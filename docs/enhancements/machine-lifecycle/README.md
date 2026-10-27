@@ -147,11 +147,11 @@ without adding those provider APIs to this enhancement.
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
-# Define a project-wide offering in the provider project; omit namespace.
+# Classes span the provider project so namespaces can share an offering.
 metadata:
   name: standard-metal
-# Definition mode is fixed after creation. Describe the architecture,
-# verified capabilities, and interfaces that candidate machines must provide.
+# The definition separates hardware requirements from provider details.
+# Its mode cannot change after creation.
 spec:
   arch: amd64
   capabilities:
@@ -160,13 +160,14 @@ spec:
     - name: primary
       type: Ethernet
 
-  # Offer power control without console sessions in the first implementation.
+  # Access describes supported operations, not permission to perform them.
+  # The first implementation supports power control but no console sessions.
   access:
     consoleModes: []
     powerControl: true
 
-  # Select existing supply in an explicit provider namespace.
-  # Matching labels do not prove eligibility or authorize new purchases.
+  # Capacity limits selection to existing supply in one provider namespace.
+  # Labels identify candidates; they confer no eligibility or purchase authority.
   capacity:
     machines:
       namespace: infra-ops
@@ -174,8 +175,8 @@ spec:
         matchLabels:
           fleet.datumapis.com/capacity-pool: general-metal
 
-    # Candidates must also satisfy this provider-local contract.
-    # Fleet retains the contract's identity and revision.
+    # This provider-local contract adds backend compatibility requirements.
+    # Retained identity and revision keep later edits from changing accepted work.
     providerClassRef:
       apiGroup: baremetal.fleet.datumapis.com
       kind: BareMetalMachineClass
@@ -189,11 +190,12 @@ publication service writes the consumer's local reference:
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
-# Give consumers a project-wide name for the offering; omit namespace.
+# Project-wide references give every namespace a local name for an offering.
 metadata:
   name: standard
-# This spec is an immutable source reference; it cannot become a definition.
-# Fleet resolves the provider Project UID and one definition, with no overrides.
+# The immutable source keeps the provider definition authoritative.
+# Fleet resolves the provider Project UID and one definition; a reference
+# cannot become a definition or override its requirements.
 spec:
   source:
     project: provider
@@ -219,35 +221,36 @@ example identifies an owned physical asset in the provider project.
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Machine
-# Register capacity in the provider project; labels support class selection.
-# Fleet assigns the record's UID. Replacement hardware needs a new UID.
+# The Machine UID identifies provider capacity independently of consumer claims.
+# Replacement hardware gets a new UID; labels only group capacity for selection.
 metadata:
   name: lab-server-01
   namespace: infra-ops
   labels:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:
-  # Required provider record in this Machine's project and namespace.
-  # Enrollment makes the provider and asset identities immutable.
+  # This required reference keeps provider details in the provider namespace.
+  # Enrollment fixes the provider and asset identities to prevent retargeting.
   providerRef:
     apiGroup: baremetal.fleet.datumapis.com
     kind: BareMetalMachine
     name: lab-server-01
 
-  # Require a Device for qualified owned hardware; omit it for supply
-  # without a physical Device, such as a VM or simulated machine.
+  # Qualified owned hardware requires a link to its physical inventory identity.
+  # Supply without a physical Device needs no invented inventory record.
   deviceRef:
     name: server-example-001
 
-  # Default to Disabled. Eligible permits selection only after preparation
-  # and current health, readiness, and placement checks pass.
+  # Disabled is the default so registration cannot expose occupied capacity.
+  # Eligible still depends on preparation, health, readiness, and placement.
   allocationPolicy: Disabled
 
-  # Required cleanup policy: each reservation pins its exact content.
-  # Later edits cannot weaken that allocation's cleanup obligations.
+  # Each reservation pins this required cleanup policy, preserving its
+  # release obligations even if the operator later weakens the policy.
   cleaningPolicyRef:
     name: tenant-reuse-v1
-  # Retain is the only supported value; release does not delete the asset.
+  # Retain separates consumer release from asset disposal; it is the only
+  # supported value in the first implementation.
   reclaimPolicy: Retain
 ```
 
@@ -271,27 +274,31 @@ The consumer creates the claim in its own project.
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClaim
-# Create the request in the consumer project. A new name creates a new request.
+# Claim identity belongs to the consumer project, separately from the Machine.
+# A new name creates a distinct request rather than retrying an existing one.
 metadata:
   name: example
   namespace: default
-# Require a local class and permitted location; Fleet retains their identities
-# and policies. Every field except powerState is immutable from creation.
+# Only powerState can change after creation, preserving the placement contract.
+# The local class and permitted location are required; Fleet retains their
+# identities and policies for allocation and recovery.
 spec:
   machineClassRef:
     name: standard
   locationRef:
     name: lab
 
-  # Optional initial gate: this Installation must name the claim and share
-  # its project and namespace. Activation waits for the installation.
+  # This optional gate delays activation until the initial installation succeeds.
+  # A reciprocal claim reference in the same project and namespace ties the
+  # Installation to this allocation.
   initialInstallationRef:
     name: example-os-1
 
-  # Complete initial attachment set in this project and namespace.
-  # An empty list requests no tenant network attachment.
+  # The complete initial attachment set fixes the allocation's network needs.
+  # References stay in this project and namespace; an empty list means none.
   networkAttachmentRefs: []
-  # Default to Off. An authorized On request waits for activation prerequisites.
+  # Off is the default so creating a claim does not request runtime power-on.
+  # On expresses intent; authorization and activation gates still control effects.
   powerState: "On"
 ```
 
@@ -316,35 +323,37 @@ The consumer creates an Installation for its claim.
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Installation
-# Share the claim's project and namespace. For an initial installation,
-# this name must match the claim's initialInstallationRef.
+# Installation shares its claim's project and namespace. The claim's
+# initialInstallationRef identifies the request that satisfies its initial gate.
 metadata:
   name: example-os-1
   namespace: default
-# Require a claim and approved image. Fleet checks install and image-use
-# permissions, then pins the Claim UID and exact image artifacts and digests.
-# Every field is immutable; changed inputs require a new Installation.
+# The entire spec is immutable so recovery uses the same authorized inputs.
+# Claim and approved image are required. Fleet checks install and image-use
+# permissions and pins the Claim UID, image artifacts, and digests.
 spec:
   claimRef:
     name: example
-  # Required: match Fleet's current OS incarnation before execution.
-  # None requires an allocation with no installed incarnation.
+  # This required precondition prevents competing installs from replacing
+  # an unexpected OS. None means the allocation has no installed incarnation.
   expectedPredecessor:
     type: None
   imageRef:
     name: qualified-linux
 
-  # Optional Secret in this namespace, under explicit caller authority.
-  # Fleet retains its UID, digest, and authorized bytes in protected storage.
+  # Optional bootstrap data comes from a Secret in this namespace under
+  # explicit caller authority. Protected copies of its UID, digest, and bytes
+  # preserve the accepted input through Secret changes or deletion.
   bootstrapConfigRef:
     name: example-bootstrap
 ```
 
-For a reinstall, use this predecessor value in a new Installation:
+A reinstall identifies the prior incarnation in its predecessor condition:
 
 ```yaml
-# Match a prior Installation by name and UID against Fleet's retained
-# incarnation, even after public deletion. This example uses a synthetic UID.
+# Name and UID identify the predecessor even after public deletion.
+# The UID prevents name reuse from substituting another incarnation.
+# This example uses a synthetic UID.
 expectedPredecessor:
   type: Installation
   name: example-os-1
