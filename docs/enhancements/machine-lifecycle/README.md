@@ -98,50 +98,27 @@ pending, cancellation, and recovery behavior. Review assignments remain open.
 
 ### Resource relationships across projects
 
-The diagram shows one consumer allocation. Each additional consumer project has
-its own class references, claims, and installations. Consumers can reference the
-same provider definition, but the shared allocator binds each Machine to at most
-one claim.
+The first diagram shows the public resources. Arrows show references or supply
+selection, not execution order. Each project owns its resources and namespaces.
 
-```mermaid
-flowchart LR
-    subgraph consumer["Consumer project"]
-        reference["MachineClass reference<br/>Project-wide"]
-        subgraph consumerNamespace["Consumer namespace"]
-            claim["MachineClaim"]
-            installation["Installation"]
-        end
-    end
+![Public resource relationships across provider and consumer projects](diagrams/public-resources.svg)
 
-    subgraph provider["Provider project"]
-        definition["MachineClass definition<br/>Project-wide"]
-        subgraph providerNamespace["Provider namespace"]
-            machine["Machine"]
-        end
-    end
+The consumer's class references the provider's definition through `spec.source`.
+Fleet checks publication provenance and source-use permission before allocation.
+The claim can also name its first Installation through `initialInstallationRef`
+(not shown).
 
-    subgraph privateStorage["Fleet private storage<br/>Outside both project deletion domains"]
-        reservation["Reservation record"]
-        operation["Operation record"]
-    end
+The second diagram shows how Fleet retains the allocation privately. Each
+resource identity includes its `ProjectKey` and UID. An installation operation
+also retains the Installation UID and exact inputs.
 
-    claim -->|machineClassRef| reference
-    installation -->|claimRef| claim
-    claim -->|initialInstallationRef: optional| installation
-    reference -->|source: project + name| definition
-    definition -->|capacity.machines: namespace + selector| machine
-    reservation -.->|Consumer Project UID + Claim UID| claim
-    reservation -.->|Provider Project UID + Machine UID| machine
-    operation -.->|Binding ID + epoch| reservation
-    operation -.->|Installation UID: install operations| installation
-```
+![Private reservation and operation records connecting a consumer claim to a provider machine](diagrams/private-records.svg)
 
-Solid arrows show public references or selection rules. Dashed arrows show
-identities that Fleet retains privately; they are not Kubernetes owner
-references. The Machine stays in the provider project. Fleet resolves the
-cross-project class reference through protected publication provenance and
-checks source-use permission before allocation. Private records preserve the
-binding and cleanup obligations when either project's public objects disappear.
+The reservation binds one consumer claim to one provider Machine. Other projects
+can reference the same class and compete for its supply, but only one claim can
+hold that Machine. Private records survive project deletion so Fleet can finish
+cleanup. These links are not Kubernetes owner references and do not transfer
+ownership of the Machine.
 
 ### Project identity and resource scope
 

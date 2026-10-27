@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="510" viewBox="0 0 960 510" role="img" aria-labelledby="title description">
+  <title id="title">Public resources across project boundaries</title>
+  <desc id="description">The consumer project contains a project-wide MachineClass reference and a namespace containing MachineClaim and Installation. The claim references the local class; the installation references the claim. The local class references a provider MachineClass definition across the project boundary. That definition selects Machines in an explicit provider namespace. Arrows show references and selection, not execution order.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; }
+    .heading { font-size: 24px; font-weight: 700; }
+    .label { font-size: 20px; font-weight: 700; }
+    .detail { font-size: 17px; fill: #475569; }
+    .edge { font-size: 17px; fill: #334155; }
+    .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+  </style>
+  <rect width="960" height="510" fill="white"/>
+  <rect x="20" y="16" width="426" height="478" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+  <rect x="514" y="16" width="426" height="478" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+  <text x="44" y="55" class="heading" text-anchor="start">Consumer project</text>
+  <text x="538" y="55" class="heading" text-anchor="start">Provider project</text>
+  <rect x="103" y="88" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="233.0" y="117" class="label" text-anchor="middle">MachineClass</text>
+  <text x="233.0" y="141" class="detail" text-anchor="middle">Project-wide reference</text>
+  <rect x="597" y="88" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="727.0" y="117" class="label" text-anchor="middle">MachineClass</text>
+  <text x="727.0" y="141" class="detail" text-anchor="middle">Project-wide definition</text>
+  <path d="M 363 124 L 597 124" class="line"/>
+  <text x="480" y="110" class="edge" text-anchor="middle">source</text>
+  <rect x="44" y="216" width="378" height="254" rx="10" fill="#f8fbff" stroke="#93b4df" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <rect x="538" y="216" width="378" height="254" rx="10" fill="#f8fdf9" stroke="#96bda1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="62" y="245" class="detail" text-anchor="start">Namespace</text>
+  <text x="556" y="245" class="detail" text-anchor="start">Namespace</text>
+  <rect x="103" y="270" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="233.0" y="313" class="label" text-anchor="middle">MachineClaim</text>
+  <rect x="103" y="386" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="233.0" y="429" class="label" text-anchor="middle">Installation</text>
+  <rect x="597" y="270" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="727.0" y="313" class="label" text-anchor="middle">Machine</text>
+  <path d="M 233 270 L 233 160" class="line"/>
+  <text x="245" y="193" class="edge" text-anchor="start">machineClassRef</text>
+  <path d="M 233 386 L 233 342" class="line"/>
+  <text x="245" y="371" class="edge" text-anchor="start">claimRef</text>
+  <path d="M 727 160 L 727 270" class="line"/>
+  <text x="739" y="193" class="edge" text-anchor="start">selects</text>
+  <text x="727" y="405" class="detail" text-anchor="middle">Capacity stays in</text>
+  <text x="727" y="431" class="detail" text-anchor="middle">the provider project.</text>
+</svg>
