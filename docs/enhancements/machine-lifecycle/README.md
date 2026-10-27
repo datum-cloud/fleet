@@ -16,6 +16,7 @@ stage: alpha
   - [Authorization and publication](#authorization-and-publication)
   - [Durable coordination](#durable-coordination)
   - [Allocation and quota integration](#allocation-and-quota-integration)
+  - [Provider configuration resolution](#provider-configuration-resolution)
   - [Provider execution and recovery](#provider-execution-and-recovery)
   - [Release and project lifecycle](#release-and-project-lifecycle)
   - [Implementation decisions](#implementation-decisions)
@@ -29,8 +30,8 @@ stage: alpha
 ## Summary
 
 Fleet will let consumers allocate and install machines through their Milo project
-APIs. Four public resources define the contract: `MachineClass`, `Machine`,
-`MachineClaim`, and `Installation`. Private reservation and operation records
+APIs. Five public resources define the contract: `MachineClass`, `MachineProfile`,
+`Machine`, `MachineClaim`, and `Installation`. Private reservation and operation records
 retain ownership, execution authority, exact inputs, and cleanup obligations.
 
 The first implementation will use a persistent simulated provider with real Milo
@@ -47,6 +48,8 @@ consumer.
 
 ### Goals
 
+- Separate reusable hardware requirements from provider offerings and observed
+  hardware.
 - Allocate each machine to at most one claim through one shared allocator.
 - Preserve distinct asset, allocation, installation, and managed-node identities.
 - Retain authorized inputs before execution and recover work after failures.
@@ -73,9 +76,13 @@ will retain ownership of the machines throughout that lifecycle.
 
 - A provider operator publishes a machine class and controls which capacity Fleet
   can allocate without exposing management credentials or other consumers.
-- A consumer selects a local class and requests a machine. Fleet allocates
-  available capacity within the consumer's permissions, entitlement, and quota,
-  or reports why the request remains pending.
+- A consumer selects a local class and hardware profile. Fleet allocates matching
+  capacity within the consumer's permissions, entitlement, and quota, or reports
+  why the request cannot proceed.
+- A consumer defines a custom profile when the class permits it. Fleet checks
+  whether the provider supports the complete configuration before allocation.
+- A consumer inspects the assigned CPU, memory, GPUs, disks, and network
+  interfaces through the claim without accessing provider inventory.
 - A consumer installs or reinstalls an approved OS and controls power without
   creating a managed cluster.
 - A consumer releases a machine or deletes its project. Fleet completes cleanup
@@ -86,14 +93,20 @@ will retain ownership of the machines throughout that lifecycle.
 ### Resource relationships across projects
 
 The first diagram shows how consumers discover and request provider capacity.
-Arrows show references or supply selection. Each project owns its resources and
-namespaces.
+Solid arrows show references or supply selection; the dashed arrow shows
+profile publication. Each project owns its resources and namespaces.
 
 ![Public resource relationships across provider and consumer projects](diagrams/public-resources.svg)
 
-A consumer discovers offerings through local MachineClass references. Each
-MachineClaim requests capacity from a class, and each Installation requests an
-OS installation for a claim. Other projects can reference the same offering and
+A MachineClass defines an offering and its allocation policy. A MachineProfile
+specifies hardware requirements independently of that offering. Each MachineClaim
+selects both through local names. A class can support several profiles, and a
+profile can work with several classes or providers.
+
+The publication service creates protected local copies of provider profiles.
+Consumers can also create custom profiles in their own projects when a class
+permits them. Custom profiles have no provider source. Each Installation requests
+an OS installation for a claim. Other projects can use the same offering and
 compete for its supply.
 
 The second diagram shows how Fleet preserves exclusive allocation and recovery
@@ -134,7 +147,7 @@ pending, cancellation, and recovery behavior. Review assignments remain open.
 
 ### API design
 
-All four kinds use the proposed `fleet.datumapis.com/v1alpha1` API and a status
+All five kinds use the proposed `fleet.datumapis.com/v1alpha1` API and a status
 subresource. The server applies defaults before capturing a request digest and
 rejects unknown behavioral fields or unsupported required capabilities.
 
@@ -157,15 +170,17 @@ kind: MachineClass
 metadata:
   generation: 1
   name: standard-metal
-# The definition separates hardware requirements from provider details.
+# The definition owns offering policy; profiles own hardware requirements.
 # Its mode cannot change after creation.
 spec:
-  arch: amd64
-  capabilities:
-    - baremetal
-  interfaces:
-    - name: primary
-      type: Ethernet
+  # Named profiles identify approved provider-local contracts by incarnation.
+  # Custom profiles require a separate opt-in and provider validation.
+  profilePolicy:
+    allowedProfiles:
+      - name: accelerated-16c-64g
+        uid: 00000000-0000-4000-8000-000000000003
+    customProfiles:
+      enabled: false
 
   # Access describes supported operations, not permission to perform them.
   # The first implementation supports power control but no console sessions.
@@ -202,8 +217,15 @@ status:
       observedGeneration: 1
       lastTransitionTime: "2026-10-27T12:00:00Z"
       reason: DefinitionValid
-      message: "Hardware requirements and provider contract resolved."
+      message: "Profile policy and provider contract resolved."
 ```
+
+`profilePolicy` allows named profiles, custom profiles, or both. Custom profiles
+are disabled by default. The provider contract validates custom requirements
+against approved configurations and locations; enabling them does not accept
+arbitrary combinations. An offering must permit at least one of these paths.
+A missing named profile blocks that profile's use; a recreated name has a new
+UID and needs explicit approval.
 
 Definitions contain no audience grant, quota, image, or network policy. The
 publication service writes the consumer's local reference:
@@ -217,7 +239,7 @@ metadata:
   name: standard
 # The immutable source keeps the provider definition authoritative.
 # Fleet resolves the provider Project UID and one definition; a reference
-# cannot become a definition or override its requirements.
+# cannot become a definition or override its policy.
 spec:
   source:
     project: provider
@@ -232,12 +254,14 @@ status:
   observedAt: "2026-10-27T12:00:00Z"
   validUntil: "2026-10-27T12:05:00Z"
   resolvedClass:
-    arch: amd64
-    capabilities:
-      - baremetal
-    interfaces:
-      - name: primary
-        type: Ethernet
+    # Publication maps allowed provider profiles to protected local copies.
+    # These local identities do not expose provider inventory or grant use.
+    profilePolicy:
+      allowedProfiles:
+        - name: accelerated-16c-64g
+          uid: 00000000-0000-4000-8000-000000000002
+      customProfiles:
+        enabled: false
     access:
       consoleModes: []
       powerControl: true
@@ -260,6 +284,92 @@ list, and watch results, including watch revocation. A publisher's cached status
 cannot disclose source details to every principal in the consumer project.
 Selectors, provider configuration, machine IDs, and other consumers stay private.
 Availability reports an observation, not a reservation.
+
+#### MachineProfile
+
+A profile is a project-wide, immutable hardware contract. Providers define named
+profiles; the publication service copies their requirements into consumer
+projects. Consumers create custom profiles using the same schema. The example
+shows a published consumer copy; its provider source has a different UID.
+
+```yaml
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineProfile
+metadata:
+  name: accelerated-16c-64g
+  uid: 00000000-0000-4000-8000-000000000002
+  generation: 1
+# Immutable requirements can serve several offerings without coupling hardware
+# choices to capacity ownership, price, location, or provisioning credentials.
+spec:
+  # Cores count physical cores across sockets. Memory describes installed RAM,
+  # not memory left available after the OS starts.
+  cpu:
+    architecture: amd64
+    cores:
+      min: 16
+  memory:
+    capacity:
+      min: "64Gi"
+
+  # GPU memory applies to each matching device, not their combined memory.
+  gpus:
+    count:
+      min: 1
+    vendor: Example
+    models:
+      - example-gpu
+    memoryPerDevice:
+      min: "24Gi"
+
+  # Each group requires distinct devices. Capacity is per disk; the group name
+  # describes a hardware role without prescribing RAID or filesystem layout.
+  disks:
+    - name: boot
+      count:
+        min: 2
+      capacity:
+        min: "480Gi"
+      media: SSD
+      interface: NVMe
+
+  # Interfaces describe physical ports. Network attachments and IP addresses
+  # remain separate inputs owned by the networking APIs.
+  interfaces:
+    - name: primary
+      type: Ethernet
+      speed:
+        min: "10G"
+status:
+  conditions:
+    - type: Accepted
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: ProfileValid
+      message: "Hardware requirements are well formed."
+```
+
+Numeric constraints use inclusive `min` and optional `max`, or `exact` alone.
+Counts use integers; capacities use byte quantities; link speeds use bits per
+second (`10G` means 10 billion bits per second). Admission rejects negative values,
+empty constraints, inverted bounds, duplicate group names, and unknown units or
+required capabilities. CPU architecture and memory capacity are required.
+Omitting another constraint adds no requirement for that dimension. An explicit
+GPU count of `exact: 0` requires no GPUs.
+
+Matching uses physical core counts, not logical threads. Every selected GPU must
+meet the per-device constraints. Counts bound matching devices, not their summed
+capacity. Each interface entry requires one port. Disk groups and interface
+entries require distinct matching devices; one device cannot satisfy two groups. Missing observations
+cannot satisfy a required constraint. The provider adapter verifies that the
+complete combination works at the requested location. A profile does not resize
+an existing bare-metal machine.
+
+`Accepted=True` validates the profile's structure, not compatibility with a class
+or available capacity. Specs cannot change, including on published copies.
+A revised contract requires a new profile. Deleting a profile blocks new
+admissions but does not change retained allocation or release contracts.
 
 #### Machine
 
@@ -312,6 +422,35 @@ status:
     revision: evidence-example
     observedAt: "2026-10-27T12:00:00Z"
     validUntil: "2026-10-27T12:05:00Z"
+  # Normalized hardware facts come from discovery, with the evidence revision
+  # above. Logical device names keep serial numbers and management IDs private.
+  hardware:
+    cpu:
+      architecture: amd64
+      model: example-cpu
+      sockets: 2
+      cores: 24
+      threads: 48
+    memory:
+      capacity: "128Gi"
+    gpus:
+      - name: accelerator-0
+        vendor: Example
+        model: example-gpu
+        memory: "32Gi"
+    disks:
+      - name: disk-0
+        capacity: "960Gi"
+        media: SSD
+        interface: NVMe
+      - name: disk-1
+        capacity: "960Gi"
+        media: SSD
+        interface: NVMe
+    interfaces:
+      - name: primary
+        type: Ethernet
+        speed: "25G"
   conditions:
     - type: Prepared
       status: "True"
@@ -342,6 +481,14 @@ Enrollment enforces one canonical asset identity across Machine records and
 provider projects. Operators cannot manufacture preparation evidence by editing
 status; simulator observations identify themselves as such.
 
+Inventory or provider discovery owns hardware facts. The projector normalizes
+those observations into `status.hardware`; Machine policy does not duplicate
+editable inventory. `status.evidence` bounds the hardware, preparation, and
+health observations. The simulator supplies explicit synthetic evidence.
+Unknown fields remain absent, and an unknown device list differs from a verified
+empty list. Hardware changes require new evidence and compatibility evaluation;
+Fleet cannot silently weaken an active claim's accepted requirements.
+
 The reservation determines occupancy. `Available=True` alone cannot authorize a
 binding. Retirement must settle enrollment, reservation, and operation
 obligations before Machine deletion.
@@ -360,11 +507,13 @@ metadata:
   name: example
   namespace: default
 # Only powerState can change after creation, preserving the placement contract.
-# The local class and permitted location are required; Fleet retains their
-# identities and policies for allocation and recovery.
+# The local class, profile, and permitted location are required. Fleet retains
+# their identities and exact contracts for allocation and recovery.
 spec:
   machineClassRef:
     name: standard
+  machineProfileRef:
+    name: accelerated-16c-64g
   locationRef:
     name: lab
 
@@ -385,6 +534,40 @@ spec:
 # Machine identity. These fields describe the binding; they cannot authorize it.
 status:
   bindingID: binding-example
+  # These are the accepted local profile and hardware snapshot at binding.
+  # They survive profile deletion and do not claim to be live health evidence.
+  acceptedProfileRef:
+    name: accelerated-16c-64g
+    uid: 00000000-0000-4000-8000-000000000002
+  allocatedHardware:
+    observedAt: "2026-10-27T12:00:00Z"
+    hardware:
+      cpu:
+        architecture: amd64
+        model: example-cpu
+        sockets: 2
+        cores: 24
+        threads: 48
+      memory:
+        capacity: "128Gi"
+      gpus:
+        - name: accelerator-0
+          vendor: Example
+          model: example-gpu
+          memory: "32Gi"
+      disks:
+        - name: disk-0
+          capacity: "960Gi"
+          media: SSD
+          interface: NVMe
+        - name: disk-1
+          capacity: "960Gi"
+          media: SSD
+          interface: NVMe
+      interfaces:
+        - name: primary
+          type: Ethernet
+          speed: "25G"
   # The retained incarnation survives deletion of its public Installation.
   currentInstallationRef:
     name: example-os-1
@@ -404,7 +587,7 @@ status:
       observedGeneration: 1
       lastTransitionTime: "2026-10-27T12:00:00Z"
       reason: InputsAccepted
-      message: "Request identity and initial inputs are retained."
+      message: "Supported class/profile inputs and request identity are retained."
     - type: Bound
       status: "True"
       observedGeneration: 1
@@ -429,6 +612,20 @@ A superseded power intent generation cannot dispatch new work. Creating a claim
 captures protected caller identity but reserves no capacity. Resolution pins
 dependency UIDs and content; missing dependencies leave the claim pending.
 Later name reuse cannot replace a pinned UID.
+
+The coordinator resolves both references within the consumer project and pins
+their UIDs. The named path requires a profile listed by the provider class:
+either that provider-local UID or a protected published copy of it. Matching
+names or copied requirements do not establish that relationship. Other profiles,
+including those published by another provider, take the custom path. They can
+bind only when the class permits custom profiles and the adapter accepts the
+complete configuration. Publication permissions still apply to their sources.
+
+`acceptedProfileRef` identifies the retained contract. `allocatedHardware`
+exposes the assigned CPU, memory, GPUs, disks, and interfaces without revealing
+provider inventory identities. Fleet retains exact requirements and device
+mappings privately. The snapshot survives source deletion; later observations
+can change readiness but cannot rewrite what Fleet allocated.
 
 Before selecting hardware, the coordinator resolves initial installation
 requirements and network feasibility. After binding, it materializes
@@ -549,7 +746,9 @@ refresh status.
 
 The resources report different aspects of the lifecycle:
 
-- **MachineClass:** `Accepted` applies to a definition whose requirements and
+- **MachineProfile:** `Accepted` reports whether immutable requirements are well
+  formed. It does not establish class compatibility, authorization, or supply.
+- **MachineClass:** `Accepted` applies to a definition whose profile policy and
   provider contract resolve. `SourceResolved` applies to a reference with an
   authorized, resolved source. The opaque `evaluatedRevision` identifies the
   evaluated contract; `resolvedClass` contains only its public capabilities. Neither
@@ -559,8 +758,8 @@ The resources report different aspects of the lifecycle:
   live reservation or cleanup obligation. A known policy block can keep
   `Available=False` even when health evidence becomes unknown.
 - **MachineClaim:** `Accepted` means Fleet retained the request identity and
-  initial inputs. `Bound` means a private reservation committed, not that the
-  machine is ready. `Ready` requires the current installation, required network
+  initial inputs, including a supported class/profile/location combination.
+  `Bound` means a private reservation committed, not that the machine is ready. `Ready` requires the current installation, required network
   handoff, and power prerequisites to pass. A blank powered-off claim can also
   become ready. `Releasing` remains true until cleanup and quota release finish.
 - **Installation:** `Accepted` means Fleet admitted an operation with exact
@@ -569,7 +768,8 @@ The resources report different aspects of the lifecycle:
   `completedAt` appears only after verified success. Failure and cancellation
   use `Ready=False` with a specific reason; an uncertain outcome uses `Unknown`.
 
-A claim omits `bindingID` and `placement` before binding and omits
+A claim omits `bindingID`, `placement`, and `allocatedHardware` before binding
+and omits `acceptedProfileRef` until admission retains the profile. It omits
 `currentInstallationRef` before an installation succeeds. An Installation omits
 operation correlation and the resolved digest until admission retains them.
 `power.state` is `On`, `Off`, or `Unknown`; intent changes do not change the
@@ -583,8 +783,9 @@ current Installation reference if partial effects leave the incarnation unknown.
 Private history still preserves earlier identities for recovery.
 
 The projector publishes `DependenciesPending`, `AuthorizationUnavailable`,
-`SourceUnavailable`, `QuotaPending`, `QuotaDenied`, `InsufficientCapacity`,
-`PredecessorMismatch`, `OutcomeUnknown`, or `CleanupBlocked` where applicable.
+`SourceUnavailable`, `ProfileUnsupported`, `ProviderUnavailable`, `QuotaPending`,
+`QuotaDenied`, `InsufficientCapacity`, `PredecessorMismatch`, `OutcomeUnknown`, or
+`CleanupBlocked` where applicable.
 A status write, absent condition, or stale `Ready=True` cannot authorize effects
 or free capacity. Recovery reads private records, never a reconstructed public
 binding. Consumer-visible status excludes inventory mappings, BMC endpoints,
@@ -627,9 +828,10 @@ records also retain the Namespace UID. Every query, cache key, list/watch filter
 continuation token, and work item includes `ProjectKey`. Recreating a project,
 namespace, or object cannot inherit the previous lifetime's authority.
 
-Provider operators write project-wide MachineClass definitions and namespaced
-Machines. The publication service writes project-wide references in consumer
-projects. Consumers write namespaced MachineClaims and Installations; each
+Provider operators write project-wide MachineClass definitions and MachineProfiles,
+and namespaced Machines. The publication service writes project-wide class
+references and protected profile copies in consumer projects. Consumers write
+project-wide custom profiles and namespaced MachineClaims and Installations; each
 Installation shares its claim's project and namespace. Fleet stores private
 reservation and operation records outside both project deletion domains.
 
@@ -653,10 +855,12 @@ Verify that deployment setting. Admission must also protect immutable fields,
 reserved metadata, and service finalizers; labels and field managers confer no
 permission.
 
-Provider operators write class definitions, Machine policy, and trusted
-enrollment mappings. The publication service writes consumer references and
-private provenance. Consumers write authorized claims, installation requests,
-power intent, and deletion requests.
+Provider operators write class definitions, named profiles, Machine policy, and
+trusted enrollment mappings. The publication service writes consumer class
+references, protected profile copies, and private provenance. Consumers write
+custom profiles, authorized claims, installation requests, power intent, and
+deletion requests. Admission protects publisher-owned profiles from consumer
+replacement; a copied label cannot establish publisher ownership.
 
 The coordinator writes accepted inputs, reservations, operation authority, and
 release progress. Executors write authenticated observations and completion
@@ -674,6 +878,13 @@ permission and provider-project `machineclasses.use` permission. The provider
 check retains the caller's identity and changes the target scope, as the
 [IPClass checker][ipam-class-use] does. Controller credentials cannot substitute
 for consumer permission.
+
+Admission also requires local `machineprofiles.use`. A published profile requires
+`machineprofiles.use` on its canonical provider source; a custom profile requires
+no provider profile grant. Provider-class permission and custom-profile policy
+still apply. Class and profile permissions grant no inventory access or purchase
+authority. Reads, lists, and watches of published profile content enforce current
+source-use permission, including revocation, as class summaries do.
 
 Fleet retains the initiating User or ServiceAccount UID privately. Milo's
 [PolicyBinding schema][milo-policybinding] supports User, Group, and
@@ -704,11 +915,17 @@ Fleet retains this publication mapping privately:
 ```text
 (consumer ProjectKey, local class UID)
   -> (provider ProjectKey, definition UID, revision)
+(consumer ProjectKey, local published profile UID)
+  -> (provider ProjectKey, source profile UID, immutable requirements)
 ```
 
 Copied fields, labels, and status cannot establish provenance. Fleet rejects
 name collisions and unauthorized sources without disclosing foreign inventory.
-Same-project definition use skips publication but still requires authorization.
+Same-project definition and named-profile use skip publication but still require
+authorization. Profile publication preserves requirements exactly. It neither
+confers class support nor converts consumer-created profiles into named profiles.
+Profiles outside the class's named allowlist follow the custom path; unresolved
+publication stays pending.
 
 ### Durable coordination
 
@@ -725,8 +942,11 @@ cross-project identities are not Kubernetes owner references.
   authority to the exact consumer lifetime.
 - **Provider ProjectKey, Machine UID, canonical asset identity:** Identify
   exclusive capacity across classes and enrollment aliases.
-- **Class UIDs, revision, requirements, dependency identities/content:**
+- **Class UIDs/revision, local and source profile UIDs, exact requirements:**
   Preserve the accepted contract after source changes or deletion.
+- **Resolved provider configuration, hardware snapshot, dependency content:**
+  Pin the catalog revision, concrete targets, and device-to-requirement mapping
+  used to validate the allocation.
 - **Principal UID, authorization decision, entitlement, admission revisions:**
   Record the authority for binding.
 - **Quota hold UID and state:** Recover quota custody through release.
@@ -758,10 +978,12 @@ The coordinator follows this sequence:
 
 1. Resolve project, namespace, and request lifetimes. Check deletion state,
    provenance, current principal permissions, entitlement, and initial inputs.
+   Validate the class/profile/location combination before requesting quota.
 2. Create or resume preparation by Claim UID. Obtain one correlated quota hold
    and retain its UID. Query a lost grant response using the same correlation.
-3. Select eligible supply and recheck lifecycle, policy, source compatibility,
-   authorization, entitlement, and quota.
+3. Select eligible supply whose fresh hardware observations satisfy the profile.
+   Resolve its concrete provider configuration and recheck lifecycle, policy,
+   compatibility, authorization, entitlement, and quota.
 4. Commit the exclusive binding and activation intent under the admission
    ordering below. A losing contender retries selection or remains pending.
 5. Dispatch admitted operations and project their results to public status.
@@ -790,7 +1012,7 @@ remembered `Granted=True` cannot replace current authority.
 An authorization check followed by a database commit cannot order a concurrent
 revocation. Fleet needs an admission fence: a protocol that orders binding
 against relevant IAM, entitlement, project/namespace lifecycle, quota, class,
-and eligibility changes.
+profile, and eligibility changes.
 
 If invalidation wins, the pending claim cannot bind. If binding wins, later
 changes follow the active-allocation rules. Authorities must acknowledge
@@ -799,6 +1021,56 @@ invalidation only when older admission authority can no longer commit.
 This protocol is a new integration requirement, not an existing Milo API.
 Implementation must define participating authorities and test their ordering.
 Cached reads, stale tokens, and simulator-only policy tests do not satisfy it.
+
+### Provider configuration resolution
+
+The provider adapter resolves the class, profile, and location into a supported
+configuration. It checks the complete combination, including CPU model, memory,
+GPU options, disk slots, and physical interfaces. Independent minimum checks
+cannot prove that a provider supports those options together.
+
+Resolution distinguishes three outcomes:
+
+- **Unsupported:** `Accepted=False` with `ProfileUnsupported` explains the
+  incompatible requirement without exposing private catalog details.
+- **Unverified:** `Accepted=Unknown` with `ProviderUnavailable` blocks admission
+  when Fleet cannot establish compatibility.
+- **Supported:** Fleet retains the accepted inputs. A lack of eligible supply
+  leaves the claim unbound with `InsufficientCapacity`.
+
+Before binding or effects, Fleet retains the exact provider configuration,
+catalog identity and revision, observed hardware, and logical-to-physical device
+mapping. Backend device, model, and configuration IDs stay in private records.
+Changed catalogs require revalidation before binding; retries of admitted work
+use retained inputs. If the backend cannot honor them, Fleet stops or recovers
+the operation without silently selecting a substitute.
+
+Hardware requirements do not define an OS layout. The installation resolver
+retains the image fixture's RAID, partition, and filesystem plan;
+networking owns logical attachments, IPAM, and routing. A backend may combine
+hardware selection and OS deployment in one request. Fleet must still retain
+the separate allocation and installation authority before sending it.
+
+The published APIs support this separation, with provider-specific limits:
+
+- **Servers.com:** [Order options][servers-options] depend on location and server
+  model. The [creation API][servers-create] combines supported RAM, drive models
+  and slots, uplinks, and OS inputs. Its adapter must validate combinations and
+  retain concrete IDs; a portable profile cannot encode arbitrary combinations
+  as supported merely because each numeric minimum fits.
+- **NetActuate:** The API distinguishes [available dedicated devices][net-devices],
+  [buying and deploying a device][net-buy], and [deploying an existing
+  server][net-build]. This fits separate supply and installation responsibilities.
+  Those endpoint descriptions do not establish support for every custom hardware
+  combination.
+
+These public API shapes inform the proposed adapters; they do not demonstrate
+Fleet's fencing, retry, or cleanup guarantees. Each adapter needs qualification.
+The first implementation only matches existing simulated supply. Neither profile
+validation nor an unbound claim authorizes procurement. Future acquisition needs
+explicit purchasing authority, limits, and cancellation obligations. Consumer
+release follows the retained cleaning contract and keeps the asset; it does not
+cancel a supplier subscription or dispose of hardware.
 
 ### Provider execution and recovery
 
@@ -863,7 +1135,7 @@ Failed activation retains the binding. Release proceeds in this order:
 - **Project or entitlement suspension:** Deny new bindings, installations, and
   consumer power actions. Bring committed work to a safe boundary. Permit
   authorized deletion and release without automatically wiping active machines.
-- **Class withdrawal or Machine disablement:** Block future bindings; retain
+- **Class/profile withdrawal or Machine disablement:** Block future bindings; retain
   active contracts. Admit reclaim separately.
 
 Milo's [project controller][milo-cleanup] waits for resource cleanup before
@@ -906,6 +1178,18 @@ component, lose responses, and delay old workers to verify recovery.
 - **Consumer admin lacks source use; two local principals have different
   grants:** Deny unauthorized effects and source disclosure, including cached
   summaries and watches.
+- **One profile serves multiple classes or projects:** Retain each local and
+  canonical identity; keep capacity and authorization scoped to the offering.
+- **Consumer copies a named profile or reuses its name:** Require the custom
+  path or protected publication provenance; reject UID substitution.
+- **Custom profiles are disabled, unsupported, or temporarily unverifiable:**
+  Report the specific admission result without reserving capacity or purchasing.
+- **Profiles require physical cores, per-device GPU memory, or multiple disks:**
+  Reject aggregate-only matches, double-counted devices, and missing or stale
+  observations. Distinguish supported configurations from available supply.
+- **Profile deletion, catalog changes, or hardware drift:** Order pending
+  admission against invalidation; retain active requirements, assigned hardware,
+  exact execution inputs, and cleanup targets.
 - **Inactive entitlement or suspension:** Block new work while preserving
   authorized cleanup.
 - **Two projects, overlapping classes, or duplicate enrollment target one
@@ -944,7 +1228,9 @@ establish which versions Datum deploys.
 
 The catalog provisioner's ownership check postdates the imported publication
 proposal. This enhancement uses that newer behavior and retains Fleet's separate
-provenance and source-use checks.
+provenance and source-use checks. The provider comparison uses public NetActuate
+and Servers.com API documentation reviewed on the same date; it does not verify
+live catalogs or adapter behavior.
 
 ## Production readiness review questionnaire
 
@@ -1074,7 +1360,7 @@ throughput and per-project watch cost before setting supported limits.
 
 #### Does the feature introduce API types?
 
-Yes: the four kinds in [API design](#api-design). Load tests must set
+Yes: the five kinds in [API design](#api-design). Load tests must set
 project and namespace limits; this proposal claims no supported object count.
 
 #### Does the feature add cloud-provider calls?
@@ -1147,11 +1433,18 @@ before retrying. Pause admission if evidence suggests a correctness violation.
 
 Durable coordination adds storage, recovery, and operational work before Fleet
 can provision hardware. The admission-ordering requirement also needs changes or
-explicit contracts across several services. Strict cleanup can leave capacity
-unavailable for an extended period when evidence or management access fails.
+explicit contracts across several services. Profile publication adds provenance
+and permission checks to discovery. Strict cleanup can leave capacity unavailable
+for an extended period when evidence or management access fails.
 
 ## Alternatives
 
+- **Embed hardware requirements in each class:** This couples a reusable hardware
+  contract to an offering's policy and duplicates it across providers. Separate
+  profiles let claims select both responsibilities explicitly.
+- **Let profiles select provider configuration IDs:** Provider IDs vary by catalog
+  and location. Private resolution keeps profiles portable while retaining exact
+  execution inputs.
 - **Store allocation authority only in public status:** Project deletion and
   delayed status writes cannot preserve exclusive ownership or cleanup
   authority.
@@ -1193,3 +1486,9 @@ select the storage backend and deployment layout.
 [catalog-provisioner]: https://github.com/milo-os/service-catalog/blob/de3cc40518254f832ad4db4aa104e37bf4ddfe2c/internal/controller/provisioning_controller.go
 [catalog-entitlement]: https://github.com/milo-os/service-catalog/blob/de3cc40518254f832ad4db4aa104e37bf4ddfe2c/api/v1alpha1/serviceentitlement_types.go
 [template]: https://github.com/datum-cloud/enhancements/blob/370f8eb8a6b09890d829505ad6e5b7b6c5fa8356/enhancements/template/README.md
+
+[servers-options]: https://www.servers.com/docs/ebm/create-a-dedicated-server-via-public-api/
+[servers-create]: https://www.servers.com/docs/api-reference/dedicated-server/create-a-dedicated-server/
+[net-devices]: https://www.netactuate.com/docs/api/v2/dedicated-filter-devices
+[net-buy]: https://www.netactuate.com/docs/api/v2/dedicated-server-buy-build
+[net-build]: https://www.netactuate.com/docs/api/v2/dedicated-server-build

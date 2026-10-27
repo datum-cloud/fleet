@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="330" viewBox="0 0 960 330" role="img" aria-labelledby="title description">
   <title id="title">Private records retain the cross-project binding</title>
-  <desc id="description">Outside both project deletion domains, Fleet stores a reservation that retains the consumer claim identity and provider machine identity. An operation record references that reservation by binding ID and epoch. Each retained resource identity includes its ProjectKey and resource UID.</desc>
+  <desc id="description">Outside both project deletion domains, Fleet stores a reservation that retains the consumer claim identity, accepted class and profile contracts, and provider machine identity. An operation record references that reservation by binding ID and epoch. Each retained resource identity includes its ProjectKey and resource UID.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
@@ -26,7 +26,7 @@
   <text x="832.0" y="148" class="label" text-anchor="middle">Machine</text>
   <rect x="348" y="105" width="264" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
   <text x="480.0" y="134" class="label" text-anchor="middle">Reservation</text>
-  <text x="480.0" y="158" class="detail" text-anchor="middle">Exclusive binding</text>
+  <text x="480.0" y="158" class="detail" text-anchor="middle">Binding and accepted contracts</text>
   <path d="M 348 141 L 232 141" class="line"/>
   <path d="M 612 141 L 728 141" class="line"/>
   <rect x="348" y="226" width="264" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
