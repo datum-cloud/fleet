@@ -9,6 +9,7 @@ stage: alpha
 - [Motivation](#motivation)
 - [Proposal](#proposal)
 - [Design details](#design-details)
+  - [Resource relationships across projects](#resource-relationships-across-projects)
 - [Production readiness review questionnaire](#production-readiness-review-questionnaire)
 - [Implementation history](#implementation-history)
 - [Drawbacks](#drawbacks)
@@ -94,6 +95,53 @@ execution fencing and cleanup evidence. Consumer-facing API review must cover
 pending, cancellation, and recovery behavior. Review assignments remain open.
 
 ## Design details
+
+### Resource relationships across projects
+
+The diagram shows one consumer allocation. Each additional consumer project has
+its own class references, claims, and installations. Consumers can reference the
+same provider definition, but the shared allocator binds each Machine to at most
+one claim.
+
+```mermaid
+flowchart LR
+    subgraph consumer["Consumer project"]
+        reference["MachineClass reference<br/>Project-wide"]
+        subgraph consumerNamespace["Consumer namespace"]
+            claim["MachineClaim"]
+            installation["Installation"]
+        end
+    end
+
+    subgraph provider["Provider project"]
+        definition["MachineClass definition<br/>Project-wide"]
+        subgraph providerNamespace["Provider namespace"]
+            machine["Machine"]
+        end
+    end
+
+    subgraph privateStorage["Fleet private storage<br/>Outside both project deletion domains"]
+        reservation["Reservation record"]
+        operation["Operation record"]
+    end
+
+    claim -->|machineClassRef| reference
+    installation -->|claimRef| claim
+    claim -->|initialInstallationRef: optional| installation
+    reference -->|source: project + name| definition
+    definition -->|capacity.machines: namespace + selector| machine
+    reservation -.->|Consumer Project UID + Claim UID| claim
+    reservation -.->|Provider Project UID + Machine UID| machine
+    operation -.->|Binding ID + epoch| reservation
+    operation -.->|Installation UID: install operations| installation
+```
+
+Solid arrows show public references or selection rules. Dashed arrows show
+identities that Fleet retains privately; they are not Kubernetes owner
+references. The Machine stays in the provider project. Fleet resolves the
+cross-project class reference through protected publication provenance and
+checks source-use permission before allocation. Private records preserve the
+binding and cleanup obligations when either project's public objects disappear.
 
 ### Project identity and resource scope
 
