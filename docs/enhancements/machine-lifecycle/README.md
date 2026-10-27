@@ -17,7 +17,7 @@ stage: alpha
   - [Durable coordination](#durable-coordination)
   - [Allocation and quota integration](#allocation-and-quota-integration)
   - [Provider configuration resolution](#provider-configuration-resolution)
-  - [Network and IP assignment integration](#network-and-ip-assignment-integration)
+  - [Galactic VPC API integration](#galactic-vpc-api-integration)
   - [Provider execution and recovery](#provider-execution-and-recovery)
   - [Release and project lifecycle](#release-and-project-lifecycle)
   - [Implementation decisions](#implementation-decisions)
@@ -82,6 +82,9 @@ will retain ownership of the machines throughout that lifecycle.
   why the request cannot proceed.
 - A consumer defines a custom profile when the class permits it. Fleet checks
   whether the provider supports the complete configuration before allocation.
+- A consumer attaches named machine interfaces to existing project networks.
+  The machine joins those networks through Galactic VPC and uses their network
+  policy. Attachment does not create a new network or grant Internet access.
 - A consumer inspects the assigned hardware, IP addresses, routes, DNS resolvers,
   and network readiness through the claim without accessing provider inventory.
 - A consumer installs or reinstalls an approved OS and controls power without
@@ -107,9 +110,13 @@ profile can work with several classes or providers.
 The publication service creates protected local copies of provider profiles.
 Consumers can also create custom profiles in their own projects when a class
 permits them. Custom profiles have no provider source. Each Installation requests
-an OS installation for a claim. A networking-owned NetworkAttachment connects the
-claim to a network in the consumer project. Other projects can use the same
-offering and compete for its supply.
+an OS installation for a claim. Each requested machine interface references an
+existing `networking.datumapis.com` Network in the consumer project. Networking
+owns its Galactic VPC realization. The physical Machine remains in the provider
+project; attaching it does not move the consumer's network there.
+
+Other projects can use the same offering and compete for its supply without
+sharing networks. A network reference grants no access to another project.
 
 The second diagram shows how Fleet preserves exclusive allocation and recovery
 across project boundaries.
@@ -525,10 +532,21 @@ spec:
   initialInstallationRef:
     name: example-os-1
 
-  # Attachments own network selection and address intent outside Fleet.
-  # This immutable set stays in the claim's project and namespace.
-  networkAttachmentRefs:
-    - name: example-primary
+  # Each immutable entry connects a profile interface slot to an existing
+  # project Network. Networking owns VPC membership and address assignment.
+  networkInterfaces:
+    - name: primary
+      network:
+        namespace: default
+        name: production
+      # Families describe addresses inside the selected network. The current
+      # Network API admits new networks as IPv6-only; public IPs are separate.
+      ipFamilies:
+        - IPv6
+      # Extra addresses use NSO address classes; no extra address is requested.
+      # Delete returns this interface's assignments after verified release.
+      addresses: []
+      reclaimPolicy: Delete
   # Off is the default so creating a claim does not request runtime power-on.
   # On expresses intent; authorization and activation gates still control effects.
   powerState: "On"
@@ -584,35 +602,54 @@ status:
     revision: network-revision-example
     observedAt: "2026-10-27T12:00:00Z"
     validUntil: "2026-10-27T12:05:00Z"
-    attachments:
-      - attachmentRef:
-          name: example-primary
-          uid: 00000000-0000-4000-8000-000000000004
-        interfaces:
-          - name: primary
-            macAddress: "02:00:00:00:00:10"
-            mtu: 1500
-            # Addresses include their prefix lengths and assignment authority.
-            # Provider assignments use origin: Provider and remain observations.
-            addresses:
-              - address: "192.0.2.10"
-                prefixLength: 24
-                origin: IPAM
-              - address: "2001:db8::10"
-                prefixLength: 64
-                origin: IPAM
-            routes:
-              - destination: "0.0.0.0/0"
-                gateway: "192.0.2.1"
-              - destination: "::/0"
-                gateway: "2001:db8::1"
-        # Resolver settings apply to this attachment. Networking resolves
-        # conflicts across attachments before producing installation inputs.
+    interfaces:
+      - name: primary
+        # The accepted project Network UID prevents a recreated name from
+        # changing membership. NSO's location-specific resource IDs stay private.
+        network:
+          apiGroup: networking.datumapis.com
+          kind: Network
+          namespace: default
+          name: production
+          uid: 00000000-0000-4000-8000-000000000005
+        macAddress: "02:00:00:00:00:10"
+        mtu: 1440
+        # Addresses retain networking's CIDR and primary-address semantics.
+        # An external address is distinct from an address configured on the NIC.
+        addresses:
+          - family: IPv6
+            address: "2001:db8::10/64"
+            gateway: "2001:db8::1"
+            primary: true
+        externalAddresses: []
+        routes:
+          - destination: "::/0"
+            gateway: "2001:db8::1"
         dns:
           servers:
-            - "192.0.2.53"
             - "2001:db8::53"
           searchDomains: []
+        # NSO separates address allocation, preparation, and programming.
+        # The claim aggregates these facts without asserting guest health.
+        conditions:
+          - type: Allocated
+            status: "True"
+            observedGeneration: 1
+            lastTransitionTime: "2026-10-27T12:00:00Z"
+            reason: AddressesAllocated
+            message: "NSO holds every requested address family and class."
+          - type: Prepared
+            status: "True"
+            observedGeneration: 1
+            lastTransitionTime: "2026-10-27T12:00:00Z"
+            reason: ConfigurationPrepared
+            message: "NSO supplied the configuration needed for installation."
+          - type: Programmed
+            status: "True"
+            observedGeneration: 1
+            lastTransitionTime: "2026-10-27T12:00:00Z"
+            reason: AttachmentVerified
+            message: "Networking verified this interface on the selected network."
   # Power is an observation, separate from spec.powerState intent. Its validity
   # prevents a stale successful power action from implying current readiness.
   power:
@@ -673,21 +710,70 @@ can change readiness but cannot rewrite what Fleet allocated.
 
 Before selecting hardware, the coordinator resolves initial installation
 requirements and network feasibility. After binding, it materializes
-machine-specific inputs and waits for attachment readiness. This order avoids a
-claim/installation dependency cycle.
+machine-specific inputs from assigned addresses and network preparation.
+Attachment completion gates handoff, not the work needed to create the
+attachment. This order avoids a claim/installation dependency cycle.
 
-`status.network` exposes consumer network assignments. Interface names identify
-attachment slots that Fleet maps to retained hardware targets, not OS device
-names. Addresses carry IPv4 or IPv6 literals and prefix lengths; `origin` names
-the authority (`IPAM` or `Provider`). Routes, MTU, MAC addresses, and DNS settings
-come from the network resolver. Absent data means unknown, not an implicit
-address or default route. All addresses in this example are documentation values.
+`networkInterfaces` is an immutable list keyed by `name`. Each name identifies
+one interface slot in the selected MachineProfile, not an OS device name.
+Duplicate names and unknown slots are invalid. Each entry requires `network`;
+its namespace defaults to the claim's namespace, and its project always comes
+from authenticated request context. Other namespaces in that project require
+explicit network-use permission. References cannot select another project.
+An omitted or empty list requests no consumer network attachment.
 
-The claim projects facts from its authorized attachments; consumers request
-networks or specific addresses through networking APIs, not Fleet status.
+`network` follows NSO's NetworkRef shape and targets the existing [Network API][nso-network], not a provider
+network or a raw Galactic VPC identifier. Admission pins its Namespace UID and
+Network UID. Deletion or name reuse cannot redirect an accepted claim. Fleet
+checks the selected network's availability at the requested location and rejects
+unsupported address families; it never silently falls back to another network.
+`ipFamilies` defaults to `[IPv6]`. Every requested family must be satisfied, and
+the first identifies the primary family. This is a requirement, not a claim that
+all existing networks support both families.
+
+`addresses` follows NSO's extra-address request shape: each entry contains an
+address `class`, not a literal IP, pool, or CIDR. Every requested class must be
+satisfied. Omission requests none. `reclaimPolicy` follows NSO's `Delete` or
+`Retain` semantics and defaults to `Delete`. Delete returns this interface's
+assignments after verified release; Retain preserves them under networking's
+ownership after detachment. Neither permits premature reuse. These fields are
+immutable along with the network, interface name, and address families.
+
+`status.network.interfaces` uses the same names as the request. Each entry shows
+the accepted Network identity and its addresses, MTU, MAC, routes, DNS, and
+networking conditions. Read permission on the claim exposes this consumer-safe
+summary. Following the Network reference still requires permission on it.
+MTU and address fields come from NSO. MAC addresses, routes, and DNS are optional
+normalized facts from verified network configuration; the reviewed NSO interface
+schema does not expose all of them. Missing values remain unknown.
+NSO's [interface contract][nso-interface-design] places interface claims and
+interfaces in location control planes. Fleet retains their scoped UIDs privately;
+it does not imply that those records are directly readable in the project API.
+
+Addresses preserve the [network interface API][nso-interface] distinction:
+`addresses` contains CIDRs configured or delegated inside the selected network;
+`externalAddresses` contains separately assigned external addresses, with family,
+address class, and bare IP. A delegated CIDR is not a single host address. Only a
+verified empty external-address list means none; absence means unknown.
+The example uses documentation addresses and does not promise Internet egress.
+Network policy, route eligibility, and public exposure remain networking concerns.
+
+Per-interface `Allocated`, `Prepared`, and `Programmed` preserve NSO's condition
+meanings. Allocation does not prove attachment; preparation supplies inputs for
+installation without waiting for the result that installation helps produce.
+`Programmed=True` requires networking evidence for this interface, accepted
+Network UID, and allocation. Before resolution, status omits unresolved identities
+and addresses. A known block yields `False`; missing or stale evidence yields
+`Unknown`. Conditions observe the MachineClaim generation and share
+`status.network` freshness. `NetworkReady` requires all requested interfaces to
+be allocated, prepared, and programmed. Class or profile status cannot establish
+VPC membership.
+
+A provider-assigned IP alone does not prove Galactic attachment. Fleet does not
+present it as an address in the selected Network without networking's authority.
 Provider management addresses, provisioning networks, and credentials stay
-private. The [network integration contract](#network-and-ip-assignment-integration)
-defines freshness, installation, and release behavior.
+private. [Galactic VPC API integration](#galactic-vpc-api-integration) defines the
+boundary with the existing network resources.
 
 A blank claim starts powered off and omits the initial Installation. A later
 Installation uses predecessor `None`. A bound claim never moves to another
@@ -823,7 +909,8 @@ The resources report different aspects of the lifecycle:
   assignment and attachment evidence for the binding. It does not prove that
   the guest applied the configuration. `Ready` also requires the current
   installation, network handoff, and power prerequisites to pass. A blank
-  powered-off claim can also become ready. `Releasing` remains true until cleanup and quota release finish.
+  powered-off claim can also become ready. `Releasing` remains true until cleanup
+  and quota release finish.
 - **Installation:** `Accepted` means Fleet admitted an operation with exact
   inputs. `Executing` describes work in progress; `False` alone does not mean
   success. `Ready=True` records verified installation and platform handoff.
@@ -835,11 +922,11 @@ and omits `acceptedProfileRef` until admission retains the profile. It omits
 `currentInstallationRef` before an installation succeeds. An Installation omits
 operation correlation and the resolved digest until admission retains them.
 `power.state` is `On`, `Off`, or `Unknown`; intent changes do not change the
-observation until fresh executor evidence arrives. `network` appears only after
-the resolver supplies assignments for the binding. Expired evidence makes
+observation until fresh executor evidence arrives. `network` appears when the
+resolver evaluates the binding; unassigned address fields remain absent. Expired evidence makes
 `NetworkReady=Unknown`; retained addresses are not proof of current assignment.
-An empty attachment set yields `NetworkReady=True` with `NoAttachmentsRequired`
-and does not imply that a guest has connectivity.
+An empty `networkInterfaces` list yields `NetworkReady=True` with
+`NoAttachmentsRequired` and does not imply that a guest has connectivity.
 
 Binding identity and completed installation results are durable facts. Runtime
 health, power, and claim readiness can change independently. A later reinstall
@@ -970,9 +1057,10 @@ An Installation also requires `install` permission on its exact claim, image-use
 permission, and access to its bootstrap input. Power changes capture their own
 caller and generation. Each action requires separate operation admission.
 
-Network resolution checks the initiating principal's attachment-use permission
-and access to its requested networks and address pools. A local reference cannot
-grant cross-project network access. The projector exposes only consumer-visible
+Network resolution checks the initiating principal's use permission on each
+selected Network in its actual namespace and the required address authority.
+These are proposed Fleet admission checks; a namespace field grants no access.
+A network reference cannot grant cross-project network access. The projector exposes only consumer-visible
 assignment data, under claim-read permission; private IPAM and provider mappings
 remain with their owners.
 
@@ -1025,7 +1113,7 @@ cross-project identities are not Kubernetes owner references.
 - **Quota hold UID and state:** Recover quota custody through release.
 - **Current incarnation, initial gate, active operation ID:** Serialize
   installation, power, and release.
-- **Attachment UIDs, assignment identities, network revision, release authority:**
+- **Network Namespace/UIDs, interface UIDs, assignments, revision, release authority:**
   Retain exact configuration and each owner's detach, return, or retention
   obligations after public network objects disappear.
 - **Cleaning policy, obligations, evidence, retired identities:** Complete
@@ -1148,61 +1236,53 @@ explicit purchasing authority, limits, and cancellation obligations. Consumer
 release follows the retained cleaning contract and keeps the asset; it does not
 cancel a supplier subscription or dispose of hardware.
 
-### Network and IP assignment integration
+### Galactic VPC API integration
 
-Networking owns attachments and effective interface configuration. IPAM owns
-Datum address allocations; provider adapters report provider-assigned addresses.
-Fleet projects the authorized result on the claim and supplies retained inputs
-to installation. Neither discovery nor status publication allocates an address,
-imports it into Datum ownership, or authorizes routing changes.
+Fleet exposes network selection through `MachineClaim.spec.networkInterfaces`
+and the result through `status.network`. The consumer selects an existing
+`networking.datumapis.com/v1alpha` Network. Fleet acts as a consumer of NSO's
+NetworkInterfaceClaim contract, as Compute does. Fleet supplies the immutable
+interface requirements; NSO owns binding a NetworkInterface and allocating its
+addresses. The network realization owner reports Galactic VPC programming.
+Fleet does not introduce a separate public NetworkAttachment resource or require
+consumers to select `cloud.datumapis.com` backing objects.
 
-The networking-owned NetworkAttachment targets the claim and an interface slot
-in the same project and namespace. It supplies network selection, requested
-address families, and any authorized specific-address request. Its schema is
-outside this enhancement. The Fleet resolver contract requires these steps:
+The existing [NetworkInterfaceClaim][nso-interface-claim] separates address
+allocation, preparation, and programming. Fleet needs prepared configuration
+for installation and verified attachment for handoff. The existing Galactic
+[VPCAttachment][cloud-vpc-attachment] also separates `Ready` preparation from
+`Programmed` realization. A backing object's existence or its preparation
+condition alone cannot produce `Programmed=True` on the Fleet interface.
 
-1. Before binding, check attachment permissions, reciprocal claim identity,
-   interface compatibility, and location feasibility. Missing inputs leave the
-   claim pending with `NetworkPending`; this check does not promise assignments.
-2. After binding, retain authorized attachment inputs and a binding-scoped
-   correlation key before requesting network effects. Networking resolves the
-   exact hardware targets and establishes assignment custody and connectivity.
-   Retain assignment identities, normalized configuration, and acknowledgments
-   privately. A lost response queries the same correlation; it cannot allocate
-   another address. Uncertain outcomes remain outstanding cleanup obligations.
-3. Publish the consumer view in `status.network`. Its revision identifies the
-   complete effective configuration for this binding. The resolver defines
-   explicit address, route, and DNS outcomes; conflicting inputs block progress.
-   `NetworkReady` reports fresh evidence from networking for all required
-   assignments and attachments.
-4. Before installation, retain that network revision and exact inputs in the
-   operation. The executor configures the OS from those inputs; it cannot choose
-   another address or allocate a second one. Platform handoff verifies the
-   admitted network revision and required customer connectivity before claim
-   readiness. Provisioning connectivity alone does not satisfy that check.
-5. During release, detach or fence the old attachment before an address can move
-   to another consumer. Obtain the owning service's acknowledgment for each
-   release or authorized retention obligation before completing Fleet release.
+The Fleet API reports `NetworkPending`, `NetworkNotAvailableInLocation`,
+`AddressFamilyNotCarried`, or `NetworkConfigurationChanged` as appropriate.
+Authorization failures disclose no foreign network details. If one requested
+interface fails, the claim cannot become network-ready, even when another works.
+A lost or recreated Network cannot silently replace the accepted identity.
 
-The initial contract fixes the attachment set and accepted network configuration
-for the allocation. Reinstallations reuse assignments while they remain valid;
-Installation deletion does not release them. A changed assignment, lost custody,
-or stale evidence blocks dependent effects and clears readiness with a specific
-reason. Fleet reports `NetworkConfigurationChanged` for configuration drift and
-does not silently rewrite the guest. In-place network changes require a later
-admitted workflow; recovery or release uses the retained contract.
+Installation retains the exact resolved network revision and configuration.
+Reinstallations preserve valid assignments. Changes to interface names, network
+selection, address families/classes, or reclaim policy require a new claim;
+in-place network changes remain outside scope. Address changes or stale evidence
+clear affected readiness and cannot silently rewrite admitted installation inputs.
 
-An address's owner determines its lifetime. Claim-owned ephemeral assignments
-return only after verified detachment or fencing. A separately owned reserved
-address may remain allocated after the claim releases, but networking must prove
-that the old binding can no longer use it. A provider may keep an address with
-its server; Fleet must verify isolation rather than claim it released that
-address into Datum IPAM. Unknown cleanup keeps the Machine unavailable.
+Release ends the machine's membership and settles its interface/address
+obligations. It does not delete the existing Network or the VPC shared by its
+other consumers. Unknown release evidence keeps capacity unavailable. Under
+`Retain`, the interface and addresses stay under NSO ownership once the old binding
+can no longer use them. Reusing a Fleet claim's name grants no authority over a
+retained interface: any future adoption must validate exact identity and current
+network-use permission. The current contract does not expose NSO's explicit
+`networkInterfaceName` adoption selector or promise address recovery by name.
 
-The first implementation uses persistent network fixtures behind this resolver
-contract. Fixtures model dual-stack assignments, stale evidence, lost responses,
-and release acknowledgments; they allocate no real addresses or routes. Real
-networking/IPAM integration and customer handoff remain qualification gates.
+This enhancement defines request, identity, status, and lifetime semantics.
+NSO's current attachment modes describe container and hypervisor consumers; this
+proposal does not reuse one as a bare-metal mode. Fleet's interface names identify
+profile slots; the installation contract retains their mapping to OS interfaces.
+The mechanism for attaching a physical machine to Galactic remains a separate
+design decision. The reviewed APIs do not establish implemented bare-metal
+attachment support; the first Fleet implementation exercises this contract with
+persistent fixtures before qualification against Galactic.
 
 ### Provider execution and recovery
 
@@ -1334,14 +1414,20 @@ component, lose responses, and delay old workers to verify recovery.
   binding:** Enforce the defined admission order through real integrations.
 - **Quota denial or interrupted preparation:** Produce no effects; settle the
   same hold before aborting.
-- **Dual-stack assignments, provider addresses, or lost network responses:**
-  Project the correct authority and interface mapping; recover the same
-  assignments without allocating twice.
+- **Existing project networks, namespace reuse, or a forged foreign reference:**
+  Check network-use permission in the referenced namespace, pin exact lifetimes,
+  and reject substitution or cross-project access.
+- **Multiple interfaces or an unsupported address family:** Report results per
+  interface; withhold network readiness until every requested requirement passes.
+- **Provider IP without Galactic membership, or preparation without programming:**
+  Do not report the interface attached merely because an address or backing
+  object exists.
+- **Lost network responses:** Recover the same assignments without allocating twice.
 - **Assignment drift or stale network evidence during installation:** Block
   affected effects and readiness; never replace retained execution inputs.
-- **Reinstall, attachment deletion, or release with a reserved address:** Preserve
-  valid assignments through reinstall; verify old-binding detachment and the
-  owner's return or retention decision before reuse.
+- **Reinstall, network deletion, or release with a reserved address:** Preserve
+  valid assignments through reinstall; verify old-binding detachment and address
+  obligations before reuse. Machine release must preserve the shared Network.
 - **Initial Installation or network input arrives after the claim:** Resolve
   dependencies without deadlock or premature activation.
 - **Reinstalls share a predecessor; inputs change or names recur:** Admit one
@@ -1367,12 +1453,19 @@ establish which versions Datum deploys.
 - **`milo-os/milo`:** `cd469ff4235c0847d9863a132bdb58f3ff8d3845`
 - **`milo-os/ipam`:** `ed3f54151a3f0a08014caec150567ed1012007f2`
 - **`milo-os/service-catalog`:** `de3cc40518254f832ad4db4aa104e37bf4ddfe2c`
+- **`datum-cloud/network-services-operator`:** `d7fdc43f852450c447d4b7bb44b564c970582b1a`
+- **`datum-cloud/cloud`:** `cf31b2b71ded321ae95b411cd97765568aa05cde`
 
 The catalog provisioner's ownership check postdates the imported publication
 proposal. This enhancement uses that newer behavior and retains Fleet's separate
 provenance and source-use checks. The provider comparison uses public NetActuate
 and Servers.com API documentation reviewed on the same date; it does not verify
 live catalogs or adapter behavior.
+
+The networking source distinguishes consumer Networks and NetworkInterfaces
+from Galactic VPC backing resources. Its current Network admission permits new
+IPv6-only networks; address-family fields alone do not establish support. The
+Fleet interface schema above is proposed, not an existing networking API.
 
 ## Production readiness review questionnaire
 
@@ -1634,3 +1727,9 @@ select the storage backend and deployment layout.
 [net-devices]: https://www.netactuate.com/docs/api/v2/dedicated-filter-devices
 [net-buy]: https://www.netactuate.com/docs/api/v2/dedicated-server-buy-build
 [net-build]: https://www.netactuate.com/docs/api/v2/dedicated-server-build
+
+[nso-network]: https://github.com/datum-cloud/network-services-operator/blob/d7fdc43f852450c447d4b7bb44b564c970582b1a/api/v1alpha/network_types.go
+[nso-interface]: https://github.com/datum-cloud/network-services-operator/blob/d7fdc43f852450c447d4b7bb44b564c970582b1a/api/v1alpha/networkinterface_types.go
+[nso-interface-claim]: https://github.com/datum-cloud/network-services-operator/blob/d7fdc43f852450c447d4b7bb44b564c970582b1a/api/v1alpha/networkinterfaceclaim_types.go
+[cloud-vpc-attachment]: https://github.com/datum-cloud/cloud/blob/cf31b2b71ded321ae95b411cd97765568aa05cde/api/v1alpha1/vpcattachment_types.go
+[nso-interface-design]: https://github.com/datum-cloud/network-services-operator/blob/d7fdc43f852450c447d4b7bb44b564c970582b1a/docs/enhancements/network-interfaces.md
