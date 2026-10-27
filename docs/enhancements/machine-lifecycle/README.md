@@ -11,6 +11,7 @@ stage: alpha
   - [Resource relationships across projects](#resource-relationships-across-projects)
 - [Design details](#design-details)
   - [API design](#api-design)
+    - [Status contract](#status-contract)
   - [Milo project integration](#milo-project-integration)
   - [Authorization and publication](#authorization-and-publication)
   - [Durable coordination](#durable-coordination)
@@ -137,6 +138,11 @@ All four kinds use the proposed `fleet.datumapis.com/v1alpha1` API and a status
 subresource. The server applies defaults before capturing a request digest and
 rejects unknown behavioral fields or unsupported required capabilities.
 
+The examples show proposed API responses at different lifecycle points. The
+server assigns `metadata.uid` and `metadata.generation`; the status projector
+alone writes `/status`. Names, identifiers, digests, and timestamps are synthetic.
+The example validity windows do not establish production freshness limits.
+
 #### MachineClass
 
 The provider operator writes the definition in the provider project. This
@@ -149,6 +155,7 @@ apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
 # Classes span the provider project so namespaces can share an offering.
 metadata:
+  generation: 1
   name: standard-metal
 # The definition separates hardware requirements from provider details.
 # Its mode cannot change after creation.
@@ -182,6 +189,20 @@ spec:
       kind: BareMetalMachineClass
       namespace: infra-ops
       name: qualified-server-v1
+
+# The projector reports the definition that the class evaluator accepted.
+# Acceptance validates the offering; it does not reserve or promise capacity.
+status:
+  evaluatedRevision: class-revision-example
+  observedAt: "2026-10-27T12:00:00Z"
+  validUntil: "2026-10-27T12:05:00Z"
+  conditions:
+    - type: Accepted
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: DefinitionValid
+      message: "Hardware requirements and provider contract resolved."
 ```
 
 Definitions contain no audience grant, quota, image, or network policy. The
@@ -192,6 +213,7 @@ apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
 # Project-wide references give every namespace a local name for an offering.
 metadata:
+  generation: 1
   name: standard
 # The immutable source keeps the provider definition authoritative.
 # Fleet resolves the provider Project UID and one definition; a reference
@@ -200,6 +222,32 @@ spec:
   source:
     project: provider
     name: standard-metal
+
+# The projector exposes only the authorized public offering. Private source
+# mappings, selectors, provider configuration, and other consumers stay private.
+status:
+  # Revision and validity identify the evaluated offering, independently of
+  # this reference object's generation. They do not grant source-use permission.
+  evaluatedRevision: class-revision-example
+  observedAt: "2026-10-27T12:00:00Z"
+  validUntil: "2026-10-27T12:05:00Z"
+  resolvedClass:
+    arch: amd64
+    capabilities:
+      - baremetal
+    interfaces:
+      - name: primary
+        type: Ethernet
+    access:
+      consoleModes: []
+      powerControl: true
+  conditions:
+    - type: SourceResolved
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: AuthorizedSource
+      message: "The source offering resolved under current authorization."
 ```
 
 Resolution follows one hop to a definition and rejects cycles, chains, and mixed
@@ -224,6 +272,7 @@ kind: Machine
 # The Machine UID identifies provider capacity independently of consumer claims.
 # Replacement hardware gets a new UID; labels only group capacity for selection.
 metadata:
+  generation: 1
   name: lab-server-01
   namespace: infra-ops
   labels:
@@ -252,6 +301,36 @@ spec:
   # Retain separates consumer release from asset disposal; it is the only
   # supported value in the first implementation.
   reclaimPolicy: Retain
+
+# The projector derives these observations from executor evidence and private
+# reservations. Operators cannot make capacity available by editing status.
+status:
+  # Evidence validity bounds preparation and health observations. Simulator
+  # evidence remains distinguishable from qualified hardware verification.
+  evidence:
+    source: Simulator
+    revision: evidence-example
+    observedAt: "2026-10-27T12:00:00Z"
+    validUntil: "2026-10-27T12:05:00Z"
+  conditions:
+    - type: Prepared
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: PreparationVerified
+      message: "The simulator verified preparation for this asset."
+    - type: Healthy
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: HealthVerified
+      message: "The simulator reported healthy capacity."
+    - type: Available
+      status: "False"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: AllocationDisabled
+      message: "Operator policy excludes this Machine from new allocations."
 ```
 
 References resolve within the Machine's provider project and namespace. Private
@@ -277,6 +356,7 @@ kind: MachineClaim
 # Claim identity belongs to the consumer project, separately from the Machine.
 # A new name creates a distinct request rather than retrying an existing one.
 metadata:
+  generation: 1
   name: example
   namespace: default
 # Only powerState can change after creation, preserving the placement contract.
@@ -300,6 +380,49 @@ spec:
   # Off is the default so creating a claim does not request runtime power-on.
   # On expresses intent; authorization and activation gates still control effects.
   powerState: "On"
+
+# The projector reports allocation progress without exposing the provider
+# Machine identity. These fields describe the binding; they cannot authorize it.
+status:
+  bindingID: binding-example
+  # The retained incarnation survives deletion of its public Installation.
+  currentInstallationRef:
+    name: example-os-1
+    uid: 00000000-0000-4000-8000-000000000001
+  placement:
+    locationRef:
+      name: lab
+  # Power is an observation, separate from spec.powerState intent. Its validity
+  # prevents a stale successful power action from implying current readiness.
+  power:
+    state: "On"
+    observedAt: "2026-10-27T12:00:00Z"
+    validUntil: "2026-10-27T12:05:00Z"
+  conditions:
+    - type: Accepted
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: InputsAccepted
+      message: "Request identity and initial inputs are retained."
+    - type: Bound
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: ReservationCommitted
+      message: "The private reservation holds exclusive capacity."
+    - type: Ready
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: PlatformHandoffComplete
+      message: "Initial installation and required handoff checks passed."
+    - type: Releasing
+      status: "False"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: AllocationActive
+      message: "The allocation has no release request."
 ```
 
 A superseded power intent generation cannot dispatch new work. Creating a claim
@@ -326,7 +449,9 @@ kind: Installation
 # Installation shares its claim's project and namespace. The claim's
 # initialInstallationRef identifies the request that satisfies its initial gate.
 metadata:
+  generation: 1
   name: example-os-1
+  uid: 00000000-0000-4000-8000-000000000001
   namespace: default
 # The entire spec is immutable so recovery uses the same authorized inputs.
 # Claim and approved image are required. Fleet checks install and image-use
@@ -346,6 +471,33 @@ spec:
   # preserve the accepted input through Secret changes or deletion.
   bootstrapConfigRef:
     name: example-bootstrap
+
+# The projector reports the retained installation outcome, not guest health.
+# Opaque correlation IDs support diagnosis without exposing execution authority.
+status:
+  bindingID: binding-example
+  operationID: operation-example
+  resolvedImageDigest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  completedAt: "2026-10-27T12:00:00Z"
+  conditions:
+    - type: Accepted
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: OperationAdmitted
+      message: "The immutable plan and operation authority are retained."
+    - type: Executing
+      status: "False"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: OperationComplete
+      message: "The executor has no remaining work for this installation."
+    - type: Ready
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: PlatformHandoffComplete
+      message: "The installation and platform handoff completed with verified evidence."
 ```
 
 A reinstall identifies the prior incarnation in its predecessor condition:
@@ -379,6 +531,64 @@ grants no continuing ownership of a standalone OS.
 Deleting an unfinished Installation requests cancellation at a safe boundary.
 Deleting a completed one does not uninstall the OS, release capacity, or reset
 the initial gate. Private history preserves predecessor identity in both cases.
+
+#### Status contract
+
+Each condition describes one fact. Its `status` is `True`, `False`, or `Unknown`;
+its `reason` identifies the outcome, and its bounded `message` explains it.
+`observedGeneration` identifies the spec generation the controller evaluated.
+`lastTransitionTime` records a change in the condition's value, not a heartbeat.
+Status can be empty before reconciliation; an absent condition means `Unknown`.
+
+An unchanged spec can acquire new dependency revisions or stale evidence.
+`observedAt` records an observation, and `validUntil` bounds its validity under
+the relevant evidence policy. A matching generation alone does not prove
+freshness. Missing, expired, or unverifiable evidence yields `Unknown` for the
+facts that depend on it. Readers also check validity when the projector cannot
+refresh status.
+
+The resources report different aspects of the lifecycle:
+
+- **MachineClass:** `Accepted` applies to a definition whose requirements and
+  provider contract resolve. `SourceResolved` applies to a reference with an
+  authorized, resolved source. The opaque `evaluatedRevision` identifies the
+  evaluated contract; `resolvedClass` contains only its public capabilities. Neither
+  condition promises free capacity or grants every reader source-use permission.
+- **Machine:** `Prepared` reports preparation evidence, and `Healthy` reports
+  observed health. `Available` requires eligible policy, fresh evidence, and no
+  live reservation or cleanup obligation. A known policy block can keep
+  `Available=False` even when health evidence becomes unknown.
+- **MachineClaim:** `Accepted` means Fleet retained the request identity and
+  initial inputs. `Bound` means a private reservation committed, not that the
+  machine is ready. `Ready` requires the current installation, required network
+  handoff, and power prerequisites to pass. A blank powered-off claim can also
+  become ready. `Releasing` remains true until cleanup and quota release finish.
+- **Installation:** `Accepted` means Fleet admitted an operation with exact
+  inputs. `Executing` describes work in progress; `False` alone does not mean
+  success. `Ready=True` records verified installation and platform handoff.
+  `completedAt` appears only after verified success. Failure and cancellation
+  use `Ready=False` with a specific reason; an uncertain outcome uses `Unknown`.
+
+A claim omits `bindingID` and `placement` before binding and omits
+`currentInstallationRef` before an installation succeeds. An Installation omits
+operation correlation and the resolved digest until admission retains them.
+`power.state` is `On`, `Off`, or `Unknown`; intent changes do not change the
+observation until fresh executor evidence arrives.
+
+Binding identity and completed installation results are durable facts. Runtime
+health, power, and claim readiness can change independently. A later reinstall
+does not rewrite a prior Installation's successful result. The claim reports the
+current incarnation, becomes unready during disruptive work, and withholds a
+current Installation reference if partial effects leave the incarnation unknown.
+Private history still preserves earlier identities for recovery.
+
+The projector publishes `DependenciesPending`, `AuthorizationUnavailable`,
+`SourceUnavailable`, `QuotaPending`, `QuotaDenied`, `InsufficientCapacity`,
+`PredecessorMismatch`, `OutcomeUnknown`, or `CleanupBlocked` where applicable.
+A status write, absent condition, or stale `Ready=True` cannot authorize effects
+or free capacity. Recovery reads private records, never a reconstructed public
+binding. Consumer-visible status excludes inventory mappings, BMC endpoints,
+credentials, bootstrap bytes, and bearer capabilities.
 
 ### Milo project integration
 
@@ -806,26 +1016,11 @@ ongoing obligations after deletion.
 
 #### How can a consumer tell whether the feature works for its instance?
 
-Consumers read status conditions:
-
-- **`MachineClass`:** `SourceResolved`, authorized capabilities, revision, and
-  freshness.
-- **`Machine`:** `Prepared`, `Available`, health, and evidence freshness.
-- **`MachineClaim`:** `Accepted`, `Bound`, `Ready`, `Releasing`, opaque binding
-  handle, current Installation UID, placement, and power.
-- **`Installation`:** `Accepted`, `Executing`, `Ready`, image digest, safe
-  operation correlation, and failure/cancellation reason.
-
-Conditions include `observedGeneration`, transition time, reason, and a bounded
-message. Track dependency revisions and evidence freshness separately. Report
-missing or stale evidence as `Unknown`. Reasons include `DependenciesPending`,
-`AuthorizationUnavailable`, `SourceUnavailable`, `QuotaPending`, `QuotaDenied`,
-`InsufficientCapacity`, `PredecessorMismatch`, `OutcomeUnknown`, and
-`CleanupBlocked`.
-
-Status excludes inventory mappings, BMC endpoints, credentials, bootstrap bytes,
-and bearer capabilities. Operator audit records retain principals, ProjectKeys,
-decisions, transitions, and evidence references without secret content.
+Consumers read the conditions, progress, and observations defined in the
+[API status contract](#status-contract). Status distinguishes pending inputs,
+committed capacity, installation completion, current readiness, and release.
+Operator audit records retain principals, ProjectKeys, decisions, transitions,
+and evidence references without secret content.
 
 #### What service-level objectives are reasonable?
 
