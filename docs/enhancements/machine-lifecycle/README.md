@@ -10,6 +10,15 @@ stage: alpha
 - [Proposal](#proposal)
   - [Resource relationships across projects](#resource-relationships-across-projects)
 - [Design details](#design-details)
+  - [API design](#api-design)
+  - [Milo project integration](#milo-project-integration)
+  - [Authorization and publication](#authorization-and-publication)
+  - [Durable coordination](#durable-coordination)
+  - [Allocation and quota integration](#allocation-and-quota-integration)
+  - [Provider execution and recovery](#provider-execution-and-recovery)
+  - [Release and project lifecycle](#release-and-project-lifecycle)
+  - [Implementation decisions](#implementation-decisions)
+  - [Acceptance tests](#acceptance-tests)
 - [Production readiness review questionnaire](#production-readiness-review-questionnaire)
 - [Implementation history](#implementation-history)
 - [Drawbacks](#drawbacks)
@@ -122,135 +131,11 @@ pending, cancellation, and recovery behavior. Review assignments remain open.
 
 ## Design details
 
-### Project identity and resource scope
-
-Milo routes project requests through:
-
-```text
-/apis/resourcemanager.miloapis.com/v1alpha1/projects/{project-name}/control-plane
-```
-
-The [project filter][milo-routing] supplies authenticated parent context:
-
-```text
-iam.miloapis.com/parent-api-group=resourcemanager.miloapis.com
-iam.miloapis.com/parent-type=Project
-iam.miloapis.com/parent-name={project-name}
-```
-
-Fleet accepts that context only through its authenticated API-server path. It
-rejects missing, conflicting, or organization-only context. Client headers,
-annotations, and request fields cannot select a tenant. Public APIs offer no
-unscoped global list.
-
-The project name selects the route. Fleet resolves the root ResourceManager
-Project UID to identify its lifetime. `user.Info.UID` identifies the caller, not
-the project. The [IPAM tenancy implementation][ipam-tenancy] follows this
-separation. Fleet uses these keys:
-
-```text
-ProjectKey = (Milo authority ID, root Project UID)
-ObjectKey  = (ProjectKey, API group/resource, namespace, name)
-ObjectID   = (ProjectKey, resource UID)
-```
-
-Fleet initially supports one operator-configured Milo authority. Namespaced
-records also retain the Namespace UID. Every query, cache key, list/watch filter,
-continuation token, and work item includes `ProjectKey`. Recreating a project,
-namespace, or object cannot inherit the previous lifetime's authority.
-
-Provider operators write project-wide MachineClass definitions and namespaced
-Machines. The publication service writes project-wide references in consumer
-projects. Consumers write namespaced MachineClaims and Installations; each
-Installation shares its claim's project and namespace. Fleet stores private
-reservation and operation records outside both project deletion domains.
-
-Provider projects follow the same tenancy rules as consumer projects. Authorized
-consumers may also claim a definition in their own project. A namespace named
-`default` in one project has no relationship to `default` in another.
-
-Milo's [multicluster provider][milo-multicluster] indexes clients by project name
-and can disengage unready projects. Fleet must verify the root UID and connected
-control-plane lifetime before admission or status writes. A changed UID
-invalidates cached clients and work. An unavailable API does not prove deletion.
-Private recovery continues without an engaged project client. Resource versions
-from separate project APIs do not provide a global transaction order.
-
-### Authorized writers
-
-Register separate Milo IAM permissions for CRUD, source `use`, claim `install`,
-status, and private coordination. [ProtectedResource][milo-protected] supports
-subresource permissions only when the authorization provider enables them.
-Verify that deployment setting. Admission must also protect immutable fields,
-reserved metadata, and service finalizers; labels and field managers confer no
-permission.
-
-Provider operators write class definitions, Machine policy, and trusted
-enrollment mappings. The publication service writes consumer references and
-private provenance. Consumers write authorized claims, installation requests,
-power intent, and deletion requests.
-
-The coordinator writes accepted inputs, reservations, operation authority, and
-release progress. Executors write authenticated observations and completion
-evidence for admitted operations. The status projector writes sanitized status
-from retained records and observations.
-
-Each surface has one authoritative writer. A process that implements multiple
-roles must preserve these boundaries. The initial deployment limits supply
-enrollment to operator-controlled provider projects.
-
-#### Request authority
-
-For a claim, the coordinator checks the initiating principal's local create
-permission and provider-project `machineclasses.use` permission. The provider
-check retains the caller's identity and changes the target scope, as the
-[IPClass checker][ipam-class-use] does. Controller credentials cannot substitute
-for consumer permission.
-
-Fleet retains the initiating User or ServiceAccount UID privately. Milo's
-[PolicyBinding schema][milo-policybinding] supports User, Group, and
-ServiceAccount subjects; it does not support Project subjects. This proposal
-uses explicit source-use grants to request principals. Publication grants no
-such authority.
-
-Asynchronous admission must resolve current identity and group membership.
-Fleet retains no bearer token and cannot replay stale groups. If that check is
-unavailable, the claim stays pending with `AuthorizationUnavailable`. A principal
-that loses access before binding must submit a new request after regaining it.
-After binding, subsequent actions use current claim permissions and the retained
-allocation contract; the creator's departure does not reclaim the machine.
-
-An Installation also requires `install` permission on its exact claim, image-use
-permission, and access to its bootstrap input. Power changes capture their own
-caller and generation. Each action requires separate operation admission.
-
-#### Entitlement and publication
-
-Admission requires an Active consumer service entitlement and no applicable
-suspension. [ServiceEntitlement][catalog-entitlement] tracks suspension separately
-from phase. The [provisioner][catalog-provisioner] checks existing-object ownership
-before applying references but does not grant source-use permission.
-
-Fleet retains this publication mapping privately:
-
-```text
-(consumer ProjectKey, local class UID)
-  -> (provider ProjectKey, definition UID, revision)
-```
-
-Copied fields, labels, and status cannot establish provenance. Fleet rejects
-name collisions and unauthorized sources without disclosing foreign inventory.
-Same-project definition use skips publication but still requires authorization.
-
-### Public resources
+### API design
 
 All four kinds use the proposed `fleet.datumapis.com/v1alpha1` API and a status
 subresource. The server applies defaults before capturing a request digest and
 rejects unknown behavioral fields or unsupported required capabilities.
-
-Typed resolvers supply image inputs, network evidence, and provider access.
-Fixtures implement those interfaces for simulation. Missing required evidence
-blocks progress.
 
 #### MachineClass
 
@@ -505,7 +390,127 @@ Deleting an unfinished Installation requests cancellation at a safe boundary.
 Deleting a completed one does not uninstall the OS, release capacity, or reset
 the initial gate. Private history preserves predecessor identity in both cases.
 
-### Private durable records
+### Milo project integration
+
+Milo routes project requests through:
+
+```text
+/apis/resourcemanager.miloapis.com/v1alpha1/projects/{project-name}/control-plane
+```
+
+The [project filter][milo-routing] supplies authenticated parent context:
+
+```text
+iam.miloapis.com/parent-api-group=resourcemanager.miloapis.com
+iam.miloapis.com/parent-type=Project
+iam.miloapis.com/parent-name={project-name}
+```
+
+Fleet accepts that context only through its authenticated API-server path. It
+rejects missing, conflicting, or organization-only context. Client headers,
+annotations, and request fields cannot select a tenant. Public APIs offer no
+unscoped global list.
+
+The project name selects the route. Fleet resolves the root ResourceManager
+Project UID to identify its lifetime. `user.Info.UID` identifies the caller, not
+the project. The [IPAM tenancy implementation][ipam-tenancy] follows this
+separation. Fleet uses these keys:
+
+```text
+ProjectKey = (Milo authority ID, root Project UID)
+ObjectKey  = (ProjectKey, API group/resource, namespace, name)
+ObjectID   = (ProjectKey, resource UID)
+```
+
+Fleet initially supports one operator-configured Milo authority. Namespaced
+records also retain the Namespace UID. Every query, cache key, list/watch filter,
+continuation token, and work item includes `ProjectKey`. Recreating a project,
+namespace, or object cannot inherit the previous lifetime's authority.
+
+Provider operators write project-wide MachineClass definitions and namespaced
+Machines. The publication service writes project-wide references in consumer
+projects. Consumers write namespaced MachineClaims and Installations; each
+Installation shares its claim's project and namespace. Fleet stores private
+reservation and operation records outside both project deletion domains.
+
+Provider projects follow the same tenancy rules as consumer projects. Authorized
+consumers may also claim a definition in their own project. A namespace named
+`default` in one project has no relationship to `default` in another.
+
+Milo's [multicluster provider][milo-multicluster] indexes clients by project name
+and can disengage unready projects. Fleet must verify the root UID and connected
+control-plane lifetime before admission or status writes. A changed UID
+invalidates cached clients and work. An unavailable API does not prove deletion.
+Private recovery continues without an engaged project client. Resource versions
+from separate project APIs do not provide a global transaction order.
+
+### Authorization and publication
+
+Register separate Milo IAM permissions for CRUD, source `use`, claim `install`,
+status, and private coordination. [ProtectedResource][milo-protected] supports
+subresource permissions only when the authorization provider enables them.
+Verify that deployment setting. Admission must also protect immutable fields,
+reserved metadata, and service finalizers; labels and field managers confer no
+permission.
+
+Provider operators write class definitions, Machine policy, and trusted
+enrollment mappings. The publication service writes consumer references and
+private provenance. Consumers write authorized claims, installation requests,
+power intent, and deletion requests.
+
+The coordinator writes accepted inputs, reservations, operation authority, and
+release progress. Executors write authenticated observations and completion
+evidence for admitted operations. The status projector writes sanitized status
+from retained records and observations.
+
+Each surface has one authoritative writer. A process that implements multiple
+roles must preserve these boundaries. The initial deployment limits supply
+enrollment to operator-controlled provider projects.
+
+#### Request authority
+
+For a claim, the coordinator checks the initiating principal's local create
+permission and provider-project `machineclasses.use` permission. The provider
+check retains the caller's identity and changes the target scope, as the
+[IPClass checker][ipam-class-use] does. Controller credentials cannot substitute
+for consumer permission.
+
+Fleet retains the initiating User or ServiceAccount UID privately. Milo's
+[PolicyBinding schema][milo-policybinding] supports User, Group, and
+ServiceAccount subjects; it does not support Project subjects. This proposal
+uses explicit source-use grants to request principals. Publication grants no
+such authority.
+
+Asynchronous admission must resolve current identity and group membership.
+Fleet retains no bearer token and cannot replay stale groups. If that check is
+unavailable, the claim stays pending with `AuthorizationUnavailable`. A principal
+that loses access before binding must submit a new request after regaining it.
+After binding, subsequent actions use current claim permissions and the retained
+allocation contract; the creator's departure does not reclaim the machine.
+
+An Installation also requires `install` permission on its exact claim, image-use
+permission, and access to its bootstrap input. Power changes capture their own
+caller and generation. Each action requires separate operation admission.
+
+#### Entitlement and publication
+
+Admission requires an Active consumer service entitlement and no applicable
+suspension. [ServiceEntitlement][catalog-entitlement] tracks suspension separately
+from phase. The [provisioner][catalog-provisioner] checks existing-object ownership
+before applying references but does not grant source-use permission.
+
+Fleet retains this publication mapping privately:
+
+```text
+(consumer ProjectKey, local class UID)
+  -> (provider ProjectKey, definition UID, revision)
+```
+
+Copied fields, labels, and status cannot establish provenance. Fleet rejects
+name collisions and unauthorized sources without disclosing foreign inventory.
+Same-project definition use skips publication but still requires authorization.
+
+### Durable coordination
 
 Public status projects private state; it grants no execution authority. Missing
 private records block effects and quarantine uncertain capacity. Private storage
@@ -547,20 +552,7 @@ or power generation, predecessor, exact inputs, permitted effects, target
 components, executor, fencing token, dispatch correlation, cancellation boundary,
 outcome evidence, and remaining obligations.
 
-Only the coordinator authorizes a plan. The executor reports evidence for that
-plan. Retries reuse the operation ID and inputs; a changed plan with the same
-key conflicts. Fleet persists dispatch intent before sending a command and
-queries the backend after a lost response.
-
-Operations progress through `Admitted`, `Dispatched`, and `Verifying` to
-`Succeeded` or a verified `Failed`/`Cancelled` boundary. `OutcomeUnknown` remains
-nonterminal. Command acceptance does not prove completion.
-
-Each binding permits one active effectful operation. The provider must reject
-stale executor tokens, epochs, and callbacks, including after restart. A
-Kubernetes controller lease alone cannot fence a remote worker.
-
-### Allocation and quota
+### Allocation and quota integration
 
 The coordinator follows this sequence:
 
@@ -608,7 +600,26 @@ This protocol is a new integration requirement, not an existing Milo API.
 Implementation must define participating authorities and test their ordering.
 Cached reads, stale tokens, and simulator-only policy tests do not satisfy it.
 
-### Release and deletion
+### Provider execution and recovery
+
+Typed resolvers supply image inputs, network evidence, and provider access.
+Fixtures implement those interfaces for simulation. Missing required evidence
+blocks progress.
+
+Only the coordinator authorizes a plan. The executor reports evidence for that
+plan. Retries reuse the operation ID and inputs; a changed plan with the same
+key conflicts. Fleet persists dispatch intent before sending a command and
+queries the backend after a lost response.
+
+Operations progress through `Admitted`, `Dispatched`, and `Verifying` to
+`Succeeded` or a verified `Failed`/`Cancelled` boundary. `OutcomeUnknown` remains
+nonterminal. Command acceptance does not prove completion.
+
+Each binding permits one active effectful operation. The provider must reject
+stale executor tokens, epochs, and callbacks, including after restart. A
+Kubernetes controller lease alone cannot fence a remote worker.
+
+### Release and project lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -878,7 +889,7 @@ throughput and per-project watch cost before setting supported limits.
 
 #### Does the feature introduce API types?
 
-Yes: the four kinds in [Public resources](#public-resources). Load tests must set
+Yes: the four kinds in [API design](#api-design). Load tests must set
 project and namespace limits; this proposal claims no supported object count.
 
 #### Does the feature add cloud-provider calls?
