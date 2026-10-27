@@ -1,0 +1,27 @@
+# Local editor and operating system files
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# Local credentials and environment
+.env
+.env.*
+!.env.example
+/.kube/
+/.secrets/
+/kubeconfig
+/kubeconfig.*
+/talosconfig
+/netbox.txt
+/servers.com.txt
+
+# Local outputs and scratch work
+/tmp/
+/dist/
+/coverage/
+/worktrees/
+
+# Local agent settings
+.claude/settings.local.json
+.claude/worktrees/
