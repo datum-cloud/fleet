@@ -6,7 +6,7 @@ progress independently while sharing allocation and installation contracts.
 
 ## 1. Define the service contracts
 
-The [M1 enhancement](enhancements/machine-lifecycle/README.md) defines the four
+The [Machine lifecycle enhancement](enhancements/machine-lifecycle/README.md) defines the four
 public resources, private reservation/operation records, Milo tenancy boundaries,
 and recovery acceptance criteria. Its functional target uses a persistent
 simulated provider; real hardware qualification remains in stage 3 below.

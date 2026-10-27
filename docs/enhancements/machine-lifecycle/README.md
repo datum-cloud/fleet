@@ -1,10 +1,9 @@
 ---
 status: provisional
 stage: alpha
-latest-milestone: "M1"
 ---
 
-# M1: Durable machine allocation and installation
+# Durable machine allocation and installation
 
 ## Summary
 
@@ -14,7 +13,7 @@ records. Consumers use their own Milo project APIs to request capacity held in a
 provider project. Fleet admits one exclusive allocation, executes only its retained
 installation inputs, and preserves release obligations until reuse is safe.
 
-The first functional milestone runs against a durable simulated provider through
+The initial implementation runs against a durable simulated provider through
 real Milo project contexts. It demonstrates one provider project and two consumer
 projects competing for the same machine, including restart and failure recovery.
 It does not claim physical provisioning support. Qualification of a real adapter
@@ -34,7 +33,7 @@ reinstall, and release. Restarting Fleet or losing an executor response never
 changes the selected machine or repeats an unknown destructive operation. The
 waiting consumer can acquire the machine only after release completes.
 
-Included in M1:
+This enhancement covers:
 
 - Project-isolated CRUD, list/watch, admission, status, and finalization for the
   four public kinds, with a single shared allocation coordinator.
@@ -86,7 +85,7 @@ ObjectKey  = (ProjectKey, API group/resource, namespace, name)
 ObjectID   = (ProjectKey, resource UID)
 ```
 
-M1 supports one configured Milo authority. Its identifier is service-owned, not a
+The initial implementation supports one configured Milo authority. Its identifier is service-owned, not a
 customer field. Names route requests; UIDs bind lifetimes. Namespace is empty for
 project-wide kinds. Namespaced objects also retain Namespace UID when admitted.
 Deleting and recreating a project or namespace cannot inherit old objects,
@@ -112,7 +111,7 @@ not authorize a later provider effect.
 Projects can have independent API servers. Cross-project binding is a Fleet
 protocol, not an owner reference or a namespace lookup. A provider project uses
 the same tenancy rules as a consumer project; its name confers no privilege.
-M1 permits authorized claims against a definition in the same project too.
+Fleet permits authorized claims against a definition in the same project too.
 
 ### Controllers and project lifecycle
 
@@ -134,7 +133,7 @@ If the existing discovery path cannot establish this, admission stays blocked.
 Register Fleet resources and permissions with Milo IAM. Separate CRUD, source
 `use`, installation authority, status writes, and private coordination access.
 The [ProtectedResource schema][milo-protected] supports subresource permissions
-only when the authorization provider enables that feature. M1 must verify that
+only when the authorization provider enables that feature. The implementation must verify that
 deployment contract; declaring `/status` is not sufficient isolation by itself.
 Admission additionally protects immutable fields and service-owned finalizers.
 
@@ -149,8 +148,8 @@ Admission additionally protects immutable fields and service-owned finalizers.
 
 One process may implement several roles, but its write paths and credentials must
 preserve these boundaries. Field-manager names and labels are not authorization.
-M1 provider projects are administratively controlled; offering an arbitrary
-customer project permission to enroll supply is outside this milestone.
+Provider projects in the initial implementation are administratively controlled; offering an arbitrary
+customer project permission to enroll supply is outside this enhancement.
 
 ### Two authorization scopes, one initiating principal
 
@@ -164,11 +163,11 @@ let its administrator authorize access to someone else's class.
 Use Milo-supported User or ServiceAccount identities, pinned by UID; Group grants
 are evaluated through IAM. A Project is a resource scope, not an invented IAM
 subject kind. The current [PolicyBinding schema][milo-policybinding] supports User,
-Group, and ServiceAccount subjects, not `kind: Project`. M1 records the initiating
+Group, and ServiceAccount subjects, not `kind: Project`. Fleet records the initiating
 principal and consumer ProjectKey in protected admission data, never in
 consumer-editable annotations. Do not retain bearer tokens as execution authority.
 
-This chooses explicit source-use grants to the request principals for M1. A
+This chooses explicit source-use grants to the request principals for the initial implementation. A
 provider-authorized, per-project service principal could later represent delegated
 project access, but it would need a protected Project UID-to-principal UID mapping
 and its own revocation contract. Neither a bare Project name nor the publication
@@ -249,7 +248,7 @@ Public reference status reports only authorized resolved capabilities, revision,
 freshness, and `SourceResolved`. Availability is an observation, not a reservation.
 Do not expose selectors, provider configuration, machine IDs, or other consumers.
 Deleting either class form does not destroy a retained allocation contract.
-With M1's principal-scoped grants, local class read permission alone cannot expose
+With principal-scoped grants, local class read permission alone cannot expose
 resolved source details to another principal. Apply source-use authorization to
 reference resolution and capability-bearing GET/list/watch results, including
 revocation during a watch. Cached status written under the publisher's identity
@@ -257,23 +256,23 @@ is not disclosure authority for every user in the consumer project.
 
 ### Machine: capacity, not consumer ownership
 
-| Input | M1 contract |
+| Input | Contract |
 | --- | --- |
 | `providerRef` | Required typed operator reference. Resolve to a retained provider/asset identity; immutable once enrolled. |
 | `deviceRef` | Optional for simulated/opaque supply; required for qualified owned physical supply. Never fabricate a physical Device for a VM. |
 | `allocationPolicy` | Defaults to `Disabled`; `Eligible` only permits selection when all required evidence passes. |
 | `cleaningPolicyRef` | Required operator policy; pin exact content at reservation admission. Edits cannot weaken an active release obligation. |
-| `reclaimPolicy` | M1 supports `Retain` only. Delete/release at an external supplier is deferred. |
+| `reclaimPolicy` | The initial implementation supports `Retain` only. Delete/release at an external supplier is deferred. |
 
 Machine references resolve within its provider project and, for namespaced
 targets, its namespace. No customer-supplied cross-project management reference
-is accepted. M1 adapter fixtures supply private provider and cleaning policy
+is accepted. Adapter fixtures supply private provider and cleaning policy
 records without introducing public provider CRDs.
 
 Normalize provider placement, capabilities, and eligibility evidence through the
 adapter. Provider-assigned addresses remain observations; they are not editable
 IPAM intent. The operator cannot mark a machine prepared by editing public status.
-Seeded M1 simulator evidence is explicitly identified as simulated.
+Seeded simulator evidence is explicitly identified as simulated.
 
 Enforce a canonical enrolled asset identity across Machine records and provider
 projects. Creating another Machine for the same provider asset cannot duplicate
@@ -289,7 +288,7 @@ operations require it; explicit retirement must settle those obligations first.
 
 ### MachineClaim: one immutable allocation request
 
-| Input | M1 contract |
+| Input | Contract |
 | --- | --- |
 | `machineClassRef.name` | Required local project-wide class. |
 | `locationRef.name` | Required permitted location; resolved identity and policy retained. |
@@ -297,7 +296,7 @@ operations require it; explicit retirement must settle those obligations first.
 | `networkAttachmentRefs[]` | Complete initial required attachment set; same project/namespace. Empty means no requested tenant attachment, not an implicit network. |
 | `powerState` | Defaults to `Off`; `On` is admitted only through serialized activation/power operations. |
 
-For M1, all claim inputs except power intent are immutable from creation. This
+All claim inputs except power intent are immutable from creation. This
 is deliberately stricter than allowing placement edits until binding. To change
 class, location, initial installation, or attachments, replace the unbound claim.
 Power changes after creation carry their own authenticated request identity and
@@ -340,7 +339,7 @@ replace Fleet's finalization and retained-record protocol either.
 
 ### Installation: one requested OS incarnation
 
-| Input | M1 contract |
+| Input | Contract |
 | --- | --- |
 | `claimRef.name` | Required same-project, same-namespace MachineClaim. Resolve and retain Claim UID. |
 | `expectedPredecessor` | Required `None`, or `Installation` with name and UID. Compare with the reservation's durable current-incarnation record. |
@@ -364,7 +363,7 @@ spec:
   imageRef: {name: qualified-linux}
 ```
 
-M1 adds no fifth public image kind: its image resolver uses operator-installed,
+This enhancement adds no fifth public image kind: the image resolver uses operator-installed,
 project-scoped fixtures for the proposed image reference contract. Each fixture
 has immutable content, an exact digest, permission policy, and declared supported
 hardware/bootstrap behavior. It is not an arbitrary URL-fetch facility. A future
@@ -382,7 +381,7 @@ one-time initial gate. Public history deletion does not reopen that gate.
 On a failure after possible effects, record a dirty/unknown incarnation and block
 ordinary reinstall until recovery establishes a supported predecessor state.
 Do not continue treating the old installed OS as intact merely because the new
-operation failed. M1 supports resume/recovery of that operation or claim release;
+operation failed. The initial implementation supports resume/recovery of that operation or claim release;
 arbitrary repair workflows are deferred.
 
 After binding, installation and runtime authorization use the retained allocation
@@ -457,7 +456,7 @@ between Fleet's store and a remote executor.
 Exactly one effectful operation may be active per binding. Release first closes
 consumer admission and settles/cancels any active operation before admitting
 cleanup. Takeover must exclude the old executor at the effect boundary, not merely
-expire a Kubernetes lease. The M1 simulator must actually reject stale executor
+expire a Kubernetes lease. The simulator must actually reject stale executor
 tokens, binding epochs, and late callbacks, including after its own restart.
 
 ## Allocation commit and quota
@@ -491,8 +490,8 @@ skip an uncertain quota result.
 ### Quota authority and retention
 
 Use Milo's quota authority; Fleet must not copy an allowance into a second allocator.
-M1 uses one registered machine-count quota dimension, amount one per live binding,
-to avoid claiming multi-dimension atomicity this milestone has not qualified.
+The initial implementation uses one registered machine-count quota dimension, amount one per live binding,
+to avoid claiming multi-dimension atomicity the initial implementation has not qualified.
 Other quota dimensions can follow with their own admission contract.
 
 Milo's [ResourceClaim][milo-quota-claim] represents consumption, and its
@@ -530,7 +529,7 @@ the explicit active-allocation policy. The fence must cover quota loss and class
 eligibility changes relevant to the commit, not just a cached IAM result.
 
 This is a **new integration requirement**, not an existing Milo API identified by
-this review. Before declaring M1 complete, specify and test how IAM, entitlement,
+this review. Before declaring the implementation complete, specify and test how IAM, entitlement,
 project lifecycle, quota, and Fleet participate: for example, a coordinator whose
 admission epochs and invalidation acknowledgments serialize these transitions.
 An ordinary read-check-write or a token that remains usable after acknowledged
@@ -569,7 +568,7 @@ Release requires the following ordered evidence for the exact binding:
 1. Close new consumer admission and invalidate unconsumed execution capabilities.
    Settle in-flight install/power work or fence its executor.
 2. Revoke artifact/bootstrap access and any allocated sessions/credentials.
-   M1 offers no real console sessions; adapters still account for every capability
+   The simulator offers no real console sessions; adapters still account for every capability
    they issued. A later console integration must actively close existing streams.
 3. Detach or fence consumer networking while preserving cleanup access. No
    requested attachments must be proven from the retained plan, not inferred from
@@ -581,7 +580,7 @@ Release requires the following ordered evidence for the exact binding:
 
 ### Deletion boundaries
 
-- **Claim or namespace deletion:** M1 installs a service-controlled claim finalizer
+- **Claim or namespace deletion:** Fleet installs a service-controlled claim finalizer
   at creation and retains private request provenance atomically with accepted
   intent. DELETE immediately closes new admission through the lifecycle guard;
   physical release is asynchronous. Namespace teardown cannot bypass it.
@@ -590,7 +589,7 @@ Release requires the following ordered evidence for the exact binding:
   waits for project resource cleanup before reclaiming the control plane; Fleet
   participates through its finalizers. Private cleanup continues if the API is
   forcibly lost. Normal finalization waits for release; no early-transfer shortcut
-  is introduced in M1.
+  is introduced by this enhancement.
 - **Provider project termination:** Stop new bindings and retain execution identity,
   credentials, artifacts, quota linkage, and release authority for existing work.
   Provider retirement must be blocked while it would discard these prerequisites.
@@ -667,12 +666,12 @@ Deliver in three increments, with each proving the next boundary:
 | Completed Installation is deleted | OS and binding remain; initial gate stays complete and predecessor identity is retained. |
 | Fleet, project API, simulator, or backing store is restarted/restored | Recover same identities and obligations; unverified restored authority cannot issue effects. |
 
-M1 is complete only when these tests run through the real project tenancy, IAM,
+The implementation is complete only when these tests run through the real project tenancy, IAM,
 entitlement, and quota integrations. Simulator evidence establishes control-plane
 behavior; real hardware, network handoff, cleaning assurance, and guest boot
 qualification require the later bare-metal pilot.
 
-## Decisions required before implementation can claim M1
+## Implementation decisions
 
 This enhancement selects four public kinds, project/namespace scopes, immutable
 request semantics, a shared transactional reservation authority, and an explicit

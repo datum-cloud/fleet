@@ -27,7 +27,7 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
 
 ## Start here
 
-- [First functional milestone](docs/enhancements/machine-lifecycle/README.md): the
+- [Machine allocation and installation](docs/enhancements/machine-lifecycle/README.md): the
   smallest durable machine lifecycle, integrated with Milo project tenancy.
 - [Design context](docs/design.md): subsystem boundaries, lifecycle contracts,
   source proposals, and unresolved design questions.
