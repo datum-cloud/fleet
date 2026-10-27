@@ -8,8 +8,8 @@ stage: alpha
 - [Summary](#summary)
 - [Motivation](#motivation)
 - [Proposal](#proposal)
-- [Design details](#design-details)
   - [Resource relationships across projects](#resource-relationships-across-projects)
+- [Design details](#design-details)
 - [Production readiness review questionnaire](#production-readiness-review-questionnaire)
 - [Implementation history](#implementation-history)
 - [Drawbacks](#drawbacks)
@@ -54,31 +54,55 @@ cleaning, and a supported non-Talos OS. Simulated results do not satisfy that ga
 
 ## Proposal
 
-An operator publishes a machine class over prepared capacity. Two authorized
-consumer projects request the same machine. Fleet binds one claim and leaves the
-other pending. The winner installs an OS, requests a reinstall, and releases the
-machine. Fleet completes cleanup before the waiting consumer can acquire it.
-
-The simulator persists its state independently of Fleet and supports controlled
-failures. Tests restart each component, lose responses, and delay old workers to
-verify recovery across the entire lifecycle.
+Fleet will let providers offer machine capacity to authorized Milo projects.
+Consumers will discover that capacity, request exclusive use, install an OS,
+control power, and release the machine through their own project APIs. Providers
+will retain ownership of the machines throughout that lifecycle.
 
 ### User stories
 
-- A provider operator offers capacity without exposing management credentials or
-  another consumer's allocation.
-- A consumer selects a local class, installs a machine, and releases it through
-  the consumer's project API.
-- A service operator recovers an interrupted operation without repeating an
-  unknown destructive action or losing its cleanup obligations.
+- A provider operator publishes a machine class and controls which capacity Fleet
+  can allocate without exposing management credentials or other consumers.
+- A consumer selects a local class and requests a machine. Fleet allocates
+  available capacity within the consumer's permissions, entitlement, and quota,
+  or reports why the request remains pending.
+- A consumer installs or reinstalls an approved OS and controls power without
+  creating a managed cluster.
+- A consumer releases a machine or deletes its project. Fleet completes cleanup
+  before another consumer can use that capacity.
+- A service operator recovers interrupted work without repeating an unknown
+  destructive action or losing cleanup obligations.
+
+### Resource relationships across projects
+
+The first diagram shows how consumers discover and request provider capacity.
+Arrows show references or supply selection. Each project owns its resources and
+namespaces.
+
+![Public resource relationships across provider and consumer projects](diagrams/public-resources.svg)
+
+A consumer discovers offerings through local MachineClass references. Each
+MachineClaim requests capacity from a class, and each Installation requests an
+OS installation for a claim. Other projects can reference the same offering and
+compete for its supply.
+
+The second diagram shows how Fleet preserves exclusive allocation and recovery
+across project boundaries.
+
+![Private reservation and operation records connecting a consumer claim to a provider machine](diagrams/private-records.svg)
+
+A reservation binds one consumer claim to one provider Machine. Operation records
+retain the work Fleet authorizes for that allocation. These private records
+survive project deletion so Fleet can finish cleanup. The Machine stays in the
+provider project.
 
 ### Notes, constraints, and caveats
 
 This proposal narrows the existing [allocation][allocation],
 [publication][publication], and [installation][installation] contracts. API names
-and field shapes remain provisional. Typed resolvers supply image inputs,
-network evidence, and provider access; fixtures implement those interfaces for
-simulation. Missing required evidence blocks progress.
+and field shapes remain provisional. The first implementation validates these
+capabilities with simulated capacity; production hardware support requires the
+qualification described in [Non-goals](#non-goals).
 
 ### Risks and mitigations
 
@@ -95,30 +119,6 @@ execution fencing and cleanup evidence. Consumer-facing API review must cover
 pending, cancellation, and recovery behavior. Review assignments remain open.
 
 ## Design details
-
-### Resource relationships across projects
-
-The first diagram shows the public resources. Arrows show references or supply
-selection, not execution order. Each project owns its resources and namespaces.
-
-![Public resource relationships across provider and consumer projects](diagrams/public-resources.svg)
-
-The consumer's class references the provider's definition through `spec.source`.
-Fleet checks publication provenance and source-use permission before allocation.
-The claim can also name its first Installation through `initialInstallationRef`
-(not shown).
-
-The second diagram shows how Fleet retains the allocation privately. Each
-resource identity includes its `ProjectKey` and UID. An installation operation
-also retains the Installation UID and exact inputs.
-
-![Private reservation and operation records connecting a consumer claim to a provider machine](diagrams/private-records.svg)
-
-The reservation binds one consumer claim to one provider Machine. Other projects
-can reference the same class and compete for its supply, but only one claim can
-hold that Machine. Private records survive project deletion so Fleet can finish
-cleanup. These links are not Kubernetes owner references and do not transfer
-ownership of the Machine.
 
 ### Project identity and resource scope
 
@@ -247,6 +247,10 @@ Same-project definition use skips publication but still requires authorization.
 All four kinds use the proposed `fleet.datumapis.com/v1alpha1` API and a status
 subresource. The server applies defaults before capturing a request digest and
 rejects unknown behavioral fields or unsupported required capabilities.
+
+Typed resolvers supply image inputs, network evidence, and provider access.
+Fixtures implement those interfaces for simulation. Missing required evidence
+blocks progress.
 
 #### MachineClass
 
@@ -390,7 +394,8 @@ the initial gate. Private history preserves predecessor identity in both cases.
 
 Public status projects private state; it grants no execution authority. Missing
 private records block effects and quarantine uncertain capacity. Private storage
-and protected artifacts must survive either project's API removal.
+and protected artifacts must survive either project's API removal. Retained
+cross-project identities are not Kubernetes owner references.
 
 #### Reservation record
 
@@ -550,6 +555,12 @@ open; the public contract must also support a future managed-node consumer.
 
 Implement the following tests through Milo tenancy, IAM, entitlement, and quota.
 No implementation tests exist yet.
+
+The end-to-end scenario uses two consumer projects competing for one provider
+machine. One claim binds while the other remains pending. The winner installs,
+reinstalls, and releases; the waiting consumer acquires the machine only after
+cleanup. The simulator persists state independently of Fleet. Tests restart each
+component, lose responses, and delay old workers to verify recovery.
 
 | Scenario | Required result |
 | --- | --- |
