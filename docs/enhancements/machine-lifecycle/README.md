@@ -29,8 +29,8 @@ stage: alpha
 
 ## Summary
 
-Fleet will let consumers allocate and install machines through their Milo project
-APIs. Five public resources define the contract: `MachineClass`, `MachineProfile`,
+Fleet will let consumers allocate and install machines in their project.
+Five public resources define the contract: `MachineClass`, `MachineProfile`,
 `Machine`, `MachineClaim`, and `Installation`. Private reservation and operation records
 retain ownership, execution authority, exact inputs, and cleanup obligations.
 
@@ -67,9 +67,9 @@ cleaning, and a supported non-Talos OS. Simulated results do not satisfy that ga
 
 ## Proposal
 
-Fleet will let providers offer machine capacity to authorized Milo projects.
+Fleet will let providers offer machine capacity to authorized projects.
 Consumers will discover that capacity, request exclusive use, install an OS,
-control power, and release the machine through their own project APIs. Providers
+control power, and release the machine in their own project. Providers
 will retain ownership of the machines throughout that lifecycle.
 
 ### User stories
@@ -1330,7 +1330,7 @@ cleaning timings also require hardware qualification.
 
 #### Does the feature depend on specific services?
 
-- **Milo project APIs and IAM** resolve identity, lifecycle, and permissions.
+- **Project APIs and IAM** resolve identity, lifecycle, and permissions.
   During an outage, Fleet pauses affected admissions and status projection while
   retaining private recovery authority.
 - **Service catalog and quota** establish entitlement and quota custody. When
