@@ -1,0 +1,65 @@
+# CUSTOMER: desired resources in the example project's scope.
+# Project context: acme. The local MachineClass is registered by Fleet (catalog.yaml).
+# Its capacity remains in the distinct datum-metal provider project.
+# These objects can be submitted together or in any creation order.
+# The binder waits for all named initial resources and validated network inputs.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClaim
+metadata:
+  name: db-01
+  namespace: acme
+spec:
+  machineClassRef: {name: metal-standard}
+  locationRef: {name: us-east-1}
+  powerState: "On"
+  networkAttachmentRefs:
+    - {name: db-01-primary}
+  initialInstallationRef: {name: db-01-os-01}
+---
+# CUSTOMER: request a project network for the allocation's published primary slot.
+# No switch, VLAN, BMC address, or physical asset is selected by the consumer.
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkAttachment
+metadata:
+  name: db-01-primary
+  namespace: acme
+spec:
+  targetRef:
+    apiGroup: fleet.datumapis.com
+    kind: MachineClaim
+    name: db-01
+  interface: primary
+  networkRef: {name: acme-private}
+---
+# CUSTOMER: an immutable request for the first OS incarnation.
+# Linux image/bootstrap behavior is assumed qualified for the offered class.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Installation
+metadata:
+  name: db-01-os-01
+  namespace: acme
+spec:
+  claimRef: {name: db-01}
+  expectedPredecessor: {type: None}
+  imageRef: {name: linux-lts-v1}
+  bootstrapConfigRef: {name: db-01-bootstrap}
+---
+# CUSTOMER: native input for this example's qualified cloud-init image.
+# Replace the placeholder with an actual public key before any implementation use.
+# The OS adapter resolves network configuration from the authorized attachment.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-01-bootstrap
+  namespace: acme
+type: Opaque
+immutable: true
+stringData:
+  userData: |
+    #cloud-config
+    hostname: db-01
+    users:
+      - name: acme
+        lock_passwd: true
+        ssh_authorized_keys:
+          - "<ACME_SSH_PUBLIC_KEY>"

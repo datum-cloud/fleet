@@ -1,0 +1,89 @@
+# REGISTRATION/VERIFICATION OUTPUTS, not operator-authored apply manifests.
+# Values, UIDs, timestamps, observations, and evidence handles are illustrative.
+# Conditions omit timestamps and other routine bookkeeping for readability.
+# Registration is allowed only against an accepted, authorized DeviceClaim.
+# The registry creates the Device; hardware does not grant itself acceptance.
+
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: Device
+metadata:
+  name: server-example-001
+  namespace: infra-ops
+  uid: d1111111-1111-4111-8111-111111111111
+spec:
+  # Registry-owned active placement relationship. A move requires an explicit
+  # successor DeviceClaim/maintenance transition; a raw ref edit cannot move it.
+  claimRef:
+    name: iad1-r12-u20-server
+    uid: c1111111-1111-4111-8111-111111111111
+  identity:
+    manufacturer: Dell
+    model: PowerEdge-R650
+    serialNumber: EXAMPLE-SERVER-001
+status:
+  observedPlacement:
+    rackRef: {name: iad1-r12}
+    position: 20
+    face: Front
+    evidenceRef: installation-scan-001
+  components:
+    - {id: management-port-1, type: EthernetPort, physicalLabel: BMC}
+    - {id: nic-slot2-port1, type: EthernetPort, physicalLabel: NIC1/P1, macAddress: "02:00:00:00:12:01"}
+    - {id: power-supply-1, type: PowerInlet, physicalLabel: PSU1}
+    - {id: power-supply-2, type: PowerInlet, physicalLabel: PSU2}
+---
+# After exclusive binding and evaluation of current identity/placement/path evidence.
+# Binding itself can precede these verification conditions becoming True.
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: DeviceClaim
+metadata:
+  name: iad1-r12-u20-server
+  namespace: infra-ops
+  uid: c1111111-1111-4111-8111-111111111111
+status:
+  observedGeneration: 1
+  evaluatedPlanDigest: "sha256:<claim and required cable inputs>"
+  evaluatedChecks: [Identity, RackPlacement, NetworkPaths, PowerPaths]
+  evidenceRef: commissioning-evaluation-001
+  deviceRef:
+    name: server-example-001
+    uid: d1111111-1111-4111-8111-111111111111
+  portBindings:
+    - {claimPortID: bmc, deviceComponentID: management-port-1}
+    - {claimPortID: nic1-p1, deviceComponentID: nic-slot2-port1}
+    - {claimPortID: psu1, deviceComponentID: power-supply-1}
+    - {claimPortID: psu2, deviceComponentID: power-supply-2}
+  conditions:
+    - {type: Accepted, status: "True", reason: PhysicalReservationsCommitted}
+    - {type: Bound, status: "True", reason: ExclusiveDeviceBindingCommitted}
+    - {type: IdentityVerified, status: "True", reason: TrustedEnrollmentMatched}
+    - {type: PlacementVerified, status: "True", reason: InstallationScanVerified}
+    - {type: NetworkPathVerified, status: "True", reason: TrustedPeerEvidenceMatched}
+    - {type: PowerPathVerified, status: "True", reason: PowerPathEvidenceVerified}
+    - {type: Ready, status: "True", reason: RequiredEvidenceCurrent}
+---
+# Cable remains the source of expected topology. Status resolves a claim port to
+# the physical Device/component and reports evidence; it does not rewrite spec.
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: Cable
+metadata:
+  name: iad1-r12-srv01-data
+  namespace: infra-ops
+status:
+  resolvedEndpoints:
+    a:
+      - deviceRef:
+          name: server-example-001
+          uid: d1111111-1111-4111-8111-111111111111
+        componentID: nic-slot2-port1
+    b:
+      - deviceRef:
+          name: iad1-r12-leaf-a
+          uid: e1111111-1111-4111-8111-111111111111
+        componentID: ethernet20
+  evidence:
+    - {type: EndpointAdjacency, source: TrustedSwitchCollector, ref: link-observation-001}
+    - {type: PhysicalCableIdentity, source: TechnicianScan, ref: cable-scan-001}
+  conditions:
+    - {type: EndpointsResolved, status: "True", reason: DeviceClaimBound}
+    - {type: Verified, status: "True", reason: RequiredPathAndCableEvidenceMatched}

@@ -1,0 +1,150 @@
+# PROPOSED SERVICE CONTRACT EXAMPLES, not an installable manifest bundle.
+# API groups, fields, and namespace scopes below are proposed.
+# Apply no status snapshots or operation envelopes as resources.
+# Existing dependencies are listed in README.md.
+
+# OPERATOR: describe the existing rack in the provider-neutral Facility.
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: Rack
+metadata:
+  name: iad1-r12
+  namespace: infra-ops
+spec:
+  facilityRef: {name: iad1}
+  heightUnits: 42
+---
+# OPERATOR: plan one physical installation before any Device is registered.
+# DeviceClaim is a physical commissioning expectation, not a customer allocation.
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: DeviceClaim
+metadata:
+  name: iad1-r12-u20-server
+  namespace: infra-ops
+spec:
+  role: Server
+  expectedIdentity:
+    manufacturer: Dell
+    model: PowerEdge-R650
+    serialNumber: EXAMPLE-SERVER-001
+  placement:
+    rackRef: {name: iad1-r12}
+    position: 20
+    heightUnits: 1
+    face: Front
+    fullDepth: true
+  verification:
+    requiredChecks: [Identity, RackPlacement, NetworkPaths, PowerPaths]
+  ports:
+    # Illustrative chassis labels, resolved from qualified hardware layout and
+    # trusted inspection/scans, never chosen to make observed cabling pass.
+    - {id: bmc, type: EthernetPort, role: Management, physicalLabel: BMC}
+    - {id: nic1-p1, type: EthernetPort, role: Data, physicalLabel: NIC1/P1}
+    - {id: psu1, type: PowerInlet, physicalLabel: PSU1}
+    - {id: psu2, type: PowerInlet, physicalLabel: PSU2}
+  cableRefs:
+    - {name: iad1-r12-srv01-management}
+    - {name: iad1-r12-srv01-data}
+    - {name: iad1-r12-srv01-power-a}
+    - {name: iad1-r12-srv01-power-b}
+---
+# OPERATOR: BMC to the existing management switch.
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: Cable
+metadata:
+  name: iad1-r12-srv01-management
+  namespace: infra-ops
+spec:
+  medium: CopperEthernet
+  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: bmc}]
+  b: [{deviceRef: {name: iad1-oob01}, componentID: port12}]
+---
+# OPERATOR: the data NIC can serve protected provisioning and later tenant
+# connectivity. The network controller controls the transition between them.
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: Cable
+metadata:
+  name: iad1-r12-srv01-data
+  namespace: infra-ops
+spec:
+  medium: DirectAttachCopper
+  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: nic1-p1}]
+  b: [{deviceRef: {name: iad1-r12-leaf-a}, componentID: ethernet20}]
+---
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: Cable
+metadata:
+  name: iad1-r12-srv01-power-a
+  namespace: infra-ops
+spec:
+  medium: Power
+  a: [{deviceRef: {name: iad1-r12-pdu-a}, componentID: outlet20}]
+  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu1}]
+---
+apiVersion: inventory.fleet.datumapis.com/v1alpha1
+kind: Cable
+metadata:
+  name: iad1-r12-srv01-power-b
+  namespace: infra-ops
+spec:
+  medium: Power
+  a: [{deviceRef: {name: iad1-r12-pdu-b}, componentID: outlet20}]
+  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu2}]
+---
+# OPERATOR: existing network controller manages the leaf through this record.
+# Base fabric configuration and management-switch configuration already exist.
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkDevice
+metadata:
+  name: iad1-r12-leaf-a
+  namespace: infra-ops
+spec:
+  deviceRef: {name: iad1-r12-leaf-a}
+  management:
+    protocol: GNMI
+    endpoint: leaf-a.r12.iad1.mgmt.example.invalid:9339
+    credentialsSecretRef: {name: leaf-a-management}
+    trustSecretRef: {name: network-management-ca}
+---
+# OPERATOR: create after registration resolves the physical Device (see registration.yaml).
+# Machine is the compute representation, with its own allocation/preparation gates.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Machine
+metadata:
+  name: iad1-r12-srv01
+  namespace: infra-ops
+  labels:
+    fleet.datumapis.com/capacity-pool: general-metal
+spec:
+  deviceRef: {name: server-example-001}
+  providerRef:
+    apiGroup: baremetal.fleet.datumapis.com
+    kind: BareMetalMachine
+    name: iad1-r12-srv01
+  allocationPolicy: Disabled
+  cleaningPolicyRef: {name: tenant-reuse-v1}
+  reclaimPolicy: Retain
+---
+# OPERATOR: illustrative direct BMC and console configuration. An adapter may
+# instead integrate backend-owned management without exposing BMC credentials.
+# Secret contents stay private.
+# Physical identity is resolved from Machine -> registered Device.
+apiVersion: baremetal.fleet.datumapis.com/v1alpha1
+kind: BareMetalMachine
+metadata:
+  name: iad1-r12-srv01
+  namespace: infra-ops
+spec:
+  managementMode: ObserveOnly
+  bmc:
+    endpoint: https://srv01.r12.iad1.bmc.example.invalid
+    systemID: /redfish/v1/Systems/System.Embedded.1
+    credentialsSecretRef: {name: srv01-bmc}
+    trustSecretRef: {name: bmc-ca}
+  console:
+    transport: RedfishGraphical
+
+# Later operator updates, after non-destructive identity/physical verification:
+# 1. BareMetalMachine.spec.managementMode = Managed
+# 2. Explicitly authorize the exact preparation plan (requests.yaml).
+# 3. After successful preparation evidence, Machine.spec.allocationPolicy = Eligible.
+# Managed does not implicitly authorize cleaning, power changes, or installation.

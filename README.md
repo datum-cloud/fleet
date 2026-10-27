@@ -6,7 +6,7 @@ configuration, managed clusters, and node services into a shared service with
 explicit ownership and lifecycle boundaries.
 
 This repository is the starting point for building that platform. It currently
-contains design context and an implementation roadmap. There are no implemented
+contains the detailed service proposal, design context, and an implementation roadmap. There are no implemented
 APIs, controllers, deployment manifests, or build/test commands yet.
 
 ## Scope
@@ -27,17 +27,19 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
 
 ## Start here
 
+- [Service proposal](docs/proposals/fleet-management/README.md): detailed contracts,
+  examples, and architecture diagrams imported from the infra proposals.
 - [Design context](docs/design.md): subsystem boundaries, lifecycle contracts,
   source proposals, and unresolved design questions.
 - [Implementation roadmap](docs/roadmap.md): proposed milestones and evidence
   required before enabling infrastructure effects.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
 
-The foundation comes from open `datum-cloud/infra` PRs
+The foundation was developed in `datum-cloud/infra` PRs
 [#5782](https://github.com/datum-cloud/infra/pull/5782) and
 [#7705](https://github.com/datum-cloud/infra/pull/7705). Their API shapes and
-implementation choices remain provisional. This repository's summaries do not
-turn those proposals into accepted schemas or deployed behavior.
+implementation choices remain provisional. The proposal now lives here for
+continued review; migration does not imply design acceptance or deployed behavior.
 
 Fleet will integrate with Datum's existing identity, service catalog, location,
 networking/IPAM, Galactic, and Compute services. Environment-specific rollout
