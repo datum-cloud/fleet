@@ -145,49 +145,41 @@ the [bare-metal proposal][allocation]; the simulator resolves private fixtures
 without adding those provider APIs to this enhancement.
 
 ```yaml
-# Use the proposed Fleet API for the public offering.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
+# Define a project-wide offering in the provider project; omit namespace.
 metadata:
-  # Classes span the project, so they have no namespace.
   name: standard-metal
-# Definition mode cannot change to reference mode after creation.
+# Definition mode is fixed after creation. Describe the architecture,
+# verified capabilities, and interfaces that candidate machines must provide.
 spec:
-  # Select machines that support this CPU architecture.
   arch: amd64
-  # Require the provider to verify these capabilities.
   capabilities:
     - baremetal
-  # Describe interfaces that consumers can request.
   interfaces:
-    # Name the interface within this offering.
     - name: primary
-      # Require an Ethernet interface.
       type: Ethernet
-  # Declare the access features the offering supports.
+
+  # Offer power control without console sessions in the first implementation.
   access:
-    # The first implementation offers no console sessions.
     consoleModes: []
-    # Consumers may request power changes through Fleet.
     powerControl: true
-  # Keep supply selection in the provider project.
+
+  # Select existing supply in an explicit provider namespace.
+  # Matching labels do not prove eligibility or authorize new purchases.
   capacity:
-    # Select existing Machines; do not create or purchase supply.
     machines:
-      # Search only this namespace in the provider project.
       namespace: infra-ops
-      # Labels narrow the candidates but do not prove eligibility.
       selector:
         matchLabels:
           fleet.datumapis.com/capacity-pool: general-metal
-    # Require candidates to satisfy this provider contract too.
+
+    # Candidates must also satisfy this provider-local contract.
+    # Fleet retains the contract's identity and revision.
     providerClassRef:
-      # Identify the provider contract's API group and kind.
       apiGroup: baremetal.fleet.datumapis.com
       kind: BareMetalMachineClass
-      # Resolve the contract in this provider-local namespace.
       namespace: infra-ops
-      # Resolve and retain this contract's identity and revision.
       name: qualified-server-v1
 ```
 
@@ -195,19 +187,16 @@ Definitions contain no audience grant, quota, image, or network policy. The
 publication service writes the consumer's local reference:
 
 ```yaml
-# Use the same kind for a consumer-local reference.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
+# Give consumers a project-wide name for the offering; omit namespace.
 metadata:
-  # Consumers use this project-wide name when requesting capacity.
   name: standard
+# This spec is an immutable source reference; it cannot become a definition.
+# Fleet resolves the provider Project UID and one definition, with no overrides.
 spec:
-  # Reference mode and source cannot change after creation.
-  # This is the entire spec; a reference cannot override the offering.
   source:
-    # Route to the provider project; Fleet resolves its immutable UID.
     project: provider
-    # Resolve one definition, never another reference.
     name: standard-metal
 ```
 
@@ -228,39 +217,37 @@ The provider operator writes Machine policy and enrollment references. This
 example identifies an owned physical asset in the provider project.
 
 ```yaml
-# Represent allocatable capacity through the public Fleet API.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Machine
+# Register capacity in the provider project; labels support class selection.
+# Fleet assigns the record's UID. Replacement hardware needs a new UID.
 metadata:
-  # Fleet assigns a UID to this record; replacement hardware needs a new UID.
   name: lab-server-01
-  # Keep the Machine and its namespaced references in the provider project.
   namespace: infra-ops
-  # Let a MachineClass select this capacity pool.
   labels:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:
-  # Required: identify the provider record for this asset.
+  # Required provider record in this Machine's project and namespace.
   # Enrollment makes the provider and asset identities immutable.
   providerRef:
-    # Identify the provider record's API group and kind.
     apiGroup: baremetal.fleet.datumapis.com
     kind: BareMetalMachine
-    # Resolve in this Machine's project and namespace.
     name: lab-server-01
-  # Require a Device for qualified owned hardware.
-  # Omit this for virtual, simulated, or opaque supply without a Device.
+
+  # Require a Device for qualified owned hardware; omit it for supply
+  # without a physical Device, such as a VM or simulated machine.
   deviceRef:
     name: server-example-001
-  # Default to Disabled. An operator may set Eligible after preparation.
-  # Eligible still requires current health, readiness, and placement evidence.
+
+  # Default to Disabled. Eligible permits selection only after preparation
+  # and current health, readiness, and placement checks pass.
   allocationPolicy: Disabled
-  # Required: retain this policy's exact content for each reservation.
-  # Later edits cannot weaken an active allocation's cleanup obligations.
+
+  # Required cleanup policy: each reservation pins its exact content.
+  # Later edits cannot weaken that allocation's cleanup obligations.
   cleaningPolicyRef:
     name: tenant-reuse-v1
-  # Keep the asset after release; supplier deletion is outside this contract.
-  # Retain is the only supported value in the first implementation.
+  # Retain is the only supported value; release does not delete the asset.
   reclaimPolicy: Retain
 ```
 
@@ -279,34 +266,32 @@ obligations before Machine deletion.
 
 #### MachineClaim
 
-The consumer creates the claim in its own project. All spec fields except
-power intent are immutable from creation.
+The consumer creates the claim in its own project.
 
 ```yaml
-# Request capacity through the consumer project's Fleet API.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClaim
+# Create the request in the consumer project. A new name creates a new request.
 metadata:
-  # A different name creates a different request, not a retry.
   name: example
-  # Keep the claim, Installation, and attachments in the same namespace.
   namespace: default
+# Require a local class and permitted location; Fleet retains their identities
+# and policies. Every field except powerState is immutable from creation.
 spec:
-  # Required: select a class in this project, not a provider Machine.
   machineClassRef:
     name: standard
-  # Required: select a permitted location; Fleet retains its identity and policy.
   locationRef:
     name: lab
-  # Optional: wait for this Installation before completing initial activation.
-  # That Installation must name this claim in the same project and namespace.
+
+  # Optional initial gate: this Installation must name the claim and share
+  # its project and namespace. Activation waits for the installation.
   initialInstallationRef:
     name: example-os-1
-  # Declare the complete initial attachment set in this project and namespace.
+
+  # Complete initial attachment set in this project and namespace.
   # An empty list requests no tenant network attachment.
   networkAttachmentRefs: []
-  # Default to Off. On requests activation only after its prerequisites pass.
-  # This is the only mutable spec field; each change needs authorization.
+  # Default to Off. An authorized On request waits for activation prerequisites.
   powerState: "On"
 ```
 
@@ -326,32 +311,30 @@ Machine. Owner references cannot replace Fleet's release protocol.
 
 #### Installation
 
-The consumer creates an Installation for its claim. Every spec field is
-immutable; changing an input requires a new Installation.
+The consumer creates an Installation for its claim.
 
 ```yaml
-# Request one OS installation through the consumer project's Fleet API.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Installation
+# Share the claim's project and namespace. For an initial installation,
+# this name must match the claim's initialInstallationRef.
 metadata:
-  # This name matches the claim's optional initial installation reference.
   name: example-os-1
-  # Use the same namespace as the claim and bootstrap Secret.
   namespace: default
+# Require a claim and approved image. Fleet checks install and image-use
+# permissions, then pins the Claim UID and exact image artifacts and digests.
+# Every field is immutable; changed inputs require a new Installation.
 spec:
-  # Required: name the claim in this project and namespace.
-  # Fleet retains the Claim UID and checks the caller's install permission.
   claimRef:
     name: example
-  # Required: match the allocation's current OS incarnation before execution.
+  # Required: match Fleet's current OS incarnation before execution.
+  # None requires an allocation with no installed incarnation.
   expectedPredecessor:
-    # None requires an allocation with no installed incarnation.
     type: None
-  # Required: select an approved image, not an arbitrary download URL.
-  # Fleet checks image-use permission and retains exact artifacts and digests.
   imageRef:
     name: qualified-linux
-  # Optional: read this Secret only with explicit caller authority.
+
+  # Optional Secret in this namespace, under explicit caller authority.
   # Fleet retains its UID, digest, and authorized bytes in protected storage.
   bootstrapConfigRef:
     name: example-bootstrap
@@ -360,13 +343,11 @@ spec:
 For a reinstall, use this predecessor value in a new Installation:
 
 ```yaml
-# Compare against Fleet's retained incarnation, even if its public object is gone.
+# Match a prior Installation by name and UID against Fleet's retained
+# incarnation, even after public deletion. This example uses a synthetic UID.
 expectedPredecessor:
-  # Require a specific prior Installation instead of an empty allocation.
   type: Installation
-  # Identify the prior installation by both name and UID.
   name: example-os-1
-  # This synthetic UID illustrates the immutable identity, not a name lookup.
   uid: 00000000-0000-4000-8000-000000000001
 ```
 
