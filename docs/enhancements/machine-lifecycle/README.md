@@ -17,6 +17,7 @@ stage: alpha
   - [Durable coordination](#durable-coordination)
   - [Allocation and quota integration](#allocation-and-quota-integration)
   - [Provider configuration resolution](#provider-configuration-resolution)
+  - [Network and IP assignment integration](#network-and-ip-assignment-integration)
   - [Provider execution and recovery](#provider-execution-and-recovery)
   - [Release and project lifecycle](#release-and-project-lifecycle)
   - [Implementation decisions](#implementation-decisions)
@@ -81,8 +82,8 @@ will retain ownership of the machines throughout that lifecycle.
   why the request cannot proceed.
 - A consumer defines a custom profile when the class permits it. Fleet checks
   whether the provider supports the complete configuration before allocation.
-- A consumer inspects the assigned CPU, memory, GPUs, disks, and network
-  interfaces through the claim without accessing provider inventory.
+- A consumer inspects the assigned hardware, IP addresses, routes, DNS resolvers,
+  and network readiness through the claim without accessing provider inventory.
 - A consumer installs or reinstalls an approved OS and controls power without
   creating a managed cluster.
 - A consumer releases a machine or deletes its project. Fleet completes cleanup
@@ -106,8 +107,9 @@ profile can work with several classes or providers.
 The publication service creates protected local copies of provider profiles.
 Consumers can also create custom profiles in their own projects when a class
 permits them. Custom profiles have no provider source. Each Installation requests
-an OS installation for a claim. Other projects can use the same offering and
-compete for its supply.
+an OS installation for a claim. A networking-owned NetworkAttachment connects the
+claim to a network in the consumer project. Other projects can use the same
+offering and compete for its supply.
 
 The second diagram shows how Fleet preserves exclusive allocation and recovery
 across project boundaries.
@@ -523,9 +525,10 @@ spec:
   initialInstallationRef:
     name: example-os-1
 
-  # The complete initial attachment set fixes the allocation's network needs.
-  # References stay in this project and namespace; an empty list means none.
-  networkAttachmentRefs: []
+  # Attachments own network selection and address intent outside Fleet.
+  # This immutable set stays in the claim's project and namespace.
+  networkAttachmentRefs:
+    - name: example-primary
   # Off is the default so creating a claim does not request runtime power-on.
   # On expresses intent; authorization and activation gates still control effects.
   powerState: "On"
@@ -575,6 +578,41 @@ status:
   placement:
     locationRef:
       name: lab
+  # Networking supplies this current assignment view. The revision identifies
+  # exact configuration inputs; freshness alone does not prove guest setup.
+  network:
+    revision: network-revision-example
+    observedAt: "2026-10-27T12:00:00Z"
+    validUntil: "2026-10-27T12:05:00Z"
+    attachments:
+      - attachmentRef:
+          name: example-primary
+          uid: 00000000-0000-4000-8000-000000000004
+        interfaces:
+          - name: primary
+            macAddress: "02:00:00:00:00:10"
+            mtu: 1500
+            # Addresses include their prefix lengths and assignment authority.
+            # Provider assignments use origin: Provider and remain observations.
+            addresses:
+              - address: "192.0.2.10"
+                prefixLength: 24
+                origin: IPAM
+              - address: "2001:db8::10"
+                prefixLength: 64
+                origin: IPAM
+            routes:
+              - destination: "0.0.0.0/0"
+                gateway: "192.0.2.1"
+              - destination: "::/0"
+                gateway: "2001:db8::1"
+        # Resolver settings apply to this attachment. Networking resolves
+        # conflicts across attachments before producing installation inputs.
+        dns:
+          servers:
+            - "192.0.2.53"
+            - "2001:db8::53"
+          searchDomains: []
   # Power is an observation, separate from spec.powerState intent. Its validity
   # prevents a stale successful power action from implying current readiness.
   power:
@@ -600,6 +638,12 @@ status:
       lastTransitionTime: "2026-10-27T12:00:00Z"
       reason: PlatformHandoffComplete
       message: "Initial installation and required handoff checks passed."
+    - type: NetworkReady
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: AttachmentsVerified
+      message: "Networking verified the required assignments and attachments."
     - type: Releasing
       status: "False"
       observedGeneration: 1
@@ -631,6 +675,19 @@ Before selecting hardware, the coordinator resolves initial installation
 requirements and network feasibility. After binding, it materializes
 machine-specific inputs and waits for attachment readiness. This order avoids a
 claim/installation dependency cycle.
+
+`status.network` exposes consumer network assignments. Interface names identify
+attachment slots that Fleet maps to retained hardware targets, not OS device
+names. Addresses carry IPv4 or IPv6 literals and prefix lengths; `origin` names
+the authority (`IPAM` or `Provider`). Routes, MTU, MAC addresses, and DNS settings
+come from the network resolver. Absent data means unknown, not an implicit
+address or default route. All addresses in this example are documentation values.
+
+The claim projects facts from its authorized attachments; consumers request
+networks or specific addresses through networking APIs, not Fleet status.
+Provider management addresses, provisioning networks, and credentials stay
+private. The [network integration contract](#network-and-ip-assignment-integration)
+defines freshness, installation, and release behavior.
 
 A blank claim starts powered off and omits the initial Installation. A later
 Installation uses predecessor `None`. A bound claim never moves to another
@@ -674,6 +731,9 @@ spec:
 status:
   bindingID: binding-example
   operationID: operation-example
+  # The retained revision ties the installed configuration to exact assignments.
+  # Later network observations cannot rewrite this installation's inputs.
+  resolvedNetworkRevision: network-revision-example
   resolvedImageDigest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   completedAt: "2026-10-27T12:00:00Z"
   conditions:
@@ -759,9 +819,11 @@ The resources report different aspects of the lifecycle:
   `Available=False` even when health evidence becomes unknown.
 - **MachineClaim:** `Accepted` means Fleet retained the request identity and
   initial inputs, including a supported class/profile/location combination.
-  `Bound` means a private reservation committed, not that the machine is ready. `Ready` requires the current installation, required network
-  handoff, and power prerequisites to pass. A blank powered-off claim can also
-  become ready. `Releasing` remains true until cleanup and quota release finish.
+  `Bound` means a private reservation committed. `NetworkReady` requires fresh
+  assignment and attachment evidence for the binding. It does not prove that
+  the guest applied the configuration. `Ready` also requires the current
+  installation, network handoff, and power prerequisites to pass. A blank
+  powered-off claim can also become ready. `Releasing` remains true until cleanup and quota release finish.
 - **Installation:** `Accepted` means Fleet admitted an operation with exact
   inputs. `Executing` describes work in progress; `False` alone does not mean
   success. `Ready=True` records verified installation and platform handoff.
@@ -773,7 +835,11 @@ and omits `acceptedProfileRef` until admission retains the profile. It omits
 `currentInstallationRef` before an installation succeeds. An Installation omits
 operation correlation and the resolved digest until admission retains them.
 `power.state` is `On`, `Off`, or `Unknown`; intent changes do not change the
-observation until fresh executor evidence arrives.
+observation until fresh executor evidence arrives. `network` appears only after
+the resolver supplies assignments for the binding. Expired evidence makes
+`NetworkReady=Unknown`; retained addresses are not proof of current assignment.
+An empty attachment set yields `NetworkReady=True` with `NoAttachmentsRequired`
+and does not imply that a guest has connectivity.
 
 Binding identity and completed installation results are durable facts. Runtime
 health, power, and claim readiness can change independently. A later reinstall
@@ -784,8 +850,9 @@ Private history still preserves earlier identities for recovery.
 
 The projector publishes `DependenciesPending`, `AuthorizationUnavailable`,
 `SourceUnavailable`, `ProfileUnsupported`, `ProviderUnavailable`, `QuotaPending`,
-`QuotaDenied`, `InsufficientCapacity`, `PredecessorMismatch`, `OutcomeUnknown`, or
-`CleanupBlocked` where applicable.
+`QuotaDenied`, `InsufficientCapacity`, `PredecessorMismatch`, `OutcomeUnknown`,
+`NetworkPending`, `NetworkConfigurationChanged`, or `CleanupBlocked` where
+applicable.
 A status write, absent condition, or stale `Ready=True` cannot authorize effects
 or free capacity. Recovery reads private records, never a reconstructed public
 binding. Consumer-visible status excludes inventory mappings, BMC endpoints,
@@ -903,6 +970,12 @@ An Installation also requires `install` permission on its exact claim, image-use
 permission, and access to its bootstrap input. Power changes capture their own
 caller and generation. Each action requires separate operation admission.
 
+Network resolution checks the initiating principal's attachment-use permission
+and access to its requested networks and address pools. A local reference cannot
+grant cross-project network access. The projector exposes only consumer-visible
+assignment data, under claim-read permission; private IPAM and provider mappings
+remain with their owners.
+
 #### Entitlement and publication
 
 Admission requires an Active consumer service entitlement and no applicable
@@ -952,6 +1025,9 @@ cross-project identities are not Kubernetes owner references.
 - **Quota hold UID and state:** Recover quota custody through release.
 - **Current incarnation, initial gate, active operation ID:** Serialize
   installation, power, and release.
+- **Attachment UIDs, assignment identities, network revision, release authority:**
+  Retain exact configuration and each owner's detach, return, or retention
+  obligations after public network objects disappear.
 - **Cleaning policy, obligations, evidence, retired identities:** Complete
   cleanup and reject stale work.
 
@@ -1072,6 +1148,62 @@ explicit purchasing authority, limits, and cancellation obligations. Consumer
 release follows the retained cleaning contract and keeps the asset; it does not
 cancel a supplier subscription or dispose of hardware.
 
+### Network and IP assignment integration
+
+Networking owns attachments and effective interface configuration. IPAM owns
+Datum address allocations; provider adapters report provider-assigned addresses.
+Fleet projects the authorized result on the claim and supplies retained inputs
+to installation. Neither discovery nor status publication allocates an address,
+imports it into Datum ownership, or authorizes routing changes.
+
+The networking-owned NetworkAttachment targets the claim and an interface slot
+in the same project and namespace. It supplies network selection, requested
+address families, and any authorized specific-address request. Its schema is
+outside this enhancement. The Fleet resolver contract requires these steps:
+
+1. Before binding, check attachment permissions, reciprocal claim identity,
+   interface compatibility, and location feasibility. Missing inputs leave the
+   claim pending with `NetworkPending`; this check does not promise assignments.
+2. After binding, retain authorized attachment inputs and a binding-scoped
+   correlation key before requesting network effects. Networking resolves the
+   exact hardware targets and establishes assignment custody and connectivity.
+   Retain assignment identities, normalized configuration, and acknowledgments
+   privately. A lost response queries the same correlation; it cannot allocate
+   another address. Uncertain outcomes remain outstanding cleanup obligations.
+3. Publish the consumer view in `status.network`. Its revision identifies the
+   complete effective configuration for this binding. The resolver defines
+   explicit address, route, and DNS outcomes; conflicting inputs block progress.
+   `NetworkReady` reports fresh evidence from networking for all required
+   assignments and attachments.
+4. Before installation, retain that network revision and exact inputs in the
+   operation. The executor configures the OS from those inputs; it cannot choose
+   another address or allocate a second one. Platform handoff verifies the
+   admitted network revision and required customer connectivity before claim
+   readiness. Provisioning connectivity alone does not satisfy that check.
+5. During release, detach or fence the old attachment before an address can move
+   to another consumer. Obtain the owning service's acknowledgment for each
+   release or authorized retention obligation before completing Fleet release.
+
+The initial contract fixes the attachment set and accepted network configuration
+for the allocation. Reinstallations reuse assignments while they remain valid;
+Installation deletion does not release them. A changed assignment, lost custody,
+or stale evidence blocks dependent effects and clears readiness with a specific
+reason. Fleet reports `NetworkConfigurationChanged` for configuration drift and
+does not silently rewrite the guest. In-place network changes require a later
+admitted workflow; recovery or release uses the retained contract.
+
+An address's owner determines its lifetime. Claim-owned ephemeral assignments
+return only after verified detachment or fencing. A separately owned reserved
+address may remain allocated after the claim releases, but networking must prove
+that the old binding can no longer use it. A provider may keep an address with
+its server; Fleet must verify isolation rather than claim it released that
+address into Datum IPAM. Unknown cleanup keeps the Machine unavailable.
+
+The first implementation uses persistent network fixtures behind this resolver
+contract. Fixtures model dual-stack assignments, stale evidence, lost responses,
+and release acknowledgments; they allocate no real addresses or routes. Real
+networking/IPAM integration and customer handoff remain qualification gates.
+
 ### Provider execution and recovery
 
 Typed resolvers supply image inputs, network evidence, and provider access.
@@ -1118,6 +1250,8 @@ Failed activation retains the binding. Release proceeds in this order:
    for every issued capability; the simulator provides no real console sessions.
 3. Detach or fence networking while preserving cleanup access. Use the retained
    attachment plan, even when the consumer's network objects no longer exist.
+   Settle each address owner's release or retention obligations; an uncertain
+   acknowledgment blocks reuse.
 4. Execute the retained cleaning policy and verify every target. Uncertain
    results quarantine capacity and retain its quota hold.
 5. Record `CleanupVerified`, release quota idempotently, and await acknowledgment.
@@ -1200,6 +1334,14 @@ component, lose responses, and delay old workers to verify recovery.
   binding:** Enforce the defined admission order through real integrations.
 - **Quota denial or interrupted preparation:** Produce no effects; settle the
   same hold before aborting.
+- **Dual-stack assignments, provider addresses, or lost network responses:**
+  Project the correct authority and interface mapping; recover the same
+  assignments without allocating twice.
+- **Assignment drift or stale network evidence during installation:** Block
+  affected effects and readiness; never replace retained execution inputs.
+- **Reinstall, attachment deletion, or release with a reserved address:** Preserve
+  valid assignments through reinstall; verify old-binding detachment and the
+  owner's return or retention decision before reuse.
 - **Initial Installation or network input arrives after the claim:** Resolve
   dependencies without deadlock or premature activation.
 - **Reinstalls share a predecessor; inputs change or names recur:** Admit one
