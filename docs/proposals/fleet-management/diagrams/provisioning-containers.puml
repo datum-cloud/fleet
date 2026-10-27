@@ -1,0 +1,46 @@
+@startuml provisioning-containers
+!$NEW_C4_STYLE = 1
+!include <C4/C4_Container>
+
+title Operating owned servers
+LAYOUT_TOP_DOWN()
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam shadowing false
+skinparam nodesep 40
+skinparam ranksep 60
+AddRelTag("authority", $textColor="#9A3412", $lineColor="#C2410C", $lineStyle=BoldLine(), $legendText="Admitted effects for an exact binding")
+AddRelTag("evidence", $textColor="#475569", $lineColor="#64748B", $lineStyle=DashedLine(), $legendText="Observations; do not grant effect authority")
+
+Person(consumer, "Authorized project consumer", "Uses a short-lived console session scoped to a live allocation.")
+System_Ext(networking, "Network management", "Sole switch writer; establishes isolation and confirms tenant handoff for the exact binding.")
+System_Ext(management, "Owned-server management services", "Embedded management firmware supplies hardware observations and permitted remote control.")
+
+System_Boundary(fleet, "Fleet infrastructure management — owned-server provisioning and access") {
+  Container(api, "Fleet API service", "Kubernetes API extensions and admission", "Retains the machine coordinator's admitted authority; exposes progress and revocation state.")
+  Container(provider, "Infrastructure adapter service", "Owned-metal provider controller", "Checks authority and identity; translates operations and normalizes evidence; coordinates handoff and recovery.")
+  ContainerDb(journal, "Durable operation journal", "Durable store; implementation-defined", "Retained plan, exact identities/digests, operation epoch, effects, and evidence. Written before hardware effects.")
+  Container(execution, "Provisioning execution service", "Backend-specific bare-metal control plane", "Runs admitted work without allocating Fleet capacity. Workers, agents, and persistence remain internal.")
+  ContainerDb(artifacts, "Approved artifact store", "Authenticated object storage", "Pinned images, configuration, and operation inputs; protected delivery as required by the admitted operation.")
+  Container(console, "Console gateway", "Authenticated session broker", "Delegates permitted console interaction; keeps management credentials private; actively closes revoked sessions.")
+}
+
+Rel(api, provider, "Admitted plan: asset + binding epoch + effects", "Authenticated watch / HTTPS", $tags="authority")
+Rel(provider, api, "Reports progress and physical evidence", "Kubernetes API / HTTPS", $tags="evidence")
+Rel(provider, journal, "Retains authority before effects; recovers same operation", "Durable storage interface")
+Rel(provider, execution, "Submits, queries, and requests supported cancellation", "Backend-specific adapter interface", $tags="authority")
+Rel(provider, networking, "Requests isolation/handoff; awaits exact-binding evidence", "Authenticated service API")
+Rel(execution, management, "Performs admitted hardware effects; reads observations", "Backend-specific management interface", $tags="authority")
+Rel(execution, artifacts, "Resolves approved inputs when required", "Authenticated artifact interface")
+Rel(consumer, console, "Opens an authorized console session", "HTTPS / WebSocket")
+Rel(console, api, "Checks current binding; observes revocation", "Authenticated API / HTTPS")
+Rel(console, management, "Brokers permitted console interaction", "Qualified console transport")
+
+Lay_R(api, provider)
+Lay_R(provider, journal)
+Lay_D(provider, execution)
+Lay_R(execution, artifacts)
+Lay_D(consumer, console)
+
+SHOW_LEGEND()
+@enduml

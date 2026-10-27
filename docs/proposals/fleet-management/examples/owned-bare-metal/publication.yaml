@@ -1,0 +1,21 @@
+# PLATFORM SERVICE CONFIGURATION EXCERPT, not a complete installable resource.
+# Existing service enablement/provisioning registers these candidate references.
+# Fleet integration must enforce source-use IAM and project eligibility separately.
+# The Fleet service registration and controller integration are proposed.
+apiVersion: services.miloapis.com/v1alpha1
+kind: ServiceConfiguration
+metadata:
+  name: fleet-datumapis-com
+spec:
+  provisioning:
+    resources:
+      - name: machine-classes
+        objects:
+          - apiVersion: fleet.datumapis.com/v1alpha1
+            kind: MachineClass
+            metadata:
+              name: metal-standard
+            spec:
+              source:
+                project: datum-metal
+                name: datum-metal-standard

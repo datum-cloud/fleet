@@ -12,8 +12,9 @@ replacement for the source proposals or a claim that their APIs exist.
 
 Read the [core proposal at its reviewed revision][proposal] and the
 [extension at its reviewed revision][extension]. The latter includes the core
-proposal plus the extension. The source documents, examples, and diagrams remain
-in `infra`; this repository records their implications without duplicating them.
+proposal plus the extension. The [combined proposal](proposals/fleet-management/README.md),
+examples, and diagrams now live in this repository. The [migration record](proposals/fleet-management/MIGRATION.md)
+preserves provenance and outstanding review points; the original discussions remain in `infra`.
 
 ## Problem and intended outcome
 
@@ -145,10 +146,10 @@ inventory remains finite and reports `InsufficientCapacity` when exhausted.
   extension's expectation that consumer demand can obtain capacity elsewhere.
 - **Node service policy:** Resolve permitted roles, runtime/template privileges,
   region scoping, and the remaining regional DNS writer work.
-- **Repository ownership:** Source text uses `milo-os/fleet` in implementation
-  examples and leaves subsystem ownership open. This local `fleet` repository is
-  the requested starting point; remote organization, module path, license, and
-  any provider repository split still need to be chosen.
+- **Repository ownership:** The service proposal and implementation will live in
+  `datum-cloud/fleet`; environment-specific rollout configuration remains in
+  `datum-cloud/infra`. Imported implementation references are updated accordingly.
+  Module path, license, and any future provider repository split remain open.
 
 The [review of #7705][node-review] requested clarity on readiness, regional rollout,
 fencing, and procurement policy. Its latest text addresses those points with the
