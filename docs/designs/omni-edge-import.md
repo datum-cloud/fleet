@@ -446,7 +446,7 @@ The NetActuate GET-only transport and the `key=` redaction stay even with a read
 
 Each provider importer writes only its own vendor kind: NetActuate writes `NetActuateServer`, servers.com writes `ServersComMachine`, Vultr writes `VultrServer`.
 
-The records importer reads the release tag, not `main`, because production Flux reads the tag. A change merged to `main` but not yet tagged is not yet a record.
+The records importer reads the release tag, not `main`, because production Flux reads the tag. A change merged to `main` but not yet tagged is not yet a record. The tag is still not exactly what Omni runs: template and pin changes reach Omni only when someone dispatches the cluster sync by hand, so a tagged change can be missing from Omni. Report that gap as a Discrepancy rather than treating the tag as Omni's desired state.
 
 `configure-netactuate` is a bash `case` statement and the importer should not parse it. Move it to a data file first (open question).
 
