@@ -7,7 +7,7 @@ Sources read:
 - Fleet PR #1 at `24568e13`, mainly `cluster-lifecycle.md`, `inventory.md` and the `us-east-1` adoption example.
 - Fleet PR #2 at `71216c31`, for the `Machine`, `MachineClass`, `MachineClaim`, `MachineProfile` and `Installation` names.
 - Fleet `docs/design.md`, `AGENTS.md` and `roadmap.md` on main.
-- infra `provisioning/` at local `origin/main` `0478c027` (27 Oct 23:32Z). This copy was not fetched, so re-check the seeds against current main.
+- infra `provisioning/` at local `origin/main` `0478c027` (27 Oct 23:32Z). The importer reads the latest production release tag, not main, and this copy was not fetched, so re-check the seeds against that tag.
 - infra#7797 and `docs/guides/fleet-talos-k8s-upgrade.md`.
 - Omni `v1.12.2`, which is the `omnictl` version infra pins in `provisioning/install-omnictl`: `client/api/omni/specs/omni.proto`, `client/pkg/omni/resources/omni/labels.go` and `client/pkg/access/role/role.go`.
 - gona `v0.3.0`, the version infra pins, and `v0.4.4`.
@@ -25,13 +25,17 @@ No credentials were used and no live API was called. Every "live" claim below is
 3. **Provenance is recorded per source block, not per field.** Each block (`status.omni`, `status.provider`, `status.records`) has `observedAt` and a source condition. A block whose source is stale or unreachable reads **Unknown**. Its last values stay visible as `lastKnown` and are never deleted.
 4. **Fleet's core `Machine` is not used in milestone 2.** PR #2's `Machine` is the allocation contract. Creating Machines for occupied hardware risks exposing it as free, which `AGENTS.md` forbids. Instead:
    - Omni machines become `OmniMachine` in group `omni.fleet.datumapis.com`.
-   - Provider servers become one normalized `ProviderServer`.
-   - Adopting either into `Machine`/`MachineClaim` comes later.
+   - Rented servers become one kind per vendor: `NetActuateServer` (`netactuate.fleet.datumapis.com`), `ServersComMachine` (`serverscom.fleet.datumapis.com`, the proposal's name) and `VultrServer` (`vultr.fleet.datumapis.com`).
+   - Adopting any of them into `Machine`/`MachineClaim` comes later.
 5. **Disagreements are objects.** Each is a `Discrepancy` with a deterministic name and labels for site and cluster, so `kubectl get discrepancies -l fleet.datumapis.com/site=us-east-1` answers #7. Each names the check, the sources and the value each source holds.
 6. **The importers are read-only twice over.**
-   - The credential is read-only on the server side wherever the vendor offers that.
+   - The credential is read-only on the server side wherever the vendor offers that. Omni's `Reader` role and NetActuate's read-only API keys do.
    - The client is read-only by construction: a narrow Go interface for Omni, and an HTTP transport that allows only GET to an allowlist of paths for providers.
    - Tests prove the client side. The server side is a deployment check.
+7. **A Fleet `Site` is a cell is a region**, such as `us-east-1`. It is never a zone (`us-east-1a`) and never a provider facility code.
+8. **One kind per vendor, not one normalized server kind.** Each vendor kind carries `spec.managementMode: ObserveOnly` and only the facts that vendor has: BGP sessions on `NetActuateServer`, boot hazards and the OOB address on `ServersComMachine`. Fields every vendor shares come from one embedded Go status struct (§5).
+9. **Site records come from the latest infra production release tag**, the highest semver `v*` tag, which is the ref production Flux tracks. The importer never reads `main`.
+10. **BGP tells Fleet whether a site is serving.** It is the source for #9's "site stops serving" gate. Which BGP observation to read is still open (§9).
 
 ---
 
@@ -41,15 +45,16 @@ No credentials were used and no live API was called. Every "live" claim below is
 |---|---|---|
 | infra `DATUM_SITE`, `datum.sites`, MachineClass ids | Datum zone | `us-east-1a` |
 | Omni machine label `site`, MachineClass matchers, `sites/netactuate` | provider facility code | `IAD3` (NetActuate), `WAS4` (servers.com) |
-| Fleet `Site` (proposal) | region-level placement boundary | `us-east-1` |
+| Fleet `Site` (proposal) | region-level placement boundary, also called a cell | `us-east-1` |
 
 Mapping:
 
 | infra term | Fleet field |
 |---|---|
 | Fleet `Site` | the infra **region** (`us-east-1`) |
+| Cell | the same thing as a Fleet `Site` and a region: Site = cell = region |
 | Datum zone | `Cluster.spec.zones[]` (`us-east-1a`) |
-| Provider facility code | `providerFacilityCode` on `OmniMachine` and `ProviderServer` |
+| Provider facility code | `providerFacilityCode` on `OmniMachine` and on each vendor server kind |
 
 The facility code joins to inventory `Facility` only once Facilities exist; see Open questions. Never store a provider code in a field named `site`.
 
@@ -71,7 +76,7 @@ Key:
 | Zones in region | `provisioning/datum.sites` (`netactuate: <zone>,...`) | `status.records.zones[]` (no field; proposal has `Cluster.spec.zones`) | record |
 | Regional service VIP | `provisioning/region.ipam` (prod and staging sections) | `status.records.regionalAddresses[]{environment,address}` (no field; owned by IPAM/services, shown read-only) | record |
 | City and country | `provisioning/sites/footprint.yaml` `region:` (marked `# verify`) | `status.records.location{city,country}` (proposal uses `locationRef`; no Location importer yet) | record |
-| Providers present | footprint `providers[]`; observed `ProviderServer.providerFacilityCode` | `status.records.providers[]`, `status.observedProviders[]` | record / provider |
+| Providers present | footprint `providers[]`; observed `status.providerFacilityCode` on the vendor server kinds | `status.records.providers[]`, `status.observedProviders[]` | record / provider |
 | NetActuate facility, region id, ISO per zone | `provisioning/configure-netactuate` (a bash `case`), `sites/netactuate` | `status.records.providerMappings[]{provider,zone,facilityCode,regionID,isoID}` (proposal: adapter mapping to `Facility`) | record |
 | Clusters at site | Omni clusters labelled `region`; `clusters/edge/` | `status.clusters[]` | actual |
 | Shape profile (`dnsonly` or per-site template) | `provisioning/profiles/<cluster>` or `provisioning/templates/<cluster>/` | `Cluster.status.records.profile` | record |
@@ -96,7 +101,7 @@ Key:
 | Upgrade quota per set | `UpgradeRollout.machine_sets_upgrade_quota` | `status.omni.upgradeQuota` | actual |
 | Pool counts | `MachineSetStatus.machines` | `status.machinePools[]{name,desired,ready}` (proposal field) | actual |
 | Capabilities (Karmada labels) | not Omni; Karmada cluster labels | `status.capabilities` (proposal field), **deferred** | none |
-| Serving or drained (BGP routes) | not Omni; route-restore state and BGP sessions | **no field, deferred.** #9 needs it as a gate (infra#7797: us-west-1 drained for 2h48m) | actual |
+| Serving or drained (BGP routes) | not Omni; **BGP** (decided). Which BGP observation is open | **no field, deferred.** #9 needs it as a gate (infra#7797: us-west-1 drained for 2h48m) | actual |
 
 ### 3.3 MachinePool (`fleet.datumapis.com/MachinePool`, one per Omni MachineSet)
 
@@ -158,13 +163,21 @@ An unknown suffix maps to `role: unknown` and raises a Discrepancy. It is never 
 | Identity labels | MachineStatus labels `provider`, `site` (from image labels or `MachineLabels`) | `status.labels.provider`, `status.labels.providerFacilityCode` | actual |
 | Class matches | evaluate each Omni `MachineClass.match_labels` against the labels | `status.matchingOmniClasses[]` | derived |
 | Diagnostics | `MachineStatus.{last_error,diagnostics}` | `status.diagnostics` | actual |
-| Bound provider server | join result (§4) | `status.providerServerRef`, `status.joinEvidence[]` | derived |
+| Bound rented server | join result (§4) | `status.serverRef` (typed: `apiGroup`, `kind`, `name`, where `kind` is `NetActuateServer`, `ServersComMachine` or `VultrServer`), `status.joinEvidence[]` | derived |
 
-### 3.6 ProviderServer (`fleet.datumapis.com/ProviderServer`, new, one per rented server)
+### 3.6 Rented servers: one kind per vendor (new, one object per rented server)
+
+| Vendor | Kind | Group |
+|---|---|---|
+| NetActuate | `NetActuateServer` | `netactuate.fleet.datumapis.com` |
+| servers.com | `ServersComMachine` (the proposal's name) | `serverscom.fleet.datumapis.com` |
+| Vultr | `VultrServer` | `vultr.fleet.datumapis.com` |
+
+Each kind carries `spec.managementMode: ObserveOnly`. The vendor is the kind, so there is no `spec.provider` field. A fact only one vendor has lives only on that vendor's kind, never as an optional field on a shared type. A cell marked "none" below means that vendor's kind has no such field.
 
 | Fact | NetActuate (gona `Server`) | servers.com (`/hosts`, `/hosts/dedicated_servers/{id}`) | Vultr (govultr `Instance`, `BareMetalServer`) | Field |
 |---|---|---|---|---|
-| Provider ID | `mbpkgid` | `id` | `id` | `spec.provider`, `spec.providerID` (identity) |
+| Provider ID | `mbpkgid` | `id` | `id` | `spec.providerID` (identity) |
 | Name | `fqdn` (`worker-1161d041-iad3.local`) | `title` (`name` is null) | `label`, `hostname` | `status.name` |
 | Facility / location | `location_id`, `city` | location field (*verify name*: `location_code`/`location_id`) | `region` | `status.providerFacilityCode`, `status.providerLocationID` |
 | Plan / model | `plan_id`, `package` | `configuration_details.server_model_name`, `configuration` | `plan` | `status.plan` |
@@ -172,9 +185,9 @@ An unknown suffix maps to `role: unknown` and raises a Discrepancy. It is never 
 | Lifecycle status | `status`, `installed` | `status`, `operational_status` (*verify*) | `status`, `server_status` | `status.lifecycle` |
 | Power | `state` | `power_status` | `power_status` | `status.power` |
 | Billing | `package_billing`, `package_billing_contract_id` | `scheduled_release_at` (*verify*) | `date_created`, `pending_charges` | `status.billing` (operator-only) |
-| Boot hazards | none | features `public_ipxe_boot`, `host_rescue_mode`, `oob_public_access` (status only) | none | `status.bootOverrides[]` |
-| BGP sessions | `GetBGPSessions(mbpkgid)`: group, ASN, peer IPs, state. **Drop `password`** | none | none | `status.bgpSessions[]` |
-| OOB address | none | `oob_ipv4_address` (never the credentials) | none | `status.oobAddress` (operator-only) |
+| Boot hazards | none | features `public_ipxe_boot`, `host_rescue_mode`, `oob_public_access` (status only) | none | `ServersComMachine` `status.bootOverrides[]` |
+| BGP sessions | `GetBGPSessions(mbpkgid)`: group, ASN, peer IPs, state. **Drop `password`** | none | none | `NetActuateServer` `status.bgpSessions[]` |
+| OOB address | none | `oob_ipv4_address` (never the credentials) | none | `ServersComMachine` `status.oobAddress` (operator-only) |
 | Bound Omni machine | join (§4) | join | join | `status.omniMachineRef`, `status.joinEvidence[]` |
 
 ---
@@ -198,6 +211,7 @@ An unknown suffix maps to `role: unknown` and raises a Discrepancy. It is never 
 Join rule:
 
 - Bind when **two independent keys agree** (IP and hostname) and neither key matches another candidate. Record `status.joinEvidence[]` as key, value and source.
+- A binding is two typed refs: `OmniMachine.status.serverRef` names the vendor kind (`NetActuateServer`, `ServersComMachine` or `VultrServer`) and object, and the vendor object's `status.omniMachineRef` names the `OmniMachine`. A ref without a kind is never written.
 - One key, or conflicting keys, raises an `AmbiguousJoin` Discrepancy and binds nothing.
 - Once a binding is made, keep it while either key still agrees. Reassign only when both keys move. This prevents flapping after a rename.
 
@@ -206,6 +220,8 @@ Join rule:
 ## 5. Go types sketch (`fleet.datumapis.com/v1alpha1`)
 
 Only the fields the importers write are shown. Fields the proposal already defines (`identityScopeRef`, `configurationAdmission`, `updatePolicy`, `machineClassRef`, `imageRef`, `consumer`) are **deferred** and are optional, so observe-mode objects validate.
+
+The three vendor server kinds embed one shared Go struct, `RentedServerStatus`, for the fields every vendor has: name, facility, plan, addresses, lifecycle, power and the Omni binding. Each kind adds only its own facts on top. The shared struct is a Go convenience; it is not an API kind and has no group.
 
 ```go
 type ManagementMode string
@@ -335,20 +351,19 @@ type OmniMachineStatus struct {
 	Platform           PlatformObs
 	Labels             IdentityLabels // provider, providerFacilityCode
 	MatchingOmniClasses []string
-	ProviderServerRef  *LocalRef
+	ServerRef          *TypedRef // NetActuateServer | ServersComMachine | VultrServer
 	JoinEvidence       []JoinEvidence
 	Conditions         []metav1.Condition
 }
 ```
 
 ```go
-// fleet.datumapis.com/v1alpha1, new kinds
-type ProviderServerSpec struct {
+// shared by the vendor kinds; not an API kind
+type RentedServerSpec struct {
 	ManagementMode ManagementMode `json:"managementMode"`
-	Provider       string         `json:"provider"`   // netactuate|serverscom|vultr
 	ProviderID     string         `json:"providerID"` // immutable
 }
-type ProviderServerStatus struct {
+type RentedServerStatus struct {
 	SourceObservation
 	State                FactState
 	Name                 string
@@ -357,14 +372,36 @@ type ProviderServerStatus struct {
 	Plan                 string
 	Addresses            []string // provider-assigned only
 	Lifecycle, Power     string
-	BootOverrides        []string // serverscom features in "activated"
-	BGPSessions          []BGPSessionObs // no secrets
-	Billing              *BillingObs     // operator-only; see open questions
+	Billing              *BillingObs // operator-only; see open questions
 	OmniMachineRef       *TypedRef
 	JoinEvidence         []JoinEvidence
 	Conditions           []metav1.Condition
 }
 
+// netactuate.fleet.datumapis.com/v1alpha1
+type NetActuateServerSpec struct{ RentedServerSpec } // providerID = mbpkgid
+type NetActuateServerStatus struct {
+	RentedServerStatus `json:",inline"`
+	BGPSessions        []BGPSessionObs // no secrets
+}
+
+// serverscom.fleet.datumapis.com/v1alpha1
+type ServersComMachineSpec struct{ RentedServerSpec }
+type ServersComMachineStatus struct {
+	RentedServerStatus `json:",inline"`
+	BootOverrides      []string // features in "activated"
+	OOBAddress         string   // operator-only; never the credentials
+}
+
+// vultr.fleet.datumapis.com/v1alpha1
+type VultrServerSpec struct{ RentedServerSpec }
+type VultrServerStatus struct {
+	RentedServerStatus `json:",inline"`
+}
+```
+
+```go
+// fleet.datumapis.com/v1alpha1
 type Discrepancy struct { // cluster-scoped; labels: site, cluster, check, severity
 	Spec   DiscrepancySpec
 	Status DiscrepancyStatus
@@ -394,16 +431,22 @@ Rules:
 
 | | Omni | NetActuate | servers.com | Vultr | Site records (infra git) |
 |---|---|---|---|---|---|
-| Client | `github.com/siderolabs/omni/client`, pinned to the server minor (infra pins `omnictl v1.12.2`), `client.WithServiceAccount` | gona **≥ v0.4.4** (`redactURL`), never v0.3.0 | plain `net/http`, the paths `lib/serverscom.sh` uses | `govultr/v3` | Flux `GitRepository` artifact of `datum-cloud/infra` main, or a shallow clone |
+| Client | `github.com/siderolabs/omni/client`, pinned to the server minor (infra pins `omnictl v1.12.2`), `client.WithServiceAccount` | gona **≥ v0.4.4** (`redactURL`), never v0.3.0 | plain `net/http`, the paths `lib/serverscom.sh` uses | `govultr/v3` | Flux `GitRepository` artifact of `datum-cloud/infra` at the latest production release tag (highest semver `v*`, the same `ref.semver` production Flux uses), or a shallow clone of that tag. Never `main` |
 | Lists | `Clusters`, `ClusterStatuses`, `MachineSets`, `MachineSetStatuses`, `MachineSetNodes`, `ClusterMachines`, `ClusterMachineStatuses`, `ClusterMachineIdentities`, `ClusterMachineTalosVersions`, `MachineStatuses`, `Machines`, `MachineLabels`, `MachineClasses`, `TalosUpgradeStatuses`, `KubernetesUpgradeStatuses`, `KubernetesStatuses`, `MachineUpgradeStatuses`, `MachineStatusSnapshots`, `MachinePendingUpdates` (drop `config_diff`), `ConfigPatches` (**metadata only**; discard `spec.data` on receipt) | `cloud/servers`; `cloud/server?mbpkgid=`; BGP sessions per `mbpkgid`; locations | `GET /hosts?per_page=100` **with pagination** (`sc_resolve` reads only page 1); `GET /hosts/dedicated_servers/{id}`; `GET …/{id}/features` | `Instance.List`, `BareMetalServer.List`, `Region.List` | `provisioning/{datum.sites,region.ipam,sites/*,profiles/*,templates/**,machine-patches/*,fleet/machineclasses/*,fleet-floor-exceptions}`, `clusters/edge/*/kustomization.yaml` |
 | Never touch | `Talosconfig`, `Kubeconfig`, `ClusterSecrets`/`MachineSecrets`, `ClusterMachineConfig`, any create, update or delete | create, delete, BGP create, buy/build | `oob_credentials`, any `features/*/activate|deactivate`, `power_cycle`, `ssh_keys`, PUT/POST/DELETE | create, delete, reinstall | none |
-| Credential (Secret Manager → ExternalSecret via `gcp-secret-store`) | **new** service account, account role **`Reader`** (`omnictl serviceaccount create fleet-importer --role Reader`). No ACL rule is needed: no Kubernetes access. **Not** `datum-ci` (Admin) | read-only key **if NetActuate offers one** (open question). Today's `NETACTUATE_API_KEY` can buy and delete | read-only token **if offered** (open question). Today's token can wipe hosts via rescue | sub-user with `subscriptions_view` ACL only (*verify*) | Flux deploy key or GitHub App, read-only |
+| Credential (Secret Manager → ExternalSecret via `gcp-secret-store`) | **new** service account, account role **`Reader`** (`omnictl serviceaccount create fleet-importer --role Reader`). No ACL rule is needed: no Kubernetes access. **Not** `datum-ci` (Admin) | a **read-only** API key, issued for the importer alone. NetActuate offers read-only keys. Never today's `NETACTUATE_API_KEY`, which can buy and delete | read-only token **if offered** (open question). Today's token can wipe hosts via rescue | sub-user with `subscriptions_view` ACL only (*verify*) | Flux deploy key or GitHub App, read-only |
 | Read-only proof | the code takes a `Reader` interface with `Get`/`List`/`Watch` only. A test wraps COSI in-memory state in a proxy that fails on `Create`/`Update`/`Destroy`/`AddFinalizer`. A deploy check asserts the SA role is `Reader` | `http.RoundTripper` that allows GET only, plus a path allowlist. A test drives every code path through it | same | same | n/a |
 | Secret hygiene | never log ConfigPatch data | **redact `key=` from every URL in errors and logs** in our own transport wrapper, even with gona v0.4.4. Drop `BGPSession.password` | never log the `Authorization` header | never log the key | none |
-| Refresh | `Watch` per kind, plus a full relist every 10 min | 15 min | 15 min (a features call per host, so mind rate limits) | 15 min | on new artifact revision, at least every 10 min |
+| Refresh | `Watch` per kind, plus a full relist every 10 min | 15 min | 15 min (a features call per host, so mind rate limits) | 15 min | on a new release tag, checked at least every 10 min |
 | Stale after | 3 missed relists → block `Unknown` | 45 min | 45 min | 45 min | 30 min |
 | Source down | source condition `Available=False`. Blocks go `Unknown` with last values kept. No object is deleted or created. Discrepancies that depend on the source show the value `unknown` | same | same | same | same |
 | Empty answer | a list that parses zero clusters is an **error** (edge always has clusters) | zero servers is an error | zero hosts is an error | zero is valid (no live Vultr known), but the call must have succeeded | zero zones or templates parsed is an error |
+
+The NetActuate GET-only transport and the `key=` redaction stay even with a read-only key. They are defence in depth, no longer the only guard: a read-only key can still leak account data through a logged URL.
+
+Each provider importer writes only its own vendor kind: NetActuate writes `NetActuateServer`, servers.com writes `ServersComMachine`, Vultr writes `VultrServer`.
+
+The records importer reads the release tag, not `main`, because production Flux reads the tag. A change merged to `main` but not yet tagged is not yet a record.
 
 `configure-netactuate` is a bash `case` statement and the importer should not parse it. Move it to a data file first (open question).
 
@@ -411,9 +454,9 @@ Rules:
 
 ## 7. Disagreement checks (#7)
 
-Each check reads one or more sources, `R` (records), `O` (Omni) and `P` (provider), and emits a Discrepancy. A check whose inputs are Unknown emits the value `unknown`. Unknown never counts as healthy.
+Each check reads one or more sources, `R` (records), `O` (Omni) and `P` (provider), and emits a Discrepancy. `P` is a vendor kind: `NetActuateServer`, `ServersComMachine` or `VultrServer`. A Discrepancy's `subject` and values name that kind, never a generic server. A check whose inputs are Unknown emits the value `unknown`. Unknown never counts as healthy.
 
-**Seeds** are visible in infra `origin/main` today. Rows marked *verify* rest on an older memory, not current live data.
+**Seeds** were taken from infra `origin/main`, not from the production release tag the importer reads. Re-check each seed against the latest tag. Rows marked *verify* rest on an older memory, not current live data.
 
 ### 7.1 Records against records
 
@@ -452,13 +495,13 @@ Each check reads one or more sources, `R` (records), `O` (Omni) and `P` (provide
 | P2 | Omni machine labelled `provider=X` with no server at X | O labels × P | none |
 | P3 | Provider location differs from the Omni `site` label or from the cluster's Site | P facility × O label × R mapping | none |
 | P4 | Provider address not on the bound Omni machine | P addresses × O addresses | none |
-| P5 | servers.com `title` differs from the Omni hostname: rename not yet applied by a re-image | P title × O hostname | `rename-serverscom-host` documents this state |
+| P5 | servers.com `title` differs from the Omni hostname: rename not yet applied by a re-image | `ServersComMachine` title × O hostname | `rename-serverscom-host` documents this state |
 | P6 | Provider says off or stopped while Omni says connected, or provider running while Omni is disconnected for more than 10 min (a hung node) | P power × O connected/stage | infra#7797: `worker-574abe73-sjc` froze mid-kexec |
-| P7 | servers.com `public_ipxe_boot` or `host_rescue_mode` activated on an assigned machine. The next reboot during a roll boots iPXE or rescue | P features × O assignment | README: "public_ipxe_boot is PERSISTENT" |
+| P7 | servers.com `public_ipxe_boot` or `host_rescue_mode` activated on an assigned machine. The next reboot during a roll boots iPXE or rescue | `ServersComMachine` boot overrides × O assignment | README: "public_ipxe_boot is PERSISTENT" |
 | P8 | Release or cancellation scheduled on an assigned machine | P billing × O assignment | none |
-| P9 | NetActuate BGP session expected for the role (`bgp-worker`, `bgp-controlplane-dns`) but missing or down, or a session on a server with no node | P BGP × O role | none |
+| P9 | NetActuate BGP session expected for the role (`bgp-worker`, `bgp-controlplane-dns`) but missing or down, or a session on a server with no node | `NetActuateServer` BGP sessions × O role | none |
 | P10 | Plan memory differs from the Omni class memory guard (`omni.sidero.dev/mem`) | P plan × O class | none |
-| P11 | One Omni machine joined by two provider servers, or one server by two machines (`AmbiguousJoin`) | join | none |
+| P11 | One Omni machine joined by two vendor server objects, or one server by two machines (`AmbiguousJoin`) | P × O join, across all three vendor kinds | none |
 
 ### 7.4 Upgrade readiness (feeds #9; Omni and records)
 
@@ -478,20 +521,18 @@ Each check reads one or more sources, `R` (records), `O` (Omni) and `P` (provide
 
 - Per node: desired and actual Talos version and schematic, kubelet version, stage, `config_up_to_date`, `bootID`, etcd member, connected, provider power. That is enough to gate "one node at a time, wait until it serves" and to report per-node progress (#7797 follow-up: "report each node's own state").
 - Per pool: role, Omni allocation mode, rolling `max_parallelism`. Per cluster: Omni upgrade phase and step, plus records channel or environment for "staging labs first".
-- **Missing, deferred:** site serving state (BGP withdrawn or restored) and per-site compute capacity. #9 cannot gate on "site stops serving" until a source for it is chosen.
+- **Missing, deferred:** site serving state (BGP withdrawn or restored) and per-site compute capacity. BGP is the chosen source for "site stops serving", but #9 cannot gate on it until the BGP observation to read is chosen (§9).
 
 ---
 
 ## 9. Open questions for a human
 
-1. **Read-only provider credentials.** Do NetActuate and servers.com issue read-only API keys? If not, the importer holds a key that can buy and wipe servers. Decide whether a client-side GET-only transport is an acceptable guard, or whether #6 waits for vendor-side scoping. Today's GitHub Actions keys can buy and delete servers (NetActuate) and wipe hosts (servers.com rescue).
-2. **Provider records: one kind or typed per vendor?** This design uses one normalized `ProviderServer`. The proposal names typed `ServersComMachine` (`serverscom.fleet.datumapis.com`) with `managementMode: ObserveOnly`. Choose now, before data accrues.
-3. **Fleet `Machine` in milestone 2, or later?** This design defers it and uses `OmniMachine`. PR #2 may want imported capacity as `Machine` with `allocationPolicy: Disabled`.
-4. **Fleet `Site` granularity.** Is it the region (`us-east-1`, as in the proposal example) or the zone (`us-east-1a`, infra's `DATUM_SITE`)? This design picks region. Do we create inventory `Facility` objects for provider codes now, or keep `providerFacilityCode` as a plain string until inventory lands?
-5. **NodeClaim naming for adopted nodes.** This design uses `<cluster>-<nodename>`. NetActuate node names embed a per-VM random id, so a replacement VM changes the name. Is that acceptable for observe mode, given the proposal's logical-slot names (`…-compute-0`)?
-6. **Billing data.** Should Fleet hold billing and release dates, which P1 and P8 need, and who may read them?
-7. **Site serving state.** What is the source for #9's "site stops serving" gate: route-restore state, BGP sessions in VictoriaMetrics, or Cilium BGP CRs via Karmada? And should `kube_node_info` be a fourth source next to Omni?
-8. **`configure-netactuate` and other bash-held facts.** Move the zone → NetActuate region/ISO/facility map into a data file before the importer reads it?
-9. **Where exemptions live.** In the infra repo next to `fleet-floor-exceptions`, or in the fleet repo as Fleet objects?
-10. **Absent objects.** After a source positively reports an object gone, who deletes the Fleet record, and when?
-11. **Records source.** Should the importer read infra `main`, or the production release tag? Templates and pins merge to main but reach Omni only on a hand-dispatched sync, so neither ref is "what Omni should have".
+1. **Read-only servers.com and Vultr credentials.** Does servers.com issue read-only API tokens, and is a Vultr sub-user with `subscriptions_view` only truly read-only (*verify*)? If not, the importer holds a token that can wipe hosts (servers.com rescue). Decide whether the client-side GET-only transport is an acceptable guard for those two, or whether #6 waits for vendor-side scoping. NetActuate is settled: it offers read-only keys.
+2. **Fleet `Machine` in milestone 2, or later?** This design defers it and uses `OmniMachine`. PR #2 may want imported capacity as `Machine` with `allocationPolicy: Disabled`.
+3. **Inventory `Facility` objects.** Do we create inventory `Facility` objects for provider codes now, or keep `providerFacilityCode` as a plain string until inventory lands?
+4. **NodeClaim naming for adopted nodes.** This design uses `<cluster>-<nodename>`. NetActuate node names embed a per-VM random id, so a replacement VM changes the name. Is that acceptable for observe mode, given the proposal's logical-slot names (`…-compute-0`)?
+5. **Billing data.** Should Fleet hold billing and release dates, which P1 and P8 need, and who may read them?
+6. **Which BGP observation.** BGP is the source for #9's "site stops serving" gate. Which observation does Fleet read: route-restore state, BGP sessions in VictoriaMetrics, Cilium BGP CRs via Karmada, or NetActuate BGP session state on `NetActuateServer`? And should `kube_node_info` be a further source next to Omni?
+7. **`configure-netactuate` and other bash-held facts.** Move the zone → NetActuate region/ISO/facility map into a data file before the importer reads it?
+8. **Where exemptions live.** In the infra repo next to `fleet-floor-exceptions`, or in the fleet repo as Fleet objects?
+9. **Absent objects.** After a source positively reports an object gone, who deletes the Fleet record, and when?
