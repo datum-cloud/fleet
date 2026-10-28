@@ -43,3 +43,19 @@ Fleet will integrate with Datum's existing identity, service catalog, location,
 networking/IPAM, Galactic, and Compute services. Environment-specific rollout
 configuration remains in `infra`; ownership of individual outputs must transfer
 explicitly as Fleet capabilities are implemented.
+
+## Development
+
+The controller is Go, laid out by kubebuilder. The
+[toolchain decision](docs/decisions/0001-omni-adapter-toolchain.md) records why.
+It needs Go 1.26 or later; `go` fetches the pinned toolchain from `go.mod` when
+the installed one is older. Every other tool installs into `bin/` on first use.
+
+```sh
+make build   # build bin/manager
+make test    # run the tests with envtest
+make lint    # run golangci-lint
+make help    # list every target
+```
+
+CI runs the build, the tests and the linter on every pull request.
