@@ -11,6 +11,11 @@ stage: alpha
   - [Resource relationships across projects](#resource-relationships-across-projects)
 - [Design details](#design-details)
   - [API design](#api-design)
+    - [MachineClass](#machineclass)
+    - [MachineProfile](#machineprofile)
+    - [Machine](#machine)
+    - [MachineClaim](#machineclaim)
+    - [Installation](#installation)
     - [Status contract](#status-contract)
   - [Milo project integration](#milo-project-integration)
   - [Authorization and publication](#authorization-and-publication)
@@ -160,10 +165,14 @@ All five kinds use the proposed `fleet.datumapis.com/v1alpha1` API and a status
 subresource. The server applies defaults before capturing a request digest and
 rejects unknown behavioral fields or unsupported required capabilities.
 
-The examples show proposed API responses at different lifecycle points. The
-server assigns `metadata.uid` and `metadata.generation`; the status projector
-alone writes `/status`. Names, identifiers, digests, and timestamps are synthetic.
-The example validity windows do not establish production freshness limits.
+The examples show selected fields from proposed responses at different lifecycle
+points. Specs are complete; repeated condition fields and some observed hardware
+are omitted. [Complete responses](api-examples.md) preserve every example field.
+The [status contract](#status-contract) defines the common condition structure.
+
+The server assigns UIDs and generations; the projector alone writes `/status`.
+Example identifiers and timestamps are synthetic, and validity windows do not
+establish production freshness limits.
 
 #### MachineClass
 
@@ -177,7 +186,6 @@ apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
 # Classes span the provider project so namespaces can share an offering.
 metadata:
-  generation: 1
   name: standard-metal
 # The definition owns offering policy; profiles own hardware requirements.
 # Its mode cannot change after creation.
@@ -221,12 +229,7 @@ status:
   observedAt: "2026-10-27T12:00:00Z"
   validUntil: "2026-10-27T12:05:00Z"
   conditions:
-    - type: Accepted
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: DefinitionValid
-      message: "Profile policy and provider contract resolved."
+    - {type: Accepted, status: "True"}
 ```
 
 `profilePolicy` allows named profiles, custom profiles, or both. Custom profiles
@@ -244,7 +247,6 @@ apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineClass
 # Project-wide references give every namespace a local name for an offering.
 metadata:
-  generation: 1
   name: standard
 # The immutable source keeps the provider definition authoritative.
 # Fleet resolves the provider Project UID and one definition; a reference
@@ -275,24 +277,16 @@ status:
       consoleModes: []
       powerControl: true
   conditions:
-    - type: SourceResolved
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: AuthorizedSource
-      message: "The source offering resolved under current authorization."
+    - {type: SourceResolved, status: "True"}
 ```
 
 Resolution follows one hop to a definition and rejects cycles, chains, and mixed
 modes. Definition edits create revisions for future admissions; accepted claims
 retain the exact source UIDs and requirements.
 
-Reference status exposes authorized capabilities, revision, freshness, and
-`SourceResolved`. Fleet checks source-use permission for capability-bearing GET,
-list, and watch results, including watch revocation. A publisher's cached status
-cannot disclose source details to every principal in the consumer project.
-Selectors, provider configuration, machine IDs, and other consumers stay private.
-Availability reports an observation, not a reservation.
+Reference status exposes the public offering under the [publication and access
+rules](#authorization-and-publication). Its capabilities and freshness do not
+promise capacity.
 
 #### MachineProfile
 
@@ -307,7 +301,6 @@ kind: MachineProfile
 metadata:
   name: accelerated-16c-64g
   uid: 00000000-0000-4000-8000-000000000002
-  generation: 1
 # Immutable requirements can serve several offerings without coupling hardware
 # choices to capacity ownership, price, location, or provisioning credentials.
 spec:
@@ -315,30 +308,24 @@ spec:
   # not memory left available after the OS starts.
   cpu:
     architecture: amd64
-    cores:
-      min: 16
+    cores: {min: 16}
   memory:
-    capacity:
-      min: "64Gi"
+    capacity: {min: "64Gi"}
 
   # GPU memory applies to each matching device, not their combined memory.
   gpus:
-    count:
-      min: 1
+    count: {min: 1}
     vendor: Example
     models:
       - example-gpu
-    memoryPerDevice:
-      min: "24Gi"
+    memoryPerDevice: {min: "24Gi"}
 
   # Each group requires distinct devices. Capacity is per disk; the group name
   # describes a hardware role without prescribing RAID or filesystem layout.
   disks:
     - name: boot
-      count:
-        min: 2
-      capacity:
-        min: "480Gi"
+      count: {min: 2}
+      capacity: {min: "480Gi"}
       media: SSD
       interface: NVMe
 
@@ -347,16 +334,10 @@ spec:
   interfaces:
     - name: primary
       type: Ethernet
-      speed:
-        min: "10G"
+      speed: {min: "10G"}
 status:
   conditions:
-    - type: Accepted
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: ProfileValid
-      message: "Hardware requirements are well formed."
+    - {type: Accepted, status: "True"}
 ```
 
 Numeric constraints use inclusive `min` and optional `max`, or `exact` alone.
@@ -391,7 +372,6 @@ kind: Machine
 # The Machine UID identifies provider capacity independently of consumer claims.
 # Replacement hardware gets a new UID; labels only group capacity for selection.
 metadata:
-  generation: 1
   name: lab-server-01
   namespace: infra-ops
   labels:
@@ -406,8 +386,7 @@ spec:
 
   # Qualified owned hardware requires a link to its physical inventory identity.
   # Supply without a physical Device needs no invented inventory record.
-  deviceRef:
-    name: server-example-001
+  deviceRef: {name: server-example-001}
 
   # Disabled is the default so registration cannot expose occupied capacity.
   # Eligible still depends on preparation, health, readiness, and placement.
@@ -415,8 +394,7 @@ spec:
 
   # Each reservation pins this required cleanup policy, preserving its
   # release obligations even if the operator later weakens the policy.
-  cleaningPolicyRef:
-    name: tenant-reuse-v1
+  cleaningPolicyRef: {name: tenant-reuse-v1}
   # Retain separates consumer release from asset disposal; it is the only
   # supported value in the first implementation.
   reclaimPolicy: Retain
@@ -461,24 +439,9 @@ status:
         type: Ethernet
         speed: "25G"
   conditions:
-    - type: Prepared
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: PreparationVerified
-      message: "The simulator verified preparation for this asset."
-    - type: Healthy
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: HealthVerified
-      message: "The simulator reported healthy capacity."
-    - type: Available
-      status: "False"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: AllocationDisabled
-      message: "Operator policy excludes this Machine from new allocations."
+    - {type: Prepared, status: "True"}
+    - {type: Healthy, status: "True"}
+    - {type: Available, status: "False"}
 ```
 
 References resolve within the Machine's provider project and namespace. Private
@@ -512,25 +475,20 @@ kind: MachineClaim
 # Claim identity belongs to the consumer project, separately from the Machine.
 # A new name creates a distinct request rather than retrying an existing one.
 metadata:
-  generation: 1
   name: example
   namespace: default
 # Only powerState can change after creation, preserving the placement contract.
 # The local class, profile, and permitted location are required. Fleet retains
 # their identities and exact contracts for allocation and recovery.
 spec:
-  machineClassRef:
-    name: standard
-  machineProfileRef:
-    name: accelerated-16c-64g
-  locationRef:
-    name: lab
+  machineClassRef: {name: standard}
+  machineProfileRef: {name: accelerated-16c-64g}
+  locationRef: {name: lab}
 
   # This optional gate delays activation until the initial installation succeeds.
   # A reciprocal claim reference in the same project and namespace ties the
   # Installation to this allocation.
-  initialInstallationRef:
-    name: example-os-1
+  initialInstallationRef: {name: example-os-1}
 
   # Each immutable entry connects a profile interface slot to an existing
   # project Network. Networking owns VPC membership and address assignment.
@@ -562,40 +520,20 @@ status:
     uid: 00000000-0000-4000-8000-000000000002
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
+    # Selected fields from the same hardware shape shown on Machine.
+    # The complete response includes GPUs, disks, and interfaces.
     hardware:
       cpu:
         architecture: amd64
-        model: example-cpu
-        sockets: 2
         cores: 24
-        threads: 48
       memory:
         capacity: "128Gi"
-      gpus:
-        - name: accelerator-0
-          vendor: Example
-          model: example-gpu
-          memory: "32Gi"
-      disks:
-        - name: disk-0
-          capacity: "960Gi"
-          media: SSD
-          interface: NVMe
-        - name: disk-1
-          capacity: "960Gi"
-          media: SSD
-          interface: NVMe
-      interfaces:
-        - name: primary
-          type: Ethernet
-          speed: "25G"
   # The retained incarnation survives deletion of its public Installation.
   currentInstallationRef:
     name: example-os-1
     uid: 00000000-0000-4000-8000-000000000001
   placement:
-    locationRef:
-      name: lab
+    locationRef: {name: lab}
   # Networking supplies this current assignment view. The revision identifies
   # exact configuration inputs; freshness alone does not prove guest setup.
   network:
@@ -632,24 +570,9 @@ status:
         # NSO separates address allocation, preparation, and programming.
         # The claim aggregates these facts without asserting guest health.
         conditions:
-          - type: Allocated
-            status: "True"
-            observedGeneration: 1
-            lastTransitionTime: "2026-10-27T12:00:00Z"
-            reason: AddressesAllocated
-            message: "NSO holds every requested address family and class."
-          - type: Prepared
-            status: "True"
-            observedGeneration: 1
-            lastTransitionTime: "2026-10-27T12:00:00Z"
-            reason: ConfigurationPrepared
-            message: "NSO supplied the configuration needed for installation."
-          - type: Programmed
-            status: "True"
-            observedGeneration: 1
-            lastTransitionTime: "2026-10-27T12:00:00Z"
-            reason: AttachmentVerified
-            message: "Networking verified this interface on the selected network."
+          - {type: Allocated, status: "True"}
+          - {type: Prepared, status: "True"}
+          - {type: Programmed, status: "True"}
   # Power is an observation, separate from spec.powerState intent. Its validity
   # prevents a stale successful power action from implying current readiness.
   power:
@@ -657,36 +580,11 @@ status:
     observedAt: "2026-10-27T12:00:00Z"
     validUntil: "2026-10-27T12:05:00Z"
   conditions:
-    - type: Accepted
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: InputsAccepted
-      message: "Supported class/profile inputs and request identity are retained."
-    - type: Bound
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: ReservationCommitted
-      message: "The private reservation holds exclusive capacity."
-    - type: Ready
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: PlatformHandoffComplete
-      message: "Initial installation and required handoff checks passed."
-    - type: NetworkReady
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: AttachmentsVerified
-      message: "Networking verified the required assignments and attachments."
-    - type: Releasing
-      status: "False"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: AllocationActive
-      message: "The allocation has no release request."
+    - {type: Accepted, status: "True"}
+    - {type: Bound, status: "True"}
+    - {type: Ready, status: "True"}
+    - {type: NetworkReady, status: "True"}
+    - {type: Releasing, status: "False"}
 ```
 
 A superseded power intent generation cannot dispatch new work. Creating a claim
@@ -713,6 +611,8 @@ requirements and network feasibility. After binding, it materializes
 machine-specific inputs from assigned addresses and network preparation.
 Attachment completion gates handoff, not the work needed to create the
 attachment. This order avoids a claim/installation dependency cycle.
+
+##### Network interfaces
 
 `networkInterfaces` is an immutable list keyed by `name`. Each name identifies
 one interface slot in the selected MachineProfile, not an OS device name.
@@ -789,7 +689,6 @@ kind: Installation
 # Installation shares its claim's project and namespace. The claim's
 # initialInstallationRef identifies the request that satisfies its initial gate.
 metadata:
-  generation: 1
   name: example-os-1
   uid: 00000000-0000-4000-8000-000000000001
   namespace: default
@@ -797,20 +696,17 @@ metadata:
 # Claim and approved image are required. Fleet checks install and image-use
 # permissions and pins the Claim UID, image artifacts, and digests.
 spec:
-  claimRef:
-    name: example
+  claimRef: {name: example}
   # This required precondition prevents competing installs from replacing
   # an unexpected OS. None means the allocation has no installed incarnation.
   expectedPredecessor:
     type: None
-  imageRef:
-    name: qualified-linux
+  imageRef: {name: qualified-linux}
 
   # Optional bootstrap data comes from a Secret in this namespace under
   # explicit caller authority. Protected copies of its UID, digest, and bytes
   # preserve the accepted input through Secret changes or deletion.
-  bootstrapConfigRef:
-    name: example-bootstrap
+  bootstrapConfigRef: {name: example-bootstrap}
 
 # The projector reports the retained installation outcome, not guest health.
 # Opaque correlation IDs support diagnosis without exposing execution authority.
@@ -823,24 +719,9 @@ status:
   resolvedImageDigest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   completedAt: "2026-10-27T12:00:00Z"
   conditions:
-    - type: Accepted
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: OperationAdmitted
-      message: "The immutable plan and operation authority are retained."
-    - type: Executing
-      status: "False"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: OperationComplete
-      message: "The executor has no remaining work for this installation."
-    - type: Ready
-      status: "True"
-      observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: PlatformHandoffComplete
-      message: "The installation and platform handoff completed with verified evidence."
+    - {type: Accepted, status: "True"}
+    - {type: Executing, status: "False"}
+    - {type: Ready, status: "True"}
 ```
 
 A reinstall identifies the prior incarnation in its predecessor condition:
@@ -877,10 +758,22 @@ the initial gate. Private history preserves predecessor identity in both cases.
 
 #### Status contract
 
+Every condition uses this structure; resource examples abbreviate it:
+
+```yaml
+conditions:
+  - type: Ready
+    status: "Unknown"
+    # Generation ties the observation to desired state; transition time records
+    # a change in value. Neither proves that external evidence remains fresh.
+    observedGeneration: 1
+    lastTransitionTime: "2026-10-27T12:00:00Z"
+    reason: OutcomeUnknown
+    message: "Fleet cannot yet verify the operation outcome."
+```
+
 Each condition describes one fact. Its `status` is `True`, `False`, or `Unknown`;
 its `reason` identifies the outcome, and its bounded `message` explains it.
-`observedGeneration` identifies the spec generation the controller evaluated.
-`lastTransitionTime` records a change in the condition's value, not a heartbeat.
 Status can be empty before reconciliation; an absent condition means `Unknown`.
 
 An unchanged spec can acquire new dependency revisions or stale evidence.
@@ -923,7 +816,8 @@ and omits `acceptedProfileRef` until admission retains the profile. It omits
 operation correlation and the resolved digest until admission retains them.
 `power.state` is `On`, `Off`, or `Unknown`; intent changes do not change the
 observation until fresh executor evidence arrives. `network` appears when the
-resolver evaluates the binding; unassigned address fields remain absent. Expired evidence makes
+resolver evaluates the binding; unassigned address fields remain absent.
+Expired evidence makes
 `NetworkReady=Unknown`; retained addresses are not proof of current assignment.
 An empty `networkInterfaces` list yields `NetworkReady=True` with
 `NoAttachmentsRequired` and does not imply that a guest has connectivity.
@@ -947,23 +841,12 @@ credentials, bootstrap bytes, and bearer capabilities.
 
 ### Milo project integration
 
-Milo routes project requests through:
+Milo supplies project context through its authenticated API-server path. The
+[source review](source-review.md#milo-integration-evidence) records the routing
+and identity fields.
 
-```text
-/apis/resourcemanager.miloapis.com/v1alpha1/projects/{project-name}/control-plane
-```
-
-The [project filter][milo-routing] supplies authenticated parent context:
-
-```text
-iam.miloapis.com/parent-api-group=resourcemanager.miloapis.com
-iam.miloapis.com/parent-type=Project
-iam.miloapis.com/parent-name={project-name}
-```
-
-Fleet accepts that context only through its authenticated API-server path. It
-rejects missing, conflicting, or organization-only context. Client headers,
-annotations, and request fields cannot select a tenant. Public APIs offer no
+Fleet rejects missing, conflicting, or organization-only context. Client headers,
+annotations, and request fields cannot select a tenant; public APIs offer no
 unscoped global list.
 
 The project name selects the route. Fleet resolves the root ResourceManager
@@ -982,23 +865,19 @@ records also retain the Namespace UID. Every query, cache key, list/watch filter
 continuation token, and work item includes `ProjectKey`. Recreating a project,
 namespace, or object cannot inherit the previous lifetime's authority.
 
-Provider operators write project-wide MachineClass definitions and MachineProfiles,
-and namespaced Machines. The publication service writes project-wide class
-references and protected profile copies in consumer projects. Consumers write
-project-wide custom profiles and namespaced MachineClaims and Installations; each
-Installation shares its claim's project and namespace. Fleet stores private
-reservation and operation records outside both project deletion domains.
+Classes and profiles span their project; Machines, claims, and Installations
+are namespaced. An Installation shares its claim's project and namespace.
+Private records survive both project deletion domains. [Authorization and
+publication](#authorization-and-publication) defines the writers.
 
 Provider projects follow the same tenancy rules as consumer projects. Authorized
 consumers may also claim a definition in their own project. A namespace named
 `default` in one project has no relationship to `default` in another.
 
-Milo's [multicluster provider][milo-multicluster] indexes clients by project name
-and can disengage unready projects. Fleet must verify the root UID and connected
-control-plane lifetime before admission or status writes. A changed UID
-invalidates cached clients and work. An unavailable API does not prove deletion.
-Private recovery continues without an engaged project client. Resource versions
-from separate project APIs do not provide a global transaction order.
+Before admission or status writes, Fleet verifies the root UID and control-plane
+lifetime; a changed UID invalidates cached clients and work. API unavailability
+does not prove deletion or stop private recovery. Resource versions from separate
+project APIs do not provide a global transaction order.
 
 ### Authorization and publication
 
@@ -1038,7 +917,9 @@ Admission also requires local `machineprofiles.use`. A published profile require
 no provider profile grant. Provider-class permission and custom-profile policy
 still apply. Class and profile permissions grant no inventory access or purchase
 authority. Reads, lists, and watches of published profile content enforce current
-source-use permission, including revocation, as class summaries do.
+source-use permission, including revocation. The same rule protects class
+summaries: cached status never grants every project principal source access.
+Selectors, provider configuration, Machine IDs, and other consumers stay private.
 
 Fleet retains the initiating User or ServiceAccount UID privately. Milo's
 [PolicyBinding schema][milo-policybinding] supports User, Group, and
@@ -1060,9 +941,9 @@ caller and generation. Each action requires separate operation admission.
 Network resolution checks the initiating principal's use permission on each
 selected Network in its actual namespace and the required address authority.
 These are proposed Fleet admission checks; a namespace field grants no access.
-A network reference cannot grant cross-project network access. The projector exposes only consumer-visible
-assignment data, under claim-read permission; private IPAM and provider mappings
-remain with their owners.
+A network reference cannot grant cross-project access. The projector exposes
+consumer assignment data under claim-read permission; private IPAM and provider
+mappings remain with their owners.
 
 #### Entitlement and publication
 
@@ -1097,65 +978,47 @@ cross-project identities are not Kubernetes owner references.
 
 #### Reservation record
 
-- **Record ID, revision, state, binding ID, and epoch:** Identify the allocation
-  and order conditional transitions.
-- **Consumer ProjectKey, Namespace UID, Claim UID, request digest:** Bind
-  authority to the exact consumer lifetime.
-- **Provider ProjectKey, Machine UID, canonical asset identity:** Identify
-  exclusive capacity across classes and enrollment aliases.
-- **Class UIDs/revision, local and source profile UIDs, exact requirements:**
-  Preserve the accepted contract after source changes or deletion.
-- **Resolved provider configuration, hardware snapshot, dependency content:**
-  Pin the catalog revision, concrete targets, and device-to-requirement mapping
-  used to validate the allocation.
-- **Principal UID, authorization decision, entitlement, admission revisions:**
-  Record the authority for binding.
-- **Quota hold UID and state:** Recover quota custody through release.
-- **Current incarnation, initial gate, active operation ID:** Serialize
-  installation, power, and release.
-- **Network Namespace/UIDs, interface UIDs, assignments, revision, release authority:**
-  Retain exact configuration and each owner's detach, return, or retention
-  obligations after public network objects disappear.
-- **Cleaning policy, obligations, evidence, retired identities:** Complete
-  cleanup and reject stale work.
+The record retains these field groups:
 
-Fleet persists preparation before requesting quota. Preparation need not select
-a machine. The binding transaction commits machine occupancy, claim uniqueness,
-and dispatch intent together. The store enforces one live binding per Machine
-and per Claim, plus one allocatable enrollment per canonical asset. Lists and
-process-local locks cannot enforce these constraints across workers.
+- **Identity:** record ID/revision/state, binding ID/epoch, consumer ProjectKey,
+  Namespace UID, Claim UID/request digest, provider ProjectKey, Machine UID, and
+  canonical asset identity.
+- **Accepted contract:** class UIDs/revision, local/source profile UIDs, exact
+  requirements, dependency identities/content, provider configuration/catalog
+  revision, hardware snapshot, and logical-to-physical device mapping.
+- **Authority:** principal UID, authorization decision, entitlement/admission
+  revisions, quota-hold UID/state, and release authority.
+- **Lifecycle:** current incarnation, initial gate, active operation ID, network
+  Namespace/UIDs, interface and assignment identities, network revision, cleaning
+  policy, remaining obligations, evidence, and retired identities.
 
-An epoch is a monotonically increasing allocation generation. Every effect and
-callback carries it. Retirement advances the machine's fence so an old binding
-cannot act for the next consumer.
+The store enforces one live binding per Claim and Machine and one allocatable
+enrollment per canonical asset. A transaction commits occupancy, claim uniqueness,
+and dispatch intent together. Lists and process-local locks cannot enforce this
+across workers. Each effect and callback carries the monotonically increasing
+binding epoch; retirement advances the fence before another consumer can act.
 
 #### Operation record
 
-Each operation retains its stable ID, idempotency key, binding, Installation UID
-or power generation, predecessor, exact inputs, permitted effects, target
-components, executor, fencing token, dispatch correlation, cancellation boundary,
-outcome evidence, and remaining obligations.
+Each operation retains its stable ID/idempotency key, binding, Installation UID
+or power generation, predecessor, exact inputs, permitted effects and targets,
+executor/fencing token, dispatch correlation, cancellation boundary, outcome
+evidence, and remaining obligations.
 
 ### Allocation and quota integration
 
-The coordinator follows this sequence:
+The coordinator resolves exact lifetimes and dependencies and validates the
+class/profile/location combination before requesting quota. This diagram shows
+the successful admission path; policy checks remain subject to the ordering
+contract below.
 
-1. Resolve project, namespace, and request lifetimes. Check deletion state,
-   provenance, current principal permissions, entitlement, and initial inputs.
-   Validate the class/profile/location combination before requesting quota.
-2. Create or resume preparation by Claim UID. Obtain one correlated quota hold
-   and retain its UID. Query a lost grant response using the same correlation.
-3. Select eligible supply whose fresh hardware observations satisfy the profile.
-   Resolve its concrete provider configuration and recheck lifecycle, policy,
-   compatibility, authorization, entitlement, and quota.
-4. Commit the exclusive binding and activation intent under the admission
-   ordering below. A losing contender retries selection or remains pending.
-5. Dispatch admitted operations and project their results to public status.
+![Allocation sequence from validation through durable binding and operation dispatch](diagrams/allocation-sequence.svg)
 
-When no eligible machine exists, Fleet reports `InsufficientCapacity` and aborts
-the unused preparation hold before starting another attempt. `Aborted` requires
-confirmed hold release or proof that no hold exists. Preparation authorizes no
-provider effects.
+Preparation uses Claim UID for recovery and authorizes no provider effects.
+A lost quota response recovers the same correlated hold. With no eligible supply,
+report `InsufficientCapacity` and settle that hold before another attempt.
+`Aborted` requires confirmed release or proof that no hold exists. A binding
+contender that loses retries selection or remains pending.
 
 #### Quota custody
 
@@ -1215,74 +1078,39 @@ networking owns logical attachments, IPAM, and routing. A backend may combine
 hardware selection and OS deployment in one request. Fleet must still retain
 the separate allocation and installation authority before sending it.
 
-The published APIs support this separation, with provider-specific limits:
-
-- **Servers.com:** [Order options][servers-options] depend on location and server
-  model. The [creation API][servers-create] combines supported RAM, drive models
-  and slots, uplinks, and OS inputs. Its adapter must validate combinations and
-  retain concrete IDs; a portable profile cannot encode arbitrary combinations
-  as supported merely because each numeric minimum fits.
-- **NetActuate:** The API distinguishes [available dedicated devices][net-devices],
-  [buying and deploying a device][net-buy], and [deploying an existing
-  server][net-build]. This fits separate supply and installation responsibilities.
-  Those endpoint descriptions do not establish support for every custom hardware
-  combination.
-
-These public API shapes inform the proposed adapters; they do not demonstrate
-Fleet's fencing, retry, or cleanup guarantees. Each adapter needs qualification.
-The first implementation only matches existing simulated supply. Neither profile
-validation nor an unbound claim authorizes procurement. Future acquisition needs
-explicit purchasing authority, limits, and cancellation obligations. Consumer
-release follows the retained cleaning contract and keeps the asset; it does not
-cancel a supplier subscription or dispose of hardware.
+The [provider comparison](source-review.md#provider-comparison) explains how
+NetActuate and Servers.com inform this boundary. Each adapter still needs
+qualification. The first implementation matches existing simulated supply;
+profile validation grants no purchasing authority. Consumer release retains
+the asset and does not cancel a supplier subscription.
 
 ### Galactic VPC API integration
 
-Fleet exposes network selection through `MachineClaim.spec.networkInterfaces`
-and the result through `status.network`. The consumer selects an existing
-`networking.datumapis.com/v1alpha` Network. Fleet acts as a consumer of NSO's
-NetworkInterfaceClaim contract, as Compute does. Fleet supplies the immutable
-interface requirements; NSO owns binding a NetworkInterface and allocating its
-addresses. The network realization owner reports Galactic VPC programming.
-Fleet does not introduce a separate public NetworkAttachment resource or require
-consumers to select `cloud.datumapis.com` backing objects.
+Fleet supplies immutable requirements through NSO's NetworkInterfaceClaim
+contract. NSO binds a NetworkInterface and allocates its addresses; the network
+realization owner reports Galactic programming. Consumers select the existing
+project Network through [the claim API](#network-interfaces), not backing VPC
+objects or a new Fleet attachment resource.
 
-The existing [NetworkInterfaceClaim][nso-interface-claim] separates address
-allocation, preparation, and programming. Fleet needs prepared configuration
-for installation and verified attachment for handoff. The existing Galactic
-[VPCAttachment][cloud-vpc-attachment] also separates `Ready` preparation from
-`Programmed` realization. A backing object's existence or its preparation
-condition alone cannot produce `Programmed=True` on the Fleet interface.
+![NSO allocation and preparation supply installation inputs; verified programming gates handoff](diagrams/network-sequence.svg)
 
-The Fleet API reports `NetworkPending`, `NetworkNotAvailableInLocation`,
-`AddressFamilyNotCarried`, or `NetworkConfigurationChanged` as appropriate.
-Authorization failures disclose no foreign network details. If one requested
-interface fails, the claim cannot become network-ready, even when another works.
-A lost or recreated Network cannot silently replace the accepted identity.
+The [NSO claim][nso-interface-claim] and [Galactic attachment][cloud-vpc-attachment]
+contracts distinguish preparation from programming. The diagram shows readiness
+dependencies; programming may complete before installation. Fleet waits for both
+required results before handoff. One failed interface blocks network readiness.
+Missing location support reports `NetworkNotAvailableInLocation`; unsupported
+families report `AddressFamilyNotCarried`. Assignment drift reports
+`NetworkConfigurationChanged` and cannot rewrite an admitted installation plan.
 
-Installation retains the exact resolved network revision and configuration.
-Reinstallations preserve valid assignments. Changes to interface names, network
-selection, address families/classes, or reclaim policy require a new claim;
-in-place network changes remain outside scope. Address changes or stale evidence
-clear affected readiness and cannot silently rewrite admitted installation inputs.
+Release preserves the shared Network and VPC. Under `Retain`, NSO keeps the
+interface and addresses after verified detachment. Reusing a Fleet claim name
+grants no authority over them; future adoption requires exact identity and current
+permission. This contract exposes no `networkInterfaceName` adoption selector.
 
-Release ends the machine's membership and settles its interface/address
-obligations. It does not delete the existing Network or the VPC shared by its
-other consumers. Unknown release evidence keeps capacity unavailable. Under
-`Retain`, the interface and addresses stay under NSO ownership once the old binding
-can no longer use them. Reusing a Fleet claim's name grants no authority over a
-retained interface: any future adoption must validate exact identity and current
-network-use permission. The current contract does not expose NSO's explicit
-`networkInterfaceName` adoption selector or promise address recovery by name.
-
-This enhancement defines request, identity, status, and lifetime semantics.
-NSO's current attachment modes describe container and hypervisor consumers; this
-proposal does not reuse one as a bare-metal mode. Fleet's interface names identify
-profile slots; the installation contract retains their mapping to OS interfaces.
-The mechanism for attaching a physical machine to Galactic remains a separate
-design decision. The reviewed APIs do not establish implemented bare-metal
-attachment support; the first Fleet implementation exercises this contract with
-persistent fixtures before qualification against Galactic.
+NSO's current attachment modes describe containers and hypervisors, not physical
+machines. Fleet maps profile slots to OS interfaces in retained installation
+inputs. Physical attachment mechanics remain a separate design decision; the
+first implementation exercises this API contract with persistent fixtures.
 
 ### Provider execution and recovery
 
@@ -1305,37 +1133,16 @@ Kubernetes controller lease alone cannot fence a remote worker.
 
 ### Release and project lifecycle
 
-```mermaid
-stateDiagram-v2
-    [*] --> Preparing
-    Preparing --> Aborted: preparation and quota settled
-    Preparing --> Bound: exclusive commit
-    Bound --> Activating: installation and handoff
-    Activating --> Active: verified completion
-    Bound --> Active: blank powered-off handoff
-    Bound --> Releasing: release request
-    Activating --> Releasing: safe boundary
-    Active --> Releasing: release request
-    Releasing --> Quarantined: unresolved obligations
-    Quarantined --> Releasing: verified recovery
-    Releasing --> CleanupVerified: external obligations complete
-    CleanupVerified --> Released: quota release confirmed
-    Released --> [*]
-```
+Failed activation retains its binding. Every release must pass these gates:
 
-Failed activation retains the binding. Release proceeds in this order:
+![Release gates with quarantine on any unverified obligation](diagrams/release-gates.svg)
 
-1. Close consumer admission. Settle active operations or fence their executors.
-2. Revoke artifact/bootstrap access, credentials, and sessions. Adapters account
-   for every issued capability; the simulator provides no real console sessions.
-3. Detach or fence networking while preserving cleanup access. Use the retained
-   attachment plan, even when the consumer's network objects no longer exist.
-   Settle each address owner's release or retention obligations; an uncertain
-   acknowledgment blocks reuse.
-4. Execute the retained cleaning policy and verify every target. Uncertain
-   results quarantine capacity and retain its quota hold.
-5. Record `CleanupVerified`, release quota idempotently, and await acknowledgment.
-   Commit `Released` and require fresh eligibility evidence before reuse.
+Use retained credential, network, address, and cleaning obligations even after
+public inputs disappear. Preserve protected cleanup access while detaching
+consumer connectivity. Unknown outcomes keep capacity unavailable and retain
+unsettled quota custody. Only verified recovery can resume release. The simulator
+issues no real console sessions; real adapters must account for every capability
+they issue.
 
 - **Claim or namespace deletion:** At claim creation, atomically capture private
   provenance and install a protected finalizer. Deletion closes admission;
@@ -1377,95 +1184,19 @@ open; the public contract must also support a future managed-node consumer.
 
 ### Acceptance tests
 
-Implement the following tests through Milo tenancy, IAM, entitlement, and quota.
-No implementation tests exist yet.
+The [acceptance test inventory](acceptance-tests.md) is required validation,
+not implemented behavior. Test through real Milo tenancy, IAM, entitlement, and
+quota integrations with a persistent simulator.
 
-The end-to-end scenario uses two consumer projects competing for one provider
-machine. One claim binds while the other remains pending. The winner installs,
-reinstalls, and releases; the waiting consumer acquires the machine only after
-cleanup. The simulator persists state independently of Fleet. Tests restart each
-component, lose responses, and delay old workers to verify recovery.
+The primary scenario has two projects compete for one Machine. One claim binds,
+installs, reinstalls, and releases; the other waits until cleanup completes.
+Restart components, lose responses, and delay old workers throughout the scenario.
+The tests must prove tenant isolation, exclusive allocation, retained inputs,
+ordered revocation, safe network handoff, and cleanup before reuse.
 
-- **Projects reuse object names in `default`; clients forge context or recreate
-  projects/namespaces:** Isolate CRUD, list/watch, caches, and status; reject
-  forged context and stale UID work.
-- **Consumer admin lacks source use; two local principals have different
-  grants:** Deny unauthorized effects and source disclosure, including cached
-  summaries and watches.
-- **One profile serves multiple classes or projects:** Retain each local and
-  canonical identity; keep capacity and authorization scoped to the offering.
-- **Consumer copies a named profile or reuses its name:** Require the custom
-  path or protected publication provenance; reject UID substitution.
-- **Custom profiles are disabled, unsupported, or temporarily unverifiable:**
-  Report the specific admission result without reserving capacity or purchasing.
-- **Profiles require physical cores, per-device GPU memory, or multiple disks:**
-  Reject aggregate-only matches, double-counted devices, and missing or stale
-  observations. Distinguish supported configurations from available supply.
-- **Profile deletion, catalog changes, or hardware drift:** Order pending
-  admission against invalidation; retain active requirements, assigned hardware,
-  exact execution inputs, and cleanup targets.
-- **Inactive entitlement or suspension:** Block new work while preserving
-  authorized cleanup.
-- **Two projects, overlapping classes, or duplicate enrollment target one
-  asset:** Commit one binding; reject duplicate supply.
-- **Replicas reconcile one claim after lost quota/binding responses:** Recover
-  one hold and one machine; repair status from private state.
-- **Revocation, deletion, suspension, quota loss, or policy withdrawal races
-  binding:** Enforce the defined admission order through real integrations.
-- **Quota denial or interrupted preparation:** Produce no effects; settle the
-  same hold before aborting.
-- **Existing project networks, namespace reuse, or a forged foreign reference:**
-  Check network-use permission in the referenced namespace, pin exact lifetimes,
-  and reject substitution or cross-project access.
-- **Multiple interfaces or an unsupported address family:** Report results per
-  interface; withhold network readiness until every requested requirement passes.
-- **Provider IP without Galactic membership, or preparation without programming:**
-  Do not report the interface attached merely because an address or backing
-  object exists.
-- **Lost network responses:** Recover the same assignments without allocating twice.
-- **Assignment drift or stale network evidence during installation:** Block
-  affected effects and readiness; never replace retained execution inputs.
-- **Reinstall, network deletion, or release with a reserved address:** Preserve
-  valid assignments through reinstall; verify old-binding detachment and address
-  obligations before reuse. Machine release must preserve the shared Network.
-- **Initial Installation or network input arrives after the claim:** Resolve
-  dependencies without deadlock or premature activation.
-- **Reinstalls share a predecessor; inputs change or names recur:** Admit one
-  operation and execute only retained identities/content.
-- **Executor response disappears or a retired worker returns after reuse:**
-  Recover the existing operation; reject stale effects and callbacks.
-- **Installation fails after partial effects:** Retain a dirty/unknown
-  incarnation; resume recovery or release.
-- **Claim, namespace, class, or project disappears during work:** Retain
-  authority and obligations; complete cleanup or quarantine.
-- **Cleanup or quota-release acknowledgment remains unknown:** Keep the machine
-  unavailable.
-- **Consumer deletes a completed Installation:** Preserve the OS, binding,
-  initial gate, and predecessor identity.
-- **Fleet, project API, simulator, or backing store restarts/restores:** Recover
-  the same identities; verify fences before resuming effects.
-
-### Source evidence
-
-The review checked these source revisions on 2026-10-27. Source behavior does not
-establish which versions Datum deploys.
-
-- **`milo-os/milo`:** `cd469ff4235c0847d9863a132bdb58f3ff8d3845`
-- **`milo-os/ipam`:** `ed3f54151a3f0a08014caec150567ed1012007f2`
-- **`milo-os/service-catalog`:** `de3cc40518254f832ad4db4aa104e37bf4ddfe2c`
-- **`datum-cloud/network-services-operator`:** `d7fdc43f852450c447d4b7bb44b564c970582b1a`
-- **`datum-cloud/cloud`:** `cf31b2b71ded321ae95b411cd97765568aa05cde`
-
-The catalog provisioner's ownership check postdates the imported publication
-proposal. This enhancement uses that newer behavior and retains Fleet's separate
-provenance and source-use checks. The provider comparison uses public NetActuate
-and Servers.com API documentation reviewed on the same date; it does not verify
-live catalogs or adapter behavior.
-
-The networking source distinguishes consumer Networks and NetworkInterfaces
-from Galactic VPC backing resources. Its current Network admission permits new
-IPv6-only networks; address-family fields alone do not establish support. The
-Fleet interface schema above is proposed, not an existing networking API.
+[Source review](source-review.md) records the pinned integration evidence and
+provider comparisons. Those sources establish neither deployed versions nor
+qualified Fleet behavior.
 
 ## Production readiness review questionnaire
 
@@ -1708,8 +1439,6 @@ select the storage backend and deployment layout.
 [allocation]: ../../proposals/fleet-management/bare-metal-hardware.md
 [publication]: ../../proposals/fleet-management/capacity-publication.md
 [installation]: ../../proposals/fleet-management/os-configuration.md
-[milo-routing]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/server/filters/projects.go
-[milo-multicluster]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/multicluster-runtime/milo/provider.go
 [milo-policybinding]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/iam/v1alpha1/policybinding_types.go
 [milo-protected]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/iam/v1alpha1/protectedresource_types.go
 [milo-cleanup]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/internal/controllers/resourcemanager/project_controller.go
@@ -1721,12 +1450,6 @@ select the storage backend and deployment layout.
 [catalog-provisioner]: https://github.com/milo-os/service-catalog/blob/de3cc40518254f832ad4db4aa104e37bf4ddfe2c/internal/controller/provisioning_controller.go
 [catalog-entitlement]: https://github.com/milo-os/service-catalog/blob/de3cc40518254f832ad4db4aa104e37bf4ddfe2c/api/v1alpha1/serviceentitlement_types.go
 [template]: https://github.com/datum-cloud/enhancements/blob/370f8eb8a6b09890d829505ad6e5b7b6c5fa8356/enhancements/template/README.md
-
-[servers-options]: https://www.servers.com/docs/ebm/create-a-dedicated-server-via-public-api/
-[servers-create]: https://www.servers.com/docs/api-reference/dedicated-server/create-a-dedicated-server/
-[net-devices]: https://www.netactuate.com/docs/api/v2/dedicated-filter-devices
-[net-buy]: https://www.netactuate.com/docs/api/v2/dedicated-server-buy-build
-[net-build]: https://www.netactuate.com/docs/api/v2/dedicated-server-build
 
 [nso-network]: https://github.com/datum-cloud/network-services-operator/blob/d7fdc43f852450c447d4b7bb44b564c970582b1a/api/v1alpha/network_types.go
 [nso-interface]: https://github.com/datum-cloud/network-services-operator/blob/d7fdc43f852450c447d4b7bb44b564c970582b1a/api/v1alpha/networkinterface_types.go
