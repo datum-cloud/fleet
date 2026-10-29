@@ -525,6 +525,12 @@ status:
 
 ## Reinstallation predecessor
 
+This fragment belongs to a new Installation named `example-os-2`, in the same
+project and namespace as the claim. Its `spec.claimRef.name` remains `example`;
+its image and bootstrap references describe the new installation inputs. The
+claim's `initialInstallationRef` stays `example-os-1`. The predecessor pins the
+incarnation being replaced; it does not modify the earlier Installation.
+
 ```yaml
 # Name and UID identify the predecessor even after public deletion.
 # The UID prevents name reuse from substituting another incarnation.

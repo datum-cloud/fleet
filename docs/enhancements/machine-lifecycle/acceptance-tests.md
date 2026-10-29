@@ -53,6 +53,16 @@ component, lose responses, and delay old workers to verify recovery.
 - **Reinstall, network deletion, or release with a reserved address:** Preserve
   valid assignments through reinstall; verify old-binding detachment and address
   obligations before reuse. Machine release must preserve the shared Network.
+- **Consumer lists requested and allocated machines:** Return its claims with
+  pending or bound state and sanitized allocation details, without requiring
+  access to provider Machines.
+- **Claim omits the initial Installation:** Allow prepared, powered-off handoff
+  once the other gates pass; omit current installation status. Admit a later
+  first Installation against the same claim with predecessor `None`.
+- **Consumer reinstalls an allocated machine:** Create a new Installation with
+  the same claim and the prior incarnation's name and UID. Preserve the binding
+  and `initialInstallationRef`; report disruptive work through claim readiness
+  and the new request's status. Reject edits to an existing Installation's spec.
 - **Initial Installation or network input arrives after the claim:** Resolve
   dependencies without deadlock or premature activation.
 - **Reinstalls share a predecessor; inputs change or names recur:** Admit one

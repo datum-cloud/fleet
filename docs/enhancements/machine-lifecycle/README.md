@@ -8,6 +8,7 @@ stage: alpha
 - [Summary](#summary)
 - [Motivation](#motivation)
 - [Proposal](#proposal)
+  - [Managing allocated machines](#managing-allocated-machines)
   - [Resource relationships across projects](#resource-relationships-across-projects)
 - [Design details](#design-details)
   - [API design](#api-design)
@@ -76,8 +77,8 @@ cleaning, and a supported non-Talos OS. Simulated results do not satisfy that ga
 ## Proposal
 
 Fleet will let providers offer machine capacity to authorized projects.
-Consumers will discover that capacity, request exclusive use, install an OS,
-control power, and release the machine in their own project. Providers
+Consumers will discover that capacity, request exclusive use, optionally install
+an OS, control power, and release the machine in their own project. Providers
 will retain ownership of the machines throughout that lifecycle.
 
 ### User stories
@@ -103,6 +104,36 @@ will retain ownership of the machines throughout that lifecycle.
   available for recovery.
 - A service operator recovers interrupted work without repeating an unknown
   destructive action or losing cleanup obligations.
+
+### Managing allocated machines
+
+Consumers list MachineClaims in their project to see requested and allocated
+machines. A pending claim represents a request; a bound claim represents an
+exclusive allocation. The claim is the management handle throughout that
+allocation. It exposes assigned hardware, location, network addresses, power,
+readiness, and the current installation. The physical Machine belongs to the
+provider project; consumers do not need access to provider inventory.
+
+An Installation requests one OS installation with an image and optional bootstrap
+configuration. It is separate from the allocation and reports the progress and
+result of that work. Consumers can choose either handoff:
+
+- **Allocate only:** Omit the claim's `initialInstallationRef`. Fleet hands over
+  a prepared machine powered off, without promising an installed, bootable OS.
+  A later Installation can install the first OS on that same allocation.
+- **Allocate and install:** Set `initialInstallationRef` to the initial
+  Installation. Fleet waits for that request to succeed, along with the other
+  handoff requirements, before reporting the claim ready.
+
+Reinstalling creates a new Installation against the same claim and physical
+machine. The new request identifies the installation it replaces and supplies
+its own image and bootstrap inputs. The consumer leaves the claim's
+`initialInstallationRef` unchanged. Fleet retains the allocation while the
+reinstallation runs and reports progress on the new request.
+
+Deleting a claim starts release and cleanup. Deleting a completed Installation
+does not uninstall the OS or release the machine. Installation history records
+past outcomes; it does not continuously manage the running OS.
 
 ### Resource relationships across projects
 
@@ -478,7 +509,8 @@ obligations before Machine deletion.
 
 #### MachineClaim
 
-The consumer creates the claim in its own project.
+The consumer creates and lists claims in its own project. The claim remains the
+management handle after binding; its status describes the allocated machine.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -686,13 +718,19 @@ Provider management addresses, provisioning networks, and credentials stay
 private. [Galactic VPC API integration](#galactic-vpc-api-integration) defines the
 boundary with the existing network resources.
 
-A blank claim starts powered off and omits the initial Installation. A later
-Installation uses predecessor `None`. A bound claim never moves to another
-Machine. Owner references cannot replace Fleet's release protocol.
+For allocation without installation, the claim omits `initialInstallationRef`
+and starts with `powerState: Off`, the default. Its `currentInstallationRef`
+remains absent until an Installation succeeds. A later first Installation
+references this claim and uses predecessor `None`; it does not change the claim's
+initial gate. A bound claim never moves to another Machine. Owner references
+cannot replace Fleet's release protocol.
 
 #### Installation
 
-The consumer creates an Installation for its claim.
+The consumer optionally creates an Installation in the claim's project and
+namespace. Each request has an immutable spec. Changing the image or bootstrap
+configuration requires a new Installation, not an edit to a completed request.
+The following example requests the first OS installation.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -735,7 +773,10 @@ status:
     - {type: Ready, status: "True"}
 ```
 
-A reinstall identifies the prior incarnation in its predecessor condition:
+To reinstall the example allocation, the consumer creates `example-os-2` with
+`spec.claimRef.name: example`, the desired image and bootstrap configuration, and
+the following `spec.expectedPredecessor`. Fleet checks the prior incarnation's
+name and UID so the request cannot replace an unexpected installation.
 
 ```yaml
 # Name and UID identify the predecessor even after public deletion.
@@ -747,8 +788,10 @@ expectedPredecessor:
   uid: 00000000-0000-4000-8000-000000000001
 ```
 
-Two requests with the same predecessor cannot both execute. Only the claim's
-named initial Installation can satisfy its initial gate.
+Two requests with the same predecessor cannot both execute. The claim's
+`initialInstallationRef` remains `example-os-1`; it identifies only the initial
+handoff requirement. Later requests select the claim through their own
+`claimRef`. Only the named initial Installation can satisfy the initial gate.
 
 Operator-installed, project-scoped image fixtures supply immutable artifacts,
 permissions, hardware compatibility, and bootstrap behavior. They accept no
@@ -811,9 +854,10 @@ The resources report different aspects of the lifecycle:
   initial inputs, including a supported class/profile/location combination.
   `Bound` means a private reservation committed. `NetworkReady` requires fresh
   assignment and attachment evidence for the binding. It does not prove that
-  the guest applied the configuration. `Ready` also requires the current
-  installation, network handoff, and power prerequisites to pass. A blank
-  powered-off claim can also become ready. `Releasing` remains true until cleanup
+  the guest applied the configuration. `Ready` requires network handoff and
+  power prerequisites, plus a verified installation when installation is
+  required. An allocation-only claim can become ready powered off without an
+  Installation; that readiness does not promise a bootable OS. `Releasing` remains true until cleanup
   and quota release finish.
 - **Installation:** `Accepted` means Fleet admitted an operation with exact
   inputs. `Executing` describes work in progress; `False` alone does not mean
