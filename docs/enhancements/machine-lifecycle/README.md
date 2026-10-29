@@ -126,9 +126,9 @@ result of that work. Consumers can choose either handoff:
   handoff requirements, before reporting the claim ready.
 
 Reinstalling creates a new Installation against the same claim and physical
-machine. The new request identifies the installation it replaces and supplies
-its own image and bootstrap inputs. The consumer leaves the claim's
-`initialInstallationRef` unchanged. Fleet retains the allocation while the
+machine. The new request supplies the claim's current installation revision as a
+precondition, along with its own image and bootstrap inputs. The consumer leaves
+the claim's `initialInstallationRef` unchanged. Fleet retains the allocation while the
 reinstallation runs and reports progress on the new request.
 
 Deleting a claim starts release and cleanup. Deleting a completed Installation
@@ -212,9 +212,18 @@ points. Specs are complete; repeated condition fields and some observed hardware
 are omitted. [Complete responses](api-examples.md) preserve every example field.
 The [status contract](#status-contract) defines the common condition structure.
 
-The server assigns UIDs and generations; the projector alone writes `/status`.
-Example identifiers and timestamps are synthetic, and validity windows do not
-establish production freshness limits.
+Public references use names, with namespace, kind, or provider project where
+needed to resolve scope. Callers do not supply resource UIDs. Fleet resolves each
+reference under current permissions and retains project, namespace, and resource
+UIDs internally to prevent name reuse from changing accepted work. Resolved
+status references also use names; they do not authorize future effects. Standard
+server-managed Kubernetes metadata remains available, but these examples omit
+`metadata.uid` and no Fleet reference requires it.
+
+The projector alone writes `/status`. Installation revisions provide replacement
+preconditions; they are not UIDs, object generations, or Kubernetes resource
+versions. Example identifiers and timestamps are synthetic, and validity windows
+do not establish production freshness limits.
 
 #### MachineClass
 
@@ -232,12 +241,12 @@ metadata:
 # The definition owns offering policy; profiles own hardware requirements.
 # Its mode cannot change after creation.
 spec:
-  # Named profiles identify approved provider-local contracts by incarnation.
+  # Named profiles select provider-local contracts by name.
+  # Fleet retains their resolved identities internally.
   # Custom profiles require a separate opt-in and provider validation.
   profilePolicy:
     allowedProfiles:
       - name: accelerated-16c-64g
-        uid: 00000000-0000-4000-8000-000000000003
     customProfiles:
       enabled: false
 
@@ -278,8 +287,11 @@ status:
 are disabled by default. The provider contract validates custom requirements
 against approved configurations and locations; enabling them does not accept
 arbitrary combinations. An offering must permit at least one of these paths.
-A missing named profile blocks that profile's use; a recreated name has a new
-UID and needs explicit approval.
+Fleet pins each allowed profile's lifetime internally. A missing or recreated
+profile blocks that entry; a replacement does not inherit approval from its
+name. The provider can use a new profile name, or remove and re-add the entry in
+separate accepted class revisions. Existing allocations keep their accepted
+requirements.
 
 Definitions contain no audience grant, quota, image, or network policy. The
 publication service writes the consumer's local reference:
@@ -291,7 +303,7 @@ kind: MachineClass
 metadata:
   name: standard
 # The immutable source keeps the provider definition authoritative.
-# Fleet resolves the provider Project UID and one definition; a reference
+# Fleet resolves the provider project and definition internally; a reference
 # cannot become a definition or override its policy.
 spec:
   source:
@@ -308,11 +320,10 @@ status:
   validUntil: "2026-10-27T12:05:00Z"
   resolvedClass:
     # Publication maps allowed provider profiles to protected local copies.
-    # These local identities do not expose provider inventory or grant use.
+    # These local names do not expose provider inventory or grant use.
     profilePolicy:
       allowedProfiles:
         - name: accelerated-16c-64g
-          uid: 00000000-0000-4000-8000-000000000002
       customProfiles:
         enabled: false
     access:
@@ -324,7 +335,7 @@ status:
 
 Resolution follows one hop to a definition and rejects cycles, chains, and mixed
 modes. Definition edits create revisions for future admissions; accepted claims
-retain the exact source UIDs and requirements.
+retain the exact source identities and requirements internally.
 
 Reference status exposes the public offering under the [publication and access
 rules](#authorization-and-publication). Its capabilities and freshness do not
@@ -335,14 +346,13 @@ promise capacity.
 A profile is a project-wide, immutable hardware contract. Providers define named
 profiles; the publication service copies their requirements into consumer
 projects. Consumers create custom profiles using the same schema. The example
-shows a published consumer copy; its provider source has a different UID.
+shows a published consumer copy; Fleet retains its provider provenance internally.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineProfile
 metadata:
   name: accelerated-16c-64g
-  uid: 00000000-0000-4000-8000-000000000002
 # Immutable requirements can serve several offerings without coupling hardware
 # choices to capacity ownership, price, location, or provisioning credentials.
 spec:
@@ -411,8 +421,8 @@ example identifies an owned physical asset in the provider project.
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Machine
-# The Machine UID identifies provider capacity independently of consumer claims.
-# Replacement hardware gets a new UID; labels only group capacity for selection.
+# Machine identity is independent of consumer allocations. Replacement hardware
+# gets a new resource lifetime; labels only group capacity for selection.
 metadata:
   name: lab-server-01
   namespace: infra-ops
@@ -560,7 +570,6 @@ status:
   # They survive profile deletion and do not claim to be live health evidence.
   acceptedProfileRef:
     name: accelerated-16c-64g
-    uid: 00000000-0000-4000-8000-000000000002
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
     # Selected fields from the same hardware shape shown on Machine.
@@ -571,10 +580,12 @@ status:
         cores: 24
       memory:
         capacity: "128Gi"
-  # The retained incarnation survives deletion of its public Installation.
+  # This name identifies the successful request for display, not replacement authority.
   currentInstallationRef:
     name: example-os-1
-    uid: 00000000-0000-4000-8000-000000000001
+  # The opaque revision guards replacement of the current installation state.
+  # It belongs to this allocation and remains independent of request names.
+  installationRevision: installation-revision-example-1
   placement:
     locationRef: {name: lab}
   # Networking supplies this current assignment view. The revision identifies
@@ -585,14 +596,13 @@ status:
     validUntil: "2026-10-27T12:05:00Z"
     interfaces:
       - name: primary
-        # The accepted project Network UID prevents a recreated name from
-        # changing membership. NSO's location-specific resource IDs stay private.
+        # Status shows the accepted Network by name. Fleet pins its lifetime
+        # internally; name reuse cannot redirect this allocation.
         network:
           apiGroup: networking.datumapis.com
           kind: Network
           namespace: default
           name: production
-          uid: 00000000-0000-4000-8000-000000000005
         macAddress: "02:00:00:00:00:10"
         mtu: 1440
         # Addresses retain networking's CIDR and primary-address semantics.
@@ -632,13 +642,13 @@ status:
 
 A superseded power intent generation cannot dispatch new work. Creating a claim
 captures protected caller identity but reserves no capacity. Resolution pins
-dependency UIDs and content; missing dependencies leave the claim pending.
-Later name reuse cannot replace a pinned UID.
+dependency lifetimes and content internally; missing dependencies leave the claim
+pending. Later name reuse cannot replace a retained dependency.
 
-The coordinator resolves both references within the consumer project and pins
-their UIDs. The named path requires a profile listed by the provider class:
-either that provider-local UID or a protected published copy of it. Matching
-names or copied requirements do not establish that relationship. Other profiles,
+The coordinator resolves both names within the consumer project and pins their
+UIDs internally. The named path requires a profile approved by the provider
+class: either the retained provider-local profile or a protected published copy.
+Matching names or copied requirements do not establish that relationship. Other profiles,
 including those published by another provider, take the custom path. They can
 bind only when the class permits custom profiles and the adapter accepts the
 complete configuration. Publication permissions still apply to their sources.
@@ -705,7 +715,8 @@ Per-interface `Allocated`, `Prepared`, and `Programmed` preserve NSO's condition
 meanings. Allocation does not prove attachment; preparation supplies inputs for
 installation without waiting for the result that installation helps produce.
 `Programmed=True` requires networking evidence for this interface, accepted
-Network UID, and allocation. Before resolution, status omits unresolved identities
+Network lifetime, and allocation. Fleet keeps that identity internal and exposes
+the accepted name. Before resolution, status omits unresolved references
 and addresses. A known block yields `False`; missing or stale evidence yields
 `Unknown`. Conditions observe the MachineClaim generation and share
 `status.network` freshness. `NetworkReady` requires all requested interfaces to
@@ -739,21 +750,20 @@ kind: Installation
 # initialInstallationRef identifies the request that satisfies its initial gate.
 metadata:
   name: example-os-1
-  uid: 00000000-0000-4000-8000-000000000001
   namespace: default
 # The entire spec is immutable so recovery uses the same authorized inputs.
 # Claim and approved image are required. Fleet checks install and image-use
-# permissions and pins the Claim UID, image artifacts, and digests.
+# permissions and internally pins the claim lifetime, image artifacts, and digests.
 spec:
   claimRef: {name: example}
   # This required precondition prevents competing installs from replacing
-  # an unexpected OS. None means the allocation has no installed incarnation.
+  # an unexpected OS. None identifies a blank allocation with no admitted install.
   expectedPredecessor:
     type: None
   imageRef: {name: qualified-linux}
 
   # Optional bootstrap data comes from a Secret in this namespace under
-  # explicit caller authority. Protected copies of its UID, digest, and bytes
+  # explicit caller authority. Protected copies of its identity, digest, and bytes
   # preserve the accepted input through Secret changes or deletion.
   bootstrapConfigRef: {name: example-bootstrap}
 
@@ -762,6 +772,8 @@ spec:
 status:
   bindingID: binding-example
   operationID: operation-example
+  # This is the historical result revision. The claim reports the current one.
+  installationRevision: installation-revision-example-1
   # The retained revision ties the installed configuration to exact assignments.
   # Later network observations cannot rewrite this installation's inputs.
   resolvedNetworkRevision: network-revision-example
@@ -775,23 +787,50 @@ status:
 
 To reinstall the example allocation, the consumer creates `example-os-2` with
 `spec.claimRef.name: example`, the desired image and bootstrap configuration, and
-the following `spec.expectedPredecessor`. Fleet checks the prior incarnation's
-name and UID so the request cannot replace an unexpected installation.
+the following `spec.expectedPredecessor`. Its revision comes from the claim's
+`status.installationRevision`, not from an earlier Installation's name or UID.
 
 ```yaml
-# Name and UID identify the predecessor even after public deletion.
-# The UID prevents name reuse from substituting another incarnation.
-# This example uses a synthetic UID.
+# The claim's current installation revision guards this replacement.
+# It cannot authorize work on another allocation or an older installation state.
 expectedPredecessor:
-  type: Installation
-  name: example-os-1
-  uid: 00000000-0000-4000-8000-000000000001
+  type: Revision
+  revision: installation-revision-example-1
 ```
 
-Two requests with the same predecessor cannot both execute. The claim's
-`initialInstallationRef` remains `example-os-1`; it identifies only the initial
-handoff requirement. Later requests select the claim through their own
-`claimRef`. Only the named initial Installation can satisfy the initial gate.
+`expectedPredecessor` is required and has two forms: `None`, with no additional
+fields, or `Revision`, with one nonempty opaque `revision`. A predecessor name
+or UID is not part of the public schema. `None` is valid only for a verified
+blank allocation that has never admitted an installation.
+
+Fleet binds each revision to the exact claim lifetime, allocation, and verified
+installation state in provider-owned records. Tokens are unique and never reused,
+including after deletion, recreation, or restore. A token is a precondition, not
+permission: Fleet still checks install and image-use authority.
+
+Admission atomically compares and consumes the current revision, reserves the
+operation, and records exact inputs before dispatch. The first installation
+similarly consumes the allocation's `None` state. At most one request can be
+admitted from either state. Retries of that admitted request recover its existing
+operation; a different request with a stale, foreign, or consumed revision
+reports `Accepted=False` with `InstallationRevisionConflict` and causes no effects.
+Public status can lag this transaction; the retained record decides admission.
+
+While work is active or its outcome is unknown, the claim exposes no usable
+installation revision. On verified success, Fleet issues a fresh revision and
+updates the current Installation name. If a failure or cancellation proves that
+the operation is fenced, no effects occurred, and the prior state is intact,
+Fleet can issue a fresh revision for that unchanged state, including a still-blank
+machine. It never
+restores a consumed token or resets to `None`. Partial or uncertain effects
+require recovery of the existing operation or release before new work; they do
+not produce a replacement token. Revision issuance does not bypass the initial
+handoff gate.
+
+The claim's `initialInstallationRef` remains `example-os-1`; it identifies only
+the initial handoff requirement. Later requests select the claim through their own
+`claimRef`. Until the initial gate succeeds, Fleet admits only the retained
+initial request.
 
 Operator-installed, project-scoped image fixtures supply immutable artifacts,
 permissions, hardware compatibility, and bootstrap behavior. They accept no
@@ -799,16 +838,18 @@ arbitrary URLs. A future image catalog can implement this resolver contract.
 
 Before dispatch, the coordinator pins the binding, predecessor, image, bootstrap
 content, disk/interface targets, network prerequisites, and executor. On success,
-it atomically records the current incarnation and initial-gate completion.
-Partial destructive failure makes the incarnation dirty or unknown. Recovery
-resumes that operation or releases the claim; it cannot assume the old OS remains
-intact. Reinstallation can make an active claim unready without releasing its
-binding. Platform handoff makes no claim about guest or application health and
-grants no continuing ownership of a standalone OS.
+it atomically records the current incarnation, a fresh installation revision,
+and initial-gate completion when this is the named initial request.
+Reinstallation makes the claim unready during disruptive work while preserving
+its binding. Platform handoff makes no claim about guest or application health
+and grants no continuing ownership of a standalone OS.
 
 Deleting an unfinished Installation requests cancellation at a safe boundary.
 Deleting a completed one does not uninstall the OS, release capacity, or reset
-the initial gate. Private history preserves predecessor identity in both cases.
+the initial gate. Provider records retain predecessor identities and revision
+history independently of public Installation deletion. Names in
+`currentInstallationRef` describe the successful request; deleting or reusing that
+name cannot change the revision or select a different operation.
 
 #### Status contract
 
@@ -857,8 +898,8 @@ The resources report different aspects of the lifecycle:
   the guest applied the configuration. `Ready` requires network handoff and
   power prerequisites, plus a verified installation when installation is
   required. An allocation-only claim can become ready powered off without an
-  Installation; that readiness does not promise a bootable OS. `Releasing` remains true until cleanup
-  and quota release finish.
+  Installation; that readiness does not promise a bootable OS. `Releasing`
+  remains true until cleanup and quota release finish.
 - **Installation:** `Accepted` means Fleet admitted an operation with exact
   inputs. `Executing` describes work in progress; `False` alone does not mean
   success. `Ready=True` records verified installation and platform handoff.
@@ -869,6 +910,10 @@ A claim omits `bindingID`, `placement`, and `allocatedHardware` before binding
 and omits `acceptedProfileRef` until admission retains the profile. It omits
 `currentInstallationRef` before an installation succeeds. An Installation omits
 operation correlation and the resolved digest until admission retains them.
+`Installation.status.installationRevision` appears on verified success and
+records that historical result; it does not prove that revision is still current.
+The claim reports the usable revision for the current verified state and omits
+it before any admitted installation or while work or recovery blocks replacement.
 `power.state` is `On`, `Off`, or `Unknown`; intent changes do not change the
 observation until fresh executor evidence arrives. `network` appears when the
 resolver evaluates the binding; unassigned address fields remain absent.
@@ -886,7 +931,8 @@ Private history still preserves earlier identities for recovery.
 
 The projector publishes `DependenciesPending`, `AuthorizationUnavailable`,
 `SourceUnavailable`, `ProfileUnsupported`, `ProviderUnavailable`, `QuotaPending`,
-`QuotaDenied`, `InsufficientCapacity`, `PredecessorMismatch`, `OutcomeUnknown`,
+`QuotaDenied`, `InsufficientCapacity`, `InstallationRevisionConflict`,
+`OutcomeUnknown`,
 `NetworkPending`, `NetworkConfigurationChanged`, or `CleanupBlocked` where
 applicable.
 A status write, absent condition, or stale `Ready=True` cannot authorize effects
@@ -907,7 +953,7 @@ unscoped global list.
 The project name selects the route. Fleet resolves the root ResourceManager
 Project UID to identify its lifetime. `user.Info.UID` identifies the caller, not
 the project. The [IPAM tenancy implementation][ipam-tenancy] follows this
-separation. Fleet uses these keys:
+separation. Fleet uses these internal keys:
 
 ```text
 ProjectKey = (Milo authority ID, root Project UID)
@@ -1061,8 +1107,8 @@ The record retains these field groups:
   revision, hardware snapshot, and logical-to-physical device mapping.
 - **Authority:** principal UID, authorization decision, entitlement/admission
   revisions, quota-hold UID/state, and release authority.
-- **Lifecycle:** current incarnation, initial gate, active operation ID, network
-  Namespace/UIDs, interface and assignment identities, network revision, cleaning
+- **Lifecycle:** current incarnation, installation revision and consumed tokens,
+  initial gate, active operation ID, network Namespace/UIDs, interface and assignment identities, network revision, cleaning
   policy, remaining obligations, evidence, and retired identities.
 
 Provider-project placement does not supply transaction or fencing guarantees.
@@ -1075,7 +1121,8 @@ binding epoch; retirement advances the fence before another consumer can act.
 #### Operation record
 
 Each operation retains its stable ID/idempotency key, binding, Installation UID
-or power generation, predecessor, exact inputs, permitted effects and targets,
+or power generation, internally resolved predecessor identity, consumed and
+resulting installation revisions, exact inputs, permitted effects and targets,
 executor/fencing token, dispatch correlation, cancellation boundary, outcome
 evidence, and remaining obligations.
 
@@ -1289,7 +1336,8 @@ the normal owner or location of reservations and operations.
 
 Retain records while operations, cleanup, predecessor checks, or replay risks
 need them. Before replaying work after a database restore, reconcile executor
-fences and quota state. Unresolved divergence blocks effects.
+fences, installation revision consumption, and quota state. Unresolved divergence
+blocks effects; restored status cannot make an old revision usable again.
 
 ### Implementation decisions
 

@@ -25,12 +25,12 @@ metadata:
 # The definition owns offering policy; profiles own hardware requirements.
 # Its mode cannot change after creation.
 spec:
-  # Named profiles identify approved provider-local contracts by incarnation.
+  # Named profiles select provider-local contracts by name.
+  # Fleet retains their resolved identities internally.
   # Custom profiles require a separate opt-in and provider validation.
   profilePolicy:
     allowedProfiles:
       - name: accelerated-16c-64g
-        uid: 00000000-0000-4000-8000-000000000003
     customProfiles:
       enabled: false
 
@@ -82,7 +82,7 @@ metadata:
   generation: 1
   name: standard
 # The immutable source keeps the provider definition authoritative.
-# Fleet resolves the provider Project UID and one definition; a reference
+# Fleet resolves the provider project and definition internally; a reference
 # cannot become a definition or override its policy.
 spec:
   source:
@@ -99,11 +99,10 @@ status:
   validUntil: "2026-10-27T12:05:00Z"
   resolvedClass:
     # Publication maps allowed provider profiles to protected local copies.
-    # These local identities do not expose provider inventory or grant use.
+    # These local names do not expose provider inventory or grant use.
     profilePolicy:
       allowedProfiles:
         - name: accelerated-16c-64g
-          uid: 00000000-0000-4000-8000-000000000002
       customProfiles:
         enabled: false
     access:
@@ -125,7 +124,6 @@ apiVersion: fleet.datumapis.com/v1alpha1
 kind: MachineProfile
 metadata:
   name: accelerated-16c-64g
-  uid: 00000000-0000-4000-8000-000000000002
   generation: 1
 # Immutable requirements can serve several offerings without coupling hardware
 # choices to capacity ownership, price, location, or provisioning credentials.
@@ -183,8 +181,8 @@ status:
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Machine
-# The Machine UID identifies provider capacity independently of consumer claims.
-# Replacement hardware gets a new UID; labels only group capacity for selection.
+# Machine identity is independent of consumer allocations. Replacement hardware
+# gets a new resource lifetime; labels only group capacity for selection.
 metadata:
   generation: 1
   name: lab-server-01
@@ -331,7 +329,6 @@ status:
   # They survive profile deletion and do not claim to be live health evidence.
   acceptedProfileRef:
     name: accelerated-16c-64g
-    uid: 00000000-0000-4000-8000-000000000002
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
     hardware:
@@ -361,10 +358,12 @@ status:
         - name: primary
           type: Ethernet
           speed: "25G"
-  # The retained incarnation survives deletion of its public Installation.
+  # This name identifies the successful request for display, not replacement authority.
   currentInstallationRef:
     name: example-os-1
-    uid: 00000000-0000-4000-8000-000000000001
+  # The opaque revision guards replacement of the current installation state.
+  # It belongs to this allocation and remains independent of request names.
+  installationRevision: installation-revision-example-1
   placement:
     locationRef:
       name: lab
@@ -376,14 +375,13 @@ status:
     validUntil: "2026-10-27T12:05:00Z"
     interfaces:
       - name: primary
-        # The accepted project Network UID prevents a recreated name from
-        # changing membership. NSO's location-specific resource IDs stay private.
+        # Status shows the accepted Network by name. Fleet pins its lifetime
+        # internally; name reuse cannot redirect this allocation.
         network:
           apiGroup: networking.datumapis.com
           kind: Network
           namespace: default
           name: production
-          uid: 00000000-0000-4000-8000-000000000005
         macAddress: "02:00:00:00:00:10"
         mtu: 1440
         # Addresses retain networking's CIDR and primary-address semantics.
@@ -471,23 +469,22 @@ kind: Installation
 metadata:
   generation: 1
   name: example-os-1
-  uid: 00000000-0000-4000-8000-000000000001
   namespace: default
 # The entire spec is immutable so recovery uses the same authorized inputs.
 # Claim and approved image are required. Fleet checks install and image-use
-# permissions and pins the Claim UID, image artifacts, and digests.
+# permissions and internally pins the claim lifetime, image artifacts, and digests.
 spec:
   claimRef:
     name: example
   # This required precondition prevents competing installs from replacing
-  # an unexpected OS. None means the allocation has no installed incarnation.
+  # an unexpected OS. None identifies a blank allocation with no admitted install.
   expectedPredecessor:
     type: None
   imageRef:
     name: qualified-linux
 
   # Optional bootstrap data comes from a Secret in this namespace under
-  # explicit caller authority. Protected copies of its UID, digest, and bytes
+  # explicit caller authority. Protected copies of its identity, digest, and bytes
   # preserve the accepted input through Secret changes or deletion.
   bootstrapConfigRef:
     name: example-bootstrap
@@ -497,6 +494,8 @@ spec:
 status:
   bindingID: binding-example
   operationID: operation-example
+  # This is the historical result revision. The claim reports the current one.
+  installationRevision: installation-revision-example-1
   # The retained revision ties the installed configuration to exact assignments.
   # Later network observations cannot rewrite this installation's inputs.
   resolvedNetworkRevision: network-revision-example
@@ -528,15 +527,15 @@ status:
 This fragment belongs to a new Installation named `example-os-2`, in the same
 project and namespace as the claim. Its `spec.claimRef.name` remains `example`;
 its image and bootstrap references describe the new installation inputs. The
-claim's `initialInstallationRef` stays `example-os-1`. The predecessor pins the
-incarnation being replaced; it does not modify the earlier Installation.
+claim's `initialInstallationRef` stays `example-os-1`. The revision comes from
+`MachineClaim.status.installationRevision`. Fleet consumes it when admitting the
+replacement; it does not modify the earlier Installation. See the
+[revision contract](README.md#installation) for conflicts, retries, and recovery.
 
 ```yaml
-# Name and UID identify the predecessor even after public deletion.
-# The UID prevents name reuse from substituting another incarnation.
-# This example uses a synthetic UID.
+# The claim's current installation revision guards this replacement.
+# It cannot authorize work on another allocation or an older installation state.
 expectedPredecessor:
-  type: Installation
-  name: example-os-1
-  uid: 00000000-0000-4000-8000-000000000001
+  type: Revision
+  revision: installation-revision-example-1
 ```
