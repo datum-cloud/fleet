@@ -61,8 +61,25 @@ component, lose responses, and delay old workers to verify recovery.
   Recover the existing operation; reject stale effects and callbacks.
 - **Installation fails after partial effects:** Retain a dirty/unknown
   incarnation; resume recovery or release.
-- **Claim, namespace, class, or project disappears during work:** Retain
-  authority and obligations; complete cleanup or quarantine.
+- **Consumer claim, namespace, class, or project disappears during work:**
+  Preserve reservations, operations, and required inputs in the provider project;
+  complete cleanup or quarantine without reconstructing authority from status.
+- **Provider retirement races preparation, quota acquisition, binding, or operation
+  admission:** Order the transition. Either reject new work or retain its
+  obligations before retirement can proceed.
+- **Provider project or namespace deletion, record deletion, or finalizer removal
+  is requested while obligations remain:** Reject bypass attempts by ordinary
+  provider administrators. Keep records, artifacts, credentials, quota anchors,
+  cleanup permissions, and the project API available; do not wipe active machines
+  merely because retirement was requested.
+- **Provider retirement encounters unknown operations, quarantine, or unsettled
+  quota:** Keep the deletion guard closed. After authorized release and verified
+  cleanup, retire enrollment and execution authority, satisfy history retention,
+  and allow purge in the defined order. Exercise the same-project consumer case.
+- **Provider API outage or forced storage loss:** Never treat absence as release.
+  Restore exact identities and retained state, reconcile external executor and
+  quota evidence, and reject stale work before resuming. Unresolved recovery
+  blocks effects and deletion.
 - **Cleanup or quota-release acknowledgment remains unknown:** Keep the machine
   unavailable.
 - **Consumer deletes a completed Installation:** Preserve the OS, binding,
