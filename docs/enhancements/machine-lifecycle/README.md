@@ -277,8 +277,6 @@ spec:
 # Acceptance validates the offering; it does not reserve or promise capacity.
 status:
   evaluatedRevision: class-revision-example
-  observedAt: "2026-10-27T12:00:00Z"
-  validUntil: "2026-10-27T12:05:00Z"
   conditions:
     - {type: Accepted, status: "True"}
 ```
@@ -313,11 +311,9 @@ spec:
 # The projector exposes only the authorized public offering. Private source
 # mappings, selectors, provider configuration, and other consumers stay private.
 status:
-  # Revision and validity identify the evaluated offering, independently of
-  # this reference object's generation. They do not grant source-use permission.
+  # The revision identifies the evaluated offering independently of this
+  # reference object's generation. It does not grant source-use permission.
   evaluatedRevision: class-revision-example
-  observedAt: "2026-10-27T12:00:00Z"
-  validUntil: "2026-10-27T12:05:00Z"
   resolvedClass:
     # Publication maps allowed provider profiles to protected local copies.
     # These local names do not expose provider inventory or grant use.
@@ -338,8 +334,9 @@ modes. Definition edits create revisions for future admissions; accepted claims
 retain the exact source identities and requirements internally.
 
 Reference status exposes the public offering under the [publication and access
-rules](#authorization-and-publication). Its capabilities and freshness do not
-promise capacity.
+rules](#authorization-and-publication). It does not promise capacity. Fleet
+checks current offering policy and authorization when admitting a claim, then
+retains the accepted revision and inputs internally.
 
 #### MachineProfile
 
@@ -872,8 +869,9 @@ its `reason` identifies the outcome, and its bounded `message` explains it.
 Status can be empty before reconciliation; an absent condition means `Unknown`.
 
 An unchanged spec can acquire new dependency revisions or stale evidence.
-`observedAt` records an observation, and `validUntil` bounds its validity under
-the relevant evidence policy. A matching generation alone does not prove
+For Machine evidence and claim network and power observations, `observedAt`
+records an observation, and `validUntil` bounds its validity under the relevant
+evidence policy. A matching generation alone does not prove
 freshness. Missing, expired, or unverifiable evidence yields `Unknown` for the
 facts that depend on it. Readers also check validity when the projector cannot
 refresh status.

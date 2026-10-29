@@ -61,8 +61,6 @@ spec:
 # Acceptance validates the offering; it does not reserve or promise capacity.
 status:
   evaluatedRevision: class-revision-example
-  observedAt: "2026-10-27T12:00:00Z"
-  validUntil: "2026-10-27T12:05:00Z"
   conditions:
     - type: Accepted
       status: "True"
@@ -92,11 +90,9 @@ spec:
 # The projector exposes only the authorized public offering. Private source
 # mappings, selectors, provider configuration, and other consumers stay private.
 status:
-  # Revision and validity identify the evaluated offering, independently of
-  # this reference object's generation. They do not grant source-use permission.
+  # The revision identifies the evaluated offering independently of this
+  # reference object's generation. It does not grant source-use permission.
   evaluatedRevision: class-revision-example
-  observedAt: "2026-10-27T12:00:00Z"
-  validUntil: "2026-10-27T12:05:00Z"
   resolvedClass:
     # Publication maps allowed provider profiles to protected local copies.
     # These local names do not expose provider inventory or grant use.
