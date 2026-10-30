@@ -27,7 +27,7 @@ metadata:
 spec:
   # Named profiles select provider-local contracts by name.
   # Fleet retains their resolved identities internally.
-  # Custom profiles require a separate opt-in and provider validation.
+  # Custom profiles default to disabled and require provider validation.
   profilePolicy:
     allowedProfiles:
       - name: accelerated-16c-64g
@@ -317,6 +317,7 @@ status:
   # They survive profile deletion and do not claim to be live health evidence.
   acceptedProfileRef:
     name: accelerated-16c-64g
+  # The snapshot retains its observation time and does not expire.
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
     hardware:
@@ -406,7 +407,7 @@ status:
             lastTransitionTime: "2026-10-27T12:00:00Z"
             reason: AttachmentVerified
             message: "Networking verified this interface on the selected network."
-  # Power reports observed state independently of spec.powerState intent.
+  # Observed power is On, Off, or Unknown, independently of spec.powerState intent.
   # Fleet reports Unknown when it cannot verify the state from current evidence.
   power:
     state: "On"

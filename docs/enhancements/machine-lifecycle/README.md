@@ -203,33 +203,25 @@ pending, cancellation, and recovery behavior. Review assignments remain open.
 
 ### API design
 
-All five kinds use the proposed `fleet.datumapis.com/v1alpha1` API and a status
-subresource. The server applies defaults before capturing a request digest and
-rejects unknown behavioral fields or unsupported required capabilities.
+The server applies defaults before capturing the request digest and rejects
+unknown behavioral fields or unsupported required capabilities. The projector
+alone writes status.
+Examples show selected fields; [complete responses](api-examples.md) include all
+condition fields and hardware details. Identifiers and timestamps are synthetic.
 
-The examples show selected fields from proposed responses at different lifecycle
-points. Specs are complete; repeated condition fields and some observed hardware
-are omitted. [Complete responses](api-examples.md) preserve every example field.
-The [status contract](#status-contract) defines the common condition structure.
+Public references use scoped names. Fleet resolves them under current permissions
+and retains project, namespace, and resource UIDs internally. Deleting or reusing
+a name cannot replace an accepted dependency. Standard Kubernetes metadata remains
+available, but no Fleet reference requires a caller-supplied UID.
 
-Public references use names, with namespace, kind, or provider project where
-needed to resolve scope. Callers do not supply resource UIDs. Fleet resolves each
-reference under current permissions and retains project, namespace, and resource
-UIDs internally to prevent name reuse from changing accepted work. Resolved
-status references also use names; they do not authorize future effects. Standard
-server-managed Kubernetes metadata remains available, but these examples omit
-`metadata.uid` and no Fleet reference requires it.
-
-The projector alone writes `/status`. Installation revisions provide replacement
-preconditions; they are not UIDs, object generations, or Kubernetes resource
-versions. Example identifiers and timestamps are synthetic.
+Installation revisions guard replacement of an allocation's installation state.
+They are separate from resource identity, generation, and Kubernetes resource
+version. Public status never grants permission to perform effects.
 
 #### MachineClass
 
-The provider operator writes the definition in the provider project. This
-example describes an owned bare-metal offering. Provider type names come from
-the [bare-metal proposal][allocation]; the simulator resolves private fixtures
-without adding those provider APIs to this enhancement.
+Provider operators own definitions; the publication service owns consumer
+references. The example uses provider types from the [bare-metal proposal][allocation].
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -242,7 +234,7 @@ metadata:
 spec:
   # Named profiles select provider-local contracts by name.
   # Fleet retains their resolved identities internally.
-  # Custom profiles require a separate opt-in and provider validation.
+  # Custom profiles default to disabled and require provider validation.
   profilePolicy:
     allowedProfiles:
       - name: accelerated-16c-64g
@@ -280,18 +272,16 @@ status:
     - {type: Accepted, status: "True"}
 ```
 
-`profilePolicy` allows named profiles, custom profiles, or both. Custom profiles
-are disabled by default. The provider contract validates custom requirements
-against approved configurations and locations; enabling them does not accept
-arbitrary combinations. An offering must permit at least one of these paths.
-Fleet pins each allowed profile's lifetime internally. A missing or recreated
-profile blocks that entry; a replacement does not inherit approval from its
-name. The provider can use a new profile name, or remove and re-add the entry in
-separate accepted class revisions. Existing allocations keep their accepted
-requirements.
+An offering must allow named profiles, custom profiles, or both. Enabling custom
+profiles still requires provider validation of the complete configuration at the
+requested location.
 
-Definitions contain no audience grant, quota, image, or network policy. The
-publication service writes the consumer's local reference:
+Approval applies to a profile's lifetime. A missing or recreated profile blocks
+its entry. The provider must select a new name or remove and re-add the entry in
+separate accepted class revisions to approve a replacement.
+
+Publication, quota, image, and network policy remain separate from the definition.
+The publication service creates the consumer reference:
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -329,20 +319,16 @@ status:
 ```
 
 Resolution follows one hop to a definition and rejects cycles, chains, and mixed
-modes. Definition edits create revisions for future admissions; accepted claims
-retain the exact source identities and requirements internally.
-
-Reference status exposes the public offering under the [publication and access
-rules](#authorization-and-publication). It does not promise capacity. Fleet
-checks current offering policy and authorization when admitting a claim, then
-retains the accepted revision and inputs internally.
+modes. Fleet checks current offering policy and authorization at claim admission;
+accepted claims retain the source identities, revision, and requirements through
+later edits. [Publication and access rules](#authorization-and-publication)
+control who receives and may use an offering.
 
 #### MachineProfile
 
-A profile is a project-wide, immutable hardware contract. Providers define named
-profiles; the publication service copies their requirements into consumer
-projects. Consumers create custom profiles using the same schema. The example
-shows a published consumer copy; Fleet retains its provider provenance internally.
+Providers publish named profiles into consumer projects. Consumers can create
+custom profiles with the same schema; Fleet retains publication provenance
+internally to distinguish the two paths.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -388,31 +374,25 @@ status:
     - {type: Accepted, status: "True"}
 ```
 
-Numeric constraints use inclusive `min` and optional `max`, or `exact` alone.
-Counts use integers; capacities use byte quantities; link speeds use bits per
-second (`10G` means 10 billion bits per second). Admission rejects negative values,
-empty constraints, inverted bounds, duplicate group names, and unknown units or
-required capabilities. CPU architecture and memory capacity are required.
-Omitting another constraint adds no requirement for that dimension. An explicit
-GPU count of `exact: 0` requires no GPUs.
+Admission requires CPU architecture and memory capacity. Numeric constraints use
+inclusive `min` and optional `max`, or `exact` alone. Counts are integers,
+capacities are byte quantities, and speeds are bits per second (`10G` means
+10 billion bits per second). Negative values, empty constraints, inverted bounds,
+duplicate group names, and unknown units or required capabilities are invalid.
+An omitted constraint imposes no requirement; GPU count `exact: 0` excludes GPUs.
 
-Matching uses physical core counts, not logical threads. Every selected GPU must
-meet the per-device constraints. Counts bound matching devices, not their summed
-capacity. Each interface entry requires one port. Disk groups and interface
-entries require distinct matching devices; one device cannot satisfy two groups. Missing observations
-cannot satisfy a required constraint. The provider adapter verifies that the
-complete combination works at the requested location. A profile does not resize
-an existing bare-metal machine.
+Counts apply to matching devices. Each interface entry requires one port; disk
+groups and interface entries cannot share a device. Missing observations cannot
+satisfy a requirement. The provider must validate the complete combination at
+the requested location. A profile does not resize an existing machine.
 
-`Accepted=True` validates the profile's structure, not compatibility with a class
-or available capacity. Specs cannot change, including on published copies.
-A revised contract requires a new profile. Deleting a profile blocks new
-admissions but does not change retained allocation or release contracts.
+Changing requirements requires a new profile, including for published copies.
+Deleting a profile blocks new admissions while preserving retained allocation
+and release contracts.
 
 #### Machine
 
-The provider operator writes Machine policy and enrollment references. This
-example identifies an owned physical asset in the provider project.
+Provider operators own Machine policy and enrollment references.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -485,29 +465,19 @@ status:
     - {type: Available, status: "False"}
 ```
 
-References resolve within the Machine's provider project and namespace. Private
-adapter fixtures supply provider and cleaning records without adding public
-kinds. Provider-assigned addresses remain observations; networking owns IPAM
-intent. Importing records grants no provisioning authority or eligibility.
+References resolve within the provider project and namespace. Enrollment enforces
+one canonical asset identity across all Machines and provider projects. Importing
+records grants no provisioning authority or allocation eligibility.
 
-Enrollment enforces one canonical asset identity across Machine records and
-provider projects. Operators cannot manufacture preparation evidence by editing
-status.
+Discovery owns hardware observations. Fleet retains their sources, revisions,
+and verification results internally, distinguishing simulation from qualified
+hardware verification. Unknown values remain absent; an unknown device list is
+different from a verified empty list. Hardware changes require new evidence and
+compatibility evaluation without weakening an active claim's requirements.
 
-Inventory or provider discovery owns hardware facts. The projector normalizes
-those observations into `status.hardware` and reports preparation, health, and
-availability through `status.conditions`. Fleet retains evidence sources,
-revisions, and verification results internally, including whether observations
-come from a simulator or qualified hardware verification. It checks that evidence
-before reporting readiness or accepting hardware compatibility.
-
-Unknown fields remain absent, and an unknown device list differs from a verified
-empty list. Hardware changes require new evidence and compatibility evaluation;
-Fleet cannot silently weaken an active claim's accepted requirements.
-
-The reservation determines occupancy. `Available=True` alone cannot authorize a
-binding. Retirement must settle enrollment, reservation, and operation
-obligations before Machine deletion.
+Reservations determine occupancy. Machine deletion must settle enrollment,
+allocation, and operation obligations through the [release
+protocol](#release-and-project-lifecycle).
 
 #### MachineClaim
 
@@ -561,6 +531,7 @@ status:
   # They survive profile deletion and do not claim to be live health evidence.
   acceptedProfileRef:
     name: accelerated-16c-64g
+  # The snapshot retains its observation time and does not expire.
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
     # Selected fields from the same hardware shape shown on Machine.
@@ -615,7 +586,7 @@ status:
           - {type: Allocated, status: "True"}
           - {type: Prepared, status: "True"}
           - {type: Programmed, status: "True"}
-  # Power reports observed state independently of spec.powerState intent.
+  # Observed power is On, Off, or Unknown, independently of spec.powerState intent.
   # Fleet reports Unknown when it cannot verify the state from current evidence.
   power:
     state: "On"
@@ -627,37 +598,24 @@ status:
     - {type: Releasing, status: "False"}
 ```
 
-A superseded power intent generation cannot dispatch new work. Creating a claim
-captures protected caller identity but reserves no capacity. Resolution pins
-dependency lifetimes and content internally; missing dependencies leave the claim
-pending. Later name reuse cannot replace a retained dependency.
+Claim creation captures caller identity without reserving capacity. Missing
+dependencies leave the claim pending. Superseded power intent generations cannot
+dispatch new work.
 
-The coordinator resolves both names within the consumer project and pins their
-UIDs internally. The named path requires a profile approved by the provider
-class: either the retained provider-local profile or a protected published copy.
-Matching names or copied requirements do not establish that relationship. Other profiles,
-including those published by another provider, take the custom path. They can
-bind only when the class permits custom profiles and the adapter accepts the
-complete configuration. Publication permissions still apply to their sources.
+A named profile must be the provider-approved profile or its protected published
+copy. Matching names or requirements do not establish that relationship. Other
+profiles take the custom path, including profiles from another provider. The
+class must permit custom profiles, the adapter must accept the complete
+configuration, and published sources still require use permission.
 
-`acceptedProfileRef` identifies the retained contract. `allocatedHardware`
-exposes the assigned CPU, memory, GPUs, disks, and interfaces without revealing
-provider inventory identities. Fleet retains exact requirements and device
-mappings privately. The snapshot survives source deletion; later observations
-can change readiness but cannot rewrite what Fleet allocated.
+A binding retains its accepted requirements and hardware snapshot through source
+changes or deletion. Later observations can change readiness, but a bound claim
+never moves to another Machine. Owner references cannot replace Fleet's release
+protocol.
 
-Before selecting hardware, the coordinator resolves initial installation
-requirements and network feasibility. After binding, it materializes
-machine-specific inputs from assigned addresses and network preparation.
-Attachment completion gates handoff, not the work needed to create the
-attachment. This order avoids a claim/installation dependency cycle.
-
-For allocation without installation, the claim omits `initialInstallationRef`
-and starts with `powerState: Off`, the default. Its `currentInstallationRef`
-remains absent until an Installation succeeds. A later first Installation
-references this claim and uses predecessor `None`; it does not change the claim's
-initial gate. A bound claim never moves to another Machine. Owner references
-cannot replace Fleet's release protocol.
+An allocation-only claim can accept a later first Installation without changing
+its initial handoff gate. [Allocation ordering](#allocation-and-quota-integration)
+keeps network preparation and installation from waiting on each other's results.
 
 ##### Network interfaces
 
@@ -677,10 +635,8 @@ contract](#galactic-vpc-api-integration) defines how Fleet uses those results.
 
 #### Installation
 
-The consumer optionally creates an Installation in the claim's project and
-namespace. Each request has an immutable spec. Changing the image or bootstrap
-configuration requires a new Installation, not an edit to a completed request.
-The following example requests the first OS installation.
+Consumers change an OS by creating a new Installation against the same claim.
+The first request uses the following precondition:
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -717,10 +673,8 @@ status:
     - {type: Ready, status: "True"}
 ```
 
-To reinstall the example allocation, the consumer creates `example-os-2` with
-`spec.claimRef.name: example`, the desired image and bootstrap configuration, and
-the following `spec.expectedPredecessor`. Its revision comes from the claim's
-`status.installationRevision`, not from an earlier Installation's name or UID.
+A reinstall uses the claim's current `status.installationRevision` in
+`spec.expectedPredecessor`:
 
 ```yaml
 # The claim's current installation revision guards this replacement.
@@ -730,58 +684,37 @@ expectedPredecessor:
   revision: installation-revision-example-1
 ```
 
-`expectedPredecessor` is required and has two forms: `None`, with no additional
-fields, or `Revision`, with one nonempty opaque `revision`. A predecessor name
-or UID is not part of the public schema. `None` is valid only for a verified
-blank allocation that has never admitted an installation.
+The required precondition is `None` with no additional fields, or `Revision` with
+one nonempty opaque revision. `None` is valid only for a verified blank allocation
+that has never admitted an installation. Fleet binds revisions to the exact claim
+lifetime, allocation, and verified state; it never reuses them after deletion,
+recreation, or restore. Revisions do not replace install or image-use permission.
 
-Fleet binds each revision to the exact claim lifetime, allocation, and verified
-installation state in provider-owned records. Tokens are unique and never reused,
-including after deletion, recreation, or restore. A token is a precondition, not
-permission: Fleet still checks install and image-use authority.
+Admission atomically consumes the precondition and retains the operation before
+effects. Only one request can win. A retry of that request recovers its retained
+operation; another request with a stale, foreign, or consumed revision reports
+`Accepted=False` with `InstallationRevisionConflict` and causes no effects.
+Retained records decide admission even when public status lags.
 
-Admission atomically compares and consumes the current revision, reserves the
-operation, and records exact inputs before dispatch. The first installation
-similarly consumes the allocation's `None` state. At most one request can be
-admitted from either state. Retries of that admitted request recover its existing
-operation; a different request with a stale, foreign, or consumed revision
-reports `Accepted=False` with `InstallationRevisionConflict` and causes no effects.
-Public status can lag this transaction; the retained record decides admission.
+Disruptive work makes the claim unready while preserving its allocation. Active
+or uncertain work withholds a usable revision. Verified success atomically
+records the current installation, a fresh revision, and initial-gate completion
+when applicable. The completed Installation retains that historical result;
+only the claim reports the currently usable revision. An Installation grants
+Fleet no continuing authority over a standalone OS.
 
-While work is active or its outcome is unknown, the claim exposes no usable
-installation revision. On verified success, Fleet issues a fresh revision and
-updates the current Installation name. If a failure or cancellation proves that
-the operation is fenced, no effects occurred, and the prior state is intact,
-Fleet can issue a fresh revision for that unchanged state, including a still-blank
-machine. It never
-restores a consumed token or resets to `None`. Partial or uncertain effects
-require recovery of the existing operation or release before new work; they do
-not produce a replacement token. Revision issuance does not bypass the initial
-handoff gate.
+After a failure or cancellation, Fleet can issue a fresh revision only after
+fencing the operation and verifying that no effects occurred and the prior state
+is intact. This includes a still-blank machine; Fleet never restores a consumed
+revision or resets to `None`. Partial or uncertain effects require recovery of
+the retained operation or release, and an unknown incarnation has no current
+Installation reference.
 
-The claim's `initialInstallationRef` remains `example-os-1`; it identifies only
-the initial handoff requirement. Later requests select the claim through their own
-`claimRef`. Until the initial gate succeeds, Fleet admits only the retained
-initial request.
-
-Operator-installed, project-scoped image fixtures supply immutable artifacts,
-permissions, hardware compatibility, and bootstrap behavior. They accept no
-arbitrary URLs. A future image catalog can implement this resolver contract.
-
-Before dispatch, the coordinator pins the binding, predecessor, image, bootstrap
-content, disk/interface targets, network prerequisites, and executor. On success,
-it atomically records the current incarnation, a fresh installation revision,
-and initial-gate completion when this is the named initial request.
-Reinstallation makes the claim unready during disruptive work while preserving
-its binding. Platform handoff makes no claim about guest or application health
-and grants no continuing ownership of a standalone OS.
-
-Deleting an unfinished Installation requests cancellation at a safe boundary.
-Deleting a completed one does not uninstall the OS, release capacity, or reset
-the initial gate. Provider records retain predecessor identities and revision
-history independently of public Installation deletion. Names in
-`currentInstallationRef` describe the successful request; deleting or reusing that
-name cannot change the revision or select a different operation.
+Only the retained initial request can run until the initial gate succeeds.
+Reinstalls leave that gate unchanged. Deleting an unfinished request requests
+cancellation at a safe boundary; deleting a completed request does not uninstall the OS, release
+capacity, or reset the gate. Provider records preserve identities and revision
+history through deletion and name reuse.
 
 #### Status contract
 
@@ -799,76 +732,58 @@ conditions:
     message: "Fleet cannot yet verify the operation outcome."
 ```
 
-Each condition describes one fact. Its `status` is `True`, `False`, or `Unknown`;
-its `reason` identifies the outcome, and its bounded `message` explains it.
-Status can be empty before reconciliation; an absent condition means `Unknown`.
+Conditions report `True`, `False`, or `Unknown`. Empty status or an absent
+condition means `Unknown`; reconciliation must not infer success from absence.
 
 Conditions report Fleet's last assessment of readiness. Fleet retains observation
 times and freshness limits internally and schedules reevaluation when evidence
 expires, even if the spec does not change. Missing, stale, or unverifiable
 evidence yields `Unknown` for facts that require current evidence; stale evidence
 uses reason `EvidenceStale`. A known blocking fact still yields `False`.
-`lastTransitionTime` records a change in condition value, not the latest check;
-`observedGeneration` identifies the evaluated spec generation.
 
 If the projector stops, public conditions can remain stale. Clients cannot infer
 freshness from a transition time or matching generation. Fleet independently
 checks the required internal evidence before allocation, installation, power
 changes, and release.
 
-`allocatedHardware.observedAt` dates the hardware observation retained at binding.
-It describes a historical snapshot and has no expiration.
+Readiness depends on the resource's role:
 
-The resources report different aspects of the lifecycle:
-
-- **MachineProfile:** `Accepted` reports whether immutable requirements are well
-  formed. It does not establish class compatibility, authorization, or supply.
-- **MachineClass:** `Accepted` applies to a definition whose profile policy and
-  provider contract resolve. `SourceResolved` applies to a reference with an
-  authorized, resolved source. The opaque `evaluatedRevision` identifies the
-  evaluated contract; `resolvedClass` contains only its public capabilities. Neither
-  condition promises free capacity or grants every reader source-use permission.
-- **Machine:** `Prepared` reports preparation evidence, and `Healthy` reports
-  observed health. `Available` requires eligible policy, fresh evidence, and no
-  live reservation or cleanup obligation. A known policy block can keep
-  `Available=False` even when health evidence becomes unknown.
-- **MachineClaim:** `Accepted` means Fleet retained the request identity and
-  initial inputs, including a supported class/profile/location combination.
-  `Bound` means a private reservation committed. `NetworkReady` requires fresh
-  assignment and attachment evidence for the binding. It does not prove that
-  the guest applied the configuration. `Ready` requires network handoff and
-  power prerequisites, plus a verified installation when installation is
-  required. An allocation-only claim can become ready powered off without an
-  Installation; that readiness does not promise a bootable OS. `Releasing`
+- **MachineProfile:** `Accepted` validates structure without promising class
+  compatibility, authorization, or supply.
+- **MachineClass:** `Accepted` requires a resolved profile policy and provider
+  contract. `SourceResolved` requires an authorized, resolved definition. Neither
+  condition promises capacity or grants every reader source-use permission.
+- **Machine:** `Prepared` requires preparation evidence; `Healthy` requires health
+  evidence. `Available` also requires eligible policy and no live reservation or
+  cleanup obligation.
+- **MachineClaim:** `Accepted` requires retained identity and validated inputs;
+  `Bound` requires a committed reservation. `Ready` requires network and power
+  handoff, plus verified installation when required. An allocation-only claim
+  can become ready powered off without promising a bootable OS. `Releasing`
   remains true until cleanup and quota release finish.
-- **Installation:** `Accepted` means Fleet admitted an operation with exact
-  inputs. `Executing` describes work in progress; `False` alone does not mean
-  success. `Ready=True` records verified installation and platform handoff.
-  `completedAt` appears only after verified success. Failure and cancellation
-  use `Ready=False` with a specific reason; an uncertain outcome uses `Unknown`.
+- **Installation:** `Accepted` requires an admitted operation with exact inputs.
+  `Executing=False` alone cannot establish success. `Ready=True` and `completedAt`
+  require verified installation and platform handoff, not guest health. Verified
+  failure or cancellation yields `Ready=False`; an uncertain outcome yields
+  `Unknown`.
 
-A claim omits `placement` and `allocatedHardware` before binding
-and omits `acceptedProfileRef` until admission retains the profile. It omits
-`currentInstallationRef` before an installation succeeds.
-`Installation.status.installationRevision` appears on verified success and
-records that historical result; it does not prove that revision is still current.
-The claim reports the usable revision for the current verified state and omits
-it before any admitted installation or while work or recovery blocks replacement.
-`power.state` is `On`, `Off`, or `Unknown`. Intent changes cannot establish an
-observed power state. Missing or stale power evidence yields `Unknown` and
-withholds claim readiness when that evidence is required. `network` appears when
-the resolver evaluates the binding; unassigned address fields remain absent.
-Stale required network evidence yields `NetworkReady=Unknown` unless a known
-block establishes `False`; retained addresses do not prove current assignment.
-An empty `networkInterfaces` list yields `NetworkReady=True` with
-`NoAttachmentsRequired` and does not imply that a guest has connectivity.
+Status omits unresolved results: a claim has no placement or hardware snapshot
+before binding, no accepted profile before admission, and no current Installation
+before verified success. An Installation publishes its result revision only on
+success. The claim omits a usable revision before its first admitted installation
+or while work or recovery blocks replacement.
 
-The allocation and completed installation results are durable facts. Runtime
-health, power, and claim readiness can change independently. A later reinstall
-does not rewrite a prior Installation's successful result. The claim reports the
-current incarnation, becomes unready during disruptive work, and withholds a
-current Installation reference if partial effects leave the incarnation unknown.
-Private history still preserves earlier identities for recovery.
+Power intent cannot establish observed power state. Missing or stale power
+evidence yields `Unknown` and blocks readiness when required. Network status
+appears after the resolver evaluates the binding; unassigned addresses remain
+absent. Stale required network evidence yields `NetworkReady=Unknown` unless a
+known block establishes `False`. Retained addresses do not prove current
+assignment. An empty interface list yields `NetworkReady=True` with
+`NoAttachmentsRequired`, without implying guest connectivity.
+
+Allocation and completed installation results remain durable while runtime
+health, power, and claim readiness change. Later work cannot rewrite a completed
+Installation's result.
 
 The projector publishes `DependenciesPending`, `AuthorizationUnavailable`,
 `SourceUnavailable`, `ProfileUnsupported`, `ProviderUnavailable`, `QuotaPending`,
@@ -1080,9 +995,14 @@ resulting installation revision, completion time, and conditions.
 ### Allocation and quota integration
 
 The coordinator resolves exact lifetimes and dependencies and validates the
-class/profile/location combination before requesting quota. This diagram shows
-the successful admission path; policy checks remain subject to the ordering
-contract below.
+class/profile/location combination before requesting quota. Initial installation
+requirements and network feasibility must resolve before hardware selection.
+After binding, the coordinator materializes machine-specific inputs from assigned
+addresses and network preparation. Attachment completion gates handoff rather
+than the work needed to create the attachment.
+
+The diagram shows the successful admission path; policy checks remain subject
+to the ordering contract below.
 
 ![Allocation sequence from validation through durable binding and operation dispatch](diagrams/allocation-sequence.svg)
 
@@ -1206,6 +1126,12 @@ first implementation exercises this API contract with persistent fixtures.
 Typed resolvers supply image inputs, network evidence, and provider access.
 Fixtures implement those interfaces for simulation. Missing required evidence
 blocks progress.
+
+Operator-installed, project-scoped image fixtures provide immutable artifacts,
+permissions, hardware compatibility, and bootstrap behavior. They accept no
+arbitrary URLs. A future image catalog can implement this resolver contract.
+Private fixtures also resolve provider and cleaning records without adding
+public provider APIs to this enhancement.
 
 Only the coordinator authorizes a plan. The executor reports evidence for that
 plan. Retries reuse the operation ID and inputs; a changed plan with the same
