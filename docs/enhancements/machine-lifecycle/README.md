@@ -797,18 +797,15 @@ mappings, BMC endpoints, credentials, bootstrap bytes, and bearer capabilities.
 
 ### Milo project integration
 
-Milo supplies project context through its authenticated API-server path. The
-[source review](source-review.md#milo-integration-evidence) records the routing
-and identity fields.
+Fleet accepts project context only through Milo's authenticated API-server path.
+It rejects missing, conflicting, or organization-only context and exposes no
+unscoped global list. Client headers, annotations, and request fields cannot
+select a tenant. The [source review](source-review.md#milo-integration-evidence)
+records the routing fields.
 
-Fleet rejects missing, conflicting, or organization-only context. Client headers,
-annotations, and request fields cannot select a tenant; public APIs offer no
-unscoped global list.
-
-The project name selects the route. Fleet resolves the root ResourceManager
-Project UID to identify its lifetime. `user.Info.UID` identifies the caller, not
-the project. The [IPAM tenancy implementation][ipam-tenancy] follows this
-separation. Fleet uses these internal keys:
+The project name selects a route; the root ResourceManager Project UID identifies
+its lifetime. `user.Info.UID` identifies the caller. Following the [IPAM tenancy
+implementation][ipam-tenancy], Fleet uses these internal keys:
 
 ```text
 ProjectKey = (Milo authority ID, root Project UID)
@@ -816,108 +813,78 @@ ObjectKey  = (ProjectKey, API group/resource, namespace, name)
 ObjectID   = (ProjectKey, resource UID)
 ```
 
-Fleet initially supports one operator-configured Milo authority. Namespaced
-records also retain the Namespace UID. Every query, cache key, list/watch filter,
-continuation token, and work item includes `ProjectKey`. Recreating a project,
-namespace, or object cannot inherit the previous lifetime's authority.
-
-Classes and profiles span their project; Machines, claims, and Installations
-are namespaced. An Installation shares its claim's project and namespace.
-Reservation and operation records belong to the Machine's provider project.
-Fleet retains preparation records there before acquiring quota or authorizing
-effects. Their lifecycle is independent of consumer objects and Machine
-garbage collection. [Authorization and publication](#authorization-and-publication)
-defines the writers; [provider-project retirement](#provider-project-retirement)
-defines deletion protection.
-
-Provider projects follow the same tenancy rules as consumer projects. Authorized
-consumers may also claim a definition in their own project. A namespace named
-`default` in one project has no relationship to `default` in another.
+The initial deployment uses one operator-configured Milo authority. Every query,
+cache key, list/watch filter, continuation token, and work item includes
+`ProjectKey`; namespaced records also retain the Namespace UID. Classes and
+profiles span a project; Machines, claims, and Installations are namespaced. An
+Installation shares its claim's project and namespace. These rules also apply
+when provider and consumer are the same project.
 
 Before admission or status writes, Fleet verifies the root UID and control-plane
-lifetime; a changed UID invalidates cached clients and work. API unavailability
-does not prove deletion. Consumer API loss does not erase provider-held recovery
-state; provider API loss blocks work that requires unavailable records or
-authority. Resource versions from separate project APIs do not provide a global
-transaction order.
+lifetime. A changed lifetime invalidates cached clients and work. API loss does
+not prove deletion; unavailable identity, authority, or required records block
+the operations that depend on them. Resource versions from separate project APIs
+cannot order cross-project transactions.
 
 ### Authorization and publication
 
 Register separate Milo IAM permissions for CRUD, source `use`, claim `install`,
-status, and private coordination. [ProtectedResource][milo-protected] supports
-subresource permissions only when the authorization provider enables them.
-Verify that deployment setting. Admission must also protect immutable fields,
-reserved metadata, and service finalizers; labels and field managers confer no
-permission.
+status, and private coordination. [ProtectedResource][milo-protected] requires
+the authorization provider to enable subresource permissions. Admission must
+enforce the [API writer boundaries](#api-design) and protect immutable fields,
+reserved metadata, published profiles, and service finalizers. Labels and field
+managers cannot establish ownership or permission.
 
-Provider operators write class definitions, named profiles, Machine policy, and
-trusted enrollment mappings. The publication service writes consumer class
-references, protected profile copies, and private provenance. Consumers write
-custom profiles, authorized claims, installation requests, power intent, and
-deletion requests. Admission protects publisher-owned profiles from consumer
-replacement; a copied label cannot establish publisher ownership.
+Separate service roles enforce one writer per configuration surface:
 
-The coordinator writes accepted inputs, reservations, operation authority, and
-release progress in the provider project. Provider ownership does not grant
-ordinary provider operators permission to edit or delete these records, remove
-Fleet's lifecycle guards, or access consumer bootstrap secrets. Scoped service
-permissions and admission enforce those restrictions. Executors write
-authenticated observations and completion evidence for admitted operations. The
-status projector writes sanitized status from retained records and observations.
+- The publisher writes consumer class references, protected profile copies, and
+  provenance mappings.
+- The coordinator writes accepted inputs, reservations, operation authority, and
+  release progress in the provider project.
+- Executors submit authenticated observations and completion evidence for
+  admitted operations; the projector alone writes public status.
 
-Each surface has one authoritative writer. A process that implements multiple
-roles must preserve these boundaries. The initial deployment limits supply
-enrollment to operator-controlled provider projects.
+Ordinary provider operators cannot edit or delete coordination records, bypass
+lifecycle guards, or read consumer bootstrap secrets. Scoped IAM and admission
+must enforce these restrictions even when one process implements several roles.
+The initial deployment accepts enrollment only from operator-controlled providers.
 
 #### Request authority
 
-For a claim, the coordinator checks the initiating principal's local create
-permission and provider-project `machineclasses.use` permission. The provider
-check retains the caller's identity and changes the target scope, as the
-[IPClass checker][ipam-class-use] does. Controller credentials cannot substitute
-for consumer permission.
+Claim admission checks the initiating principal's local create permission,
+provider-project `machineclasses.use`, and local `machineprofiles.use`. Published
+profiles also require `machineprofiles.use` on their canonical provider source;
+custom profiles require no provider-profile grant. Cross-project checks preserve
+the caller and change only the target scope, as the [IPClass checker][ipam-class-use]
+does. Controller credentials cannot substitute for caller authority.
 
-Admission also requires local `machineprofiles.use`. A published profile requires
-`machineprofiles.use` on its canonical provider source; a custom profile requires
-no provider profile grant. Provider-class permission and custom-profile policy
-still apply. Class and profile permissions grant no inventory access or purchase
-authority. Reads, lists, and watches of published profile content enforce current
-source-use permission, including revocation. The same rule protects class
-summaries: cached status never grants every project principal source access.
-Selectors, provider configuration, Machine IDs, and other consumers stay private.
+Reads, lists, and watches of published profiles and class summaries enforce
+current source-use permission, including revocation. Source-use grants confer no
+inventory access or purchasing authority. Milo's [PolicyBinding
+schema][milo-policybinding] supports User, Group, and ServiceAccount subjects,
+not Project subjects, so grants target request principals.
 
-Fleet retains the initiating User or ServiceAccount UID privately. Milo's
-[PolicyBinding schema][milo-policybinding] supports User, Group, and
-ServiceAccount subjects; it does not support Project subjects. This proposal
-uses explicit source-use grants to request principals. Publication grants no
-such authority.
+Retain the initiating User or ServiceAccount UID without storing bearer tokens.
+Asynchronous admission resolves current identity and group membership; unavailable
+checks leave the request pending with `AuthorizationUnavailable`. Loss of access
+before binding requires a new request after access returns. After binding, actions
+use current claim permissions and the retained contract; the creator's departure
+does not reclaim the machine.
 
-Asynchronous admission must resolve current identity and group membership.
-Fleet retains no bearer token and cannot replay stale groups. If that check is
-unavailable, the claim stays pending with `AuthorizationUnavailable`. A principal
-that loses access before binding must submit a new request after regaining it.
-After binding, subsequent actions use current claim permissions and the retained
-allocation contract; the creator's departure does not reclaim the machine.
-
-An Installation also requires `install` permission on its exact claim, image-use
-permission, and access to its bootstrap input. Power changes capture their own
-caller and generation. Each action requires separate operation admission.
-
-Network resolution checks the initiating principal's use permission on each
-selected Network in its actual namespace and the required address authority.
-These are proposed Fleet admission checks; a namespace field grants no access.
-A network reference cannot grant cross-project access. The projector exposes
-consumer assignment data under claim-read permission; private IPAM and provider
-mappings remain with their owners.
+Each action needs separate admission. Installations require claim `install`,
+image-use permission, and access to bootstrap input. Power changes retain their
+own caller and generation. Network resolution checks the caller's network-use
+permission in each selected namespace and the required address authority. These
+checks are Fleet integration requirements, not permissions granted by references.
 
 #### Entitlement and publication
 
 Admission requires an Active consumer service entitlement and no applicable
 suspension. [ServiceEntitlement][catalog-entitlement] tracks suspension separately
 from phase. The [provisioner][catalog-provisioner] checks existing-object ownership
-before applying references but does not grant source-use permission.
+before applying references; Fleet must separately enforce source-use permission.
 
-Fleet retains this publication mapping privately:
+Retain publication provenance independently of copied fields, labels, and status:
 
 ```text
 (consumer ProjectKey, local class UID)
@@ -926,38 +893,28 @@ Fleet retains this publication mapping privately:
   -> (provider ProjectKey, source profile UID, immutable requirements)
 ```
 
-Copied fields, labels, and status cannot establish provenance. Fleet rejects
-name collisions and unauthorized sources without disclosing foreign inventory.
-Same-project definition and named-profile use skip publication but still require
-authorization. Profile publication preserves requirements exactly. It neither
-confers class support nor converts consumer-created profiles into named profiles.
-Profiles outside the class's named allowlist follow the custom path; unresolved
-publication stays pending.
+Publication must copy profile requirements exactly, reject name collisions and
+unauthorized sources without exposing foreign inventory, and keep unresolved
+publication pending. Same-project use skips publication but still requires
+authorization. The [claim rules](#machineclaim) determine whether a resolved
+profile follows the named or custom path.
 
 ### Durable coordination
 
-Fleet coordination state consists of provider-project reservation and operation
-records, retained inputs, and release evidence. "Private" means service-controlled
-and excluded from the consumer API contract; it does not imply a separate
-service project or database. The physical storage and internal encoding remain
-implementation choices. Any backend must enforce provider-project ownership,
-access controls, and the retirement contract below.
+The provider project owns reservation and operation records, retained inputs, and
+release evidence. Private records are service-controlled and excluded from the
+consumer API. Storage and internal encoding remain implementation decisions.
+Records must survive consumer deletion and Machine garbage collection; unsettled
+obligations cannot depend on cross-project owner references or cascading deletion.
+The [retirement guard](#provider-project-retirement) protects their provider.
 
-The provider's private records retain binding and operation IDs for coordination,
-retries, fencing, recovery, and diagnostic correlation. Fleet maps claims and
-Installations to those records internally. Public status exposes the installation
-revision that consumers need for reinstall preconditions.
-
-Public status projects this state; it grants no execution authority. Missing
-records block effects and quarantine uncertain capacity. Records and protected
-artifacts survive consumer-project deletion. Fleet retains the provider project
-and its required resources until obligations end. Retained cross-project
-identities are not Kubernetes owner references; cascading deletion cannot remove
-unsettled records or their inputs.
+Map public resource lifetimes to these records for recovery and diagnostics.
+Missing records block effects and quarantine uncertain capacity. Recovery uses
+retained authority and inputs rather than reconstructing them from public status.
 
 #### Reservation record
 
-The record retains these field groups:
+Retain the following information:
 
 - **Identity:** record ID/revision/state, binding ID/epoch, consumer ProjectKey,
   Namespace UID, Claim UID/request digest, provider ProjectKey, Machine UID, and
@@ -968,299 +925,254 @@ The record retains these field groups:
 - **Authority:** principal UID, authorization decision, entitlement/admission
   revisions, quota-hold UID/state, and release authority.
 - **Lifecycle:** current incarnation, installation revision and consumed tokens,
-  initial gate, active operation ID, network Namespace/UIDs, interface and assignment identities, network revision, cleaning
-  policy, remaining obligations, evidence, and retired identities.
+  initial gate, active operation ID, network Namespace/UIDs, interface and
+  assignment identities, network revision, cleaning policy, remaining obligations,
+  evidence, and retired identities.
 
-Provider-project placement does not supply transaction or fencing guarantees.
-The coordinator must enforce one live binding per Claim and Machine and one
-allocatable enrollment per canonical asset. A transaction commits occupancy,
-claim uniqueness, and dispatch intent together. Lists and process-local locks cannot enforce this
-across workers. Each effect and callback carries the monotonically increasing
-binding epoch; retirement advances the fence before another consumer can act.
+The backend must enforce one live binding per claim and Machine and one
+allocatable enrollment per canonical asset. Commit occupancy, claim uniqueness,
+and dispatch intent atomically; lists and process-local locks cannot enforce
+this across workers. Every effect and callback carries a monotonically increasing
+binding epoch; retirement advances it before another consumer can act.
 
 #### Operation record
 
-Each operation retains its stable ID/idempotency key, binding ID, Installation UID
-or power generation, internally resolved predecessor identity, consumed and
-resulting installation revisions, exact inputs, permitted effects and targets,
-executor/fencing token, dispatch correlation, cancellation boundary, outcome
-evidence, and remaining obligations.
+Retain these fields before dispatch:
 
-Before dispatch, the provider's private operation record retains the resolved
-network configuration revision and image artifact digest with the exact inputs.
-Fleet uses them for verification, reproducibility, and recovery. Later network or
-image changes cannot rewrite those inputs. Installation status exposes only the
-resulting installation revision, completion time, and conditions.
+- **Authority:** stable operation ID/idempotency key, binding ID, Installation UID
+  or power generation, predecessor identity, consumed installation revision,
+  permitted effects and targets, and executor/fencing token.
+- **Inputs:** exact image, bootstrap, disk/interface, and network inputs,
+  including the resolved image digest and network configuration revision.
+- **Recovery:** dispatch correlation, cancellation boundary, outcome evidence,
+  resulting installation revision, and remaining obligations.
+
+Retries and recovery use the retained inputs. Later source changes cannot
+rewrite an admitted plan.
 
 ### Allocation and quota integration
 
-The coordinator resolves exact lifetimes and dependencies and validates the
-class/profile/location combination before requesting quota. Initial installation
-requirements and network feasibility must resolve before hardware selection.
-After binding, the coordinator materializes machine-specific inputs from assigned
-addresses and network preparation. Attachment completion gates handoff rather
-than the work needed to create the attachment.
-
-The diagram shows the successful admission path; policy checks remain subject
-to the ordering contract below.
+Resolve dependencies and the class/profile/location combination before requesting
+quota. Initial installation requirements and network feasibility must resolve
+before hardware selection. After binding, materialize machine-specific inputs
+from assigned addresses and prepared network configuration. Attachment completion
+gates handoff, so installation can perform work needed to establish attachment.
 
 ![Allocation sequence from validation through durable binding and operation dispatch](diagrams/allocation-sequence.svg)
 
-Preparation uses Claim UID for recovery and authorizes no provider effects.
-Fleet resolves the provider project from the accepted class and establishes its
-retirement guard before retaining preparation or acquiring quota. Preparation,
-binding, and operation admission must participate in that guard's ordering.
-A lost quota response recovers the same correlated hold. With no eligible supply,
-report `InsufficientCapacity` and settle that hold before another attempt.
-`Aborted` requires confirmed release or proof that no hold exists. A binding
-contender that loses retries selection or remains pending.
+Preparation records use Claim UID for recovery and authorize no effects. Resolve
+the provider from the accepted class and establish its retirement guard before
+recording preparation or acquiring quota. Preparation, binding, and operation
+admission must participate in the [retirement ordering](#provider-project-retirement).
+
+Recover the same hold after a lost quota response. No eligible supply reports
+`InsufficientCapacity`; settle the hold before another attempt. `Aborted` requires
+confirmed release or proof that no hold exists. A losing binding contender
+retries selection or remains pending.
 
 #### Quota custody
 
-Milo owns quota. Fleet initially requests one machine-count dimension, amount one
-per binding. Its [ResourceClaim][milo-quota-claim] and
-[references][milo-quota-refs] use names rather than UIDs for consumers/resources.
-Fleet must separately retain the ProjectKey and exact quota-claim UID to prevent
-name reuse from inheriting or charging an old hold.
+Milo owns quota. Initially request one unit of machine-count quota per binding.
+Its [ResourceClaim][milo-quota-claim] and [references][milo-quota-refs] identify
+consumers and resources by name. Fleet must also retain ProjectKey and the exact
+quota-claim UID to distinguish lifetimes.
 
-The quota adapter must preserve the hold outside consumer garbage collection or
-provide a protected transfer. It must define its service-owned anchor, claiming
-resource, authorization, and release acknowledgment. The existing schema alone
-does not establish these guarantees. A lost or revoked hold blocks new work;
-remembered `Granted=True` cannot replace current authority.
+The adapter needs a service-owned anchor or protected transfer that preserves the
+hold through consumer garbage collection. Define its claiming resource,
+authorization, and release acknowledgment; the existing schema supplies no custody
+guarantee. Lost or revoked quota blocks new work even if cached status says
+`Granted=True`.
 
 #### Admission ordering
 
-An authorization check followed by a database commit cannot order a concurrent
-revocation. Fleet needs an admission fence: a protocol that orders binding
-against relevant IAM, entitlement, project/namespace lifecycle, quota, class,
-profile, eligibility, and provider-retirement changes.
+An authorization check followed by a database commit cannot order concurrent
+revocation. Define an admission fence covering IAM, entitlement, project/namespace
+lifecycle, quota, class/profile policy, eligibility, and provider retirement.
 
-If invalidation wins, the pending claim cannot bind. If binding wins, later
-changes follow the active-allocation rules. Authorities must acknowledge
-invalidation only when older admission authority can no longer commit.
+If invalidation wins, the claim cannot bind. If binding wins, subsequent changes
+follow the active-allocation contract. Participating authorities may acknowledge
+invalidation only when older admission authority can no longer commit. Separate
+API resource versions and cached reads cannot establish this order.
 
-This protocol is a new integration requirement, not an existing Milo API.
-Implementation must define participating authorities and test their ordering.
-Cached reads, stale tokens, and simulator-only policy tests do not satisfy it.
+This requires a new Milo integration protocol. Owners must specify and test its
+participants and ordering; simulator-only policy tests are insufficient.
 
 ### Provider configuration resolution
 
-The provider adapter resolves the class, profile, and location into a supported
-configuration. It checks the complete combination, including CPU model, memory,
-GPU options, disk slots, and physical interfaces. Independent minimum checks
-cannot prove that a provider supports those options together.
+The adapter resolves a class, profile, and location into a supported configuration
+as a whole. Independent hardware minimum checks cannot establish that combination.
+It reports:
 
-Resolution distinguishes three outcomes:
+- `Accepted=False` with `ProfileUnsupported` for an incompatible requirement,
+  without disclosing private catalog details.
+- `Accepted=Unknown` with `ProviderUnavailable` when compatibility is unverified.
+- Accepted inputs when supported; absent supply leaves the claim unbound with
+  `InsufficientCapacity`.
 
-- **Unsupported:** `Accepted=False` with `ProfileUnsupported` explains the
-  incompatible requirement without exposing private catalog details.
-- **Unverified:** `Accepted=Unknown` with `ProviderUnavailable` blocks admission
-  when Fleet cannot establish compatibility.
-- **Supported:** Fleet retains the accepted inputs. A lack of eligible supply
-  leaves the claim unbound with `InsufficientCapacity`.
+Persist the selected configuration, catalog revision, observations, and device
+mapping in the [reservation](#reservation-record). Catalog changes require
+revalidation before binding. Admitted work uses its retained inputs; an adapter
+that cannot honor them must stop or recover rather than substitute a configuration.
 
-Before binding or effects, Fleet retains the exact provider configuration,
-catalog identity and revision, observed hardware, and logical-to-physical device
-mapping. Backend device, model, and configuration IDs stay in private records.
-Changed catalogs require revalidation before binding; retries of admitted work
-use retained inputs. If the backend cannot honor them, Fleet stops or recovers
-the operation without silently selecting a substitute.
-
-Hardware requirements do not define an OS layout. The installation resolver
-retains the image fixture's RAID, partition, and filesystem plan;
-networking owns logical attachments, IPAM, and routing. A backend may combine
-hardware selection and OS deployment in one request. Fleet must still retain
-the separate allocation and installation authority before sending it.
-
-The [provider comparison](source-review.md#provider-comparison) explains how
-NetActuate and Servers.com inform this boundary. Each adapter still needs
-qualification. The first implementation matches existing simulated supply;
-profile validation grants no purchasing authority. Consumer release retains
-the asset and does not cancel a supplier subscription.
+The installation resolver supplies RAID, partition, and filesystem layout.
+If a backend combines hardware selection and OS deployment in one request, Fleet
+must retain separate allocation and installation authority before sending it.
+The initial adapter matches existing simulated supply without purchasing. Release
+retains the asset and does not cancel supplier subscriptions. The [provider
+comparison](source-review.md#provider-comparison) informs adapter qualification.
 
 ### Galactic VPC API integration
 
-Fleet supplies immutable requirements through NSO's NetworkInterfaceClaim
-contract. NSO binds a [NetworkInterface][nso-interface] and allocates its addresses; the network
-realization owner reports Galactic programming. Consumers select the existing
-project Network through [the claim API](#network-interfaces), not backing VPC
-objects or a new Fleet attachment resource.
+Fleet submits requirements through [NSO's NetworkInterfaceClaim][nso-interface-claim].
+NSO binds a [NetworkInterface][nso-interface] and assigns addresses; the network
+realization owner reports Galactic programming. NSO places backing claims and
+interfaces in [location control planes][nso-interface-design]. Fleet retains
+those identities and the selected Network and namespace lifetimes internally.
+It never substitutes another Network, including after deletion or name reuse.
 
-Fleet pins the selected Network and namespace lifetimes internally; deletion or
-name reuse cannot redirect an accepted claim. It never substitutes another
-network. NSO's [interface contract][nso-interface-design] places backing claims
-and interfaces in location control planes. Their scoped identities, provider
-management addresses, provisioning networks, and credentials remain private.
-
-NSO supplies MTU and address facts. MAC addresses, routes, and DNS are optional
-normalized facts from verified configuration; the reviewed NSO schema does not
-expose them all. Missing values remain unknown. Networking owns policy, route
-eligibility, public exposure, and evidence that the interface belongs to the
-selected Network and allocation. A provider-assigned IP cannot establish that
-membership.
+NSO supplies MTU and address facts. MAC addresses, routes, and DNS require optional
+normalization from verified configuration; the reviewed schema does not expose
+them all. Missing values remain unknown. Networking owns policy, routing, public
+exposure, and evidence of membership for the selected Network and allocation.
+A provider-assigned IP alone cannot establish that membership. Provider management
+addresses, provisioning networks, and credentials remain private.
 
 ![NSO allocation and preparation supply installation inputs; verified programming gates handoff](diagrams/network-sequence.svg)
 
-The [NSO claim][nso-interface-claim] and [Galactic attachment][cloud-vpc-attachment]
-contracts distinguish preparation from programming. The diagram shows readiness
-dependencies; programming may complete before installation. Fleet waits for both
-required results before handoff. One failed interface blocks network readiness.
-Missing location support reports `NetworkNotAvailableInLocation`; unsupported
-families report `AddressFamilyNotCarried`. Assignment drift reports
-`NetworkConfigurationChanged` and cannot rewrite an admitted installation plan.
+The diagram shows dependencies, not mandatory execution order: [Galactic
+programming][cloud-vpc-attachment] may finish before installation. Missing location
+support reports `NetworkNotAvailableInLocation`; unsupported families report
+`AddressFamilyNotCarried`. Assignment drift reports `NetworkConfigurationChanged`
+and cannot rewrite admitted installation inputs.
 
-Release preserves the shared Network and VPC. `Delete` returns assignments only
-after verified release. Under `Retain`, NSO keeps the interface and addresses
-after verified detachment. Reusing a Fleet claim name
-grants no authority over them; future adoption requires exact identity and current
-permission. This contract exposes no `networkInterfaceName` adoption selector.
+Release preserves the shared Network and VPC. `Delete` returns assignments after
+verified release; `Retain` preserves interfaces and addresses after verified
+detachment. Future adoption requires exact identity and current permission;
+claim-name reuse grants neither. This contract exposes no `networkInterfaceName`
+adoption selector.
 
-NSO's current attachment modes describe containers and hypervisors, not physical
-machines. Fleet maps profile slots to OS interfaces in retained installation
-inputs. Physical attachment mechanics remain a separate design decision; the
-first implementation exercises this API contract with persistent fixtures.
+NSO's current attachment modes cover containers and hypervisors. Fleet must map
+profile slots to OS interfaces in installation inputs. Physical attachment
+mechanics remain outside this enhancement; persistent fixtures exercise the API
+contract first.
 
 ### Provider execution and recovery
 
-Typed resolvers supply image inputs, network evidence, and provider access.
-Fixtures implement those interfaces for simulation. Missing required evidence
-blocks progress.
+Typed resolvers supply image inputs, network evidence, and provider access;
+missing required evidence blocks dispatch. Operator-installed, project-scoped
+image fixtures provide immutable artifacts, permissions, compatibility, and
+bootstrap behavior without accepting arbitrary URLs. A future catalog can
+implement that resolver. Private fixtures also resolve provider and cleaning
+records without adding public provider APIs.
 
-Operator-installed, project-scoped image fixtures provide immutable artifacts,
-permissions, hardware compatibility, and bootstrap behavior. They accept no
-arbitrary URLs. A future image catalog can implement this resolver contract.
-Private fixtures also resolve provider and cleaning records without adding
-public provider APIs to this enhancement.
+Persist dispatch intent before sending commands. Retries reuse the operation ID
+and exact plan; a changed plan with the same key conflicts. After a lost response,
+query the backend using the retained operation identity before retrying.
 
-Only the coordinator authorizes a plan. The executor reports evidence for that
-plan. Retries reuse the operation ID and inputs; a changed plan with the same
-key conflicts. Fleet persists dispatch intent before sending a command and
-queries the backend after a lost response.
+Operations move through `Admitted`, `Dispatched`, and `Verifying` to `Succeeded`
+or a verified `Failed`/`Cancelled` boundary. `OutcomeUnknown` remains nonterminal;
+command acceptance cannot establish completion.
 
-Operations progress through `Admitted`, `Dispatched`, and `Verifying` to
-`Succeeded` or a verified `Failed`/`Cancelled` boundary. `OutcomeUnknown` remains
-nonterminal. Command acceptance does not prove completion.
-
-Each binding permits one active effectful operation. The provider must reject
-stale executor tokens, epochs, and callbacks, including after restart. A
-Kubernetes controller lease alone cannot fence a remote worker.
+Permit one active effectful operation per binding. Providers must reject stale
+executor tokens, epochs, and callbacks, including after restart. A Kubernetes
+controller lease cannot by itself fence a remote worker.
 
 ### Release and project lifecycle
 
-Failed activation retains its binding. Every release must pass these gates:
+Failed activation retains its binding. Release uses retained credential, network,
+address, and cleaning obligations even after public inputs disappear. Keep
+cleanup access available until the gates complete:
 
 ![Release gates with quarantine on any unverified obligation](diagrams/release-gates.svg)
 
-Use retained credential, network, address, and cleaning obligations even after
-public inputs disappear. Preserve protected cleanup access while detaching
-consumer connectivity. Unknown outcomes keep capacity unavailable and retain
-unsettled quota custody. Only verified recovery can resume release. The simulator
-issues no real console sessions; real adapters must account for every capability
-they issue.
+Unknown outcomes quarantine capacity and retain unsettled quota custody. Adapters
+must account for every issued capability; the simulator issues no real console
+sessions. Lifecycle integration must handle these triggers:
 
-- **Claim or namespace deletion:** At claim creation, atomically capture private
-  provenance and install a protected finalizer. Deletion closes admission;
-  finalization waits for release.
-- **Consumer project termination:** Close admission by Project UID and release
-  every reservation. Participate in Milo's resource purge; continue private
-  cleanup after forced API loss.
-- **Provider project retirement:** Close new admission and apply the
-  [retirement gates](#provider-project-retirement). Preserve the project API and
-  cleanup dependencies while any obligation remains.
+- **Claim or namespace deletion:** Atomically capture caller provenance and add
+  a protected finalizer at claim creation. Deletion closes admission; finalization
+  waits for release.
+- **Consumer project termination:** Close admission for its Project UID and
+  release every reservation, continuing cleanup after forced consumer API loss.
+- **Provider retirement:** Apply the [retirement guard](#provider-project-retirement).
 - **Project or entitlement suspension:** Deny new bindings, installations, and
-  consumer power actions. Bring committed work to a safe boundary. Permit
-  authorized deletion and release without automatically wiping active machines.
-- **Class/profile withdrawal or Machine disablement:** Block future bindings; retain
-  active contracts. Admit reclaim separately.
+  consumer power actions. Bring committed work to a safe boundary and allow
+  authorized release without automatically wiping active machines.
+- **Class/profile withdrawal or Machine disablement:** Block future bindings,
+  preserve active contracts, and admit reclaim separately.
 
-Milo's [project controller][milo-cleanup] waits for resource cleanup before
-reclaiming the control plane. Its [suspension admission][milo-suspension] allows
-deletes and updates to terminating objects. Fleet must enforce the effect rules
-even when its service principal bypasses ordinary admission.
+Milo's [project controller][milo-cleanup] waits for cleanup before reclaiming the
+control plane, while [suspension admission][milo-suspension] permits deletes and
+updates to terminating objects. Fleet must participate in purge and enforce
+these effect rules even when its service principal bypasses ordinary admission.
 
 #### Provider-project retirement
 
-Fleet must establish a lifecycle guard before the provider project can hold
-preparation, quota custody, allocations, or admitted operations. Retirement
-closes admission for that exact Project UID and waits for already admitted work
-to reach a safe boundary. Binding and retirement must have one defined order:
-retirement wins and the request cannot commit, or admission wins and retirement
-must account for the resulting obligation. A list of visible Machines or claims
-is not proof that the provider project is empty.
+Establish the guard before the provider holds preparation, quota, allocations,
+or admitted operations. Retirement closes new admission for that exact Project
+UID and orders the transition against preparation, binding, and operation
+admission. Work either loses admission or remains recorded as an obligation.
+Already admitted work must reach a safe boundary; recovery and cleanup remain
+available. Public Machine or claim listings cannot establish that obligations
+are settled.
 
 ![Provider-project retirement retains the project until all obligations settle](diagrams/provider-retirement.svg)
 
-Milo must consult Fleet's guard before purging provider resources, deleting
-required namespaces, revoking cleanup service access, or removing the project
-control plane. A finalizer on the root Project alone is insufficient if dependent
-resources disappear first. Fleet also protects individual coordination records,
-execution credentials, retained artifacts, and quota anchors from deletion while
-work depends on them. Ordinary project administrators cannot bypass these guards
-or remove service finalizers. Recovery and cleanup remain available during
-termination; new consumer operations do not.
+Milo must consult the guard before purging provider resources, deleting required
+namespaces, revoking cleanup access, or removing the project control plane.
+A root Project finalizer alone cannot protect dependencies removed earlier.
+Protect individual records, artifacts, execution credentials, and quota anchors
+from deletion while work needs them. Ordinary provider administrators must not
+bypass these guards or remove service finalizers.
 
-Fleet acknowledges retirement only after all of the following hold:
+Acknowledge retirement only after preparations and quota holds settle, every
+allocation completes release, and every executor is settled or fenced with its
+permitted effects verified or cleaned up. Retire enrollment and execution
+authority and satisfy history and replay retention before allowing purge.
+Retirement itself grants no destructive authority; active allocations still
+require authorized release. Unknown outcomes, quarantine, and unavailable
+evidence keep deletion blocked. Report blockers to authorized provider operators.
+These gates also apply when provider and consumer are the same project.
 
-- Preparation has aborted with quota settled, and every allocation has completed
-  its release protocol. Provider retirement alone grants no destructive release
-  authority; active allocations require an authorized release transition.
-- Every executor is settled or fenced, and every permitted effect has a verified
-  outcome or completed cleanup. `OutcomeUnknown` and quarantine block retirement.
-- Issued access is revoked, network and address obligations are settled, required
-  cleaning is verified, and quota release is acknowledged.
-- Machine enrollment and execution authority are retired. Required history and
-  replay fences have met their retention obligations before records are deleted.
-
-Fleet reports blocking obligations to authorized provider operators. Unavailable
-evidence keeps retirement pending. These gates also apply when the
-provider and consumer are the same project. The Milo integration must implement
-and verify the required purge ordering; the existing project-cleanup API alone
-does not establish it.
-
-Forced destruction of the provider API or its storage bypasses this contract;
-it is not a supported release path. Backups and a recovery procedure must restore
-the provider's records and authority before work resumes. Fleet must not infer
-that capacity is free from missing records or recreate authority under a new
-Project UID. External protection for such a disaster is a recovery concern, not
-the normal owner or location of reservations and operations.
-
-Retain records while operations, cleanup, predecessor checks, or replay risks
-need them. Before replaying work after a database restore, reconcile executor
-fences, installation revision consumption, and quota state. Unresolved divergence
-blocks effects; restored status cannot make an old revision usable again.
+Forced destruction of the provider API or storage bypasses the contract and is
+not a release path. Backups and recovery must restore records and authority under
+the same Project UID. Missing records cannot establish free capacity. Before
+replaying work, reconcile executor fences, installation revision consumption,
+and quota state. Unresolved divergence blocks effects; restored status cannot
+make a consumed revision usable again. Retain records while operations, cleanup,
+predecessor checks, or replay risks still need them.
 
 ### Implementation decisions
 
-Before marking this enhancement implementable, Fleet and integration owners must:
+Before this enhancement becomes implementable, Fleet and integration owners must
+record these decisions in the repository:
 
-- Select storage for provider-owned coordination records and define atomic caller
+- **Coordination backend:** Choose storage and commit primitives for caller
   capture, uniqueness, lifecycle guards, and dispatch persistence. An orphaned
   public request must gain no authority.
-- Specify admission ordering and current-principal reevaluation with Milo.
-- Define durable quota custody, UID correlation, and grant/release recovery.
-- Verify project-lifetime routing, status/finalizer protection, and provider
-  retirement protection, including purge ordering, protected service access, and
-  races between retirement and preparation, binding, or operation admission.
+- **Milo admission:** Specify the [ordering protocol](#admission-ordering) and
+  current-principal reevaluation, including failure recovery.
+- **Quota adapter:** Choose the [custody anchor](#quota-custody), UID correlation,
+  and grant/release recovery protocol.
+- **Project lifecycle:** Define and verify routing, status/finalizer protection,
+  and the provider purge hook, including protected service access and races with
+  preparation, binding, and operation admission. Existing Milo cleanup does not
+  establish the required purge ordering.
 
-Record these decisions in Fleet. Storage, packaging, and internal encoding remain
-open; the public contract must also support a future managed-node consumer.
+Packaging and internal encoding remain open. The contracts must also support a
+future managed-node consumer.
 
 ### Acceptance tests
 
-The [acceptance test inventory](acceptance-tests.md) is required validation,
-not implemented behavior. Test through real Milo tenancy, IAM, entitlement, and
-quota integrations with a persistent simulator.
+Run the [acceptance inventory](acceptance-tests.md) through real Milo tenancy,
+IAM, entitlement, and quota integrations with a persistent simulator. It covers
+competing consumers, restart and response loss, delayed workers, revocation,
+network handoff, and cleanup before reuse. These tests are required and have not
+been implemented.
 
-The primary scenario has two projects compete for one Machine. One claim binds,
-installs, reinstalls, and releases; the other waits until cleanup completes.
-Restart components, lose responses, and delay old workers throughout the scenario.
-The tests must prove tenant isolation, exclusive allocation, retained inputs,
-ordered revocation, safe network handoff, and cleanup before reuse.
-
-[Source review](source-review.md) records the pinned integration evidence and
-provider comparisons. Those sources establish neither deployed versions nor
-qualified Fleet behavior.
+The [source review](source-review.md) records pinned integration evidence and
+provider comparisons; it does not establish deployed versions or qualified Fleet
+behavior.
 
 ## Production readiness review questionnaire
 
