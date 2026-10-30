@@ -1362,10 +1362,10 @@ Fleet owns implementation and design records in this repository. `infra` will
 own environment-specific deployment configuration. Implementation decisions will
 select the storage backend and deployment layout.
 
-[fleet-proposal]: ../../proposals/fleet-management/README.md
-[allocation]: ../../proposals/fleet-management/bare-metal-hardware.md
-[publication]: ../../proposals/fleet-management/capacity-publication.md
-[installation]: ../../proposals/fleet-management/os-configuration.md
+[fleet-proposal]: https://github.com/datum-cloud/fleet/blob/24568e13bdc23b4eb360c8f1f38a16d8c59f9a86/docs/proposals/fleet-management/README.md
+[allocation]: https://github.com/datum-cloud/fleet/blob/24568e13bdc23b4eb360c8f1f38a16d8c59f9a86/docs/proposals/fleet-management/bare-metal-hardware.md
+[publication]: https://github.com/datum-cloud/fleet/blob/24568e13bdc23b4eb360c8f1f38a16d8c59f9a86/docs/proposals/fleet-management/capacity-publication.md
+[installation]: https://github.com/datum-cloud/fleet/blob/24568e13bdc23b4eb360c8f1f38a16d8c59f9a86/docs/proposals/fleet-management/os-configuration.md
 [milo-policybinding]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/iam/v1alpha1/policybinding_types.go
 [milo-protected]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/iam/v1alpha1/protectedresource_types.go
 [milo-cleanup]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/internal/controllers/resourcemanager/project_controller.go
