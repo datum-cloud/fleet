@@ -759,10 +759,6 @@ spec:
 status:
   # This is the historical result revision. The claim reports the current one.
   installationRevision: installation-revision-example-1
-  # The retained revision ties the installed configuration to exact assignments.
-  # Later network observations cannot rewrite this installation's inputs.
-  resolvedNetworkRevision: network-revision-example
-  resolvedImageDigest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   completedAt: "2026-10-27T12:00:00Z"
   conditions:
     - {type: Accepted, status: "True"}
@@ -902,8 +898,7 @@ The resources report different aspects of the lifecycle:
 
 A claim omits `placement` and `allocatedHardware` before binding
 and omits `acceptedProfileRef` until admission retains the profile. It omits
-`currentInstallationRef` before an installation succeeds. An Installation omits
-the resolved digest until admission retains it.
+`currentInstallationRef` before an installation succeeds.
 `Installation.status.installationRevision` appears on verified success and
 records that historical result; it does not prove that revision is still current.
 The claim reports the usable revision for the current verified state and omits
@@ -1124,6 +1119,12 @@ or power generation, internally resolved predecessor identity, consumed and
 resulting installation revisions, exact inputs, permitted effects and targets,
 executor/fencing token, dispatch correlation, cancellation boundary, outcome
 evidence, and remaining obligations.
+
+Before dispatch, the provider's private operation record retains the resolved
+network configuration revision and image artifact digest with the exact inputs.
+Fleet uses them for verification, reproducibility, and recovery. Later network or
+image changes cannot rewrite those inputs. Installation status exposes only the
+resulting installation revision, completion time, and conditions.
 
 ### Allocation and quota integration
 

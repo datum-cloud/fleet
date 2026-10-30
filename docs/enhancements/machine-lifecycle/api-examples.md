@@ -477,10 +477,6 @@ spec:
 status:
   # This is the historical result revision. The claim reports the current one.
   installationRevision: installation-revision-example-1
-  # The retained revision ties the installed configuration to exact assignments.
-  # Later network observations cannot rewrite this installation's inputs.
-  resolvedNetworkRevision: network-revision-example
-  resolvedImageDigest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   completedAt: "2026-10-27T12:00:00Z"
   conditions:
     - type: Accepted
