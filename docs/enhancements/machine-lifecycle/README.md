@@ -450,13 +450,8 @@ spec:
 # The projector derives these observations from executor evidence and private
 # reservations. Operators cannot make capacity available by editing status.
 status:
-  # Conditions report preparation and health from evidence Fleet checks internally.
-  # The source distinguishes simulation from qualified hardware verification.
-  evidence:
-    source: Simulator
-    revision: evidence-example
-  # Normalized hardware facts come from discovery, with the evidence revision
-  # above. Logical device names keep serial numbers and management IDs private.
+  # Fleet normalizes discovery observations and checks their evidence internally.
+  # Logical device names keep serial numbers and management IDs private.
   hardware:
     cpu:
       architecture: amd64
@@ -497,12 +492,15 @@ intent. Importing records grants no provisioning authority or eligibility.
 
 Enrollment enforces one canonical asset identity across Machine records and
 provider projects. Operators cannot manufacture preparation evidence by editing
-status; simulator observations identify themselves as such.
+status.
 
 Inventory or provider discovery owns hardware facts. The projector normalizes
-those observations into `status.hardware`; Machine policy does not duplicate
-editable inventory. `status.evidence` bounds the hardware, preparation, and
-health observations. The simulator supplies explicit synthetic evidence.
+those observations into `status.hardware` and reports preparation, health, and
+availability through `status.conditions`. Fleet retains evidence sources,
+revisions, and verification results internally, including whether observations
+come from a simulator or qualified hardware verification. It checks that evidence
+before reporting readiness or accepting hardware compatibility.
+
 Unknown fields remain absent, and an unknown device list differs from a verified
 empty list. Hardware changes require new evidence and compatibility evaluation;
 Fleet cannot silently weaken an active claim's accepted requirements.

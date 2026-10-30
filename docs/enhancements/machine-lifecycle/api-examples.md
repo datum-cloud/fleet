@@ -213,13 +213,8 @@ spec:
 # The projector derives these observations from executor evidence and private
 # reservations. Operators cannot make capacity available by editing status.
 status:
-  # Conditions report preparation and health from evidence Fleet checks internally.
-  # The source distinguishes simulation from qualified hardware verification.
-  evidence:
-    source: Simulator
-    revision: evidence-example
-  # Normalized hardware facts come from discovery, with the evidence revision
-  # above. Logical device names keep serial numbers and management IDs private.
+  # Fleet normalizes discovery observations and checks their evidence internally.
+  # Logical device names keep serial numbers and management IDs private.
   hardware:
     cpu:
       architecture: amd64
