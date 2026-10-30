@@ -134,7 +134,8 @@ component, lose responses, and delay old workers to verify recovery.
 
 ## Lifecycle reference
 
-The tests cover these reservation transitions as well as the required
+The tests cover these reservation transitions, including later installation and
+reinstallation on an active allocation, as well as the required
 [release gates](README.md#release-and-project-lifecycle).
 
 ```mermaid
@@ -143,8 +144,9 @@ stateDiagram-v2
     Preparing --> Aborted: preparation and quota settled
     Preparing --> Bound: exclusive commit
     Bound --> Activating: installation and handoff
-    Activating --> Active: verified completion
+    Activating --> Active: verified handoff
     Bound --> Active: blank powered-off handoff
+    Active --> Activating: admitted install or reinstall
     Bound --> Releasing: release request
     Activating --> Releasing: safe boundary
     Active --> Releasing: release request

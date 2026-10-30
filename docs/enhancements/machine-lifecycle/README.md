@@ -166,6 +166,7 @@ open.
 The server applies defaults before capturing the request digest and rejects
 unknown behavioral fields or unsupported required capabilities. The projector
 alone writes status.
+
 Examples show selected fields; [complete responses](api-examples.md) include all
 condition fields and hardware details. Identifiers and timestamps are synthetic.
 
@@ -176,12 +177,13 @@ available, but no Fleet reference requires a caller-supplied UID.
 
 Installation revisions guard replacement of an allocation's installation state.
 They are separate from resource identity, generation, and Kubernetes resource
-version. Public status never grants permission to perform effects.
+version.
 
 #### MachineClass
 
 Provider operators own definitions; the publication service owns consumer
-references. The example uses provider types from the [bare-metal proposal][allocation].
+references. The example uses provider types from the
+[bare-metal proposal][allocation].
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -487,11 +489,11 @@ spec:
 # The projector reports allocation progress without exposing the provider
 # Machine identity. These fields describe the binding; they cannot authorize it.
 status:
-  # These are the accepted local profile and hardware snapshot at binding.
-  # They survive profile deletion and do not claim to be live health evidence.
+  # Admission retains the selected local profile through source deletion.
   acceptedProfileRef:
     name: accelerated-16c-64g
-  # The snapshot retains its observation time and does not expire.
+  # Binding captures this hardware snapshot and its observation time.
+  # Later observations can change readiness without rewriting the snapshot.
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
     # Selected fields from the same hardware shape shown on Machine.
@@ -670,11 +672,13 @@ revision or resets to `None`. Partial or uncertain effects require recovery of
 the retained operation or release, and an unknown incarnation has no current
 Installation reference.
 
-Only the retained initial request can run until the initial gate succeeds.
-Reinstalls leave that gate unchanged. Deleting an unfinished request requests
-cancellation at a safe boundary; deleting a completed request does not uninstall the OS, release
-capacity, or reset the gate. Provider records preserve identities and revision
-history through deletion and name reuse.
+When a claim requires an initial installation, only that retained request can run
+until the gate succeeds. An allocation-only claim has no initial installation
+gate. Later installations leave this choice unchanged.
+
+Deleting an unfinished request asks Fleet to cancel at a safe boundary. Deleting
+a completed request leaves the OS, allocation, and initial gate intact. Provider
+records preserve identities and revision history through deletion and name reuse.
 
 #### Status contract
 
@@ -695,18 +699,18 @@ conditions:
 Conditions report `True`, `False`, or `Unknown`. Empty status or an absent
 condition means `Unknown`; reconciliation must not infer success from absence.
 
-Conditions report Fleet's last assessment of readiness. Fleet retains observation
-times and freshness limits internally and schedules reevaluation when evidence
-expires, even if the spec does not change. Missing, stale, or unverifiable
-evidence yields `Unknown` for facts that require current evidence; stale evidence
-uses reason `EvidenceStale`. A known blocking fact still yields `False`.
+Conditions report Fleet's last assessment. For facts that require current
+evidence, Fleet retains observation times and freshness limits internally and
+schedules reevaluation when evidence expires, even if the spec does not change.
+Missing, stale, or unverifiable evidence yields `Unknown`; stale evidence uses
+reason `EvidenceStale`. A known blocking fact still yields `False`.
 
 If the projector stops, public conditions can remain stale. Clients cannot infer
 freshness from a transition time or matching generation. Fleet independently
 checks the required internal evidence before allocation, installation, power
 changes, and release.
 
-Readiness depends on the resource's role:
+Each resource defines its conditions:
 
 - **MachineProfile:** `Accepted` validates structure without promising class
   compatibility, authorization, or supply.
@@ -897,15 +901,16 @@ binding epoch; retirement advances it before another consumer can act.
 
 #### Operation record
 
-Retain these fields before dispatch:
+Retain authority, inputs, and dispatch intent before effects. Add progress and
+verified results as execution proceeds:
 
 - **Authority:** stable operation ID/idempotency key, binding ID, Installation UID
   or power generation, predecessor identity, consumed installation revision,
-  permitted effects and targets, and executor/fencing token.
+  permitted effects and targets, cancellation boundary, and executor/fencing token.
 - **Inputs:** exact image, bootstrap, disk/interface, and network inputs,
   including the resolved image digest and network configuration revision.
-- **Recovery:** dispatch correlation, cancellation boundary, outcome evidence,
-  resulting installation revision, and remaining obligations.
+- **Recovery:** dispatch correlation, outcome evidence, resulting installation
+  revision, and remaining obligations.
 
 Retries and recovery use the retained inputs. Later source changes cannot
 rewrite an admitted plan.
@@ -997,7 +1002,7 @@ exposure, and evidence of membership for the selected Network and allocation.
 A provider-assigned IP alone cannot establish that membership. Provider management
 addresses, provisioning networks, and credentials remain private.
 
-![NSO allocation and preparation supply installation inputs; verified programming gates handoff](diagrams/network-sequence.svg)
+![Network preparation supports optional installation; verified programming gates handoff](diagrams/network-sequence.svg)
 
 The diagram shows dependencies, not mandatory execution order: [Galactic
 programming][cloud-vpc-attachment] may finish before installation. Missing location
@@ -1178,7 +1183,8 @@ pause must not power off active machines.
 
 #### What specific metrics should inform a rollback?
 
-Pause admission on any duplicate binding, unauthorized effect, or accepted stale worker.
+Pause admission on any duplicate binding, unauthorized effect, or accepted stale
+worker.
 Investigate rising unknown outcomes, cleanup age, quota mismatches, and
 reconciliation failures before choosing rollback.
 
@@ -1196,7 +1202,8 @@ No. This enhancement introduces a new service contract.
 #### How can an operator determine whether workloads use the feature?
 
 Count live reservations, active operations, quota holds, and quarantined machines
-from private records. Public object counts omit obligations retained after deletion.
+from private records. Public object counts omit obligations retained after
+deletion.
 
 #### How can a consumer tell whether the feature works for its instance?
 
@@ -1348,8 +1355,8 @@ for an extended period when evidence or management access fails.
 
 The integration environment needs one provider project, two consumer projects,
 Milo IAM, service catalog, quota, durable provider-project storage,
-protected artifact storage, and an independently restartable simulator. Test tooling must inject
-lost responses, stale workers, API outages, and restore events.
+protected artifact storage, and an independently restartable simulator. Test
+tooling must inject lost responses, stale workers, API outages, and restore events.
 
 Fleet owns implementation and design records in this repository. `infra` will
 own environment-specific deployment configuration. Implementation decisions will

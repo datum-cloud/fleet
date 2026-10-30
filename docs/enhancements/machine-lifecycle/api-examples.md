@@ -313,11 +313,11 @@ spec:
 # The projector reports allocation progress without exposing the provider
 # Machine identity. These fields describe the binding; they cannot authorize it.
 status:
-  # These are the accepted local profile and hardware snapshot at binding.
-  # They survive profile deletion and do not claim to be live health evidence.
+  # Admission retains the selected local profile through source deletion.
   acceptedProfileRef:
     name: accelerated-16c-64g
-  # The snapshot retains its observation time and does not expire.
+  # Binding captures this hardware snapshot and its observation time.
+  # Later observations can change readiness without rewriting the snapshot.
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
     hardware:
