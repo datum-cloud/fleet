@@ -76,128 +76,88 @@ cleaning, and a supported non-Talos OS. Simulated results do not satisfy that ga
 
 ## Proposal
 
-Fleet will let providers offer machine capacity to authorized projects.
-Consumers will discover that capacity, request exclusive use, optionally install
-an OS, control power, and release the machine in their own project. Providers
-will retain ownership of the machines throughout that lifecycle.
+Fleet will let authorized projects discover provider capacity, allocate machines,
+optionally install an OS, control power, and release capacity. Providers retain
+ownership of the physical machines; consumers manage their allocations within
+their own projects.
 
 ### User stories
 
-- A provider operator publishes a machine class and controls which capacity Fleet
-  can allocate without exposing management credentials or other consumers.
-- A consumer selects a local class and hardware profile. Fleet allocates matching
-  capacity within the consumer's permissions, entitlement, and quota, or reports
-  why the request cannot proceed.
-- A consumer defines a custom profile when the class permits it. Fleet checks
-  whether the provider supports the complete configuration before allocation.
-- A consumer attaches named machine interfaces to existing project networks.
-  The machine joins those networks through Galactic VPC and uses their network
-  policy. Attachment does not create a new network or grant Internet access.
-- A consumer inspects the assigned hardware, IP addresses, routes, DNS resolvers,
-  and network readiness through the claim without accessing provider inventory.
-- A consumer installs or reinstalls an approved OS and controls power without
-  creating a managed cluster.
-- A consumer releases a machine or deletes its project. Fleet completes cleanup
-  before another consumer can use that capacity.
-- A provider retires its project after Fleet settles allocations, operations,
-  and cleanup. Pending or unknown obligations keep the project and its records
-  available for recovery.
-- A service operator recovers interrupted work without repeating an unknown
-  destructive action or losing cleanup obligations.
+- A provider publishes offerings and controls which machines consumers can use.
+- A consumer chooses an offering and hardware profile, defines custom requirements
+  when permitted, and operates the machine without creating a managed cluster.
+- A service operator diagnoses blocked requests and recovers interrupted
+  provisioning or cleanup without disrupting other allocations.
 
 ### Managing allocated machines
 
-Consumers list MachineClaims in their project to see requested and allocated
-machines. A pending claim represents a request; a bound claim represents an
-exclusive allocation. The claim is the management handle throughout that
-allocation. It exposes assigned hardware, location, network addresses, power,
-readiness, and the current installation. The physical Machine belongs to the
-provider project; consumers do not need access to provider inventory.
+Consumers list MachineClaims to see pending requests and allocated machines.
+Each claim remains the management handle for its allocation and shows hardware,
+location, IP assignments, power, and readiness. Fleet reports why allocation is
+blocked, including unavailable capacity or missing permissions, entitlement, or
+quota. Consumers can attach interfaces to existing project networks through
+Galactic VPC. Attachments follow network policy and do not automatically grant
+Internet access.
 
-An Installation requests one OS installation with an image and optional bootstrap
-configuration. It is separate from the allocation and reports the progress and
-result of that work. Consumers can choose either handoff:
+Installation is optional. Consumers choose between two handoffs:
 
-- **Allocate only:** Omit the claim's `initialInstallationRef`. Fleet hands over
-  a prepared machine powered off, without promising an installed, bootable OS.
-  A later Installation can install the first OS on that same allocation.
-- **Allocate and install:** Set `initialInstallationRef` to the initial
-  Installation. Fleet waits for that request to succeed, along with the other
-  handoff requirements, before reporting the claim ready.
+- **Allocate only:** Receive a prepared, powered-off machine and install an OS
+  later. Fleet does not promise a bootable OS at handoff.
+- **Allocate and install:** Request an approved OS with optional bootstrap
+  configuration. Fleet reports the claim ready after installation and the other
+  handoff requirements succeed.
 
-Reinstalling creates a new Installation against the same claim and physical
-machine. The new request supplies the claim's current installation revision as a
-precondition, along with its own image and bootstrap inputs. The consumer leaves
-the claim's `initialInstallationRef` unchanged. Fleet retains the allocation while the
-reinstallation runs and reports progress on the new request.
+A reinstall creates a new Installation and preserves the same claim and machine.
+Consumers follow progress on that request. Installation history records outcomes;
+Fleet does not continuously manage the running OS.
 
-Deleting a claim starts release and cleanup. Deleting a completed Installation
-does not uninstall the OS or release the machine. Installation history records
-past outcomes; it does not continuously manage the running OS.
+Deleting a claim starts release and cleanup before another consumer can use the
+machine. Deleting a completed Installation leaves the OS and allocation in place.
 
 ### Resource relationships across projects
 
-The first diagram shows how consumers discover and request provider capacity.
-Solid arrows show references or supply selection; the dashed arrow shows
-profile publication. Each project owns its resources and namespaces.
+Classes describe provider offerings; profiles describe hardware requirements.
+An offering can support several profiles, and a profile can serve several
+offerings. Consumers can define custom profiles where the offering permits them.
+
+The diagram shows resource references with solid arrows and profile publication
+with a dashed arrow:
 
 ![Public resource relationships across provider and consumer projects](diagrams/public-resources.svg)
 
-A MachineClass defines an offering and its allocation policy. A MachineProfile
-specifies hardware requirements independently of that offering. Each MachineClaim
-selects both through local names. A class can support several profiles, and a
-profile can work with several classes or providers.
+Projects can share an offering's capacity without sharing networks or provider
+inventory access. Machines stay in the provider project; networks stay in the
+consumer project.
 
-The publication service creates protected local copies of provider profiles.
-Consumers can also create custom profiles in their own projects when a class
-permits them. Custom profiles have no provider source. Each Installation requests
-an OS installation for a claim. Each requested machine interface references an
-existing `networking.datumapis.com` Network in the consumer project. Networking
-owns its Galactic VPC realization. The physical Machine remains in the provider
-project; attaching it does not move the consumer's network there.
-
-Other projects can use the same offering and compete for its supply without
-sharing networks. A network reference grants no access to another project.
-
-The second diagram shows how Fleet preserves exclusive allocation and recovery
-across project boundaries.
+Fleet retains allocation and cleanup state in the provider project when a
+consumer project is deleted:
 
 ![Provider-project reservations and operations retain the consumer binding](diagrams/private-records.svg)
 
-The provider project owns the Machine, its reservation, and its operation
-records. The reservation binds the consumer claim to that Machine; operation
-records retain the work Fleet authorizes. Consumers see results through their
-MachineClaims and Installations, without access to these internal records.
-
-Consumer-project deletion leaves the provider records intact. Fleet blocks
-provider-project deletion while allocations, operations, or cleanup obligations
-remain. Requesting provider retirement does not itself authorize wiping an
-allocated machine.
+Provider retirement remains blocked while allocations, operations, or cleanup
+obligations remain. A retirement request does not authorize wiping active machines.
 
 ### Notes, constraints, and caveats
 
 This proposal narrows the existing [allocation][allocation],
-[publication][publication], and [installation][installation] contracts. API names
-and field shapes remain provisional. The first implementation validates these
-capabilities with simulated capacity; production hardware support requires the
-qualification described in [Non-goals](#non-goals).
+[publication][publication], and [installation][installation] contracts. APIs remain
+provisional. Initial validation uses simulated capacity; production hardware
+support requires the [qualification work](#non-goals).
 
 ### Risks and mitigations
 
-- **A privileged controller acts for an unauthorized consumer:** Check the
-  initiating principal in both project scopes; retain the decision privately.
-- **Concurrent workers allocate the same asset:** Enforce uniqueness in the
-  reservation store and reject stale execution authority at the provider.
-- **Project deletion destroys cleanup inputs:** Retain coordination records and
-  required artifacts in the provider project, outside consumer garbage
-  collection. Protect provider retirement and quota custody until obligations end.
-- **A timeout hides a completed destructive action:** Recover the existing
-  operation by its stable identity before retrying.
+- **Unauthorized access:** [Authorization checks](#request-authority) restrict
+  consumers to permitted offerings and actions.
+- **Double allocation:** [Coordination guarantees](#durable-coordination) keep
+  capacity exclusive until release completes.
+- **Lost cleanup obligations:** [Project lifecycle controls](#release-and-project-lifecycle)
+  preserve recovery through consumer deletion and block premature provider removal.
+- **Repeated destructive work:** [Execution recovery](#provider-execution-and-recovery)
+  resolves uncertain outcomes before retrying.
 
-Fleet and Milo maintainers must review authorization and lifecycle integration
-before the enhancement becomes implementable. Provider maintainers must review
-execution fencing and cleanup evidence. Consumer-facing API review must cover
-pending, cancellation, and recovery behavior. Review assignments remain open.
+Fleet, Milo, provider, and consumer API maintainers must review authorization,
+lifecycle, recovery, and cleanup before implementation. Review assignments remain
+open.
 
 ## Design details
 
