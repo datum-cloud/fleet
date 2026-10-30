@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" role="img" aria-labelledby="title description">
+  <title id="title">Public resources across project boundaries</title>
+  <desc id="description">A consumer MachineClaim references a project-wide MachineClass and MachineProfile. Its Installation references the claim. Each requested interface selects an existing networking.datumapis.com Network in the consumer project. Networking owns its Galactic VPC realization; the physical Machine remains in the provider project. The local class references a provider definition, which selects provider Machines and permits named profiles. A dashed arrow shows publication of a provider profile as a protected consumer copy. Consumer-authored custom profiles have no provider source and require the class to permit them. Public references use scoped names; Fleet resolves and retains UIDs internally. Reinstallation uses the claim installation revision as a precondition. Solid arrows show references or selection, not execution order.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; }
+    .heading { font-size: 24px; font-weight: 700; }
+    .label { font-size: 20px; font-weight: 700; }
+    .detail { font-size: 17px; fill: #475569; }
+    .edge { font-size: 17px; fill: #334155; }
+    .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+  </style>
+  <rect width="960" height="620" fill="white"/>
+  <rect x="20" y="16" width="536" height="588" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+  <rect x="580" y="16" width="360" height="588" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+  <text x="44" y="55" class="heading" text-anchor="start">Consumer project</text>
+  <text x="604" y="55" class="heading" text-anchor="start">Provider project</text>
+  <rect x="72" y="90" width="220" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="182.0" y="119" class="label" text-anchor="middle">MachineClass</text>
+  <text x="182.0" y="143" class="detail" text-anchor="middle">Local reference</text>
+  <rect x="622" y="90" width="290" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="767.0" y="119" class="label" text-anchor="middle">MachineClass</text>
+  <text x="767.0" y="143" class="detail" text-anchor="middle">Offering definition</text>
+  <rect x="296" y="200" width="220" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="406.0" y="229" class="label" text-anchor="middle">MachineProfile</text>
+  <text x="406.0" y="253" class="detail" text-anchor="middle">Published or custom</text>
+  <rect x="622" y="200" width="290" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="767.0" y="229" class="label" text-anchor="middle">MachineProfile</text>
+  <text x="767.0" y="253" class="detail" text-anchor="middle">Named requirements</text>
+  <path d="M 292 126 L 622 126" class="line"/>
+  <text x="452" y="113" class="edge" text-anchor="middle">provider + name</text>
+  <path d="M 622 236 L 516 236" class="line" stroke-dasharray="6 4"/>
+  <text x="569" y="222" class="edge" text-anchor="middle">publishes</text>
+  <path d="M 767 162 L 767 200" class="line"/>
+  <text x="779" y="186" class="edge" text-anchor="start">permits</text>
+  <rect x="44" y="330" width="492" height="258" rx="10" fill="#f8fbff" stroke="#93b4df" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <rect x="600" y="330" width="320" height="258" rx="10" fill="#f8fdf9" stroke="#96bda1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="62" y="356" class="detail" text-anchor="start">Namespace</text>
+  <text x="618" y="356" class="detail" text-anchor="start">Namespace</text>
+  <rect x="72" y="378" width="220" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="182.0" y="421" class="label" text-anchor="middle">MachineClaim</text>
+  <rect x="72" y="500" width="220" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="182.0" y="543" class="label" text-anchor="middle">Installation</text>
+  <rect x="622" y="378" width="290" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="767.0" y="421" class="label" text-anchor="middle">Machine</text>
+  <path d="M 182 378 L 182 162" class="line"/>
+  <text x="170" y="308" class="edge" text-anchor="end">class name</text>
+  <path d="M 292 414 L 406 414 L 406 272" class="line"/>
+  <text x="418" y="371" class="edge" text-anchor="start">profile name</text>
+  <path d="M 182 500 L 182 450" class="line"/>
+  <text x="194" y="480" class="edge" text-anchor="start">claim name</text>
+  <rect x="310" y="500" width="210" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="415" y="529" class="label" style="font-size:20px" text-anchor="middle">Network</text>
+  <text x="415" y="553" class="detail" text-anchor="middle">Existing project network</text>
+  <path d="M 292 434 L 415 434 L 415 500" class="line"/>
+  <text x="422" y="476" class="edge" text-anchor="start">network name</text>
+  <path d="M 912 126 L 928 126 L 928 414 L 912 414" class="line"/>
+  <text x="912" y="310" class="edge" text-anchor="end">selects</text>
+  <text x="767" y="510" class="detail" text-anchor="middle">Capacity stays in</text>
+  <text x="767" y="536" class="detail" text-anchor="middle">the provider project.</text>
+</svg>
