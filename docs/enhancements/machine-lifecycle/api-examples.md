@@ -3,7 +3,7 @@
 These proposed responses accompany the [machine lifecycle enhancement](README.md#api-design).
 They show different lifecycle points, not one simultaneous observation. Names,
 identifiers, and timestamps are synthetic. They define no implemented APIs or
-production freshness limits. The enhancement owns field semantics and lifecycle rules.
+production timing requirements. The enhancement owns field semantics and lifecycle rules.
 
 - [Provider MachineClass](#provider-machineclass)
 - [Consumer MachineClass](#consumer-machineclass)
@@ -213,13 +213,11 @@ spec:
 # The projector derives these observations from executor evidence and private
 # reservations. Operators cannot make capacity available by editing status.
 status:
-  # Evidence validity bounds preparation and health observations. Simulator
-  # evidence remains distinguishable from qualified hardware verification.
+  # Conditions report preparation and health from evidence Fleet checks internally.
+  # The source distinguishes simulation from qualified hardware verification.
   evidence:
     source: Simulator
     revision: evidence-example
-    observedAt: "2026-10-27T12:00:00Z"
-    validUntil: "2026-10-27T12:05:00Z"
   # Normalized hardware facts come from discovery, with the evidence revision
   # above. Logical device names keep serial numbers and management IDs private.
   hardware:
@@ -363,12 +361,10 @@ status:
   placement:
     locationRef:
       name: lab
-  # Networking supplies this current assignment view. The revision identifies
-  # exact configuration inputs; freshness alone does not prove guest setup.
+  # Networking supplies the assignment view and interface conditions.
+  # The revision identifies exact configuration inputs; it does not prove guest setup.
   network:
     revision: network-revision-example
-    observedAt: "2026-10-27T12:00:00Z"
-    validUntil: "2026-10-27T12:05:00Z"
     interfaces:
       - name: primary
         # Status shows the accepted Network by name. Fleet pins its lifetime
@@ -416,12 +412,10 @@ status:
             lastTransitionTime: "2026-10-27T12:00:00Z"
             reason: AttachmentVerified
             message: "Networking verified this interface on the selected network."
-  # Power is an observation, separate from spec.powerState intent. Its validity
-  # prevents a stale successful power action from implying current readiness.
+  # Power reports observed state independently of spec.powerState intent.
+  # Fleet reports Unknown when it cannot verify the state from current evidence.
   power:
     state: "On"
-    observedAt: "2026-10-27T12:00:00Z"
-    validUntil: "2026-10-27T12:05:00Z"
   conditions:
     - type: Accepted
       status: "True"

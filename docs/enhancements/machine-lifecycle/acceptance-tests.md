@@ -54,6 +54,15 @@ component, lose responses, and delay old workers to verify recovery.
   Do not report the interface attached merely because an address or backing
   object exists.
 - **Lost network responses:** Recover the same assignments without allocating twice.
+- **Evidence expires without a spec change:** Reevaluate from internal freshness
+  limits. Report affected machine and network conditions as `Unknown` with
+  `EvidenceStale`, and power state as `Unknown`; preserve known blocking results
+  as `False`. Withhold readiness that depends on the missing evidence. Keep the
+  binding, completed installation results, and dated hardware snapshot intact.
+- **The status projector stops while conditions remain successful:** Block any
+  allocation, installation, power change, or release whose required internal
+  evidence is stale or unavailable. Condition timestamps and generations cannot
+  substitute for these checks. Refresh conditions when projection resumes.
 - **Assignment drift or stale network evidence during installation:** Block
   affected effects and readiness; never replace retained execution inputs.
 - **Reinstall, network deletion, or release with a reserved address:** Preserve

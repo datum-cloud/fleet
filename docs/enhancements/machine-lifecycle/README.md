@@ -222,8 +222,7 @@ server-managed Kubernetes metadata remains available, but these examples omit
 
 The projector alone writes `/status`. Installation revisions provide replacement
 preconditions; they are not UIDs, object generations, or Kubernetes resource
-versions. Example identifiers and timestamps are synthetic, and validity windows
-do not establish production freshness limits.
+versions. Example identifiers and timestamps are synthetic.
 
 #### MachineClass
 
@@ -451,13 +450,11 @@ spec:
 # The projector derives these observations from executor evidence and private
 # reservations. Operators cannot make capacity available by editing status.
 status:
-  # Evidence validity bounds preparation and health observations. Simulator
-  # evidence remains distinguishable from qualified hardware verification.
+  # Conditions report preparation and health from evidence Fleet checks internally.
+  # The source distinguishes simulation from qualified hardware verification.
   evidence:
     source: Simulator
     revision: evidence-example
-    observedAt: "2026-10-27T12:00:00Z"
-    validUntil: "2026-10-27T12:05:00Z"
   # Normalized hardware facts come from discovery, with the evidence revision
   # above. Logical device names keep serial numbers and management IDs private.
   hardware:
@@ -585,12 +582,10 @@ status:
   installationRevision: installation-revision-example-1
   placement:
     locationRef: {name: lab}
-  # Networking supplies this current assignment view. The revision identifies
-  # exact configuration inputs; freshness alone does not prove guest setup.
+  # Networking supplies the assignment view and interface conditions.
+  # The revision identifies exact configuration inputs; it does not prove guest setup.
   network:
     revision: network-revision-example
-    observedAt: "2026-10-27T12:00:00Z"
-    validUntil: "2026-10-27T12:05:00Z"
     interfaces:
       - name: primary
         # Status shows the accepted Network by name. Fleet pins its lifetime
@@ -623,12 +618,10 @@ status:
           - {type: Allocated, status: "True"}
           - {type: Prepared, status: "True"}
           - {type: Programmed, status: "True"}
-  # Power is an observation, separate from spec.powerState intent. Its validity
-  # prevents a stale successful power action from implying current readiness.
+  # Power reports observed state independently of spec.powerState intent.
+  # Fleet reports Unknown when it cannot verify the state from current evidence.
   power:
     state: "On"
-    observedAt: "2026-10-27T12:00:00Z"
-    validUntil: "2026-10-27T12:05:00Z"
   conditions:
     - {type: Accepted, status: "True"}
     - {type: Bound, status: "True"}
@@ -715,8 +708,9 @@ installation without waiting for the result that installation helps produce.
 Network lifetime, and allocation. Fleet keeps that identity internal and exposes
 the accepted name. Before resolution, status omits unresolved references
 and addresses. A known block yields `False`; missing or stale evidence yields
-`Unknown`. Conditions observe the MachineClaim generation and share
-`status.network` freshness. `NetworkReady` requires all requested interfaces to
+`Unknown`. Conditions observe the MachineClaim generation. Fleet checks network
+evidence freshness internally and projects the result into these conditions.
+`NetworkReady` requires all requested interfaces to
 be allocated, prepared, and programmed. Class or profile status cannot establish
 VPC membership.
 
@@ -868,13 +862,21 @@ Each condition describes one fact. Its `status` is `True`, `False`, or `Unknown`
 its `reason` identifies the outcome, and its bounded `message` explains it.
 Status can be empty before reconciliation; an absent condition means `Unknown`.
 
-An unchanged spec can acquire new dependency revisions or stale evidence.
-For Machine evidence and claim network and power observations, `observedAt`
-records an observation, and `validUntil` bounds its validity under the relevant
-evidence policy. A matching generation alone does not prove
-freshness. Missing, expired, or unverifiable evidence yields `Unknown` for the
-facts that depend on it. Readers also check validity when the projector cannot
-refresh status.
+Conditions report Fleet's last assessment of readiness. Fleet retains observation
+times and freshness limits internally and schedules reevaluation when evidence
+expires, even if the spec does not change. Missing, stale, or unverifiable
+evidence yields `Unknown` for facts that require current evidence; stale evidence
+uses reason `EvidenceStale`. A known blocking fact still yields `False`.
+`lastTransitionTime` records a change in condition value, not the latest check;
+`observedGeneration` identifies the evaluated spec generation.
+
+If the projector stops, public conditions can remain stale. Clients cannot infer
+freshness from a transition time or matching generation. Fleet independently
+checks the required internal evidence before allocation, installation, power
+changes, and release.
+
+`allocatedHardware.observedAt` dates the hardware observation retained at binding.
+It describes a historical snapshot and has no expiration.
 
 The resources report different aspects of the lifecycle:
 
@@ -912,11 +914,13 @@ operation correlation and the resolved digest until admission retains them.
 records that historical result; it does not prove that revision is still current.
 The claim reports the usable revision for the current verified state and omits
 it before any admitted installation or while work or recovery blocks replacement.
-`power.state` is `On`, `Off`, or `Unknown`; intent changes do not change the
-observation until fresh executor evidence arrives. `network` appears when the
+`power.state` is `On`, `Off`, or `Unknown`. Intent changes cannot establish an
+observed power state. Missing or stale power evidence yields `Unknown` and
+withholds claim readiness when that evidence is required. `network` appears when
+the
 resolver evaluates the binding; unassigned address fields remain absent.
-Expired evidence makes
-`NetworkReady=Unknown`; retained addresses are not proof of current assignment.
+Stale required network evidence yields `NetworkReady=Unknown` unless a known
+block establishes `False`; retained addresses do not prove current assignment.
 An empty `networkInterfaces` list yields `NetworkReady=True` with
 `NoAttachmentsRequired` and does not imply that a guest has connectivity.
 
@@ -930,9 +934,8 @@ Private history still preserves earlier identities for recovery.
 The projector publishes `DependenciesPending`, `AuthorizationUnavailable`,
 `SourceUnavailable`, `ProfileUnsupported`, `ProviderUnavailable`, `QuotaPending`,
 `QuotaDenied`, `InsufficientCapacity`, `InstallationRevisionConflict`,
-`OutcomeUnknown`,
-`NetworkPending`, `NetworkConfigurationChanged`, or `CleanupBlocked` where
-applicable.
+`OutcomeUnknown`, `EvidenceStale`, `NetworkPending`,
+`NetworkConfigurationChanged`, or `CleanupBlocked` where applicable.
 A status write, absent condition, or stale `Ready=True` cannot authorize effects
 or free capacity. Recovery reads private records, never a reconstructed public
 binding. Consumer-visible status excludes inventory mappings, BMC endpoints,
