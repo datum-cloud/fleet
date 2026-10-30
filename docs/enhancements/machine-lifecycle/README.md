@@ -1176,60 +1176,56 @@ behavior.
 
 ## Production readiness review questionnaire
 
-These answers describe proposed controls. Fleet has not implemented or qualified
-them. Reviewers must approve this questionnaire before the enhancement becomes
-implementable.
+These controls and tests are proposed, not implemented or qualified. Reviewers
+must approve this questionnaire before the enhancement becomes implementable.
 
 ### Feature enablement and rollback
 
 #### How do operators enable or disable the feature in a live cluster?
 
-Operators deploy Fleet, register its APIs and IAM resources, and enable consumer
-entitlements. An operator control must pause new bindings and consumer operations
-while allowing recovery and release. Implementation must define this control and
-verify that it needs no Milo downtime or machine reprovisioning.
+Deploy Fleet, register its APIs and IAM resources, and enable consumer
+entitlements. Define and test an admission pause that preserves recovery and
+release without Milo downtime or machine reprovisioning.
 
 #### Does enabling the feature change any default behavior?
 
-No. Imported Machines default to `Disabled`, and claims default to power `Off`.
-Creating or importing a record cannot trigger provisioning.
+No. Machines default to `Disabled` and claims to power `Off`. Creating or
+importing records cannot trigger provisioning.
 
 #### Can operators disable the feature after enabling it?
 
-Yes, by pausing admission. They must retain Fleet's APIs, provider-project
-coordination records, required artifacts, and recovery workers until outstanding
-obligations end. Removing the service while allocations remain is not a
-supported rollback.
+Yes, by pausing admission. Keep APIs, provider records, artifacts, and recovery
+workers available until obligations end; service removal is unsupported while
+allocations remain.
 
 #### What happens if operators reenable the feature after rollback?
 
 Fleet reconciles retained operations, quota, and executor fences before admitting
-new work. It does not create replacement bindings from public status.
+work. Public status cannot reconstruct a binding.
 
 #### Are there tests for feature enablement and disablement?
 
-Not yet. Add tests that pause during preparation, installation, and release,
-restart components, and resume without duplicate effects or lost obligations.
+Not yet. Test pause, restart, and resume during preparation, installation, and
+release without duplicate effects or lost obligations.
 
 ### Rollout, upgrade and rollback planning
 
 #### How can a rollout or rollback fail? Can it impact running workloads?
 
-Incompatible record formats or fencing protocols could strand work or authorize
-stale workers. Version private records and executor protocols before rollout.
-Block downgrade when the older version cannot recover retained work. Pausing
-admission must not power off active machines.
+Incompatible records or fencing protocols can strand work or admit stale workers.
+Version both, and block downgrades that cannot recover retained work. An admission
+pause must not power off active machines.
 
 #### What specific metrics should inform a rollback?
 
-Pause admission on any duplicate binding, unauthorized effect, or stale-worker
-acceptance. Investigate rising unknown-operation counts, cleanup age, quota
-mismatches, and reconciliation failures before choosing rollback.
+Pause admission on any duplicate binding, unauthorized effect, or accepted stale worker.
+Investigate rising unknown outcomes, cleanup age, quota mismatches, and
+reconciliation failures before choosing rollback.
 
 #### Have upgrade, rollback, and upgrade-downgrade-upgrade tests passed?
 
-No implementation exists. Add compatibility tests before the first version
-change that affects persisted state or executor behavior.
+No. Test compatibility before the first change to persisted state or executor
+behavior.
 
 #### Does rollout deprecate or remove any features, APIs, fields, or flags?
 
@@ -1239,135 +1235,118 @@ No. This enhancement introduces a new service contract.
 
 #### How can an operator determine whether workloads use the feature?
 
-Expose counts of live reservations, active operations, quota holds, and
-quarantined machines from private state. Public object counts cannot establish
-ongoing obligations after deletion.
+Count live reservations, active operations, quota holds, and quarantined machines
+from private records. Public object counts omit obligations retained after deletion.
 
 #### How can a consumer tell whether the feature works for its instance?
 
-Consumers read the conditions, progress, and observations defined in the
-[API status contract](#status-contract). Status distinguishes pending inputs,
-committed capacity, installation completion, current readiness, and release.
-Operator audit records retain principals, ProjectKeys, decisions, transitions,
-and evidence references without secret content.
+Read claim and Installation status using the [status contract](#status-contract).
 
 #### What service-level objectives are reasonable?
 
-Fleet has no measured latency or availability baseline. Establish targets after
-simulator load tests and before production rollout. Exclusive allocation and
-verified release are correctness requirements, not error-budget allowances.
+No measured baseline exists. Set latency and availability targets after simulator
+load tests and before production. Exclusive allocation and verified release are
+correctness requirements with no error-budget allowance.
 
 #### Which service-level indicators show service health?
 
-Measure admission latency, reconciliation success, operation completion latency,
-unknown outcomes, cleanup age, quota reconciliation failures, and dependency
-availability. Separate waiting for capacity from controller failure. Define
-metric names and aggregation during implementation; avoid object UIDs as labels.
+Measure admission and operation completion latency, reconciliation success, unknown
+outcomes, cleanup age, quota failures, and dependency availability. Separate capacity
+waits from controller failures. Define metric names and aggregation without object
+UID labels.
 
 #### Which useful metrics are missing?
 
 All proposed metrics await implementation. Real-adapter provisioning, boot, and
-cleaning timings also require hardware qualification.
+cleaning timings require hardware qualification.
 
 ### Dependencies
 
 #### Does the feature depend on specific services?
 
-- **Project APIs and IAM** resolve identity, lifecycle, and permissions.
-  During an outage, Fleet pauses affected admissions and status projection while
-  retaining provider-held recovery authority. Provider-project API loss blocks
-  work that needs unavailable records; it cannot establish release or deletion
-  readiness.
-- **Service catalog and quota** establish entitlement and quota custody. When
-  either service cannot confirm the required authority, Fleet blocks admission
-  and retains bindings through unknown quota release.
-- **Provider-project coordination state and artifact storage** retain authority,
-  dispatch, and exact inputs under Fleet's lifecycle guards. During an outage,
-  Fleet blocks new effects. Admitted executors follow their retained plans and
-  cancellation boundaries.
-- **Provider executors** execute and verify operations. When an executor becomes
-  unavailable, Fleet retains unknown outcomes and queries the same operation
-  after service returns.
-- **Location, image, and network resolvers** validate placement and execution
-  prerequisites. If evidence is unavailable, Fleet waits rather than
-  substituting defaults. Initial image and network fixtures model these
-  interfaces.
+- **Project APIs and IAM:** Identity, lifecycle, and permission checks. Outages
+  block dependent admissions, effects, and status writes; retained authority
+  supports recovery where dependencies permit.
+- **Service catalog and quota:** Entitlement and quota custody. Unverified
+  authority blocks admission; unknown quota release retains the binding.
+- **Provider records and artifact storage:** Authority and exact inputs. Outages
+  block new effects; admitted executors follow retained plans and cancellation
+  boundaries.
+- **Executors:** Execution and verification. Unavailability leaves outcomes
+  unknown; query the same operation after recovery.
+- **Location, image, and network resolvers:** Placement and execution inputs.
+  Missing evidence delays work without substituting defaults. Initial image
+  and network fixtures model these interfaces.
 
-Dependency delays increase pending time. Retries must use backoff and preserve
-operation identity.
+Retries use backoff and preserve operation identity.
 
 ### Scalability
 
 #### Does the feature add API calls?
 
-Yes. Controllers watch project lifecycles and Fleet resources, resolve inputs,
-check authorization/entitlement, manage quota claims, and write status. Measure
-throughput and per-project watch cost before setting supported limits.
+Yes: watches, input resolution, authorization, entitlement, quota, and status
+updates. Measure throughput and per-project watch cost before setting limits.
 
 #### Does the feature introduce API types?
 
-Yes: the five kinds in [API design](#api-design). Load tests must set
-project and namespace limits; this proposal claims no supported object count.
+Yes: the five kinds in [API design](#api-design). Load tests must establish
+project and namespace limits; none are claimed yet.
 
 #### Does the feature add cloud-provider calls?
 
-The initial implementation calls only the simulator. Real adapters must document
-API operations, rate limits, and retry costs during qualification.
+Initially, only simulator calls. Document each real adapter's operations, rate
+limits, and retry costs during qualification.
 
 #### Does the feature increase existing object sizes or counts?
 
-Quota consumption adds one hold per preparation or live binding. Fleet also adds
-IAM registrations and publication references. Measure total object sizes,
-including bounded status and evidence references, during implementation.
+Yes: one quota hold per preparation or live binding, IAM registrations, and
+publication references. Measure object sizes and bound status payloads.
 
 #### Does the feature increase latency for operations with existing objectives?
 
-Authorization, quota, and project-purge traffic can affect Milo. Project deletion
-also waits for Fleet cleanup. Measure these effects with Milo maintainers before
-production rollout.
+Authorization, quota, and purge traffic can affect Milo; project deletion also
+waits for cleanup. Measure both with Milo maintainers before production.
 
 #### Does the feature significantly increase component resource usage?
 
-Private records, retained artifacts, project watches, and reconciliation queues
-consume storage, memory, and connections. Establish retention and per-project
-concurrency limits through load tests without deleting active obligations.
+Records, artifacts, watches, and queues consume storage, memory, and connections.
+Use load tests to set retention and per-project concurrency limits without
+discarding active obligations.
 
 #### Can the feature exhaust node resources?
 
-Yes. Unbounded watches, retries, artifact downloads, or pending operations could
-exhaust connections, memory, or disk. Bound queues, transfer concurrency, and
-artifact sizes. Test overload and dependency outages before setting limits.
+Yes. Bound watches, queues, retries, transfer concurrency, and artifact sizes.
+Test overload and dependency outages before setting limits.
 
 ### Troubleshooting
 
 #### How does the feature react when an API server becomes unavailable?
 
-Fleet stops admissions that need that API's evidence and delays status writes.
-It continues recovery from retained authority where dependencies permit. See
-[Dependencies](#dependencies) for the outage boundaries.
+Fleet pauses dependent admissions and status writes. Recovery continues where
+retained authority and available dependencies allow; [dependency
+boundaries](#dependencies) also govern effects.
 
 #### What other failure modes should operators investigate?
 
-- **Unknown executor outcome:** Detect through `OutcomeUnknown` and operation
-  age. Query the retained operation; fence the old worker before takeover.
-- **Incomplete cleanup:** Detect through `CleanupBlocked` and quarantine count.
-  Restore management access or missing evidence, then resume release.
-- **Quota divergence:** Detect through quota reconciliation failures. Recover
-  the exact hold and acknowledgment; keep capacity unavailable.
-- **Restored state conflicts with executor state:** Detect through fence or
-  epoch mismatch. Keep effects paused until reconciliation establishes current
-  authority.
+- **Unknown outcome:** Check `OutcomeUnknown` and operation age; query the
+  backend operation and fence the old worker before takeover.
+- **Incomplete cleanup:** Check `CleanupBlocked` and quarantine; restore access
+  or evidence before resuming release.
+- **Quota divergence:** Recover the exact hold and acknowledgment; keep capacity
+  unavailable.
+- **Restore conflicts:** Reconcile executor fences and epochs before resuming
+  effects.
 
-Audit logs must include operation/binding IDs, transitions, and evidence
-references. Implementation must define log levels and verify these paths through
-[Acceptance tests](#acceptance-tests); none have run yet.
+Audit logs must retain principals, ProjectKeys, binding/operation IDs, decisions,
+transitions, and evidence references without secrets. Define log levels and verify
+these paths through [acceptance tests](#acceptance-tests).
 
 #### How should operators investigate missed service-level objectives?
 
-Identify the affected phase and dependency from conditions and metrics. Locate
-the provider records through the retained claim or Installation identity, then
-follow internal operation IDs into audit logs. Check quota and executor state
-before retrying. Pause admission if evidence suggests a correctness violation.
+Find the blocked phase and dependency in conditions and metrics. Follow the
+claim or Installation identity to provider records and operation audit logs.
+Check quota and executor state before retrying; pause admission on suspected
+correctness violations.
 
 ## Implementation history
 
