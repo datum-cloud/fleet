@@ -535,19 +535,19 @@ spec:
   # Installation to this allocation.
   initialInstallationRef: {name: example-os-1}
 
-  # Each immutable entry connects a profile interface slot to an existing
-  # project Network. Networking owns VPC membership and address assignment.
+  # Immutable entries connect profile slots to project Networks. Omission
+  # requests no attachment; a Network namespace defaults to the claim namespace.
   networkInterfaces:
     - name: primary
       network:
         namespace: default
         name: production
-      # Families describe addresses inside the selected network. The current
-      # Network API admits new networks as IPv6-only; public IPs are separate.
+      # IPv6 is the default; the first family is primary. Every requested family
+      # must be supported. The current Network API admits new networks as IPv6-only.
       ipFamilies:
         - IPv6
-      # Extra addresses use NSO address classes; no extra address is requested.
-      # Delete returns this interface's assignments after verified release.
+      # Extra addresses select NSO classes; every requested class must be satisfied.
+      # Omission requests none. Delete is the default and requires verified release.
       addresses: []
       reclaimPolicy: Delete
   # Off is the default so creating a claim does not request runtime power-on.
@@ -595,7 +595,7 @@ status:
         macAddress: "02:00:00:00:00:10"
         mtu: 1440
         # Addresses retain networking's CIDR and primary-address semantics.
-        # An external address is distinct from an address configured on the NIC.
+        # For external addresses, [] means verified none; absence means unknown.
         addresses:
           - family: IPv6
             address: "2001:db8::10/64"
@@ -661,39 +661,19 @@ cannot replace Fleet's release protocol.
 
 ##### Network interfaces
 
-`networkInterfaces` is immutable. Each entry's `name` identifies a MachineProfile
-interface slot, not an OS device. Duplicate names and unknown slots are invalid.
-An omitted or empty list requests no consumer network attachment.
+Interface names map to MachineProfile slots, not OS devices. Fleet rejects
+unknown slots and duplicate names.
 
-- **`network`:** An NSO NetworkRef to an existing [project Network][nso-network].
-  The namespace defaults to the claim's namespace. Other namespaces require
-  explicit network-use permission; the project always comes from authenticated
-  request context.
-- **`ipFamilies`:** Defaults to `[IPv6]`. The first family is primary, and the
-  selected network must support every requested family at the requested location.
-- **`addresses`:** Extra-address requests containing an NSO address `class`, not
-  literal IPs, pools, or CIDRs. Every requested class must be satisfied; omission
-  requests none.
-- **`reclaimPolicy`:** Defaults to `Delete`; `Retain` preserves assignments under
-  networking's ownership after verified detachment. Neither permits premature
-  reuse. The [integration contract](#galactic-vpc-api-integration) defines release.
+Network references stay within the consumer project. Fleet checks network-use
+permission in the selected namespace. Claim read permission exposes the network
+summary; following the [Network reference][nso-network] requires permission on
+the Network itself.
 
-`status.network.interfaces` uses the requested interface names and reports the
-accepted Network, assignments, and configuration shown in the YAML example.
-Claim read permission exposes this summary; following the Network reference
-requires separate permission. Unresolved references and addresses remain absent.
-
-The [network interface API][nso-interface] distinguishes configured or delegated
-CIDRs in `addresses` from separately assigned addresses in `externalAddresses`.
-External entries include family, address class, and a bare IP. A delegated CIDR
-can contain multiple host addresses. An empty external-address list means Fleet
-verified that none exist; absence means unknown. Addresses alone do not promise
-Internet access or prove Galactic attachment.
-
-Per-interface `Allocated`, `Prepared`, and `Programmed` retain NSO's meanings and
-observe the claim's generation. `NetworkReady` requires all requested interfaces
-to satisfy all three conditions. Fleet checks supporting evidence internally;
-the [status contract](#status-contract) defines unknown and stale observations.
+Fleet requires every requested interface to satisfy `Allocated`, `Prepared`, and
+`Programmed` before reporting `NetworkReady`. These conditions observe the claim's
+generation and follow the [status contract](#status-contract). Networking owns
+assignments, attachment, and release; the [Galactic integration
+contract](#galactic-vpc-api-integration) defines how Fleet uses those results.
 
 #### Installation
 
@@ -1182,7 +1162,7 @@ the asset and does not cancel a supplier subscription.
 ### Galactic VPC API integration
 
 Fleet supplies immutable requirements through NSO's NetworkInterfaceClaim
-contract. NSO binds a NetworkInterface and allocates its addresses; the network
+contract. NSO binds a [NetworkInterface][nso-interface] and allocates its addresses; the network
 realization owner reports Galactic programming. Consumers select the existing
 project Network through [the claim API](#network-interfaces), not backing VPC
 objects or a new Fleet attachment resource.
@@ -1211,8 +1191,8 @@ families report `AddressFamilyNotCarried`. Assignment drift reports
 `NetworkConfigurationChanged` and cannot rewrite an admitted installation plan.
 
 Release preserves the shared Network and VPC. `Delete` returns assignments only
-after verified release. Under `Retain`, NSO keeps the
-interface and addresses after verified detachment. Reusing a Fleet claim name
+after verified release. Under `Retain`, NSO keeps the interface and addresses
+after verified detachment. Reusing a Fleet claim name
 grants no authority over them; future adoption requires exact identity and current
 permission. This contract exposes no `networkInterfaceName` adoption selector.
 

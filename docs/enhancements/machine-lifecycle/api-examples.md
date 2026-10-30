@@ -291,19 +291,19 @@ spec:
   initialInstallationRef:
     name: example-os-1
 
-  # Each immutable entry connects a profile interface slot to an existing
-  # project Network. Networking owns VPC membership and address assignment.
+  # Immutable entries connect profile slots to project Networks. Omission
+  # requests no attachment; a Network namespace defaults to the claim namespace.
   networkInterfaces:
     - name: primary
       network:
         namespace: default
         name: production
-      # Families describe addresses inside the selected network. The current
-      # Network API admits new networks as IPv6-only; public IPs are separate.
+      # IPv6 is the default; the first family is primary. Every requested family
+      # must be supported. The current Network API admits new networks as IPv6-only.
       ipFamilies:
         - IPv6
-      # Extra addresses use NSO address classes; no extra address is requested.
-      # Delete returns this interface's assignments after verified release.
+      # Extra addresses select NSO classes; every requested class must be satisfied.
+      # Omission requests none. Delete is the default and requires verified release.
       addresses: []
       reclaimPolicy: Delete
   # Off is the default so creating a claim does not request runtime power-on.
@@ -371,7 +371,7 @@ status:
         macAddress: "02:00:00:00:00:10"
         mtu: 1440
         # Addresses retain networking's CIDR and primary-address semantics.
-        # An external address is distinct from an address configured on the NIC.
+        # For external addresses, [] means verified none; absence means unknown.
         addresses:
           - family: IPv6
             address: "2001:db8::10/64"
