@@ -313,7 +313,6 @@ spec:
 # The projector reports allocation progress without exposing the provider
 # Machine identity. These fields describe the binding; they cannot authorize it.
 status:
-  bindingID: binding-example
   # These are the accepted local profile and hardware snapshot at binding.
   # They survive profile deletion and do not claim to be live health evidence.
   acceptedProfileRef:
@@ -475,10 +474,7 @@ spec:
     name: example-bootstrap
 
 # The projector reports the retained installation outcome, not guest health.
-# Opaque correlation IDs support diagnosis without exposing execution authority.
 status:
-  bindingID: binding-example
-  operationID: operation-example
   # This is the historical result revision. The claim reports the current one.
   installationRevision: installation-revision-example-1
   # The retained revision ties the installed configuration to exact assignments.

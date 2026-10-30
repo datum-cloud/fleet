@@ -557,7 +557,6 @@ spec:
 # The projector reports allocation progress without exposing the provider
 # Machine identity. These fields describe the binding; they cannot authorize it.
 status:
-  bindingID: binding-example
   # These are the accepted local profile and hardware snapshot at binding.
   # They survive profile deletion and do not claim to be live health evidence.
   acceptedProfileRef:
@@ -757,10 +756,7 @@ spec:
   bootstrapConfigRef: {name: example-bootstrap}
 
 # The projector reports the retained installation outcome, not guest health.
-# Opaque correlation IDs support diagnosis without exposing execution authority.
 status:
-  bindingID: binding-example
-  operationID: operation-example
   # This is the historical result revision. The claim reports the current one.
   installationRevision: installation-revision-example-1
   # The retained revision ties the installed configuration to exact assignments.
@@ -904,10 +900,10 @@ The resources report different aspects of the lifecycle:
   `completedAt` appears only after verified success. Failure and cancellation
   use `Ready=False` with a specific reason; an uncertain outcome uses `Unknown`.
 
-A claim omits `bindingID`, `placement`, and `allocatedHardware` before binding
+A claim omits `placement` and `allocatedHardware` before binding
 and omits `acceptedProfileRef` until admission retains the profile. It omits
 `currentInstallationRef` before an installation succeeds. An Installation omits
-operation correlation and the resolved digest until admission retains them.
+the resolved digest until admission retains it.
 `Installation.status.installationRevision` appears on verified success and
 records that historical result; it does not prove that revision is still current.
 The claim reports the usable revision for the current verified state and omits
@@ -915,14 +911,13 @@ it before any admitted installation or while work or recovery blocks replacement
 `power.state` is `On`, `Off`, or `Unknown`. Intent changes cannot establish an
 observed power state. Missing or stale power evidence yields `Unknown` and
 withholds claim readiness when that evidence is required. `network` appears when
-the
-resolver evaluates the binding; unassigned address fields remain absent.
+the resolver evaluates the binding; unassigned address fields remain absent.
 Stale required network evidence yields `NetworkReady=Unknown` unless a known
 block establishes `False`; retained addresses do not prove current assignment.
 An empty `networkInterfaces` list yields `NetworkReady=True` with
 `NoAttachmentsRequired` and does not imply that a guest has connectivity.
 
-Binding identity and completed installation results are durable facts. Runtime
+The allocation and completed installation results are durable facts. Runtime
 health, power, and claim readiness can change independently. A later reinstall
 does not rewrite a prior Installation's successful result. The claim reports the
 current incarnation, becomes unready during disruptive work, and withholds a
@@ -936,8 +931,8 @@ The projector publishes `DependenciesPending`, `AuthorizationUnavailable`,
 `NetworkConfigurationChanged`, or `CleanupBlocked` where applicable.
 A status write, absent condition, or stale `Ready=True` cannot authorize effects
 or free capacity. Recovery reads private records, never a reconstructed public
-binding. Consumer-visible status excludes inventory mappings, BMC endpoints,
-credentials, bootstrap bytes, and bearer capabilities.
+binding. Consumer-visible status excludes binding and operation IDs, inventory
+mappings, BMC endpoints, credentials, bootstrap bytes, and bearer capabilities.
 
 ### Milo project integration
 
@@ -1087,6 +1082,11 @@ service project or database. The physical storage and internal encoding remain
 implementation choices. Any backend must enforce provider-project ownership,
 access controls, and the retirement contract below.
 
+The provider's private records retain binding and operation IDs for coordination,
+retries, fencing, recovery, and diagnostic correlation. Fleet maps claims and
+Installations to those records internally. Public status exposes the installation
+revision that consumers need for reinstall preconditions.
+
 Public status projects this state; it grants no execution authority. Missing
 records block effects and quarantine uncertain capacity. Records and protected
 artifacts survive consumer-project deletion. Fleet retains the provider project
@@ -1119,7 +1119,7 @@ binding epoch; retirement advances the fence before another consumer can act.
 
 #### Operation record
 
-Each operation retains its stable ID/idempotency key, binding, Installation UID
+Each operation retains its stable ID/idempotency key, binding ID, Installation UID
 or power generation, internally resolved predecessor identity, consumed and
 resulting installation revisions, exact inputs, permitted effects and targets,
 executor/fencing token, dispatch correlation, cancellation boundary, outcome
@@ -1560,8 +1560,9 @@ references. Implementation must define log levels and verify these paths through
 
 #### How should operators investigate missed service-level objectives?
 
-Identify the affected phase and dependency from conditions and metrics. Use the
-operation correlation to inspect audit records. Check quota and executor state
+Identify the affected phase and dependency from conditions and metrics. Locate
+the provider records through the retained claim or Installation identity, then
+follow internal operation IDs into audit logs. Check quota and executor state
 before retrying. Pause admission if evidence suggests a correctness violation.
 
 ## Implementation history
