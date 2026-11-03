@@ -5,9 +5,10 @@ It brings physical inventory, machine allocation, provisioning, operating system
 configuration, managed clusters, and node services into a shared service with
 explicit ownership and lifecycle boundaries.
 
-This repository is the starting point for building that platform. It currently
-contains the detailed service proposal, design context, and an implementation roadmap. There are no implemented
-APIs, controllers, deployment manifests, or build/test commands yet.
+This repository contains the detailed service proposal, design context,
+implementation roadmap, and the first alpha public API encoding for the machine
+lifecycle. The Go types and CRDs are implemented, but there are no allocation
+controllers, provider integrations, or production deployment manifests yet.
 
 ## Scope
 

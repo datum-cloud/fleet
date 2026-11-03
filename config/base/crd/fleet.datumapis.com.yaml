@@ -1,0 +1,344 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machineclasses.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names: {kind: MachineClass, listKind: MachineClassList, plural: machineclasses, singular: machineclass, shortNames: [mc]}
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            x-kubernetes-validations:
+            - rule: >-
+                (has(self.source) && !has(self.profilePolicy) && !has(self.access) && !has(self.capacity)) ||
+                (!has(self.source) && has(self.profilePolicy) && has(self.capacity))
+              message: a class must be either a source reference or a provider definition
+            - rule: >-
+                has(self.source) == has(oldSelf.source) &&
+                (!has(self.source) || self.source == oldSelf.source)
+              message: class mode and source are immutable
+            properties:
+              source:
+                type: object
+                required: [project, name]
+                properties:
+                  project: {type: string, minLength: 1}
+                  name: {type: string, minLength: 1}
+              profilePolicy: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              access: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              capacity: {type: object, x-kubernetes-preserve-unknown-fields: true}
+          status:
+            type: object
+            properties:
+              evaluatedRevision: {type: string}
+              resolvedClass: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machineprofiles.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names: {kind: MachineProfile, listKind: MachineProfileList, plural: machineprofiles, singular: machineprofile, shortNames: [mp]}
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            x-kubernetes-validations:
+            - {rule: 'self == oldSelf', message: MachineProfile requirements are immutable}
+            required: [cpu, memory]
+            properties:
+              cpu:
+                type: object
+                required: [architecture]
+                properties:
+                  architecture: {type: string, minLength: 1}
+                  cores: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              memory:
+                type: object
+                required: [capacity]
+                properties:
+                  capacity:
+                    type: object
+                    minProperties: 1
+                    properties: {min: {type: string}, max: {type: string}, exact: {type: string}}
+              gpus:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              disks:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              interfaces:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+          status:
+            type: object
+            properties:
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machines.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names: {kind: Machine, listKind: MachineList, plural: machines, singular: machine}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Policy, type: string, jsonPath: .spec.allocationPolicy}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            required: [providerRef, allocationPolicy, cleaningPolicyRef, reclaimPolicy]
+            x-kubernetes-validations:
+            - rule: >-
+                self.providerRef == oldSelf.providerRef &&
+                ((!has(self.deviceRef) && !has(oldSelf.deviceRef)) ||
+                 (has(self.deviceRef) && has(oldSelf.deviceRef) && self.deviceRef == oldSelf.deviceRef))
+              message: provider and physical-device identity are immutable
+            properties:
+              providerRef:
+                type: object
+                required: [apiGroup, kind, name]
+                properties:
+                  apiGroup: {type: string, minLength: 1}
+                  kind: {type: string, minLength: 1}
+                  name: {type: string, minLength: 1}
+              deviceRef:
+                type: object
+                required: [name]
+                properties: {name: {type: string, minLength: 1}}
+              allocationPolicy: {type: string, enum: [Enabled, Disabled], default: Disabled}
+              cleaningPolicyRef:
+                type: object
+                required: [name]
+                properties: {name: {type: string, minLength: 1}}
+              reclaimPolicy: {type: string, enum: [Retain]}
+          status:
+            type: object
+            properties:
+              hardware: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machineclaims.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names: {kind: MachineClaim, listKind: MachineClaimList, plural: machineclaims, singular: machineclaim, shortNames: [mclaim]}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Phase, type: string, jsonPath: .status.phase}
+    - {name: Location, type: string, jsonPath: .spec.locationRef.name}
+    - {name: CPU, type: integer, jsonPath: .status.allocatedHardware.hardware.cpu.cores}
+    - {name: Memory, type: string, jsonPath: .status.allocatedHardware.hardware.memory.capacity}
+    - {name: Network, type: string, jsonPath: '.status.network.interfaces[0].network.name'}
+    - {name: Address, type: string, jsonPath: '.status.network.interfaces[0].addresses[?(@.primary==true)].address'}
+    - {name: Revision, type: string, jsonPath: .status.installationRevision}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            required: [machineClassRef, machineProfileRef, locationRef]
+            x-kubernetes-validations:
+            - rule: >-
+                self.machineClassRef == oldSelf.machineClassRef &&
+                self.machineProfileRef == oldSelf.machineProfileRef &&
+                self.locationRef == oldSelf.locationRef &&
+                ((!has(self.initialInstallationRef) && !has(oldSelf.initialInstallationRef)) ||
+                 (has(self.initialInstallationRef) && has(oldSelf.initialInstallationRef) &&
+                  self.initialInstallationRef == oldSelf.initialInstallationRef)) &&
+                ((!has(self.networkInterfaces) && !has(oldSelf.networkInterfaces)) ||
+                 (has(self.networkInterfaces) && has(oldSelf.networkInterfaces) &&
+                  self.networkInterfaces == oldSelf.networkInterfaces))
+              message: allocation inputs are immutable
+            properties:
+              machineClassRef: {type: object, required: [name], properties: {name: {type: string}}}
+              machineProfileRef: {type: object, required: [name], properties: {name: {type: string}}}
+              locationRef: {type: object, required: [name], properties: {name: {type: string}}}
+              initialInstallationRef: {type: object, properties: {name: {type: string}}}
+              networkInterfaces:
+                type: array
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name, network]
+                  properties:
+                    name: {type: string, minLength: 1}
+                    network:
+                      type: object
+                      required: [name]
+                      properties: {namespace: {type: string}, name: {type: string}}
+                    ipFamilies:
+                      type: array
+                      items: {type: string, enum: [IPv4, IPv6]}
+                      default: [IPv6]
+                    addresses:
+                      type: array
+                      items:
+                        type: object
+                        required: [classRef]
+                        properties:
+                          classRef:
+                            type: object
+                            required: [name]
+                            properties: {name: {type: string, minLength: 1}}
+                    reclaimPolicy: {type: string, enum: [Delete, Retain], default: Delete}
+              powerState: {type: string, enum: ["On", "Off"], default: "Off"}
+          status:
+            type: object
+            properties:
+              phase: {type: string}
+              placement:
+                type: object
+                required: [locationRef]
+                properties:
+                  locationRef:
+                    type: object
+                    required: [name]
+                    properties: {name: {type: string}}
+              acceptedProfileRef:
+                type: object
+                required: [name]
+                properties: {name: {type: string}}
+              allocatedHardware:
+                type: object
+                required: [hardware]
+                properties:
+                  observedAt: {type: string, format: date-time}
+                  hardware: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              currentInstallationRef:
+                type: object
+                required: [name]
+                properties: {name: {type: string}}
+              installationRevision: {type: string}
+              network:
+                type: object
+                properties:
+                  revision: {type: string}
+                  interfaces:
+                    type: array
+                    items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              power:
+                type: object
+                required: [state]
+                properties:
+                  state: {type: string, enum: ["On", "Off", Unknown]}
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: installations.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names: {kind: Installation, listKind: InstallationList, plural: installations, singular: installation, shortNames: [install]}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Phase, type: string, jsonPath: .status.phase}
+    - {name: Revision, type: string, jsonPath: .status.installationRevision}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            x-kubernetes-validations:
+            - {rule: 'self == oldSelf', message: Installation requests are immutable}
+            - rule: >-
+                (self.expectedPredecessor.type == 'None' && !has(self.expectedPredecessor.revision)) ||
+                (self.expectedPredecessor.type == 'Revision' && has(self.expectedPredecessor.revision) && size(self.expectedPredecessor.revision) > 0)
+              message: expectedPredecessor must be None without a revision or Revision with a nonempty revision
+            required: [claimRef, expectedPredecessor, imageRef]
+            properties:
+              claimRef: {type: object, required: [name], properties: {name: {type: string}}}
+              expectedPredecessor:
+                type: object
+                required: [type]
+                properties:
+                  type: {type: string, enum: [None, Revision]}
+                  revision: {type: string}
+              imageRef: {type: object, required: [name], properties: {name: {type: string}}}
+              bootstrapConfigRef: {type: object, properties: {name: {type: string}}}
+          status:
+            type: object
+            properties:
+              phase: {type: string}
+              installationRevision: {type: string}
+              completedAt: {type: string, format: date-time}
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}
