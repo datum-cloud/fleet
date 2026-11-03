@@ -1,0 +1,52 @@
+@startuml containers
+!$NEW_C4_STYLE = 1
+!include <C4/C4_Container>
+
+title How Fleet services coordinate
+LAYOUT_TOP_DOWN()
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam shadowing false
+skinparam nodesep 40
+skinparam ranksep 60
+AddRelTag("authority", $textColor="#9A3412", $lineColor="#C2410C", $lineStyle=BoldLine(), $legendText="Admitted effects for an exact binding")
+AddRelTag("evidence", $textColor="#475569", $lineColor="#64748B", $lineStyle=DashedLine(), $legendText="Observations; do not grant effect authority")
+
+System_Ext(identity, "Identity and authorization", "Shared platform identity, project policy, and delegation.")
+System_Ext(networking, "Network management", "Sole network configuration and IPAM authority; consumes verified physical topology.")
+System_Ext(os_execution, "OS and cluster execution systems", "Selected OS and cluster management endpoints; outside the Fleet service boundary.")
+
+System_Boundary(fleet, "Fleet infrastructure management") {
+  Container(api, "Fleet API service", "Kubernetes API extensions and admission", "Project-scoped intent, validation, private admission records, and observed status. Entry point for humans and automation.")
+  ContainerDb(state, "Fleet API state", "Durable transactional API storage", "Project intent and service-owned publication, reservation, and admission records; private obligations survive consumer deletion.")
+  Container(catalog, "Catalog publication service", "Controller service", "Registers source class references in eligible projects; resolves authorized summaries and source identity. Publication does not reserve capacity.")
+  Container(inventory, "Inventory registry and verifier", "Controller service", "Registers approved assets and compares actual identity, placement, and wiring evidence with installation intent.")
+  Container(allocation, "Machine coordination service", "Controller service", "Validates cross-project entitlement and quota; exclusively reserves shared provider inventory; coordinates activation and release.")
+  Container(cluster, "Cluster orchestration service", "Controller service", "Requests capacity and OS changes; coordinates managed membership, replacement, and rollout safety.")
+  Container(os, "OS resolution and configuration service", "Controller service and OS adapters", "Resolves and pins images/configuration; renders approved inputs; coordinates one selected OS executor.")
+  Container(provider, "Infrastructure adapter service", "Provider controller service", "Consumes admitted effects for bound assets; translates provider contracts and reports execution evidence.")
+  ContainerDb(artifacts, "Approved artifact store", "Authenticated object storage", "Retained images and configuration revisions addressed by digest; controlled delivery and expiry.")
+}
+
+Rel_U(api, identity, "Checks delegated authority", "HTTPS")
+Rel_R(api, state, "Persists authority and status", "Storage transaction")
+Rel_D(catalog, api, "Registers source references; resolves public summaries", "Authenticated project APIs")
+Rel_R(inventory, api, "Publishes verified inventory", "Kubernetes API / HTTPS", $tags="evidence")
+Rel_D(cluster, api, "Requests managed capacity and OS", "Kubernetes API / HTTPS")
+Rel_L(allocation, api, "Commits bindings and effect authority", "Kubernetes API / HTTPS")
+Rel_R(allocation, networking, "Coordinates network readiness", "Authenticated service API")
+Rel_U(os, api, "Pins OS inputs; reports results", "Kubernetes API / HTTPS")
+Rel_D(os, artifacts, "Retains approved revisions", "HTTPS object API")
+Rel_L(os, os_execution, "Applies admitted OS changes", "Authenticated OS/provider API", $tags="authority")
+Rel_D(api, provider, "Admitted effects for exact binding", "Authenticated watch / HTTPS", $tags="authority")
+Rel_U(provider, api, "Reports execution evidence", "Kubernetes API / HTTPS", $tags="evidence")
+Rel_L(provider, artifacts, "Reads approved digests", "HTTPS")
+
+' Common controller watches are intentionally omitted; the document describes
+' their shared API communication. No controller writes another subsystem's DB.
+Lay_D(inventory, os)
+Lay_R(catalog, cluster)
+Lay_R(os, provider)
+
+SHOW_LEGEND()
+@enduml

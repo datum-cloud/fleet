@@ -1,0 +1,26 @@
+# OPERATOR INTENT in project datum-metal.
+# MachineClass is project-scoped; its private supply selector names a namespace.
+# No consumer-project selection or publication policy belongs in this definition.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClass
+metadata:
+  name: datum-metal-standard
+spec:
+  arch: amd64
+  capabilities: [baremetal]
+  interfaces:
+    - {name: primary, type: Ethernet}
+  access:
+    consoleModes: [Graphical]
+    powerControl: true
+  capacity:
+    machines:
+      namespace: infra-ops
+      selector:
+        matchLabels:
+          fleet.datumapis.com/capacity-pool: general-metal
+    providerClassRef:
+      apiGroup: baremetal.fleet.datumapis.com
+      kind: BareMetalMachineClass
+      namespace: infra-ops
+      name: qualified-server-v1
