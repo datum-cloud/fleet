@@ -1,0 +1,183 @@
+# Historical migration inputs from the original enhancement, not API resources.
+# Reverify identity, addresses, provider state, and authority before adoption.
+# Provider codes do not independently prove a canonical physical Facility.
+sourceRevision: 14c67f394af24f07abc8a326a776a725fa994b22
+machines:
+- name: was4-c3c04f474834
+  provider: serverscom
+  providerFacilityCode: WAS4
+  providerID: <servers.com host id>
+  reportedHardwareUUID: 4c4c4544-0031-4610-8042-c3c04f474834
+  reportedSystemDisk: eui.3756303059c001610025384700000001
+  networkInputs:
+    uplinks:
+    - name: bond0
+      members:
+      - enP1s1f1
+      - enP1s4f1
+    ipv4:
+      address: 170.23.227.193/31
+      gateway: 170.23.227.192
+    ipv6:
+      address: 2600:9c07:0:43::2/64
+      gateway: 2600:9c07:0:43::1
+    upstream: enabled
+  managementCredentialRef: was4-c3c04f474834-bmc
+- name: was4-b2c04f384233
+  provider: serverscom
+  providerFacilityCode: WAS4
+  reportedHardwareUUID: 4c4c4544-0058-4210-8043-b2c04f384233
+  reportedSystemDisk: naa.55cd2e4152655b49
+  networkInputs:
+    uplinks:
+    - name: bond0
+      members:
+      - enp3s0f1
+      - enp1s0f1
+    ipv4:
+      address: 188.42.80.235/31
+      gateway: 188.42.80.234
+    ipv6:
+      address: 2600:9c07:0:48::2/64
+      gateway: 2600:9c07:0:48::1
+    upstream: enabled
+  managementCredentialRef: was4-b2c04f384233-bmc
+- name: was4-b2c04f384233-2
+  provider: serverscom
+  providerFacilityCode: WAS4
+  reportedHardwareUUID: 4c4c4544-0058-3010-8047-b2c04f384233
+  reportedSystemDisk: naa.5c8d6b7000aec813
+  networkInputs:
+    uplinks:
+    - name: bond0
+      members:
+      - enp3s0f1
+      - enp1s0f1
+    ipv4:
+      address: 188.42.80.191/31
+      gateway: 188.42.80.190
+    ipv6:
+      address: 2600:9c07:0:47::2/64
+      gateway: 2600:9c07:0:47::1
+    upstream: enabled
+  managementCredentialRef: was4-b2c04f384233-2-bmc
+- name: was4-b6c04f474834
+  provider: serverscom
+  providerFacilityCode: WAS4
+  reportedHardwareUUID: 4c4c4544-0031-4610-8042-b6c04f474834
+  reportedSystemDisk: eui.3756303059c001680025384700000001
+  networkInputs:
+    uplinks:
+    - name: bond0
+      members:
+      - enP1s1f1
+      - enP1s4f1
+    ipv4:
+      address: 170.23.227.197/31
+      gateway: 170.23.227.196
+    ipv6:
+      address: 2600:9c07:0:44::2/64
+      gateway: 2600:9c07:0:44::1
+    upstream: enabled
+- name: was4-c6c04f304333
+  provider: serverscom
+  providerFacilityCode: WAS4
+  reportedHardwareUUID: 4c4c4544-0035-4e10-8038-c6c04f304333
+  reportedSystemDisk: naa.55cd2e41516e6250
+  networkInputs:
+    uplinks:
+    - name: bond0
+      members:
+      - enp6s0f1
+      - enp3s0f1
+    ipv4:
+      address: 96.46.188.236/29
+      gateway: 96.46.188.235
+    upstream: enabled
+- name: was1-b2c04f4e5233
+  provider: serverscom
+  providerFacilityCode: WAS1
+  reportedHardwareUUID: 4c4c4544-0036-3310-804d-b2c04f4e5233
+  reportedSystemDisk: naa.55cd2e415655634d
+  networkInputs:
+    uplinks:
+    - name: bond0
+      members:
+      - ens1f1
+      - ens2f1
+    ipv4:
+      address: 96.46.187.236/29
+      gateway: 96.46.187.235
+    ipv6:
+      address: 2604:8240:999::28c/125
+      gateway: 2604:8240:999::28b
+      routed:
+      - 2604:8240:43:1::/64
+    upstream: disabled
+  retirementRequested: true
+- name: was1-c2c04f485233
+  provider: serverscom
+  providerFacilityCode: WAS1
+  reportedHardwareUUID: 4c4c4544-005a-5210-8037-c2c04f485233
+  reportedSystemDisk: naa.55cd2e4156576d7a
+  networkInputs:
+    uplinks:
+    - name: bond0
+      members:
+      - ens1f1
+      - ens2f1
+    ipv4:
+      address: 96.46.187.100/29
+      gateway: 96.46.187.99
+    ipv6:
+      address: 2604:8240:999::284/125
+      gateway: 2604:8240:999::283
+      routed:
+      - 2604:8240:43::/64
+    upstream: disabled
+  retirementRequested: true
+- name: netactuate-4a724585
+  provider: netactuate
+  providerFacilityCode: IAD3
+  providerID: 4a724585-c214-4ecd-aa1f-35c6cbbb7c11
+  networkInputs:
+    uplinks:
+    - name: eth0
+    ipv4:
+      address: 104.225.8.229/24
+      gateway: 104.225.8.1
+    ipv6:
+      address: 2607:fc50:3000:2::2cd/64
+      gateway: 2607:fc50:3000:2::1
+    upstream: enabled
+    peers:
+    - 104.225.8.137
+    - 104.225.8.207
+    - 2607:fc50:3000:2::241
+    - 2607:fc50:3000:2::2bf
+networkPolicyInputs:
+- sourceClass: worker
+  sourceKind: NetActuateMachineClass
+  routingPolicy:
+    peerAsn: 36236
+    uplink: eth0
+- sourceClass: compute-2u
+  sourceKind: ServersComMachineClass
+  routingPolicy:
+    peerAsn: 7979
+    uplink: bond0
+    peerGroup:
+      name: HOSTING-AS7979
+      bfd: true
+      ebgpMultihop: 2
+      maxPrefix: 100
+      allowAsIn: 1
+  bond:
+    mode: 802.3ad
+    lacpRate: slow
+    xmitHashPolicy: layer3+4
+legacyProviderMappings:
+- provider: netactuate
+  facilityCode: IAD3
+  regionID: '245'
+  legacyISOID: '5892'
