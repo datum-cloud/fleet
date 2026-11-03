@@ -27,6 +27,8 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
 
 ## Start here
 
+- [Machine allocation and installation](docs/enhancements/machine-lifecycle/README.md): the
+  smallest durable machine lifecycle, integrated with Milo project tenancy.
 - [Service proposal](docs/proposals/fleet-management/README.md): detailed contracts,
   examples, and architecture diagrams imported from the infra proposals.
 - [Design context](docs/design.md): subsystem boundaries, lifecycle contracts,

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="490" viewBox="0 0 960 490" role="img" aria-labelledby="title description">
+<title id="title">The provider project retains allocation and execution state</title><desc id="description">The consumer project owns the MachineClaim and Installation. The provider project owns the Machine and Fleet-controlled reservation and operation records. The reservation pins both claim and machine identities; the operation pins the Installation and reservation binding and epoch. Consumer deletion leaves provider records intact. Provider deletion is blocked while allocations, operations, or cleanup obligations remain. These private records retain ProjectKeys and UIDs internally; public references use names. Installation revisions guard replacements and are consumed in the provider record before effects.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 22px; font-weight: 700; } .label { font-size: 19px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="490" fill="white"/>
+<rect x="20" y="20" width="270" height="345" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="155" y="55" class="heading" text-anchor="middle">Consumer project</text>
+<rect x="410" y="20" width="530" height="345" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="675" y="55" class="heading" text-anchor="middle">Provider project</text>
+<rect x="40" y="95" width="230" height="75" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="155" y="125" class="label" text-anchor="middle">MachineClaim</text>
+<text x="155" y="150" class="detail" text-anchor="middle">Allocation request</text>
+<rect x="40" y="235" width="230" height="75" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="155" y="265" class="label" text-anchor="middle">Installation</text>
+<text x="155" y="290" class="detail" text-anchor="middle">Installation request</text>
+<rect x="440" y="95" width="250" height="75" rx="10" fill="#eff6ff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="565" y="125" class="label" text-anchor="middle">Reservation</text>
+<text x="565" y="150" class="detail" text-anchor="middle">Binding, inputs, and revisions</text>
+<rect x="750" y="95" width="160" height="75" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="830" y="140" class="label" text-anchor="middle">Machine</text>
+<rect x="440" y="235" width="250" height="75" rx="10" fill="#eff6ff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="565" y="265" class="label" text-anchor="middle">Operation</text>
+<text x="565" y="290" class="detail" text-anchor="middle">Exact plan and authority</text>
+<path d="M 440 132 H 270" class="line"/>
+<text x="350" y="119" class="detail" text-anchor="middle">Internal UID</text>
+<path d="M 690 132 H 750" class="line"/>
+<path d="M 440 272 H 270" class="line"/>
+<text x="350" y="235" class="detail" text-anchor="middle">Internal</text>
+<text x="350" y="259" class="detail" text-anchor="middle">UID</text>
+<path d="M 565 235 V 170" class="line"/>
+<text x="580" y="207" class="detail" text-anchor="start">Binding + epoch</text>
+<text x="675" y="343" class="detail" text-anchor="middle">Only Fleet service roles write coordination records.</text>
+<rect x="20" y="390" width="920" height="80" rx="10" fill="#fff7ed" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="418" class="label" text-anchor="middle">Provider deletion stays blocked until obligations are settled.</text>
+<text x="480" y="447" class="detail" text-anchor="middle">Consumer deletion leaves these records and cleanup inputs intact.</text>
+</svg>
