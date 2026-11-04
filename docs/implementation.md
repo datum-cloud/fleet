@@ -41,6 +41,25 @@ same-named `default` namespaces. No interface is requested, so network and
 address output is blank and no NSO/IPAM/Galactic behavior is claimed. See
 [`docs/standalone-smoke.md`](standalone-smoke.md) for the runnable scenario.
 
+Standalone-only Kustomize roots mark every rendered object with
+`fleet.datumapis.com/standalone-only: "true"`. CI discovers and builds every
+Kustomization below `config/`. For every root except the explicitly designated
+standalone and simulator definition roots, it resolves the complete local
+resource/component graph, including deprecated bases and external generators,
+and rejects any transitive reference to either protected source tree. Remote
+resource-producing references and unauditable Helm generation fail closed.
+References must use plain local relative-path syntax and remain inside the
+audited config tree both before and after symlink resolution, preventing remote
+repo grammar from being disguised by a local shadow path. It also parses
+rendered objects structurally: annotations are checked by GVK and metadata,
+Secret data is decoded before comparison, and effective RBAC
+permission and subject sets are compared without relying on rule layout,
+duplicates, or mutable object and subject names.
+ConfigMap payload text is not treated as a credential. Hermetic adversarial
+fixtures cover direct, nested, generated, copied, renamed, and malformed inputs,
+including paths containing spaces. This is a packaging boundary, not an
+authorization mechanism; production overlays must never consume these fixtures.
+
 ## Event-only manager scaffold
 
 `internal/manager` defines project-lifetime work keys, exact reverse indexes,
