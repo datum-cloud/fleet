@@ -31,12 +31,15 @@ import (
 const (
 	MachineClaimFinalizer = "fleet.datumapis.com/machineclaim-protection"
 	recordSchemaVersion   = 1
-	assetRecordPrefix     = "fleet-asset-"
-	custodyRecordPrefix   = "fleet-claim-"
-	operationPrefix       = "fleet-install-"
-	recordDataKey         = "record.json"
-	recordTypeLabel       = "fleet.datumapis.com/private-record"
-	claimUIDLabel         = "fleet.datumapis.com/claim-uid"
+	// Installation records gained retained public routing identities in v2.
+	// v1 is accepted only by the explicit request-bound upgrader below.
+	installationRecordSchemaVersion = 2
+	assetRecordPrefix               = "fleet-asset-"
+	custodyRecordPrefix             = "fleet-claim-"
+	operationPrefix                 = "fleet-install-"
+	recordDataKey                   = "record.json"
+	recordTypeLabel                 = "fleet.datumapis.com/private-record"
+	claimUIDLabel                   = "fleet.datumapis.com/claim-uid"
 )
 
 type CustodyState string
@@ -184,23 +187,27 @@ func (LocalDigestImageResolver) ResolveImage(_ context.Context, request ImageReq
 }
 
 type InstallationRecord struct {
-	SchemaVersion   int                            `json:"schemaVersion"`
-	State           OperationState                 `json:"state"`
-	OperationID     string                         `json:"operationID"`
-	InstallationUID types.UID                      `json:"installationUID"`
-	NamespaceUID    types.UID                      `json:"namespaceUID"`
-	ClaimUID        types.UID                      `json:"claimUID"`
-	ClaimScope      ClaimScope                     `json:"claimScope"`
-	ConsumerProject ProjectIdentity                `json:"consumerProject,omitempty"`
-	AssetID         string                         `json:"assetID"`
-	BindingID       string                         `json:"bindingID"`
-	Epoch           int64                          `json:"epoch"`
-	Predecessor     string                         `json:"predecessor"`
-	ResultRevision  string                         `json:"resultRevision"`
-	Image           ResolvedImage                  `json:"image"`
-	ImageName       string                         `json:"imageName"`
-	Admission       InstallationAdmissionAuthority `json:"admission"`
-	NetworkInputs   *fleetnetwork.Observation      `json:"networkInputs,omitempty"`
+	SchemaVersion         int                            `json:"schemaVersion"`
+	State                 OperationState                 `json:"state"`
+	OperationID           string                         `json:"operationID"`
+	InstallationNamespace string                         `json:"installationNamespace"`
+	InstallationName      string                         `json:"installationName"`
+	InstallationUID       types.UID                      `json:"installationUID"`
+	NamespaceUID          types.UID                      `json:"namespaceUID"`
+	ClaimNamespace        string                         `json:"claimNamespace"`
+	ClaimName             string                         `json:"claimName"`
+	ClaimUID              types.UID                      `json:"claimUID"`
+	ClaimScope            ClaimScope                     `json:"claimScope"`
+	ConsumerProject       ProjectIdentity                `json:"consumerProject,omitempty"`
+	AssetID               string                         `json:"assetID"`
+	BindingID             string                         `json:"bindingID"`
+	Epoch                 int64                          `json:"epoch"`
+	Predecessor           string                         `json:"predecessor"`
+	ResultRevision        string                         `json:"resultRevision"`
+	Image                 ResolvedImage                  `json:"image"`
+	ImageName             string                         `json:"imageName"`
+	Admission             InstallationAdmissionAuthority `json:"admission"`
+	NetworkInputs         *fleetnetwork.Observation      `json:"networkInputs,omitempty"`
 }
 
 type InstallationAdmissionAuthority struct {
@@ -1213,6 +1220,9 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	}
 	operationName := operationRecordName(scope, request.Claim.UID, predecessor)
 	operation, _, err := c.getOperation(ctx, operationName)
+	if errors.Is(err, ErrRecordInvalid) {
+		operation, err = c.upgradeLegacyOperation(ctx, operationName, request, asset, scope, predecessor)
+	}
 	if apierrors.IsNotFound(err) {
 		if asset.Network != nil && (!asset.Network.Observation.Prepared(asset.Network.Plan) || asset.Network.Observation.ObservedAt.After(c.now()) || c.now().Sub(asset.Network.Observation.ObservedAt) > c.maxEvidenceAge) {
 			return InstallationResult{}, fleetnetwork.ErrEvidenceStale
@@ -1232,7 +1242,7 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	if err != nil {
 		return InstallationResult{}, err
 	}
-	if operation.InstallationUID != request.Installation.UID || operation.NamespaceUID != request.NamespaceUID || operation.ClaimUID != request.Claim.UID || operation.ClaimScope != scope || operation.ConsumerProject != request.ConsumerProject || operation.AssetID != asset.AssetID || operation.BindingID != asset.BindingID || operation.Epoch != asset.Epoch || operation.Predecessor != predecessor || operation.ImageName != request.Installation.Spec.ImageRef.Name || operation.Admission != request.Admission {
+	if operation.InstallationNamespace != request.Installation.Namespace || operation.InstallationName != request.Installation.Name || operation.InstallationUID != request.Installation.UID || operation.NamespaceUID != request.NamespaceUID || operation.ClaimNamespace != request.Claim.Namespace || operation.ClaimName != request.Claim.Name || operation.ClaimUID != request.Claim.UID || operation.ClaimScope != scope || operation.ConsumerProject != request.ConsumerProject || operation.AssetID != asset.AssetID || operation.BindingID != asset.BindingID || operation.Epoch != asset.Epoch || operation.Predecessor != predecessor || operation.ImageName != request.Installation.Spec.ImageRef.Name || operation.Admission != request.Admission {
 		return InstallationResult{}, ErrPredecessorConflict
 	}
 	if operation.State == OperationSucceeded {
@@ -1330,7 +1340,7 @@ func (c *Coordinator) getOrCreateOperation(ctx context.Context, name string, req
 	if scopeErr != nil {
 		return nil, nil, scopeErr
 	}
-	record := &InstallationRecord{SchemaVersion: recordSchemaVersion, State: OperationAdmitted, OperationID: "install-" + operationID, InstallationUID: request.Installation.UID, NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, ClaimScope: scope, ConsumerProject: request.ConsumerProject, AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, Predecessor: predecessor, ResultRevision: "ir-" + revisionID, Image: image, ImageName: request.Installation.Spec.ImageRef.Name, Admission: request.Admission}
+	record := &InstallationRecord{SchemaVersion: installationRecordSchemaVersion, State: OperationAdmitted, OperationID: "install-" + operationID, InstallationNamespace: request.Installation.Namespace, InstallationName: request.Installation.Name, InstallationUID: request.Installation.UID, NamespaceUID: request.NamespaceUID, ClaimNamespace: request.Claim.Namespace, ClaimName: request.Claim.Name, ClaimUID: request.Claim.UID, ClaimScope: scope, ConsumerProject: request.ConsumerProject, AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, Predecessor: predecessor, ResultRevision: "ir-" + revisionID, Image: image, ImageName: request.Installation.Spec.ImageRef.Name, Admission: request.Admission}
 	if asset.Network != nil {
 		inputs := asset.Network.Observation
 		record.NetworkInputs = &inputs
@@ -1354,6 +1364,45 @@ func (c *Coordinator) getOperation(ctx context.Context, name string) (*Installat
 	}
 	record, err := decodeOperationSecret(&secret)
 	return record, &secret, err
+}
+
+// upgradeLegacyOperation upgrades a v1 operation only while an exact public
+// request is available to supply the names that v1 failed to retain. A v1
+// record without that request remains quarantined: guessing a name from a UID
+// would retarget admitted provider authority.
+func (c *Coordinator) upgradeLegacyOperation(ctx context.Context, name string, request InstallationRequest, asset *AssetRecord, scope ClaimScope, predecessor string) (*InstallationRecord, error) {
+	var result *InstallationRecord
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var secret corev1.Secret
+		if err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret); err != nil {
+			return err
+		}
+		if current, err := decodeOperationSecret(&secret); err == nil {
+			result = current
+			return nil
+		}
+		legacy, err := decodeLegacyOperationSecret(&secret)
+		if err != nil {
+			return err
+		}
+		if legacy.InstallationUID != request.Installation.UID || legacy.NamespaceUID != request.NamespaceUID || legacy.ClaimUID != request.Claim.UID || legacy.ClaimScope != scope || legacy.ConsumerProject != request.ConsumerProject || legacy.AssetID != asset.AssetID || legacy.BindingID != asset.BindingID || legacy.Epoch != asset.Epoch || legacy.Predecessor != predecessor || legacy.ImageName != request.Installation.Spec.ImageRef.Name || legacy.Admission != request.Admission {
+			return ErrPredecessorConflict
+		}
+		legacy.SchemaVersion = installationRecordSchemaVersion
+		legacy.InstallationNamespace = request.Installation.Namespace
+		legacy.InstallationName = request.Installation.Name
+		legacy.ClaimNamespace = request.Claim.Namespace
+		legacy.ClaimName = request.Claim.Name
+		if err := encodeRecord(&secret, legacy, "installation"); err != nil {
+			return err
+		}
+		if err := c.client.Update(ctx, &secret); err != nil {
+			return err
+		}
+		result = legacy
+		return nil
+	})
+	return result, err
 }
 
 func (c *Coordinator) activateOperation(ctx context.Context, assetID string, claimUID types.UID, predecessor, operationID string) error {
@@ -1778,6 +1827,116 @@ func decodeOperationSecret(secret *corev1.Secret) (*InstallationRecord, error) {
 	return &record, nil
 }
 
+// PrivateRecordRoute is the minimal routing identity exposed by the lifecycle
+// record owner after the complete persisted record and deterministic Secret
+// identity have been validated.
+type PrivateRecordRoute struct {
+	RecordType            string
+	ClaimNamespace        string
+	ClaimName             string
+	ClaimUID              types.UID
+	InstallationNamespace string
+	InstallationName      string
+	InstallationUID       types.UID
+	ConsumerProject       ProjectIdentity
+	NamespaceUIDs         []types.UID
+	MachineUIDs           []types.UID
+	NetworkUIDs           []types.UID
+	NICClaimUIDs          []types.UID
+	InterfaceUIDs         []types.UID
+	AuthorityRecordIDs    []string
+	QuotaUIDs             []types.UID
+	EntitlementUIDs       []types.UID
+	PendingEntitlement    bool
+}
+
+func DecodePrivateLifecycleRoute(secret *corev1.Secret) (PrivateRecordRoute, error) {
+	if secret == nil || secret.Type != corev1.SecretType("fleet.datumapis.com/private-lifecycle") {
+		return PrivateRecordRoute{}, ErrRecordInvalid
+	}
+	switch secret.Labels[recordTypeLabel] {
+	case "custody":
+		record, err := decodeCustodySecret(secret)
+		if err != nil {
+			return PrivateRecordRoute{}, err
+		}
+		route := PrivateRecordRoute{RecordType: "custody", ClaimNamespace: record.ClaimNamespace, ClaimName: record.ClaimName, ClaimUID: record.ClaimUID, ConsumerProject: record.ConsumerProject, NamespaceUIDs: []types.UID{record.NamespaceUID}}
+		appendAuthorityIndexes(&route, record.Authority, record.ExternalHold)
+		if record.ProposedAsset != nil {
+			appendAssetIndexes(&route, record.ProposedAsset)
+		}
+		return route, nil
+	case "asset":
+		record, err := decodeAssetSecret(secret)
+		if err != nil {
+			return PrivateRecordRoute{}, err
+		}
+		route := PrivateRecordRoute{RecordType: "asset", ClaimNamespace: record.ClaimNamespace, ClaimName: record.ClaimName, ClaimUID: record.ClaimUID, ConsumerProject: record.ConsumerProject}
+		appendAssetIndexes(&route, record)
+		return route, nil
+	case "installation":
+		record, err := decodeOperationSecret(secret)
+		if err != nil {
+			return PrivateRecordRoute{}, err
+		}
+		route := PrivateRecordRoute{RecordType: "installation", ClaimNamespace: record.ClaimNamespace, ClaimName: record.ClaimName, ClaimUID: record.ClaimUID, InstallationNamespace: record.InstallationNamespace, InstallationName: record.InstallationName, InstallationUID: record.InstallationUID, ConsumerProject: record.ConsumerProject, NamespaceUIDs: []types.UID{record.NamespaceUID}}
+		if record.NetworkInputs != nil {
+			appendObservationIndexes(&route, *record.NetworkInputs)
+		}
+		return route, nil
+	default:
+		return PrivateRecordRoute{}, ErrRecordInvalid
+	}
+}
+
+func appendAuthorityIndexes(route *PrivateRecordRoute, authority AuthorityRef, hold ExternalHoldRef) {
+	if authority.Valid() {
+		route.AuthorityRecordIDs = append(route.AuthorityRecordIDs, authority.RecordID)
+	}
+	if hold.Valid() {
+		route.QuotaUIDs = append(route.QuotaUIDs, hold.UID)
+	}
+}
+
+func appendAssetIndexes(route *PrivateRecordRoute, record *AssetRecord) {
+	route.MachineUIDs = append(route.MachineUIDs, record.MachineUID)
+	appendAuthorityIndexes(route, record.Authority, record.ExternalHold)
+	if record.Network == nil {
+		return
+	}
+	for _, iface := range record.Network.Plan.Interfaces {
+		route.NetworkUIDs = append(route.NetworkUIDs, iface.NetworkUID)
+	}
+	appendObservationIndexes(route, record.Network.Observation)
+	for _, state := range record.Network.Lifecycle {
+		if state.CreatedUID != "" {
+			route.NICClaimUIDs = append(route.NICClaimUIDs, state.CreatedUID)
+		}
+		if state.RetainedInterfaceUID != "" {
+			route.InterfaceUIDs = append(route.InterfaceUIDs, state.RetainedInterfaceUID)
+		}
+	}
+}
+
+func appendObservationIndexes(route *PrivateRecordRoute, observation fleetnetwork.Observation) {
+	for _, iface := range observation.Interfaces {
+		if iface.ClaimUID != "" {
+			route.NICClaimUIDs = append(route.NICClaimUIDs, iface.ClaimUID)
+		}
+		if iface.NetworkInterfaceUID != "" {
+			route.InterfaceUIDs = append(route.InterfaceUIDs, iface.NetworkInterfaceUID)
+		}
+	}
+}
+
+func decodeLegacyOperationSecret(secret *corev1.Secret) (*InstallationRecord, error) {
+	var record InstallationRecord
+	if secret.Type != corev1.SecretType("fleet.datumapis.com/private-lifecycle") || secret.Labels[recordTypeLabel] != "installation" || json.Unmarshal(secret.Data[recordDataKey], &record) != nil || validateLegacyInstallationRecord(&record) != nil || secret.Name != operationRecordName(record.ClaimScope, record.ClaimUID, record.Predecessor) || secret.Labels[claimUIDLabel] != string(record.ClaimUID) {
+		return nil, fmt.Errorf("%w: legacy installation secret %s/%s", ErrRecordInvalid, secret.Namespace, secret.Name)
+	}
+	return &record, nil
+}
+
 func validateAssetRecord(r *AssetRecord) error {
 	if r.SchemaVersion != recordSchemaVersion || r.AssetID == "" || r.MachineNamespace == "" || r.MachineName == "" || r.MachineUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.ClassUID == "" || r.ProfileUID == "" || r.LocalClassUID == "" || r.LocalProfileUID == "" || r.BindingID == "" || r.Epoch < 1 || r.FenceToken == "" || r.CurrentRevision == "" {
 		return ErrRecordInvalid
@@ -1807,7 +1966,26 @@ func validateAssetRecord(r *AssetRecord) error {
 }
 
 func validateInstallationRecord(r *InstallationRecord) error {
-	if r.SchemaVersion != recordSchemaVersion || !strings.HasPrefix(r.OperationID, "install-") || r.InstallationUID == "" || r.NamespaceUID == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.AssetID == "" || r.BindingID == "" || r.Epoch < 1 || r.Predecessor == "" || !strings.HasPrefix(r.ResultRevision, "ir-") || r.ImageName == "" || !r.Admission.valid() || r.Image.Validate() != nil || r.Image.CatalogAuthority != r.Admission.CatalogAuthority || r.Image.CatalogRevision != r.Admission.CatalogRevision || r.Image.ImageDecisionID != r.Admission.ImageDecisionID {
+	if r.SchemaVersion != installationRecordSchemaVersion || !strings.HasPrefix(r.OperationID, "install-") || r.InstallationNamespace == "" || r.InstallationName == "" || r.InstallationUID == "" || r.NamespaceUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.AssetID == "" || r.BindingID == "" || r.Epoch < 1 || r.Predecessor == "" || !strings.HasPrefix(r.ResultRevision, "ir-") || r.ImageName == "" || !r.Admission.valid() || r.Image.Validate() != nil || r.Image.CatalogAuthority != r.Admission.CatalogAuthority || r.Image.CatalogRevision != r.Admission.CatalogRevision || r.Image.ImageDecisionID != r.Admission.ImageDecisionID {
+		return ErrRecordInvalid
+	}
+	if r.InstallationNamespace != r.ClaimNamespace {
+		return ErrRecordInvalid
+	}
+	if r.ConsumerProject.Valid() && r.ClaimScope != ProjectClaimScope(r.ConsumerProject) || !r.ConsumerProject.Valid() && r.ClaimScope != LocalClaimScope(r.NamespaceUID) {
+		return ErrRecordInvalid
+	}
+	if r.State != OperationAdmitted && r.State != OperationSucceeded {
+		return ErrRecordInvalid
+	}
+	if r.NetworkInputs != nil && (r.NetworkInputs.Revision == "" || r.NetworkInputs.ObservedAt.IsZero()) {
+		return ErrRecordInvalid
+	}
+	return nil
+}
+
+func validateLegacyInstallationRecord(r *InstallationRecord) error {
+	if r.SchemaVersion != 1 || r.InstallationNamespace != "" || r.InstallationName != "" || r.ClaimNamespace != "" || r.ClaimName != "" || !strings.HasPrefix(r.OperationID, "install-") || r.InstallationUID == "" || r.NamespaceUID == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.AssetID == "" || r.BindingID == "" || r.Epoch < 1 || r.Predecessor == "" || !strings.HasPrefix(r.ResultRevision, "ir-") || r.ImageName == "" || !r.Admission.valid() || r.Image.Validate() != nil || r.Image.CatalogAuthority != r.Admission.CatalogAuthority || r.Image.CatalogRevision != r.Admission.CatalogRevision || r.Image.ImageDecisionID != r.Admission.ImageDecisionID {
 		return ErrRecordInvalid
 	}
 	if r.ConsumerProject.Valid() && r.ClaimScope != ProjectClaimScope(r.ConsumerProject) || !r.ConsumerProject.Valid() && r.ClaimScope != LocalClaimScope(r.NamespaceUID) {
