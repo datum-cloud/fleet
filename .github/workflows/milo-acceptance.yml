@@ -7,9 +7,22 @@ permissions:
   contents: read
 
 jobs:
+  trust-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Reject untrusted ref
+        env:
+          TRUSTED_REF: refs/heads/main
+        run: test "$GITHUB_REF" = "$TRUSTED_REF"
+
   live-preflight:
+    needs: trust-gate
+    if: github.ref == 'refs/heads/main'
     environment: milo-acceptance
-    runs-on: [self-hosted, fleet-milo-acceptance]
+    runs-on:
+      group: fleet-milo-acceptance
+      labels: [self-hosted, datum-cloud-fleet, fleet-milo-acceptance]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

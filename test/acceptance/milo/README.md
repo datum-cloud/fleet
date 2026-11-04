@@ -126,5 +126,20 @@ phase matching the overall outcome and reviewed reason, then only a not-run
 suffix. Invalid configuration is the sole one-phase exception. Raw execution
 errors are never copied to workflow logs.
 
+## GitHub execution boundary
+
+The workflow has an unprivileged trust-gate job and refuses every dispatch whose
+ref is not `refs/heads/main` before the protected environment or self-hosted
+runner is selected. The protected job repeats the main-only condition. It
+requires the dedicated `fleet-milo-acceptance` runner group and the labels
+`self-hosted`, `datum-cloud-fleet`, and `fleet-milo-acceptance`.
+
+These workflow checks do not configure GitHub. Before credentials are attached,
+operators must apply and verify the repository environment and organization
+runner-group settings in
+[`github-environment.md`](github-environment.md). The reviewed desired state is
+also recorded in [`.github/milo-acceptance-policy.json`](../../../.github/milo-acceptance-policy.json)
+and validated by `milo:validate`.
+
 The authoritative acceptance inventory remains
 [`docs/enhancements/machine-lifecycle/acceptance-tests.md`](../../../docs/enhancements/machine-lifecycle/acceptance-tests.md).
