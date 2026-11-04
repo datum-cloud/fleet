@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: fleet-system}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-system-private
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-provider
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-project-a
+  labels:
+    fleet.datumapis.com/local-project-stand-in: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-project-b
+  labels:
+    fleet.datumapis.com/local-project-stand-in: "true"

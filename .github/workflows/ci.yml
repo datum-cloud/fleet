@@ -18,4 +18,8 @@ jobs:
     - run: go test -race ./...
     - run: go vet ./...
     - run: kustomize build config/base/crd >/dev/null
+    - run: ./hack/validate-standalone-render.sh
+    - run: ./hack/test-standalone-source-id.sh
+    - run: ./hack/test-standalone-preflight.sh
+    - run: ./hack/test-standalone-build-context.sh
     - run: ./hack/validate-doc-links.sh

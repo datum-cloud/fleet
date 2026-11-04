@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base/crd
+  - ../base/simulator
+  - namespaces.yaml
+  - runtime-secret.yaml
+  - rbac.yaml
+  - fixtures.yaml
+  - smoke-cronjobs.yaml
+images:
+  - name: ghcr.io/datum-cloud/fleet-simulator
+    newName: fleet-simulator
+    newTag: standalone-local
+  - name: ghcr.io/datum-cloud/fleet-standalone-smoke
+    newName: fleet-standalone-smoke
+    newTag: standalone-local

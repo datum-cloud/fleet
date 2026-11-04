@@ -1,0 +1,57 @@
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClass
+metadata: {name: standard-metal}
+spec:
+  profilePolicy:
+    allowedProfiles: [{name: general-purpose-24c-128g}]
+    customProfiles: {enabled: false}
+  access: {consoleModes: [], powerControl: false}
+  capacity:
+    machines:
+      namespace: fleet-provider
+      selector: {matchLabels: {fleet.datumapis.com/capacity-pool: central-metal}}
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineProfile
+metadata: {name: general-purpose-24c-128g}
+spec:
+  cpu: {architecture: amd64, cores: {min: 24}}
+  memory: {capacity: {min: 128Gi}}
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Machine
+metadata:
+  name: central1-baremetal-01
+  namespace: fleet-provider
+  labels: {fleet.datumapis.com/capacity-pool: central-metal}
+spec:
+  providerRef: {apiGroup: synthetic.fleet.datumapis.com, kind: SyntheticMachine, name: asset-central-01}
+  allocationPolicy: Enabled
+  cleaningPolicyRef: {name: synthetic-tenant-reuse-v1}
+  reclaimPolicy: Retain
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClaim
+metadata: {name: allocation, namespace: fleet-project-a}
+spec:
+  machineClassRef: {name: standard-metal}
+  machineProfileRef: {name: general-purpose-24c-128g}
+  locationRef: {name: us-central-1}
+  powerState: "Off"
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClaim
+metadata: {name: allocation, namespace: fleet-project-b}
+spec:
+  machineClassRef: {name: standard-metal}
+  machineProfileRef: {name: general-purpose-24c-128g}
+  locationRef: {name: us-central-1}
+  powerState: "Off"
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Installation
+metadata: {name: debian-12, namespace: fleet-project-a}
+spec:
+  claimRef: {name: allocation}
+  expectedPredecessor: {type: None}
+  imageRef: {name: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"}
