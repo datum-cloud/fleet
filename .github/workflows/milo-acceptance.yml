@@ -1,0 +1,41 @@
+name: milo-acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-preflight:
+    environment: milo-acceptance
+    runs-on: [self-hosted, fleet-milo-acceptance]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate fail-closed harness
+        run: |
+          go test ./test/acceptance/milo/...
+          go run ./test/acceptance/milo/cmd validate --root .
+      - name: Run protected live preflight
+        env:
+          MILO_ACCEPTANCE_CONFIG: ${{ vars.MILO_ACCEPTANCE_CONFIG }}
+          MILO_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/fleet-milo-evidence
+        run: |
+          test -n "$MILO_ACCEPTANCE_CONFIG"
+          go run ./test/acceptance/milo/cmd live --config "$MILO_ACCEPTANCE_CONFIG" --output "$MILO_ACCEPTANCE_OUTPUT"
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: fleet-milo-evidence-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fleet-milo-evidence/summary.json
+            ${{ runner.temp }}/fleet-milo-evidence/environment.json
+            ${{ runner.temp }}/fleet-milo-evidence/junit.xml
+          if-no-files-found: warn
+          retention-days: 14

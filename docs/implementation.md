@@ -342,6 +342,32 @@ Remove the synthetic token and state files when the local run is complete.
 
 ## Explicit gaps
 
+### Milo acceptance harness
+
+`test/acceptance/milo` implements a non-effectful acceptance boundary. It
+requires exact Project lifetimes, Fleet and Milo revisions, digest-pinned
+manager and simulator images, and explicit credential paths. Its evidence
+encoder allow-lists non-secret environment identity and writes restricted,
+atomic JSON and JUnit artifacts through a fresh staged three-file allowlist.
+Invalid configuration cannot copy caller fields into evidence. A central result
+validator prevents `Passed` unless every exact mandatory phase passed with valid
+identity, UTC timing, and no blockers. Credential paths are canonicalized, and
+the mandatory pre-access check rejects symlinks, non-regular files, lexical
+aliases, and files that share operating-system identity.
+The credential boundary returns already-open no-follow descriptors and rechecks
+their identity and owner-only permissions; later consumers must not reopen
+paths. Evidence staging rejects symlinks in every existing parent component.
+This is sufficient for the current non-concurrent blocked harness; a concurrent
+live writer will require held directory descriptors and no-follow `openat`
+traversal.
+
+The current live command always stops after structural validation with
+`Blocked` because the production protocol probes and live scenario executor do
+not exist. It does not load a kubeconfig, contact a cluster, or mutate an API.
+The protected manual workflow therefore demonstrates fail-closed behavior, not
+Milo acceptance. Offline validation and tests cannot satisfy the proposal's live
+acceptance inventory.
+
 - The event manager exposes claim, installation, and sole-writer projector
   surfaces, but production lifecycle handlers and public status writes remain
   unwired. Trusted create-time caller capture and protected finalizer admission
