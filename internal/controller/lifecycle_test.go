@@ -34,6 +34,15 @@ func (failingResolver) ResolveImage(context.Context, ImageRequest) (ResolvedImag
 	return ResolvedImage{}, errors.New("resolver unavailable")
 }
 
+type countingResolver struct {
+	calls int
+}
+
+func (r *countingResolver) ResolveImage(ctx context.Context, request ImageRequest) (ResolvedImage, error) {
+	r.calls++
+	return (LocalDigestImageResolver{}).ResolveImage(ctx, request)
+}
+
 type fakeNetworkLifecycle struct {
 	preflights     int
 	ensures        int
@@ -323,7 +332,7 @@ func TestReleaseRecoversPreparationBeforeCustodyAdvanceWithoutCleanup(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.coordinator.selectCustody(ctx, request.Claim, proposal); err != nil {
+	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
 	if _, won, err := f.coordinator.prepareAsset(ctx, request, &request.Machines[0]); err != nil || !won {
@@ -346,7 +355,7 @@ func TestReleaseBetweenSelectionAndCreateTombstonesProposalAgainstStaleAllocator
 	if err != nil || !reusable {
 		t.Fatalf("proposal=%#v reusable=%v err=%v", proposal, reusable, err)
 	}
-	if err := f.coordinator.selectCustody(ctx, request.Claim, proposal); err != nil {
+	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
 	result, err := f.coordinator.Release(ctx, request.Claim.UID)
@@ -373,7 +382,7 @@ func TestPreparingRetryRevalidatesInputsAndDuplicateRecordsBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.coordinator.selectCustody(ctx, request.Claim, proposal); err != nil {
+	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
 	prepared, won, err := f.coordinator.prepareAsset(ctx, request, &request.Machines[0])
@@ -449,7 +458,7 @@ func TestReleaseRecoversRetainedActiveInstallationBeforeCleanup(t *testing.T) {
 	}
 	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
-	op, _, err := f.coordinator.getOrCreateOperation(ctx, operationRecordName(request.Claim.UID, "None"), InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}, asset, "None", image)
+	op, _, err := f.coordinator.getOrCreateOperation(ctx, operationRecordName(LocalClaimScope(request.NamespaceUID), request.Claim.UID, "None"), InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}, asset, "None", image)
 	if err != nil {
 		t.Fatal(err)
 	}
