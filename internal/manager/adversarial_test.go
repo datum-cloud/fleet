@@ -186,6 +186,78 @@ func TestImmediateDeadlineEmissionSerializesCancel(t *testing.T) {
 	<-cancelDone
 }
 
+func TestDeadlineStopDrainsAndPreventsPostStopEmission(t *testing.T) {
+	fakeClock := clocktesting.NewFakeClock(time.Now())
+	request := ProjectRequest{AuthorityID: "milo", ProjectUID: "project", Namespace: "default", Name: "claim", UID: "uid"}
+	emitted := make(chan ProjectRequest, 1)
+	scheduler := NewDeadlineScheduler(fakeClock, func(value ProjectRequest) { emitted <- value })
+	if err := scheduler.Schedule(request, fakeClock.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	scheduler.Stop()
+	if len(scheduler.pending) != 0 {
+		t.Fatalf("stopped scheduler retained %d deadlines", len(scheduler.pending))
+	}
+	fakeClock.Step(time.Hour)
+	select {
+	case value := <-emitted:
+		t.Fatalf("post-stop emission: %#v", value)
+	default:
+	}
+	if err := scheduler.Schedule(request, fakeClock.Now().Add(time.Second)); !errors.Is(err, ErrEventWiringUnavailable) {
+		t.Fatalf("post-stop Schedule error = %v", err)
+	}
+	if err := scheduler.Cancel(request); !errors.Is(err, ErrEventWiringUnavailable) {
+		t.Fatalf("post-stop Cancel error = %v", err)
+	}
+}
+
+func TestDeadlineManagerContextStopsAndDrainsScheduler(t *testing.T) {
+	fakeClock := clocktesting.NewFakeClock(time.Now())
+	request := ProjectRequest{AuthorityID: "milo", ProjectUID: "project", Namespace: "default", Name: "claim", UID: "uid"}
+	scheduler := NewDeadlineScheduler(fakeClock, func(ProjectRequest) { t.Error("stopped manager emitted deadline") })
+	if err := scheduler.Schedule(request, fakeClock.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- scheduler.Start(ctx) }()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !scheduler.stopped || len(scheduler.pending) != 0 {
+		t.Fatalf("scheduler stopped=%t pending=%d", scheduler.stopped, len(scheduler.pending))
+	}
+	fakeClock.Step(time.Hour)
+}
+
+func TestDeadlineStopWaitsForInFlightEmission(t *testing.T) {
+	fakeClock := clocktesting.NewFakeClock(time.Now())
+	request := ProjectRequest{AuthorityID: "milo", ProjectUID: "project", Namespace: "default", Name: "claim", UID: "uid"}
+	emitStarted, releaseEmit := make(chan struct{}), make(chan struct{})
+	scheduler := NewDeadlineScheduler(fakeClock, func(ProjectRequest) { close(emitStarted); <-releaseEmit })
+	if err := scheduler.Schedule(request, fakeClock.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	stepDone := make(chan struct{})
+	go func() { fakeClock.Step(time.Second); close(stepDone) }()
+	<-emitStarted
+	stopDone := make(chan struct{})
+	go func() { scheduler.Stop(); close(stopDone) }()
+	select {
+	case <-stopDone:
+		t.Fatal("Stop returned while emission was in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseEmit)
+	<-stepDone
+	<-stopDone
+	if len(scheduler.pending) != 0 {
+		t.Fatalf("Stop retained %d deadlines", len(scheduler.pending))
+	}
+}
+
 func TestPrivateSecretRoutingRejectsForgedIdentities(t *testing.T) {
 	project := testProject("milo", "project")
 	valid := privateSecret(t, project, "default", "claim", "claim-uid", "machine-uid")
@@ -251,8 +323,17 @@ func TestProjectVerifierBlocksHandlers(t *testing.T) {
 		t.Fatalf("err=%v called=%t", err, called)
 	}
 	reconciler.Verifier = ProjectVerifierFunc(func(context.Context, controller.ProjectIdentity) error { return ErrEventWiringUnavailable })
-	if result, err := reconciler.Reconcile(context.Background(), request); err != nil || result.Requeue || result.RequeueAfter != 0 || called {
+	if result, err := reconciler.Reconcile(context.Background(), request); !errors.Is(err, ErrEventWiringUnavailable) || result.Requeue || result.RequeueAfter != 0 || called {
 		t.Fatalf("unwired verifier result=%#v err=%v called=%t", result, err, called)
+	}
+}
+
+func TestRouteVerifierUnavailableRetriesExactEvent(t *testing.T) {
+	project := testProject("milo", "project")
+	route := RouteRequest{AuthorityID: "milo", ProjectUID: project.UID, Kind: RouteClass, Name: "class", UID: "class-uid"}
+	reconciler := RouteReconciler{Project: project, Verifier: ProjectVerifierFunc(func(context.Context, controller.ProjectIdentity) error { return ErrEventWiringUnavailable }), Handler: HandlerFunc(func(context.Context, ProjectRequest) Outcome { t.Fatal("handler ran without wiring"); return Outcome{} })}
+	if result, err := reconciler.Reconcile(context.Background(), route); !errors.Is(err, ErrEventWiringUnavailable) || result.Requeue || result.RequeueAfter != 0 {
+		t.Fatalf("unwired route result=%#v err=%v", result, err)
 	}
 }
 

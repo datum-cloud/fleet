@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -15,6 +16,30 @@ var ErrEventWiringUnavailable = errors.New("required event-driven integration is
 // an error and never schedules a time-based reconcile.
 type Outcome struct {
 	RetryError error
+	Deadline   DeadlineDirective
+}
+
+type DeadlineMode string
+
+const (
+	DeadlineUnchanged DeadlineMode = ""
+	DeadlineSchedule  DeadlineMode = "Schedule"
+	DeadlineCancel    DeadlineMode = "Cancel"
+)
+
+// DeadlineDirective is owned by the lifecycle coordinator. It requests one
+// exact evidence-expiry event; it is not a polling interval.
+type DeadlineDirective struct {
+	Mode DeadlineMode
+	At   time.Time
+}
+
+func ScheduleDeadline(at time.Time) DeadlineDirective {
+	return DeadlineDirective{Mode: DeadlineSchedule, At: at}
+}
+
+func CancelDeadline() DeadlineDirective {
+	return DeadlineDirective{Mode: DeadlineCancel}
 }
 
 type Handler interface {
@@ -44,13 +69,13 @@ type ProjectReconciler struct {
 }
 
 func (r ProjectReconciler) Reconcile(ctx context.Context, request ProjectRequest) (reconcile.Result, error) {
-	if !r.Project.Valid() || !request.Valid() || !request.SameProject(r.Project.AuthorityID, r.Project.UID) || r.Handler == nil || r.Verifier == nil {
+	if !r.Project.Valid() || r.Handler == nil || r.Verifier == nil {
+		return reconcile.Result{}, ErrEventWiringUnavailable
+	}
+	if !request.Valid() || !request.SameProject(r.Project.AuthorityID, r.Project.UID) {
 		return reconcile.Result{}, nil
 	}
 	if err := r.Verifier.VerifyProject(ctx, r.Project); err != nil {
-		if errors.Is(err, ErrEventWiringUnavailable) {
-			return reconcile.Result{}, nil
-		}
 		return reconcile.Result{}, err
 	}
 	outcome := r.Handler.ReconcileEvent(ctx, request)

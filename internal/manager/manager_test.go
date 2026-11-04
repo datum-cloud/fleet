@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -82,6 +83,236 @@ func TestPrimaryPredicateIgnoresStatusProjection(t *testing.T) {
 	if !PrimaryPredicate().Update(event.UpdateEvent{ObjectOld: oldClaim, ObjectNew: newClaim}) {
 		t.Fatal("generation change was filtered")
 	}
+	newClaim = oldClaim.DeepCopyObject().(*fleetv1.MachineClaim)
+	newClaim.Labels = map[string]string{"fleet.datumapis.com/test": "changed"}
+	if !PrimaryPredicate().Update(event.UpdateEvent{ObjectOld: oldClaim, ObjectNew: newClaim}) {
+		t.Fatal("label change was filtered")
+	}
+	newClaim = oldClaim.DeepCopyObject().(*fleetv1.MachineClaim)
+	newClaim.Annotations = map[string]string{"fleet.datumapis.com/test": "changed"}
+	if !PrimaryPredicate().Update(event.UpdateEvent{ObjectOld: oldClaim, ObjectNew: newClaim}) {
+		t.Fatal("annotation change was filtered")
+	}
+
+	oldMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Generation: 2}}
+	newMachine := oldMachine.DeepCopyObject().(*fleetv1.Machine)
+	newMachine.Status.Hardware.CPU.Cores = 24
+	if !DependencyPredicate().Update(event.UpdateEvent{ObjectOld: oldMachine, ObjectNew: newMachine}) {
+		t.Fatal("provider dependency status change was filtered")
+	}
+}
+
+func TestRouteRequestRequiresExactDependencyUID(t *testing.T) {
+	request := RouteRequest{AuthorityID: "milo", ProjectUID: "project", Kind: RouteClass, Name: "class"}
+	if request.Valid() {
+		t.Fatal("route without dependency UID validated")
+	}
+	request.UID = "class-uid"
+	if !request.Valid() {
+		t.Fatal("exact dependency route was rejected")
+	}
+	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class"}}
+	if routes := (Mappers{Project: testProject("milo", "project")}).Route(RouteClass, "")(context.Background(), class); len(routes) != 0 {
+		t.Fatalf("UID-less dependency entered queue: %v", routes)
+	}
+}
+
+func TestRouteRejectsRecreatedDependencyLifetime(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "new-class-uid"}}
+	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "claim-uid"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}}}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, claim).
+		WithIndex(&fleetv1.MachineClaim{}, IndexClaimClassName, func(object client.Object) []string {
+			return []string{object.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name}
+		}).Build()
+	mapper := Mappers{Reader: kube, Project: testProject("milo", "project")}
+	stale := RouteRequest{AuthorityID: "milo", ProjectUID: "project", Kind: RouteClass, Name: class.Name, UID: "old-class-uid"}
+	requests, err := mapper.ResolveRoute(context.Background(), stale)
+	if err != nil || len(requests) != 0 {
+		t.Fatalf("stale dependency routed requests=%v err=%v", requests, err)
+	}
+	stale.UID = class.UID
+	requests, err = mapper.ResolveRoute(context.Background(), stale)
+	if err != nil || len(requests) != 1 || requests[0].UID != claim.UID {
+		t.Fatalf("current dependency requests=%v err=%v", requests, err)
+	}
+}
+
+func TestMachineDeleteSnapshotRoutesOldLifetimeAfterRecreation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	project := testProject("milo", "project")
+	oldMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "old-machine", Labels: map[string]string{"pool": "old"}}}
+	newMachine := &fleetv1.Machine{ObjectMeta: *oldMachine.ObjectMeta.DeepCopy()}
+	newMachine.UID = "new-machine"
+	newMachine.Labels = map[string]string{"pool": "new"}
+	secret := privateSecret(t, project, "default", "claim", "claim-uid", "old-machine")
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(newMachine, secret).
+		WithIndex(&fleetv1.MachineClass{}, IndexClassMachineNS, func(client.Object) []string { return nil }).
+		WithIndex(&corev1.Secret{}, IndexPrivateMachineUID, func(object client.Object) []string { return []string{"old-machine"} }).Build()
+	mapper := Mappers{Reader: kube, Project: project, PrivateNamespace: "private"}
+	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
+	typedRouteMap(mapper.Route(RouteMachine, "")).Delete(context.Background(), event.TypedDeleteEvent[client.Object]{Object: oldMachine}, queue)
+	route, shutdown := queue.Get()
+	if shutdown {
+		t.Fatal("delete snapshot was not queued")
+	}
+	queue.Done(route)
+	queue.ShutDown()
+	if !route.Deleted || route.UID != oldMachine.UID {
+		t.Fatalf("delete route lost lifetime snapshot: %#v", route)
+	}
+	requests, err := mapper.ResolveRoute(context.Background(), route)
+	if err != nil || len(requests) != 1 || requests[0].UID != "claim-uid" {
+		t.Fatalf("old machine deletion requests=%v err=%v", requests, err)
+	}
+	route.Deleted = false
+	requests, err = mapper.ResolveRoute(context.Background(), route)
+	if err != nil || len(requests) != 0 {
+		t.Fatalf("non-delete stale machine requests=%v err=%v", requests, err)
+	}
+}
+
+func TestMachineUpdateRoutesOldAndNewSelectorDependents(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	project := testProject("milo", "project")
+	oldMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Labels: map[string]string{"pool": "blue"}}}
+	newMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Labels: map[string]string{"pool": "red"}}}
+	blue := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "blue", UID: "blue-class"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "blue"}}}}}}
+	red := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "red", UID: "red-class"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "red"}}}}}}
+	blueClaim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "blue", UID: "blue-claim"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "blue"}}}
+	redClaim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "red", UID: "red-claim"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "red"}}}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(newMachine, blue, red, blueClaim, redClaim).
+		WithIndex(&fleetv1.MachineClass{}, IndexClassMachineNS, func(object client.Object) []string {
+			return []string{object.(*fleetv1.MachineClass).Spec.Capacity.Machines.Namespace}
+		}).
+		WithIndex(&fleetv1.MachineClaim{}, IndexClaimClassName, func(object client.Object) []string {
+			return []string{object.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name}
+		}).
+		WithIndex(&corev1.Secret{}, IndexPrivateMachineUID, func(client.Object) []string { return nil }).Build()
+	mapper := Mappers{Reader: kube, Project: project, PrivateNamespace: "private"}
+	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
+	typedRouteMap(mapper.Route(RouteMachine, "")).Update(context.Background(), event.TypedUpdateEvent[client.Object]{ObjectOld: oldMachine, ObjectNew: newMachine}, queue)
+	if queue.Len() != 2 {
+		t.Fatalf("machine update queued %d routing snapshots, want 2", queue.Len())
+	}
+	routed := map[types.UID]bool{}
+	for queue.Len() > 0 {
+		route, shutdown := queue.Get()
+		if shutdown {
+			t.Fatal("route queue shut down")
+		}
+		requests, err := mapper.ResolveRoute(context.Background(), route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, request := range requests {
+			routed[request.UID] = true
+		}
+		queue.Done(route)
+	}
+	queue.ShutDown()
+	if !routed[blueClaim.UID] || !routed[redClaim.UID] || len(routed) != 2 {
+		t.Fatalf("machine selector update routed %v", routed)
+	}
+}
+
+func TestQuotaUpdateRoutesOldAndNewClaimLabels(t *testing.T) {
+	project := testProject("milo", "project")
+	oldQuota := &quotav1alpha1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: "quota", UID: "quota-uid", Labels: map[string]string{"fleet.datumapis.com/machine-claim-uid": "old-claim"}}}
+	newQuota := &quotav1alpha1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: "quota", UID: "quota-uid", Labels: map[string]string{"fleet.datumapis.com/machine-claim-uid": "new-claim"}}}
+	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
+	typedRouteMap((Mappers{Project: project}).Route(RouteQuota, "")).Update(context.Background(), event.TypedUpdateEvent[client.Object]{ObjectOld: oldQuota, ObjectNew: newQuota}, queue)
+	if queue.Len() != 2 {
+		t.Fatalf("quota update queued %d routing snapshots, want 2", queue.Len())
+	}
+	keys := map[string]bool{}
+	for queue.Len() > 0 {
+		route, shutdown := queue.Get()
+		if shutdown {
+			t.Fatal("route queue shut down")
+		}
+		keys[route.Key] = true
+		queue.Done(route)
+	}
+	queue.ShutDown()
+	if !keys["old-claim"] || !keys["new-claim"] || len(keys) != 2 {
+		t.Fatalf("quota label update retained keys %v", keys)
+	}
+	overlap := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
+	typedRouteMap((Mappers{Project: project}).Route(RouteQuota, "")).Update(context.Background(), event.TypedUpdateEvent[client.Object]{ObjectOld: oldQuota, ObjectNew: oldQuota}, overlap)
+	if overlap.Len() != 1 {
+		t.Fatalf("overlapping quota snapshots queued %d routes, want 1", overlap.Len())
+	}
+	overlap.ShutDown()
+}
+
+func TestPrivateUIDDeleteSnapshotRoutesOldLifetimeAfterRecreation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	project := testProject("milo", "project")
+	oldNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "old-namespace"}}
+	newNamespace := oldNamespace.DeepCopy()
+	newNamespace.UID = "new-namespace"
+	secret := privateSecret(t, project, "default", "claim", "claim-uid", "")
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(newNamespace, secret).
+		WithIndex(&corev1.Secret{}, IndexPrivateNamespaceUID, func(object client.Object) []string { return []string{"old-namespace"} }).Build()
+	mapper := Mappers{Reader: kube, Project: project, PrivateNamespace: "private"}
+	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
+	typedRouteMap(mapper.Route(RoutePrivateUID, IndexPrivateNamespaceUID)).Delete(context.Background(), event.TypedDeleteEvent[client.Object]{Object: oldNamespace}, queue)
+	route, shutdown := queue.Get()
+	if shutdown {
+		t.Fatal("delete snapshot was not queued")
+	}
+	queue.Done(route)
+	queue.ShutDown()
+	if !route.Deleted || route.Key != "old-namespace" {
+		t.Fatalf("private UID delete lost snapshot: %#v", route)
+	}
+	requests, err := mapper.ResolveRoute(context.Background(), route)
+	if err != nil || len(requests) != 1 || requests[0].UID != "claim-uid" {
+		t.Fatalf("old namespace deletion requests=%v err=%v", requests, err)
+	}
+	route.Deleted = false
+	requests, err = mapper.ResolveRoute(context.Background(), route)
+	if err != nil || len(requests) != 0 {
+		t.Fatalf("non-delete stale namespace requests=%v err=%v", requests, err)
+	}
+}
+
+func TestPrivateRecordPredicateQuarantinesEnvelopeSubstitution(t *testing.T) {
+	valid := privateSecret(t, testProject("milo", "project"), "default", "claim", "claim-uid", "")
+	for name, mutate := range map[string]func(*corev1.Secret){
+		"label": func(secret *corev1.Secret) { secret.Labels["fleet.datumapis.com/private-record"] = "other" },
+		"type":  func(secret *corev1.Secret) { secret.Type = corev1.SecretTypeOpaque },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := valid.DeepCopy()
+			mutate(invalid)
+			if !PrivateRecordPredicate().Update(event.UpdateEvent{ObjectOld: valid, ObjectNew: invalid}) {
+				t.Fatal("valid-to-quarantined envelope transition was ignored")
+			}
+			if requests := (Mappers{Project: testProject("milo", "project"), PrivateNamespace: "private"}).RequestForPrivate(context.Background(), invalid); len(requests) != 0 {
+				t.Fatalf("substituted envelope routed: %v", requests)
+			}
+		})
+	}
 }
 
 func TestDeadlineSchedulerEmitsOnceAndReplacesDeadline(t *testing.T) {
@@ -110,6 +341,31 @@ func TestDeadlineSchedulerEmitsOnceAndReplacesDeadline(t *testing.T) {
 	defer mu.Unlock()
 	if len(emitted) != 1 {
 		t.Fatalf("deadline repeated: %v", emitted)
+	}
+}
+
+func TestFreshSchedulerInitialAddRebuildsDeadline(t *testing.T) {
+	start := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	request := ProjectRequest{AuthorityID: "milo", ProjectUID: "project", Namespace: "default", Name: "claim", UID: "claim-uid"}
+	for restart := 0; restart < 2; restart++ {
+		fakeClock := clocktesting.NewFakeClock(start)
+		emitted := make(chan ProjectRequest, 1)
+		scheduler := NewDeadlineScheduler(fakeClock, func(value ProjectRequest) { emitted <- value })
+		owner := NewLifecycleOwner(HandlerFunc(func(context.Context, ProjectRequest) Outcome {
+			return Outcome{Deadline: ScheduleDeadline(start.Add(time.Minute))}
+		}), HandlerFunc(func(context.Context, ProjectRequest) Outcome { return Outcome{} }), scheduler)
+		if outcome := owner.ReconcileEvent(context.Background(), request); outcome.RetryError != nil {
+			t.Fatalf("restart %d initial Add: %v", restart, outcome.RetryError)
+		}
+		fakeClock.Step(time.Minute)
+		select {
+		case got := <-emitted:
+			if got != request {
+				t.Fatalf("restart %d emitted %#v", restart, got)
+			}
+		default:
+			t.Fatalf("restart %d did not rebuild deadline", restart)
+		}
 	}
 }
 
@@ -178,6 +434,29 @@ func TestProjectReconcilerNeverTimeRequeuesPendingWork(t *testing.T) {
 	result, err = reconciler.Reconcile(context.Background(), request)
 	if !errors.Is(err, retryErr) || result.RequeueAfter != 0 || result.Requeue {
 		t.Fatalf("retry result=%#v err=%v", result, err)
+	}
+}
+
+func TestReconcilersFailClosedWithoutRequiredWiring(t *testing.T) {
+	project := testProject("milo", "project")
+	request := ProjectRequest{AuthorityID: "milo", ProjectUID: "project", Namespace: "default", Name: "claim", UID: "claim-uid"}
+	verifier := ProjectVerifierFunc(func(context.Context, controller.ProjectIdentity) error { return nil })
+	for name, reconciler := range map[string]ProjectReconciler{
+		"handler":  {Project: project, Verifier: verifier},
+		"verifier": {Project: project, Handler: HandlerFunc(func(context.Context, ProjectRequest) Outcome { return Outcome{} })},
+	} {
+		if _, err := reconciler.Reconcile(context.Background(), request); !errors.Is(err, ErrEventWiringUnavailable) {
+			t.Errorf("%s wiring error=%v", name, err)
+		}
+	}
+	route := RouteRequest{AuthorityID: "milo", ProjectUID: "project", Kind: RouteClass, Namespace: "default", Name: "class", UID: "class-uid"}
+	for name, reconciler := range map[string]RouteReconciler{
+		"handler":  {Project: project, Verifier: verifier},
+		"verifier": {Project: project, Handler: HandlerFunc(func(context.Context, ProjectRequest) Outcome { return Outcome{} })},
+	} {
+		if _, err := reconciler.Reconcile(context.Background(), route); !errors.Is(err, ErrEventWiringUnavailable) {
+			t.Errorf("%s route wiring error=%v", name, err)
+		}
 	}
 }
 
