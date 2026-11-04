@@ -232,10 +232,13 @@ spec:
                       properties: {namespace: {type: string}, name: {type: string}}
                     ipFamilies:
                       type: array
+                      maxItems: 2
+                      x-kubernetes-list-type: set
                       items: {type: string, enum: [IPv4, IPv6]}
                       default: [IPv6]
                     addresses:
                       type: array
+                      maxItems: 4
                       items:
                         type: object
                         required: [classRef]
