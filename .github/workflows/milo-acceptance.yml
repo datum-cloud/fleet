@@ -22,20 +22,28 @@ jobs:
           go test ./test/acceptance/milo/...
           go run ./test/acceptance/milo/cmd validate --root .
       - name: Run protected live preflight
+        id: live
         env:
           MILO_ACCEPTANCE_CONFIG: ${{ vars.MILO_ACCEPTANCE_CONFIG }}
-          MILO_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/fleet-milo-evidence
+          MILO_ACCEPTANCE_OUTPUT: ${{ runner.temp }}/fleet-milo-evidence-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           test -n "$MILO_ACCEPTANCE_CONFIG"
+          test ! -e "$MILO_ACCEPTANCE_OUTPUT"
+          set +e
           go run ./test/acceptance/milo/cmd live --config "$MILO_ACCEPTANCE_CONFIG" --output "$MILO_ACCEPTANCE_OUTPUT"
+          status=$?
+          set -e
+          go run ./test/acceptance/milo/cmd verify-evidence --output "$MILO_ACCEPTANCE_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Upload sanitized evidence
-        if: always()
+        if: always() && steps.live.outputs.ready == 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: fleet-milo-evidence-${{ github.run_id }}
+          name: fleet-milo-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/fleet-milo-evidence/summary.json
-            ${{ runner.temp }}/fleet-milo-evidence/environment.json
-            ${{ runner.temp }}/fleet-milo-evidence/junit.xml
+            ${{ runner.temp }}/fleet-milo-evidence-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ${{ runner.temp }}/fleet-milo-evidence-${{ github.run_id }}-${{ github.run_attempt }}/environment.json
+            ${{ runner.temp }}/fleet-milo-evidence-${{ github.run_id }}-${{ github.run_attempt }}/junit.xml
           if-no-files-found: warn
           retention-days: 14

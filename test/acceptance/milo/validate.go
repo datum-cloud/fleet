@@ -64,7 +64,13 @@ func ValidateRepository(root string) error {
 		if liveIndex < 0 || strings.Contains(text[:max(liveIndex, 0)], "MILO_ACCEPTANCE_CONFIG") {
 			problems = append(problems, errors.New("Milo acceptance config may be exposed only to the live step"))
 		}
-		for _, artifact := range []string{"fleet-milo-evidence/summary.json", "fleet-milo-evidence/environment.json", "fleet-milo-evidence/junit.xml"} {
+		if !strings.Contains(text, "fleet-milo-evidence-${{ github.run_id }}-${{ github.run_attempt }}") || !strings.Contains(text, `test ! -e "$MILO_ACCEPTANCE_OUTPUT"`) {
+			problems = append(problems, errors.New("Milo workflow must use an absent run-unique evidence directory"))
+		}
+		if !strings.Contains(text, "verify-evidence --output") || !strings.Contains(text, `echo "ready=true" >> "$GITHUB_OUTPUT"`) || !strings.Contains(text, "if: always() && steps.live.outputs.ready == 'true'") {
+			problems = append(problems, errors.New("Milo workflow may upload only a freshly verified evidence snapshot"))
+		}
+		for _, artifact := range []string{"/summary.json", "/environment.json", "/junit.xml"} {
 			if !strings.Contains(text, artifact) {
 				problems = append(problems, fmt.Errorf("workflow upload is missing exact artifact %s", artifact))
 			}

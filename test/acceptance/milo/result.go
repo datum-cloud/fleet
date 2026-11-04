@@ -3,7 +3,6 @@ package miloacceptance
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -11,11 +10,36 @@ import (
 
 type Status string
 
+// ReasonCode is the complete evidence-safe vocabulary for phase outcomes.
+// Cluster responses, object dumps, and error strings have no representation in
+// the evidence schema. Adding a reason therefore requires a reviewed code
+// change rather than copying external text into an artifact.
+type ReasonCode string
+
+// BlockerCode is the complete evidence-safe vocabulary for unmet production
+// capabilities. Detailed dependency diagnostics remain outside acceptance
+// evidence until a separately reviewed structured schema exists.
+type BlockerCode string
+
 const (
 	StatusPassed  Status = "Passed"
 	StatusFailed  Status = "Failed"
 	StatusBlocked Status = "Blocked"
 	StatusNotRun  Status = "NotRun"
+
+	ReasonConfigurationInvalid       ReasonCode = "ConfigurationInvalid"
+	ReasonProductionAccessNotAllowed ReasonCode = "ProductionAccessNotAllowed"
+	ReasonProductionCapabilitiesGap  ReasonCode = "ProductionCapabilitiesGap"
+	ReasonLiveAssertionFailed        ReasonCode = "LiveAssertionFailed"
+
+	BlockerSourceAuthority    BlockerCode = "SourceAuthorityUnavailable"
+	BlockerAdmissionFence     BlockerCode = "AdmissionFenceUnavailable"
+	BlockerQuotaCustody       BlockerCode = "QuotaCustodyUnavailable"
+	BlockerProjectPurgeGuard  BlockerCode = "ProjectPurgeGuardUnavailable"
+	BlockerReplayableEvents   BlockerCode = "ReplayableEventsUnavailable"
+	BlockerNetworkImageAuth   BlockerCode = "NetworkImageAuthorityUnavailable"
+	BlockerNetworkEvidence    BlockerCode = "NetworkEvidenceUnavailable"
+	BlockerLifecycleExecution BlockerCode = "LifecycleExecutionUnavailable"
 )
 
 var mandatoryPhases = [...]string{
@@ -30,9 +54,9 @@ var mandatoryPhases = [...]string{
 }
 
 type Phase struct {
-	Name   string `json:"name"`
-	Status Status `json:"status"`
-	Reason string `json:"reason,omitempty"`
+	Name   string     `json:"name"`
+	Status Status     `json:"status"`
+	Reason ReasonCode `json:"reason,omitempty"`
 }
 
 type Environment struct {
@@ -46,14 +70,14 @@ type Environment struct {
 // Result is deliberately allow-listed. Kubeconfig paths, credentials, Secret
 // bodies and controller logs have no representation in the evidence schema.
 type Result struct {
-	SchemaVersion int         `json:"schemaVersion"`
-	RunID         string      `json:"runID,omitempty"`
-	Status        Status      `json:"status"`
-	StartedAt     time.Time   `json:"startedAt"`
-	CompletedAt   time.Time   `json:"completedAt"`
-	Environment   Environment `json:"environment"`
-	Phases        []Phase     `json:"phases"`
-	Blockers      []string    `json:"blockers,omitempty"`
+	SchemaVersion int           `json:"schemaVersion"`
+	RunID         string        `json:"runID,omitempty"`
+	Status        Status        `json:"status"`
+	StartedAt     time.Time     `json:"startedAt"`
+	CompletedAt   time.Time     `json:"completedAt"`
+	Environment   Environment   `json:"environment"`
+	Phases        []Phase       `json:"phases"`
+	Blockers      []BlockerCode `json:"blockers,omitempty"`
 }
 
 func environmentFor(c Config) Environment {
@@ -74,7 +98,7 @@ func (r Result) Validate() error {
 	if len(r.Phases) == 0 || len(r.Phases) > len(mandatoryPhases) {
 		problems = append(problems, errors.New("result phases must be a nonempty prefix of the mandatory phase set"))
 	}
-	nonPassed := false
+	terminal := -1
 	for index, phase := range r.Phases {
 		if index >= len(mandatoryPhases) || phase.Name != mandatoryPhases[index] {
 			problems = append(problems, errors.New("result phases are unknown, duplicated, or out of order"))
@@ -84,12 +108,23 @@ func (r Result) Validate() error {
 			problems = append(problems, fmt.Errorf("phase %s has invalid status", phase.Name))
 		}
 		if phase.Status != StatusPassed {
-			nonPassed = true
-			if strings.TrimSpace(phase.Reason) == "" || len(phase.Reason) > 512 || strings.ContainsAny(phase.Reason, "\r\n") {
-				problems = append(problems, fmt.Errorf("phase %s needs a bounded single-line reason", phase.Name))
+			if !reasonAllowed(phase.Status, phase.Reason) {
+				problems = append(problems, fmt.Errorf("phase %s has an unreviewed reason code", phase.Name))
 			}
 		} else if phase.Reason != "" {
 			problems = append(problems, fmt.Errorf("passed phase %s must not include a reason", phase.Name))
+		}
+		if phase.Status == StatusBlocked || phase.Status == StatusFailed {
+			if terminal != -1 {
+				problems = append(problems, errors.New("result phases contain multiple terminal outcomes"))
+			}
+			terminal = index
+		} else if phase.Status == StatusPassed && terminal != -1 {
+			problems = append(problems, errors.New("passed phases must form a prefix"))
+		} else if phase.Status == StatusNotRun && terminal == -1 && r.Status != StatusNotRun {
+			problems = append(problems, errors.New("not-run phases must form a suffix after the terminal outcome"))
+		} else if phase.Status == StatusNotRun && r.Status != StatusNotRun && phase.Reason != ReasonProductionAccessNotAllowed {
+			problems = append(problems, errors.New("not-run suffix phases require the reviewed production-access reason"))
 		}
 	}
 	switch r.Status {
@@ -97,31 +132,63 @@ func (r Result) Validate() error {
 		if !runID.MatchString(r.RunID) || environmentIdentityValid(r.Environment) != nil {
 			problems = append(problems, errors.New("passed result requires valid exact environment identity"))
 		}
-		if len(r.Phases) != len(mandatoryPhases) || nonPassed || len(r.Blockers) != 0 {
+		if len(r.Phases) != len(mandatoryPhases) || terminal != -1 || hasPhaseStatus(r.Phases, StatusNotRun) || len(r.Blockers) != 0 {
 			problems = append(problems, errors.New("passed result requires every exact mandatory phase passed and no blockers"))
 		}
 	case StatusBlocked:
 		if !runID.MatchString(r.RunID) || environmentIdentityValid(r.Environment) != nil {
 			problems = append(problems, errors.New("blocked result requires valid exact environment identity"))
 		}
-		if len(r.Blockers) == 0 || !hasPhaseStatus(r.Phases, StatusBlocked) {
+		if len(r.Phases) != len(mandatoryPhases) || len(r.Blockers) == 0 || terminal < 0 || r.Phases[terminal].Status != StatusBlocked || r.Phases[terminal].Reason != ReasonProductionCapabilitiesGap {
 			problems = append(problems, errors.New("blocked result requires blockers and a blocked phase"))
 		}
 	case StatusNotRun:
-		if r.RunID != "" || !environmentEmpty(r.Environment) || len(r.Blockers) != 0 || !hasPhaseStatus(r.Phases, StatusNotRun) {
+		if r.RunID != "" || !environmentEmpty(r.Environment) || len(r.Blockers) != 0 || len(r.Phases) != 1 || r.Phases[0] != (Phase{Name: "configuration", Status: StatusNotRun, Reason: ReasonConfigurationInvalid}) {
 			problems = append(problems, errors.New("not-run result must contain no caller identity or blockers"))
 		}
 	case StatusFailed:
-		if !runID.MatchString(r.RunID) || environmentIdentityValid(r.Environment) != nil || !hasPhaseStatus(r.Phases, StatusFailed) {
+		if len(r.Phases) != len(mandatoryPhases) || !runID.MatchString(r.RunID) || environmentIdentityValid(r.Environment) != nil || terminal < 0 || r.Phases[terminal].Status != StatusFailed || r.Phases[terminal].Reason != ReasonLiveAssertionFailed {
 			problems = append(problems, errors.New("failed result requires exact environment identity and a failed phase"))
 		}
 	}
+	if r.Status != StatusBlocked && len(r.Blockers) != 0 {
+		problems = append(problems, errors.New("only a blocked result may contain blockers"))
+	}
+	seenBlockers := map[BlockerCode]struct{}{}
 	for _, blocker := range r.Blockers {
-		if strings.TrimSpace(blocker) == "" || len(blocker) > 256 || strings.ContainsAny(blocker, "\r\n") {
-			problems = append(problems, errors.New("blockers must be bounded single-line values"))
+		if !validBlocker(blocker) {
+			problems = append(problems, errors.New("result contains an unreviewed blocker code"))
 		}
+		if _, exists := seenBlockers[blocker]; exists {
+			problems = append(problems, errors.New("result contains a duplicate blocker code"))
+		}
+		seenBlockers[blocker] = struct{}{}
 	}
 	return errors.Join(problems...)
+}
+
+func reasonAllowed(status Status, reason ReasonCode) bool {
+	switch status {
+	case StatusNotRun:
+		return reason == ReasonConfigurationInvalid || reason == ReasonProductionAccessNotAllowed
+	case StatusBlocked:
+		return reason == ReasonProductionCapabilitiesGap
+	case StatusFailed:
+		return reason == ReasonLiveAssertionFailed
+	default:
+		return false
+	}
+}
+
+func validBlocker(blocker BlockerCode) bool {
+	switch blocker {
+	case BlockerSourceAuthority, BlockerAdmissionFence, BlockerQuotaCustody,
+		BlockerProjectPurgeGuard, BlockerReplayableEvents, BlockerNetworkImageAuth,
+		BlockerNetworkEvidence, BlockerLifecycleExecution:
+		return true
+	default:
+		return false
+	}
 }
 
 // ValidateOutcome binds the serialized status to the returned execution error.
