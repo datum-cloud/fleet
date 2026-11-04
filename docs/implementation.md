@@ -1,8 +1,49 @@
 # Fleet implementation status
 
-Status: public API foundation and standalone synthetic provider simulator
-implemented. Allocation controllers and real provider integrations are not
-implemented.
+Status: public API foundation, standalone synthetic provider simulator, and
+same-cluster allocation/installation lifecycle library implemented. A running
+controller manager, networking integration, and real providers are not implemented.
+
+## Standalone lifecycle library
+
+`internal/controller` implements the recovery-critical core without installing a
+manager or watches. Callers first create retained claim custody before adding a
+claim finalizer, retaining the namespace lifetime plus a trusted caller-supplied
+principal UID and admission decision ID; the library never manufactures an
+authorization result. Allocation requires that exact finalizer and authority and
+rejects deleting claims.
+Allocation then selects only current, healthy, available machines
+with fresh externally supplied evidence. It atomically reserves each physical
+asset through deterministic private Secrets and retains `Preparing`, `Committed`,
+`Releasing`, and `Released` authority. Released records are not deleted; a later
+binding advances the provider epoch and receives new binding and fence tokens.
+The claim-level `Selecting` record retains the complete proposed asset authority
+before creation, allowing deletion to materialize and tombstone the proposal so
+a delayed allocator cannot resurrect it.
+
+An independent custody record distinguishes a claim proven never bound from a
+claim whose sole asset authority is unexpectedly missing. Release removes a
+finalizer only after an unbound proof or retained cleanup completion. Corrupt,
+duplicate, or cross-lifetime deterministic records fail closed.
+
+Installation admission retains exact inputs and a private predecessor before the
+provider effect, including the initiating principal and installation decision plus
+the image catalog authority, revision, and image decision. Image references must
+resolve to canonical lowercase SHA-256 digests. Stable operation and result
+identities make response-loss recovery an operation lookup rather than a second
+effect. Public claim status is not used as predecessor authority.
+
+`internal/executor` is the typed bearer-authenticated client for the simulator's
+runtime surface. Transport failures, unavailable responses, malformed terminal
+results, and lost responses are classified as unknown outcomes for lookup-based
+recovery. Bearer HTTP remains a test-only transport, not a production identity
+contract.
+
+The private namespace is a security boundary: the Fleet service account must be
+its exclusive writer, and the `fleet-claim-`, `fleet-asset-`, and
+`fleet-install-` name prefixes are reserved. Provider health, availability, and
+observation timestamps supplied to the library must come from a trusted,
+authenticated provider-status path; this increment does not establish that path.
 
 ## Persistent provider simulator
 
@@ -43,6 +84,7 @@ Run the implemented checks from the repository root:
 
 ```sh
 go test ./...
+go test -race ./internal/controller ./internal/executor
 go vet ./...
 ```
 
@@ -71,7 +113,13 @@ Remove the synthetic token and state files when the local run is complete.
 
 ## Explicit gaps
 
-- No allocator or Installation controller invokes the simulator yet.
+- The lifecycle package is not wired to a manager, informer watches, status
+  projection, or finalizers yet.
+- Cross-project class sources, network attachments/IPAM, and bootstrap secret
+  retention are rejected rather than partially executed.
+- `LocalDigestImageResolver` is test-only. Production image authority,
+  namespace authorization, catalog lifetime identity, and digest resolution are
+  not implemented.
 - No container image or Kubernetes deployment is delivered in this increment.
 - There is no mTLS workload identity, target-level authorization, or production
   provider credential protocol.
