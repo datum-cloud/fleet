@@ -56,6 +56,11 @@ func TestAuthorityRecordConcurrentCreateIsExactAndPrivate(t *testing.T) {
 	}{request, receipt}
 	contractDigest, _ := digest(contract)
 	record := AuthorityRecord{SchemaVersion: authoritySchemaVersion, RecordID: "record-id", State: StatePrepared, ClaimNamespace: "default", ClaimName: "allocation", ClaimUID: request.ClaimUID, SourceRequest: request, SourceReceipt: receipt, ContractDigest: contractDigest, AcceptedRequirements: accepted}
+	mismatched := record
+	mismatched.ClaimUID = "other-claim"
+	if !errors.Is(validateAuthorityRecord(&mismatched), ErrAuthorityInvalid) {
+		t.Fatal("outer claim lifetime diverged from retained source request")
+	}
 	var wg sync.WaitGroup
 	errorsCh := make(chan error, 8)
 	for i := 0; i < 8; i++ {

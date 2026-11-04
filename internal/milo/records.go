@@ -122,11 +122,33 @@ func (s *RecordStore) getByName(ctx context.Context, name string) (*AuthorityRec
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &secret); err != nil {
 		return nil, nil, err
 	}
+	record, err := decodeAuthoritySecret(&secret)
+	return record, &secret, err
+}
+
+func decodeAuthoritySecret(secret *corev1.Secret) (*AuthorityRecord, error) {
 	var record AuthorityRecord
-	if secret.Type != authorityType || secret.Labels["fleet.datumapis.com/private-record"] != "milo-authority" || json.Unmarshal(secret.Data[authorityDataKey], &record) != nil || validateAuthorityRecord(&record) != nil || secret.Name != authorityRecordName(record.SourceRequest.ConsumerProject.AuthorityID, record.SourceRequest.ConsumerProject.UID, record.ClaimUID) || secret.Labels["fleet.datumapis.com/claim-uid"] != string(record.ClaimUID) {
-		return nil, nil, ErrAuthorityInvalid
+	if secret == nil || secret.Type != authorityType || secret.Labels["fleet.datumapis.com/private-record"] != "milo-authority" || json.Unmarshal(secret.Data[authorityDataKey], &record) != nil || validateAuthorityRecord(&record) != nil || secret.Name != authorityRecordName(record.SourceRequest.ConsumerProject.AuthorityID, record.SourceRequest.ConsumerProject.UID, record.ClaimUID) || secret.Labels["fleet.datumapis.com/claim-uid"] != string(record.ClaimUID) {
+		return nil, ErrAuthorityInvalid
 	}
-	return &record, &secret, nil
+	return &record, nil
+}
+
+// DecodePrivateAuthorityRoute exposes routing identity only after the Milo
+// owner validates the full authority record and deterministic Secret identity.
+func DecodePrivateAuthorityRoute(secret *corev1.Secret) (controller.PrivateRecordRoute, error) {
+	record, err := decodeAuthoritySecret(secret)
+	if err != nil {
+		return controller.PrivateRecordRoute{}, err
+	}
+	route := controller.PrivateRecordRoute{RecordType: "milo-authority", ClaimNamespace: record.ClaimNamespace, ClaimName: record.ClaimName, ClaimUID: record.ClaimUID, ConsumerProject: record.SourceRequest.ConsumerProject, NamespaceUIDs: []types.UID{record.SourceRequest.NamespaceUID}, AuthorityRecordIDs: []string{record.RecordID}, PendingEntitlement: record.State == StatePrepared && record.Entitlement == nil}
+	if record.QuotaHold != nil {
+		route.QuotaUIDs = append(route.QuotaUIDs, record.QuotaHold.UID)
+	}
+	if record.Entitlement != nil {
+		route.EntitlementUIDs = append(route.EntitlementUIDs, record.Entitlement.UID)
+	}
+	return route, nil
 }
 
 func encodeAuthority(secret *corev1.Secret, record *AuthorityRecord) error {
@@ -150,7 +172,7 @@ func sameAuthorityContract(a, b *AuthorityRecord) bool {
 }
 
 func validateAuthorityRecord(r *AuthorityRecord) error {
-	if r.SchemaVersion != authoritySchemaVersion || r.RecordID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || r.SourceRequest.Validate() != nil || validateReceipt(r.SourceRequest, r.SourceReceipt) != nil || r.ContractDigest == "" {
+	if r.SchemaVersion != authoritySchemaVersion || r.RecordID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || r.ClaimUID != r.SourceRequest.ClaimUID || r.SourceRequest.Validate() != nil || validateReceipt(r.SourceRequest, r.SourceReceipt) != nil || r.ContractDigest == "" {
 		return ErrAuthorityInvalid
 	}
 	contract := struct {
@@ -209,6 +231,9 @@ func validateAuthorityRecord(r *AuthorityRecord) error {
 		return ErrAuthorityInvalid
 	}
 	if r.QuotaIntent != nil && !r.QuotaIntent.Valid() || r.QuotaHold != nil && !r.QuotaHold.Valid() || r.Entitlement != nil && !r.Entitlement.Valid() {
+		return ErrAuthorityInvalid
+	}
+	if r.QuotaIntent != nil && (r.QuotaIntent.ConsumerProject != r.SourceRequest.ConsumerProject || r.QuotaIntent.Namespace != r.ClaimNamespace || r.QuotaIntent.ClaimName != r.ClaimName || r.QuotaIntent.ClaimUID != r.ClaimUID) {
 		return ErrAuthorityInvalid
 	}
 	if r.FenceReceipt != nil {

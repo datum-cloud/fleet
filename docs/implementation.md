@@ -2,10 +2,57 @@
 
 Status: public API foundation, standalone synthetic provider simulator,
 same-cluster allocation/installation lifecycle library, unwired NSO network
-lifecycle adapter, and unwired Milo tenancy/quota authority contracts
-implemented. A running controller manager, production caller-preserving Milo
-authorizer, atomic admission fence, protected quota custodian, and real providers
-are not implemented.
+lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
+event-only manager wiring scaffold implemented. Production caller-preserving
+admission, replayable Milo event adapters, and real providers are not implemented.
+
+## Event-only manager scaffold
+
+`internal/manager` defines project-lifetime work keys, exact reverse indexes,
+semantic predicates, dependency event mappers, thin claim/installation/projector
+reconciler surfaces, a replayable external-event contract, and a one-shot
+freshness deadline scheduler. Queue keys include the Milo authority ID, root
+Project UID, namespace, name, and object UID. Equal names or UIDs in separate
+project lifetimes cannot share work.
+
+The controller-runtime cache uses an explicitly non-nil zero `SyncPeriod`, both
+globally and for its private-Secret cache. Dependency mappers use exact field
+indexes; private indexes consume only typed metadata exposed after the lifecycle
+or Milo record owner validates the complete record and deterministic Secret
+identity. Unknown or nested JSON lookalike fields have no routing meaning. The
+mappers do not perform unqualified application Lists. Informer initial Add
+events route retained private records after restart, including when the consumer
+object is gone. Public status-only updates do not feed the lifecycle coordinator.
+Freshness expiry uses a replaceable one-shot deadline, not a periodic resync.
+Dependency events enter a typed route workqueue before reverse-index lookup, so
+a cache read or List failure is retried as the same source event instead of being
+mistaken for an empty target set. Every direct and routed handler also verifies
+the configured Project lifetime through an injected trusted verifier.
+
+The setup watches the implemented Fleet resources, private records, NSO Network,
+NetworkInterfaceClaim and NetworkInterface resources, Milo quota claims, and the
+reviewed ServiceEntitlement shape. External IAM, project-lifecycle, catalog, and
+executor sources must provide durable cursor/replay or materialize watched state;
+a lossy channel is not sufficient. Business pending states wait for their next
+dependency event and do not return a timed requeue.
+
+External replay persists the entire returned batch before committing the
+source-provided next checkpoint; event sequence identities are never treated as
+cursors. Empty batches may still advance a source checkpoint. Watched deliveries
+likewise carry an explicit post-event checkpoint. A crash after any persistence
+but before the batch commit replays the same idempotent inbox writes. Pending
+inbox work remains replayable until a consumer durably processes it and
+acknowledges its receipt. This increment implements and tests those runner and
+drain contracts; the production durable inbox, consumer, and live stream adapters
+remain integration-owner responsibilities.
+
+`cmd/fleet-manager` validates an exact project lifetime, starts the event graph,
+and reports the integration readiness check as failed. Its handlers deliberately
+perform no lifecycle or provider effects until trusted create-time
+caller/finalizer admission and live, replayable Milo adapters are supplied. A
+watch controller cannot recover the original `user.Info` or atomically capture
+it after object creation, so this increment does not fabricate that authority
+with annotations or controller credentials.
 
 ## Standalone lifecycle library
 
@@ -31,7 +78,14 @@ duplicate, or cross-lifetime deterministic records fail closed.
 
 Installation admission retains exact inputs and a private predecessor before the
 provider effect, including the initiating principal and installation decision plus
-the image catalog authority, revision, and image decision. Image references must
+the image catalog authority, revision, and image decision. The operation also
+retains the installation and claim namespace, name, and UID, so an informer
+initial Add can route unfinished work after restart even when the public
+Installation has been deleted. This is installation-record schema v2. A v1
+operation is upgraded atomically only when the exact public Installation and
+claim request is still available to supply and verify the names omitted by v1;
+otherwise it is quarantined from event routing and effects rather than guessed
+or treated as ready. Image references must
 resolve to canonical lowercase SHA-256 digests. Stable operation and result
 identities include the authority/project claim scope, so equal claim UIDs from
 independent project APIs cannot share an operation record. Installation custody
@@ -253,8 +307,13 @@ Remove the synthetic token and state files when the local run is complete.
 
 ## Explicit gaps
 
-- The lifecycle package is not wired to a manager, informer watches, status
-  projection, or finalizers yet.
+- The event manager exposes claim, installation, and sole-writer projector
+  surfaces, but production lifecycle handlers and public status writes remain
+  unwired. Trusted create-time caller capture and protected finalizer admission
+  cannot be reconstructed from informer events.
+- Live Milo project/IAM/catalog/quota event adapters and asynchronous executor
+  completion sources are not implemented. They must support durable replay;
+  polling is intentionally not a fallback.
 - Cross-project class sources and bootstrap secret retention are rejected rather
   than partially executed by the standalone coordinator. The Milo adapter can
   resolve a canonical source only when injected with trusted source authority,
