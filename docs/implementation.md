@@ -349,9 +349,25 @@ requires exact Project lifetimes, Fleet and Milo revisions, digest-pinned
 manager and simulator images, and explicit credential paths. Its evidence
 encoder allow-lists non-secret environment identity and writes restricted,
 atomic JSON and JUnit artifacts through a fresh staged three-file allowlist.
+The config boundary walks from a held root descriptor with component-by-component
+no-follow `openat`, requires an owner-only final file, and performs a bounded read before
+JSON decoding. Phase reasons
+and blockers use closed reviewed code vocabularies rather than external error
+text. The staged summary must validate as the closed Result schema, and the
+environment and JUnit files must exactly match canonical projections from it.
+Verification retains the root and safely traversed parent descriptor identities, opens the evidence
+basename with no-follow `openat`, and opens every allowlisted file once with
+no-follow `openat`, validates bounded reads from the held descriptor set, then
+securely rewalks and rechecks the complete absolute ancestor chain, the
+parent-relative directory identity, and every path against the held
+inode, mode, and size.
 Invalid configuration cannot copy caller fields into evidence. A central result
-validator prevents `Passed` unless every exact mandatory phase passed with valid
-identity, UTC timing, and no blockers. Credential paths are canonicalized, and
+validator enforces a passed prefix, exactly one outcome-matching terminal phase,
+and a not-run suffix; invalid configuration is exactly the configuration phase.
+Workflow logs emit only reviewed failure codes, never raw execution errors.
+The workflow uses an absent run-ID/run-attempt-specific output directory so a
+failed fresh write cannot upload artifacts left by an earlier run.
+Credential paths are canonicalized, and
 the mandatory pre-access check rejects symlinks, non-regular files, lexical
 aliases, and files that share operating-system identity.
 The credential boundary returns already-open no-follow descriptors and rechecks

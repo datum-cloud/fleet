@@ -128,9 +128,8 @@ func TestEvidenceExcludesCredentialPathsAndUsesRestrictedModes(t *testing.T) {
 			t.Fatalf("%s mode = %o", name, fileInfo.Mode().Perm())
 		}
 	}
-	contains, err := EvidenceContainsCredentialMaterial(dir)
-	if err != nil || contains {
-		t.Fatalf("credential scan = (%v, %v)", contains, err)
+	if err := VerifyEvidenceContent(dir); err != nil {
+		t.Fatalf("structural evidence verification failed: %v", err)
 	}
 	var decoded Result
 	if err := json.Unmarshal(mustRead(t, filepath.Join(dir, "summary.json")), &decoded); err != nil {
@@ -150,10 +149,12 @@ func TestResultPassedRequiresExactCompletePhases(t *testing.T) {
 		t.Fatalf("complete passed result is invalid: %v", err)
 	}
 	tests := map[string]func(*Result){
-		"missing phase":       func(r *Result) { r.Phases = r.Phases[:len(r.Phases)-1] },
-		"unknown phase":       func(r *Result) { r.Phases[2].Name = "invented" },
-		"blocked phase":       func(r *Result) { r.Phases[2].Status, r.Phases[2].Reason = StatusBlocked, "blocked" },
-		"retained blocker":    func(r *Result) { r.Blockers = []string{"still blocked"} },
+		"missing phase": func(r *Result) { r.Phases = r.Phases[:len(r.Phases)-1] },
+		"unknown phase": func(r *Result) { r.Phases[2].Name = "invented" },
+		"blocked phase": func(r *Result) {
+			r.Phases[2].Status, r.Phases[2].Reason = StatusBlocked, ReasonProductionCapabilitiesGap
+		},
+		"retained blocker":    func(r *Result) { r.Blockers = []BlockerCode{BlockerAdmissionFence} },
 		"missing identity":    func(r *Result) { r.Environment.AuthorityID = "" },
 		"reversed time":       func(r *Result) { r.CompletedAt = r.StartedAt.Add(-time.Second) },
 		"non-UTC time":        func(r *Result) { r.StartedAt = r.StartedAt.In(time.FixedZone("offset", 3600)) },
@@ -182,7 +183,10 @@ func TestValidateOutcomeRejectsEveryStatusErrorMismatch(t *testing.T) {
 	notRun, notRunErr := Run(context.Background(), invalidConfig, time.Now)
 	failed := validPassedResult(t)
 	failed.Status = StatusFailed
-	failed.Phases[3] = Phase{Name: mandatoryPhases[3], Status: StatusFailed, Reason: "live assertion failed"}
+	failed.Phases[3] = Phase{Name: mandatoryPhases[3], Status: StatusFailed, Reason: ReasonLiveAssertionFailed}
+	for index := 4; index < len(failed.Phases); index++ {
+		failed.Phases[index] = Phase{Name: mandatoryPhases[index], Status: StatusNotRun, Reason: ReasonProductionAccessNotAllowed}
+	}
 	genericErr := errors.New("live assertion failed")
 	type outcome struct {
 		name   string
@@ -215,6 +219,28 @@ func TestValidateOutcomeRejectsEveryStatusErrorMismatch(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestResultRejectsContradictoryPhaseGrammar(t *testing.T) {
+	tests := map[string]func(*Result){
+		"passed after terminal": func(r *Result) { r.Phases[2] = Phase{Name: mandatoryPhases[2], Status: StatusPassed} },
+		"second terminal": func(r *Result) {
+			r.Phases[2] = Phase{Name: mandatoryPhases[2], Status: StatusBlocked, Reason: ReasonProductionCapabilitiesGap}
+		},
+		"configuration production access": func(r *Result) {
+			r.Status, r.RunID, r.Environment, r.Blockers = StatusNotRun, "", Environment{}, nil
+			r.Phases = []Phase{{Name: "configuration", Status: StatusNotRun, Reason: ReasonProductionAccessNotAllowed}}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, _ := Run(context.Background(), validConfig(), time.Now)
+			mutate(&result)
+			if err := result.Validate(); err == nil {
+				t.Fatal("Validate() accepted contradictory phase grammar")
+			}
+		})
 	}
 }
 
@@ -257,6 +283,19 @@ func TestEvidenceDirectoryMustBeFreshAndExact(t *testing.T) {
 	}
 }
 
+func TestVerifyEvidenceDirectoryRejectsUnsafeDirectoryMode(t *testing.T) {
+	dir := filepath.Join(secureTempDir(t), "evidence")
+	if err := WriteEvidence(dir, validPassedResult(t), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyEvidenceDirectory(dir); err == nil {
+		t.Fatal("VerifyEvidenceDirectory() accepted group-readable evidence")
+	}
+}
+
 func TestWriteEvidenceRejectsParentSymlink(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -275,12 +314,12 @@ func TestWriteEvidenceRejectsParentSymlink(t *testing.T) {
 	}
 }
 
-func TestWriteEvidenceRejectsCredentialMarkerBeforePublish(t *testing.T) {
+func TestWriteEvidenceRejectsUnreviewedReasonBeforePublish(t *testing.T) {
 	result, err := Run(context.Background(), validConfig(), time.Now)
 	if !errors.Is(err, ErrBlocked) {
 		t.Fatal(err)
 	}
-	result.Phases[1].Reason = "client-key-data: caller-controlled"
+	result.Phases[1].Reason = ReasonCode("client-key-data: caller-controlled")
 	dir := filepath.Join(secureTempDir(t), "evidence")
 	if err := WriteEvidence(dir, result, ErrBlocked); err == nil {
 		t.Fatal("WriteEvidence() published credential-marked evidence")
@@ -288,6 +327,160 @@ func TestWriteEvidenceRejectsCredentialMarkerBeforePublish(t *testing.T) {
 	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rejected evidence was published: %v", err)
 	}
+}
+
+func TestResultRejectsFreeFormEvidencePayloads(t *testing.T) {
+	tests := map[string]func(*Result){
+		"credential reason": func(result *Result) {
+			result.Phases[1].Reason = ReasonCode("Bearer token abc123")
+		},
+		"object dump reason": func(result *Result) {
+			result.Phases[1].Reason = ReasonCode(`{"kind":"Secret","data":{"token":"abc123"}}`)
+		},
+		"cluster error reason": func(result *Result) {
+			result.Phases[1].Reason = ReasonCode("admission webhook returned caller-controlled details")
+		},
+		"credential blocker": func(result *Result) {
+			result.Blockers[0] = BlockerCode("client-key-data: abc123")
+		},
+		"duplicate blocker": func(result *Result) {
+			result.Blockers[1] = result.Blockers[0]
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			result, outcomeErr := Run(context.Background(), validConfig(), time.Now)
+			if !errors.Is(outcomeErr, ErrBlocked) {
+				t.Fatal(outcomeErr)
+			}
+			mutate(&result)
+			if err := result.Validate(); err == nil {
+				t.Fatal("Result.Validate() accepted free-form or ambiguous evidence")
+			}
+			dir := filepath.Join(secureTempDir(t), "evidence")
+			if err := WriteEvidence(dir, result, outcomeErr); err == nil {
+				t.Fatal("WriteEvidence() published free-form or ambiguous evidence")
+			}
+			if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("rejected evidence was published: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyEvidenceContentRejectsNonCanonicalArtifacts(t *testing.T) {
+	result, outcomeErr := Run(context.Background(), validConfig(), time.Now)
+	if !errors.Is(outcomeErr, ErrBlocked) {
+		t.Fatal(outcomeErr)
+	}
+	tests := map[string]func(string) error{
+		"summary unknown field": func(dir string) error {
+			body := mustRead(t, filepath.Join(dir, "summary.json"))
+			body = []byte(strings.Replace(string(body), "{", `{"clusterError":"token-shaped-value",`, 1))
+			return os.WriteFile(filepath.Join(dir, "summary.json"), body, 0o600)
+		},
+		"environment object dump": func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "environment.json"), []byte(`{"kind":"Secret","data":{"token":"abc123"}}`), 0o600)
+		},
+		"junit free-form error": func(dir string) error {
+			body := mustRead(t, filepath.Join(dir, "junit.xml"))
+			body = append(body, []byte("<!-- caller-controlled cluster error -->\n")...)
+			return os.WriteFile(filepath.Join(dir, "junit.xml"), body, 0o600)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(secureTempDir(t), "evidence")
+			if err := WriteEvidence(dir, result, outcomeErr); err != nil {
+				t.Fatal(err)
+			}
+			if err := mutate(dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := VerifyEvidenceContent(dir); err == nil {
+				t.Fatal("VerifyEvidenceContent() accepted a noncanonical artifact")
+			}
+		})
+	}
+}
+
+func TestVerifyEvidenceUsesOneHeldDescriptorSnapshot(t *testing.T) {
+	result := validPassedResult(t)
+	t.Run("growth is bounded after open", func(t *testing.T) {
+		dir := filepath.Join(secureTempDir(t), "evidence")
+		if err := WriteEvidence(dir, result, nil); err != nil {
+			t.Fatal(err)
+		}
+		err := verifyEvidenceContent(dir, func() {
+			file, openErr := os.OpenFile(filepath.Join(dir, "summary.json"), os.O_APPEND|os.O_WRONLY, 0)
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			defer file.Close()
+			_, _ = file.Write(make([]byte, maxSummaryEvidenceBytes))
+		})
+		if err == nil {
+			t.Fatal("verification accepted descriptor growth beyond the bound")
+		}
+	})
+	t.Run("path swap rejects publication", func(t *testing.T) {
+		dir := filepath.Join(secureTempDir(t), "evidence")
+		if err := WriteEvidence(dir, result, nil); err != nil {
+			t.Fatal(err)
+		}
+		err := verifyEvidenceContent(dir, func() {
+			path := filepath.Join(dir, "environment.json")
+			if renameErr := os.Rename(path, path+".held"); renameErr != nil {
+				t.Fatal(renameErr)
+			}
+			if writeErr := os.WriteFile(path, []byte(`{"kind":"Secret"}`), 0o600); writeErr != nil {
+				t.Fatal(writeErr)
+			}
+		})
+		if err == nil {
+			t.Fatal("verification accepted a path swapped after descriptor open")
+		}
+	})
+	t.Run("whole directory replacement rejects upload readiness", func(t *testing.T) {
+		parent := secureTempDir(t)
+		dir := filepath.Join(parent, "evidence")
+		if err := WriteEvidence(dir, result, nil); err != nil {
+			t.Fatal(err)
+		}
+		err := verifyEvidenceContent(dir, func() {
+			if renameErr := os.Rename(dir, dir+".held"); renameErr != nil {
+				t.Fatal(renameErr)
+			}
+			if mkdirErr := os.Mkdir(dir, 0o700); mkdirErr != nil {
+				t.Fatal(mkdirErr)
+			}
+		})
+		if err == nil {
+			t.Fatal("verification accepted a replaced evidence directory")
+		}
+	})
+	t.Run("earlier ancestor replacement rejects upload readiness", func(t *testing.T) {
+		root := secureTempDir(t)
+		runner := filepath.Join(root, "runner")
+		dir := filepath.Join(runner, "temp", "evidence")
+		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteEvidence(dir, result, nil); err != nil {
+			t.Fatal(err)
+		}
+		err := verifyEvidenceContent(dir, func() {
+			if renameErr := os.Rename(runner, runner+".held"); renameErr != nil {
+				t.Fatal(renameErr)
+			}
+			if mkdirErr := os.MkdirAll(filepath.Join(runner, "temp", "evidence"), 0o700); mkdirErr != nil {
+				t.Fatal(mkdirErr)
+			}
+		})
+		if err == nil {
+			t.Fatal("verification accepted a replaced earlier ancestor")
+		}
+	})
 }
 
 func TestCredentialFilesRejectLexicalAndFilesystemAliases(t *testing.T) {

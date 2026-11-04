@@ -37,8 +37,10 @@ digests, and explicit credential paths, then writes `Blocked` evidence and
 returns nonzero. A compiled runner uses status 3; the `go run` wrapper reports
 that child status as its own generic failure. The runner does not load a
 kubeconfig or contact a cluster. Invalid config writes `NotRun` evidence when
-possible and returns nonzero. Exit status 0 is reserved for a future
-implementation that verifies and completes every phase.
+possible and returns nonzero. The config file must be owner-only; its absolute
+path is walked component-by-component from a held root descriptor with no-follow `openat`,
+and read through a fixed bound before JSON decoding. Exit status 0 is reserved for a future implementation that
+verifies and completes every phase.
 
 Credential paths are cleaned before comparison. Before any future live code may
 open them, `OpenCredentialFiles` requires five distinct, owner-only real regular
@@ -79,15 +81,34 @@ The output directory is mode `0700`; files are written atomically with mode
   error for every non-`Passed` overall outcome, preventing a blocked run from
   appearing green.
 
-The schema has no field for kubeconfig paths, tokens, Secret bodies, or raw
-controller logs. Invalid configuration produces identity-empty `NotRun`
-evidence; no caller-controlled config field is copied into it.
+The schema has no field for kubeconfig paths, tokens, Secret bodies, raw
+controller logs, or free-form cluster errors. Phase reasons and production
+blockers are closed, reviewed code vocabularies; adding a value requires a code
+change. Invalid configuration produces identity-empty `NotRun` evidence; no
+caller-controlled config field is copied into it.
 
 The destination must be absent or an empty real directory. Evidence is first
 written and verified in a fresh sibling staging directory, then renamed into
 place. Existing files, nested directories, symlinks, or any entry outside the
-three-file allowlist reject the write. The manual workflow uploads those three
-files individually and pins every action to a reviewed commit SHA.
+three-file allowlist reject the write. Before publication, `summary.json` must
+decode into the closed Result schema and `environment.json` plus `junit.xml`
+must byte-match their canonical projections from that result. Unknown fields,
+object dumps, alternate encodings, and free-form messages therefore fail the
+structural boundary. The manual workflow uploads those three files individually
+and pins every action to a reviewed commit SHA.
+
+Structural verification safely walks from a held root and retains every
+ancestor identity plus the parent directory, opens
+the evidence basename with no-follow `openat`, then opens each exact
+artifact once with no-follow `openat`, checks type, mode, and initial size with
+`fstat`, then bounded-reads all three held descriptors as one snapshot. It
+finally securely rewalks the full ancestor chain, rechecks the parent-relative
+directory identity, and requires every current path to retain
+the held inode, type, mode, and size. Growth or path replacement fails.
+
+The protected workflow uses an output directory unique to the GitHub run ID and
+attempt and requires it to be absent before execution. An earlier canonical
+artifact therefore cannot be uploaded after a failed fresh write.
 
 The current harness is non-concurrent. It rejects symlinks in every existing
 evidence-parent component before staging. A future concurrent live writer must
@@ -100,7 +121,10 @@ and UTC times are valid, and no blocker remains. The CLI and evidence writer
 both enforce the same invariant validator. They also bind status to execution
 error: `Passed` requires nil, `Blocked` requires `ErrBlocked`, `NotRun` requires
 `ErrNotRun`, and `Failed` requires a non-sentinel error. A mismatch cannot be
-serialized or select an exit code.
+serialized or select an exit code. Phases must be a passed prefix, one terminal
+phase matching the overall outcome and reviewed reason, then only a not-run
+suffix. Invalid configuration is the sole one-phase exception. Raw execution
+errors are never copied to workflow logs.
 
 The authoritative acceptance inventory remains
 [`docs/enhancements/machine-lifecycle/acceptance-tests.md`](../../../docs/enhancements/machine-lifecycle/acceptance-tests.md).
