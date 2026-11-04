@@ -11,8 +11,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// PrimaryPredicate prevents the projector's status writes from feeding the
-// coordinator. Deletion and protected-finalizer changes remain events.
+// PrimaryPredicate prevents the projector's public status writes from feeding
+// the coordinator. Spec generations, labels, annotations, deletion, and
+// protected-finalizer changes remain events. Provider observations belong on
+// dependency resources (for example Machine status), where DependencyPredicate
+// routes their semantic status changes.
 func PrimaryPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc:  func(event.CreateEvent) bool { return true },
@@ -22,7 +25,7 @@ func PrimaryPredicate() predicate.Predicate {
 			if e.ObjectOld == nil || e.ObjectNew == nil {
 				return true
 			}
-			return e.ObjectOld.GetUID() != e.ObjectNew.GetUID() || e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() || !reflect.DeepEqual(e.ObjectOld.GetFinalizers(), e.ObjectNew.GetFinalizers()) || !reflect.DeepEqual(e.ObjectOld.GetDeletionTimestamp(), e.ObjectNew.GetDeletionTimestamp())
+			return e.ObjectOld.GetUID() != e.ObjectNew.GetUID() || e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() || !reflect.DeepEqual(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()) || !reflect.DeepEqual(e.ObjectOld.GetAnnotations(), e.ObjectNew.GetAnnotations()) || !reflect.DeepEqual(e.ObjectOld.GetFinalizers(), e.ObjectNew.GetFinalizers()) || !reflect.DeepEqual(e.ObjectOld.GetDeletionTimestamp(), e.ObjectNew.GetDeletionTimestamp())
 		},
 	}
 }
@@ -35,7 +38,7 @@ func PrivateRecordPredicate() predicate.Predicate {
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			oldSecret, oldOK := e.ObjectOld.(*corev1.Secret)
 			newSecret, newOK := e.ObjectNew.(*corev1.Secret)
-			return !oldOK || !newOK || oldSecret.UID != newSecret.UID || !reflect.DeepEqual(oldSecret.DeletionTimestamp, newSecret.DeletionTimestamp) || !bytes.Equal(oldSecret.Data["record.json"], newSecret.Data["record.json"])
+			return !oldOK || !newOK || oldSecret.UID != newSecret.UID || oldSecret.Type != newSecret.Type || !reflect.DeepEqual(oldSecret.Labels, newSecret.Labels) || !reflect.DeepEqual(oldSecret.DeletionTimestamp, newSecret.DeletionTimestamp) || !bytes.Equal(oldSecret.Data["record.json"], newSecret.Data["record.json"])
 		},
 	}
 }

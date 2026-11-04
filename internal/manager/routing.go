@@ -3,15 +3,21 @@ package manager
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"strings"
 
+	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
+	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
 )
 
 type RouteKind string
@@ -40,10 +46,15 @@ type RouteRequest struct {
 	UID         types.UID
 	Key         string
 	Field       string
+	// Deleted marks a snapshot delivered by an informer Delete event. The
+	// snapshot's UID and routing fields describe the dependency lifetime that
+	// disappeared, so resolution must not compare it with a same-name
+	// replacement.
+	Deleted bool
 }
 
 func (r RouteRequest) Valid() bool {
-	return r.AuthorityID != "" && r.ProjectUID != "" && r.Kind != "" && r.Name != ""
+	return strings.TrimSpace(r.AuthorityID) != "" && r.ProjectUID != "" && r.Kind != "" && r.Name != "" && r.UID != ""
 }
 
 func (m Mappers) Route(kind RouteKind, field string) func(context.Context, client.Object) []RouteRequest {
@@ -77,6 +88,15 @@ func (m Mappers) Route(kind RouteKind, field string) func(context.Context, clien
 func (m Mappers) ResolveRoute(ctx context.Context, route RouteRequest) ([]ProjectRequest, error) {
 	if !route.Valid() || route.AuthorityID != m.Project.AuthorityID || route.ProjectUID != m.Project.UID {
 		return nil, ErrEventWiringUnavailable
+	}
+	if !route.Deleted {
+		current, err := m.routeLifetimeCurrent(ctx, route)
+		if err != nil {
+			return nil, err
+		}
+		if !current {
+			return nil, nil
+		}
 	}
 	switch route.Kind {
 	case RouteClass:
@@ -131,6 +151,63 @@ func (m Mappers) ResolveRoute(ctx context.Context, route RouteRequest) ([]Projec
 	}
 }
 
+// routeLifetimeCurrent rejects a queued event when the same dependency name now
+// belongs to a different UID. NotFound is retained as a valid deletion event;
+// the replacement's Add event carries its own lifetime.
+func (m Mappers) routeLifetimeCurrent(ctx context.Context, route RouteRequest) (bool, error) {
+	if m.Reader == nil {
+		return false, ErrEventWiringUnavailable
+	}
+	object, err := routeObject(route)
+	if err != nil {
+		return false, err
+	}
+	err = m.Reader.Get(ctx, client.ObjectKey{Namespace: route.Namespace, Name: route.Name}, object)
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return object.GetUID() == route.UID, nil
+}
+
+func routeObject(route RouteRequest) (client.Object, error) {
+	switch route.Kind {
+	case RouteClass:
+		return &fleetv1.MachineClass{}, nil
+	case RouteProfile:
+		return &fleetv1.MachineProfile{}, nil
+	case RouteInstallation:
+		return &fleetv1.Installation{}, nil
+	case RouteClaim:
+		return &fleetv1.MachineClaim{}, nil
+	case RouteMachine:
+		return &fleetv1.Machine{}, nil
+	case RoutePrivateUID:
+		switch route.Field {
+		case IndexPrivateNamespaceUID:
+			return &corev1.Namespace{}, nil
+		case IndexPrivateNICClaimUID:
+			return &networkingv1.NetworkInterfaceClaim{}, nil
+		case IndexPrivateInterfaceUID:
+			return &networkingv1.NetworkInterface{}, nil
+		default:
+			return nil, ErrEventWiringUnavailable
+		}
+	case RouteNetwork:
+		return &networkingv1.Network{}, nil
+	case RouteQuota:
+		return &quotav1alpha1.ResourceClaim{}, nil
+	case RouteEntitlement:
+		object := &unstructured.Unstructured{}
+		object.SetGroupVersionKind(schema.GroupVersionKind{Group: "services.miloapis.com", Version: "v1alpha1", Kind: "ServiceEntitlement"})
+		return object, nil
+	default:
+		return nil, ErrEventWiringUnavailable
+	}
+}
+
 type RouteReconciler struct {
 	Project  controller.ProjectIdentity
 	Verifier ProjectVerifier
@@ -139,13 +216,13 @@ type RouteReconciler struct {
 }
 
 func (r RouteReconciler) Reconcile(ctx context.Context, request RouteRequest) (reconcile.Result, error) {
-	if !r.Project.Valid() || r.Verifier == nil || r.Handler == nil || request.AuthorityID != r.Project.AuthorityID || request.ProjectUID != r.Project.UID {
+	if !r.Project.Valid() || r.Verifier == nil || r.Handler == nil {
+		return reconcile.Result{}, ErrEventWiringUnavailable
+	}
+	if !request.Valid() || request.AuthorityID != r.Project.AuthorityID || request.ProjectUID != r.Project.UID {
 		return reconcile.Result{}, nil
 	}
 	if err := r.Verifier.VerifyProject(ctx, r.Project); err != nil {
-		if errors.Is(err, ErrEventWiringUnavailable) {
-			return reconcile.Result{}, nil
-		}
 		return reconcile.Result{}, err
 	}
 	targets, err := r.Mappers.ResolveRoute(ctx, request)

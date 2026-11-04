@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ type DeadlineScheduler struct {
 	mu      sync.Mutex
 	pending map[ProjectRequest]deadlineEntry
 	next    uint64
+	stopped bool
 }
 
 type deadlineEntry struct {
@@ -28,11 +30,15 @@ func NewDeadlineScheduler(c clock.WithDelayedExecution, emit func(ProjectRequest
 	return &DeadlineScheduler{clock: c, emit: emit, pending: map[ProjectRequest]deadlineEntry{}}
 }
 
-func (s *DeadlineScheduler) Schedule(request ProjectRequest, deadline time.Time) {
-	if !request.Valid() || s == nil || s.clock == nil || s.emit == nil {
-		return
+func (s *DeadlineScheduler) Schedule(request ProjectRequest, deadline time.Time) error {
+	if !request.Valid() || s == nil || s.clock == nil || s.emit == nil || deadline.IsZero() {
+		return ErrEventWiringUnavailable
 	}
 	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return ErrEventWiringUnavailable
+	}
 	if entry, ok := s.pending[request]; ok {
 		entry.timer.Stop()
 	}
@@ -46,7 +52,7 @@ func (s *DeadlineScheduler) Schedule(request ProjectRequest, deadline time.Time)
 		// can still emit.
 		s.emit(request)
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	timer := s.clock.AfterFunc(delay, func() {
 		s.mu.Lock()
@@ -64,16 +70,49 @@ func (s *DeadlineScheduler) Schedule(request ProjectRequest, deadline time.Time)
 	})
 	s.pending[request] = deadlineEntry{timer: timer, generation: generation}
 	s.mu.Unlock()
+	return nil
 }
 
-func (s *DeadlineScheduler) Cancel(request ProjectRequest) {
-	if s == nil {
-		return
+func (s *DeadlineScheduler) Cancel(request ProjectRequest) error {
+	if s == nil || !request.Valid() {
+		return ErrEventWiringUnavailable
 	}
 	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return ErrEventWiringUnavailable
+	}
 	if entry, ok := s.pending[request]; ok {
 		entry.timer.Stop()
 		delete(s.pending, request)
 	}
 	s.mu.Unlock()
+	return nil
+}
+
+// Start binds the scheduler to the manager lifetime. Stop is serialized with
+// Schedule, Cancel, and timer emission, so once Start returns there can be no
+// retained deadline or later emission.
+func (s *DeadlineScheduler) Start(ctx context.Context) error {
+	<-ctx.Done()
+	s.Stop()
+	return nil
+}
+
+// Stop atomically prevents new work, cancels every timer, and drains pending
+// state. It waits for any in-flight emission before returning.
+func (s *DeadlineScheduler) Stop() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return
+	}
+	s.stopped = true
+	for request, entry := range s.pending {
+		entry.timer.Stop()
+		delete(s.pending, request)
+	}
 }

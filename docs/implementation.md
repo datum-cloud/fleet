@@ -55,14 +55,47 @@ globally and for its private-Secret cache. Dependency mappers use exact field
 indexes; private indexes consume only typed metadata exposed after the lifecycle
 or Milo record owner validates the complete record and deterministic Secret
 identity. Unknown or nested JSON lookalike fields have no routing meaning. The
+manager's private-record predicate treats the Secret type and complete label set
+as part of that trusted envelope, so a valid record that is relabelled or has
+its type substituted is immediately reconciled into quarantine rather than
+being hidden as a data-no-op update. The
 mappers do not perform unqualified application Lists. Informer initial Add
 events route retained private records after restart, including when the consumer
-object is gone. Public status-only updates do not feed the lifecycle coordinator.
-Freshness expiry uses a replaceable one-shot deadline, not a periodic resync.
+object is gone. Public status-only updates, including status written by an
+external actor, do not feed the lifecycle coordinator; external facts that must
+drive lifecycle work require an owned dependency resource and route.
+Claim and Installation spec generations, labels, annotations, finalizers, and
+deletion changes do feed it. Provider observations belong on dependency
+resources: semantic Machine status changes use the dependency route rather than
+turning public claim status into authority. Freshness expiry uses a replaceable
+one-shot deadline, not a periodic resync.
 Dependency events enter a typed route workqueue before reverse-index lookup, so
 a cache read or List failure is retried as the same source event instead of being
 mistaken for an empty target set. Every direct and routed handler also verifies
 the configured Project lifetime through an injected trusted verifier.
+
+Every dependency route now retains the source object's UID and exact routing
+snapshot. Non-delete work checks that UID against the current named object; if a
+queued name has been recreated, the old route is discarded and the replacement's
+Add event owns its new lifetime. Delete/tombstone work instead resolves the
+retained old-UID edges from its snapshot even if same-name recreation occurs
+before reconciliation. Update events enqueue the deduplicated union of old and
+new snapshots, ensuring both lost and gained selector or label relationships are
+reconciled. Missing
+project wiring is returned as an error so controller-runtime retains the exact
+queue item under its bounded rate limiter. It is never converted into successful
+pending work and silently dropped.
+
+Claim work and Installation work each have one keyed lifecycle owner shared by
+their direct, dependency-route, and deadline controllers. For an exact
+ProjectRequest, that owner serializes the coordinator before the projector. The
+coordinator alone may schedule or cancel a one-shot evidence deadline; expiry is
+fed back through a typed controller source to the same owner. Projectors cannot
+schedule work, and no separate projector controller can race the coordinator.
+Both schedulers are manager-owned runnables: cancellation atomically stops and
+drains timers, waits for any in-flight emission, and prevents post-stop work.
+Informer initial Add processing reconstructs still-relevant deadlines after a
+fresh process starts.
 
 The setup watches the implemented Fleet resources, private records, NSO Network,
 NetworkInterfaceClaim and NetworkInterface resources, Milo quota claims, and the
@@ -88,6 +121,13 @@ caller/finalizer admission and live, replayable Milo adapters are supplied. A
 watch controller cannot recover the original `user.Info` or atomically capture
 it after object creation, so this increment does not fabricate that authority
 with annotations or controller credentials.
+
+There is still no production manager Deployment. When one is introduced, its
+service account must receive Secret permissions only through a namespaced Role
+for the configured private-record namespace; cache scoping is not an
+authorization boundary. Shipping that RBAC without the caller-preserving
+admission, verifier, and replay integrations would create an inert privileged
+workload and is deliberately deferred.
 
 ## Standalone lifecycle library
 
