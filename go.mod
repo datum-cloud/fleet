@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	go.datum.net/network-services-operator v0.28.5-0.20260925153938-d7fdc43f8524
 	go.miloapis.com/milo v0.32.5
+	golang.org/x/sys v0.47.0
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
 	k8s.io/client-go v0.36.1
@@ -57,7 +58,6 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

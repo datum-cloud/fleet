@@ -48,6 +48,8 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
   required before enabling infrastructure effects.
 - [Implementation status](docs/implementation.md): implemented simulator
   guarantees, internal interfaces, and explicit gaps.
+- [Milo acceptance harness](test/acceptance/milo/README.md): fail-closed live
+  preflight and sanitized evidence contract; live acceptance remains blocked.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
 
 The foundation was developed in `datum-cloud/infra` PRs
