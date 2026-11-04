@@ -3,8 +3,43 @@
 Status: public API foundation, standalone synthetic provider simulator,
 same-cluster allocation/installation lifecycle library, unwired NSO network
 lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
-event-only manager wiring scaffold implemented. Production caller-preserving
+event-only manager wiring scaffold implemented. A packaged standalone synthetic
+smoke scenario exercises local-scope contention, install recovery, cleanup, and
+epoch reuse. Production caller-preserving
 admission, replayable Milo event adapters, and real providers are not implemented.
+
+## Standalone synthetic smoke environment
+
+`cmd/fleet-standalone-smoke` is a test-only, phase-oriented harness around the
+implemented lifecycle coordinator. The packaged fixture uses two Kubernetes
+namespaces as project stand-ins and one synthetic `us-central-1` machine with 24
+cores and 128Gi of memory. The allocate phase retains custody before adding the
+Fleet finalizer, binds one claim, and leaves the competing claim pending. The
+install phase admits one exact digest-pinned operation through the persistent
+simulator and is idempotent across worker and simulator restart. The release
+phase verifies cleanup before finalizer removal and advances the retained asset
+epoch before the waiting claim binds.
+
+The harness is the designated writer for one retained synthetic Machine evidence
+record and public fixture status. The evidence pins the Machine UID, configured
+location, hardware, and observation time; it is not refreshed across phases.
+Both contenders pass capacity preflight against the same retained
+`Available=True` evidence before private custody selects the sole winner. The
+lifecycle coordinator remains the writer of custody, asset,
+and operation records. It does not patch status from shell, delete private
+records, strip finalizers, or use public status as authority. The simulator runs
+under an explicit non-root UID/GID with a writable `fsGroup` PVC and group-readable
+runtime-only bearer Secret; its admin listener is off. Docker bases are digest
+pinned, and the smoke script derives a source-specific local image tag and
+verifies the running workloads use it with pulls disabled. That identity commits
+to HEAD, its tree, the tracked diff, and untracked file contents; a CI regression
+test proves distinct clean commits produce distinct IDs.
+
+This is not the proposal acceptance environment. Namespace stand-ins do not
+model Milo project APIs, caller identity, IAM, entitlement, quota, purge, or
+same-named `default` namespaces. No interface is requested, so network and
+address output is blank and no NSO/IPAM/Galactic behavior is claimed. See
+[`docs/standalone-smoke.md`](standalone-smoke.md) for the runnable scenario.
 
 ## Event-only manager scaffold
 
