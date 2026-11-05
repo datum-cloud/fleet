@@ -1,7 +1,9 @@
+import { usePluginBase } from './machines-page';
 import { StatusBadge, type BadgeType } from './status-badge';
 import type { ClaimPhase, MachineClaim } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
 import type { ColumnDef } from '@tanstack/react-table';
+import { Link } from 'react-router';
 
 type ClaimColumn = ColumnDef<DataTableFeatures, MachineClaim, unknown>;
 
@@ -12,6 +14,14 @@ const PHASE_BADGE: Record<ClaimPhase, { type: BadgeType; pending: boolean }> = {
   Releasing: { type: 'warning', pending: true },
   Rejected: { type: 'danger', pending: false },
 };
+
+export function PhaseBadge({ claim }: { claim: Pick<MachineClaim, 'phase' | 'phaseReason'> }) {
+  return (
+    <span title={claim.phaseReason}>
+      <StatusBadge {...PHASE_BADGE[claim.phase]}>{claim.phase}</StatusBadge>
+    </span>
+  );
+}
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
@@ -26,21 +36,30 @@ function matchesSearch(claim: MachineClaim, search: string): boolean {
     .includes(needle);
 }
 
+// A claim's page sits directly under the plugin's mount root.
+function ClaimLink({ name }: { name: string }) {
+  const base = usePluginBase();
+  return (
+    <Link
+      to={`${base}/${encodeURIComponent(name)}`}
+      className="truncate font-medium hover:underline"
+      title={name}>
+      {name}
+    </Link>
+  );
+}
+
 const columns: ClaimColumn[] = [
   {
     id: 'name',
     accessorKey: 'name',
     header: 'Name',
-    cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    cell: ({ row }) => <ClaimLink name={row.original.name} />,
   },
   {
     id: 'status',
     header: 'Status',
-    cell: ({ row }) => (
-      <span title={row.original.phaseReason}>
-        <StatusBadge {...PHASE_BADGE[row.original.phase]}>{row.original.phase}</StatusBadge>
-      </span>
-    ),
+    cell: ({ row }) => <PhaseBadge claim={row.original} />,
   },
   { id: 'class', header: 'Class', cell: ({ row }) => <Muted>{row.original.machineClass}</Muted> },
   { id: 'profile', header: 'Profile', cell: ({ row }) => <Muted>{row.original.machineProfile}</Muted> },

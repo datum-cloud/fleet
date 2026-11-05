@@ -89,4 +89,13 @@ describe('ClaimList', () => {
     }
     expect(within(table).getAllByText('24 cores · amd64')).toHaveLength(2);
   });
+
+  it('links each claim to its detail page', () => {
+    mockResult({ data: FIXTURE_CLAIMS.map(toMachineClaim) });
+    renderPage();
+    expect(screen.getByRole('link', { name: 'build-runner' })).toHaveAttribute(
+      'href',
+      '/project/demo-project/services/fleet/build-runner'
+    );
+  });
 });

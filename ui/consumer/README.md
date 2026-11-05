@@ -6,7 +6,10 @@ project's machines. It is a Module Federation remote: the portal fetches
 `/project/:projectId/services/<slug>/`. The **Machines** nav item opens two
 tabs:
 
-- **Machines** (the mount root) lists the project's MachineClaims.
+- **Machines** (the mount root) lists the project's MachineClaims. Each name
+  opens the claim's page (`:claimName`): the request, the allocated machine's
+  hardware, network interfaces when requested, and every condition with its
+  reason. A missing condition shows as Unknown.
 - **Catalog** (`catalog`) lists the MachineClasses this project can claim from
   and the profiles each allows. A class published from another project (with
   `spec.source`) is read from `status.resolvedClass` and stays pending until

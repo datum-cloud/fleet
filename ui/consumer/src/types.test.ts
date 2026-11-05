@@ -1,4 +1,11 @@
-import { claimPhase, toCatalog, toCatalogOffering, toMachineClaim, type RawMachineProfile } from './types';
+import {
+  claimPhase,
+  toCatalog,
+  toCatalogOffering,
+  toClaimDetail,
+  toMachineClaim,
+  type RawMachineProfile,
+} from './types';
 import { FIXTURE_CLAIMS, FIXTURE_CLASSES, FIXTURE_PROFILES } from './lib/fixtures';
 import { describe, expect, it } from 'vitest';
 
@@ -120,5 +127,58 @@ describe('toCatalogOffering', () => {
       []
     );
     expect(offering).toMatchObject({ available: false, unavailableReason: 'No such class.' });
+  });
+});
+
+describe('toClaimDetail', () => {
+  it('lists allocated hardware and the four lifecycle conditions in order', () => {
+    const detail = toClaimDetail(FIXTURE_CLAIMS[0]);
+    expect(detail.placement).toBe('us-central-1');
+    expect(detail.acceptedProfile).toBe('general-purpose-24c-128g');
+    expect(detail.hardware).toEqual([
+      { label: 'CPU', value: '2 sockets / 24 cores / 48 threads · amd64' },
+      { label: 'Memory', value: '128Gi' },
+    ]);
+    expect(detail.conditions.map((c) => [c.type, c.status])).toEqual([
+      ['Accepted', 'True'],
+      ['Bound', 'True'],
+      ['NetworkReady', 'True'],
+      ['Ready', 'True'],
+    ]);
+  });
+
+  it('fills absent conditions as Unknown and leaves hardware absent before binding', () => {
+    const detail = toClaimDetail({ ...FIXTURE_CLAIMS[1], status: undefined });
+    expect(detail.hardware).toBeUndefined();
+    expect(detail.conditions.every((c) => c.status === 'Unknown')).toBe(true);
+  });
+
+  it('keeps conditions Fleet adds beyond the known four', () => {
+    const detail = toClaimDetail({
+      ...FIXTURE_CLAIMS[1],
+      status: { conditions: [{ type: 'PowerReady', status: 'False', reason: 'Waiting' }] },
+    });
+    expect(detail.conditions.at(-1)).toMatchObject({ type: 'PowerReady', status: 'False' });
+  });
+
+  it('summarizes network interfaces', () => {
+    const detail = toClaimDetail({
+      ...FIXTURE_CLAIMS[0],
+      status: {
+        network: {
+          interfaces: [
+            {
+              name: 'primary',
+              network: { apiGroup: 'networking.datumapis.com', kind: 'Network', namespace: 'default', name: 'production' },
+              addresses: [{ address: '2001:db8::10', family: 'IPv6', primary: true }],
+              conditions: [{ type: 'Ready', status: 'True' }],
+            },
+          ],
+        },
+      },
+    });
+    expect(detail.interfaces).toEqual([
+      { name: 'primary', network: 'default/production', addresses: ['2001:db8::10'], ready: 'True' },
+    ]);
   });
 });

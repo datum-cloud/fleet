@@ -1,7 +1,9 @@
 import { FIXTURE_CLASSES, FIXTURE_PROFILES, fixtureClaims } from './fixtures';
 import {
   toCatalog,
+  toClaimDetail,
   toMachineClaim,
+  type ClaimDetail,
   type CatalogOffering,
   type MachineClaim,
   type RawMachineClaim,
@@ -99,6 +101,32 @@ export function useCatalog(projectId: string | undefined): UseQueryResult<Catalo
     queryKey: [PLUGIN_ID, 'catalog', projectId],
     enabled: !!projectId,
     queryFn: () => fetchCatalog(projectId as string),
+    refetchInterval: REFETCH_INTERVAL_MS,
+    retry: false,
+  });
+}
+
+export async function fetchMachineClaim(projectId: string, name: string): Promise<ClaimDetail> {
+  if (USE_FIXTURES) {
+    const claim = fixtureClaims.list().find((c) => c.metadata.name === name);
+    if (!claim) throw new ApiError(404, `machineclaims "${name}" not found`);
+    return toClaimDetail(claim);
+  }
+  const claim = await proxyFetch<RawMachineClaim>(
+    projectId,
+    `${MACHINECLAIMS_PATH}/${encodeURIComponent(name)}`
+  );
+  return toClaimDetail(claim);
+}
+
+export function useMachineClaim(
+  projectId: string | undefined,
+  name: string | undefined
+): UseQueryResult<ClaimDetail, ApiError> {
+  return useQuery({
+    queryKey: [PLUGIN_ID, 'machineclaims', projectId, name],
+    enabled: !!projectId && !!name,
+    queryFn: () => fetchMachineClaim(projectId as string, name as string),
     refetchInterval: REFETCH_INTERVAL_MS,
     retry: false,
   });

@@ -130,3 +130,92 @@ export function toCatalog(classes: RawMachineClass[], profiles: RawMachineProfil
     .map((c) => toCatalogOffering(c, profiles))
     .sort((a, b) => a.className.localeCompare(b.className));
 }
+
+// ---- Claim detail ----
+
+/** The conditions Fleet writes on a claim, in lifecycle order. */
+export const CLAIM_CONDITIONS = ['Accepted', 'Bound', 'NetworkReady', 'Ready'] as const;
+
+export interface ClaimCondition {
+  type: string;
+  status: 'True' | 'False' | 'Unknown';
+  reason?: string;
+  message?: string;
+  lastTransitionTime?: string;
+}
+
+export interface ClaimInterface {
+  name: string;
+  network: string;
+  addresses: string[];
+  ready?: 'True' | 'False' | 'Unknown';
+}
+
+export interface ClaimDetail extends MachineClaim {
+  createdAt?: string;
+  /** Set while Fleet releases the machine after deletion. */
+  deletingSince?: string;
+  /** The profile Fleet accepted; differs from the request only if Fleet says so. */
+  acceptedProfile?: string;
+  placement?: string;
+  /** Allocated hardware, one line per part; absent until a machine is bound. */
+  hardware?: { label: string; value: string }[];
+  hardwareObservedAt?: string;
+  interfaces: ClaimInterface[];
+  installation?: string;
+  conditions: ClaimCondition[];
+}
+
+function hardwareLines(hw: NonNullable<NonNullable<RawMachineClaim['status']>['allocatedHardware']>['hardware']) {
+  const lines: { label: string; value: string }[] = [];
+  const cpu = hw.cpu;
+  if (cpu) {
+    const counts = [
+      cpu.sockets !== undefined && `${cpu.sockets} sockets`,
+      cpu.cores !== undefined && `${cpu.cores} cores`,
+      cpu.threads !== undefined && `${cpu.threads} threads`,
+    ].filter(Boolean);
+    const value = [cpu.model, counts.join(' / '), cpu.architecture].filter(Boolean).join(' · ');
+    if (value) lines.push({ label: 'CPU', value });
+  }
+  if (hw.memory?.capacity) lines.push({ label: 'Memory', value: hw.memory.capacity });
+  for (const gpu of hw.gpus ?? []) {
+    lines.push({ label: `GPU ${gpu.name}`, value: [gpu.vendor, gpu.model, gpu.memory].filter(Boolean).join(' · ') || '—' });
+  }
+  for (const disk of hw.disks ?? []) {
+    lines.push({ label: `Disk ${disk.name}`, value: [disk.capacity, disk.media, disk.interface].filter(Boolean).join(' · ') || '—' });
+  }
+  for (const nic of hw.interfaces ?? []) {
+    lines.push({ label: `NIC ${nic.name}`, value: [nic.type, nic.speed].filter(Boolean).join(' · ') || '—' });
+  }
+  return lines;
+}
+
+export function toClaimDetail(raw: RawMachineClaim): ClaimDetail {
+  const status = raw.status ?? {};
+  const conditions = status.conditions ?? [];
+  const known = new Set<string>(CLAIM_CONDITIONS);
+  return {
+    ...toMachineClaim(raw),
+    createdAt: raw.metadata.creationTimestamp,
+    deletingSince: raw.metadata.deletionTimestamp,
+    acceptedProfile: status.acceptedProfileRef?.name,
+    placement: status.placement?.locationRef.name,
+    hardware: status.allocatedHardware && hardwareLines(status.allocatedHardware.hardware),
+    hardwareObservedAt: status.allocatedHardware?.observedAt,
+    interfaces: (status.network?.interfaces ?? []).map((i) => ({
+      name: i.name,
+      network: i.network.namespace ? `${i.network.namespace}/${i.network.name}` : i.network.name,
+      addresses: (i.addresses ?? []).map((a) => a.address),
+      ready: findCondition(i.conditions ?? [], 'Ready')?.status,
+    })),
+    installation: status.currentInstallationRef?.name,
+    // An absent condition is Unknown; extra conditions follow the known ones.
+    conditions: [
+      ...CLAIM_CONDITIONS.map(
+        (type) => findCondition(conditions, type) ?? { type, status: 'Unknown' as const }
+      ),
+      ...conditions.filter((c) => !known.has(c.type)),
+    ],
+  };
+}
