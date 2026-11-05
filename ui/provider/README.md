@@ -1,13 +1,22 @@
 # Fleet staff portal plugin
 
-A [staff-portal](https://github.com/datum-cloud/staff-portal) plugin that lists
-the Machines in the provider project. It is a Module Federation remote: the
+A [staff-portal](https://github.com/datum-cloud/staff-portal) plugin for the
+provider project's Fleet resources. It is a Module Federation remote: the
 portal fetches `plugin-manifest.json` and `remoteEntry.js` server-side and
-mounts the page at `/plugins/<slug>/machines`, with a **Fleet** item under
-Operations in the navigation.
+mounts its pages under `/plugins/<slug>/`, with a **Fleet** item under
+Operations in the navigation. The page has two tabs:
 
-This is the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17). It
-is read-only and has no deployment manifests yet.
+- **Machines** (`machines`) lists the provider's Machines. Read-only.
+- **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
+  profile can't be changed after it is created, so there is no edit.
+
+The portal proxy forwards the staff member's own token, so creating a profile
+needs a Fleet role with `machineprofiles.create` in the provider project, such
+as `fleet.datumapis.com-provider`. Errors show inside the create dialog,
+because staff-portal does not share its toast module with plugins.
+
+This started as the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17).
+It has no deployment manifests yet.
 
 The provider project is `datum-cloud`, the only one for now. Machines are read
 from the `infra-ops` namespace, the
@@ -35,7 +44,9 @@ The Fleet CRDs are on staging, but reading them needs a Fleet role. Setting
 `VITE_FLEET_FIXTURES=true` at build time makes `useMachines` return the
 synthetic Machines in `src/lib/fixtures.ts`: one free, one allocated and one
 just enrolled, following Fleet's standalone fixtures and the statuses its
-standalone runner writes. The flag is baked into the build.
+standalone runner writes. Profiles start with the standalone fixture's
+profile; profiles you create are kept in memory until the page reloads. The
+flag is baked into the build.
 
 ## Run inside staff-portal
 

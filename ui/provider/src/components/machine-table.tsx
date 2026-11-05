@@ -28,16 +28,10 @@ function ConditionBadge({
   );
 }
 
-function EvidenceBadge({ source }: { source?: string }) {
-  if (!source) return <StatusBadge type="muted">No evidence</StatusBadge>;
-  // Simulator evidence must stay distinguishable from qualified hardware.
-  return <StatusBadge type={source === 'Simulator' ? 'warning' : 'success'}>{source}</StatusBadge>;
-}
-
 function matchesSearch(machine: Machine, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
-  return [machine.name, machine.pool, machine.allocationPolicy, machine.evidenceSource]
+  return [machine.name, machine.pool, machine.allocationPolicy]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
@@ -59,7 +53,6 @@ const columns: MachineColumn[] = [
   },
   { id: 'cpu', header: 'CPU', cell: ({ row }) => <Muted>{row.original.cpu ?? '—'}</Muted> },
   { id: 'memory', header: 'Memory', cell: ({ row }) => <Muted>{row.original.memory ?? '—'}</Muted> },
-  { id: 'gpus', header: 'GPUs', cell: ({ row }) => <Muted>{row.original.gpus ?? '—'}</Muted> },
   {
     id: 'prepared',
     header: 'Prepared',
@@ -74,11 +67,6 @@ const columns: MachineColumn[] = [
     id: 'available',
     header: 'Available',
     cell: ({ row }) => <ConditionBadge summary={row.original.available} falseType="muted" />,
-  },
-  {
-    id: 'evidence',
-    header: 'Evidence',
-    cell: ({ row }) => <EvidenceBadge source={row.original.evidenceSource} />,
   },
 ];
 

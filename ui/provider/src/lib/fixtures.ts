@@ -1,4 +1,5 @@
-import type { RawMachine } from '../types';
+import { ApiError } from './api';
+import type { RawMachine, RawMachineProfile } from '../types';
 
 // Synthetic Machines used while the Fleet API cannot be read
 // (VITE_FLEET_FIXTURES=true). The namespace, pool label and provider come from
@@ -50,3 +51,27 @@ export const FIXTURE_MACHINES: RawMachine[] = [
     spec: spec('asset-central-03', 'Disabled'),
   },
 ];
+
+// The standalone fixture's profile. Created profiles are kept in memory so
+// the create flow can be tried without the API; a reload resets them.
+const profiles: RawMachineProfile[] = [
+  {
+    metadata: { name: 'general-purpose-24c-128g', creationTimestamp: '2026-11-05T12:00:00Z' },
+    spec: { cpu: { architecture: 'amd64', cores: { min: 24 } }, memory: { capacity: { min: '128Gi' } } },
+  },
+];
+
+export const fixtureProfiles = {
+  list: (): RawMachineProfile[] => [...profiles],
+  create: (profile: RawMachineProfile): RawMachineProfile => {
+    if (profiles.some((p) => p.metadata.name === profile.metadata.name)) {
+      throw new ApiError(409, `machineprofiles "${profile.metadata.name}" already exists`);
+    }
+    const created = {
+      ...profile,
+      metadata: { ...profile.metadata, creationTimestamp: new Date().toISOString() },
+    };
+    profiles.push(created);
+    return created;
+  },
+};

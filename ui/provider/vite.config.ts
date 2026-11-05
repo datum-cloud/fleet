@@ -35,6 +35,7 @@ export default defineConfig({
       // Keys map 1:1 to the manifest's `exposedModules` keys / $codeRefs.
       exposes: {
         './MachineList': './src/pages/machine-list.tsx',
+        './MachineProfileList': './src/pages/machine-profile-list.tsx',
       },
       // requiredVersion:false everywhere: the host's copy always wins, so a
       // patch or major drift between host and plugin cannot fail the load.

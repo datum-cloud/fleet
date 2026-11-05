@@ -49,10 +49,10 @@ beforeEach(() => {
 });
 
 describe('MachineList', () => {
-  it('names the provider project and namespace', () => {
+  it('names the provider project', () => {
     mockResult({ data: [] });
     renderPage();
-    expect(screen.getByText('Provider capacity in datum-cloud / infra-ops')).toBeInTheDocument();
+    expect(screen.getByText('Provider resources in datum-cloud')).toBeInTheDocument();
   });
 
   it('shows the loading state while fetching', () => {
@@ -79,7 +79,7 @@ describe('MachineList', () => {
     expect(screen.getByTestId('fleet-plugin-machine-empty')).toBeInTheDocument();
   });
 
-  it('lists the fixture machines with policy, conditions and provider', () => {
+  it('lists the fixture machines with policy and conditions', () => {
     mockResult({ data: FIXTURE_MACHINES.map(toMachine) });
     renderPage();
     const table = screen.getByTestId('fleet-plugin-machine-table');
@@ -87,7 +87,6 @@ describe('MachineList', () => {
     const free = row(table, 'central1-baremetal-01');
     expect(within(free).getByText('Enabled')).toBeInTheDocument();
     expect(within(free).getAllByText('Yes')).toHaveLength(3);
-    expect(within(free).getByText('Simulator')).toBeInTheDocument();
 
     const allocated = row(table, 'central1-baremetal-02');
     expect(within(allocated).getAllByText('Yes')).toHaveLength(2);

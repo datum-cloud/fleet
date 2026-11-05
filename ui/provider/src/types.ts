@@ -2,14 +2,15 @@
 // fleet.datumapis.com/v1alpha1 Machine in ui/shared/fleet-api.ts.
 
 import { findCondition, type Condition } from '../../shared/conditions';
-import {
-  SYNTHETIC_PROVIDER_API_GROUP,
-  type List,
-  type Machine as RawMachine,
+import type {
+  List,
+  Machine as RawMachine,
+  MachineProfile as RawMachineProfile,
 } from '../../shared/fleet-api';
 
-export type { Condition, RawMachine };
+export type { Condition, RawMachine, RawMachineProfile };
 export type RawMachineList = List<RawMachine>;
+export type RawMachineProfileList = List<RawMachineProfile>;
 
 export const CAPACITY_POOL_LABEL = 'fleet.datumapis.com/capacity-pool';
 
@@ -25,12 +26,8 @@ export interface Machine {
   namespace?: string;
   pool?: string;
   allocationPolicy: string;
-  /** "Simulator" for the synthetic provider, otherwise the provider kind. */
-  evidenceSource: string;
   cpu?: string;
   memory?: string;
-  /** Absent when no GPU list was observed; 0 only for a verified empty list. */
-  gpus?: number;
   prepared: ConditionSummary;
   healthy: ConditionSummary;
   available: ConditionSummary;
@@ -57,13 +54,57 @@ export function toMachine(raw: RawMachine): Machine {
     namespace: raw.metadata.namespace,
     pool: raw.metadata.labels?.[CAPACITY_POOL_LABEL],
     allocationPolicy: raw.spec.allocationPolicy ?? 'Disabled',
-    evidenceSource:
-      raw.spec.providerRef.apiGroup === SYNTHETIC_PROVIDER_API_GROUP ? 'Simulator' : raw.spec.providerRef.kind,
     cpu: cpuSummary(hw?.cpu),
     memory: hw?.memory?.capacity,
-    gpus: hw?.gpus?.length,
     prepared: summarize(conditions, 'Prepared'),
     healthy: summarize(conditions, 'Healthy'),
     available: summarize(conditions, 'Available'),
+  };
+}
+
+// ---- MachineProfile ----
+
+export interface MachineProfile {
+  name: string;
+  /** e.g. "≥ 24 cores · amd64" */
+  cpu: string;
+  memory: string;
+  /** Absent when the profile asks for no GPUs. */
+  gpus?: string;
+  disks: number;
+  interfaces: number;
+  createdAt?: string;
+}
+
+type Bounds<T> = { min?: T; max?: T; exact?: T };
+
+// Renders a min/max/exact constraint; an empty one means "any".
+export function formatConstraint<T extends string | number>(c: Bounds<T> | undefined, unit = ''): string {
+  const u = (v: T) => `${v}${unit}`;
+  if (!c) return 'Any';
+  if (c.exact !== undefined) return u(c.exact);
+  if (c.min !== undefined && c.max !== undefined) return `${u(c.min)}–${u(c.max)}`;
+  if (c.min !== undefined) return `≥ ${u(c.min)}`;
+  if (c.max !== undefined) return `≤ ${u(c.max)}`;
+  return 'Any';
+}
+
+function gpuSummary(gpus: RawMachineProfile['spec']['gpus']): string | undefined {
+  if (!gpus) return undefined;
+  const count = formatConstraint(gpus.count);
+  const what = [gpus.vendor, gpus.models?.join(' / ')].filter(Boolean).join(' ');
+  return what ? `${count} × ${what}` : count;
+}
+
+export function toMachineProfile(raw: RawMachineProfile): MachineProfile {
+  const { cpu, memory, gpus, disks, interfaces } = raw.spec;
+  return {
+    name: raw.metadata.name,
+    cpu: `${formatConstraint(cpu.cores, ' cores')} · ${cpu.architecture}`,
+    memory: formatConstraint(memory.capacity),
+    gpus: gpuSummary(gpus),
+    disks: disks?.length ?? 0,
+    interfaces: interfaces?.length ?? 0,
+    createdAt: raw.metadata.creationTimestamp,
   };
 }
