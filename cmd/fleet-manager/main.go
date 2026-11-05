@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -45,7 +46,8 @@ func main() {
 	must(fleetv1.AddToScheme(scheme))
 	must(networkingv1.AddToScheme(scheme))
 	must(quotav1alpha1.AddToScheme(scheme))
-	hostConfig := ctrl.GetConfigOrDie()
+	hostConfig, err := rest.InClusterConfig()
+	must(err)
 	rootMiloConfig, err := clientcmd.BuildConfigFromFlags("", projectKubeconfig)
 	must(err)
 	projectConfig, err := eventmanager.ProjectRESTConfig(rootMiloConfig, project.RouteName)

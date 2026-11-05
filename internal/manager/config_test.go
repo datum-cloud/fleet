@@ -23,7 +23,7 @@ func TestProjectRESTConfigScopesCopyToExactRoute(t *testing.T) {
 }
 
 func TestProjectRESTConfigRejectsUnscopedOrAmbiguousRoute(t *testing.T) {
-	for _, route := range []string{"", "project/other", "project?other", "project#other"} {
+	for _, route := range []string{"", " project", "PROJECT", "project/other", "project?other", "project#other"} {
 		_, err := ProjectRESTConfig(&rest.Config{Host: "https://milo.example.test"}, route)
 		if err == nil || !strings.Contains(err.Error(), ErrEventWiringUnavailable.Error()) {
 			t.Fatalf("route %q err = %v, want event wiring error", route, err)

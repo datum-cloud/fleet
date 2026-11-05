@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/rest"
 )
 
@@ -15,7 +16,7 @@ func ProjectRESTConfig(root *rest.Config, route string) (*rest.Config, error) {
 	if root == nil || strings.TrimSpace(root.Host) == "" || strings.TrimSpace(route) == "" {
 		return nil, fmt.Errorf("%w: root Milo config and project route are required", ErrEventWiringUnavailable)
 	}
-	if strings.ContainsAny(route, "/?#") {
+	if problems := validation.IsDNS1123Subdomain(route); len(problems) != 0 {
 		return nil, fmt.Errorf("%w: invalid project route", ErrEventWiringUnavailable)
 	}
 	project := rest.CopyConfig(root)
