@@ -3,6 +3,7 @@ import * as api from '../lib/api';
 import { ApiError } from '../lib/api';
 import { FIXTURE_CLASSES, FIXTURE_PROFILES } from '../lib/fixtures';
 import { toCatalog } from '../types';
+import { toast } from '@datum-cloud/datum-ui/toast';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -117,6 +118,27 @@ describe('Deploy', () => {
       machineProfile: 'accelerated-32c-256g',
     });
     expect(await screen.findByTestId('claims-page')).toBeInTheDocument();
+  });
+
+  it('explains a 403 instead of headlining the raw API error', async () => {
+    const toastError = vi.spyOn(toast, 'error');
+    mutate.mockImplementation((_input, { onError }) =>
+      onError(new ApiError(403, 'machineclaims.fleet.datumapis.com is forbidden'))
+    );
+    mockResult({ data: toCatalog(FIXTURE_CLASSES, FIXTURE_PROFILES) });
+    renderPage();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Deploy' })[0]);
+    const form = await screen.findByTestId('fleet-plugin-deploy-form');
+    fireEvent.change(form.querySelector('input[name="name"]') as HTMLInputElement, {
+      target: { value: 'm1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "You don't have permission to deploy machines in this project.",
+        { description: 'machineclaims.fleet.datumapis.com is forbidden' }
+      )
+    );
   });
 
   it('rejects an invalid name without creating anything', async () => {

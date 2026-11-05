@@ -1,5 +1,5 @@
 import { usePluginBase } from './machines-page';
-import { DEFAULT_LOCATION, useCreateMachineClaim } from '../lib/api';
+import { ApiError, DEFAULT_LOCATION, useCreateMachineClaim } from '../lib/api';
 import type { CatalogProfile } from '../types';
 import { Form } from '@datum-cloud/datum-ui/form';
 import { ConformAdapter } from '@datum-cloud/datum-ui/form/adapters/conform';
@@ -55,8 +55,16 @@ export function DeployDialog({
           onOpenChange(false);
           navigate(base);
         },
+        // A 403 is the common case (no consumer role); keep the API's
+        // wording as the detail rather than the headline.
         onError: (error) => {
-          toast.error(error.message);
+          if (error instanceof ApiError && error.status === 403) {
+            toast.error("You don't have permission to deploy machines in this project.", {
+              description: error.message,
+            });
+          } else {
+            toast.error(error.message);
+          }
         },
       }
     );
