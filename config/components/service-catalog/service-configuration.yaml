@@ -1,0 +1,13 @@
+apiVersion: services.miloapis.com/v1alpha1
+kind: ServiceConfiguration
+metadata:
+  name: fleet
+spec:
+  serviceRef:
+    name: fleet
+  # Promotion is forward-only. Environment overlays may publish this only
+  # after the location and lifecycle integrations for that environment pass.
+  phase: Draft
+  locations:
+    supportedClasses:
+      - datum-managed

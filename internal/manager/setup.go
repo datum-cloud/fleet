@@ -22,6 +22,8 @@ import (
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
+	locationsv1alpha1 "go.miloapis.com/locations/api/v1alpha1"
+	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
 )
 
 type Handlers struct {
@@ -117,7 +119,9 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 		Watches(&networkingv1.NetworkInterfaceClaim{}, typedRouteMap(mappers.Route(RoutePrivateUID, IndexPrivateNICClaimUID)), builder.WithPredicates(DependencyPredicate())).
 		Watches(&networkingv1.NetworkInterface{}, typedRouteMap(mappers.Route(RoutePrivateUID, IndexPrivateInterfaceUID)), builder.WithPredicates(DependencyPredicate())).
 		Watches(&quotav1alpha1.ResourceClaim{}, typedRouteMap(mappers.Route(RouteQuota, "")), builder.WithPredicates(DependencyPredicate())).
-		Watches(entitlement, typedRouteMap(mappers.Route(RouteEntitlement, "")), builder.WithPredicates(DependencyPredicate()))
+		Watches(entitlement, typedRouteMap(mappers.Route(RouteEntitlement, "")), builder.WithPredicates(DependencyPredicate())).
+		Watches(&locationsv1alpha1.Location{}, typedRouteMap(mappers.Route(RouteLocation, "")), builder.WithPredicates(DependencyPredicate())).
+		Watches(&servicesv1alpha1.ServiceAvailability{}, typedRouteMap(mappers.Route(RouteAvailability, "")), builder.WithPredicates(DependencyPredicate()))
 	if err := claimRoutes.Complete(RouteReconciler{Project: options.Project, Verifier: options.ProjectVerifier, Mappers: mappers, Handler: claimOwner}); err != nil {
 		return err
 	}

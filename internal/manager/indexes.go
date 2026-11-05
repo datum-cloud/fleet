@@ -17,6 +17,7 @@ const (
 	IndexClaimUID                         = "fleet.manager/claim-uid"
 	IndexClaimClassName                   = "fleet.manager/claim-class-name"
 	IndexClaimProfileName                 = "fleet.manager/claim-profile-name"
+	IndexClaimLocationName                = "fleet.manager/claim-location-name"
 	IndexClaimInstallation                = "fleet.manager/claim-installation-name"
 	IndexClaimNetwork                     = "fleet.manager/claim-network"
 	IndexInstallationClaim                = "fleet.manager/installation-claim-name"
@@ -48,6 +49,7 @@ func RegisterProjectIndexes(ctx context.Context, indexer client.FieldIndexer) er
 		{&fleetv1.MachineClaim{}, IndexClaimUID, func(o client.Object) []string { return one(string(o.GetUID())) }},
 		{&fleetv1.MachineClaim{}, IndexClaimClassName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name) }},
 		{&fleetv1.MachineClaim{}, IndexClaimProfileName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.MachineProfileRef.Name) }},
+		{&fleetv1.MachineClaim{}, IndexClaimLocationName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.LocationRef.Name) }},
 		{&fleetv1.MachineClaim{}, IndexClaimInstallation, func(o client.Object) []string {
 			claim := o.(*fleetv1.MachineClaim)
 			if ref := claim.Spec.InitialInstallationRef; ref != nil && claim.Namespace != "" && ref.Name != "" {

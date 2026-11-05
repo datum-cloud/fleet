@@ -10,6 +10,28 @@ admission, replayable Milo event adapters, and real providers are not implemente
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
+## Location authority
+
+`internal/location` resolves one requested Milo `Location` into retained Fleet
+authority only when the exact Location lifetime has a current `Ready=True`
+condition and exactly one Fleet `ServiceAvailability` for that location has
+current `Available=True` evidence. The resulting authority retains the Location
+UID and a digest of both object lifetimes and observed generations. Missing,
+deleting, stale, or ambiguous evidence fails closed before allocation.
+
+The event-only manager indexes MachineClaims by requested location and watches
+both Location and ServiceAvailability objects. Semantic updates and deletes
+therefore route every affected claim through its existing durable work key;
+there is no periodic location resync. This implements resolution and event
+routing, not the production claim handler that invokes it. The manager binary
+continues to fail readiness until all production handlers and authorities are
+wired.
+
+The Milo bundle declares a Draft Fleet `ServiceConfiguration` supporting the
+platform `datum-managed` location class. Draft is intentional: an environment
+must explicitly promote both the Service and its configuration before a
+ServiceAvailability can project a Location into entitled projects.
+
 ## Standalone synthetic smoke environment
 
 `cmd/fleet-standalone-smoke` is a test-only, phase-oriented harness around the
