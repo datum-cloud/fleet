@@ -71,9 +71,14 @@ freshness deadline scheduler. Queue keys include the Milo authority ID, root
 Project UID, namespace, name, and object UID. Equal names or UIDs in separate
 project lifetimes cannot share work.
 
-The controller-runtime cache uses an explicitly non-nil zero `SyncPeriod`, both
-globally and for its private-Secret cache. Dependency mappers use exact field
-indexes; private indexes consume only typed metadata exposed after the lifecycle
+The manager uses two controller-runtime caches with explicitly non-nil zero
+`SyncPeriod` values. Its primary cache is scoped by Milo's project control-plane
+URL and contains public Fleet, NSO, quota, entitlement, and Namespace resources.
+A separate management-cluster cache is confined to `fleet-system-private` and
+contains service-owned Secrets. Public and private reverse indexes are
+registered on their owning caches, and Secret event sources explicitly use the
+host cache. Leader election also uses the management-cluster configuration.
+Dependency mappers use exact field indexes; private indexes consume only typed metadata exposed after the lifecycle
 or Milo record owner validates the complete record and deterministic Secret
 identity. Unknown or nested JSON lookalike fields have no routing meaning. The
 manager's private-record predicate treats the Secret type and complete label set
@@ -135,8 +140,10 @@ acknowledges its receipt. This increment implements and tests those runner and
 drain contracts; the production durable inbox, consumer, and live stream adapters
 remain integration-owner responsibilities.
 
-`cmd/fleet-manager` validates an exact project lifetime, starts the event graph,
-and reports the integration readiness check as failed. Its handlers deliberately
+`cmd/fleet-manager` validates an exact project lifetime, derives the routed Milo
+REST host from an environment-owned root kubeconfig, keeps host-private records
+and leader election on the management cluster, starts the event graph, and
+reports the integration readiness check as failed. Its handlers deliberately
 perform no lifecycle or provider effects until trusted create-time
 caller/finalizer admission and live, replayable Milo adapters are supplied. A
 watch controller cannot recover the original `user.Info` or atomically capture
@@ -147,8 +154,10 @@ with annotations or controller credentials.
 identity, RBAC, admission, image, and readiness boundary can be reviewed and
 rolled out fail-closed. Its service account receives Secret permissions only
 through a namespaced Role for `fleet-system-private`; cache scoping is not an
-authorization boundary. The environment must provide the exact authority ID,
-Project UID, and route in `fleet-manager-config` and pin the image. The packaged
+authorization boundary, and it has no host ClusterRole. The environment must
+provide the exact authority ID, Project UID, and route in
+`fleet-manager-config`, mount the generated `milo-configuration-kubeconfig`
+Secret, and pin the image. The packaged
 binary is intentionally inert and unready because caller-preserving admission,
 the live verifier, replay integrations, and production handlers are still
 absent. Installing these manifests is not evidence of functional allocation.

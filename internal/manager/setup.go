@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
@@ -33,28 +34,39 @@ type Handlers struct {
 type SetupOptions struct {
 	Project          controller.ProjectIdentity
 	PrivateNamespace string
+	PrivateCluster   ctrlcluster.Cluster
 	Handlers         Handlers
 	ProjectVerifier  ProjectVerifier
 	Clock            clock.WithDelayedExecution
 }
 
-// CacheOptions returns the mandatory event-only cache configuration. A nil
-// SyncPeriod would silently enable controller-runtime's ten-hour resync.
-func CacheOptions(privateNamespace string) cache.Options {
+// ProjectCacheOptions returns the mandatory event-only routed-project cache
+// configuration. A nil SyncPeriod would silently enable controller-runtime's
+// ten-hour resync.
+func ProjectCacheOptions() cache.Options {
 	zero := time.Duration(0)
-	return cache.Options{
-		SyncPeriod: &zero,
-		ByObject: map[client.Object]cache.ByObject{
-			&corev1.Secret{}: {SyncPeriod: &zero, Namespaces: map[string]cache.Config{privateNamespace: {}}},
-		},
-	}
+	return cache.Options{SyncPeriod: &zero}
+}
+
+// PrivateCacheOptions confines the host cache to the service-owned namespace.
+// RBAC remains the authorization boundary; this scope prevents accidental host
+// API watches and keeps private records out of the routed project cache.
+func PrivateCacheOptions(privateNamespace string) cache.Options {
+	zero := time.Duration(0)
+	return cache.Options{SyncPeriod: &zero, DefaultNamespaces: map[string]cache.Config{privateNamespace: {}}}
 }
 
 func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) error {
-	if mgr == nil || !options.Project.Valid() || options.PrivateNamespace == "" || options.ProjectVerifier == nil || options.Handlers.Claim == nil || options.Handlers.Installation == nil || options.Handlers.ClaimProjector == nil || options.Handlers.InstallationProjector == nil {
+	if mgr == nil || options.PrivateCluster == nil || !options.Project.Valid() || options.PrivateNamespace == "" || options.ProjectVerifier == nil || options.Handlers.Claim == nil || options.Handlers.Installation == nil || options.Handlers.ClaimProjector == nil || options.Handlers.InstallationProjector == nil {
 		return ErrEventWiringUnavailable
 	}
-	if err := RegisterIndexes(ctx, mgr.GetFieldIndexer(), options.PrivateNamespace); err != nil {
+	if err := RegisterProjectIndexes(ctx, mgr.GetFieldIndexer()); err != nil {
+		return err
+	}
+	if err := RegisterPrivateIndexes(ctx, options.PrivateCluster.GetFieldIndexer(), options.PrivateNamespace); err != nil {
+		return err
+	}
+	if err := mgr.Add(options.PrivateCluster); err != nil {
 		return err
 	}
 	deadlineClock := options.Clock
@@ -82,14 +94,14 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 	}
 	claimOwner := NewLifecycleOwner(options.Handlers.Claim, options.Handlers.ClaimProjector, claimDeadlines)
 	installationOwner := NewLifecycleOwner(options.Handlers.Installation, options.Handlers.InstallationProjector, installationDeadlines)
-	mappers := Mappers{Reader: mgr.GetCache(), Project: options.Project, PrivateNamespace: options.PrivateNamespace}
+	mappers := Mappers{Reader: mgr.GetCache(), PrivateReader: options.PrivateCluster.GetCache(), Project: options.Project, PrivateNamespace: options.PrivateNamespace}
 	entitlement := &unstructured.Unstructured{}
 	entitlement.SetGroupVersionKind(schema.GroupVersionKind{Group: "services.miloapis.com", Version: "v1alpha1", Kind: "ServiceEntitlement"})
 	claimMap := typedMap(mappers.RequestFor)
 	claim := builder.TypedControllerManagedBy[ProjectRequest](mgr).
 		Named("fleet-machineclaim-events").
 		Watches(&fleetv1.MachineClaim{}, claimMap, builder.WithPredicates(PrimaryPredicate())).
-		Watches(&corev1.Secret{}, typedMap(mappers.RequestForPrivate), builder.WithPredicates(PrivateRecordPredicate())).
+		WatchesRawSource(source.TypedKind(options.PrivateCluster.GetCache(), client.Object(&corev1.Secret{}), typedMap(mappers.RequestForPrivate), PrivateRecordPredicate())).
 		WatchesRawSource(deadlineSource(claimDeadlineEvents))
 	if err := claim.Complete(ProjectReconciler{Project: options.Project, Handler: claimOwner, Verifier: options.ProjectVerifier}); err != nil {
 		return err
@@ -112,7 +124,7 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 	installation := builder.TypedControllerManagedBy[ProjectRequest](mgr).
 		Named("fleet-installation-events").
 		Watches(&fleetv1.Installation{}, typedMap(mappers.RequestFor), builder.WithPredicates(PrimaryPredicate())).
-		Watches(&corev1.Secret{}, typedMap(mappers.RequestForPrivateInstallation), builder.WithPredicates(PrivateRecordPredicate())).
+		WatchesRawSource(source.TypedKind(options.PrivateCluster.GetCache(), client.Object(&corev1.Secret{}), typedMap(mappers.RequestForPrivateInstallation), PrivateRecordPredicate())).
 		WatchesRawSource(deadlineSource(installationDeadlineEvents))
 	if err := installation.Complete(ProjectReconciler{Project: options.Project, Handler: installationOwner, Verifier: options.ProjectVerifier}); err != nil {
 		return err

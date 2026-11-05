@@ -3,8 +3,6 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - service-account.yaml
-  - cluster-role.yaml
-  - cluster-role-binding.yaml
   - leader-election-role.yaml
   - leader-election-role-binding.yaml
   - private-record-role.yaml

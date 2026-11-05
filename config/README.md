@@ -57,16 +57,21 @@ data:
 These values are authority, not portable defaults. A missing ConfigMap prevents
 the Pod from starting; empty or inconsistent values make the binary exit. The
 environment overlay must also replace `ghcr.io/datum-cloud/fleet:latest` with an
-immutable digest or release tag. Kubeconfigs, service-account tokens, provider
-credentials, and rendered Secrets remain owned by `infra` and must not be added
-to this repository.
+immutable digest or release tag. It must provide a
+`milo-configuration-kubeconfig` Secret in `fleet-system` whose `value` key is a
+root Milo kubeconfig. The manager copies that configuration and scopes its host
+to `/apis/resourcemanager.miloapis.com/v1alpha1/projects/<projectRoute>/control-plane`;
+it never uses the root endpoint as a project cache. Kubeconfigs,
+service-account tokens, provider credentials, and rendered Secrets remain owned
+by `infra` and must not be added to this repository.
 
-The manager receives cluster-wide access only to the watched Fleet, NSO, quota,
-entitlement, Namespace, and Event surfaces. Its retained authority records are
-Secrets, and write access to them is confined to the `fleet-system-private`
-namespace by a namespaced Role. That namespace and `fleet-system` have Flux
-pruning disabled so uninstalling one release cannot implicitly delete retained
-lifecycle authority.
+Fleet, NSO, quota, entitlement, Namespace, and Event access goes through the
+routed Milo project credential. The management-cluster service account has no
+cluster-wide role. It receives only leader-election access in `fleet-system`
+and Secret access in `fleet-system-private`; the separate host cache is confined
+to that private namespace. Cache scoping is not an authorization boundary. The
+private namespace and `fleet-system` have Flux pruning disabled so uninstalling
+one release cannot implicitly delete retained lifecycle authority.
 
 ## Current readiness boundary
 

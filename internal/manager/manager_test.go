@@ -57,18 +57,46 @@ func TestObjectMapperKeepsSameNameAndUIDInConfiguredProject(t *testing.T) {
 }
 
 func TestCacheDisablesSyntheticResync(t *testing.T) {
-	options := CacheOptions("private")
-	if options.SyncPeriod == nil || *options.SyncPeriod != 0 {
-		t.Fatalf("SyncPeriod = %#v, want nonnil zero", options.SyncPeriod)
+	project := ProjectCacheOptions()
+	if project.SyncPeriod == nil || *project.SyncPeriod != 0 {
+		t.Fatalf("project SyncPeriod = %#v, want nonnil zero", project.SyncPeriod)
 	}
-	var secretOptions *time.Duration
-	for object, byObject := range options.ByObject {
-		if _, ok := object.(*corev1.Secret); ok {
-			secretOptions = byObject.SyncPeriod
-		}
+	private := PrivateCacheOptions("private")
+	if private.SyncPeriod == nil || *private.SyncPeriod != 0 {
+		t.Fatalf("private SyncPeriod = %#v, want nonnil zero", private.SyncPeriod)
 	}
-	if secretOptions == nil || *secretOptions != 0 {
-		t.Fatalf("Secret SyncPeriod = %#v, want nonnil zero", secretOptions)
+	if len(private.DefaultNamespaces) != 1 {
+		t.Fatalf("private namespaces = %#v, want only private", private.DefaultNamespaces)
+	}
+	if _, ok := private.DefaultNamespaces["private"]; !ok {
+		t.Fatalf("private namespace missing from %#v", private.DefaultNamespaces)
+	}
+}
+
+func TestMachineRouteReadsPublicAndPrivateCachesSeparately(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	project := testProject("milo", "project")
+	machine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid"}}
+	secret := privateSecret(t, project, "default", "claim", "claim-uid", machine.UID)
+	public := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&fleetv1.MachineClass{}, IndexClassMachineNS, func(client.Object) []string { return nil }).
+		Build()
+	private := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).
+		WithIndex(&corev1.Secret{}, IndexPrivateMachineUID, func(client.Object) []string { return []string{string(machine.UID)} }).
+		Build()
+	mapper := Mappers{Reader: public, PrivateReader: private, Project: project, PrivateNamespace: "private"}
+	requests, err := mapper.claimsForMachineE(context.Background(), machine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || requests[0].UID != "claim-uid" {
+		t.Fatalf("requests = %#v, want retained claim from private cache", requests)
 	}
 }
 
