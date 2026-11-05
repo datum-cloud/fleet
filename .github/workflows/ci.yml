@@ -19,6 +19,8 @@ jobs:
     - run: go vet ./...
     - run: go run ./test/acceptance/milo/cmd validate --root .
     - run: kustomize build config/base/crd >/dev/null
+    - run: kustomize build config/milo >/dev/null
+    - run: kustomize build config/overlays/management-plane >/dev/null
     - run: ./hack/validate-overlay-isolation.sh
     - run: ./hack/test-overlay-isolation.sh
     - run: ./hack/validate-standalone-render.sh

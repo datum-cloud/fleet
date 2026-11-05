@@ -1,6 +1,13 @@
 version: '3'
 
 tasks:
+  manifests:validate:
+    desc: Render and validate the production Fleet and Milo manifest roots.
+    cmds:
+      - kustomize build config/milo >/dev/null
+      - kustomize build config/overlays/management-plane >/dev/null
+      - ./hack/validate-overlay-isolation.sh
+
   milo:validate:
     desc: Validate the non-effectful Milo acceptance packaging.
     cmds:

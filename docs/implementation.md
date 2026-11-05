@@ -7,6 +7,8 @@ event-only manager wiring scaffold implemented. A packaged standalone synthetic
 smoke scenario exercises local-scope contention, install recovery, cleanup, and
 epoch reuse. Production caller-preserving
 admission, replayable Milo event adapters, and real providers are not implemented.
+Production Kustomize roots now package the implemented manager, admission, API,
+Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
 ## Standalone synthetic smoke environment
 
@@ -141,12 +143,25 @@ watch controller cannot recover the original `user.Info` or atomically capture
 it after object creation, so this increment does not fabricate that authority
 with annotations or controller credentials.
 
-There is still no production manager Deployment. When one is introduced, its
-service account must receive Secret permissions only through a namespaced Role
-for the configured private-record namespace; cache scoping is not an
-authorization boundary. Shipping that RBAC without the caller-preserving
-admission, verifier, and replay integrations would create an inert privileged
-workload and is deliberately deferred.
+`config/overlays/management-plane` now packages the manager Deployment so its
+identity, RBAC, admission, image, and readiness boundary can be reviewed and
+rolled out fail-closed. Its service account receives Secret permissions only
+through a namespaced Role for `fleet-system-private`; cache scoping is not an
+authorization boundary. The environment must provide the exact authority ID,
+Project UID, and route in `fleet-manager-config` and pin the image. The packaged
+binary is intentionally inert and unready because caller-preserving admission,
+the live verifier, replay integrations, and production handlers are still
+absent. Installing these manifests is not evidence of functional allocation.
+
+`config/milo` separately packages the Fleet CRDs, ProtectedResources, roles,
+Fleet Service, and `fleet.datumapis.com/machines` quota registration for the
+Milo root control plane. The Service remains `Draft`; the manifest does not
+advertise the inert manager as customer-ready. It does not include
+project-specific entitlements,
+grants, PolicyBindings, provider inventory, or the proposal's incomplete,
+source-specific publication example. Those remain environment/provider state.
+The two production roots target different API servers and must not be combined
+into one Flux reconciliation.
 
 ## Standalone lifecycle library
 

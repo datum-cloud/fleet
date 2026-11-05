@@ -1,0 +1,29 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-manager
+rules:
+  - apiGroups: [fleet.datumapis.com]
+    resources: [machineclasses, machineprofiles, machines, machineclaims, installations]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [machineclasses/status, machineprofiles/status, machines/status, machineclaims/status, installations/status]
+    verbs: [get, update, patch]
+  - apiGroups: [networking.datumapis.com]
+    resources: [networks, networkinterfaceclaims, networkinterfaces]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.datumapis.com]
+    resources: [networkinterfaceclaims/status, networkinterfaces/status]
+    verbs: [get]
+  - apiGroups: [quota.miloapis.com]
+    resources: [resourceclaims]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [services.miloapis.com]
+    resources: [serviceentitlements]
+    verbs: [get, list, watch]
+  - apiGroups: ['']
+    resources: [namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: ['']
+    resources: [events]
+    verbs: [create, patch]

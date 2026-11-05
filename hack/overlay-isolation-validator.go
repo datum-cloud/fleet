@@ -25,6 +25,7 @@ import (
 const (
 	marker              = "fleet.datumapis.com/standalone-only"
 	localProjectStandIn = "fleet.datumapis.com/local-project-stand-in"
+	sharedNamespace     = "fleet.datumapis.com/shared-with-standalone"
 )
 
 type kustomization struct {
@@ -40,7 +41,7 @@ type validator struct {
 	configRoot, standaloneRoot, simulatorRoot string
 	standaloneSecrets                         map[string]struct{}
 	standaloneRBAC                            map[[32]byte]struct{}
-	standaloneNamespaces                      map[string]struct{}
+	standaloneNamespaces                      map[string]bool
 }
 
 func main() {
@@ -211,10 +212,10 @@ func (v *validator) localReference(parent, reference string) (string, error) {
 func (v *validator) indexStandalone(objects []*unstructured.Unstructured) {
 	v.standaloneSecrets = map[string]struct{}{}
 	v.standaloneRBAC = map[[32]byte]struct{}{}
-	v.standaloneNamespaces = map[string]struct{}{}
+	v.standaloneNamespaces = map[string]bool{}
 	for _, object := range objects {
 		if isCoreNamespace(object) {
-			v.standaloneNamespaces[object.GetName()] = struct{}{}
+			v.standaloneNamespaces[object.GetName()] = object.GetAnnotations()[sharedNamespace] == "true"
 		}
 		if isCoreSecret(object) {
 			for _, value := range secretValues(object) {
@@ -237,7 +238,8 @@ func (v *validator) checkObject(object *unstructured.Unstructured) error {
 		if object.GetLabels()[localProjectStandIn] == "true" {
 			return fmt.Errorf("Namespace %q carries standalone local-project stand-in identity", object.GetName())
 		}
-		if _, found := v.standaloneNamespaces[object.GetName()]; found {
+		if shared, found := v.standaloneNamespaces[object.GetName()]; found &&
+			(!shared || object.GetAnnotations()[sharedNamespace] != "true") {
 			return fmt.Errorf("Namespace %q duplicates a standalone-only namespace name", object.GetName())
 		}
 	}
@@ -349,7 +351,7 @@ func canonicalPermissions(object *unstructured.Unstructured) []string {
 func canonicalBinding(object *unstructured.Unstructured) []string {
 	var records []string
 	if roleRef, found, _ := unstructured.NestedMap(object.Object, "roleRef"); found {
-		records = append(records, strings.Join([]string{"role-ref", stringValue(roleRef["apiGroup"]), stringValue(roleRef["kind"]), "<identity>"}, "\x01"))
+		records = append(records, strings.Join([]string{"role-ref", stringValue(roleRef["apiGroup"]), stringValue(roleRef["kind"]), stringValue(roleRef["name"])}, "\x01"))
 	}
 	if subjects, found, _ := unstructured.NestedSlice(object.Object, "subjects"); found {
 		for _, rawSubject := range subjects {
@@ -357,11 +359,7 @@ func canonicalBinding(object *unstructured.Unstructured) []string {
 			if !ok {
 				continue
 			}
-			namespace := "<default-namespace>"
-			if stringValue(subject["namespace"]) != "" {
-				namespace = "<identity>"
-			}
-			records = append(records, strings.Join([]string{"subject", stringValue(subject["apiGroup"]), stringValue(subject["kind"]), "<identity>", namespace}, "\x01"))
+			records = append(records, strings.Join([]string{"subject", stringValue(subject["apiGroup"]), stringValue(subject["kind"]), stringValue(subject["name"]), stringValue(subject["namespace"])}, "\x01"))
 		}
 	}
 	sort.Strings(records)

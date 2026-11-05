@@ -79,7 +79,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: fleet-system
-  annotations: {fleet.datumapis.com/standalone-only: "true"}
+  annotations:
+    fleet.datumapis.com/standalone-only: "true"
+    fleet.datumapis.com/shared-with-standalone: "true"
 ---
 apiVersion: v1
 kind: Namespace
@@ -295,6 +297,22 @@ EOF
 expect_failure "copied standalone namespace name" "duplicates a standalone-only namespace name"
 rm -rf "$fixture_root/config/overlays/copied-namespace-name"
 
+mkdir -p "$fixture_root/config/overlays/shared-system-namespace"
+cat >"$fixture_root/config/overlays/shared-system-namespace/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [namespace.yaml]
+EOF
+cat >"$fixture_root/config/overlays/shared-system-namespace/namespace.yaml" <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-system
+  annotations: {fleet.datumapis.com/shared-with-standalone: "true"}
+EOF
+"$repo_root/hack/validate-overlay-isolation.sh" "$fixture_root/config" "$fixture_root/config/standalone"
+rm -rf "$fixture_root/config/overlays/shared-system-namespace"
+
 # Secret.data is decoded and names are irrelevant.
 mkdir -p "$fixture_root/config/overlays/base64-secret"
 cat >"$fixture_root/config/overlays/base64-secret/kustomization.yaml" <<'EOF'
@@ -384,7 +402,9 @@ subjects:
   - {kind: ServiceAccount, name: duplicated-account, namespace: duplicated-namespace}
   - {kind: ServiceAccount, name: duplicated-account, namespace: duplicated-namespace}
 EOF
-expect_failure "fully aliased fixture RBAC binding"
+# Binding names and subject identities are authority and are therefore compared
+# exactly. Merely having the same binding shape is not fixture reuse.
+"$repo_root/hack/validate-overlay-isolation.sh" "$fixture_root/config" "$fixture_root/config/standalone"
 rm -rf "$fixture_root/config/overlays/rbac-binding-alias"
 
 # A broken discovered entry point is a validation failure, never silently skipped.

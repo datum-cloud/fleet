@@ -1,11 +1,16 @@
 apiVersion: v1
 kind: Namespace
-metadata: {name: fleet-system}
+metadata:
+  name: fleet-system
+  annotations:
+    fleet.datumapis.com/shared-with-standalone: "true"
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: fleet-system-private
+  annotations:
+    fleet.datumapis.com/shared-with-standalone: "true"
 ---
 apiVersion: v1
 kind: Namespace

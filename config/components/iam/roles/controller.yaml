@@ -1,0 +1,18 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-controller
+  annotations:
+    kubernetes.io/display-name: Fleet Controller
+    kubernetes.io/description: Internal Fleet status and retained-record authority
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-provider
+    - name: fleet.datumapis.com-consumer
+  includedPermissions:
+    - fleet.datumapis.com/machineclasses.updateStatus
+    - fleet.datumapis.com/machineprofiles.updateStatus
+    - fleet.datumapis.com/machines.updateStatus
+    - fleet.datumapis.com/machineclaims.updateStatus
+    - fleet.datumapis.com/installations.updateStatus

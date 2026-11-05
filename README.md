@@ -16,9 +16,12 @@ lifecycle library and persistent simulator for a two-consumer local demonstratio
 Its namespaces are project stand-ins and do not establish Milo acceptance. The
 scaffold has no production caller-preserving authorizer, admission fence,
 protected quota custodian, or replayable Milo event adapters, so its binary
-remains unready and performs no lifecycle or provider effects. There is no real
-provider integration or production deployment manifest yet; the smoke manifests
-are test fixtures.
+remains unready and performs no lifecycle or provider effects. Production
+manifest roots now package the manager security boundary and Milo API, IAM,
+service-catalog, and quota registration, while environment identity, credentials,
+and immutable image selection remain in `infra`. See
+[`config/README.md`](config/README.md). There is still no real provider
+integration; the standalone smoke manifests remain test fixtures.
 
 ## Scope
 

@@ -1,0 +1,17 @@
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceRegistration
+metadata:
+  name: fleet-machines
+spec:
+  consumerType:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Project
+  type: Entity
+  resourceType: fleet.datumapis.com/machines
+  description: Concurrent bare-metal machine allocations held by a project.
+  baseUnit: machine
+  displayUnit: machines
+  unitConversionFactor: 1
+  claimingResources:
+    - apiGroup: fleet.datumapis.com
+      kind: MachineClaim

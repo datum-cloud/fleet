@@ -1,0 +1,16 @@
+apiVersion: services.miloapis.com/v1alpha1
+kind: Service
+metadata:
+  name: fleet
+spec:
+  serviceName: fleet.datumapis.com
+  # Promotion is forward-only in Milo. Keep Fleet out of the customer catalog
+  # until the production adapters and live acceptance gates are complete.
+  phase: Draft
+  displayName: Fleet
+  description: Bare-metal machine allocation and lifecycle management.
+  owner:
+    producerProjectRef:
+      name: datum-cloud
+  enablementPolicy:
+    mode: SelfService
