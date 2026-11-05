@@ -26,6 +26,7 @@ var (
 	ErrQuotaPending              = errors.New("Milo quota grant is pending")
 	ErrQuotaUnknown              = errors.New("Milo quota outcome is unknown")
 	ErrQuotaReleaseUnknown       = errors.New("Milo quota release is not acknowledged")
+	ErrClaimAuthorityNotFound    = errors.New("claim has no Milo authority or lifecycle custody")
 )
 
 const (

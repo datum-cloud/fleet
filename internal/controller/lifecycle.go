@@ -320,13 +320,13 @@ func (c *Coordinator) RetainClaimAuthority(ctx context.Context, claimUID types.U
 		if err != nil {
 			return err
 		}
-		if record.State != CustodyUnbound || record.ExternalHold.Valid() {
-			return ErrRecordInvalid
-		}
 		if record.Authority.Valid() {
 			if record.ConsumerProject == consumer && record.ProviderProject == provider && record.Authority == authority {
 				return nil
 			}
+			return ErrRecordInvalid
+		}
+		if record.State != CustodyUnbound || record.ExternalHold.Valid() {
 			return ErrRecordInvalid
 		}
 		record.ConsumerProject, record.ProviderProject, record.Authority = consumer, provider, authority
@@ -1551,6 +1551,24 @@ func (c *Coordinator) getCustodyScoped(ctx context.Context, scope ClaimScope, cl
 	}
 	record, err := decodeCustodySecret(&secret)
 	return record, &secret, err
+}
+
+// HasClaimCustody reports whether the exact project-scoped claim lifetime has
+// any retained custody record. It is used only to distinguish a genuinely
+// never-admitted claim from authority-record loss; a present record never
+// authorizes cleanup bypass.
+func (c *Coordinator) HasClaimCustody(ctx context.Context, consumer ProjectIdentity, claimUID types.UID) (bool, error) {
+	if !consumer.Valid() || claimUID == "" {
+		return false, ErrRecordInvalid
+	}
+	_, _, err := c.getCustodyScoped(ctx, ProjectClaimScope(consumer), claimUID)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (c *Coordinator) getCustodyForAsset(ctx context.Context, asset *AssetRecord) (*ClaimCustodyRecord, *corev1.Secret, error) {
