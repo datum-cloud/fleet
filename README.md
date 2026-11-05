@@ -7,8 +7,9 @@ explicit ownership and lifecycle boundaries.
 
 This repository contains the detailed service proposal, design context,
 implementation roadmap, and the first alpha public API encoding for the machine
-lifecycle. The Go types and CRDs are implemented, but there are no allocation
-controllers, provider integrations, or production deployment manifests yet.
+lifecycle. The Go types, CRDs, and a synthetic persistent provider simulator are
+implemented, but there are no allocation controllers, real provider integrations,
+or production deployment manifests yet.
 
 ## Scope
 
@@ -36,6 +37,8 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
   source proposals, and unresolved design questions.
 - [Implementation roadmap](docs/roadmap.md): proposed milestones and evidence
   required before enabling infrastructure effects.
+- [Implementation status](docs/implementation.md): implemented simulator
+  guarantees, internal interfaces, and explicit gaps.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
 
 The foundation was developed in `datum-cloud/infra` PRs

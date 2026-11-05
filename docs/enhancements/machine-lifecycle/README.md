@@ -42,10 +42,11 @@ Five public resources define the contract: `MachineClass`, `MachineProfile`,
 operation records in the provider project. These internal records retain
 ownership, execution authority, exact inputs, and cleanup obligations.
 
-The first implementation will use a persistent simulated provider with real Milo
-tenancy, IAM, entitlement, and quota integrations. The public Go types and CRDs
-now encode the provisional contract, but Fleet has no implemented controllers or
-provider effects yet.
+The first implementation uses a persistent synthetic provider and will integrate
+real Milo tenancy, IAM, entitlement, and quota. The public Go types, CRDs, and
+standalone simulator are implemented, but Fleet has no allocation controller or
+real provider effects yet. The implemented subset and gaps are recorded in
+[`docs/implementation.md`](../../implementation.md).
 
 ## Motivation
 
@@ -1324,6 +1325,9 @@ correctness violations.
   remains provisional.
 - 2026-11-03: Added the first alpha Go types and CRDs. This encodes the public
   contract for review; it does not implement allocation or authorize effects.
+- 2026-11-03: Added the standalone persistent provider simulator with retained
+  operation inputs, epoch/token fencing, cleanup authority retirement, and
+  deterministic lost-response recovery. It has no real hardware authority.
 
 ## Drawbacks
 
