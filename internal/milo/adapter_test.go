@@ -299,6 +299,42 @@ func TestAdapterRecoversPreparedAuthorityWithoutReauthorizing(t *testing.T) {
 	}
 }
 
+func TestAdapterRecoveryAcceptsNewRevisionForSameLocationLifetime(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	if _, err := f.adapter.PrepareClaim(ctx, f.prepare); err != nil {
+		t.Fatal(err)
+	}
+
+	current := f.prepare
+	current.Location.Revision = "location-r2"
+	prepared, err := f.adapter.PrepareOrRecoverClaim(ctx, current)
+	if err != nil {
+		t.Fatalf("recover after location status revision = %v", err)
+	}
+	if prepared.Location != current.Location {
+		t.Fatalf("prepared location = %#v, want current %#v", prepared.Location, current.Location)
+	}
+	replacement := current
+	replacement.Location.UID = "replacement-location-uid"
+	if _, err := f.adapter.PrepareOrRecoverClaim(ctx, replacement); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("replacement location lifetime error = %v, want ErrAuthorityInvalid", err)
+	}
+
+	allocation := f.allocation
+	allocation.Location = current.Location
+	if _, err := f.adapter.Allocate(ctx, prepared, allocation); err != nil {
+		t.Fatalf("allocate after location status revision = %v", err)
+	}
+	record, err := f.records.Get(ctx, prepared.Authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.SourceRequest.Location.Revision != f.prepare.Location.Revision {
+		t.Fatalf("retained location revision = %q, want admitted %q", record.SourceRequest.Location.Revision, f.prepare.Location.Revision)
+	}
+}
+
 func TestAdapterRepairsPartialPreparation(t *testing.T) {
 	for _, stage := range []string{"authority", "custody"} {
 		t.Run(stage, func(t *testing.T) {

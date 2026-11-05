@@ -234,10 +234,22 @@ func validateRecoveredPrepare(record *AuthorityRecord, request PrepareRequest, c
 		}
 	}
 	want := SourceUseRequest{ConsumerProject: consumer, ProviderProject: provider, NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, LocalClassUID: request.LocalClass.UID, SourceClassUID: request.SourceClass.UID, SourceClassRevision: request.SourceClass.Status.EvaluatedRevision, SourceClassDigest: classDigest, LocalProfileUID: request.LocalProfile.UID, SourceProfileUID: sourceProfileUID, ProfileKind: kind, RequirementsDigest: requirements, PublicationRevision: request.PublicationRevision, Location: request.Location}
-	if want.Validate() != nil || record.SourceRequest != want {
+	if want.Validate() != nil || !sameLocationLifetime(record.SourceRequest.Location, want.Location) {
+		return ErrAuthorityInvalid
+	}
+	// A location revision is current eligibility evidence, not the location's
+	// lifetime identity. Preserve the admitted revision in the durable record,
+	// but do not strand an existing claim when Ready or ServiceAvailability
+	// status is re-observed for the same named Location UID.
+	want.Location.Revision = record.SourceRequest.Location.Revision
+	if record.SourceRequest != want {
 		return ErrAuthorityInvalid
 	}
 	return nil
+}
+
+func sameLocationLifetime(left, right fleetnetwork.LocationAuthority) bool {
+	return left.Name != "" && left.UID != "" && left.Name == right.Name && left.UID == right.UID
 }
 
 // ReleaseClaim recovers release authority using only the exact consumer project
@@ -521,7 +533,7 @@ func (a *Adapter) finishAbortedSettlement(ctx context.Context, authority control
 }
 
 func validatePreparedAllocation(record *AuthorityRecord, prepared PreparedClaim, request controller.AllocationRequest) error {
-	if record == nil || request.Claim == nil || request.Class == nil || request.Profile == nil || prepared.Authority.ContractDigest != record.ContractDigest || record.SourceRequest.ConsumerProject != prepared.ConsumerProject || record.SourceRequest.ProviderProject != prepared.ProviderProject || record.SourceRequest.NamespaceUID != prepared.NamespaceUID || record.SourceReceipt.PrincipalUID != prepared.PrincipalUID || record.SourceReceipt.DecisionID != prepared.DecisionID || request.Claim.Namespace != record.ClaimNamespace || request.Claim.Name != record.ClaimName || request.Claim.UID != record.ClaimUID || prepared.LocalClassUID != record.SourceRequest.LocalClassUID || prepared.SourceClassUID != record.SourceRequest.SourceClassUID || prepared.LocalProfileUID != record.SourceRequest.LocalProfileUID || prepared.SourceProfileUID != record.SourceRequest.SourceProfileUID || prepared.Location != record.SourceRequest.Location || request.Location != record.SourceRequest.Location || request.Claim.Spec.LocationRef.Name != record.SourceRequest.Location.Name || request.Class.UID != record.SourceRequest.SourceClassUID || request.Class.Status.EvaluatedRevision != record.SourceRequest.SourceClassRevision {
+	if record == nil || request.Claim == nil || request.Class == nil || request.Profile == nil || prepared.Authority.ContractDigest != record.ContractDigest || record.SourceRequest.ConsumerProject != prepared.ConsumerProject || record.SourceRequest.ProviderProject != prepared.ProviderProject || record.SourceRequest.NamespaceUID != prepared.NamespaceUID || record.SourceReceipt.PrincipalUID != prepared.PrincipalUID || record.SourceReceipt.DecisionID != prepared.DecisionID || request.Claim.Namespace != record.ClaimNamespace || request.Claim.Name != record.ClaimName || request.Claim.UID != record.ClaimUID || prepared.LocalClassUID != record.SourceRequest.LocalClassUID || prepared.SourceClassUID != record.SourceRequest.SourceClassUID || prepared.LocalProfileUID != record.SourceRequest.LocalProfileUID || prepared.SourceProfileUID != record.SourceRequest.SourceProfileUID || !sameLocationLifetime(prepared.Location, record.SourceRequest.Location) || !sameLocationLifetime(request.Location, record.SourceRequest.Location) || request.Claim.Spec.LocationRef.Name != record.SourceRequest.Location.Name || request.Class.UID != record.SourceRequest.SourceClassUID || request.Class.Status.EvaluatedRevision != record.SourceRequest.SourceClassRevision {
 		return ErrAuthorityInvalid
 	}
 	wantProfileUID := record.SourceRequest.LocalProfileUID
