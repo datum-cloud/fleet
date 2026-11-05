@@ -18,6 +18,24 @@ kustomize build config/milo >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
 ```
 
+## Published artifacts
+
+`.github/workflows/publish.yml` publishes the multi-architecture manager image
+as `ghcr.io/datum-cloud/fleet` and then publishes `config` as
+`ghcr.io/datum-cloud/fleet-kustomize`. The bundle publisher stamps the exact
+manager image tag into `config/base/manager`, so an environment consumes one
+matched image and manifest revision.
+
+The manager image can be built locally with:
+
+```sh
+docker build -f build/manager.Dockerfile .
+```
+
+Publishing an image does not relax the readiness boundary below. Deployment
+owners must select an immutable workflow-produced tag or digest and must not
+promote the Fleet Service while the production integration remains fail-closed.
+
 ## Environment-owned inputs
 
 The management-plane root intentionally does not contain a
