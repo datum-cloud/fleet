@@ -15,7 +15,7 @@ patches:
         value: --synthetic-staging
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --synthetic-provider-url=http://127.0.0.1:8080
+        value: --synthetic-provider-url=http://127.0.0.1:8090
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --synthetic-provider-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
@@ -27,14 +27,14 @@ patches:
           imagePullPolicy: IfNotPresent
           command: [/fleet-simulator]
           args:
-            - --listen-address=0.0.0.0:8080
+            - --listen-address=0.0.0.0:8090
             - --runtime-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
             - --state-file=/var/lib/fleet/state.json
           readinessProbe:
-            httpGet: {path: /readyz, port: 8080}
+            httpGet: {path: /readyz, port: 8090}
             periodSeconds: 2
           livenessProbe:
-            httpGet: {path: /healthz, port: 8080}
+            httpGet: {path: /healthz, port: 8090}
             periodSeconds: 10
           resources:
             requests: {cpu: 10m, memory: 24Mi}
