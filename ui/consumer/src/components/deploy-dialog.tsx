@@ -4,6 +4,7 @@ import type { CatalogProfile } from '../types';
 import { Form } from '@datum-cloud/datum-ui/form';
 import { ConformAdapter } from '@datum-cloud/datum-ui/form/adapters/conform';
 import { toast } from '@datum-cloud/datum-ui/toast';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import { useNavigate, useParams } from 'react-router';
 import { z } from 'zod';
 
@@ -25,8 +26,8 @@ export interface DeployTarget {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono break-all">{value}</span>
+      <Text textColor="muted">{label}</Text>
+      <Text className="font-mono break-all">{value}</Text>
     </div>
   );
 }

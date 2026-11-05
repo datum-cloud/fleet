@@ -20,12 +20,13 @@ import { EmptyContent } from '@datum-cloud/datum-ui/empty-content';
 import { Icon } from '@datum-cloud/datum-ui/icons';
 import { PageTitle } from '@datum-cloud/datum-ui/page-title';
 import { toast } from '@datum-cloud/datum-ui/toast';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import { ActivityIcon, CpuIcon, FileTextIcon, HomeIcon, NetworkIcon } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 
 function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="text-muted-foreground">{children}</span>;
+  return <Text textColor="muted">{children}</Text>;
 }
 
 function When({ date }: { date?: string }) {
@@ -80,10 +81,10 @@ function MachineCard({ claim }: { claim: ClaimDetailModel }) {
           ]}
         />
       ) : (
-        <p className="text-muted-foreground p-4 text-sm">
+        <Text as="p" textColor="muted" className="p-4">
           No machine is allocated yet. Fleet binds one when capacity matching the profile is
           available.
-        </p>
+        </Text>
       )}
     </DetailCard>
   );
@@ -96,10 +97,10 @@ function NetworkCard({ claim }: { claim: ClaimDetailModel }) {
         items={claim.interfaces.map((i) => ({
           label: i.name,
           content: (
-            <span>
+            <Text>
               {i.network}
               {i.addresses.length > 0 && <Muted> · {i.addresses.join(', ')}</Muted>}
-            </span>
+            </Text>
           ),
         }))}
       />
@@ -161,7 +162,7 @@ function ConditionsCard({ claim }: { claim: ClaimDetailModel }) {
             <div className="flex flex-col gap-1" data-testid={`fleet-plugin-condition-${c.type}`}>
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge type={conditionBadge(c)}>{c.status}</StatusBadge>
-                {c.reason && <span className="text-sm">{c.reason}</span>}
+                {c.reason && <Text>{c.reason}</Text>}
                 {c.lastTransitionTime && <When date={c.lastTransitionTime} />}
               </div>
               {c.message && <Muted>{c.message}</Muted>}

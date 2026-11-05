@@ -2,6 +2,8 @@ import { usePluginBase } from './machines-page';
 import { StatusBadge, type BadgeType } from './status-badge';
 import type { ClaimPhase, MachineClaim } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
+import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Link } from 'react-router';
 
@@ -17,14 +19,14 @@ const PHASE_BADGE: Record<ClaimPhase, { type: BadgeType; pending: boolean }> = {
 
 export function PhaseBadge({ claim }: { claim: Pick<MachineClaim, 'phase' | 'phaseReason'> }) {
   return (
-    <span title={claim.phaseReason}>
-      <StatusBadge {...PHASE_BADGE[claim.phase]}>{claim.phase}</StatusBadge>
-    </span>
+    <Tooltip message={claim.phaseReason} hidden={!claim.phaseReason}>
+      <span><StatusBadge {...PHASE_BADGE[claim.phase]}>{claim.phase}</StatusBadge></span>
+    </Tooltip>
   );
 }
 
 function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="text-muted-foreground">{children}</span>;
+  return <Text textColor="muted">{children}</Text>;
 }
 
 function matchesSearch(claim: MachineClaim, search: string): boolean {
@@ -96,9 +98,9 @@ export function ClaimTable({ claims }: { claims: MachineClaim[] }) {
       <div className="overflow-hidden rounded-lg border" data-testid="fleet-plugin-claim-table">
         <DataTable.Content
           emptyMessage={
-            <p className="text-muted-foreground py-8 text-center text-sm">
+            <Text as="p" textColor="muted" className="py-8 text-center">
               No machines match your search.
-            </p>
+            </Text>
           }
         />
       </div>

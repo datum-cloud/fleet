@@ -2,12 +2,13 @@ import { StatusBadge } from './status-badge';
 import type { CatalogOffering, CatalogProfile } from '../types';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Card, CardContent } from '@datum-cloud/datum-ui/card';
+import { Text } from '@datum-cloud/datum-ui/typography';
 
 function Spec({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span>{value}</span>
+      <Text textColor="muted">{label}</Text>
+      <Text>{value}</Text>
     </div>
   );
 }
@@ -23,7 +24,9 @@ function ProfileCard({
     <Card data-testid="fleet-plugin-profile-card">
       <CardContent className="flex flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-sm font-semibold break-all">{profile.name}</p>
+          <Text as="p" weight="semibold" className="break-all">
+            {profile.name}
+          </Text>
           {!profile.published && <StatusBadge type="muted">Not published</StatusBadge>}
         </div>
         {profile.published && (
@@ -60,7 +63,9 @@ export function OfferingSection({
   return (
     <section data-testid="fleet-plugin-offering" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-semibold">{offering.className}</h2>
+        <Text as="h2" size="base" weight="semibold">
+          {offering.className}
+        </Text>
         {offering.available ? (
           <StatusBadge type="success">Available</StatusBadge>
         ) : (
@@ -69,16 +74,20 @@ export function OfferingSection({
           </StatusBadge>
         )}
         {offering.source && (
-          <span className="text-muted-foreground text-sm">from {offering.source}</span>
+          <Text textColor="muted">from {offering.source}</Text>
         )}
       </div>
 
       {!offering.available && (
-        <p className="text-muted-foreground text-sm">{offering.unavailableReason}</p>
+        <Text as="p" textColor="muted">
+          {offering.unavailableReason}
+        </Text>
       )}
 
       {offering.available && offering.profiles.length === 0 && (
-        <p className="text-muted-foreground text-sm">This class allows no profiles yet.</p>
+        <Text as="p" textColor="muted">
+          This class allows no profiles yet.
+        </Text>
       )}
 
       {offering.available && offering.profiles.length > 0 && (
