@@ -18,9 +18,9 @@ createRoot(document.getElementById('root')!).render(
           Without the staff-portal proxy the list shows its error state unless
           <code> VITE_FLEET_FIXTURES=true</code>.
         </p>
-        <MemoryRouter initialEntries={['/plugins/fleet-datumapis-com/machines']}>
+        <MemoryRouter initialEntries={['/plugins/fleet-datumapis-com']}>
           <Routes>
-            <Route path="/plugins/:slug/machines" element={<MachineList />} />
+            <Route path="/plugins/:slug" element={<MachineList />} />
             <Route path="/plugins/:slug/profiles" element={<MachineProfileList />} />
             <Route path="/plugins/:slug/classes" element={<MachineClassList />} />
           </Routes>

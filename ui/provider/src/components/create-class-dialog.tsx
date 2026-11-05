@@ -6,6 +6,8 @@ import { Checkbox } from '@datum-cloud/datum-ui/checkbox';
 import { Form } from '@datum-cloud/datum-ui/form';
 import { ConformAdapter } from '@datum-cloud/datum-ui/form/adapters/conform';
 import { Icon } from '@datum-cloud/datum-ui/icons';
+import { Label } from '@datum-cloud/datum-ui/label';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import { PlusIcon } from 'lucide-react';
 import { useState } from 'react';
 import { z } from 'zod';
@@ -55,22 +57,22 @@ export function toRawMachineClass(values: ClassFormValues): RawMachineClass {
 function ProfileChoices({ profiles }: { profiles: MachineProfile[] | undefined }) {
   if (!profiles?.length) {
     return (
-      <p className="text-muted-foreground text-sm">
+      <Text as="p" textColor="muted">
         No profiles yet. Create one on the Profiles tab first.
-      </p>
+      </Text>
     );
   }
   // Checkboxes sharing a name submit as an array, which the schema parses.
   return (
     <div className="flex flex-col gap-2">
       {profiles.map((profile) => (
-        <label key={profile.name} className="flex items-center gap-2 text-sm">
+        <Label key={profile.name} className="flex items-center gap-2">
           <Checkbox name="allowedProfiles" value={profile.name} />
-          <span className="font-medium">{profile.name}</span>
-          <span className="text-muted-foreground">
+          <Text weight="medium">{profile.name}</Text>
+          <Text textColor="muted">
             {profile.cpu} · {profile.memory}
-          </span>
-        </label>
+          </Text>
+        </Label>
       ))}
     </div>
   );

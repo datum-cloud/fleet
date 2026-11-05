@@ -4,9 +4,15 @@ A [staff-portal](https://github.com/datum-cloud/staff-portal) plugin for the
 provider project's Fleet resources. It is a Module Federation remote: the
 portal fetches `plugin-manifest.json` and `remoteEntry.js` server-side and
 mounts its pages under `/plugins/<slug>/`, with a **Fleet** item under
-Operations in the navigation. The page has two tabs:
+Operations in the navigation. The page has three tabs:
 
-- **Machines** (`machines`) lists the provider's Machines. Read-only.
+- **Machines** (the mount root, where the nav item points) lists the provider's Machines in every namespace
+  and creates new ones. The form asks only for a name, a class, and whether to
+  offer the machine for allocation (off by default). The Machine goes in the
+  class's namespace and capacity pool, with the synthetic provider (named after
+  the Machine) and the standalone fixtures' cleaning policy, since no real
+  provider exists yet. The provider reference can't be changed later.
+  Hardware and conditions stay empty until Fleet's discovery reports them.
 - **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
   profile can't be changed after it is created, so there is no edit.
 - **Classes** (`classes`) lists MachineClasses and creates new ones: the
@@ -14,19 +20,16 @@ Operations in the navigation. The page has two tabs:
   Machines that serve it, and whether consumers get power control. Custom
   profiles and console access stay off.
 
-The portal proxy forwards the staff member's own token, so creating profiles
-and classes needs a Fleet role with `machineprofiles.create` and
-`machineclasses.create` in the provider project, such as
-`fleet.datumapis.com-provider`. Errors show inside the create dialog,
+The portal proxy forwards the staff member's own token, so creating machines,
+profiles and classes needs a Fleet role with `machines.create`,
+`machineprofiles.create` and `machineclasses.create` in the provider project,
+such as `fleet.datumapis.com-provider`. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
 
 This started as the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17).
 It has no deployment manifests yet.
 
-The provider project is `datum-cloud`, the only one for now. Machines are read
-from the `infra-ops` namespace, the
-[proposal's](https://github.com/datum-cloud/fleet/blob/main/docs/enhancements/machine-lifecycle/README.md)
-example, until the real namespace is decided. Both are constants in
+The provider project is `datum-cloud`, the only one for now, set in
 `src/lib/api.ts`. The wire types are in `../shared/fleet-api.ts`, transcribed
 by hand from Fleet's Go API types and CRDs; `src/types.ts` maps them to the
 list's view.

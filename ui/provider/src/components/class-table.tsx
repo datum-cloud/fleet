@@ -1,12 +1,16 @@
+import { DeleteButton } from './delete-dialog';
 import { StatusBadge, type BadgeType } from './status-badge';
 import type { MachineClass } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
+import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useMemo } from 'react';
 
 type ClassColumn = ColumnDef<DataTableFeatures, MachineClass, unknown>;
 
 function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="text-muted-foreground">{children}</span>;
+  return <Text textColor="muted">{children}</Text>;
 }
 
 // Fleet's class evaluator writes Accepted. No evaluator runs yet, so an
@@ -21,9 +25,9 @@ function AcceptedBadge({ machineClass }: { machineClass: MachineClass }) {
         : ['muted', 'Not evaluated'];
   const title = state === 'Unknown' ? (reason ?? "Fleet hasn't evaluated this class yet.") : reason;
   return (
-    <span title={title}>
-      <StatusBadge type={type}>{label}</StatusBadge>
-    </span>
+    <Tooltip message={title} hidden={!title}>
+      <span><StatusBadge type={type}>{label}</StatusBadge></span>
+    </Tooltip>
   );
 }
 
@@ -42,7 +46,7 @@ const columns: ClassColumn[] = [
     id: 'name',
     accessorKey: 'name',
     header: 'Name',
-    cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    cell: ({ row }) => <Text weight="medium">{row.original.name}</Text>,
   },
   {
     id: 'profiles',
@@ -70,11 +74,33 @@ const columns: ClassColumn[] = [
   },
 ];
 
-export function ClassTable({ classes }: { classes: MachineClass[] }) {
+export function ClassTable({
+  classes,
+  onDelete,
+}: {
+  classes: MachineClass[];
+  onDelete: (machineClass: MachineClass) => void;
+}) {
+  const withActions = useMemo<ClassColumn[]>(
+    () => [
+      ...columns,
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <DeleteButton name={row.original.name} onClick={() => onDelete(row.original)} />
+          </div>
+        ),
+      },
+    ],
+    [onDelete]
+  );
+
   return (
     <DataTable.Client
       data={classes}
-      columns={columns}
+      columns={withActions}
       getRowId={(machineClass) => machineClass.name}
       defaultSort={[{ id: 'name', desc: false }]}
       searchFn={matchesSearch}
@@ -83,9 +109,9 @@ export function ClassTable({ classes }: { classes: MachineClass[] }) {
       <div className="overflow-hidden rounded-lg border" data-testid="fleet-plugin-class-table">
         <DataTable.Content
           emptyMessage={
-            <p className="text-muted-foreground py-8 text-center text-sm">
+            <Text as="p" textColor="muted" className="py-8 text-center">
               No classes match your search.
-            </p>
+            </Text>
           }
         />
       </div>

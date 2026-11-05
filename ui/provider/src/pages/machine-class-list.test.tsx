@@ -16,10 +16,33 @@ vi.mock('../lib/api', async () => {
     useMachineClasses: vi.fn(),
     useMachineProfiles: vi.fn(),
     useCreateMachineClass: vi.fn(),
+    useDeleteMachineClass: vi.fn(),
   };
 });
 
 const mutate = vi.fn();
+
+const remove = vi.fn();
+
+function mockDelete(hook: unknown, result: { error?: unknown } = {}) {
+  vi.mocked(hook as () => unknown).mockReturnValue({
+    mutate: remove,
+    reset: vi.fn(),
+    error: null,
+    isPending: false,
+    ...result,
+  } as never);
+}
+
+async function confirmDelete(name: string, typed = name) {
+  fireEvent.click(screen.getByRole('button', { name: `Delete ${name}` }));
+  const form = await screen.findByTestId('fleet-plugin-delete-form');
+  fireEvent.change(form.querySelector('input[name="confirm"]') as HTMLInputElement, {
+    target: { value: typed },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  return form;
+}
 
 function mockClasses(result: { data?: unknown; isLoading?: boolean; error?: unknown }) {
   vi.mocked(api.useMachineClasses).mockReturnValue({
@@ -54,6 +77,8 @@ const PROFILES = [
 
 beforeEach(() => {
   mutate.mockReset();
+  remove.mockReset();
+  mockDelete(api.useDeleteMachineClass);
   vi.mocked(api.useMachineProfiles).mockReturnValue({ data: PROFILES } as never);
   vi.mocked(api.useCreateMachineClass).mockReturnValue({
     mutate,
@@ -92,13 +117,13 @@ describe('MachineClassList', () => {
     expect(within(tr).getByText('Accepted')).toBeInTheDocument();
   });
 
-  it('marks a class without an Accepted condition as not evaluated', () => {
+  it('marks a class without an Accepted condition as not evaluated', async () => {
     mockClasses({
       data: [toMachineClass({ metadata: { name: 'standard-metal' }, spec: {} })],
     });
     renderPage();
-    const badge = screen.getByText('Not evaluated');
-    expect(badge.closest('[title]')).toHaveAttribute('title', "Fleet hasn't evaluated this class yet.");
+    fireEvent.focus(screen.getByText('Not evaluated').closest('span') as HTMLElement);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent("Fleet hasn't evaluated this class yet.");
   });
 
   it('creates a class from the chosen profiles', async () => {
@@ -138,6 +163,15 @@ describe('MachineClassList', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect(await within(form).findByText('Choose at least one profile.')).toBeInTheDocument();
     expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('deletes a class once its name is typed', async () => {
+    mockClasses({ data: fixtureClasses.list().map(toMachineClass) });
+    renderPage();
+    const form = await confirmDelete('standard-metal');
+    expect(within(form).getByText(/Consumers can no longer deploy from it/)).toBeInTheDocument();
+    await waitFor(() => expect(remove).toHaveBeenCalled());
+    expect(remove.mock.calls[0][0]).toBe('standard-metal');
   });
 });
 

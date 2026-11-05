@@ -92,6 +92,8 @@ export interface MachineClass {
   customProfiles: boolean;
   /** "default / central-metal": the Machines namespace and capacity pool. */
   capacity?: string;
+  machineNamespace?: string;
+  capacityPool?: string;
   powerControl: boolean;
   accepted: ConditionSummary;
   createdAt?: string;
@@ -107,6 +109,8 @@ export function toMachineClass(raw: RawMachineClass): MachineClass {
     allowedProfiles: (spec.profilePolicy?.allowedProfiles ?? []).map((p) => p.name),
     customProfiles: !!spec.profilePolicy?.customProfiles?.enabled,
     capacity: machines && (pool ? `${machines.namespace} / ${pool}` : machines.namespace),
+    machineNamespace: machines?.namespace,
+    capacityPool: pool,
     powerControl: !!spec.access?.powerControl,
     accepted: summarize(raw.status?.conditions ?? [], 'Accepted'),
     createdAt: raw.metadata.creationTimestamp,

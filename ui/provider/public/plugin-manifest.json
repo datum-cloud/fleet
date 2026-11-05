@@ -15,13 +15,13 @@
         "id": "machines",
         "title": "Fleet",
         "icon": "server",
-        "path": "machines"
+        "path": ""
       }
     },
     {
       "type": "portal.page/platform",
       "properties": {
-        "path": "machines",
+        "path": "",
         "component": { "$codeRef": "MachineList" }
       }
     },

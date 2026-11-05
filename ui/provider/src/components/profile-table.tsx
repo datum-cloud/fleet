@@ -1,11 +1,14 @@
+import { DeleteButton } from './delete-dialog';
 import type { MachineProfile } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useMemo } from 'react';
 
 type ProfileColumn = ColumnDef<DataTableFeatures, MachineProfile, unknown>;
 
 function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="text-muted-foreground">{children}</span>;
+  return <Text textColor="muted">{children}</Text>;
 }
 
 function matchesSearch(profile: MachineProfile, search: string): boolean {
@@ -23,7 +26,7 @@ const columns: ProfileColumn[] = [
     id: 'name',
     accessorKey: 'name',
     header: 'Name',
-    cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    cell: ({ row }) => <Text weight="medium">{row.original.name}</Text>,
   },
   { id: 'cpu', header: 'CPU', cell: ({ row }) => <Muted>{row.original.cpu}</Muted> },
   { id: 'memory', header: 'Memory', cell: ({ row }) => <Muted>{row.original.memory}</Muted> },
@@ -39,11 +42,33 @@ const columns: ProfileColumn[] = [
   },
 ];
 
-export function ProfileTable({ profiles }: { profiles: MachineProfile[] }) {
+export function ProfileTable({
+  profiles,
+  onDelete,
+}: {
+  profiles: MachineProfile[];
+  onDelete: (profile: MachineProfile) => void;
+}) {
+  const withActions = useMemo<ProfileColumn[]>(
+    () => [
+      ...columns,
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <DeleteButton name={row.original.name} onClick={() => onDelete(row.original)} />
+          </div>
+        ),
+      },
+    ],
+    [onDelete]
+  );
+
   return (
     <DataTable.Client
       data={profiles}
-      columns={columns}
+      columns={withActions}
       getRowId={(profile) => profile.name}
       defaultSort={[{ id: 'name', desc: false }]}
       searchFn={matchesSearch}
@@ -52,9 +77,9 @@ export function ProfileTable({ profiles }: { profiles: MachineProfile[] }) {
       <div className="overflow-hidden rounded-lg border" data-testid="fleet-plugin-profile-table">
         <DataTable.Content
           emptyMessage={
-            <p className="text-muted-foreground py-8 text-center text-sm">
+            <Text as="p" textColor="muted" className="py-8 text-center">
               No profiles match your search.
-            </p>
+            </Text>
           }
         />
       </div>

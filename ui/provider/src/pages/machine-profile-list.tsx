@@ -1,13 +1,35 @@
 import { CreateProfileDialog } from '../components/create-profile-dialog';
+import { DeleteDialog } from '../components/delete-dialog';
 import { FleetPage } from '../components/fleet-page';
 import { ProfileTable } from '../components/profile-table';
 import { ErrorOrRestrictedState, LoadingState } from '../components/states';
-import { PROVIDER_PROJECT, useMachineProfiles } from '../lib/api';
+import {
+  PROVIDER_PROJECT,
+  useDeleteMachineProfile,
+  useMachineClasses,
+  useMachineProfiles,
+} from '../lib/api';
+import type { MachineProfile } from '../types';
 import { EmptyContent } from '@datum-cloud/datum-ui/empty-content';
+import { useCallback, useState } from 'react';
 
 export default function MachineProfileList() {
   const { data: profiles, isLoading, error, refetch } = useMachineProfiles();
   const isEmpty = !isLoading && !error && (profiles?.length ?? 0) === 0;
+  const { data: classes } = useMachineClasses();
+  const [deleting, setDeleting] = useState<MachineProfile>();
+  const deletion = useDeleteMachineProfile();
+  const startDelete = useCallback(
+    (profile: MachineProfile) => {
+      deletion.reset();
+      setDeleting(profile);
+    },
+    [deletion.reset]
+  );
+  // Fleet doesn't stop a profile being deleted while classes allow it.
+  const allowedBy = (classes ?? [])
+    .filter((c) => deleting && c.allowedProfiles.includes(deleting.name))
+    .map((c) => c.name);
 
   return (
     <FleetPage testId="fleet-plugin-profile-list" actions={<CreateProfileDialog />}>
@@ -32,8 +54,25 @@ export default function MachineProfileList() {
       )}
 
       {!isLoading && !error && profiles && profiles.length > 0 && (
-        <ProfileTable profiles={profiles} />
+        <ProfileTable profiles={profiles} onDelete={startDelete} />
       )}
+
+      <DeleteDialog
+        name={deleting?.name}
+        resource="profile"
+        warning={
+          allowedBy.length > 0
+            ? `Allowed by ${allowedBy.join(', ')}. Those classes keep listing it, but consumers can't deploy it.`
+            : 'No class allows this profile.'
+        }
+        pending={deletion.isPending}
+        error={deletion.error}
+        onConfirm={() =>
+          deleting &&
+          deletion.mutate(deleting.name, { onSuccess: () => setDeleting(undefined) })
+        }
+        onOpenChange={(open) => !open && setDeleting(undefined)}
+      />
     </FleetPage>
   );
 }

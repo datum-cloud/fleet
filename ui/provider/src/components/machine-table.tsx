@@ -1,12 +1,16 @@
+import { DeleteButton } from './delete-dialog';
 import { StatusBadge, type BadgeType } from './status-badge';
 import type { ConditionSummary, Machine } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
+import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useMemo } from 'react';
 
 type MachineColumn = ColumnDef<DataTableFeatures, Machine, unknown>;
 
 function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="text-muted-foreground">{children}</span>;
+  return <Text textColor="muted">{children}</Text>;
 }
 
 // `falseType` lets Available=False read as neutral: a Disabled machine is
@@ -22,16 +26,16 @@ function ConditionBadge({
     summary.state === 'True' ? 'success' : summary.state === 'False' ? falseType : 'muted';
   const label = summary.state === 'True' ? 'Yes' : summary.state === 'False' ? 'No' : 'Unknown';
   return (
-    <span title={summary.reason}>
-      <StatusBadge type={type}>{label}</StatusBadge>
-    </span>
+    <Tooltip message={summary.reason} hidden={!summary.reason}>
+      <span><StatusBadge type={type}>{label}</StatusBadge></span>
+    </Tooltip>
   );
 }
 
 function matchesSearch(machine: Machine, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
-  return [machine.name, machine.pool, machine.allocationPolicy]
+  return [machine.name, machine.namespace, machine.pool, machine.allocationPolicy]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
@@ -43,7 +47,12 @@ const columns: MachineColumn[] = [
     id: 'name',
     accessorKey: 'name',
     header: 'Name',
-    cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    cell: ({ row }) => <Text weight="medium">{row.original.name}</Text>,
+  },
+  {
+    id: 'namespace',
+    header: 'Namespace',
+    cell: ({ row }) => <Muted>{row.original.namespace ?? '—'}</Muted>,
   },
   { id: 'pool', header: 'Pool', cell: ({ row }) => <Muted>{row.original.pool ?? '—'}</Muted> },
   {
@@ -70,11 +79,33 @@ const columns: MachineColumn[] = [
   },
 ];
 
-export function MachineTable({ machines }: { machines: Machine[] }) {
+export function MachineTable({
+  machines,
+  onDelete,
+}: {
+  machines: Machine[];
+  onDelete: (machine: Machine) => void;
+}) {
+  const withActions = useMemo<MachineColumn[]>(
+    () => [
+      ...columns,
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <DeleteButton name={row.original.name} onClick={() => onDelete(row.original)} />
+          </div>
+        ),
+      },
+    ],
+    [onDelete]
+  );
+
   return (
     <DataTable.Client
       data={machines}
-      columns={columns}
+      columns={withActions}
       getRowId={(machine) => `${machine.namespace ?? ''}/${machine.name}`}
       defaultSort={[{ id: 'name', desc: false }]}
       searchFn={matchesSearch}
@@ -83,9 +114,9 @@ export function MachineTable({ machines }: { machines: Machine[] }) {
       <div className="overflow-hidden rounded-lg border" data-testid="fleet-plugin-machine-table">
         <DataTable.Content
           emptyMessage={
-            <p className="text-muted-foreground py-8 text-center text-sm">
+            <Text as="p" textColor="muted" className="py-8 text-center">
               No machines match your search.
-            </p>
+            </Text>
           }
         />
       </div>

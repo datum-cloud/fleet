@@ -1,4 +1,4 @@
-import { FIXTURE_MACHINES, fixtureClasses, fixtureProfiles } from './fixtures';
+import { fixtureClasses, fixtureMachines, fixtureProfiles } from './fixtures';
 import {
   toMachine,
   toMachineClass,
@@ -6,6 +6,7 @@ import {
   type Machine,
   type MachineClass,
   type MachineProfile,
+  type RawMachine,
   type RawMachineClass,
   type RawMachineClassList,
   type RawMachineList,
@@ -22,10 +23,9 @@ import {
 
 export const PLUGIN_ID = 'fleet.staff-portal.datumapis.com';
 
-// The single provider project and the namespace holding its Machines. The
-// namespace is the proposal's example until the real one is decided.
+// The single provider project. Its Machines can live in any namespace: each
+// class names the namespace and capacity pool it draws from.
 export const PROVIDER_PROJECT = 'datum-cloud';
-export const MACHINE_NAMESPACE = 'infra-ops';
 
 const USE_FIXTURES = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const REFETCH_INTERVAL_MS = 10_000;
@@ -76,19 +76,60 @@ async function proxyFetch<T>(
   return envelope.data as T;
 }
 
+// Machines are namespaced; the list spans every namespace in the project.
 export async function fetchMachines(): Promise<Machine[]> {
-  if (USE_FIXTURES) return FIXTURE_MACHINES.map(toMachine);
-  const path = `${FLEET_API}/namespaces/${MACHINE_NAMESPACE}/machines?limit=100`;
-  const body = await proxyFetch<RawMachineList>(PROVIDER_PROJECT, path);
+  if (USE_FIXTURES) return fixtureMachines.list().map(toMachine);
+  const body = await proxyFetch<RawMachineList>(PROVIDER_PROJECT, `${FLEET_API}/machines?limit=100`);
   return (body.items ?? []).map(toMachine);
 }
 
 export function useMachines(): UseQueryResult<Machine[], ApiError> {
   return useQuery({
-    queryKey: [PLUGIN_ID, 'machines', PROVIDER_PROJECT, MACHINE_NAMESPACE],
+    queryKey: [PLUGIN_ID, 'machines', PROVIDER_PROJECT],
     queryFn: fetchMachines,
     refetchInterval: REFETCH_INTERVAL_MS,
     retry: false,
+  });
+}
+
+export async function createMachine(machine: RawMachine): Promise<RawMachine> {
+  if (USE_FIXTURES) return fixtureMachines.create(machine);
+  const namespace = encodeURIComponent(machine.metadata.namespace ?? '');
+  return proxyFetch<RawMachine>(PROVIDER_PROJECT, `${FLEET_API}/namespaces/${namespace}/machines`, {
+    method: 'POST',
+    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'Machine', ...machine },
+  });
+}
+
+export function useCreateMachine(): UseMutationResult<RawMachine, ApiError, RawMachine> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createMachine,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machines', PROVIDER_PROJECT] }),
+  });
+}
+
+export async function deleteMachine(machine: { namespace?: string; name: string }): Promise<void> {
+  if (USE_FIXTURES) return fixtureMachines.delete(machine.namespace ?? '', machine.name);
+  const namespace = encodeURIComponent(machine.namespace ?? '');
+  await proxyFetch<unknown>(
+    PROVIDER_PROJECT,
+    `${FLEET_API}/namespaces/${namespace}/machines/${encodeURIComponent(machine.name)}`,
+    { method: 'DELETE' }
+  );
+}
+
+export function useDeleteMachine(): UseMutationResult<
+  void,
+  ApiError,
+  { namespace?: string; name: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteMachine,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machines', PROVIDER_PROJECT] }),
   });
 }
 
@@ -133,6 +174,24 @@ export function useCreateMachineProfile(): UseMutationResult<
   });
 }
 
+export async function deleteMachineProfile(name: string): Promise<void> {
+  if (USE_FIXTURES) return fixtureProfiles.delete(name);
+  await proxyFetch<unknown>(
+    PROVIDER_PROJECT,
+    `${FLEET_API}/machineprofiles/${encodeURIComponent(name)}`,
+    { method: 'DELETE' }
+  );
+}
+
+export function useDeleteMachineProfile(): UseMutationResult<void, ApiError, string> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteMachineProfile,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineprofiles', PROVIDER_PROJECT] }),
+  });
+}
+
 // MachineClasses are cluster-scoped too. A class here is the provider's
 // definition: which profiles it allows and which Machines back it.
 
@@ -170,6 +229,24 @@ export function useCreateMachineClass(): UseMutationResult<
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: createMachineClass,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclasses', PROVIDER_PROJECT] }),
+  });
+}
+
+export async function deleteMachineClass(name: string): Promise<void> {
+  if (USE_FIXTURES) return fixtureClasses.delete(name);
+  await proxyFetch<unknown>(
+    PROVIDER_PROJECT,
+    `${FLEET_API}/machineclasses/${encodeURIComponent(name)}`,
+    { method: 'DELETE' }
+  );
+}
+
+export function useDeleteMachineClass(): UseMutationResult<void, ApiError, string> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteMachineClass,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclasses', PROVIDER_PROJECT] }),
   });

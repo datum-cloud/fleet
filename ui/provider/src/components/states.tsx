@@ -3,6 +3,7 @@ import { Button } from '@datum-cloud/datum-ui/button';
 import { Card, CardContent } from '@datum-cloud/datum-ui/card';
 import { Icon } from '@datum-cloud/datum-ui/icons';
 import { Skeleton } from '@datum-cloud/datum-ui/skeleton';
+import { Text } from '@datum-cloud/datum-ui/typography';
 import { LockIcon, ServerCrashIcon } from 'lucide-react';
 
 export function LoadingState() {
@@ -26,8 +27,8 @@ export function RestrictedState({ message }: { message: string }) {
       <CardContent className="flex flex-col items-start gap-3">
         <Icon icon={LockIcon} size={24} className="text-muted-foreground" />
         <div>
-          <p className="text-sm font-semibold">Access restricted</p>
-          <p className="text-muted-foreground mt-1 text-sm">{message}</p>
+          <Text as="p" weight="semibold">Access restricted</Text>
+          <Text as="p" textColor="muted" className="mt-1">{message}</Text>
         </div>
       </CardContent>
     </Card>
@@ -41,8 +42,8 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => 
       <CardContent className="flex flex-col items-start gap-3">
         <Icon icon={ServerCrashIcon} size={24} className="text-destructive" />
         <div>
-          <p className="text-sm font-semibold">Failed to load</p>
-          <p className="text-muted-foreground mt-1 text-sm">{message}</p>
+          <Text as="p" weight="semibold">Failed to load</Text>
+          <Text as="p" textColor="muted" className="mt-1">{message}</Text>
         </div>
         <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>
           Retry

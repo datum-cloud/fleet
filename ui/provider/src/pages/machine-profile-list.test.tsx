@@ -2,8 +2,8 @@ import MachineProfileList from './machine-profile-list';
 import { toRawMachineProfile } from '../components/create-profile-dialog';
 import * as api from '../lib/api';
 import { ApiError } from '../lib/api';
-import { fixtureProfiles } from '../lib/fixtures';
-import { toMachineProfile } from '../types';
+import { fixtureClasses, fixtureProfiles } from '../lib/fixtures';
+import { toMachineClass, toMachineProfile } from '../types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -11,12 +11,40 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof api>('../lib/api');
-  return { ...actual, useMachineProfiles: vi.fn(), useCreateMachineProfile: vi.fn() };
+  return {
+    ...actual,
+    useMachineProfiles: vi.fn(),
+    useCreateMachineProfile: vi.fn(),
+    useMachineClasses: vi.fn(),
+    useDeleteMachineProfile: vi.fn(),
+  };
 });
 
 const useProfilesMock = vi.mocked(api.useMachineProfiles);
 const useCreateMock = vi.mocked(api.useCreateMachineProfile);
 const mutate = vi.fn();
+
+const remove = vi.fn();
+
+function mockDelete(hook: unknown, result: { error?: unknown } = {}) {
+  vi.mocked(hook as () => unknown).mockReturnValue({
+    mutate: remove,
+    reset: vi.fn(),
+    error: null,
+    isPending: false,
+    ...result,
+  } as never);
+}
+
+async function confirmDelete(name: string, typed = name) {
+  fireEvent.click(screen.getByRole('button', { name: `Delete ${name}` }));
+  const form = await screen.findByTestId('fleet-plugin-delete-form');
+  fireEvent.change(form.querySelector('input[name="confirm"]') as HTMLInputElement, {
+    target: { value: typed },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  return form;
+}
 
 function mockList(result: { data?: unknown; isLoading?: boolean; error?: unknown }) {
   useProfilesMock.mockReturnValue({
@@ -55,6 +83,11 @@ beforeEach(() => {
   useProfilesMock.mockReset();
   mutate.mockReset();
   mockCreate();
+  remove.mockReset();
+  mockDelete(api.useDeleteMachineProfile);
+  vi.mocked(api.useMachineClasses).mockReturnValue({
+    data: fixtureClasses.list().map(toMachineClass),
+  } as never);
 });
 
 describe('MachineProfileList', () => {
@@ -63,7 +96,7 @@ describe('MachineProfileList', () => {
     renderPage();
     expect(screen.getByRole('tab', { name: 'Machines' }).closest('a')).toHaveAttribute(
       'href',
-      '/plugins/fleet-datumapis-com/machines'
+      '/plugins/fleet-datumapis-com'
     );
     expect(screen.getByRole('tab', { name: 'Profiles' })).toHaveAttribute('data-state', 'active');
   });
@@ -119,6 +152,15 @@ describe('MachineProfileList', () => {
     fireEvent.click(screen.getByRole('button', { name: /Create profile/ }));
     const form = await screen.findByTestId('fleet-plugin-create-profile-form');
     expect(within(form).getByText(/is forbidden/)).toBeInTheDocument();
+  });
+
+  it('names the classes that allow a profile before deleting it', async () => {
+    mockList({ data: fixtureProfiles.list().map(toMachineProfile) });
+    renderPage();
+    const form = await confirmDelete('general-purpose-24c-128g');
+    expect(within(form).getByText(/Allowed by standard-metal/)).toBeInTheDocument();
+    await waitFor(() => expect(remove).toHaveBeenCalled());
+    expect(remove.mock.calls[0][0]).toBe('general-purpose-24c-128g');
   });
 });
 
