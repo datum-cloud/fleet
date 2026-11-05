@@ -1,3 +1,4 @@
+import { ApiError } from './api';
 import { MACHINE_CLAIM_FINALIZER } from '../../../shared/fleet-api';
 import type { RawMachineClaim, RawMachineClass, RawMachineProfile } from '../types';
 
@@ -72,6 +73,26 @@ export const FIXTURE_CLAIMS: RawMachineClaim[] = [
     status: BOUND_STATUS,
   },
 ];
+
+// Claims created in fixture mode are kept in memory until the page reloads.
+// A new claim has no status, so it lists as Pending, as it would before
+// Fleet admits it.
+const claims = [...FIXTURE_CLAIMS];
+
+export const fixtureClaims = {
+  list: (): RawMachineClaim[] => [...claims],
+  create: (claim: RawMachineClaim): RawMachineClaim => {
+    if (claims.some((c) => c.metadata.name === claim.metadata.name)) {
+      throw new ApiError(409, `machineclaims "${claim.metadata.name}" already exists`);
+    }
+    const created = {
+      ...claim,
+      metadata: { ...claim.metadata, creationTimestamp: new Date().toISOString() },
+    };
+    claims.push(created);
+    return created;
+  },
+};
 
 // A consumer project's catalog: standard-metal published from datum-cloud
 // with two profiles, and a second class whose publication has not resolved.

@@ -4,16 +4,17 @@ import { ApiError } from '../lib/api';
 import { FIXTURE_CLASSES, FIXTURE_PROFILES } from '../lib/fixtures';
 import { toCatalog } from '../types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof api>('../lib/api');
-  return { ...actual, useCatalog: vi.fn() };
+  return { ...actual, useCatalog: vi.fn(), useCreateMachineClaim: vi.fn() };
 });
 
 const useCatalogMock = vi.mocked(api.useCatalog);
+const mutate = vi.fn();
 
 function mockResult(result: { data?: unknown; isLoading?: boolean; error?: unknown }) {
   useCatalogMock.mockReturnValue({
@@ -32,6 +33,10 @@ function renderPage() {
       <MemoryRouter initialEntries={['/project/p1/services/fleet-datumapis-com/catalog']}>
         <Routes>
           <Route path="/project/:projectId/services/:serviceSlug/catalog" element={<Catalog />} />
+          <Route
+            path="/project/:projectId/services/:serviceSlug"
+            element={<p data-testid="claims-page">claims</p>}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -40,6 +45,8 @@ function renderPage() {
 
 beforeEach(() => {
   useCatalogMock.mockReset();
+  mutate.mockReset();
+  vi.mocked(api.useCreateMachineClaim).mockReturnValue({ mutate, isPending: false } as never);
 });
 
 describe('Catalog', () => {
@@ -78,5 +85,66 @@ describe('Catalog', () => {
     expect(within(pending).getByText('high-memory-metal')).toBeInTheDocument();
     expect(within(pending).getByText(/Waiting for the provider/)).toBeInTheDocument();
     expect(within(pending).queryByTestId('fleet-plugin-profile-card')).toBeNull();
+  });
+});
+
+describe('Deploy', () => {
+  it('only offers Deploy on published profiles of available classes', () => {
+    mockResult({ data: toCatalog(FIXTURE_CLASSES, FIXTURE_PROFILES) });
+    renderPage();
+    expect(screen.getAllByRole('button', { name: 'Deploy' })).toHaveLength(2);
+  });
+
+  it('creates a claim for the chosen profile and returns to the claims list', async () => {
+    mutate.mockImplementation((_input, { onSuccess }) => onSuccess());
+    mockResult({ data: toCatalog(FIXTURE_CLASSES, FIXTURE_PROFILES) });
+    renderPage();
+    const [, standard] = screen.getAllByTestId('fleet-plugin-offering');
+    const card = within(standard).getAllByTestId('fleet-plugin-profile-card')[1];
+    fireEvent.click(within(card).getByRole('button', { name: 'Deploy' }));
+
+    const form = await screen.findByTestId('fleet-plugin-deploy-form');
+    expect(within(form).getByText('us-central-1')).toBeInTheDocument();
+    fireEvent.change(form.querySelector('input[name="name"]') as HTMLInputElement, {
+      target: { value: 'trainer-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+
+    await waitFor(() => expect(mutate).toHaveBeenCalled());
+    expect(mutate.mock.calls[0][0]).toEqual({
+      name: 'trainer-1',
+      machineClass: 'standard-metal',
+      machineProfile: 'accelerated-32c-256g',
+    });
+    expect(await screen.findByTestId('claims-page')).toBeInTheDocument();
+  });
+
+  it('rejects an invalid name without creating anything', async () => {
+    mockResult({ data: toCatalog(FIXTURE_CLASSES, FIXTURE_PROFILES) });
+    renderPage();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Deploy' })[0]);
+    const form = await screen.findByTestId('fleet-plugin-deploy-form');
+    fireEvent.change(form.querySelector('input[name="name"]') as HTMLInputElement, {
+      target: { value: 'Not_Valid' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy' }));
+    expect(await screen.findByText(/Lowercase letters/)).toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe('toRawMachineClaim', () => {
+  it('requests the profile in us-central-1, powered off, in the default namespace', () => {
+    expect(
+      api.toRawMachineClaim({ name: 'm', machineClass: 'standard-metal', machineProfile: 'p' })
+    ).toEqual({
+      metadata: { name: 'm', namespace: 'default' },
+      spec: {
+        machineClassRef: { name: 'standard-metal' },
+        machineProfileRef: { name: 'p' },
+        locationRef: { name: 'us-central-1' },
+        powerState: 'Off',
+      },
+    });
   });
 });

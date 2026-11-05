@@ -1,5 +1,6 @@
 import { StatusBadge } from './status-badge';
 import type { CatalogOffering, CatalogProfile } from '../types';
+import { Button } from '@datum-cloud/datum-ui/button';
 import { Card, CardContent } from '@datum-cloud/datum-ui/card';
 
 function Spec({ label, value }: { label: string; value: string }) {
@@ -11,7 +12,13 @@ function Spec({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ProfileCard({ profile }: { profile: CatalogProfile }) {
+function ProfileCard({
+  profile,
+  onDeploy,
+}: {
+  profile: CatalogProfile;
+  onDeploy: (profile: CatalogProfile) => void;
+}) {
   return (
     <Card data-testid="fleet-plugin-profile-card">
       <CardContent className="flex flex-col gap-3">
@@ -26,13 +33,30 @@ function ProfileCard({ profile }: { profile: CatalogProfile }) {
             <Spec label="GPUs" value={profile.gpus ?? 'None'} />
           </div>
         )}
+        {profile.published && (
+          <Button
+            type="primary"
+            theme="solid"
+            size="small"
+            htmlType="button"
+            className="w-fit"
+            onClick={() => onDeploy(profile)}>
+            Deploy
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
 }
 
 // One class: its name, where it comes from, and the profiles it allows.
-export function OfferingSection({ offering }: { offering: CatalogOffering }) {
+export function OfferingSection({
+  offering,
+  onDeploy,
+}: {
+  offering: CatalogOffering;
+  onDeploy: (className: string, profile: CatalogProfile) => void;
+}) {
   return (
     <section data-testid="fleet-plugin-offering" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -60,7 +84,11 @@ export function OfferingSection({ offering }: { offering: CatalogOffering }) {
       {offering.available && offering.profiles.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2">
           {offering.profiles.map((profile) => (
-            <ProfileCard key={profile.name} profile={profile} />
+            <ProfileCard
+              key={profile.name}
+              profile={profile}
+              onDeploy={(p) => onDeploy(offering.className, p)}
+            />
           ))}
         </div>
       )}

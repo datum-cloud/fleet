@@ -10,10 +10,17 @@ tabs:
 - **Catalog** (`catalog`) lists the MachineClasses this project can claim from
   and the profiles each allows. A class published from another project (with
   `spec.source`) is read from `status.resolvedClass` and stays pending until
-  Fleet resolves it; the project's own class is read from its spec.
+  Fleet resolves it; the project's own class is read from its spec. Each
+  published profile has a **Deploy** button.
+
+Deploying creates a MachineClaim in the `default` namespace for the chosen
+class and profile, in `us-central-1` (the only location offered for now),
+powered off. It allocates a machine only; installing an OS is a separate
+Installation this plugin does not offer yet. Creating a claim reserves
+nothing: it lists as Pending until Fleet binds a machine.
 
 This started as the MVP from [#16](https://github.com/datum-cloud/fleet/issues/16).
-It is read-only so far and has no deployment manifests yet.
+It has no deployment manifests yet.
 
 Consumers see claims, never Machines: allocated hardware comes from
 `MachineClaim.status`, following the
@@ -38,7 +45,8 @@ Fleet's Go API types and CRDs; `src/types.ts` maps them to the list's view.
 The Fleet CRDs are on staging, but reading them needs a Fleet role. Setting
 `VITE_FLEET_FIXTURES=true` at build time makes `useMachineClaims` return the
 synthetic claims in `src/lib/fixtures.ts` instead of calling the project
-control plane. They follow Fleet's standalone fixtures and the statuses its
+control plane. Claims deployed in fixture mode are kept in memory until the
+page reloads. They follow Fleet's standalone fixtures and the statuses its
 standalone runner writes. The flag is baked into the build, so rebuild without
 it to use the real API.
 

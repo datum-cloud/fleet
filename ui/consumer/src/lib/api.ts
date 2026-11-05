@@ -1,14 +1,21 @@
-import { FIXTURE_CLAIMS, FIXTURE_CLASSES, FIXTURE_PROFILES } from './fixtures';
+import { FIXTURE_CLASSES, FIXTURE_PROFILES, fixtureClaims } from './fixtures';
 import {
   toCatalog,
   toMachineClaim,
   type CatalogOffering,
   type MachineClaim,
+  type RawMachineClaim,
   type RawMachineClaimList,
   type RawMachineClassList,
   type RawMachineProfileList,
 } from '../types';
-import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseMutationResult,
+  type UseQueryResult,
+} from '@tanstack/react-query';
 
 export const PLUGIN_ID = 'fleet.datumapis.com';
 
@@ -16,7 +23,11 @@ const USE_FIXTURES = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const REFETCH_INTERVAL_MS = 10_000;
 
 const FLEET_API = '/apis/fleet.datumapis.com/v1alpha1';
-const MACHINECLAIMS_PATH = `${FLEET_API}/namespaces/default/machineclaims`;
+const CLAIM_NAMESPACE = 'default';
+const MACHINECLAIMS_PATH = `${FLEET_API}/namespaces/${CLAIM_NAMESPACE}/machineclaims`;
+
+/** The only location offered for now. */
+export const DEFAULT_LOCATION = 'us-central-1';
 
 export class ApiError extends Error {
   status: number;
@@ -32,18 +43,30 @@ function getProjectScopedBase(projectId: string): string {
   return `/api/proxy/apis/resourcemanager.miloapis.com/v1alpha1/projects/${encodeURIComponent(projectId)}/control-plane`;
 }
 
-async function proxyFetch<T>(projectId: string, path: string): Promise<T> {
+// The portal proxy returns the upstream body unwrapped; a Kubernetes failure
+// is a Status object whose `message` says what went wrong.
+async function proxyFetch<T>(
+  projectId: string,
+  path: string,
+  init: { method?: string; body?: unknown } = {}
+): Promise<T> {
   const res = await fetch(`${getProjectScopedBase(projectId)}${path}`, {
-    headers: { Accept: 'application/json' },
+    method: init.method ?? 'GET',
+    headers: {
+      Accept: 'application/json',
+      ...(init.body !== undefined && { 'Content-Type': 'application/json' }),
+    },
+    body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   if (!res.ok) {
-    throw new ApiError(res.status, `Request failed (${res.status}): ${path}`);
+    const status = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new ApiError(res.status, status.message || `Request failed (${res.status}): ${path}`);
   }
   return res.json() as Promise<T>;
 }
 
 export async function fetchMachineClaims(projectId: string): Promise<MachineClaim[]> {
-  if (USE_FIXTURES) return FIXTURE_CLAIMS.map(toMachineClaim);
+  if (USE_FIXTURES) return fixtureClaims.list().map(toMachineClaim);
   const body = await proxyFetch<RawMachineClaimList>(projectId, `${MACHINECLAIMS_PATH}?limit=100`);
   return (body.items ?? []).map(toMachineClaim);
 }
@@ -78,5 +101,48 @@ export function useCatalog(projectId: string | undefined): UseQueryResult<Catalo
     queryFn: () => fetchCatalog(projectId as string),
     refetchInterval: REFETCH_INTERVAL_MS,
     retry: false,
+  });
+}
+
+export interface CreateClaimInput {
+  name: string;
+  machineClass: string;
+  machineProfile: string;
+}
+
+// Deploying allocates a machine and hands it over powered off; installing an
+// OS is a separate Installation, which this plugin does not offer yet.
+export function toRawMachineClaim(input: CreateClaimInput): RawMachineClaim {
+  return {
+    metadata: { name: input.name, namespace: CLAIM_NAMESPACE },
+    spec: {
+      machineClassRef: { name: input.machineClass },
+      machineProfileRef: { name: input.machineProfile },
+      locationRef: { name: DEFAULT_LOCATION },
+      powerState: 'Off',
+    },
+  };
+}
+
+export async function createMachineClaim(
+  projectId: string,
+  input: CreateClaimInput
+): Promise<RawMachineClaim> {
+  const claim = toRawMachineClaim(input);
+  if (USE_FIXTURES) return fixtureClaims.create(claim);
+  return proxyFetch<RawMachineClaim>(projectId, MACHINECLAIMS_PATH, {
+    method: 'POST',
+    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'MachineClaim', ...claim },
+  });
+}
+
+export function useCreateMachineClaim(
+  projectId: string | undefined
+): UseMutationResult<RawMachineClaim, ApiError, CreateClaimInput> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input) => createMachineClaim(projectId as string, input),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclaims', projectId] }),
   });
 }
