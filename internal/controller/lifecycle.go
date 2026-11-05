@@ -337,6 +337,24 @@ func (c *Coordinator) RetainClaimAuthority(ctx context.Context, claimUID types.U
 	})
 }
 
+// VerifyAllocationAuthority proves that the exact claim lifetime is still
+// unbound before an external quota owner is allowed to create a hold. A
+// released custody record is terminal and must never be reopened by a racing
+// allocation.
+func (c *Coordinator) VerifyAllocationAuthority(ctx context.Context, claimUID types.UID, consumer, provider ProjectIdentity, authority AuthorityRef) error {
+	if claimUID == "" || !consumer.Valid() || !provider.Valid() || !authority.Valid() {
+		return errors.New("exact project and authority lifetimes are required")
+	}
+	record, _, err := c.getCustodyScoped(ctx, ProjectClaimScope(consumer), claimUID)
+	if err != nil {
+		return err
+	}
+	if record.State != CustodyUnbound || record.ExternalHold.Valid() || record.ConsumerProject != consumer || record.ProviderProject != provider || record.Authority != authority {
+		return ErrRecordInvalid
+	}
+	return nil
+}
+
 // RetainAllocationAuthority attaches cross-project authority and an exact
 // external hold to unbound custody before allocation. It is idempotent for the
 // same authority and rejects recovery with a substituted project or hold lifetime.
@@ -857,8 +875,16 @@ func (c *Coordinator) reconcileNetwork(ctx context.Context, consumer ProjectIden
 			if current.ClaimUID != claimUID || current.State != AssetCommitted || current.Network == nil || current.Network.Plan.RequestDigest != asset.Network.Plan.RequestDigest {
 				return ErrRecordInvalid
 			}
-			current.Network.Observation = observation
-			current.Network.Lifecycle = append([]fleetnetwork.InterfaceLifecycleState(nil), observation.Lifecycle...)
+			// An unsuccessful refresh is not evidence that the last verified
+			// allocation disappeared. Preserve a Programmed observation (and its
+			// addresses) while retaining any complete lifecycle progress needed
+			// for an exact retry.
+			if ensureErr == nil || !current.Network.Observation.Programmed(current.Network.Plan) {
+				current.Network.Observation = observation
+			}
+			if len(observation.Lifecycle) != 0 {
+				current.Network.Lifecycle = append([]fleetnetwork.InterfaceLifecycleState(nil), observation.Lifecycle...)
+			}
 			if err := validateNetworkRecord(current.Network); err != nil {
 				return err
 			}
@@ -916,6 +942,12 @@ func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID ty
 	}
 	if err != nil {
 		return ReleaseResult{}, fmt.Errorf("%w: claim custody is missing or invalid: %v", ErrRecordInvalid, err)
+	}
+	// Released custody is the terminal authority for this claim lifetime. The
+	// asset record may already belong to a later epoch and another claim by the
+	// time a conflicted finalizer update retries release.
+	if custody.State == CustodyReleased {
+		return ReleaseResult{State: AssetReleased, SafeToRemoveFinalizer: true}, nil
 	}
 	records, err := c.recordsForClaimScoped(ctx, claimUID, custody.ConsumerProject)
 	if err != nil {
@@ -2070,6 +2102,12 @@ func matches(profile fleetv1.MachineProfileSpec, hardware fleetv1.Hardware) bool
 			return false
 		}
 		count := requiredCount(group.Count)
+		// A disk group always requires at least one distinct device when no
+		// explicit minimum or exact count is supplied. Fail closed on malformed
+		// negative counts and on groups with too few candidates before slicing.
+		if count < 0 || int64(len(candidates)) < count {
+			return false
+		}
 		for _, index := range candidates[:count] {
 			used[index] = true
 		}
