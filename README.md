@@ -7,10 +7,13 @@ explicit ownership and lifecycle boundaries.
 
 This repository contains the detailed service proposal, design context,
 implementation roadmap, and the first alpha public API encoding for the machine
-lifecycle. The Go types, CRDs, synthetic persistent provider simulator, and a
-standalone same-cluster allocation/installation lifecycle library, and an unwired
-NSO network lifecycle adapter are implemented. There is no running controller
-manager, caller-preserving Milo network authorizer, real provider integration,
+lifecycle. The Go types, CRDs, synthetic persistent provider simulator,
+standalone same-cluster allocation/installation lifecycle library, unwired NSO
+network lifecycle adapter, unwired Milo tenancy/quota authority contracts, and
+an event-only controller-manager wiring scaffold are implemented. The scaffold
+has no production caller-preserving authorizer, admission fence, protected quota
+custodian, or replayable Milo event adapters, so its binary remains unready and
+performs no lifecycle or provider effects. There is no real provider integration
 or production deployment manifest yet.
 
 ## Scope

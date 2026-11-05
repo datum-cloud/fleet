@@ -1,9 +1,58 @@
 # Fleet implementation status
 
 Status: public API foundation, standalone synthetic provider simulator,
-same-cluster allocation/installation lifecycle library, and an unwired NSO
-network lifecycle adapter implemented. A running controller manager,
-caller-preserving Milo authorizer, and real providers are not implemented.
+same-cluster allocation/installation lifecycle library, unwired NSO network
+lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
+event-only manager wiring scaffold implemented. Production caller-preserving
+admission, replayable Milo event adapters, and real providers are not implemented.
+
+## Event-only manager scaffold
+
+`internal/manager` defines project-lifetime work keys, exact reverse indexes,
+semantic predicates, dependency event mappers, thin claim/installation/projector
+reconciler surfaces, a replayable external-event contract, and a one-shot
+freshness deadline scheduler. Queue keys include the Milo authority ID, root
+Project UID, namespace, name, and object UID. Equal names or UIDs in separate
+project lifetimes cannot share work.
+
+The controller-runtime cache uses an explicitly non-nil zero `SyncPeriod`, both
+globally and for its private-Secret cache. Dependency mappers use exact field
+indexes; private indexes consume only typed metadata exposed after the lifecycle
+or Milo record owner validates the complete record and deterministic Secret
+identity. Unknown or nested JSON lookalike fields have no routing meaning. The
+mappers do not perform unqualified application Lists. Informer initial Add
+events route retained private records after restart, including when the consumer
+object is gone. Public status-only updates do not feed the lifecycle coordinator.
+Freshness expiry uses a replaceable one-shot deadline, not a periodic resync.
+Dependency events enter a typed route workqueue before reverse-index lookup, so
+a cache read or List failure is retried as the same source event instead of being
+mistaken for an empty target set. Every direct and routed handler also verifies
+the configured Project lifetime through an injected trusted verifier.
+
+The setup watches the implemented Fleet resources, private records, NSO Network,
+NetworkInterfaceClaim and NetworkInterface resources, Milo quota claims, and the
+reviewed ServiceEntitlement shape. External IAM, project-lifecycle, catalog, and
+executor sources must provide durable cursor/replay or materialize watched state;
+a lossy channel is not sufficient. Business pending states wait for their next
+dependency event and do not return a timed requeue.
+
+External replay persists the entire returned batch before committing the
+source-provided next checkpoint; event sequence identities are never treated as
+cursors. Empty batches may still advance a source checkpoint. Watched deliveries
+likewise carry an explicit post-event checkpoint. A crash after any persistence
+but before the batch commit replays the same idempotent inbox writes. Pending
+inbox work remains replayable until a consumer durably processes it and
+acknowledges its receipt. This increment implements and tests those runner and
+drain contracts; the production durable inbox, consumer, and live stream adapters
+remain integration-owner responsibilities.
+
+`cmd/fleet-manager` validates an exact project lifetime, starts the event graph,
+and reports the integration readiness check as failed. Its handlers deliberately
+perform no lifecycle or provider effects until trusted create-time
+caller/finalizer admission and live, replayable Milo adapters are supplied. A
+watch controller cannot recover the original `user.Info` or atomically capture
+it after object creation, so this increment does not fabricate that authority
+with annotations or controller credentials.
 
 ## Standalone lifecycle library
 
@@ -29,10 +78,24 @@ duplicate, or cross-lifetime deterministic records fail closed.
 
 Installation admission retains exact inputs and a private predecessor before the
 provider effect, including the initiating principal and installation decision plus
-the image catalog authority, revision, and image decision. Image references must
+the image catalog authority, revision, and image decision. The operation also
+retains the installation and claim namespace, name, and UID, so an informer
+initial Add can route unfinished work after restart even when the public
+Installation has been deleted. This is installation-record schema v2. A v1
+operation is upgraded atomically only when the exact public Installation and
+claim request is still available to supply and verify the names omitted by v1;
+otherwise it is quarantined from event routing and effects rather than guessed
+or treated as ready. Image references must
 resolve to canonical lowercase SHA-256 digests. Stable operation and result
-identities make response-loss recovery an operation lookup rather than a second
-effect. Public claim status is not used as predecessor authority.
+identities include the authority/project claim scope, so equal claim UIDs from
+independent project APIs cannot share an operation record. Installation custody
+and asset lookup use that same scope; standalone requests derive an explicit
+local scope from the Namespace UID. Response-loss recovery is therefore an exact
+operation lookup rather than a second effect. Public claim status is not used as
+predecessor authority. Before image resolution, operation creation, or a provider
+effect, installation also requires Bound custody whose asset, claim identity,
+scope, consumer/provider Projects, authority record, and external hold exactly
+match the selected retained asset.
 
 `internal/executor` is the typed bearer-authenticated client for the simulator's
 runtime surface. Transport failures, unavailable responses, malformed terminal
@@ -99,6 +162,82 @@ This package has no manager, watches, Milo integration, or deployment wiring.
 Production wiring must supply a location-scoped client, caller-preserving
 authorizer, and durable object guard; otherwise networked allocations fail
 closed before selection.
+
+## Milo authority contracts
+
+`internal/milo` composes the lifecycle library with internal Milo project,
+source-use, entitlement, quota, admission-fence, and release-custody contracts.
+It is a library and test-fake integration only; it does not register a manager,
+watches, webhooks, deployment, or acceptance environment.
+
+Project identity retains the configured Milo authority ID, route name, and root
+Project UID. The authority ID and root UID identify the lifetime; the route name
+only selects a control plane. Preparation verifies both consumer and provider
+lifetimes, then retains consumer Namespace UID, claim UID, local and canonical
+class/profile UIDs, canonical class revision and content digest, immutable
+profile requirements, publisher revision, initiating principal UID, and the
+caller-preserving source decision in a private service-controlled Secret. The
+lifecycle custody record links that protected authority record before later
+work. Custody names and claim lookups include the authority ID, consumer Project
+UID, and claim UID; standalone use has an explicit local scope keyed by the
+Namespace UID. Equal claim UIDs from independent project API servers therefore
+cannot occupy the same private record. Provider asset identity includes the Milo
+authority and provider Project UID, preventing reuse across project lifetimes.
+
+The adapter checks the exact retained claim, class, profile, location authority
+(name, UID, and revision), revision, and content before capacity, quota,
+fencing, or provider work. The source-use decision and admission commit bind
+that complete class/profile/location combination. Current Machine inventory
+does not carry separately authoritative placement evidence, so proving that a
+selected Machine is physically in the retained location remains an upstream API
+and provider-authority gap. The adapter accepts the
+reviewed Milo v0.32.5 ServiceEntitlement evidence shape: Active phase plus a
+current Ready condition on the exact entitlement UID. That API does not publish
+the proposal's separate suspension evidence; ordering suspension against binding
+remains an upstream admission-fence requirement rather than an invented local
+condition.
+
+Deleting claims and claims missing Fleet's protection finalizer are rejected
+before quota acquire, admission fencing, or any provider effect.
+
+Quota preparation durably records a deterministic intent before creating or
+recovering one exact Milo ResourceClaim for
+`fleet.datumapis.com/machines`. Grant evidence requires the exact object UID,
+request, consumer and resource references, and current status
+`observedGeneration`. ResourceClaim deletion or `NotFound` is never
+quota-settlement proof. Allocation requires an injected protected custodian
+before requesting quota. Acquire, intent recovery/no-hold closure, and settlement
+all pass through that custodian under the exact Project, authority record, and
+intent lifetime. A no-hold receipt closes that intent against a later acquire;
+the adapter never calls the ResourceClaim manager directly. A full
+admission-commit digest binds the retained
+source decision, exact entitlement lifetime, and exact quota hold UID,
+generation, and evidence to the fence receipt. Sequential checks are not
+presented as ordering concurrent invalidation against binding.
+
+Cleanup advances assets only to `CleanupVerified` while an external hold exists.
+Fleet persists an exact custodian settlement receipt before releasing lifecycle
+custody, and only then advances the asset to `Released` and permits finalizer
+removal. Any retained hold is first installed into core custody even when a
+crash occurred before that write. Quota recovery and settlement use the exact
+retained consumer Project lifetime through the service-owned custodian rather
+than resolving a possibly deleted or route-name-reused consumer API endpoint.
+Retried allocation and release resume persisted fence, binding, intent, and
+settlement states before considering new work. Persisted fence receipts are
+revalidated against the complete retained commit on every decode. Unknown
+create, release, or project outcomes retain custody and remain unknown.
+
+The tests verify source and lifetime substitution rejection before effects,
+concurrent authority-record creation, both admission-fence orderings, stale or
+corrupt persisted fence receipt rejection, lost quota-create recovery, a paused
+acquire racing no-hold closure, hold-write crash recovery, pending-hold deletion,
+binding recovery after a lost response, retry after a crash between core hold
+clear and authority reset, cross-project claim-UID collisions,
+cleanup-before-quota ordering, settlement-receipt replay, deleted or
+route-name-reused consumer-project cleanup, malformed authority state rejection,
+and delayed allocation or settlement racing completed release. These are
+contract tests with fakes, not evidence of
+a working Milo production integration.
 
 ## Persistent provider simulator
 
@@ -168,12 +307,25 @@ Remove the synthetic token and state files when the local run is complete.
 
 ## Explicit gaps
 
-- The lifecycle package is not wired to a manager, informer watches, status
-  projection, or finalizers yet.
+- The event manager exposes claim, installation, and sole-writer projector
+  surfaces, but production lifecycle handlers and public status writes remain
+  unwired. Trusted create-time caller capture and protected finalizer admission
+  cannot be reconstructed from informer events.
+- Live Milo project/IAM/catalog/quota event adapters and asynchronous executor
+  completion sources are not implemented. They must support durable replay;
+  polling is intentionally not a fallback.
 - Cross-project class sources and bootstrap secret retention are rejected rather
-  than partially executed. The network adapter is implemented but deliberately
+  than partially executed by the standalone coordinator. The Milo adapter can
+  resolve a canonical source only when injected with trusted source authority,
+  fence, and custody implementations. The network adapter remains deliberately
   unwired until production location, authorization, and object-guard owners are
   available.
+- Milo v0.32.5 supplies ResourceClaim evidence but no service-owned quota custody
+  anchor or explicit release acknowledgment. It also does not supply Fleet's
+  caller-preserving source/provenance receipt, atomic invalidation-versus-bind
+  fence, consumer-project deletion recovery, or provider-project purge guard.
+  Production cross-project allocation therefore fails closed; only test fakes
+  implement these interfaces in this increment.
 - `LocalDigestImageResolver` is test-only. Production image authority,
   namespace authorization, catalog lifetime identity, and digest resolution are
   not implemented.

@@ -34,6 +34,15 @@ func (failingResolver) ResolveImage(context.Context, ImageRequest) (ResolvedImag
 	return ResolvedImage{}, errors.New("resolver unavailable")
 }
 
+type countingResolver struct {
+	calls int
+}
+
+func (r *countingResolver) ResolveImage(ctx context.Context, request ImageRequest) (ResolvedImage, error) {
+	r.calls++
+	return (LocalDigestImageResolver{}).ResolveImage(ctx, request)
+}
+
 type fakeNetworkLifecycle struct {
 	preflights     int
 	ensures        int
@@ -326,7 +335,7 @@ func TestReleaseRecoversPreparationBeforeCustodyAdvanceWithoutCleanup(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.coordinator.selectCustody(ctx, request.Claim, proposal); err != nil {
+	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
 	if _, won, err := f.coordinator.prepareAsset(ctx, request, &request.Machines[0]); err != nil || !won {
@@ -349,7 +358,7 @@ func TestReleaseBetweenSelectionAndCreateTombstonesProposalAgainstStaleAllocator
 	if err != nil || !reusable {
 		t.Fatalf("proposal=%#v reusable=%v err=%v", proposal, reusable, err)
 	}
-	if err := f.coordinator.selectCustody(ctx, request.Claim, proposal); err != nil {
+	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
 	result, err := f.coordinator.Release(ctx, request.Claim.UID)
@@ -376,7 +385,7 @@ func TestPreparingRetryRevalidatesInputsAndDuplicateRecordsBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.coordinator.selectCustody(ctx, request.Claim, proposal); err != nil {
+	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
 	prepared, won, err := f.coordinator.prepareAsset(ctx, request, &request.Machines[0])
@@ -424,6 +433,14 @@ func TestInstallUsesPrivatePredecessorAndRecoversUnknownOutcome(t *testing.T) {
 	if err != nil || result.Revision == "" {
 		t.Fatalf("Install = %#v, %v", result, err)
 	}
+	if result.Record.InstallationNamespace != installation.Namespace || result.Record.InstallationName != installation.Name || result.Record.InstallationUID != installation.UID || result.Record.ClaimNamespace != request.Claim.Namespace || result.Record.ClaimName != request.Claim.Name || result.Record.ClaimUID != request.Claim.UID {
+		t.Fatalf("operation omitted recovery routing identity: %#v", result.Record)
+	}
+	invalid := result.Record
+	invalid.InstallationName = ""
+	if !errors.Is(validateInstallationRecord(&invalid), ErrRecordInvalid) {
+		t.Fatal("operation without retained installation name validated")
+	}
 	if len(f.executor.requests) != 1 || f.executor.requests[0].AssetID != asset.AssetID {
 		t.Fatalf("requests = %#v", f.executor.requests)
 	}
@@ -436,6 +453,87 @@ func TestInstallUsesPrivatePredecessorAndRecoversUnknownOutcome(t *testing.T) {
 	changed.DecisionID = "different-install-decision"
 	if _, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: "namespace-uid", Admission: changed}); !errors.Is(err, ErrPredecessorConflict) {
 		t.Fatalf("changed admission error = %v", err)
+	}
+}
+
+func TestInstallReplayRejectsRetainedRoutingIdentitySubstitution(t *testing.T) {
+	ctx := context.Background()
+	for name, mutate := range map[string]func(*InstallationRecord){
+		"installation namespace": func(record *InstallationRecord) {
+			record.InstallationNamespace, record.ClaimNamespace = "other", "other"
+		},
+		"installation name": func(record *InstallationRecord) { record.InstallationName = "other" },
+		"claim namespace": func(record *InstallationRecord) {
+			record.ClaimNamespace, record.InstallationNamespace = "other", "other"
+		},
+		"claim name": func(record *InstallationRecord) { record.ClaimName = "other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			request := f.request("claim")
+			if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+				t.Fatal(err)
+			}
+			asset, err := f.coordinator.Allocate(ctx, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+			installRequest := InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}
+			image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
+			scope := LocalClaimScope(request.NamespaceUID)
+			operationName := operationRecordName(scope, request.Claim.UID, "None")
+			record, secret, err := f.coordinator.getOrCreateOperation(ctx, operationName, installRequest, asset, "None", image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(record)
+			if err := encodeRecord(secret, record, "installation"); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.coordinator.client.Update(ctx, secret); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.coordinator.Install(ctx, installRequest); !errors.Is(err, ErrPredecessorConflict) {
+				t.Fatalf("error=%v", err)
+			}
+			if len(f.executor.requests) != 0 {
+				t.Fatalf("substituted routing identity reached executor: %#v", f.executor.requests)
+			}
+		})
+	}
+}
+
+func TestInstallUpgradesAndRecoversLegacyV1Operation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	request := f.request("claim")
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	asset, err := f.coordinator.Allocate(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	installRequest := InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}
+	image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
+	scope := LocalClaimScope(request.NamespaceUID)
+	legacy := &InstallationRecord{SchemaVersion: 1, State: OperationAdmitted, OperationID: "install-legacy", InstallationUID: installation.UID, NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, ClaimScope: scope, AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, Predecessor: "None", ResultRevision: "ir-legacy", Image: image, ImageName: installation.Spec.ImageRef.Name, Admission: installAdmission()}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "private", Name: operationRecordName(scope, request.Claim.UID, "None")}}
+	if err := encodeRecord(secret, legacy, "installation"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.coordinator.client.Create(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.coordinator.Install(ctx, installRequest)
+	if err != nil || result.Revision != "ir-legacy" || len(f.executor.requests) != 1 {
+		t.Fatalf("result=%#v err=%v requests=%#v", result, err, f.executor.requests)
+	}
+	upgraded, _, err := f.coordinator.getOperation(ctx, secret.Name)
+	if err != nil || upgraded.SchemaVersion != installationRecordSchemaVersion || upgraded.InstallationNamespace != installation.Namespace || upgraded.InstallationName != installation.Name || upgraded.ClaimNamespace != request.Claim.Namespace || upgraded.ClaimName != request.Claim.Name {
+		t.Fatalf("upgraded=%#v err=%v", upgraded, err)
 	}
 }
 
@@ -452,7 +550,7 @@ func TestReleaseRecoversRetainedActiveInstallationBeforeCleanup(t *testing.T) {
 	}
 	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
-	op, _, err := f.coordinator.getOrCreateOperation(ctx, operationRecordName(request.Claim.UID, "None"), InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}, asset, "None", image)
+	op, _, err := f.coordinator.getOrCreateOperation(ctx, operationRecordName(LocalClaimScope(request.NamespaceUID), request.Claim.UID, "None"), InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}, asset, "None", image)
 	if err != nil {
 		t.Fatal(err)
 	}
