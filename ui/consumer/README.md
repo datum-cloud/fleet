@@ -10,8 +10,9 @@ is read-only and has no deployment manifests yet.
 
 Consumers see claims, never Machines: allocated hardware comes from
 `MachineClaim.status`, following the
-[machine lifecycle proposal](https://github.com/datum-cloud/fleet/blob/docs/first-machine-lifecycle-milestone/docs/enhancements/machine-lifecycle/README.md).
-The types in `src/types.ts` are a hand-written subset of that provisional API.
+[machine lifecycle proposal](https://github.com/datum-cloud/fleet/blob/main/docs/enhancements/machine-lifecycle/README.md).
+The wire types are in `../shared/fleet-api.ts`, transcribed by hand from
+Fleet's Go API types and CRDs; `src/types.ts` maps them to the list's view.
 
 ## Commands
 
@@ -27,10 +28,12 @@ The types in `src/types.ts` are a hand-written subset of that provisional API.
 
 ## Fixture mode
 
-The Fleet API is not served anywhere yet. Setting `VITE_FLEET_FIXTURES=true`
-at build time makes `useMachineClaims` return the synthetic claims in
-`src/lib/fixtures.ts` instead of calling the project control plane. The flag is
-baked into the build, so rebuild without it to use the real API.
+The Fleet CRDs are on staging, but reading them needs a Fleet role. Setting
+`VITE_FLEET_FIXTURES=true` at build time makes `useMachineClaims` return the
+synthetic claims in `src/lib/fixtures.ts` instead of calling the project
+control plane. They follow Fleet's standalone fixtures and the statuses its
+standalone runner writes. The flag is baked into the build, so rebuild without
+it to use the real API.
 
 ## Run inside cloud-portal
 

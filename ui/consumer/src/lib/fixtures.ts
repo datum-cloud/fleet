@@ -1,62 +1,74 @@
+import { MACHINE_CLAIM_FINALIZER } from '../../../shared/fleet-api';
 import type { RawMachineClaim } from '../types';
 
-// Synthetic claims shaped after the design doc's examples, used while the
-// Fleet API is not yet served (VITE_FLEET_FIXTURES=true).
+// Synthetic claims used while the Fleet API cannot be read
+// (VITE_FLEET_FIXTURES=true). Class, profile and location names come from
+// config/standalone/fixtures.yaml, and each status is what Fleet's standalone
+// runner writes (internal/standalone/runner.go): a powered-off handoff, a claim
+// waiting for capacity, and a deleted claim still held by the release
+// finalizer.
+
+const SPEC = {
+  machineClassRef: { name: 'standard-metal' },
+  machineProfileRef: { name: 'general-purpose-24c-128g' },
+  locationRef: { name: 'us-central-1' },
+  powerState: 'Off',
+} as const;
+
+const PLACEMENT = { locationRef: { name: 'us-central-1' } };
+
+const BOUND_STATUS: RawMachineClaim['status'] = {
+  phase: 'Ready',
+  placement: PLACEMENT,
+  acceptedProfileRef: { name: 'general-purpose-24c-128g' },
+  allocatedHardware: {
+    observedAt: '2026-11-05T12:00:00Z',
+    hardware: {
+      cpu: { architecture: 'amd64', sockets: 2, cores: 24, threads: 48 },
+      memory: { capacity: '128Gi' },
+    },
+  },
+  power: { state: 'Off' },
+  conditions: [
+    { type: 'Accepted', status: 'True', reason: 'SyntheticFixtureAccepted' },
+    { type: 'Bound', status: 'True', reason: 'ExclusiveBinding' },
+    { type: 'NetworkReady', status: 'True', reason: 'NoAttachmentsRequired' },
+    { type: 'Ready', status: 'True', reason: 'PoweredOffHandoff' },
+  ],
+};
+
 export const FIXTURE_CLAIMS: RawMachineClaim[] = [
   {
-    metadata: { name: 'example', namespace: 'default' },
-    spec: {
-      machineClassRef: { name: 'standard' },
-      machineProfileRef: { name: 'accelerated-16c-64g' },
-      locationRef: { name: 'lab' },
-      powerState: 'On',
-    },
+    metadata: { name: 'example', namespace: 'default', finalizers: [MACHINE_CLAIM_FINALIZER] },
+    spec: SPEC,
+    status: BOUND_STATUS,
+  },
+  {
+    metadata: { name: 'build-runner', namespace: 'default', finalizers: [MACHINE_CLAIM_FINALIZER] },
+    spec: SPEC,
     status: {
-      allocatedHardware: {
-        hardware: { cpu: { architecture: 'amd64', cores: 24 }, memory: { capacity: '128Gi' } },
-      },
-      power: { state: 'On' },
+      phase: 'Pending',
+      placement: PLACEMENT,
       conditions: [
-        { type: 'Accepted', status: 'True' },
-        { type: 'Bound', status: 'True' },
-        { type: 'Ready', status: 'True' },
-        { type: 'Releasing', status: 'False' },
+        { type: 'Accepted', status: 'True', reason: 'SyntheticFixtureAccepted' },
+        {
+          type: 'Bound',
+          status: 'False',
+          reason: 'InsufficientCapacity',
+          message: 'The only synthetic machine is allocated to another consumer.',
+        },
+        { type: 'Ready', status: 'False', reason: 'InsufficientCapacity' },
       ],
     },
   },
   {
-    metadata: { name: 'build-runner', namespace: 'default' },
-    spec: {
-      machineClassRef: { name: 'standard' },
-      machineProfileRef: { name: 'accelerated-16c-64g' },
-      locationRef: { name: 'lab' },
+    metadata: {
+      name: 'old-worker',
+      namespace: 'default',
+      deletionTimestamp: '2026-11-05T12:30:00Z',
+      finalizers: [MACHINE_CLAIM_FINALIZER],
     },
-    status: {
-      conditions: [
-        { type: 'Accepted', status: 'True' },
-        { type: 'Bound', status: 'False', reason: 'NoCapacity' },
-      ],
-    },
-  },
-  {
-    metadata: { name: 'old-worker', namespace: 'default' },
-    spec: {
-      machineClassRef: { name: 'standard' },
-      machineProfileRef: { name: 'accelerated-16c-64g' },
-      locationRef: { name: 'lab' },
-      powerState: 'Off',
-    },
-    status: {
-      allocatedHardware: {
-        hardware: { cpu: { architecture: 'amd64', cores: 24 }, memory: { capacity: '128Gi' } },
-      },
-      power: { state: 'Off' },
-      conditions: [
-        { type: 'Accepted', status: 'True' },
-        { type: 'Bound', status: 'True' },
-        { type: 'Ready', status: 'False' },
-        { type: 'Releasing', status: 'True' },
-      ],
-    },
+    spec: SPEC,
+    status: BOUND_STATUS,
   },
 ];

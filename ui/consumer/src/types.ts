@@ -1,46 +1,11 @@
-// Hand-written subset of the proposed fleet.datumapis.com/v1alpha1 MachineClaim
-// (docs/enhancements/machine-lifecycle/README.md). Only the fields the claim
-// list reads; the API is provisional and has no generated types yet.
+// View model for the claim list. The wire shape is the shared
+// fleet.datumapis.com/v1alpha1 MachineClaim in ui/shared/fleet-api.ts.
 
-export interface Condition {
-  type: string;
-  status: 'True' | 'False' | 'Unknown';
-  reason?: string;
-  message?: string;
-}
+import { findCondition, isConditionTrue, type Condition } from '../../shared/conditions';
+import type { List, MachineClaim as RawMachineClaim } from '../../shared/fleet-api';
 
-export interface LocalRef {
-  name: string;
-}
-
-export interface RawMachineClaim {
-  metadata: {
-    name: string;
-    namespace?: string;
-    uid?: string;
-    creationTimestamp?: string;
-  };
-  spec: {
-    machineClassRef: LocalRef;
-    machineProfileRef: LocalRef;
-    locationRef: LocalRef;
-    powerState?: 'On' | 'Off';
-  };
-  status?: {
-    allocatedHardware?: {
-      hardware?: {
-        cpu?: { architecture?: string; cores?: number };
-        memory?: { capacity?: string };
-      };
-    };
-    power?: { state?: 'On' | 'Off' };
-    conditions?: Condition[];
-  };
-}
-
-export interface RawMachineClaimList {
-  items?: RawMachineClaim[];
-}
+export type { Condition, RawMachineClaim };
+export type RawMachineClaimList = List<RawMachineClaim>;
 
 export type ClaimPhase = 'Pending' | 'Bound' | 'Ready' | 'Releasing' | 'Rejected';
 
@@ -54,29 +19,28 @@ export interface MachineClaim {
   /** Requested power state (spec). */
   powerIntent: 'On' | 'Off';
   /** Observed power state (status); absent until reported. */
-  powerObserved?: 'On' | 'Off';
+  powerObserved?: 'On' | 'Off' | 'Unknown';
   cpu?: string;
   memory?: string;
 }
 
-function condition(conditions: Condition[], type: string): Condition | undefined {
-  return conditions.find((c) => c.type === type);
-}
-
-// An absent condition means Unknown (status contract), so only an explicit
-// True moves a claim past Pending.
-export function claimPhase(conditions: Condition[]): { phase: ClaimPhase; reason?: string } {
-  const isTrue = (type: string) => condition(conditions, type)?.status === 'True';
-  if (isTrue('Releasing')) return { phase: 'Releasing' };
-  const accepted = condition(conditions, 'Accepted');
+// Only an explicit True moves a claim past Pending. A deleted claim stays
+// listed, held by Fleet's finalizer, until release and cleanup complete.
+export function claimPhase(
+  conditions: Condition[],
+  deleting = false
+): { phase: ClaimPhase; reason?: string } {
+  const isTrue = (type: string) => isConditionTrue(conditions, type);
+  if (deleting) return { phase: 'Releasing' };
+  const accepted = findCondition(conditions, 'Accepted');
   if (accepted?.status === 'False') return { phase: 'Rejected', reason: accepted.reason };
   if (isTrue('Ready')) return { phase: 'Ready' };
-  if (isTrue('Bound')) return { phase: 'Bound', reason: condition(conditions, 'Ready')?.reason };
-  return { phase: 'Pending', reason: condition(conditions, 'Bound')?.reason };
+  if (isTrue('Bound')) return { phase: 'Bound', reason: findCondition(conditions, 'Ready')?.reason };
+  return { phase: 'Pending', reason: findCondition(conditions, 'Bound')?.reason };
 }
 
 export function toMachineClaim(raw: RawMachineClaim): MachineClaim {
-  const { phase, reason } = claimPhase(raw.status?.conditions ?? []);
+  const { phase, reason } = claimPhase(raw.status?.conditions ?? [], !!raw.metadata.deletionTimestamp);
   const hw = raw.status?.allocatedHardware?.hardware;
   return {
     name: raw.metadata.name,

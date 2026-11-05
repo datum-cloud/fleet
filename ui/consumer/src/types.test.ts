@@ -11,9 +11,9 @@ describe('claimPhase', () => {
     expect(
       claimPhase([
         { type: 'Accepted', status: 'True' },
-        { type: 'Bound', status: 'False', reason: 'NoCapacity' },
+        { type: 'Bound', status: 'False', reason: 'InsufficientCapacity' },
       ])
-    ).toEqual({ phase: 'Pending', reason: 'NoCapacity' });
+    ).toEqual({ phase: 'Pending', reason: 'InsufficientCapacity' });
   });
 
   it('reports Bound until Ready is True', () => {
@@ -31,13 +31,8 @@ describe('claimPhase', () => {
     ).toEqual({ phase: 'Rejected', reason: 'AuthorizationUnavailable' });
   });
 
-  it('lets Releasing win over Ready', () => {
-    expect(
-      claimPhase([
-        { type: 'Ready', status: 'True' },
-        { type: 'Releasing', status: 'True' },
-      ]).phase
-    ).toBe('Releasing');
+  it('lets a pending deletion win over Ready', () => {
+    expect(claimPhase([{ type: 'Ready', status: 'True' }], true).phase).toBe('Releasing');
   });
 });
 
@@ -51,7 +46,8 @@ describe('toMachineClaim', () => {
   });
 
   it('defaults power intent to Off and leaves unreported hardware absent', () => {
-    const claim = toMachineClaim(FIXTURE_CLAIMS[1]);
+    const { powerState: _, ...spec } = FIXTURE_CLAIMS[1].spec;
+    const claim = toMachineClaim({ ...FIXTURE_CLAIMS[1], spec });
     expect(claim.powerIntent).toBe('Off');
     expect(claim.powerObserved).toBeUndefined();
     expect(claim.cpu).toBeUndefined();
