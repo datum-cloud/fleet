@@ -175,11 +175,7 @@ func (a *Adapter) Ensure(ctx context.Context, request fleetnetwork.EnsureRequest
 		if err := a.client.Get(ctx, client.ObjectKey{Namespace: planned.NetworkNamespace, Name: planned.NetworkName}, &network); err != nil {
 			return observation, err
 		}
-		if network.UID != planned.NetworkUID || network.Generation != planned.NetworkGeneration || network.DeletionTimestamp != nil {
-			return observation, fleetnetwork.ErrEvidenceStale
-		}
-		ready := apiMeta.FindStatusCondition(network.Status.Conditions, networkingv1.NetworkReady)
-		if ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != network.Generation {
+		if network.UID != planned.NetworkUID || network.DeletionTimestamp != nil {
 			return observation, fleetnetwork.ErrEvidenceStale
 		}
 		if err := a.verifier.Verify(ctx, planned); err != nil {
@@ -190,6 +186,14 @@ func (a *Adapter) Ensure(ctx context.Context, request fleetnetwork.EnsureRequest
 		var actual networkingv1.NetworkInterfaceClaim
 		err := a.client.Get(ctx, client.ObjectKeyFromObject(desired), &actual)
 		if apierrors.IsNotFound(err) {
+			// A mutable Network must still match the retained preflight evidence
+			// immediately before Fleet creates a claim. Once the exact guarded
+			// claim exists, that claim is the stable allocation identity; later
+			// Network spec generations must not strand the allocation.
+			ready := apiMeta.FindStatusCondition(network.Status.Conditions, networkingv1.NetworkReady)
+			if network.Generation != planned.NetworkGeneration || ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != network.Generation {
+				return observation, fleetnetwork.ErrEvidenceStale
+			}
 			createdUID, guardErr := a.guard.CreateOrRecover(ctx, guardRequest, state.GuardToken, func() (types.UID, error) {
 				if createErr := a.client.Create(ctx, desired); createErr != nil {
 					var recovered networkingv1.NetworkInterfaceClaim

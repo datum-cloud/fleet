@@ -404,6 +404,57 @@ func TestEnsureRevalidatesNetworkGenerationReadyAndExternalAuthority(t *testing.
 	}
 }
 
+func TestEnsureKeepsExistingProgrammedClaimAcrossNetworkGenerationChange(t *testing.T) {
+	ctx := context.Background()
+	adapter, kube, request := newAdapterFixture(t)
+	plan, err := adapter.Preflight(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ensure := fleetnetwork.EnsureRequest{ClaimUID: request.ClaimUID, BindingID: "binding-1", Plan: plan}
+	admitted, err := adapter.Ensure(ctx, ensure)
+	if !errors.Is(err, fleetnetwork.ErrPending) {
+		t.Fatal(err)
+	}
+	ensure.Previous = admitted
+	created, err := adapter.Ensure(ctx, ensure)
+	if !errors.Is(err, fleetnetwork.ErrPending) {
+		t.Fatal(err)
+	}
+
+	var claim networkingv1.NetworkInterfaceClaim
+	key := client.ObjectKey{Namespace: "project", Name: plan.Interfaces[0].ClaimName}
+	if err := kube.Get(ctx, key, &claim); err != nil {
+		t.Fatal(err)
+	}
+	claim.Status.Addresses = []networkingv1.NetworkInterfaceAddress{{Address: "10.20.30.42/24", Family: networkingv1.IPv4Protocol, Primary: true}}
+	for _, conditionType := range []string{networkingv1.NetworkInterfaceClaimAllocated, networkingv1.NetworkInterfaceClaimPrepared, networkingv1.NetworkInterfaceClaimProgrammed} {
+		claim.Status.Conditions = append(claim.Status.Conditions, metav1.Condition{Type: conditionType, Status: metav1.ConditionTrue, ObservedGeneration: claim.Generation})
+	}
+	if err := kube.Status().Update(ctx, &claim); err != nil {
+		t.Fatal(err)
+	}
+	ensure.Previous = created
+	programmed, err := adapter.Ensure(ctx, ensure)
+	if err != nil || !programmed.Programmed(plan) {
+		t.Fatalf("programmed=%#v err=%v", programmed, err)
+	}
+
+	var network networkingv1.Network
+	if err := kube.Get(ctx, client.ObjectKey{Namespace: "project", Name: "management"}, &network); err != nil {
+		t.Fatal(err)
+	}
+	network.Generation++
+	if err := kube.Update(ctx, &network); err != nil {
+		t.Fatal(err)
+	}
+	ensure.Previous = programmed
+	refreshed, err := adapter.Ensure(ctx, ensure)
+	if err != nil || !refreshed.Programmed(plan) || len(refreshed.Interfaces[0].Addresses) != 1 || refreshed.Interfaces[0].Addresses[0].Address != "10.20.30.42/24" {
+		t.Fatalf("refreshed=%#v err=%v", refreshed, err)
+	}
+}
+
 func TestAdmissionFailuresNeverReturnPartialLifecycleVectors(t *testing.T) {
 	for _, phase := range []string{"reserve", "close"} {
 		t.Run(phase, func(t *testing.T) {

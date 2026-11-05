@@ -770,6 +770,33 @@ func TestNoHoldClosureWinsAgainstPausedAcquire(t *testing.T) {
 	}
 }
 
+func TestAllocationAfterCoreReleaseDoesNotAcquireQuotaAndReleaseSettles(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	prepared, err := f.adapter.PrepareClaim(ctx, f.prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.adapter.Lifecycle.ReleaseScoped(ctx, prepared.ConsumerProject, f.prepare.Claim.UID)
+	if err != nil || !result.SafeToRemoveFinalizer {
+		t.Fatalf("core release = %#v, %v", result, err)
+	}
+	if _, err := f.adapter.Allocate(ctx, prepared, f.allocation); !errors.Is(err, controller.ErrRecordInvalid) {
+		t.Fatalf("allocation after release error = %v", err)
+	}
+	if f.quota.calls != 0 {
+		t.Fatalf("quota acquire effects after core release = %d", f.quota.calls)
+	}
+	result, err = f.adapter.Release(ctx, prepared, f.prepare.Claim.UID)
+	if err != nil || !result.SafeToRemoveFinalizer {
+		t.Fatalf("adapter release = %#v, %v", result, err)
+	}
+	record, err := f.records.Get(ctx, prepared.Authority)
+	if err != nil || record.State != StateReleased {
+		t.Fatalf("record = %#v, %v", record, err)
+	}
+}
+
 func TestAbortedHoldClearIsRetryableAfterCrash(t *testing.T) {
 	ctx := context.Background()
 	f := newAdapterFixture(t)
