@@ -27,7 +27,7 @@ patches:
           imagePullPolicy: IfNotPresent
           command: [/fleet-simulator]
           args:
-            - --listen-address=127.0.0.1:8080
+            - --listen-address=0.0.0.0:8080
             - --runtime-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
             - --state-file=/var/lib/fleet/state.json
           readinessProbe:
