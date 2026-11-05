@@ -174,3 +174,23 @@ export function useCreateMachineClaim(
       queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclaims', projectId] }),
   });
 }
+
+// Releasing deletes the claim. Fleet's finalizer keeps it, listed as
+// Releasing, until the machine is freed; the claim then disappears.
+export async function releaseMachineClaim(projectId: string, name: string): Promise<void> {
+  if (USE_FIXTURES) return fixtureClaims.release(name);
+  await proxyFetch<unknown>(projectId, `${MACHINECLAIMS_PATH}/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function useReleaseMachineClaim(
+  projectId: string | undefined
+): UseMutationResult<void, ApiError, string> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name) => releaseMachineClaim(projectId as string, name),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclaims', projectId] }),
+  });
+}

@@ -3,7 +3,9 @@ import { DetailCard, DetailList } from '../components/detail-card';
 import { usePluginBase } from '../components/machines-page';
 import { ErrorOrRestrictedState, LoadingState } from '../components/states';
 import { StatusBadge, type BadgeType } from '../components/status-badge';
-import { ApiError, useMachineClaim } from '../lib/api';
+import { ConfirmDeleteDialog } from '../components/confirm-delete-dialog';
+import { DangerCard } from '../components/danger-card';
+import { ApiError, useMachineClaim, useReleaseMachineClaim } from '../lib/api';
 import type { ClaimCondition, ClaimDetail as ClaimDetailModel } from '../types';
 import {
   Breadcrumb,
@@ -17,7 +19,9 @@ import { DateTime } from '@datum-cloud/datum-ui/date-time';
 import { EmptyContent } from '@datum-cloud/datum-ui/empty-content';
 import { Icon } from '@datum-cloud/datum-ui/icons';
 import { PageTitle } from '@datum-cloud/datum-ui/page-title';
+import { toast } from '@datum-cloud/datum-ui/toast';
 import { ActivityIcon, CpuIcon, FileTextIcon, HomeIcon, NetworkIcon } from 'lucide-react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 
 function Muted({ children }: { children: React.ReactNode }) {
@@ -100,6 +104,50 @@ function NetworkCard({ claim }: { claim: ClaimDetailModel }) {
         }))}
       />
     </DetailCard>
+  );
+}
+
+// The claim stays, listed as Releasing, until Fleet frees the machine, so the
+// page keeps showing it. Errors go to a toast; the dialog stays open to retry.
+function ReleaseSection({ claim }: { claim: ClaimDetailModel }) {
+  const { projectId } = useParams<{ projectId: string }>();
+  const [open, setOpen] = useState(false);
+  const mutation = useReleaseMachineClaim(projectId);
+
+  const release = async () => {
+    try {
+      await mutation.mutateAsync(claim.name);
+      toast.success(`Releasing machine ${claim.name}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        toast.error("You don't have permission to release machines in this project.", {
+          description: error.message,
+        });
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Release failed.');
+      }
+      throw error;
+    }
+  };
+
+  return (
+    <div data-testid="fleet-plugin-claim-release">
+      <DangerCard
+        title="Release this machine"
+        description="Fleet takes the machine back and cleans it up before anyone else can use it. Anything on its disks is lost, and you can't get the same machine back."
+        deleteText="Release"
+        onDelete={() => setOpen(true)}
+      />
+      <ConfirmDeleteDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={`Release ${claim.name}?`}
+        description="The machine returns to the pool. This can't be undone."
+        confirmLabel="Release"
+        confirmValue={claim.name}
+        onConfirm={release}
+      />
+    </div>
   );
 }
 
@@ -188,6 +236,8 @@ export default function ClaimDetail() {
           <ConditionsCard claim={claim} />
         </div>
       )}
+
+      {claim && !claim.deletingSince && <ReleaseSection claim={claim} />}
     </div>
   );
 }

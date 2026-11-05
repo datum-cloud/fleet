@@ -92,6 +92,18 @@ export const fixtureClaims = {
     claims.push(created);
     return created;
   },
+  // Releasing keeps the claim until Fleet frees the machine and removes the
+  // finalizer; nothing does that in fixture mode, so it stays Releasing.
+  release: (name: string): void => {
+    const index = claims.findIndex((c) => c.metadata.name === name);
+    if (index === -1) throw new ApiError(404, `machineclaims "${name}" not found`);
+    const claim = claims[index];
+    if (claim.metadata.deletionTimestamp) return;
+    claims[index] = {
+      ...claim,
+      metadata: { ...claim.metadata, deletionTimestamp: new Date().toISOString() },
+    };
+  },
 };
 
 // A consumer project's catalog: standard-metal published from datum-cloud
