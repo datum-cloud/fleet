@@ -691,6 +691,12 @@ func (c *Coordinator) Release(ctx context.Context, claimUID types.UID) (ReleaseR
 	if err != nil {
 		return ReleaseResult{}, fmt.Errorf("%w: claim custody is missing or invalid: %v", ErrRecordInvalid, err)
 	}
+	// Released custody is the terminal authority for this claim lifetime. The
+	// asset record may already belong to a later epoch and another claim by the
+	// time a conflicted finalizer update retries release.
+	if custody.State == CustodyReleased {
+		return ReleaseResult{State: AssetReleased, SafeToRemoveFinalizer: true}, nil
+	}
 	records, err := c.recordsForClaim(ctx, claimUID)
 	if err != nil {
 		return ReleaseResult{}, err
@@ -1508,6 +1514,12 @@ func matches(profile fleetv1.MachineProfileSpec, hardware fleetv1.Hardware) bool
 			return false
 		}
 		count := requiredCount(group.Count)
+		// A disk group always requires at least one distinct device when no
+		// explicit minimum or exact count is supplied. Fail closed on malformed
+		// negative counts and on groups with too few candidates before slicing.
+		if count < 0 || int64(len(candidates)) < count {
+			return false
+		}
 		for _, index := range candidates[:count] {
 			used[index] = true
 		}
