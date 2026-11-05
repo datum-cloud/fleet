@@ -7,15 +7,27 @@ API servers and must be reconciled independently.
 | --- | --- | --- |
 | `config/milo` | Milo root control plane | Fleet CRDs, IAM protected resources and roles, service registration, and machine quota registration |
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
+| `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
+
+`config/overlays/synthetic-staging` is the temporary Milo-routed acceptance
+environment. It uses the real private custody, exclusivity, cleanup, and reuse
+implementation, but substitutes synthetic admission and provider evidence. It
+accepts only powered-off, networkless claims in `us-central-1`; its status
+conditions identify that boundary. The colocated provider uses the Pod's
+projected service-account token for loopback authentication, so no provider
+credential is stored in Git. Its operation log is ephemeral and may be rebuilt
+after a Pod restart; private Fleet authority remains durable and exact requests
+are idempotently recovered. This overlay must never be promoted to production.
 
 Render both production roots before publishing the Kustomize bundle:
 
 ```sh
 kustomize build config/milo >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
+kustomize build config/overlays/synthetic-staging >/dev/null
 ```
 
 ## Published artifacts

@@ -5,6 +5,8 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -18,7 +20,9 @@ import (
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
+	"go.datum.net/fleet/internal/executor"
 	eventmanager "go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/staging"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
 	locationsv1alpha1 "go.miloapis.com/locations/api/v1alpha1"
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
@@ -28,11 +32,17 @@ import (
 
 func main() {
 	var authorityID, projectName, privateNamespace, projectKubeconfig, leaderElectionNamespace string
+	var syntheticStaging bool
+	var syntheticProviderURL, syntheticTokenFile, syntheticLocation string
 	flag.StringVar(&authorityID, "authority-id", "", "configured Milo authority identifier")
 	flag.StringVar(&projectName, "project-name", "", "Milo Project name served by this cache")
 	flag.StringVar(&privateNamespace, "private-namespace", "", "service-controlled private record namespace")
 	flag.StringVar(&projectKubeconfig, "project-kubeconfig", "", "root Milo kubeconfig used to reach the configured project route")
 	flag.StringVar(&leaderElectionNamespace, "leader-election-namespace", "", "management-cluster namespace for the leader lease")
+	flag.BoolVar(&syntheticStaging, "synthetic-staging", false, "enable the explicit non-production synthetic allocation integration")
+	flag.StringVar(&syntheticProviderURL, "synthetic-provider-url", "http://127.0.0.1:8080", "synthetic provider runtime URL")
+	flag.StringVar(&syntheticTokenFile, "synthetic-provider-token-file", "", "file containing the synthetic provider bearer token")
+	flag.StringVar(&syntheticLocation, "synthetic-location", "us-central-1", "only location accepted by synthetic staging")
 	zapOptions := zap.Options{Development: false}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -68,14 +78,32 @@ func main() {
 		options.Cache = eventmanager.PrivateCacheOptions(privateNamespace)
 	})
 	must(err)
-	// Production handlers require the trusted admission and live Milo event
-	// adapters that this increment deliberately does not fabricate. The binary
-	// therefore refuses to start effects until those owners supply wiring.
 	blocked := eventmanager.HandlerFunc(func(context.Context, eventmanager.ProjectRequest) eventmanager.Outcome { return eventmanager.Outcome{} })
-	verifier := eventmanager.ProjectVerifierFunc(func(context.Context, controller.ProjectIdentity) error { return eventmanager.ErrEventWiringUnavailable })
-	must(eventmanager.Setup(ctx, mgr, eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier, Handlers: eventmanager.Handlers{Claim: blocked, Installation: blocked, ClaimProjector: blocked, InstallationProjector: blocked}}))
+	verifier := eventmanager.ProjectVerifierFunc(func(ctx context.Context, expected controller.ProjectIdentity) error {
+		current, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, authorityID, projectName)
+		if err != nil || current != expected {
+			return eventmanager.ErrProjectIdentityUnavailable
+		}
+		return nil
+	})
+	handlers := eventmanager.Handlers{Claim: blocked, Installation: blocked, ClaimProjector: blocked, InstallationProjector: blocked}
+	ready := eventmanager.ErrEventWiringUnavailable
+	if syntheticStaging {
+		if syntheticTokenFile == "" {
+			must(eventmanager.ErrEventWiringUnavailable)
+		}
+		token, err := os.ReadFile(syntheticTokenFile)
+		must(err)
+		provider, err := executor.NewHTTPClient(syntheticProviderURL, strings.TrimSpace(string(token)), &http.Client{Timeout: 30 * time.Second})
+		must(err)
+		coordinator, err := controller.NewCoordinator(privateCluster.GetClient(), privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
+		must(err)
+		handlers.Claim = staging.Handler{Public: mgr.GetClient(), Coordinator: coordinator, Project: project, Location: syntheticLocation}
+		ready = nil
+	}
+	must(eventmanager.Setup(ctx, mgr, eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier, Handlers: handlers}))
 	must(mgr.AddHealthzCheck("healthz", healthz.Ping))
-	must(mgr.AddReadyzCheck("integration", func(*http.Request) error { return eventmanager.ErrEventWiringUnavailable }))
+	must(mgr.AddReadyzCheck("integration", func(*http.Request) error { return ready }))
 	must(mgr.Start(ctx))
 }
 

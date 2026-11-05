@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../management-plane
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: fleet-manager
+      namespace: fleet-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-staging
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-provider-url=http://127.0.0.1:8080
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-provider-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: synthetic-provider
+          image: ghcr.io/datum-cloud/fleet:latest
+          imagePullPolicy: IfNotPresent
+          command: [/fleet-simulator]
+          args:
+            - --listen-address=127.0.0.1:8080
+            - --runtime-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+            - --state-file=/var/lib/fleet/state.json
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8080}
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {memory: 64Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: synthetic-provider-state, mountPath: /var/lib/fleet}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: synthetic-provider-state, emptyDir: {}}
