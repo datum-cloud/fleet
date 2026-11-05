@@ -8,6 +8,7 @@ import (
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	fleetnetwork "go.datum.net/fleet/internal/network"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -21,6 +22,8 @@ type Adapter struct {
 	Lifecycle              *controller.Coordinator
 	afterLifecycleAllocate func()
 	afterAbortedHoldClear  func()
+	afterAuthorityCreate   func() error
+	afterCustodyEnsure     func() error
 }
 
 type PrepareRequest struct {
@@ -127,14 +130,155 @@ func (a *Adapter) PrepareClaim(ctx context.Context, request PrepareRequest) (Pre
 	if err != nil {
 		return PreparedClaim{}, err
 	}
+	if a.afterAuthorityCreate != nil {
+		if err := a.afterAuthorityCreate(); err != nil {
+			return PreparedClaim{}, err
+		}
+	}
 	admission := controller.AdmissionAuthority{PrincipalUID: receipt.PrincipalUID, DecisionID: receipt.DecisionID}
+	if err := a.Lifecycle.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, admission, consumer); err != nil {
+		return PreparedClaim{}, err
+	}
+	if a.afterCustodyEnsure != nil {
+		if err := a.afterCustodyEnsure(); err != nil {
+			return PreparedClaim{}, err
+		}
+	}
+	if err := a.Lifecycle.RetainClaimAuthority(ctx, request.Claim.UID, consumer, provider, ref); err != nil {
+		return PreparedClaim{}, err
+	}
+	return PreparedClaim{Authority: ref, ConsumerProject: consumer, ProviderProject: provider, NamespaceUID: request.NamespaceUID, PrincipalUID: receipt.PrincipalUID, DecisionID: receipt.DecisionID, LocalClassName: request.LocalClass.Name, LocalClassUID: request.LocalClass.UID, SourceClassUID: request.SourceClass.UID, LocalProfileName: request.LocalProfile.Name, LocalProfileUID: request.LocalProfile.UID, SourceProfileUID: sourceProfileUID, Location: request.Location}, nil
+}
+
+// PrepareOrRecoverClaim returns the same durable prepared authority after a
+// manager restart or finalizer event. Recovery validates current resolved
+// inputs against the immutable authority record and never re-authorizes with a
+// potentially different caller receipt.
+func (a *Adapter) PrepareOrRecoverClaim(ctx context.Context, request PrepareRequest) (PreparedClaim, error) {
+	if a == nil || a.Records == nil || a.Projects == nil || a.Lifecycle == nil || request.Claim == nil || request.Claim.UID == "" || request.ConsumerRoute == "" {
+		return PreparedClaim{}, ErrAuthorityInvalid
+	}
+	consumer, _, err := a.Projects.Resolve(ctx, request.ConsumerRoute)
+	if err != nil {
+		return PreparedClaim{}, err
+	}
+	if !consumer.Valid() || consumer.RouteName != request.ConsumerRoute || a.Projects.Verify(ctx, consumer) != nil {
+		return PreparedClaim{}, ErrProjectLifetimeMismatch
+	}
+	record, ref, err := a.Records.GetForClaim(ctx, consumer, request.Claim.UID)
+	if apierrors.IsNotFound(err) {
+		hasCustody, custodyErr := a.Lifecycle.HasClaimCustody(ctx, consumer, request.Claim.UID)
+		if custodyErr != nil {
+			return PreparedClaim{}, custodyErr
+		}
+		if hasCustody {
+			return PreparedClaim{}, controller.ErrRecordInvalid
+		}
+		return a.PrepareClaim(ctx, request)
+	}
+	if err != nil {
+		return PreparedClaim{}, err
+	}
+	provider, _, err := a.Projects.Resolve(ctx, request.ProviderRoute)
+	if err != nil || !provider.Valid() || provider.RouteName != request.ProviderRoute || a.Projects.Verify(ctx, provider) != nil {
+		return PreparedClaim{}, ErrProjectLifetimeMismatch
+	}
+	if err := validateRecoveredPrepare(record, request, consumer, provider); err != nil {
+		return PreparedClaim{}, err
+	}
+	admission := controller.AdmissionAuthority{PrincipalUID: record.SourceReceipt.PrincipalUID, DecisionID: record.SourceReceipt.DecisionID}
 	if err := a.Lifecycle.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, admission, consumer); err != nil {
 		return PreparedClaim{}, err
 	}
 	if err := a.Lifecycle.RetainClaimAuthority(ctx, request.Claim.UID, consumer, provider, ref); err != nil {
 		return PreparedClaim{}, err
 	}
-	return PreparedClaim{Authority: ref, ConsumerProject: consumer, ProviderProject: provider, NamespaceUID: request.NamespaceUID, PrincipalUID: receipt.PrincipalUID, DecisionID: receipt.DecisionID, LocalClassName: request.LocalClass.Name, LocalClassUID: request.LocalClass.UID, SourceClassUID: request.SourceClass.UID, LocalProfileName: request.LocalProfile.Name, LocalProfileUID: request.LocalProfile.UID, SourceProfileUID: sourceProfileUID, Location: request.Location}, nil
+	return PreparedClaim{
+		Authority: ref, ConsumerProject: consumer, ProviderProject: provider,
+		NamespaceUID: request.NamespaceUID, PrincipalUID: record.SourceReceipt.PrincipalUID, DecisionID: record.SourceReceipt.DecisionID,
+		LocalClassName: request.LocalClass.Name, LocalClassUID: request.LocalClass.UID, SourceClassUID: request.SourceClass.UID,
+		LocalProfileName: request.LocalProfile.Name, LocalProfileUID: request.LocalProfile.UID, SourceProfileUID: record.SourceRequest.SourceProfileUID,
+		Location: request.Location,
+	}, nil
+}
+
+func validateRecoveredPrepare(record *AuthorityRecord, request PrepareRequest, consumer, provider controller.ProjectIdentity) error {
+	if record == nil || request.Claim == nil || request.LocalClass == nil || request.SourceClass == nil || request.LocalProfile == nil || request.NamespaceUID == "" || request.PublicationRevision == "" || !request.Location.Valid() {
+		return ErrAuthorityInvalid
+	}
+	if record.ClaimNamespace != request.Claim.Namespace || record.ClaimName != request.Claim.Name || record.ClaimUID != request.Claim.UID || request.LocalClass.Name != request.Claim.Spec.MachineClassRef.Name || request.LocalProfile.Name != request.Claim.Spec.MachineProfileRef.Name {
+		return ErrAuthorityInvalid
+	}
+	if request.LocalClass.Spec.Source == nil {
+		if consumer != provider || request.LocalClass.UID != request.SourceClass.UID || request.LocalClass.Name != request.SourceClass.Name {
+			return ErrAuthorityInvalid
+		}
+	} else if request.LocalClass.Spec.Source.Project != request.ProviderRoute || request.LocalClass.Spec.Source.Name != request.SourceClass.Name {
+		return ErrAuthorityInvalid
+	}
+	requirements, err := requirementsDigest(request.LocalProfile)
+	if err != nil {
+		return err
+	}
+	classDigest, err := digest(request.SourceClass.Spec)
+	if err != nil {
+		return err
+	}
+	kind := ProfileCustom
+	var sourceProfileUID types.UID
+	if request.SourceProfile != nil {
+		kind, sourceProfileUID = ProfilePublished, request.SourceProfile.UID
+		sourceRequirements, sourceErr := requirementsDigest(request.SourceProfile)
+		if sourceErr != nil || sourceRequirements != requirements {
+			return ErrAuthorityInvalid
+		}
+	}
+	want := SourceUseRequest{ConsumerProject: consumer, ProviderProject: provider, NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, LocalClassUID: request.LocalClass.UID, SourceClassUID: request.SourceClass.UID, SourceClassRevision: request.SourceClass.Status.EvaluatedRevision, SourceClassDigest: classDigest, LocalProfileUID: request.LocalProfile.UID, SourceProfileUID: sourceProfileUID, ProfileKind: kind, RequirementsDigest: requirements, PublicationRevision: request.PublicationRevision, Location: request.Location}
+	if want.Validate() != nil || !sameLocationLifetime(record.SourceRequest.Location, want.Location) {
+		return ErrAuthorityInvalid
+	}
+	// A location revision is current eligibility evidence, not the location's
+	// lifetime identity. Preserve the admitted revision in the durable record,
+	// but do not strand an existing claim when Ready or ServiceAvailability
+	// status is re-observed for the same named Location UID.
+	want.Location.Revision = record.SourceRequest.Location.Revision
+	// MachineClass revision and content are mutable policy on one provider-owned
+	// class lifetime. The current resolver has already re-read that object; keep
+	// the originally admitted evidence in the record while allowing the same
+	// class UID to progress under its current authoritative policy.
+	want.SourceClassRevision = record.SourceRequest.SourceClassRevision
+	want.SourceClassDigest = record.SourceRequest.SourceClassDigest
+	if record.SourceRequest != want {
+		return ErrAuthorityInvalid
+	}
+	return nil
+}
+
+func sameLocationLifetime(left, right fleetnetwork.LocationAuthority) bool {
+	return left.Name != "" && left.UID != "" && left.Name == right.Name && left.UID == right.UID
+}
+
+// ReleaseClaim recovers release authority using only the exact consumer project
+// and claim lifetime. Public claim/class/profile objects may already be gone.
+func (a *Adapter) ReleaseClaim(ctx context.Context, consumer controller.ProjectIdentity, claimUID types.UID) (controller.ReleaseResult, error) {
+	if a == nil || a.Records == nil || a.Lifecycle == nil || !consumer.Valid() || claimUID == "" {
+		return controller.ReleaseResult{}, ErrAuthorityInvalid
+	}
+	record, ref, err := a.Records.GetForClaim(ctx, consumer, claimUID)
+	if apierrors.IsNotFound(err) {
+		hasCustody, custodyErr := a.Lifecycle.HasClaimCustody(ctx, consumer, claimUID)
+		if custodyErr != nil {
+			return controller.ReleaseResult{}, custodyErr
+		}
+		if hasCustody {
+			return controller.ReleaseResult{}, controller.ErrRecordInvalid
+		}
+		return controller.ReleaseResult{}, ErrClaimAuthorityNotFound
+	}
+	if err != nil {
+		return controller.ReleaseResult{}, err
+	}
+	return a.Release(ctx, PreparedClaim{Authority: ref, ConsumerProject: record.SourceRequest.ConsumerProject}, claimUID)
 }
 
 func (a *Adapter) Allocate(ctx context.Context, prepared PreparedClaim, request controller.AllocationRequest) (*controller.AssetRecord, error) {
@@ -395,7 +539,7 @@ func (a *Adapter) finishAbortedSettlement(ctx context.Context, authority control
 }
 
 func validatePreparedAllocation(record *AuthorityRecord, prepared PreparedClaim, request controller.AllocationRequest) error {
-	if record == nil || request.Claim == nil || request.Class == nil || request.Profile == nil || prepared.Authority.ContractDigest != record.ContractDigest || record.SourceRequest.ConsumerProject != prepared.ConsumerProject || record.SourceRequest.ProviderProject != prepared.ProviderProject || record.SourceRequest.NamespaceUID != prepared.NamespaceUID || record.SourceReceipt.PrincipalUID != prepared.PrincipalUID || record.SourceReceipt.DecisionID != prepared.DecisionID || request.Claim.Namespace != record.ClaimNamespace || request.Claim.Name != record.ClaimName || request.Claim.UID != record.ClaimUID || prepared.LocalClassUID != record.SourceRequest.LocalClassUID || prepared.SourceClassUID != record.SourceRequest.SourceClassUID || prepared.LocalProfileUID != record.SourceRequest.LocalProfileUID || prepared.SourceProfileUID != record.SourceRequest.SourceProfileUID || prepared.Location != record.SourceRequest.Location || request.Location != record.SourceRequest.Location || request.Claim.Spec.LocationRef.Name != record.SourceRequest.Location.Name || request.Class.UID != record.SourceRequest.SourceClassUID || request.Class.Status.EvaluatedRevision != record.SourceRequest.SourceClassRevision {
+	if record == nil || request.Claim == nil || request.Class == nil || request.Profile == nil || prepared.Authority.ContractDigest != record.ContractDigest || record.SourceRequest.ConsumerProject != prepared.ConsumerProject || record.SourceRequest.ProviderProject != prepared.ProviderProject || record.SourceRequest.NamespaceUID != prepared.NamespaceUID || record.SourceReceipt.PrincipalUID != prepared.PrincipalUID || record.SourceReceipt.DecisionID != prepared.DecisionID || request.Claim.Namespace != record.ClaimNamespace || request.Claim.Name != record.ClaimName || request.Claim.UID != record.ClaimUID || prepared.LocalClassUID != record.SourceRequest.LocalClassUID || prepared.SourceClassUID != record.SourceRequest.SourceClassUID || prepared.LocalProfileUID != record.SourceRequest.LocalProfileUID || prepared.SourceProfileUID != record.SourceRequest.SourceProfileUID || !sameLocationLifetime(prepared.Location, record.SourceRequest.Location) || !sameLocationLifetime(request.Location, record.SourceRequest.Location) || request.Claim.Spec.LocationRef.Name != record.SourceRequest.Location.Name || request.Class.UID != record.SourceRequest.SourceClassUID || request.Class.Status.EvaluatedRevision == "" {
 		return ErrAuthorityInvalid
 	}
 	wantProfileUID := record.SourceRequest.LocalProfileUID
@@ -403,9 +547,8 @@ func validatePreparedAllocation(record *AuthorityRecord, prepared PreparedClaim,
 		wantProfileUID = record.SourceRequest.SourceProfileUID
 	}
 	requirements, err := requirementsDigest(request.Profile)
-	classDigest, classErr := digest(request.Class.Spec)
 	acceptedDigest, acceptedErr := digest(record.AcceptedRequirements)
-	if err != nil || classErr != nil || acceptedErr != nil || request.Profile.UID != wantProfileUID || requirements != record.SourceRequest.RequirementsDigest || acceptedDigest != record.SourceRequest.RequirementsDigest || classDigest != record.SourceRequest.SourceClassDigest {
+	if err != nil || acceptedErr != nil || request.Profile.UID != wantProfileUID || requirements != record.SourceRequest.RequirementsDigest || acceptedDigest != record.SourceRequest.RequirementsDigest {
 		return ErrAuthorityInvalid
 	}
 	return nil

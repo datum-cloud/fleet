@@ -3,7 +3,8 @@
 Status: public API foundation, standalone synthetic provider simulator,
 same-cluster allocation/installation lifecycle library, unwired NSO network
 lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
-event-only manager wiring scaffold implemented. A packaged standalone synthetic
+event-only manager wiring scaffold with an injected MachineClaim lifecycle
+handler implemented. A packaged standalone synthetic
 smoke scenario exercises local-scope contention, install recovery, cleanup, and
 epoch reuse. Production caller-preserving
 admission, replayable Milo event adapters, and real providers are not implemented.
@@ -129,6 +130,31 @@ Dependency events enter a typed route workqueue before reverse-index lookup, so
 a cache read or List failure is retried as the same source event instead of being
 mistaken for an empty target set. Every direct and routed handler also verifies
 the configured Project lifetime through an injected trusted verifier.
+
+`ClaimHandler` implements the lifecycle ordering at the manager boundary. It
+exact-reads the queued claim and namespace lifetimes, resolves only injected
+authoritative inputs, retains authority and custody before adding Fleet's
+finalizer, waits for the finalizer update event before allocation, and removes
+the finalizer only after verified cleanup and external settlement. Dependency
+waits return without a timed requeue. Trusted evidence expiry can request one
+exact coordinator-owned deadline; it is not a polling interval. Deletion and
+same-name recreation use exact claim UIDs.
+
+`MiloClaimLifecycle` is the concrete bridge to the existing Milo adapter and
+allocator. `PrepareOrRecoverClaim` validates current resolved inputs against the
+immutable private authority record, so the finalizer event and manager restart
+reuse the retained caller receipt rather than reauthorizing a different caller.
+Release recovers from the exact consumer Project lifetime and claim UID and does
+not require the public claim, class, or profile to remain present.
+
+This handler is an orchestration seam, not a live integration. Watched objects
+do not contain the create-time caller identity, protected publication
+provenance, or trusted Machine observation time and location required by the
+lifecycle contract. The manager binary therefore does not instantiate the
+handler and continues to fail readiness. An environment must provide those
+inputs plus the Milo admission fence and quota custodian before enabling effects;
+controller credentials, annotations, public status, and synthetic timestamps
+are not accepted substitutes.
 
 Every dependency route now retains the source object's UID and exact routing
 snapshot. Non-delete work checks that UID against the current named object; if a
