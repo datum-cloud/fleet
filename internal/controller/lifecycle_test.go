@@ -186,6 +186,9 @@ func TestAllocationReleaseAndEpochReuse(t *testing.T) {
 	if err != nil || record.Epoch != 2 || record.ClaimUID != second.Claim.UID {
 		t.Fatalf("reallocate = %#v, %v", record, err)
 	}
+	if again, err := f.coordinator.Release(ctx, first.Claim.UID); err != nil || !again.SafeToRemoveFinalizer || again.State != AssetReleased {
+		t.Fatalf("release retry after reallocation = %#v, %v", again, err)
+	}
 }
 
 func TestConcurrentDifferingCandidatesSelectOnlyOneAsset(t *testing.T) {
@@ -634,6 +637,18 @@ func TestFailClosedInputsAndDiskCount(t *testing.T) {
 	if matches(profile, hardware) {
 		t.Fatal("exactly one matching disk accepted two")
 	}
+	for name, count := range map[string]fleetv1.Constraint{
+		"max-only": {Max: int64ptr(2)},
+		"empty":    {},
+	} {
+		t.Run("missing-disk-"+name, func(t *testing.T) {
+			profile := fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64"}, Disks: []fleetv1.DiskRequirement{{Count: count, Media: "ssd"}}}
+			hardware := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64"}}
+			if matches(profile, hardware) {
+				t.Fatal("disk group with no matching device was accepted")
+			}
+		})
+	}
 
 	f := newFixture(t)
 	r := f.request("install-claim")
@@ -717,6 +732,39 @@ func TestNetworkLifecycleRetainsInputsAndGatesProviderCleanup(t *testing.T) {
 	second, err := f.coordinator.Release(ctx, request.Claim.UID)
 	if err != nil || !second.SafeToRemoveFinalizer || len(f.executor.requests) != 1 || f.executor.requests[0].Kind != "cleanup" {
 		t.Fatalf("second Release = %#v, %v, provider=%#v", second, err, f.executor.requests)
+	}
+}
+
+func TestNetworkRefreshErrorKeepsLastProgrammedObservation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	networks := &fakeNetworkLifecycle{}
+	f.coordinator.networks = networks
+	request := f.request("network-refresh-error")
+	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
+	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
+	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
+	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}, IPFamilies: []string{"IPv4"}}}
+	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	asset, err := f.coordinator.Allocate(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	networks.observation = fleetnetwork.Observation{Revision: "network-r1", ObservedAt: f.now, Interfaces: []fleetnetwork.InterfaceObservation{{Name: "management", ClaimUID: "network-claim-uid", ClaimGeneration: 4, Addresses: []fleetnetwork.Address{{Address: "10.20.30.42/24", Family: "IPv4", Primary: true}}, Conditions: []fleetnetwork.Condition{{Type: "Allocated", Status: metav1.ConditionTrue, ObservedGeneration: 4}, {Type: "Prepared", Status: metav1.ConditionTrue, ObservedGeneration: 4}, {Type: "Programmed", Status: metav1.ConditionTrue, ObservedGeneration: 4}}}}}
+	if _, err := f.coordinator.ReconcileNetwork(ctx, request.Claim.UID); err != nil {
+		t.Fatal(err)
+	}
+
+	networks.partialEnsure = true
+	if observation, err := f.coordinator.ReconcileNetwork(ctx, request.Claim.UID); !errors.Is(err, fleetnetwork.ErrPending) || len(observation.Interfaces) != 0 {
+		t.Fatalf("failed refresh = %#v, %v", observation, err)
+	}
+	retained, _, err := f.coordinator.getAsset(ctx, asset.AssetID)
+	if err != nil || !retained.Network.Observation.Programmed(retained.Network.Plan) || retained.Network.Observation.Interfaces[0].Addresses[0].Address != "10.20.30.42/24" || retained.Network.Lifecycle[0].GuardToken != "partial" {
+		t.Fatalf("failed refresh discarded last good observation: %#v, %v", retained.Network, err)
 	}
 }
 
