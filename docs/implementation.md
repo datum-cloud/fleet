@@ -10,6 +10,36 @@ admission, replayable Milo event adapters, and real providers are not implemente
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
+## Location authority
+
+`internal/location` uses the existing Milo location contract shared by Compute,
+NSO, and DNS. It resolves a requested project-visible `Location` only when that
+projection has `Ready=True` and exactly one Fleet `ServiceAvailability` names
+the location with `Available=True`. Missing, deleting, unavailable, or ambiguous
+inputs fail closed. The retained MVP authority contains the project-visible
+Location UID and a semantic digest of both projections.
+
+Milo legitimately omits `observedGeneration` from mirrored Location conditions,
+and mirrored ServiceAvailability status can retain its root object's generation;
+neither value is compared with the project-local generation. Canonical root UID
+provenance, expiring health receipts, and a platform-wide runtime availability
+contract are production-hardening opportunities. They are not prerequisites for
+the MVP because the existing platform contract treats ServiceAvailability as a
+service rollout declaration rather than a renewable health lease.
+
+The event-only manager indexes MachineClaims by requested location and watches
+both Location and ServiceAvailability objects. Semantic updates and deletes
+therefore route every affected claim through its existing durable work key;
+there is no periodic location resync. This implements resolution and event
+routing, not the production claim handler that invokes it. The manager binary
+continues to fail readiness until the required production handlers and
+authorities are wired.
+
+The Milo bundle declares a Draft Fleet `ServiceConfiguration` supporting the
+platform `datum-managed` location class. Draft is intentional: an environment
+must explicitly promote both the Service and its configuration before a
+ServiceAvailability can project a Location into entitled projects.
+
 ## Standalone synthetic smoke environment
 
 `cmd/fleet-standalone-smoke` is a test-only, phase-oriented harness around the

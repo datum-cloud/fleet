@@ -18,6 +18,8 @@ import (
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
+	locationsv1alpha1 "go.miloapis.com/locations/api/v1alpha1"
+	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
 )
 
 type RouteKind string
@@ -32,6 +34,8 @@ const (
 	RouteNetwork      RouteKind = "Network"
 	RouteQuota        RouteKind = "Quota"
 	RouteEntitlement  RouteKind = "Entitlement"
+	RouteLocation     RouteKind = "Location"
+	RouteAvailability RouteKind = "ServiceAvailability"
 )
 
 // RouteRequest keeps the dependency event itself in the workqueue. Index/List
@@ -77,6 +81,14 @@ func (m Mappers) Route(kind RouteKind, field string) func(context.Context, clien
 			if object.GetName() != "fleet" {
 				return nil
 			}
+		case RouteLocation:
+			request.Key = object.GetName()
+		case RouteAvailability:
+			availability, ok := object.(*servicesv1alpha1.ServiceAvailability)
+			if !ok || availability.Spec.ServiceRef.Name != "fleet" || availability.Spec.LocationRef.Name == "" {
+				return nil
+			}
+			request.Key = availability.Spec.LocationRef.Name
 		}
 		if !request.Valid() {
 			return nil
@@ -146,6 +158,8 @@ func (m Mappers) ResolveRoute(ctx context.Context, route RouteRequest) ([]Projec
 			return nil, listErr
 		}
 		return uniqueRequests(append(claims, byProject...)), nil
+	case RouteLocation, RouteAvailability:
+		return m.claimsByFieldE(ctx, IndexClaimLocationName, route.Key)
 	default:
 		return nil, ErrEventWiringUnavailable
 	}
@@ -203,6 +217,10 @@ func routeObject(route RouteRequest) (client.Object, error) {
 		object := &unstructured.Unstructured{}
 		object.SetGroupVersionKind(schema.GroupVersionKind{Group: "services.miloapis.com", Version: "v1alpha1", Kind: "ServiceEntitlement"})
 		return object, nil
+	case RouteLocation:
+		return &locationsv1alpha1.Location{}, nil
+	case RouteAvailability:
+		return &servicesv1alpha1.ServiceAvailability{}, nil
 	default:
 		return nil, ErrEventWiringUnavailable
 	}

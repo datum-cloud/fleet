@@ -20,8 +20,10 @@ import (
 	"go.datum.net/fleet/internal/controller"
 	eventmanager "go.datum.net/fleet/internal/manager"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
+	locationsv1alpha1 "go.miloapis.com/locations/api/v1alpha1"
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
 	resourcemanagerv1alpha1 "go.miloapis.com/milo/pkg/apis/resourcemanager/v1alpha1"
+	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
 )
 
 func main() {
@@ -44,8 +46,10 @@ func main() {
 	must(clientgoscheme.AddToScheme(scheme))
 	must(fleetv1.AddToScheme(scheme))
 	must(networkingv1.AddToScheme(scheme))
+	must(locationsv1alpha1.AddToScheme(scheme))
 	must(quotav1alpha1.AddToScheme(scheme))
 	must(resourcemanagerv1alpha1.AddToScheme(scheme))
+	must(servicesv1alpha1.AddToScheme(scheme))
 	hostConfig, err := rest.InClusterConfig()
 	must(err)
 	rootMiloConfig, err := clientcmd.BuildConfigFromFlags("", projectKubeconfig)
