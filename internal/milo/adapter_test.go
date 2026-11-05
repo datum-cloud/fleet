@@ -335,6 +335,42 @@ func TestAdapterRecoveryAcceptsNewRevisionForSameLocationLifetime(t *testing.T) 
 	}
 }
 
+func TestAdapterRecoveryAcceptsEditForSameSourceClassLifetime(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	if _, err := f.adapter.PrepareClaim(ctx, f.prepare); err != nil {
+		t.Fatal(err)
+	}
+
+	current := f.prepare
+	current.SourceClass = f.prepare.SourceClass.DeepCopyObject().(*fleetv1.MachineClass)
+	current.SourceClass.Status.EvaluatedRevision = "class-r2"
+	current.SourceClass.Spec.Access = &fleetv1.AccessPolicy{PowerControl: true}
+	prepared, err := f.adapter.PrepareOrRecoverClaim(ctx, current)
+	if err != nil {
+		t.Fatalf("recover after source class edit = %v", err)
+	}
+	replacement := current
+	replacement.SourceClass = current.SourceClass.DeepCopyObject().(*fleetv1.MachineClass)
+	replacement.SourceClass.UID = "replacement-class-uid"
+	if _, err := f.adapter.PrepareOrRecoverClaim(ctx, replacement); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("replacement source class lifetime error = %v, want ErrAuthorityInvalid", err)
+	}
+
+	allocation := f.allocation
+	allocation.Class = current.SourceClass
+	if _, err := f.adapter.Allocate(ctx, prepared, allocation); err != nil {
+		t.Fatalf("allocate after source class edit = %v", err)
+	}
+	record, err := f.records.Get(ctx, prepared.Authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.SourceRequest.SourceClassRevision != f.prepare.SourceClass.Status.EvaluatedRevision {
+		t.Fatalf("retained class revision = %q, want admitted %q", record.SourceRequest.SourceClassRevision, f.prepare.SourceClass.Status.EvaluatedRevision)
+	}
+}
+
 func TestAdapterRepairsPartialPreparation(t *testing.T) {
 	for _, stage := range []string{"authority", "custody"} {
 		t.Run(stage, func(t *testing.T) {
@@ -446,14 +482,6 @@ func TestAllocationRejectsAuthoritySubstitutionBeforeEffects(t *testing.T) {
 		"source class": func(r *controller.AllocationRequest) {
 			r.Class = r.Class.DeepCopyObject().(*fleetv1.MachineClass)
 			r.Class.UID = "replacement"
-		},
-		"class revision": func(r *controller.AllocationRequest) {
-			r.Class = r.Class.DeepCopyObject().(*fleetv1.MachineClass)
-			r.Class.Status.EvaluatedRevision = "replacement"
-		},
-		"class content": func(r *controller.AllocationRequest) {
-			r.Class = r.Class.DeepCopyObject().(*fleetv1.MachineClass)
-			r.Class.Spec.Capacity.Machines.Namespace = "replacement"
 		},
 		"source profile": func(r *controller.AllocationRequest) {
 			r.Profile = r.Profile.DeepCopyObject().(*fleetv1.MachineProfile)

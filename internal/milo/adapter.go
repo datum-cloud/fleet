@@ -242,6 +242,12 @@ func validateRecoveredPrepare(record *AuthorityRecord, request PrepareRequest, c
 	// but do not strand an existing claim when Ready or ServiceAvailability
 	// status is re-observed for the same named Location UID.
 	want.Location.Revision = record.SourceRequest.Location.Revision
+	// MachineClass revision and content are mutable policy on one provider-owned
+	// class lifetime. The current resolver has already re-read that object; keep
+	// the originally admitted evidence in the record while allowing the same
+	// class UID to progress under its current authoritative policy.
+	want.SourceClassRevision = record.SourceRequest.SourceClassRevision
+	want.SourceClassDigest = record.SourceRequest.SourceClassDigest
 	if record.SourceRequest != want {
 		return ErrAuthorityInvalid
 	}
@@ -533,7 +539,7 @@ func (a *Adapter) finishAbortedSettlement(ctx context.Context, authority control
 }
 
 func validatePreparedAllocation(record *AuthorityRecord, prepared PreparedClaim, request controller.AllocationRequest) error {
-	if record == nil || request.Claim == nil || request.Class == nil || request.Profile == nil || prepared.Authority.ContractDigest != record.ContractDigest || record.SourceRequest.ConsumerProject != prepared.ConsumerProject || record.SourceRequest.ProviderProject != prepared.ProviderProject || record.SourceRequest.NamespaceUID != prepared.NamespaceUID || record.SourceReceipt.PrincipalUID != prepared.PrincipalUID || record.SourceReceipt.DecisionID != prepared.DecisionID || request.Claim.Namespace != record.ClaimNamespace || request.Claim.Name != record.ClaimName || request.Claim.UID != record.ClaimUID || prepared.LocalClassUID != record.SourceRequest.LocalClassUID || prepared.SourceClassUID != record.SourceRequest.SourceClassUID || prepared.LocalProfileUID != record.SourceRequest.LocalProfileUID || prepared.SourceProfileUID != record.SourceRequest.SourceProfileUID || !sameLocationLifetime(prepared.Location, record.SourceRequest.Location) || !sameLocationLifetime(request.Location, record.SourceRequest.Location) || request.Claim.Spec.LocationRef.Name != record.SourceRequest.Location.Name || request.Class.UID != record.SourceRequest.SourceClassUID || request.Class.Status.EvaluatedRevision != record.SourceRequest.SourceClassRevision {
+	if record == nil || request.Claim == nil || request.Class == nil || request.Profile == nil || prepared.Authority.ContractDigest != record.ContractDigest || record.SourceRequest.ConsumerProject != prepared.ConsumerProject || record.SourceRequest.ProviderProject != prepared.ProviderProject || record.SourceRequest.NamespaceUID != prepared.NamespaceUID || record.SourceReceipt.PrincipalUID != prepared.PrincipalUID || record.SourceReceipt.DecisionID != prepared.DecisionID || request.Claim.Namespace != record.ClaimNamespace || request.Claim.Name != record.ClaimName || request.Claim.UID != record.ClaimUID || prepared.LocalClassUID != record.SourceRequest.LocalClassUID || prepared.SourceClassUID != record.SourceRequest.SourceClassUID || prepared.LocalProfileUID != record.SourceRequest.LocalProfileUID || prepared.SourceProfileUID != record.SourceRequest.SourceProfileUID || !sameLocationLifetime(prepared.Location, record.SourceRequest.Location) || !sameLocationLifetime(request.Location, record.SourceRequest.Location) || request.Claim.Spec.LocationRef.Name != record.SourceRequest.Location.Name || request.Class.UID != record.SourceRequest.SourceClassUID || request.Class.Status.EvaluatedRevision == "" {
 		return ErrAuthorityInvalid
 	}
 	wantProfileUID := record.SourceRequest.LocalProfileUID
@@ -541,9 +547,8 @@ func validatePreparedAllocation(record *AuthorityRecord, prepared PreparedClaim,
 		wantProfileUID = record.SourceRequest.SourceProfileUID
 	}
 	requirements, err := requirementsDigest(request.Profile)
-	classDigest, classErr := digest(request.Class.Spec)
 	acceptedDigest, acceptedErr := digest(record.AcceptedRequirements)
-	if err != nil || classErr != nil || acceptedErr != nil || request.Profile.UID != wantProfileUID || requirements != record.SourceRequest.RequirementsDigest || acceptedDigest != record.SourceRequest.RequirementsDigest || classDigest != record.SourceRequest.SourceClassDigest {
+	if err != nil || acceptedErr != nil || request.Profile.UID != wantProfileUID || requirements != record.SourceRequest.RequirementsDigest || acceptedDigest != record.SourceRequest.RequirementsDigest {
 		return ErrAuthorityInvalid
 	}
 	return nil
