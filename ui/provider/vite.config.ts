@@ -36,6 +36,7 @@ export default defineConfig({
       exposes: {
         './MachineList': './src/pages/machine-list.tsx',
         './MachineProfileList': './src/pages/machine-profile-list.tsx',
+        './MachineClassList': './src/pages/machine-class-list.tsx',
       },
       // requiredVersion:false everywhere: the host's copy always wins, so a
       // patch or major drift between host and plugin cannot fail the load.

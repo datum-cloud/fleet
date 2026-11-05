@@ -6,10 +6,12 @@ import { formatConstraint, summarizeProfile, type ProfileSummary } from '../../s
 import type {
   List,
   Machine as RawMachine,
+  MachineClass as RawMachineClass,
   MachineProfile as RawMachineProfile,
 } from '../../shared/fleet-api';
 
-export type { Condition, RawMachine, RawMachineProfile };
+export type { Condition, RawMachine, RawMachineClass, RawMachineProfile };
+export type RawMachineClassList = List<RawMachineClass>;
 export type RawMachineList = List<RawMachine>;
 export type RawMachineProfileList = List<RawMachineProfile>;
 
@@ -76,6 +78,37 @@ export function toMachineProfile(raw: RawMachineProfile): MachineProfile {
   return {
     name: raw.metadata.name,
     ...summarizeProfile(raw.spec),
+    createdAt: raw.metadata.creationTimestamp,
+  };
+}
+
+// ---- MachineClass ----
+
+export interface MachineClass {
+  name: string;
+  /** A class published from another project; staff rarely see these here. */
+  source?: string;
+  allowedProfiles: string[];
+  customProfiles: boolean;
+  /** "default / central-metal": the Machines namespace and capacity pool. */
+  capacity?: string;
+  powerControl: boolean;
+  accepted: ConditionSummary;
+  createdAt?: string;
+}
+
+export function toMachineClass(raw: RawMachineClass): MachineClass {
+  const spec = raw.spec ?? {};
+  const machines = spec.capacity?.machines;
+  const pool = machines?.selector?.matchLabels?.[CAPACITY_POOL_LABEL];
+  return {
+    name: raw.metadata.name,
+    source: spec.source && `${spec.source.project}/${spec.source.name}`,
+    allowedProfiles: (spec.profilePolicy?.allowedProfiles ?? []).map((p) => p.name),
+    customProfiles: !!spec.profilePolicy?.customProfiles?.enabled,
+    capacity: machines && (pool ? `${machines.namespace} / ${pool}` : machines.namespace),
+    powerControl: !!spec.access?.powerControl,
+    accepted: summarize(raw.status?.conditions ?? [], 'Accepted'),
     createdAt: raw.metadata.creationTimestamp,
   };
 }

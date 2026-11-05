@@ -1,9 +1,13 @@
-import { FIXTURE_MACHINES, fixtureProfiles } from './fixtures';
+import { FIXTURE_MACHINES, fixtureClasses, fixtureProfiles } from './fixtures';
 import {
   toMachine,
+  toMachineClass,
   toMachineProfile,
   type Machine,
+  type MachineClass,
   type MachineProfile,
+  type RawMachineClass,
+  type RawMachineClassList,
   type RawMachineList,
   type RawMachineProfile,
   type RawMachineProfileList,
@@ -126,5 +130,47 @@ export function useCreateMachineProfile(): UseMutationResult<
     mutationFn: createMachineProfile,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineprofiles', PROVIDER_PROJECT] }),
+  });
+}
+
+// MachineClasses are cluster-scoped too. A class here is the provider's
+// definition: which profiles it allows and which Machines back it.
+
+export async function fetchMachineClasses(): Promise<MachineClass[]> {
+  if (USE_FIXTURES) return fixtureClasses.list().map(toMachineClass);
+  const body = await proxyFetch<RawMachineClassList>(
+    PROVIDER_PROJECT,
+    `${FLEET_API}/machineclasses?limit=100`
+  );
+  return (body.items ?? []).map(toMachineClass);
+}
+
+export function useMachineClasses(): UseQueryResult<MachineClass[], ApiError> {
+  return useQuery({
+    queryKey: [PLUGIN_ID, 'machineclasses', PROVIDER_PROJECT],
+    queryFn: fetchMachineClasses,
+    refetchInterval: REFETCH_INTERVAL_MS,
+    retry: false,
+  });
+}
+
+export async function createMachineClass(machineClass: RawMachineClass): Promise<RawMachineClass> {
+  if (USE_FIXTURES) return fixtureClasses.create(machineClass);
+  return proxyFetch<RawMachineClass>(PROVIDER_PROJECT, `${FLEET_API}/machineclasses`, {
+    method: 'POST',
+    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'MachineClass', ...machineClass },
+  });
+}
+
+export function useCreateMachineClass(): UseMutationResult<
+  RawMachineClass,
+  ApiError,
+  RawMachineClass
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createMachineClass,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclasses', PROVIDER_PROJECT] }),
   });
 }

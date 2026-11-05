@@ -1,3 +1,4 @@
+import MachineClassList from './pages/machine-class-list';
 import MachineList from './pages/machine-list';
 import MachineProfileList from './pages/machine-profile-list';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -21,6 +22,7 @@ createRoot(document.getElementById('root')!).render(
           <Routes>
             <Route path="/plugins/:slug/machines" element={<MachineList />} />
             <Route path="/plugins/:slug/profiles" element={<MachineProfileList />} />
+            <Route path="/plugins/:slug/classes" element={<MachineClassList />} />
           </Routes>
         </MemoryRouter>
       </div>

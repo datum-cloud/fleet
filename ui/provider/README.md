@@ -9,10 +9,15 @@ Operations in the navigation. The page has two tabs:
 - **Machines** (`machines`) lists the provider's Machines. Read-only.
 - **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
   profile can't be changed after it is created, so there is no edit.
+- **Classes** (`classes`) lists MachineClasses and creates new ones: the
+  profiles a class allows, the namespace and capacity-pool label of the
+  Machines that serve it, and whether consumers get power control. Custom
+  profiles and console access stay off.
 
-The portal proxy forwards the staff member's own token, so creating a profile
-needs a Fleet role with `machineprofiles.create` in the provider project, such
-as `fleet.datumapis.com-provider`. Errors show inside the create dialog,
+The portal proxy forwards the staff member's own token, so creating profiles
+and classes needs a Fleet role with `machineprofiles.create` and
+`machineclasses.create` in the provider project, such as
+`fleet.datumapis.com-provider`. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
 
 This started as the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17).

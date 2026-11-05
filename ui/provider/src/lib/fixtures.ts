@@ -1,5 +1,5 @@
 import { ApiError } from './api';
-import type { RawMachine, RawMachineProfile } from '../types';
+import type { RawMachine, RawMachineClass, RawMachineProfile } from '../types';
 
 // Synthetic Machines used while the Fleet API cannot be read
 // (VITE_FLEET_FIXTURES=true). The namespace, pool label and provider come from
@@ -72,6 +72,46 @@ export const fixtureProfiles = {
       metadata: { ...profile.metadata, creationTimestamp: new Date().toISOString() },
     };
     profiles.push(created);
+    return created;
+  },
+};
+
+// The standalone fixture's class, accepted by Fleet. Created classes are kept
+// in memory like profiles, and have no status until Fleet evaluates them.
+const classes: RawMachineClass[] = [
+  {
+    metadata: { name: 'standard-metal', creationTimestamp: '2026-11-05T12:00:00Z' },
+    spec: {
+      profilePolicy: {
+        allowedProfiles: [{ name: 'general-purpose-24c-128g' }],
+        customProfiles: { enabled: false },
+      },
+      access: { consoleModes: [], powerControl: false },
+      capacity: {
+        machines: {
+          namespace: 'fleet-provider',
+          selector: { matchLabels: { 'fleet.datumapis.com/capacity-pool': 'central-metal' } },
+        },
+      },
+    },
+    status: {
+      evaluatedRevision: 'class-revision-example',
+      conditions: [{ type: 'Accepted', status: 'True' }],
+    },
+  },
+];
+
+export const fixtureClasses = {
+  list: (): RawMachineClass[] => [...classes],
+  create: (machineClass: RawMachineClass): RawMachineClass => {
+    if (classes.some((c) => c.metadata.name === machineClass.metadata.name)) {
+      throw new ApiError(409, `machineclasses "${machineClass.metadata.name}" already exists`);
+    }
+    const created = {
+      ...machineClass,
+      metadata: { ...machineClass.metadata, creationTimestamp: new Date().toISOString() },
+    };
+    classes.push(created);
     return created;
   },
 };
