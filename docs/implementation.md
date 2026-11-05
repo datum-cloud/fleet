@@ -554,7 +554,12 @@ acceptance inventory.
   completion sources are not implemented. They must support durable replay;
   polling is intentionally not a fallback.
 - Cross-project class sources and bootstrap secret retention are rejected rather
-  than partially executed by the standalone coordinator. The Milo adapter can
+  than partially executed by the production and standalone entry points. The
+  explicit synthetic-staging mode can publish and allocate one configured class
+  and profile across two exact Milo project lifetimes. It uses synthetic
+  admission, quota-hold, and source-use evidence, labels that boundary in public
+  status, refuses publication collisions or profile drift, and is not production
+  authorization. The Milo adapter can
   resolve a canonical source only when injected with trusted source authority,
   fence, and custody implementations. The network adapter remains deliberately
   unwired until production location, authorization, and object-guard owners are

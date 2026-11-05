@@ -97,6 +97,88 @@ func TestOneMachineAllocatesExclusivelyThenReusesAfterRelease(t *testing.T) {
 	assertPhase(t, ctx, public, client.ObjectKeyFromObject(second), "Ready")
 }
 
+func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	consumerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-zdhcz", UID: "consumer-project-uid"}
+	providerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "provider-project-uid"}
+	cores := int64(24)
+	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &cores}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
+	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "central-metal", UID: "source-class-uid", Generation: 1}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: sourceProfile.Name}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
+	machine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "machine-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineSpec{ProviderRef: fleetv1.TypedLocalReference{APIGroup: "synthetic.fleet.datumapis.com", Kind: providerKind, Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
+	revision, err := publicationRevision(sourceClass, providerProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	localClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: sourceClass.Name, UID: "local-class-uid", Generation: 1, Annotations: map[string]string{publicationManagedByAnnotation: publicationManager, publicationProviderUIDAnnotation: string(providerProject.UID), publicationSourceUIDAnnotation: string(sourceClass.UID), publicationSourceNameAnnotation: sourceClass.Name}}, Spec: fleetv1.MachineClassSpec{Source: &fleetv1.SourceReference{Project: providerProject.RouteName, Name: sourceClass.Name}}, Status: fleetv1.MachineClassStatus{EvaluatedRevision: revision, ResolvedClass: &fleetv1.ResolvedClass{ProfilePolicy: *sourceClass.Spec.ProfilePolicy}, Conditions: []metav1.Condition{publicationCondition("SourceResolved", metav1.ConditionTrue, 1, "AuthorizedSource", "resolved")}}}
+	localProfile := sourceProfile.DeepCopyObject().(*fleetv1.MachineProfile)
+	localProfile.UID = "local-profile-uid"
+	localProfile.Annotations = map[string]string{publicationManagedByAnnotation: publicationManager, publicationProviderUIDAnnotation: string(providerProject.UID), publicationSourceUIDAnnotation: string(sourceProfile.UID), publicationSourceNameAnnotation: sourceProfile.Name}
+	localProfile.Status.Conditions = []metav1.Condition{publicationCondition("Published", metav1.ConditionTrue, localProfile.Generation, "SourceCopied", "copied")}
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "namespace-uid"}}
+	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "cross-project", UID: "claim-uid"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: localClass.Name}, MachineProfileRef: fleetv1.LocalReference{Name: localProfile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
+	consumer := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineClaim{}).WithObjects(namespace, localClass, localProfile, claim).Build()
+	providerKube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.Machine{}).WithObjects(sourceClass, sourceProfile, machine).Build()
+	private := fake.NewClientBuilder().WithScheme(scheme).Build()
+	providerExecutor := &executor{results: map[string]simulator.OperationResult{}}
+	coordinator, err := controller.NewCoordinator(private, "fleet-system-private", providerExecutor, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := Handler{Public: consumer, Provider: providerKube, Coordinator: coordinator, Project: consumerProject, ProviderProject: providerProject, Location: "us-central-1", Now: time.Now}
+	request := manager.ProjectRequest{AuthorityID: consumerProject.AuthorityID, ProjectUID: consumerProject.UID, Namespace: claim.Namespace, Name: claim.Name, UID: claim.UID}
+	for i := 0; i < 2; i++ {
+		if out := h.ReconcileEvent(ctx, request); out.RetryError != nil {
+			t.Fatal(out.RetryError)
+		}
+	}
+	assertPhase(t, ctx, consumer, client.ObjectKeyFromObject(claim), "Ready")
+	var allocated fleetv1.Machine
+	if err := providerKube.Get(ctx, client.ObjectKeyFromObject(machine), &allocated); err != nil {
+		t.Fatal(err)
+	}
+	available := false
+	for _, condition := range allocated.Status.Conditions {
+		if condition.Type == "Available" && condition.Status == metav1.ConditionFalse {
+			available = true
+		}
+	}
+	if !available {
+		t.Fatal("provider Machine was not marked allocated")
+	}
+	var deleting fleetv1.MachineClaim
+	if err := consumer.Get(ctx, client.ObjectKeyFromObject(claim), &deleting); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Delete(ctx, &deleting); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Get(ctx, client.ObjectKeyFromObject(claim), &deleting); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.ReconcileEvent(ctx, request); out.RetryError != nil {
+		t.Fatal(out.RetryError)
+	}
+	if err := providerKube.Get(ctx, client.ObjectKeyFromObject(machine), &allocated); err != nil {
+		t.Fatal(err)
+	}
+	reusable := false
+	for _, condition := range allocated.Status.Conditions {
+		if condition.Type == "Available" && condition.Status == metav1.ConditionTrue {
+			reusable = true
+		}
+	}
+	if !reusable {
+		t.Fatal("provider Machine did not become reusable after cross-project release")
+	}
+}
+
 func assertPhase(t *testing.T, ctx context.Context, kube client.Client, key client.ObjectKey, phase string) {
 	t.Helper()
 	var claim fleetv1.MachineClaim

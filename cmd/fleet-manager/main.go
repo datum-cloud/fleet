@@ -34,6 +34,7 @@ func main() {
 	var authorityID, projectName, privateNamespace, projectKubeconfig, leaderElectionNamespace string
 	var syntheticStaging bool
 	var syntheticProviderURL, syntheticTokenFile, syntheticLocation string
+	var syntheticProviderProjectName, syntheticPublishedClassName, syntheticPublishedProfileName string
 	flag.StringVar(&authorityID, "authority-id", "", "configured Milo authority identifier")
 	flag.StringVar(&projectName, "project-name", "", "Milo Project name served by this cache")
 	flag.StringVar(&privateNamespace, "private-namespace", "", "service-controlled private record namespace")
@@ -43,6 +44,9 @@ func main() {
 	flag.StringVar(&syntheticProviderURL, "synthetic-provider-url", "http://127.0.0.1:8080", "synthetic provider runtime URL")
 	flag.StringVar(&syntheticTokenFile, "synthetic-provider-token-file", "", "file containing the synthetic provider bearer token")
 	flag.StringVar(&syntheticLocation, "synthetic-location", "us-central-1", "only location accepted by synthetic staging")
+	flag.StringVar(&syntheticProviderProjectName, "synthetic-provider-project-name", "", "provider project used by synthetic cross-project staging")
+	flag.StringVar(&syntheticPublishedClassName, "synthetic-published-class-name", "", "provider MachineClass published into the synthetic consumer project")
+	flag.StringVar(&syntheticPublishedProfileName, "synthetic-published-profile-name", "", "provider MachineProfile published into the synthetic consumer project")
 	zapOptions := zap.Options{Development: false}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -79,14 +83,18 @@ func main() {
 	})
 	must(err)
 	blocked := eventmanager.HandlerFunc(func(context.Context, eventmanager.ProjectRequest) eventmanager.Outcome { return eventmanager.Outcome{} })
-	verifier := eventmanager.ProjectVerifierFunc(func(ctx context.Context, expected controller.ProjectIdentity) error {
-		current, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, authorityID, projectName)
-		if err != nil || current != expected {
-			return eventmanager.ErrProjectIdentityUnavailable
-		}
-		return nil
-	})
+	verifierFor := func(name string) eventmanager.ProjectVerifier {
+		return eventmanager.ProjectVerifierFunc(func(ctx context.Context, expected controller.ProjectIdentity) error {
+			current, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, authorityID, name)
+			if err != nil || current != expected {
+				return eventmanager.ErrProjectIdentityUnavailable
+			}
+			return nil
+		})
+	}
+	verifier := verifierFor(projectName)
 	handlers := eventmanager.Handlers{Claim: blocked, Installation: blocked, ClaimProjector: blocked, InstallationProjector: blocked}
+	setupOptions := eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier}
 	ready := eventmanager.ErrEventWiringUnavailable
 	if syntheticStaging {
 		if syntheticTokenFile == "" {
@@ -98,10 +106,33 @@ func main() {
 		must(err)
 		coordinator, err := controller.NewCoordinator(privateCluster.GetClient(), privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
 		must(err)
-		handlers.Claim = staging.Handler{Public: mgr.GetClient(), Coordinator: coordinator, Project: project, Location: syntheticLocation}
+		handler := staging.Handler{Public: mgr.GetClient(), Coordinator: coordinator, Project: project, Location: syntheticLocation}
+		if syntheticProviderProjectName != "" {
+			if syntheticPublishedClassName == "" || syntheticPublishedProfileName == "" {
+				must(eventmanager.ErrEventWiringUnavailable)
+			}
+			providerProject, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, authorityID, syntheticProviderProjectName)
+			must(err)
+			if providerProject.SameLifetime(project) {
+				must(eventmanager.ErrEventWiringUnavailable)
+			}
+			providerConfig, err := eventmanager.ProjectRESTConfig(rootMiloConfig, providerProject.RouteName)
+			must(err)
+			providerCluster, err := ctrlcluster.New(providerConfig, func(options *ctrlcluster.Options) {
+				options.Scheme = scheme
+				options.Cache = eventmanager.ProjectCacheOptions()
+			})
+			must(err)
+			providerVerifier := verifierFor(syntheticProviderProjectName)
+			handler.Provider, handler.ProviderProject = providerCluster.GetClient(), providerProject
+			setupOptions.ProviderProject, setupOptions.ProviderCluster, setupOptions.ProviderVerifier = providerProject, providerCluster, providerVerifier
+			must(staging.SetupPublisher(mgr, providerCluster, staging.PublisherOptions{ConsumerProject: project, ProviderProject: providerProject, ClassName: syntheticPublishedClassName, ProfileName: syntheticPublishedProfileName}))
+		}
+		handlers.Claim = handler
 		ready = nil
 	}
-	must(eventmanager.Setup(ctx, mgr, eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier, Handlers: handlers}))
+	setupOptions.Handlers = handlers
+	must(eventmanager.Setup(ctx, mgr, setupOptions))
 	must(mgr.AddHealthzCheck("healthz", healthz.Ping))
 	must(mgr.AddReadyzCheck("integration", func(*http.Request) error { return ready }))
 	must(mgr.Start(ctx))

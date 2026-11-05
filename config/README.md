@@ -16,7 +16,11 @@ not be referenced by either production root.
 environment. It uses the real private custody, exclusivity, cleanup, and reuse
 implementation, but substitutes synthetic admission and provider evidence. It
 accepts only powered-off, networkless claims in `us-central-1`; its status
-conditions identify that boundary. The colocated provider uses the Pod's
+conditions identify that boundary. When the three publication keys documented
+below are present, it watches one consumer project and one distinct provider
+project, publishes a locked class reference and exact profile copy, and retains
+both project lifetimes in allocation custody. Provider Machine events wake
+consumer claims directly; no polling resync is enabled. The colocated provider uses the Pod's
 projected service-account token for loopback authentication, so no provider
 credential is stored in Git. Its operation log is ephemeral and may be rebuilt
 after a Pod restart; private Fleet authority remains durable and exact requests
@@ -65,6 +69,23 @@ data:
   projectName: <Milo Project name>
 ```
 
+The non-production `synthetic-staging` overlay additionally requires one
+explicit publication contract:
+
+```yaml
+data:
+  providerProjectName: <distinct provider Milo Project name>
+  publishedClassName: <provider MachineClass definition name>
+  publishedProfileName: <allowed provider MachineProfile name>
+```
+
+The publisher refuses name collisions, reference chains, mutable profile-copy
+drift, a profile not allowed by the source class, or replacement source/project
+lifetimes. It writes only a consumer class containing `spec.source`, an exact
+profile copy, and sanitized `resolvedClass` status. These checks exercise the
+publication and shared-allocation shapes, but the resulting conditions remain
+explicitly synthetic authority rather than production IAM/catalog evidence.
+
 These values select the Milo authority and project but do not duplicate the
 project's immutable identity. At startup the manager reads the named Project
 through the root Milo credential, rejects missing, deleting, or UID-less
@@ -100,8 +121,10 @@ deployment is therefore suitable for render, policy, and fail-closed rollout
 validation, not for claiming a functional allocation service.
 
 Provider inventory, MachineClasses, MachineProfiles, project-specific role
-bindings, quota grants, service entitlements, and publication objects are
-environment or provider state. They are not installed by these roots. In
+bindings, quota grants, service entitlements, and publication selection are
+environment or provider state. They are not installed by the production roots.
+The synthetic overlay publishes only the one explicitly named staging class and
+profile; it is not a general production catalog publisher. In
 particular, the proposal's `ServiceConfiguration.spec.provisioning` example is
 explicitly incomplete and source-project-specific, so this bundle does not
 invent a publication source or claim that authorization integration exists.
