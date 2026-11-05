@@ -123,6 +123,9 @@ func TestAllocationReleaseAndEpochReuse(t *testing.T) {
 	if err != nil || record.Epoch != 2 || record.ClaimUID != second.Claim.UID {
 		t.Fatalf("reallocate = %#v, %v", record, err)
 	}
+	if again, err := f.coordinator.Release(ctx, first.Claim.UID); err != nil || !again.SafeToRemoveFinalizer || again.State != AssetReleased {
+		t.Fatalf("release retry after reallocation = %#v, %v", again, err)
+	}
 }
 
 func TestConcurrentDifferingCandidatesSelectOnlyOneAsset(t *testing.T) {
@@ -478,6 +481,18 @@ func TestFailClosedInputsAndDiskCount(t *testing.T) {
 	hardware := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64"}, Disks: []fleetv1.HardwareDisk{{Media: "ssd"}, {Media: "ssd"}}}
 	if matches(profile, hardware) {
 		t.Fatal("exactly one matching disk accepted two")
+	}
+	for name, count := range map[string]fleetv1.Constraint{
+		"max-only": {Max: int64ptr(2)},
+		"empty":    {},
+	} {
+		t.Run("missing-disk-"+name, func(t *testing.T) {
+			profile := fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64"}, Disks: []fleetv1.DiskRequirement{{Count: count, Media: "ssd"}}}
+			hardware := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64"}}
+			if matches(profile, hardware) {
+				t.Fatal("disk group with no matching device was accepted")
+			}
+		})
 	}
 
 	f := newFixture(t)
