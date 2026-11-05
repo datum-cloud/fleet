@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/executor"
+	fleetnetwork "go.datum.net/fleet/internal/network"
 	"go.datum.net/fleet/internal/simulator"
 )
 
@@ -30,6 +32,58 @@ type failingResolver struct{}
 
 func (failingResolver) ResolveImage(context.Context, ImageRequest) (ResolvedImage, error) {
 	return ResolvedImage{}, errors.New("resolver unavailable")
+}
+
+type fakeNetworkLifecycle struct {
+	preflights     int
+	ensures        int
+	releases       int
+	plan           fleetnetwork.Plan
+	observation    fleetnetwork.Observation
+	partialEnsure  bool
+	partialRelease bool
+}
+
+func (f *fakeNetworkLifecycle) Preflight(_ context.Context, request fleetnetwork.PreflightRequest) (fleetnetwork.Plan, error) {
+	f.preflights++
+	digest, _ := fleetnetwork.DigestRequests(request.Interfaces)
+	f.plan = fleetnetwork.Plan{RequestDigest: digest, Location: request.Location}
+	for _, iface := range request.Interfaces {
+		f.plan.Interfaces = append(f.plan.Interfaces, fleetnetwork.InterfacePlan{Name: iface.Name, NetworkNamespace: request.ClaimNamespace, NetworkName: iface.NetworkName, NetworkUID: types.UID("network-" + iface.Name), NetworkGeneration: 1, IPFamilies: append([]string(nil), iface.IPFamilies...), ReclaimPolicy: iface.ReclaimPolicy, ClaimName: "guarded-" + iface.Name, Decision: fleetnetwork.Decision{ID: "network-decision-" + iface.Name, Revision: "policy-r1"}})
+	}
+	return f.plan, nil
+}
+
+func (f *fakeNetworkLifecycle) Ensure(_ context.Context, request fleetnetwork.EnsureRequest) (fleetnetwork.Observation, error) {
+	f.ensures++
+	if request.Plan.RequestDigest != f.plan.RequestDigest {
+		return fleetnetwork.Observation{}, fleetnetwork.ErrObjectConflict
+	}
+	if f.partialEnsure {
+		return fleetnetwork.Observation{Lifecycle: []fleetnetwork.InterfaceLifecycleState{{Name: request.Plan.Interfaces[0].Name, GuardToken: "partial", CreateAdmitted: true}}}, fleetnetwork.ErrPending
+	}
+	return f.observation, nil
+}
+
+func (f *fakeNetworkLifecycle) Release(_ context.Context, request fleetnetwork.ReleaseRequest) (fleetnetwork.ReleaseObservation, error) {
+	f.releases++
+	if f.partialRelease {
+		return fleetnetwork.ReleaseObservation{Lifecycle: []fleetnetwork.InterfaceLifecycleState{{Name: request.Plan.Interfaces[0].Name, GuardToken: "partial", CreateAdmitted: true, DeleteAdmitted: true}}}, fleetnetwork.ErrPending
+	}
+	states := append([]fleetnetwork.InterfaceLifecycleState(nil), request.Lifecycle...)
+	if len(states) == 0 {
+		for _, planned := range request.Plan.Interfaces {
+			states = append(states, fleetnetwork.InterfaceLifecycleState{Name: planned.Name, GuardToken: "guard-" + planned.Name, CreateAdmitted: true, DeleteAdmitted: true})
+		}
+		return fleetnetwork.ReleaseObservation{Lifecycle: states}, fleetnetwork.ErrPending
+	}
+	for i := range states {
+		if !states[i].DeleteAdmitted {
+			return fleetnetwork.ReleaseObservation{}, fleetnetwork.ErrObjectConflict
+		}
+		states[i].DeleteCompleted = true
+	}
+	return fleetnetwork.ReleaseObservation{Verified: true, Lifecycle: states, Revision: "release-r1"}, nil
 }
 
 func (e *memoryExecutor) Execute(_ context.Context, request simulator.Request) (simulator.OperationResult, error) {
@@ -68,7 +122,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	kube := fake.NewClientBuilder().WithScheme(scheme).Build()
 	exec := &memoryExecutor{results: map[string]simulator.OperationResult{}}
-	coordinator, err := NewCoordinator(kube, "private", exec, LocalDigestImageResolver{}, time.Minute)
+	coordinator, err := NewCoordinator(kube, "private", exec, LocalDigestImageResolver{}, nil, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,13 +511,16 @@ func TestCoordinatorRejectsMalformedGenericExecutorEvidence(t *testing.T) {
 
 func TestFailClosedInputsAndDiskCount(t *testing.T) {
 	ctx := context.Background()
-	for name, mutate := range map[string]func(*AllocationRequest){
-		"source": func(r *AllocationRequest) {
+	for name, test := range map[string]struct {
+		mutate func(*AllocationRequest)
+		want   error
+	}{
+		"source": {mutate: func(r *AllocationRequest) {
 			r.Class.Spec.Source = &fleetv1.SourceReference{Project: "other", Name: "class"}
-		},
-		"network": func(r *AllocationRequest) {
+		}, want: ErrUnsupported},
+		"network": {mutate: func(r *AllocationRequest) {
 			r.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management"}}
-		},
+		}, want: fleetnetwork.ErrAuthorizationUnavailable},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
@@ -471,8 +528,8 @@ func TestFailClosedInputsAndDiskCount(t *testing.T) {
 			if err := f.coordinator.EnsureClaimCustody(ctx, r.Claim, r.NamespaceUID, r.Admission); err != nil {
 				t.Fatal(err)
 			}
-			mutate(&r)
-			if _, err := f.coordinator.Allocate(ctx, r); !errors.Is(err, ErrUnsupported) {
+			test.mutate(&r)
+			if _, err := f.coordinator.Allocate(ctx, r); !errors.Is(err, test.want) {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -511,6 +568,266 @@ func TestFailClosedInputsAndDiskCount(t *testing.T) {
 	if _, err := f.coordinator.Install(ctx, InstallationRequest{Claim: r.Claim, Installation: installation, NamespaceUID: "namespace", Admission: installAdmission()}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("bootstrap error = %v", err)
 	}
+}
+
+func TestNetworkLifecycleRetainsInputsAndGatesProviderCleanup(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	networks := &fakeNetworkLifecycle{}
+	f.coordinator.networks = networks
+	request := f.request("networked")
+	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
+	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
+	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
+	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}, IPFamilies: []string{"IPv4"}}}
+	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	asset, err := f.coordinator.Allocate(ctx, request)
+	if err != nil || networks.preflights != 1 || asset.Network == nil || asset.Network.Plan.Interfaces[0].NetworkUID != "network-management" {
+		t.Fatalf("Allocate = %#v, %v, preflights=%d", asset, err, networks.preflights)
+	}
+	networks.observation = fleetnetwork.Observation{Revision: "network-r1", ObservedAt: f.now, Interfaces: []fleetnetwork.InterfaceObservation{{Name: "management", ClaimUID: "network-claim-uid", ClaimGeneration: 4, NetworkInterfaceUID: "private-interface-uid", NetworkInterfaceName: "private-interface-name", MTU: 1440, Addresses: []fleetnetwork.Address{{Address: "10.20.30.42/24", Family: "IPv4", Primary: true}}, Conditions: []fleetnetwork.Condition{{Type: "Allocated", Status: metav1.ConditionTrue, Reason: "internal-detail", ObservedGeneration: 4}, {Type: "Prepared", Status: metav1.ConditionTrue, Reason: "internal-detail", ObservedGeneration: 4}, {Type: "Programmed", Status: metav1.ConditionTrue, Reason: "internal-detail", ObservedGeneration: 4}}}}}
+	if observation, err := f.coordinator.ReconcileNetwork(ctx, request.Claim.UID); err != nil || !observation.Programmed(asset.Network.Plan) {
+		t.Fatalf("ReconcileNetwork = %#v, %v", observation, err)
+	}
+	retained, _, err := f.coordinator.getAsset(ctx, asset.AssetID)
+	if err != nil || retained.Network.Observation.Interfaces[0].ClaimUID != "network-claim-uid" {
+		t.Fatalf("retained network = %#v, %v", retained.Network, err)
+	}
+	status, ready := ProjectNetworkStatus(retained.Network, f.now, time.Minute)
+	if ready.Status != metav1.ConditionTrue || status.Interfaces[0].Conditions[0].Reason != "Verified" || status.Interfaces[0].Addresses[0].Address != "10.20.30.42/24" {
+		t.Fatalf("projection = %#v, condition %#v", status, ready)
+	}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "installation-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "registry/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	installed, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()})
+	if err != nil || installed.Record.NetworkInputs == nil || installed.Record.NetworkInputs.Revision != "network-r1" {
+		t.Fatalf("Install = %#v, %v", installed, err)
+	}
+	if inputs := string(f.executor.requests[0].Inputs); strings.Contains(inputs, "network-claim-uid") || strings.Contains(inputs, "private-interface-uid") || !strings.Contains(inputs, "network-r1") {
+		t.Fatalf("provider network inputs were not sanitized: %s", inputs)
+	}
+	current, secret, err := f.coordinator.getAsset(ctx, asset.AssetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Network.Observation.ObservedAt = f.now.Add(-2 * time.Minute)
+	if err := encodeRecord(secret, current, "asset"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.coordinator.client.Update(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+	if _, ready := ProjectNetworkStatus(current.Network, f.now, time.Minute); ready.Status != metav1.ConditionUnknown {
+		t.Fatalf("stale network evidence projected ready: %#v", ready)
+	}
+	f.coordinator.images = failingResolver{}
+	if recovered, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}); err != nil || recovered.Revision != installed.Revision || len(f.executor.requests) != 1 {
+		t.Fatalf("retained install recovery = %#v, %v, provider=%#v", recovered, err, f.executor.requests)
+	}
+	f.executor.requests = nil
+	first, err := f.coordinator.Release(ctx, request.Claim.UID)
+	if !errors.Is(err, fleetnetwork.ErrPending) || first.State != AssetReleasing || len(f.executor.requests) != 0 {
+		t.Fatalf("first Release = %#v, %v, provider=%#v", first, err, f.executor.requests)
+	}
+	second, err := f.coordinator.Release(ctx, request.Claim.UID)
+	if err != nil || !second.SafeToRemoveFinalizer || len(f.executor.requests) != 1 || f.executor.requests[0].Kind != "cleanup" {
+		t.Fatalf("second Release = %#v, %v, provider=%#v", second, err, f.executor.requests)
+	}
+}
+
+func TestNetworkRefreshErrorKeepsLastProgrammedObservation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	networks := &fakeNetworkLifecycle{}
+	f.coordinator.networks = networks
+	request := f.request("network-refresh-error")
+	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
+	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
+	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
+	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}, IPFamilies: []string{"IPv4"}}}
+	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	asset, err := f.coordinator.Allocate(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	networks.observation = fleetnetwork.Observation{Revision: "network-r1", ObservedAt: f.now, Interfaces: []fleetnetwork.InterfaceObservation{{Name: "management", ClaimUID: "network-claim-uid", ClaimGeneration: 4, Addresses: []fleetnetwork.Address{{Address: "10.20.30.42/24", Family: "IPv4", Primary: true}}, Conditions: []fleetnetwork.Condition{{Type: "Allocated", Status: metav1.ConditionTrue, ObservedGeneration: 4}, {Type: "Prepared", Status: metav1.ConditionTrue, ObservedGeneration: 4}, {Type: "Programmed", Status: metav1.ConditionTrue, ObservedGeneration: 4}}}}}
+	if _, err := f.coordinator.ReconcileNetwork(ctx, request.Claim.UID); err != nil {
+		t.Fatal(err)
+	}
+
+	networks.partialEnsure = true
+	if observation, err := f.coordinator.ReconcileNetwork(ctx, request.Claim.UID); !errors.Is(err, fleetnetwork.ErrPending) || len(observation.Interfaces) != 0 {
+		t.Fatalf("failed refresh = %#v, %v", observation, err)
+	}
+	retained, _, err := f.coordinator.getAsset(ctx, asset.AssetID)
+	if err != nil || !retained.Network.Observation.Programmed(retained.Network.Plan) || retained.Network.Observation.Interfaces[0].Addresses[0].Address != "10.20.30.42/24" || retained.Network.Lifecycle[0].GuardToken != "partial" {
+		t.Fatalf("failed refresh discarded last good observation: %#v, %v", retained.Network, err)
+	}
+}
+
+func TestNetworkPreflightRunsBeforeHardwareSelection(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	networks := &fakeNetworkLifecycle{}
+	f.coordinator.networks = networks
+	request := f.request("networked")
+	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
+	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
+	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}}}
+	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
+	request.Machines = nil
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.coordinator.Allocate(ctx, request); !errors.Is(err, ErrInsufficientCapacity) || networks.preflights != 1 {
+		t.Fatalf("Allocate error = %v, preflights=%d", err, networks.preflights)
+	}
+}
+
+func TestNetworkRequestShapeIsRejectedBeforePreflight(t *testing.T) {
+	for name, mutate := range map[string]func(*fleetv1.NetworkInterfaceRequest){
+		"duplicate families": func(request *fleetv1.NetworkInterfaceRequest) {
+			request.IPFamilies = []string{"IPv4", "IPv4"}
+		},
+		"too many families": func(request *fleetv1.NetworkInterfaceRequest) {
+			request.IPFamilies = []string{"IPv4", "IPv6", "IPv4"}
+		},
+		"unknown family": func(request *fleetv1.NetworkInterfaceRequest) {
+			request.IPFamilies = []string{"IPX"}
+		},
+		"duplicate address classes": func(request *fleetv1.NetworkInterfaceRequest) {
+			request.Addresses = []fleetv1.AddressRequest{{ClassRef: fleetv1.LocalReference{Name: "public"}}, {ClassRef: fleetv1.LocalReference{Name: "public"}}}
+		},
+		"too many address classes": func(request *fleetv1.NetworkInterfaceRequest) {
+			for i := 0; i < 5; i++ {
+				request.Addresses = append(request.Addresses, fleetv1.AddressRequest{ClassRef: fleetv1.LocalReference{Name: fmt.Sprintf("class-%d", i)}})
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFixture(t)
+			networks := &fakeNetworkLifecycle{}
+			f.coordinator.networks = networks
+			request := f.request(types.UID(strings.ReplaceAll(name, " ", "-")))
+			request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
+			request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
+			request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}}}
+			request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
+			mutate(&request.Claim.Spec.NetworkInterfaces[0])
+			if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.coordinator.Allocate(ctx, request); !errors.Is(err, ErrRecordInvalid) {
+				t.Fatalf("Allocate error = %v, want ErrRecordInvalid", err)
+			}
+			if networks.preflights != 0 {
+				t.Fatalf("invalid request reached network preflight %d times", networks.preflights)
+			}
+		})
+	}
+}
+
+func TestNetworkReleaseBeforeEnsurePersistsDeleteIntent(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	networks := &fakeNetworkLifecycle{}
+	f.coordinator.networks = networks
+	request := f.request("network-delete-before-ensure")
+	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
+	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
+	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
+	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}}}
+	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	asset, err := f.coordinator.Allocate(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.coordinator.Release(ctx, request.Claim.UID); !errors.Is(err, fleetnetwork.ErrPending) {
+		t.Fatalf("first Release error = %v", err)
+	}
+	retained, _, err := f.coordinator.getAsset(ctx, asset.AssetID)
+	if err != nil || len(retained.Network.Lifecycle) != 1 || !retained.Network.Lifecycle[0].DeleteAdmitted {
+		t.Fatalf("retained lifecycle = %#v, err=%v", retained.Network, err)
+	}
+	if result, err := f.coordinator.Release(ctx, request.Claim.UID); err != nil || !result.SafeToRemoveFinalizer {
+		t.Fatalf("second Release = %#v, %v", result, err)
+	}
+}
+
+func TestCoordinatorRejectsPartialNetworkLifecycleWithoutCorruptingRecord(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		partial func(*fakeNetworkLifecycle)
+		run     func(context.Context, *Coordinator, types.UID) error
+		state   AssetState
+	}{
+		{
+			name:    "ensure",
+			partial: func(lifecycle *fakeNetworkLifecycle) { lifecycle.partialEnsure = true },
+			run: func(ctx context.Context, coordinator *Coordinator, claimUID types.UID) error {
+				_, err := coordinator.ReconcileNetwork(ctx, claimUID)
+				return err
+			},
+			state: AssetCommitted,
+		},
+		{
+			name:    "release",
+			partial: func(lifecycle *fakeNetworkLifecycle) { lifecycle.partialRelease = true },
+			run: func(ctx context.Context, coordinator *Coordinator, claimUID types.UID) error {
+				_, err := coordinator.Release(ctx, claimUID)
+				return err
+			},
+			state: AssetReleasing,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFixture(t)
+			networks := &fakeNetworkLifecycle{}
+			test.partial(networks)
+			f.coordinator.networks = networks
+			request := twoInterfaceNetworkRequest(f, types.UID("partial-"+test.name))
+			if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+				t.Fatal(err)
+			}
+			asset, err := f.coordinator.Allocate(ctx, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.run(ctx, f.coordinator, request.Claim.UID); !errors.Is(err, ErrRecordInvalid) {
+				t.Fatalf("operation error = %v, want ErrRecordInvalid", err)
+			}
+			retained, _, err := f.coordinator.getAsset(ctx, asset.AssetID)
+			if err != nil {
+				t.Fatalf("retained asset became undecodable: %v", err)
+			}
+			if retained.State != test.state || len(retained.Network.Lifecycle) != 0 {
+				t.Fatalf("retained asset = %#v, want state %s with no lifecycle", retained, test.state)
+			}
+		})
+	}
+}
+
+func twoInterfaceNetworkRequest(f *fixture, claimUID types.UID) AllocationRequest {
+	request := f.request(claimUID)
+	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}, {Name: "data"}}
+	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}, {Name: "eno2"}}
+	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
+	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{
+		{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}},
+		{Name: "data", Network: fleetv1.NamespacedReference{Name: "workload"}},
+	}
+	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
+	return request
 }
 
 func int64ptr(value int64) *int64 { return &value }

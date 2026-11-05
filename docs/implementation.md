@@ -1,8 +1,9 @@
 # Fleet implementation status
 
-Status: public API foundation, standalone synthetic provider simulator, and
-same-cluster allocation/installation lifecycle library implemented. A running
-controller manager, networking integration, and real providers are not implemented.
+Status: public API foundation, standalone synthetic provider simulator,
+same-cluster allocation/installation lifecycle library, and an unwired NSO
+network lifecycle adapter implemented. A running controller manager,
+caller-preserving Milo authorizer, and real providers are not implemented.
 
 ## Standalone lifecycle library
 
@@ -45,6 +46,60 @@ its exclusive writer, and the `fleet-claim-`, `fleet-asset-`, and
 observation timestamps supplied to the library must come from a trusted,
 authenticated provider-status path; this increment does not establish that path.
 
+## Network lifecycle adapter
+
+`internal/network` defines an NSO-independent lifecycle contract. Allocation
+preflights every requested interface before hardware selection, requiring exact
+namespace and location lifetime authority plus a caller-preserving network-use
+decision. The accepted Network UIDs, normalized request, decisions, and request
+digest are retained in the private asset record before any NSO effect.
+Fleet validates NSO's attachment shape before preflight and physical selection:
+families are unique `IPv4`/`IPv6` values with at most two entries, and address
+classes are unique with at most four entries. The Fleet CRD carries the same
+cardinality constraints where OpenAPI can express them.
+
+`internal/network/nso` implements that contract against the proposal's reviewed
+NSO commit `d7fdc43f852450c447d4b7bb44b564c970582b1a`. It creates deterministic
+NetworkInterfaceClaims only after binding and rejects name, UID, protected
+metadata, or normalized-spec conflicts. A separate durable `ObjectGuard` must
+prove Fleet reserved a claim name before an existing object can be recovered;
+object annotations alone are not provenance. There is intentionally no default
+authorizer or object guard.
+The guard binds the created Kubernetes UID, so deleting and recreating the same
+name with copied annotations or token is rejected. Cluster admission must reserve
+Fleet's metadata keys and deterministic claim-name prefix against non-Fleet
+writers. Guarded create/recovery and UID binding must be serialized atomically
+against guard closure; a separate pre-create check is insufficient. Immediately before creation, production wiring must also verify the
+retained Network UID and generation are currently Ready and every retained
+address-class name still has the exact authorized lifetime UID.
+
+The coordinator retains exact claim and interface UIDs plus current-generation
+`Allocated`, `Prepared`, and `Programmed` observations. Installation admission
+requires fresh `Allocated` and `Prepared` evidence and copies the exact network
+revision and inputs into the private operation record. Public projection is a
+pure helper that publishes only Network names, MTU, addresses, and normalized
+conditions only while the observation is within the configured evidence age;
+stale evidence projects `NetworkReady=Unknown`. Internal UIDs, NSO claim names,
+and raw provider messages remain private.
+
+Create intent for every interface is durably returned before any NSO create.
+Release first durably admits an exact per-interface delete vector without effects,
+then retries execute and verify individual deletes. Provider cleanup and finalizer release remain blocked while
+network deletion, retained-interface detachment, or outcome evidence is pending
+or unknown. Object absence counts only after the private record proves deletion
+was admitted for the exact retained UID. `Retain` additionally requires the
+same retained interface UID to report `Available` with no claim reference.
+For `Retain`, an absent claim completes only when the closed guard proves the
+claim was never created, or when an exact interface name and UID retained before
+deletion later reports `Available` with no claim. A created claim whose binding
+was never observed remains pending; a nil reference from one claim snapshot is
+not durable proof that NSO could not bind it before deletion.
+
+This package has no manager, watches, Milo integration, or deployment wiring.
+Production wiring must supply a location-scoped client, caller-preserving
+authorizer, and durable object guard; otherwise networked allocations fail
+closed before selection.
+
 ## Persistent provider simulator
 
 `cmd/fleet-simulator` is a test-only process for exercising provider-operation
@@ -84,7 +139,7 @@ Run the implemented checks from the repository root:
 
 ```sh
 go test ./...
-go test -race ./internal/controller ./internal/executor
+go test -race ./...
 go vet ./...
 ```
 
@@ -115,8 +170,10 @@ Remove the synthetic token and state files when the local run is complete.
 
 - The lifecycle package is not wired to a manager, informer watches, status
   projection, or finalizers yet.
-- Cross-project class sources, network attachments/IPAM, and bootstrap secret
-  retention are rejected rather than partially executed.
+- Cross-project class sources and bootstrap secret retention are rejected rather
+  than partially executed. The network adapter is implemented but deliberately
+  unwired until production location, authorization, and object-guard owners are
+  available.
 - `LocalDigestImageResolver` is test-only. Production image authority,
   namespace authorization, catalog lifetime identity, and digest resolution are
   not implemented.

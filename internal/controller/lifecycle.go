@@ -24,6 +24,7 @@ import (
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/executor"
+	fleetnetwork "go.datum.net/fleet/internal/network"
 	"go.datum.net/fleet/internal/simulator"
 )
 
@@ -118,6 +119,7 @@ type AssetRecord struct {
 	ActiveOperationID    string                     `json:"activeOperationID,omitempty"`
 	AcceptedRequirements fleetv1.MachineProfileSpec `json:"acceptedRequirements"`
 	Hardware             fleetv1.Hardware           `json:"hardware"`
+	Network              *NetworkRecord             `json:"network,omitempty"`
 }
 
 type ResolvedImage struct {
@@ -183,6 +185,7 @@ type InstallationRecord struct {
 	Image           ResolvedImage                  `json:"image"`
 	ImageName       string                         `json:"imageName"`
 	Admission       InstallationAdmissionAuthority `json:"admission"`
+	NetworkInputs   *fleetnetwork.Observation      `json:"networkInputs,omitempty"`
 }
 
 type InstallationAdmissionAuthority struct {
@@ -202,16 +205,17 @@ type Coordinator struct {
 	namespace      string
 	executor       executor.Client
 	images         ImageResolver
+	networks       fleetnetwork.Lifecycle
 	maxEvidenceAge time.Duration
 	now            func() time.Time
 	newID          func() (string, error)
 }
 
-func NewCoordinator(kube client.Client, privateNamespace string, provider executor.Client, images ImageResolver, maxEvidenceAge time.Duration) (*Coordinator, error) {
+func NewCoordinator(kube client.Client, privateNamespace string, provider executor.Client, images ImageResolver, networks fleetnetwork.Lifecycle, maxEvidenceAge time.Duration) (*Coordinator, error) {
 	if kube == nil || provider == nil || images == nil || privateNamespace == "" || maxEvidenceAge <= 0 {
 		return nil, errors.New("client, private namespace, executor, image resolver, and positive evidence age are required")
 	}
-	return &Coordinator{client: kube, namespace: privateNamespace, executor: provider, images: images, maxEvidenceAge: maxEvidenceAge, now: time.Now, newID: randomID}, nil
+	return &Coordinator{client: kube, namespace: privateNamespace, executor: provider, images: images, networks: networks, maxEvidenceAge: maxEvidenceAge, now: time.Now, newID: randomID}, nil
 }
 
 type AllocationRequest struct {
@@ -222,6 +226,8 @@ type AllocationRequest struct {
 	EvidenceObservedAt map[types.UID]time.Time
 	NamespaceUID       types.UID
 	Admission          AdmissionAuthority
+	Location           fleetnetwork.LocationAuthority
+	networkPlan        *fleetnetwork.Plan
 }
 
 // EnsureClaimCustody must be called before a claim finalizer is installed. It
@@ -266,9 +272,6 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 	if request.Class.Spec.Source != nil {
 		return nil, fmt.Errorf("%w: cross-project MachineClass sources are not implemented", ErrUnsupported)
 	}
-	if len(request.Claim.Spec.NetworkInterfaces) != 0 {
-		return nil, fmt.Errorf("%w: network attachments are not implemented", ErrUnsupported)
-	}
 	if request.Claim.DeletionTimestamp != nil || !contains(request.Claim.Finalizers, MachineClaimFinalizer) {
 		return nil, errors.New("claim must be live and carry the Fleet finalizer before allocation")
 	}
@@ -305,6 +308,20 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 			return nil, ErrClaimAlreadyReleased
 		}
 		return c.commitPrepared(ctx, record.AssetID, request.Claim.UID)
+	}
+	if len(request.Claim.Spec.NetworkInterfaces) != 0 {
+		if c.networks == nil || !request.Location.Valid() || request.Location.Name != request.Claim.Spec.LocationRef.Name {
+			return nil, fleetnetwork.ErrAuthorizationUnavailable
+		}
+		interfaces, err := networkRequests(request)
+		if err != nil {
+			return nil, err
+		}
+		plan, err := c.networks.Preflight(ctx, fleetnetwork.PreflightRequest{ClaimNamespace: request.Claim.Namespace, ClaimUID: request.Claim.UID, NamespaceUID: request.NamespaceUID, PrincipalUID: request.Admission.PrincipalUID, Location: request.Location, Interfaces: interfaces})
+		if err != nil {
+			return nil, err
+		}
+		request.networkPlan = &plan
 	}
 
 	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.Machines.Selector)
@@ -384,7 +401,53 @@ func validateAssetForRequest(record *AssetRecord, request AllocationRequest) err
 	if record.ClaimNamespace != request.Claim.Namespace || record.ClaimName != request.Claim.Name || record.ClaimUID != request.Claim.UID || record.ClassUID != request.Class.UID || record.ProfileUID != request.Profile.UID || string(got) != string(want) {
 		return fmt.Errorf("%w: retained asset inputs differ from allocation retry", ErrRecordInvalid)
 	}
+	interfaces, err := networkRequests(request)
+	if err != nil {
+		return err
+	}
+	digest, err := fleetnetwork.DigestRequests(interfaces)
+	if err != nil {
+		return err
+	}
+	if (record.Network == nil) != (len(interfaces) == 0) || record.Network != nil && (record.Network.Plan.RequestDigest != digest || record.Network.Plan.Location.Name != request.Claim.Spec.LocationRef.Name) {
+		return fmt.Errorf("%w: retained network inputs differ from allocation retry", ErrRecordInvalid)
+	}
 	return nil
+}
+
+func networkRequests(request AllocationRequest) ([]fleetnetwork.InterfaceRequest, error) {
+	slots := map[string]bool{}
+	for _, iface := range request.Profile.Spec.Interfaces {
+		slots[iface.Name] = true
+	}
+	seen := map[string]bool{}
+	result := make([]fleetnetwork.InterfaceRequest, 0, len(request.Claim.Spec.NetworkInterfaces))
+	for _, requested := range request.Claim.Spec.NetworkInterfaces {
+		if requested.Name == "" || seen[requested.Name] || !slots[requested.Name] || requested.Network.Name == "" {
+			return nil, fmt.Errorf("%w: network interface does not name one unique profile slot", ErrRecordInvalid)
+		}
+		seen[requested.Name] = true
+		reclaim, ok := fleetnetwork.NormalizeReclaimPolicy(requested.ReclaimPolicy)
+		if !ok {
+			return nil, fmt.Errorf("%w: invalid network reclaim policy", ErrRecordInvalid)
+		}
+		namespace := requested.Network.Namespace
+		if namespace == "" {
+			namespace = request.Claim.Namespace
+		}
+		item := fleetnetwork.InterfaceRequest{Name: requested.Name, NetworkName: requested.Network.Name, NetworkNS: namespace, IPFamilies: append([]string(nil), requested.IPFamilies...), ReclaimPolicy: reclaim}
+		for _, address := range requested.Addresses {
+			if address.ClassRef.Name == "" {
+				return nil, fmt.Errorf("%w: address class name is required", ErrRecordInvalid)
+			}
+			item.AddressClasses = append(item.AddressClasses, address.ClassRef.Name)
+		}
+		if !fleetnetwork.ValidAttachmentLists(item.IPFamilies, item.AddressClasses) {
+			return nil, fmt.Errorf("%w: network attachment families or address classes violate NSO cardinality or uniqueness", ErrRecordInvalid)
+		}
+		result = append(result, item)
+	}
+	return result, nil
 }
 
 func validateAllocationRequest(request AllocationRequest) error {
@@ -516,11 +579,15 @@ func (c *Coordinator) proposeAsset(ctx context.Context, request AllocationReques
 }
 
 func newAssetRecord(request AllocationRequest, machine *fleetv1.Machine, assetID string, epoch int64, bindingID, fenceToken string) *AssetRecord {
-	return &AssetRecord{SchemaVersion: recordSchemaVersion, State: AssetPreparing, AssetID: assetID,
+	record := &AssetRecord{SchemaVersion: recordSchemaVersion, State: AssetPreparing, AssetID: assetID,
 		MachineNamespace: machine.Namespace, MachineName: machine.Name, MachineUID: machine.UID,
 		ClaimNamespace: request.Claim.Namespace, ClaimName: request.Claim.Name, ClaimUID: request.Claim.UID,
 		ClassUID: request.Class.UID, ProfileUID: request.Profile.UID, BindingID: bindingID, Epoch: epoch,
 		FenceToken: fenceToken, CurrentRevision: "None", AcceptedRequirements: request.Profile.Spec, Hardware: machine.Status.Hardware}
+	if request.networkPlan != nil {
+		record.Network = &NetworkRecord{Plan: *request.networkPlan}
+	}
+	return record
 }
 
 func (c *Coordinator) commitPrepared(ctx context.Context, assetID string, claimUID types.UID) (*AssetRecord, error) {
@@ -551,6 +618,60 @@ func (c *Coordinator) commitPrepared(ctx context.Context, assetID string, claimU
 		return nil
 	})
 	return committed, err
+}
+
+// ReconcileNetwork materializes and observes NSO claims only after the asset
+// binding is committed. It uses the retained plan rather than the public claim.
+func (c *Coordinator) ReconcileNetwork(ctx context.Context, claimUID types.UID) (fleetnetwork.Observation, error) {
+	if c.networks == nil || claimUID == "" {
+		return fleetnetwork.Observation{}, fleetnetwork.ErrAuthorizationUnavailable
+	}
+	records, err := c.recordsForClaim(ctx, claimUID)
+	if err != nil || len(records) != 1 {
+		if err != nil {
+			return fleetnetwork.Observation{}, err
+		}
+		return fleetnetwork.Observation{}, ErrRecordInvalid
+	}
+	asset := records[0]
+	if asset.State != AssetCommitted || asset.Network == nil {
+		return fleetnetwork.Observation{}, ErrRecordInvalid
+	}
+	previous := asset.Network.Observation
+	previous.Lifecycle = append([]fleetnetwork.InterfaceLifecycleState(nil), asset.Network.Lifecycle...)
+	observation, ensureErr := c.networks.Ensure(ctx, fleetnetwork.EnsureRequest{ClaimUID: claimUID, BindingID: asset.BindingID, Plan: asset.Network.Plan, Previous: previous})
+	if observation.Revision != "" || len(observation.Lifecycle) != 0 {
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			current, secret, getErr := c.getAsset(ctx, asset.AssetID)
+			if getErr != nil {
+				return getErr
+			}
+			if current.ClaimUID != claimUID || current.State != AssetCommitted || current.Network == nil || current.Network.Plan.RequestDigest != asset.Network.Plan.RequestDigest {
+				return ErrRecordInvalid
+			}
+			// An unsuccessful refresh is not evidence that the last verified
+			// allocation disappeared. Preserve a Programmed observation (and its
+			// addresses) while retaining any complete lifecycle progress needed
+			// for an exact retry.
+			if ensureErr == nil || !current.Network.Observation.Programmed(current.Network.Plan) {
+				current.Network.Observation = observation
+			}
+			if len(observation.Lifecycle) != 0 {
+				current.Network.Lifecycle = append([]fleetnetwork.InterfaceLifecycleState(nil), observation.Lifecycle...)
+			}
+			if err := validateNetworkRecord(current.Network); err != nil {
+				return err
+			}
+			if err := encodeRecord(secret, current, "asset"); err != nil {
+				return err
+			}
+			return c.client.Update(ctx, secret)
+		})
+		if err != nil {
+			return observation, err
+		}
+	}
+	return observation, ensureErr
 }
 
 func (c *Coordinator) authorityIDs() (string, string, error) {
@@ -668,6 +789,27 @@ func (c *Coordinator) Release(ctx context.Context, claimUID types.UID) (ReleaseR
 	if record.State != AssetReleasing {
 		return ReleaseResult{}, fmt.Errorf("%w: unexpected release state %s", ErrRecordInvalid, record.State)
 	}
+	if record.Network != nil && record.Network.ReleaseRevision == "" {
+		if c.networks == nil {
+			return ReleaseResult{State: AssetReleasing}, fleetnetwork.ErrAuthorizationUnavailable
+		}
+		released, releaseErr := c.networks.Release(ctx, fleetnetwork.ReleaseRequest{ClaimUID: record.ClaimUID, BindingID: record.BindingID, Plan: record.Network.Plan, Observation: record.Network.Observation, Lifecycle: record.Network.Lifecycle})
+		if len(released.Lifecycle) != 0 || released.Verified {
+			if err := c.retainNetworkRelease(ctx, record.AssetID, record.ClaimUID, released); err != nil {
+				return ReleaseResult{State: AssetReleasing}, err
+			}
+			record, _, err = c.getAsset(ctx, record.AssetID)
+			if err != nil {
+				return ReleaseResult{State: AssetReleasing}, err
+			}
+		}
+		if releaseErr != nil {
+			return ReleaseResult{State: AssetReleasing}, releaseErr
+		}
+		if !released.Verified {
+			return ReleaseResult{State: AssetReleasing}, fleetnetwork.ErrPending
+		}
+	}
 	request := simulator.Request{ID: "cleanup-" + record.BindingID, Kind: "cleanup", AssetID: record.AssetID, BindingID: record.BindingID, Epoch: record.Epoch, FenceToken: record.FenceToken}
 	if _, err := c.executeAndRecover(ctx, request); err != nil {
 		return ReleaseResult{State: AssetReleasing}, err
@@ -679,6 +821,34 @@ func (c *Coordinator) Release(ctx context.Context, claimUID types.UID) (ReleaseR
 		return ReleaseResult{}, err
 	}
 	return ReleaseResult{State: AssetReleased, SafeToRemoveFinalizer: true}, nil
+}
+
+func (c *Coordinator) retainNetworkRelease(ctx context.Context, assetID string, claimUID types.UID, released fleetnetwork.ReleaseObservation) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		record, secret, err := c.getAsset(ctx, assetID)
+		if err != nil {
+			return err
+		}
+		if record.ClaimUID != claimUID || record.State != AssetReleasing || record.Network == nil {
+			return ErrRecordInvalid
+		}
+		if len(released.Lifecycle) != 0 {
+			record.Network.Lifecycle = append([]fleetnetwork.InterfaceLifecycleState(nil), released.Lifecycle...)
+		}
+		if released.Verified {
+			if released.Revision == "" {
+				return ErrRecordInvalid
+			}
+			record.Network.ReleaseRevision = released.Revision
+		}
+		if err := validateNetworkRecord(record.Network); err != nil {
+			return err
+		}
+		if err := encodeRecord(secret, record, "asset"); err != nil {
+			return err
+		}
+		return c.client.Update(ctx, secret)
+	})
 }
 
 func (c *Coordinator) settleActiveOperation(ctx context.Context, asset *AssetRecord) error {
@@ -698,7 +868,7 @@ func (c *Coordinator) settleActiveOperation(ctx context.Context, asset *AssetRec
 	if operation == nil {
 		return ErrOperationActive
 	}
-	request := simulator.Request{ID: operation.OperationID, Kind: "install", AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, FenceToken: asset.FenceToken, Inputs: json.RawMessage(fmt.Sprintf(`{"image":%q}`, operation.Image.Reference()))}
+	request := simulator.Request{ID: operation.OperationID, Kind: "install", AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, FenceToken: asset.FenceToken, Inputs: installationInputs(operation)}
 	if operation.State == OperationAdmitted {
 		if _, err := c.executeAndRecover(ctx, request); err != nil {
 			return err
@@ -758,6 +928,9 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	operationName := operationRecordName(request.Claim.UID, predecessor)
 	operation, _, err := c.getOperation(ctx, operationName)
 	if apierrors.IsNotFound(err) {
+		if asset.Network != nil && (!asset.Network.Observation.Prepared(asset.Network.Plan) || asset.Network.Observation.ObservedAt.After(c.now()) || c.now().Sub(asset.Network.Observation.ObservedAt) > c.maxEvidenceAge) {
+			return InstallationResult{}, fleetnetwork.ErrEvidenceStale
+		}
 		image, resolveErr := c.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: request.Installation.UID, ImageName: request.Installation.Spec.ImageRef.Name})
 		if resolveErr != nil {
 			return InstallationResult{}, resolveErr
@@ -788,7 +961,7 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	if err := c.activateOperation(ctx, asset.AssetID, asset.ClaimUID, predecessor, operation.OperationID); err != nil {
 		return InstallationResult{}, err
 	}
-	execRequest := simulator.Request{ID: operation.OperationID, Kind: "install", AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, FenceToken: asset.FenceToken, Inputs: json.RawMessage(fmt.Sprintf(`{"image":%q}`, operation.Image.Reference()))}
+	execRequest := simulator.Request{ID: operation.OperationID, Kind: "install", AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, FenceToken: asset.FenceToken, Inputs: installationInputs(operation)}
 	if _, err := c.executeAndRecover(ctx, execRequest); err != nil {
 		return InstallationResult{}, err
 	}
@@ -816,6 +989,39 @@ func predecessorValue(value fleetv1.InstallationPredecessor) (string, error) {
 	return "", errors.New("expectedPredecessor must be None without revision or Revision with a nonempty revision")
 }
 
+func sameNetworkInputs(inputs *fleetnetwork.Observation, record *NetworkRecord) bool {
+	if inputs == nil || record == nil {
+		return inputs == nil && record == nil
+	}
+	left, _ := json.Marshal(inputs)
+	right, _ := json.Marshal(record.Observation)
+	return string(left) == string(right)
+}
+
+func installationInputs(operation *InstallationRecord) json.RawMessage {
+	type interfaceInput struct {
+		Name      string                 `json:"name"`
+		MTU       int32                  `json:"mtu,omitempty"`
+		Addresses []fleetnetwork.Address `json:"addresses,omitempty"`
+	}
+	type networkInput struct {
+		Revision   string           `json:"revision"`
+		Interfaces []interfaceInput `json:"interfaces"`
+	}
+	value := struct {
+		Image   string        `json:"image"`
+		Network *networkInput `json:"network,omitempty"`
+	}{Image: operation.Image.Reference()}
+	if operation.NetworkInputs != nil {
+		value.Network = &networkInput{Revision: operation.NetworkInputs.Revision}
+		for _, iface := range operation.NetworkInputs.Interfaces {
+			value.Network.Interfaces = append(value.Network.Interfaces, interfaceInput{Name: iface.Name, MTU: iface.MTU, Addresses: append([]fleetnetwork.Address(nil), iface.Addresses...)})
+		}
+	}
+	b, _ := json.Marshal(value)
+	return b
+}
+
 func (c *Coordinator) getOrCreateOperation(ctx context.Context, name string, request InstallationRequest, asset *AssetRecord, predecessor string, image ResolvedImage) (*InstallationRecord, *corev1.Secret, error) {
 	var secret corev1.Secret
 	err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret)
@@ -835,6 +1041,10 @@ func (c *Coordinator) getOrCreateOperation(ctx context.Context, name string, req
 		return nil, nil, err
 	}
 	record := &InstallationRecord{SchemaVersion: recordSchemaVersion, State: OperationAdmitted, OperationID: "install-" + operationID, InstallationUID: request.Installation.UID, NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, Predecessor: predecessor, ResultRevision: "ir-" + revisionID, Image: image, ImageName: request.Installation.Spec.ImageRef.Name, Admission: request.Admission}
+	if asset.Network != nil {
+		inputs := asset.Network.Observation
+		record.NetworkInputs = &inputs
+	}
 	secret = corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.namespace}}
 	if err := encodeRecord(&secret, record, "installation"); err != nil {
 		return nil, nil, err
@@ -1238,6 +1448,12 @@ func validateAssetRecord(r *AssetRecord) error {
 	if (r.State == AssetPreparing || r.State == AssetReleasing || r.State == AssetReleased) && r.ActiveOperationID != "" {
 		return ErrRecordInvalid
 	}
+	if validateNetworkRecord(r.Network) != nil {
+		return ErrRecordInvalid
+	}
+	if r.Network != nil && r.State == AssetReleased && r.Network.ReleaseRevision == "" && (r.Network.Observation.Revision != "" || len(r.Network.Lifecycle) != 0) {
+		return ErrRecordInvalid
+	}
 	return nil
 }
 
@@ -1246,6 +1462,9 @@ func validateInstallationRecord(r *InstallationRecord) error {
 		return ErrRecordInvalid
 	}
 	if r.State != OperationAdmitted && r.State != OperationSucceeded {
+		return ErrRecordInvalid
+	}
+	if r.NetworkInputs != nil && (r.NetworkInputs.Revision == "" || r.NetworkInputs.ObservedAt.IsZero()) {
 		return ErrRecordInvalid
 	}
 	return nil
