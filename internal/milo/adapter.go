@@ -231,6 +231,12 @@ func (a *Adapter) Allocate(ctx context.Context, prepared PreparedClaim, request 
 	if err := a.Lifecycle.CheckCapacity(request); err != nil {
 		return nil, err
 	}
+	// Do not create an external hold after release has made this claim lifetime
+	// terminal. RetainAllocationAuthority repeats this check after Acquire to
+	// close the race between this proof and the external effect.
+	if err := a.Lifecycle.VerifyAllocationAuthority(ctx, request.Claim.UID, consumer, provider, prepared.Authority); err != nil {
+		return nil, err
+	}
 	entitlement, err := a.Entitlements.Current(ctx, consumerClient)
 	if err != nil {
 		return nil, err
@@ -280,7 +286,7 @@ func (a *Adapter) Allocate(ctx context.Context, prepared PreparedClaim, request 
 	}
 	request.ExternalHold = hold.Ref()
 	if err := a.Lifecycle.RetainAllocationAuthority(ctx, request.Claim.UID, consumer, provider, prepared.Authority, hold.Ref()); err != nil {
-		return nil, err
+		return nil, a.settleAfterFailedAdmission(ctx, consumer, prepared.Authority, hold, err)
 	}
 	commit := AdmissionCommit{Authority: prepared.Authority, SourceUse: record.SourceRequest, Source: record.SourceReceipt, Entitlement: entitlement, Hold: hold}
 	commitDigest, err := digest(commit)
