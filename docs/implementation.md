@@ -155,10 +155,12 @@ identity, RBAC, admission, image, and readiness boundary can be reviewed and
 rolled out fail-closed. Its service account receives Secret permissions only
 through a namespaced Role for `fleet-system-private`; cache scoping is not an
 authorization boundary, and it has no host ClusterRole. The environment must
-provide the exact authority ID, Project UID, and route in
-`fleet-manager-config`, mount the generated `milo-configuration-kubeconfig`
-Secret, and pin the image. The packaged
-binary is intentionally inert and unready because caller-preserving admission,
+provide the authority ID and Project name in `fleet-manager-config`, mount the
+generated `milo-configuration-kubeconfig` Secret, and pin the image. The
+manager resolves the immutable Project UID from Milo at startup and fails
+closed when the named Project cannot be read, is being deleted, or has no UID;
+operators do not copy an opaque Project UID into deployment configuration. The
+packaged binary is intentionally inert and unready because caller-preserving admission,
 the live verifier, replay integrations, and production handlers are still
 absent. Installing these manifests is not evidence of functional allocation.
 

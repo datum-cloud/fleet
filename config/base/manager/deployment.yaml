@@ -33,8 +33,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - --authority-id=$(FLEET_AUTHORITY_ID)
-            - --project-uid=$(FLEET_PROJECT_UID)
-            - --project-route=$(FLEET_PROJECT_ROUTE)
+            - --project-name=$(FLEET_PROJECT_NAME)
             - --private-namespace=fleet-system-private
             - --project-kubeconfig=/var/run/fleet/milo/kubeconfig
             - --leader-election-namespace=fleet-system
@@ -44,16 +43,11 @@ spec:
                 configMapKeyRef:
                   name: fleet-manager-config
                   key: authorityID
-            - name: FLEET_PROJECT_UID
+            - name: FLEET_PROJECT_NAME
               valueFrom:
                 configMapKeyRef:
                   name: fleet-manager-config
-                  key: projectUID
-            - name: FLEET_PROJECT_ROUTE
-              valueFrom:
-                configMapKeyRef:
-                  name: fleet-manager-config
-                  key: projectRoute
+                  key: projectName
           ports:
             - name: health
               containerPort: 8081
