@@ -57,7 +57,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		return h.release(ctx, claim.UID, &claim)
 	}
 	if claim.Spec.LocationRef.Name != h.Location || claim.Spec.PowerState != "Off" || len(claim.Spec.NetworkInterfaces) != 0 || claim.Spec.InitialInstallationRef != nil {
-		return h.pending(ctx, &claim, "UnsupportedSyntheticRequest", "Synthetic staging accepts powered-off, networkless claims without an initial installation.", nil)
+		return h.rejected(ctx, &claim, "UnsupportedSyntheticRequest", "Synthetic staging accepts powered-off, networkless claims without an initial installation.")
 	}
 
 	var namespace corev1.Namespace
@@ -73,7 +73,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		return h.dependency(ctx, &claim, "MachineProfilePending", err)
 	}
 	if class.Spec.Source != nil || class.Spec.Capacity == nil || class.Spec.Capacity.Machines.Namespace == "" {
-		return h.pending(ctx, &claim, "UnsupportedMachineClass", "Synthetic staging requires a local class with an explicit provider namespace.", nil)
+		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "Synthetic staging requires a local class with an explicit provider namespace.")
 	}
 	var list fleetv1.MachineList
 	if err := h.Public.List(ctx, &list, client.InNamespace(class.Spec.Capacity.Machines.Namespace)); err != nil {
@@ -174,6 +174,21 @@ func (h Handler) pending(ctx context.Context, claim *fleetv1.MachineClaim, reaso
 		}
 	}
 	return manager.Outcome{RetryError: retryErr}
+}
+
+func (h Handler) rejected(ctx context.Context, claim *fleetv1.MachineClaim, reason, message string) manager.Outcome {
+	status := fleetv1.MachineClaimStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: claim.Spec.LocationRef.Name}}, Conditions: []metav1.Condition{
+		condition("Accepted", metav1.ConditionFalse, claim.Generation, reason, message),
+		condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message),
+		condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message),
+	}}
+	if !sameStatus(claim.Status, status) {
+		claim.Status = status
+		if err := h.Public.Status().Update(ctx, claim); err != nil {
+			return manager.Outcome{RetryError: err}
+		}
+	}
+	return manager.Outcome{}
 }
 
 func (h Handler) release(ctx context.Context, uid types.UID, claim *fleetv1.MachineClaim) manager.Outcome {
