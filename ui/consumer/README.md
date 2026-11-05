@@ -1,12 +1,19 @@
 # Fleet consumer portal plugin
 
-A [cloud-portal](https://github.com/datum-cloud/cloud-portal) plugin that lists
-the MachineClaims in the current project. It is a Module Federation remote: the
-portal fetches `plugin-manifest.json` and `remoteEntry.js` server-side and
-mounts the pages at `/project/:projectId/services/<slug>/`.
+A [cloud-portal](https://github.com/datum-cloud/cloud-portal) plugin for a
+project's machines. It is a Module Federation remote: the portal fetches
+`plugin-manifest.json` and `remoteEntry.js` server-side and mounts the pages at
+`/project/:projectId/services/<slug>/`. The **Machines** nav item opens two
+tabs:
 
-This is the MVP from [#16](https://github.com/datum-cloud/fleet/issues/16). It
-is read-only and has no deployment manifests yet.
+- **Machines** (the mount root) lists the project's MachineClaims.
+- **Catalog** (`catalog`) lists the MachineClasses this project can claim from
+  and the profiles each allows. A class published from another project (with
+  `spec.source`) is read from `status.resolvedClass` and stays pending until
+  Fleet resolves it; the project's own class is read from its spec.
+
+This started as the MVP from [#16](https://github.com/datum-cloud/fleet/issues/16).
+It is read-only so far and has no deployment manifests yet.
 
 Consumers see claims, never Machines: allocated hardware comes from
 `MachineClaim.status`, following the

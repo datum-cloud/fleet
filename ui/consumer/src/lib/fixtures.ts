@@ -1,5 +1,5 @@
 import { MACHINE_CLAIM_FINALIZER } from '../../../shared/fleet-api';
-import type { RawMachineClaim } from '../types';
+import type { RawMachineClaim, RawMachineClass, RawMachineProfile } from '../types';
 
 // Synthetic claims used while the Fleet API cannot be read
 // (VITE_FLEET_FIXTURES=true). Class, profile and location names come from
@@ -70,5 +70,45 @@ export const FIXTURE_CLAIMS: RawMachineClaim[] = [
     },
     spec: SPEC,
     status: BOUND_STATUS,
+  },
+];
+
+// A consumer project's catalog: standard-metal published from datum-cloud
+// with two profiles, and a second class whose publication has not resolved.
+export const FIXTURE_CLASSES: RawMachineClass[] = [
+  {
+    metadata: { name: 'standard-metal' },
+    spec: { source: { project: 'datum-cloud', name: 'standard-metal' } },
+    status: {
+      evaluatedRevision: 'class-revision-example',
+      resolvedClass: {
+        profilePolicy: {
+          allowedProfiles: [{ name: 'general-purpose-24c-128g' }, { name: 'accelerated-32c-256g' }],
+          customProfiles: { enabled: false },
+        },
+        access: { consoleModes: [], powerControl: true },
+      },
+      conditions: [{ type: 'SourceResolved', status: 'True' }],
+    },
+  },
+  {
+    metadata: { name: 'high-memory-metal' },
+    spec: { source: { project: 'datum-cloud', name: 'high-memory-metal' } },
+    status: { conditions: [{ type: 'SourceResolved', status: 'Unknown' }] },
+  },
+];
+
+export const FIXTURE_PROFILES: RawMachineProfile[] = [
+  {
+    metadata: { name: 'general-purpose-24c-128g' },
+    spec: { cpu: { architecture: 'amd64', cores: { min: 24 } }, memory: { capacity: { min: '128Gi' } } },
+  },
+  {
+    metadata: { name: 'accelerated-32c-256g' },
+    spec: {
+      cpu: { architecture: 'amd64', cores: { min: 32 } },
+      memory: { capacity: { min: '256Gi' } },
+      gpus: { count: { exact: 4 }, vendor: 'nvidia' },
+    },
   },
 ];

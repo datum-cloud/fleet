@@ -2,6 +2,7 @@
 // fleet.datumapis.com/v1alpha1 Machine in ui/shared/fleet-api.ts.
 
 import { findCondition, type Condition } from '../../shared/conditions';
+import { formatConstraint, summarizeProfile, type ProfileSummary } from '../../shared/profile-summary';
 import type {
   List,
   Machine as RawMachine,
@@ -64,47 +65,17 @@ export function toMachine(raw: RawMachine): Machine {
 
 // ---- MachineProfile ----
 
-export interface MachineProfile {
+export { formatConstraint };
+
+export interface MachineProfile extends ProfileSummary {
   name: string;
-  /** e.g. "≥ 24 cores · amd64" */
-  cpu: string;
-  memory: string;
-  /** Absent when the profile asks for no GPUs. */
-  gpus?: string;
-  disks: number;
-  interfaces: number;
   createdAt?: string;
 }
 
-type Bounds<T> = { min?: T; max?: T; exact?: T };
-
-// Renders a min/max/exact constraint; an empty one means "any".
-export function formatConstraint<T extends string | number>(c: Bounds<T> | undefined, unit = ''): string {
-  const u = (v: T) => `${v}${unit}`;
-  if (!c) return 'Any';
-  if (c.exact !== undefined) return u(c.exact);
-  if (c.min !== undefined && c.max !== undefined) return `${u(c.min)}–${u(c.max)}`;
-  if (c.min !== undefined) return `≥ ${u(c.min)}`;
-  if (c.max !== undefined) return `≤ ${u(c.max)}`;
-  return 'Any';
-}
-
-function gpuSummary(gpus: RawMachineProfile['spec']['gpus']): string | undefined {
-  if (!gpus) return undefined;
-  const count = formatConstraint(gpus.count);
-  const what = [gpus.vendor, gpus.models?.join(' / ')].filter(Boolean).join(' ');
-  return what ? `${count} × ${what}` : count;
-}
-
 export function toMachineProfile(raw: RawMachineProfile): MachineProfile {
-  const { cpu, memory, gpus, disks, interfaces } = raw.spec;
   return {
     name: raw.metadata.name,
-    cpu: `${formatConstraint(cpu.cores, ' cores')} · ${cpu.architecture}`,
-    memory: formatConstraint(memory.capacity),
-    gpus: gpuSummary(gpus),
-    disks: disks?.length ?? 0,
-    interfaces: interfaces?.length ?? 0,
+    ...summarizeProfile(raw.spec),
     createdAt: raw.metadata.creationTimestamp,
   };
 }

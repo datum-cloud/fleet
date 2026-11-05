@@ -33,6 +33,7 @@
     "date-fns": "^4.4.0",
     "date-fns-tz": "^3.2.0",
     "jsdom": "^25.0.1",
+    "motion": "^13.5.1",
     "nuqs": "^2.10.2",
     "react-day-picker": "^10.0.2",
     "typescript": "^6.0.3",

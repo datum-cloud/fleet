@@ -35,6 +35,7 @@ export default defineConfig({
       // Keys map 1:1 to the manifest's `exposedModules` keys / $codeRefs.
       exposes: {
         './ClaimList': './src/pages/claim-list.tsx',
+        './Catalog': './src/pages/catalog.tsx',
       },
       // requiredVersion:false everywhere: the host's copy always wins, so a
       // host major bump cannot reject the plugin.
@@ -54,6 +55,7 @@ export default defineConfig({
         '@datum-cloud/datum-ui/icons': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/page-title': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/skeleton': { singleton: true, requiredVersion: false },
+        '@datum-cloud/datum-ui/tabs': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/utils': { singleton: true, requiredVersion: false },
       },
     }),

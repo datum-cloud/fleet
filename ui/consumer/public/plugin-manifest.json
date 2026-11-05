@@ -4,7 +4,8 @@
   "sdk": { "name": "@datum-cloud/portal-plugin-sdk", "range": "^1.0.0" },
   "remoteEntry": "remoteEntry.js",
   "exposedModules": {
-    "ClaimList": "./src/pages/claim-list.tsx"
+    "ClaimList": "./src/pages/claim-list.tsx",
+    "Catalog": "./src/pages/catalog.tsx"
   },
   "extensions": [
     {
@@ -23,6 +24,13 @@
       "properties": {
         "path": "",
         "component": { "$codeRef": "ClaimList" }
+      }
+    },
+    {
+      "type": "portal.page/project",
+      "properties": {
+        "path": "catalog",
+        "component": { "$codeRef": "Catalog" }
       }
     }
   ]
