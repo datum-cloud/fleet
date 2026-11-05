@@ -649,8 +649,16 @@ func (c *Coordinator) ReconcileNetwork(ctx context.Context, claimUID types.UID) 
 			if current.ClaimUID != claimUID || current.State != AssetCommitted || current.Network == nil || current.Network.Plan.RequestDigest != asset.Network.Plan.RequestDigest {
 				return ErrRecordInvalid
 			}
-			current.Network.Observation = observation
-			current.Network.Lifecycle = append([]fleetnetwork.InterfaceLifecycleState(nil), observation.Lifecycle...)
+			// An unsuccessful refresh is not evidence that the last verified
+			// allocation disappeared. Preserve a Programmed observation (and its
+			// addresses) while retaining any complete lifecycle progress needed
+			// for an exact retry.
+			if ensureErr == nil || !current.Network.Observation.Programmed(current.Network.Plan) {
+				current.Network.Observation = observation
+			}
+			if len(observation.Lifecycle) != 0 {
+				current.Network.Lifecycle = append([]fleetnetwork.InterfaceLifecycleState(nil), observation.Lifecycle...)
+			}
 			if err := validateNetworkRecord(current.Network); err != nil {
 				return err
 			}
