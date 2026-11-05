@@ -1,0 +1,26 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-consumer
+  annotations:
+    kubernetes.io/display-name: Fleet Consumer
+    kubernetes.io/description: Request, install, and release machines in a consumer project
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-viewer
+  includedPermissions:
+    - fleet.datumapis.com/machineprofiles.create
+    - fleet.datumapis.com/machineprofiles.update
+    - fleet.datumapis.com/machineprofiles.patch
+    - fleet.datumapis.com/machineprofiles.delete
+    - fleet.datumapis.com/machineprofiles.use
+    - fleet.datumapis.com/machineclaims.create
+    - fleet.datumapis.com/machineclaims.update
+    - fleet.datumapis.com/machineclaims.patch
+    - fleet.datumapis.com/machineclaims.delete
+    - fleet.datumapis.com/machineclaims.install
+    - fleet.datumapis.com/installations.create
+    - fleet.datumapis.com/installations.update
+    - fleet.datumapis.com/installations.patch
+    - fleet.datumapis.com/installations.delete

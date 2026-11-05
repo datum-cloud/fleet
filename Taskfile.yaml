@@ -1,0 +1,30 @@
+version: '3'
+
+tasks:
+  manifests:validate:
+    desc: Render and validate the production Fleet and Milo manifest roots.
+    cmds:
+      - kustomize build config/milo >/dev/null
+      - kustomize build config/overlays/management-plane >/dev/null
+      - ./hack/validate-overlay-isolation.sh
+
+  milo:validate:
+    desc: Validate the non-effectful Milo acceptance packaging.
+    cmds:
+      - go test ./test/acceptance/milo/...
+      - go run ./test/acceptance/milo/cmd validate --root .
+
+  milo:test:fail-closed:
+    desc: Prove missing production integrations cannot become acceptance success.
+    cmds:
+      - go test -race ./test/acceptance/milo/...
+
+  milo:test:live:
+    desc: Run protected live preflight; currently exits Blocked before cluster access.
+    requires:
+      vars: [MILO_ACCEPTANCE_CONFIG, MILO_ACCEPTANCE_OUTPUT]
+    env:
+      FLEET_MILO_ACCEPTANCE_CONFIG: '{{.MILO_ACCEPTANCE_CONFIG}}'
+      FLEET_MILO_ACCEPTANCE_OUTPUT: '{{.MILO_ACCEPTANCE_OUTPUT}}'
+    cmds:
+      - go run ./test/acceptance/milo/cmd live --config "$FLEET_MILO_ACCEPTANCE_CONFIG" --output "$FLEET_MILO_ACCEPTANCE_OUTPUT"

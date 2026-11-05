@@ -21,6 +21,8 @@
 /dist/
 /coverage/
 /worktrees/
+/milo-acceptance-evidence/
+**/milo-acceptance-config.json
 
 # Local agent settings
 .claude/settings.local.json

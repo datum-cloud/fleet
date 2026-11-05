@@ -3,8 +3,64 @@
 Status: public API foundation, standalone synthetic provider simulator,
 same-cluster allocation/installation lifecycle library, unwired NSO network
 lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
-event-only manager wiring scaffold implemented. Production caller-preserving
+event-only manager wiring scaffold implemented. A packaged standalone synthetic
+smoke scenario exercises local-scope contention, install recovery, cleanup, and
+epoch reuse. Production caller-preserving
 admission, replayable Milo event adapters, and real providers are not implemented.
+Production Kustomize roots now package the implemented manager, admission, API,
+Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
+
+## Standalone synthetic smoke environment
+
+`cmd/fleet-standalone-smoke` is a test-only, phase-oriented harness around the
+implemented lifecycle coordinator. The packaged fixture uses two Kubernetes
+namespaces as project stand-ins and one synthetic `us-central-1` machine with 24
+cores and 128Gi of memory. The allocate phase retains custody before adding the
+Fleet finalizer, binds one claim, and leaves the competing claim pending. The
+install phase admits one exact digest-pinned operation through the persistent
+simulator and is idempotent across worker and simulator restart. The release
+phase verifies cleanup before finalizer removal and advances the retained asset
+epoch before the waiting claim binds.
+
+The harness is the designated writer for one retained synthetic Machine evidence
+record and public fixture status. The evidence pins the Machine UID, configured
+location, hardware, and observation time; it is not refreshed across phases.
+Both contenders pass capacity preflight against the same retained
+`Available=True` evidence before private custody selects the sole winner. The
+lifecycle coordinator remains the writer of custody, asset,
+and operation records. It does not patch status from shell, delete private
+records, strip finalizers, or use public status as authority. The simulator runs
+under an explicit non-root UID/GID with a writable `fsGroup` PVC and group-readable
+runtime-only bearer Secret; its admin listener is off. Docker bases are digest
+pinned, and the smoke script derives a source-specific local image tag and
+verifies the running workloads use it with pulls disabled. That identity commits
+to HEAD, its tree, the tracked diff, and untracked file contents; a CI regression
+test proves distinct clean commits produce distinct IDs.
+
+This is not the proposal acceptance environment. Namespace stand-ins do not
+model Milo project APIs, caller identity, IAM, entitlement, quota, purge, or
+same-named `default` namespaces. No interface is requested, so network and
+address output is blank and no NSO/IPAM/Galactic behavior is claimed. See
+[`docs/standalone-smoke.md`](standalone-smoke.md) for the runnable scenario.
+
+Standalone-only Kustomize roots mark every rendered object with
+`fleet.datumapis.com/standalone-only: "true"`. CI discovers and builds every
+Kustomization below `config/`. For every root except the explicitly designated
+standalone and simulator definition roots, it resolves the complete local
+resource/component graph, including deprecated bases and external generators,
+and rejects any transitive reference to either protected source tree. Remote
+resource-producing references and unauditable Helm generation fail closed.
+References must use plain local relative-path syntax and remain inside the
+audited config tree both before and after symlink resolution, preventing remote
+repo grammar from being disguised by a local shadow path. It also parses
+rendered objects structurally: annotations are checked by GVK and metadata,
+Secret data is decoded before comparison, and effective RBAC
+permission and subject sets are compared without relying on rule layout,
+duplicates, or mutable object and subject names.
+ConfigMap payload text is not treated as a credential. Hermetic adversarial
+fixtures cover direct, nested, generated, copied, renamed, and malformed inputs,
+including paths containing spaces. This is a packaging boundary, not an
+authorization mechanism; production overlays must never consume these fixtures.
 
 ## Event-only manager scaffold
 
@@ -15,19 +71,57 @@ freshness deadline scheduler. Queue keys include the Milo authority ID, root
 Project UID, namespace, name, and object UID. Equal names or UIDs in separate
 project lifetimes cannot share work.
 
-The controller-runtime cache uses an explicitly non-nil zero `SyncPeriod`, both
-globally and for its private-Secret cache. Dependency mappers use exact field
-indexes; private indexes consume only typed metadata exposed after the lifecycle
+The manager uses two controller-runtime caches with explicitly non-nil zero
+`SyncPeriod` values. Its primary cache is scoped by Milo's project control-plane
+URL and contains public Fleet, NSO, quota, entitlement, and Namespace resources.
+A separate management-cluster cache is confined to `fleet-system-private` and
+contains service-owned Secrets. Public and private reverse indexes are
+registered on their owning caches, and Secret event sources explicitly use the
+host cache. Leader election also uses the management-cluster configuration.
+Dependency mappers use exact field indexes; private indexes consume only typed metadata exposed after the lifecycle
 or Milo record owner validates the complete record and deterministic Secret
 identity. Unknown or nested JSON lookalike fields have no routing meaning. The
+manager's private-record predicate treats the Secret type and complete label set
+as part of that trusted envelope, so a valid record that is relabelled or has
+its type substituted is immediately reconciled into quarantine rather than
+being hidden as a data-no-op update. The
 mappers do not perform unqualified application Lists. Informer initial Add
 events route retained private records after restart, including when the consumer
-object is gone. Public status-only updates do not feed the lifecycle coordinator.
-Freshness expiry uses a replaceable one-shot deadline, not a periodic resync.
+object is gone. Public status-only updates, including status written by an
+external actor, do not feed the lifecycle coordinator; external facts that must
+drive lifecycle work require an owned dependency resource and route.
+Claim and Installation spec generations, labels, annotations, finalizers, and
+deletion changes do feed it. Provider observations belong on dependency
+resources: semantic Machine status changes use the dependency route rather than
+turning public claim status into authority. Freshness expiry uses a replaceable
+one-shot deadline, not a periodic resync.
 Dependency events enter a typed route workqueue before reverse-index lookup, so
 a cache read or List failure is retried as the same source event instead of being
 mistaken for an empty target set. Every direct and routed handler also verifies
 the configured Project lifetime through an injected trusted verifier.
+
+Every dependency route now retains the source object's UID and exact routing
+snapshot. Non-delete work checks that UID against the current named object; if a
+queued name has been recreated, the old route is discarded and the replacement's
+Add event owns its new lifetime. Delete/tombstone work instead resolves the
+retained old-UID edges from its snapshot even if same-name recreation occurs
+before reconciliation. Update events enqueue the deduplicated union of old and
+new snapshots, ensuring both lost and gained selector or label relationships are
+reconciled. Missing
+project wiring is returned as an error so controller-runtime retains the exact
+queue item under its bounded rate limiter. It is never converted into successful
+pending work and silently dropped.
+
+Claim work and Installation work each have one keyed lifecycle owner shared by
+their direct, dependency-route, and deadline controllers. For an exact
+ProjectRequest, that owner serializes the coordinator before the projector. The
+coordinator alone may schedule or cancel a one-shot evidence deadline; expiry is
+fed back through a typed controller source to the same owner. Projectors cannot
+schedule work, and no separate projector controller can race the coordinator.
+Both schedulers are manager-owned runnables: cancellation atomically stops and
+drains timers, waits for any in-flight emission, and prevents post-stop work.
+Informer initial Add processing reconstructs still-relevant deadlines after a
+fresh process starts.
 
 The setup watches the implemented Fleet resources, private records, NSO Network,
 NetworkInterfaceClaim and NetworkInterface resources, Milo quota claims, and the
@@ -46,13 +140,39 @@ acknowledges its receipt. This increment implements and tests those runner and
 drain contracts; the production durable inbox, consumer, and live stream adapters
 remain integration-owner responsibilities.
 
-`cmd/fleet-manager` validates an exact project lifetime, starts the event graph,
-and reports the integration readiness check as failed. Its handlers deliberately
+`cmd/fleet-manager` validates an exact project lifetime, derives the routed Milo
+REST host from an environment-owned root kubeconfig, keeps host-private records
+and leader election on the management cluster, starts the event graph, and
+reports the integration readiness check as failed. Its handlers deliberately
 perform no lifecycle or provider effects until trusted create-time
 caller/finalizer admission and live, replayable Milo adapters are supplied. A
 watch controller cannot recover the original `user.Info` or atomically capture
 it after object creation, so this increment does not fabricate that authority
 with annotations or controller credentials.
+
+`config/overlays/management-plane` now packages the manager Deployment so its
+identity, RBAC, admission, image, and readiness boundary can be reviewed and
+rolled out fail-closed. Its service account receives Secret permissions only
+through a namespaced Role for `fleet-system-private`; cache scoping is not an
+authorization boundary, and it has no host ClusterRole. The environment must
+provide the authority ID and Project name in `fleet-manager-config`, mount the
+generated `milo-configuration-kubeconfig` Secret, and pin the image. The
+manager resolves the immutable Project UID from Milo at startup and fails
+closed when the named Project cannot be read, is being deleted, or has no UID;
+operators do not copy an opaque Project UID into deployment configuration. The
+packaged binary is intentionally inert and unready because caller-preserving admission,
+the live verifier, replay integrations, and production handlers are still
+absent. Installing these manifests is not evidence of functional allocation.
+
+`config/milo` separately packages the Fleet CRDs, ProtectedResources, roles,
+Fleet Service, and `fleet.datumapis.com/machines` quota registration for the
+Milo root control plane. The Service remains `Draft`; the manifest does not
+advertise the inert manager as customer-ready. It does not include
+project-specific entitlements,
+grants, PolicyBindings, provider inventory, or the proposal's incomplete,
+source-specific publication example. Those remain environment/provider state.
+The two production roots target different API servers and must not be combined
+into one Flux reconciliation.
 
 ## Standalone lifecycle library
 
@@ -306,6 +426,48 @@ The process refuses to start if the runtime and admin credential values match.
 Remove the synthetic token and state files when the local run is complete.
 
 ## Explicit gaps
+
+### Milo acceptance harness
+
+`test/acceptance/milo` implements a non-effectful acceptance boundary. It
+requires exact Project lifetimes, Fleet and Milo revisions, digest-pinned
+manager and simulator images, and explicit credential paths. Its evidence
+encoder allow-lists non-secret environment identity and writes restricted,
+atomic JSON and JUnit artifacts through a fresh staged three-file allowlist.
+The config boundary walks from a held root descriptor with component-by-component
+no-follow `openat`, requires an owner-only final file, and performs a bounded read before
+JSON decoding. Phase reasons
+and blockers use closed reviewed code vocabularies rather than external error
+text. The staged summary must validate as the closed Result schema, and the
+environment and JUnit files must exactly match canonical projections from it.
+Verification retains the root and safely traversed parent descriptor identities, opens the evidence
+basename with no-follow `openat`, and opens every allowlisted file once with
+no-follow `openat`, validates bounded reads from the held descriptor set, then
+securely rewalks and rechecks the complete absolute ancestor chain, the
+parent-relative directory identity, and every path against the held
+inode, mode, and size.
+Invalid configuration cannot copy caller fields into evidence. A central result
+validator enforces a passed prefix, exactly one outcome-matching terminal phase,
+and a not-run suffix; invalid configuration is exactly the configuration phase.
+Workflow logs emit only reviewed failure codes, never raw execution errors.
+The workflow uses an absent run-ID/run-attempt-specific output directory so a
+failed fresh write cannot upload artifacts left by an earlier run.
+Credential paths are canonicalized, and
+the mandatory pre-access check rejects symlinks, non-regular files, lexical
+aliases, and files that share operating-system identity.
+The credential boundary returns already-open no-follow descriptors and rechecks
+their identity and owner-only permissions; later consumers must not reopen
+paths. Evidence staging rejects symlinks in every existing parent component.
+This is sufficient for the current non-concurrent blocked harness; a concurrent
+live writer will require held directory descriptors and no-follow `openat`
+traversal.
+
+The current live command always stops after structural validation with
+`Blocked` because the production protocol probes and live scenario executor do
+not exist. It does not load a kubeconfig, contact a cluster, or mutate an API.
+The protected manual workflow therefore demonstrates fail-closed behavior, not
+Milo acceptance. Offline validation and tests cannot satisfy the proposal's live
+acceptance inventory.
 
 - The event manager exposes claim, installation, and sole-writer projector
   surfaces, but production lifecycle handlers and public status writes remain

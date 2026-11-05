@@ -10,11 +10,18 @@ implementation roadmap, and the first alpha public API encoding for the machine
 lifecycle. The Go types, CRDs, synthetic persistent provider simulator,
 standalone same-cluster allocation/installation lifecycle library, unwired NSO
 network lifecycle adapter, unwired Milo tenancy/quota authority contracts, and
-an event-only controller-manager wiring scaffold are implemented. The scaffold
-has no production caller-preserving authorizer, admission fence, protected quota
-custodian, or replayable Milo event adapters, so its binary remains unready and
-performs no lifecycle or provider effects. There is no real provider integration
-or production deployment manifest yet.
+an event-only controller-manager wiring scaffold are implemented. A separate
+[standalone synthetic smoke environment](docs/standalone-smoke.md) packages the
+lifecycle library and persistent simulator for a two-consumer local demonstration.
+Its namespaces are project stand-ins and do not establish Milo acceptance. The
+scaffold has no production caller-preserving authorizer, admission fence,
+protected quota custodian, or replayable Milo event adapters, so its binary
+remains unready and performs no lifecycle or provider effects. Production
+manifest roots now package the manager security boundary and Milo API, IAM,
+service-catalog, and quota registration, while environment identity, credentials,
+and immutable image selection remain in `infra`. See
+[`config/README.md`](config/README.md). There is still no real provider
+integration; the standalone smoke manifests remain test fixtures.
 
 ## Scope
 
@@ -44,6 +51,8 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
   required before enabling infrastructure effects.
 - [Implementation status](docs/implementation.md): implemented simulator
   guarantees, internal interfaces, and explicit gaps.
+- [Milo acceptance harness](test/acceptance/milo/README.md): fail-closed live
+  preflight and sanitized evidence contract; live acceptance remains blocked.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
 
 The foundation was developed in `datum-cloud/infra` PRs

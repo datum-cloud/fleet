@@ -35,15 +35,16 @@ const (
 	IndexPrivateConsumerProject           = "fleet.manager/private-consumer-project"
 )
 
-// RegisterIndexes registers every reverse edge used by event mappers. All
-// mapper Lists must name one of these indexes; application-wide scans are not a
-// recovery mechanism.
-func RegisterIndexes(ctx context.Context, indexer client.FieldIndexer, privateNamespace string) error {
-	registrations := []struct {
-		object client.Object
-		field  string
-		fn     client.IndexerFunc
-	}{
+type indexRegistration struct {
+	object client.Object
+	field  string
+	fn     client.IndexerFunc
+}
+
+// RegisterProjectIndexes installs reverse edges on the routed Milo project
+// cache. Public resources must never be indexed from the host API.
+func RegisterProjectIndexes(ctx context.Context, indexer client.FieldIndexer) error {
+	return registerIndexes(ctx, indexer, []indexRegistration{
 		{&fleetv1.MachineClaim{}, IndexClaimUID, func(o client.Object) []string { return one(string(o.GetUID())) }},
 		{&fleetv1.MachineClaim{}, IndexClaimClassName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name) }},
 		{&fleetv1.MachineClaim{}, IndexClaimProfileName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.MachineProfileRef.Name) }},
@@ -82,6 +83,13 @@ func RegisterIndexes(ctx context.Context, indexer client.FieldIndexer, privateNa
 			}
 			return one(c.Spec.Capacity.Machines.Namespace)
 		}},
+	})
+}
+
+// RegisterPrivateIndexes installs reverse edges on the management-cluster
+// cache. Only service-owned Secrets in privateNamespace enter this cache.
+func RegisterPrivateIndexes(ctx context.Context, indexer client.FieldIndexer, privateNamespace string) error {
+	return registerIndexes(ctx, indexer, []indexRegistration{
 		{&corev1.Secret{}, IndexPrivateClaimUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return one(string(route.ClaimUID)) })},
 		{&corev1.Secret{}, IndexPrivateNamespaceUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.NamespaceUIDs) })},
 		{&corev1.Secret{}, IndexPrivateMachineUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.MachineUIDs) })},
@@ -104,7 +112,10 @@ func RegisterIndexes(ctx context.Context, indexer client.FieldIndexer, privateNa
 			}
 			return one(projectIndexKey(route.ConsumerProject.AuthorityID, route.ConsumerProject.UID))
 		}},
-	}
+	})
+}
+
+func registerIndexes(ctx context.Context, indexer client.FieldIndexer, registrations []indexRegistration) error {
 	for _, registration := range registrations {
 		if err := indexer.IndexField(ctx, registration.object, registration.field, registration.fn); err != nil {
 			return fmt.Errorf("register %s: %w", registration.field, err)

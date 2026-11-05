@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: fleet-smoke-allocate, namespace: fleet-system}
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: fleet-standalone-smoke
+          restartPolicy: Never
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: smoke
+              image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
+              imagePullPolicy: Never
+              args: [--phase=allocate, --runtime-token-file=/var/run/fleet/token]
+              securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+              volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
+          volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: fleet-smoke-install, namespace: fleet-system}
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: fleet-standalone-smoke
+          restartPolicy: Never
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: smoke
+              image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
+              imagePullPolicy: Never
+              args: [--phase=install, --runtime-token-file=/var/run/fleet/token]
+              securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+              volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
+          volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: fleet-smoke-release, namespace: fleet-system}
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: fleet-standalone-smoke
+          restartPolicy: Never
+          securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: smoke
+              image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
+              imagePullPolicy: Never
+              args: [--phase=release, --runtime-token-file=/var/run/fleet/token]
+              securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+              volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
+          volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]

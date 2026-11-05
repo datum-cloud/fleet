@@ -17,9 +17,21 @@ import (
 // Project identity is configuration supplied by the authenticated cache owner,
 // never read from a consumer object.
 type Mappers struct {
-	Reader           client.Reader
+	// Reader is the routed Milo project cache. It is retained as the field name
+	// used by the initial same-cache tests and callers.
+	Reader client.Reader
+	// PrivateReader is the management-cluster cache for service-owned Secrets.
+	// When nil, private lookups fall back to Reader for standalone tests only.
+	PrivateReader    client.Reader
 	Project          controller.ProjectIdentity
 	PrivateNamespace string
+}
+
+func (m Mappers) privateReader() client.Reader {
+	if m.PrivateReader != nil {
+		return m.PrivateReader
+	}
+	return m.Reader
 }
 
 func (m Mappers) RequestFor(_ context.Context, object client.Object) []ProjectRequest {
@@ -107,11 +119,12 @@ func (m Mappers) RequestForPrivateInstallation(_ context.Context, object client.
 }
 
 func (m Mappers) claimsForPrivateFieldE(ctx context.Context, field, value string) ([]ProjectRequest, error) {
-	if m.Reader == nil || m.PrivateNamespace == "" || value == "" {
+	reader := m.privateReader()
+	if reader == nil || m.PrivateNamespace == "" || value == "" {
 		return nil, ErrEventWiringUnavailable
 	}
 	var secrets corev1.SecretList
-	if err := m.Reader.List(ctx, &secrets, client.InNamespace(m.PrivateNamespace), client.MatchingFields{field: value}); err != nil {
+	if err := reader.List(ctx, &secrets, client.InNamespace(m.PrivateNamespace), client.MatchingFields{field: value}); err != nil {
 		return nil, err
 	}
 	var result []ProjectRequest

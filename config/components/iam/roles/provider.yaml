@@ -1,0 +1,33 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-provider
+  annotations:
+    kubernetes.io/display-name: Fleet Provider
+    kubernetes.io/description: Publish machine capacity and operate provider inventory
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fleet.datumapis.com/machineclasses.list
+    - fleet.datumapis.com/machineclasses.get
+    - fleet.datumapis.com/machineclasses.watch
+    - fleet.datumapis.com/machineclasses.create
+    - fleet.datumapis.com/machineclasses.update
+    - fleet.datumapis.com/machineclasses.patch
+    - fleet.datumapis.com/machineclasses.delete
+    - fleet.datumapis.com/machineclasses.use
+    - fleet.datumapis.com/machineprofiles.list
+    - fleet.datumapis.com/machineprofiles.get
+    - fleet.datumapis.com/machineprofiles.watch
+    - fleet.datumapis.com/machineprofiles.create
+    - fleet.datumapis.com/machineprofiles.update
+    - fleet.datumapis.com/machineprofiles.patch
+    - fleet.datumapis.com/machineprofiles.delete
+    - fleet.datumapis.com/machineprofiles.use
+    - fleet.datumapis.com/machines.list
+    - fleet.datumapis.com/machines.get
+    - fleet.datumapis.com/machines.watch
+    - fleet.datumapis.com/machines.create
+    - fleet.datumapis.com/machines.update
+    - fleet.datumapis.com/machines.patch
+    - fleet.datumapis.com/machines.delete
