@@ -50,17 +50,21 @@ metadata:
   namespace: fleet-system
 data:
   authorityID: <configured Milo authority ID>
-  projectUID: <exact root Project UID>
-  projectRoute: <Milo project route name>
+  projectName: <Milo Project name>
 ```
 
-These values are authority, not portable defaults. A missing ConfigMap prevents
-the Pod from starting; empty or inconsistent values make the binary exit. The
+These values select the Milo authority and project but do not duplicate the
+project's immutable identity. At startup the manager reads the named Project
+through the root Milo credential, rejects missing, deleting, or UID-less
+projects, and retains the UID returned by Milo in its internal authority and
+custody records. A missing ConfigMap prevents the Pod from starting; empty or
+unresolvable values make the binary exit. The
 environment overlay must also replace `ghcr.io/datum-cloud/fleet:latest` with an
 immutable digest or release tag. It must provide a
 `milo-configuration-kubeconfig` Secret in `fleet-system` whose `value` key is a
-root Milo kubeconfig. The manager copies that configuration and scopes its host
-to `/apis/resourcemanager.miloapis.com/v1alpha1/projects/<projectRoute>/control-plane`;
+root Milo kubeconfig with permission to get the named Project. The manager
+copies that configuration and scopes its host to
+`/apis/resourcemanager.miloapis.com/v1alpha1/projects/<projectName>/control-plane`;
 it never uses the root endpoint as a project cache. Kubeconfigs,
 service-account tokens, provider credentials, and rendered Secrets remain owned
 by `infra` and must not be added to this repository.
