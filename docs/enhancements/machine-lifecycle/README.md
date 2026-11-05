@@ -43,8 +43,9 @@ operation records in the provider project. These internal records retain
 ownership, execution authority, exact inputs, and cleanup obligations.
 
 The first implementation will use a persistent simulated provider with real Milo
-tenancy, IAM, entitlement, and quota integrations. This document proposes the
-contract; Fleet has no implemented APIs or controllers yet.
+tenancy, IAM, entitlement, and quota integrations. The public Go types and CRDs
+now encode the provisional contract, but Fleet has no implemented controllers or
+provider effects yet.
 
 ## Motivation
 
@@ -1320,7 +1321,9 @@ correctness violations.
 - 2026-10-27: Drafted the machine lifecycle contract and reviewed pinned Milo,
   IPAM, and service-catalog source.
 - 2026-10-27: Adopted the [Datum enhancement template][template]. The proposal
-  remains provisional; implementation has not started.
+  remains provisional.
+- 2026-11-03: Added the first alpha Go types and CRDs. This encodes the public
+  contract for review; it does not implement allocation or authorize effects.
 
 ## Drawbacks
 
