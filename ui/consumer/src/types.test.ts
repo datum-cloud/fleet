@@ -89,7 +89,7 @@ describe('toCatalogOffering', () => {
 
   it('keeps an unresolved published class pending, ignoring its spec', () => {
     const offering = toCatalogOffering(FIXTURE_CLASSES[1], FIXTURE_PROFILES);
-    expect(offering.available).toBe(false);
+    expect(offering).toMatchObject({ available: false, failed: false });
     expect(offering.unavailableReason).toMatch(/Waiting/);
     expect(offering.profiles).toEqual([]);
   });
@@ -126,7 +126,11 @@ describe('toCatalogOffering', () => {
       },
       []
     );
-    expect(offering).toMatchObject({ available: false, unavailableReason: 'No such class.' });
+    expect(offering).toMatchObject({
+      available: false,
+      failed: true,
+      unavailableReason: 'No such class.',
+    });
   });
 });
 

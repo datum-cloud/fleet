@@ -22,7 +22,8 @@ powered off. It allocates a machine only; installing an OS is a separate
 Installation this plugin does not offer yet. Creating a claim reserves
 nothing: it lists as Pending until Fleet binds a machine.
 
-**Release** on a claim's page deletes the claim after the user types its name.
+**Release**, on a claim's page or as a row action in the list, deletes the claim
+after the user types its name.
 Fleet's finalizer keeps the claim, listed as Releasing, until cleanup finishes;
 then it disappears and the page shows it as not found. Release is hidden on a
 claim that is already releasing. In fixture mode a released claim stays

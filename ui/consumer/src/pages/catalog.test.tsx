@@ -84,8 +84,38 @@ describe('Catalog', () => {
     expect(within(cards[1]).getByText('4 × nvidia')).toBeInTheDocument();
 
     expect(within(pending).getByText('high-memory-metal')).toBeInTheDocument();
+    expect(within(pending).getByText('Pending')).toBeInTheDocument();
     expect(within(pending).getByText(/Waiting for the provider/)).toBeInTheDocument();
     expect(within(pending).queryByTestId('fleet-plugin-profile-card')).toBeNull();
+  });
+
+  it('marks a class Fleet could not resolve as unavailable, not pending', () => {
+    mockResult({
+      data: toCatalog(
+        [
+          {
+            metadata: { name: 'central-metal' },
+            spec: { source: { project: 'datum-cloud', name: 'central-metal' } },
+            status: {
+              conditions: [
+                {
+                  type: 'SourceResolved',
+                  status: 'False',
+                  reason: 'SourceClassNotFound',
+                  message: 'The provider MachineClass does not exist.',
+                },
+              ],
+            },
+          },
+        ],
+        []
+      ),
+    });
+    renderPage();
+    const offering = screen.getByTestId('fleet-plugin-offering');
+    expect(within(offering).getByText('Unavailable')).toBeInTheDocument();
+    expect(within(offering).queryByText('Pending')).toBeNull();
+    expect(within(offering).getByText('The provider MachineClass does not exist.')).toBeInTheDocument();
   });
 });
 

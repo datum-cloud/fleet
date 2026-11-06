@@ -1,10 +1,12 @@
 import { usePluginBase } from './machines-page';
+import { ReleaseButton } from './release-dialog';
 import { StatusBadge, type BadgeType } from './status-badge';
 import type { ClaimPhase, MachineClaim } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
 import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
 import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useMemo } from 'react';
 import { Link } from 'react-router';
 
 type ClaimColumn = ColumnDef<DataTableFeatures, MachineClaim, unknown>;
@@ -85,11 +87,35 @@ const columns: ClaimColumn[] = [
   { id: 'memory', header: 'Memory', cell: ({ row }) => <Muted>{row.original.memory ?? '—'}</Muted> },
 ];
 
-export function ClaimTable({ claims }: { claims: MachineClaim[] }) {
+// A claim already releasing has nothing left to release.
+export function ClaimTable({
+  claims,
+  onRelease,
+}: {
+  claims: MachineClaim[];
+  onRelease: (claim: MachineClaim) => void;
+}) {
+  const withActions = useMemo<ClaimColumn[]>(
+    () => [
+      ...columns,
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) =>
+          row.original.phase === 'Releasing' ? null : (
+            <div className="flex justify-end">
+              <ReleaseButton name={row.original.name} onClick={() => onRelease(row.original)} />
+            </div>
+          ),
+      },
+    ],
+    [onRelease]
+  );
+
   return (
     <DataTable.Client
       data={claims}
-      columns={columns}
+      columns={withActions}
       getRowId={(claim) => claim.name}
       defaultSort={[{ id: 'name', desc: false }]}
       searchFn={matchesSearch}

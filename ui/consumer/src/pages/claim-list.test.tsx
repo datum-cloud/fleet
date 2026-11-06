@@ -4,16 +4,19 @@ import { ApiError } from '../lib/api';
 import { FIXTURE_CLAIMS } from '../lib/fixtures';
 import { toMachineClaim } from '../types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof api>('../lib/api');
-  return { ...actual, useMachineClaims: vi.fn() };
+  return { ...actual, useMachineClaims: vi.fn(), useReleaseMachineClaim: vi.fn() };
 });
 
 const useMachineClaimsMock = vi.mocked(api.useMachineClaims);
+const releaseMock = vi.fn<(name: string) => Promise<void>>();
+
+vi.mock('@datum-cloud/datum-ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 function mockResult(result: { data?: unknown; isLoading?: boolean; error?: unknown }) {
   useMachineClaimsMock.mockReturnValue({
@@ -40,6 +43,8 @@ function renderPage() {
 
 beforeEach(() => {
   useMachineClaimsMock.mockReset();
+  releaseMock.mockReset();
+  vi.mocked(api.useReleaseMachineClaim).mockReturnValue({ mutateAsync: releaseMock } as never);
 });
 
 describe('ClaimList', () => {
@@ -97,5 +102,29 @@ describe('ClaimList', () => {
       'href',
       '/project/demo-project/services/fleet/build-runner'
     );
+  });
+
+  it('releases a claim from its row once the name is typed', async () => {
+    releaseMock.mockResolvedValue();
+    mockResult({ data: FIXTURE_CLAIMS.map(toMachineClaim) });
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Release example' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const confirm = within(dialog).getByRole('button', { name: 'Release' });
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'example' } });
+    fireEvent.click(confirm);
+
+    expect(api.useReleaseMachineClaim).toHaveBeenCalledWith('demo-project');
+    await waitFor(() => expect(releaseMock).toHaveBeenCalledWith('example'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('offers no release for a claim that is already releasing', () => {
+    mockResult({ data: FIXTURE_CLAIMS.map(toMachineClaim) });
+    renderPage();
+    expect(screen.getByRole('button', { name: 'Release build-runner' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Release old-worker' })).toBeNull();
   });
 });

@@ -81,6 +81,8 @@ export interface CatalogOffering {
   source?: string;
   /** Unavailable offerings are listed so a missing publication is visible, not silent. */
   available: boolean;
+  /** Fleet said this class can't resolve or was rejected, as opposed to not having answered yet. */
+  failed: boolean;
   unavailableReason?: string;
   powerControl: boolean;
   profiles: CatalogProfile[];
@@ -114,6 +116,7 @@ export function toCatalogOffering(
     className: raw.metadata.name,
     source: source && `${source.project}/${source.name}`,
     available,
+    failed: !!failed,
     unavailableReason,
     powerControl: !!access?.powerControl,
     profiles: (policy?.allowedProfiles ?? []).map(({ name }) => {
