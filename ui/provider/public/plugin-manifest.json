@@ -1,0 +1,43 @@
+{
+  "name": "fleet.staff-portal.datumapis.com",
+  "version": "0.1.0",
+  "sdk": { "name": "@datum-cloud/portal-plugin-sdk", "range": "^1.0.0" },
+  "remoteEntry": "remoteEntry.js",
+  "exposedModules": {
+    "MachineList": "./src/pages/machine-list.tsx",
+    "MachineProfileList": "./src/pages/machine-profile-list.tsx",
+    "MachineClassList": "./src/pages/machine-class-list.tsx"
+  },
+  "extensions": [
+    {
+      "type": "portal.nav/platform",
+      "properties": {
+        "id": "machines",
+        "title": "Fleet",
+        "icon": "server",
+        "path": ""
+      }
+    },
+    {
+      "type": "portal.page/platform",
+      "properties": {
+        "path": "",
+        "component": { "$codeRef": "MachineList" }
+      }
+    },
+    {
+      "type": "portal.page/platform",
+      "properties": {
+        "path": "profiles",
+        "component": { "$codeRef": "MachineProfileList" }
+      }
+    },
+    {
+      "type": "portal.page/platform",
+      "properties": {
+        "path": "classes",
+        "component": { "$codeRef": "MachineClassList" }
+      }
+    }
+  ]
+}

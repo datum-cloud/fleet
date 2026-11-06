@@ -1,0 +1,57 @@
+{
+  "name": "@datum-cloud/fleet-staff-portal-plugin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Fleet Staff Portal Plugin: a Module Federation remote listing the provider project's Machines through staff-portal's Milo control-plane proxy.",
+  "scripts": {
+    "dev": "vite",
+    "preview": "vite preview",
+    "build": "vite build",
+    "build:fixtures": "VITE_FLEET_FIXTURES=true vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@conform-to/react": "^1.21.3",
+    "@conform-to/zod": "^1.21.3",
+    "@datum-cloud/datum-ui": "^3.5.0",
+    "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-table": "^9.1.2",
+    "@tanstack/react-virtual": "^3.14.24",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "lucide-react": "^1.21.0",
+    "motion": "^13.5.1",
+    "nuqs": "^2.10.0",
+    "react": "19.2.8",
+    "react-day-picker": "^10",
+    "react-dom": "19.2.8",
+    "react-number-format": "^5.4.5",
+    "react-router": "7.18.2",
+    "sonner": "^2.0.8",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@module-federation/vite": "^1.16.16",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "@module-federation/dts-plugin": {
+      "adm-zip": "0.6.1",
+      "undici": "7.30.1"
+    },
+    "vitest": {
+      "tinypool": "^2.1.2"
+    }
+  }
+}
