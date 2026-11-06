@@ -125,7 +125,11 @@ export function OfferingSection({
       )}
 
       {offering.available && offering.profiles.length > 0 && (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-4">
+        // Inline: the host's stylesheet only carries the utilities it uses
+        // itself, and an arbitrary grid template is not one of them.
+        <div
+          className="grid gap-4"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(18rem, 1fr))' }}>
           {offering.profiles.map((profile) => (
             <ProfileCard
               key={profile.name}
