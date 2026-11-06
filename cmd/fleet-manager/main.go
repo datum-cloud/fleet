@@ -81,6 +81,13 @@ func main() {
 		options.Cache = eventmanager.PrivateCacheOptions(privateNamespace)
 	})
 	must(err)
+	// Private lifecycle records are retained authority, not eventually
+	// consistent projections. Reconciliation may create or advance multiple
+	// records in one pass, so all coordinator reads must observe API-server
+	// state directly. The private cluster cache remains responsible only for
+	// event delivery.
+	privateRecordClient, err := ctrlclient.New(hostConfig, ctrlclient.Options{Scheme: scheme})
+	must(err)
 	blocked := eventmanager.HandlerFunc(func(context.Context, eventmanager.ProjectRequest) eventmanager.Outcome { return eventmanager.Outcome{} })
 	verifierFor := func(name string) eventmanager.ProjectVerifier {
 		return eventmanager.ProjectVerifierFunc(func(ctx context.Context, expected controller.ProjectIdentity) error {
@@ -101,7 +108,7 @@ func main() {
 		}
 		provider, err := executor.NewHTTPClientFromTokenFile(syntheticProviderURL, syntheticTokenFile, &http.Client{Timeout: 30 * time.Second})
 		must(err)
-		coordinator, err := controller.NewCoordinator(privateCluster.GetClient(), privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
+		coordinator, err := controller.NewCoordinator(privateRecordClient, privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
 		must(err)
 		handler := staging.Handler{Public: mgr.GetClient(), Coordinator: coordinator, Project: project, Location: syntheticLocation}
 		if syntheticProviderProjectName != "" {
