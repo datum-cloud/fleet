@@ -5,7 +5,6 @@ import (
 	"flag"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -100,9 +99,7 @@ func main() {
 		if syntheticTokenFile == "" {
 			must(eventmanager.ErrEventWiringUnavailable)
 		}
-		token, err := os.ReadFile(syntheticTokenFile)
-		must(err)
-		provider, err := executor.NewHTTPClient(syntheticProviderURL, strings.TrimSpace(string(token)), &http.Client{Timeout: 30 * time.Second})
+		provider, err := executor.NewHTTPClientFromTokenFile(syntheticProviderURL, syntheticTokenFile, &http.Client{Timeout: 30 * time.Second})
 		must(err)
 		coordinator, err := controller.NewCoordinator(privateCluster.GetClient(), privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
 		must(err)
