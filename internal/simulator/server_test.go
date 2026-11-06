@@ -42,6 +42,35 @@ func TestRuntimeAndAdminHandlersRequireSeparateAuthentication(t *testing.T) {
 	assertStatus(t, admin, http.MethodPost, "/v1/operations", body, adminToken, http.StatusNotFound)
 }
 
+func TestRuntimeHandlerReloadsRotatedTokenWhileRunning(t *testing.T) {
+	store := openStore(t, filepath.Join(t.TempDir(), "state.json"))
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokenSource := func() (string, error) {
+		value, err := os.ReadFile(tokenFile)
+		return strings.TrimSpace(string(value)), err
+	}
+	handler := RuntimeHandlerWithTokenSource(store, tokenSource, discardLogger())
+	assertStatus(t, handler, http.MethodGet, "/v1/operations/missing", "", "first", http.StatusNotFound)
+
+	rotated := tokenFile + ".rotated"
+	if err := os.WriteFile(rotated, []byte("second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(rotated, tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, "/v1/operations/missing", "", "first", http.StatusUnauthorized)
+	assertStatus(t, handler, http.MethodGet, "/v1/operations/missing", "", "second", http.StatusNotFound)
+
+	if err := os.Remove(tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, handler, http.MethodGet, "/v1/operations/missing", "", "second", http.StatusServiceUnavailable)
+}
+
 func TestLostResponseRecoversThroughSanitizedLookup(t *testing.T) {
 	store := openStore(t, filepath.Join(t.TempDir(), "state.json"))
 	runtime := RuntimeHandler(store, runtimeToken, discardLogger())

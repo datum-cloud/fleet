@@ -42,7 +42,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	servers := []*http.Server{newServer(runtimeAddress, simulator.RuntimeHandler(store, runtimeToken, logger), logger)}
+	runtimeTokenSource := func() (string, error) { return readToken(runtimeTokenPath) }
+	servers := []*http.Server{newServer(runtimeAddress, simulator.RuntimeHandlerWithTokenSource(store, runtimeTokenSource, logger), logger)}
 	if adminAddress != "" {
 		adminToken, err := readToken(adminTokenPath)
 		if err != nil {
@@ -53,7 +54,8 @@ func main() {
 			logger.Error("validate simulator credentials", "error", err)
 			os.Exit(1)
 		}
-		servers = append(servers, newServer(adminAddress, simulator.AdminHandler(store, adminToken, logger), logger))
+		adminTokenSource := func() (string, error) { return readToken(adminTokenPath) }
+		servers = append(servers, newServer(adminAddress, simulator.AdminHandlerWithTokenSource(store, adminTokenSource, logger), logger))
 	}
 
 	errCh := make(chan error, len(servers))

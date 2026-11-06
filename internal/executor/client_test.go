@@ -109,3 +109,61 @@ func TestHTTPClientRequiresBoundedTimeout(t *testing.T) {
 		t.Fatalf("default client timeout = %v, error=%v", client.http.Timeout, err)
 	}
 }
+
+func TestHTTPClientReloadsRotatedTokenForEveryRequest(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := "first"
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+want {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	client, err := NewHTTPClientFromTokenFile("http://executor", tokenFile, &http.Client{Transport: handlerTransport{handler: handler}, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.Lookup(context.Background(), "before-rotation"); err != nil {
+		t.Fatalf("Lookup before rotation: %v", err)
+	}
+
+	// Model kubelet replacing the projected file while only the provider side
+	// restarts and begins requiring the new token.
+	want = "second"
+	rotated := tokenFile + ".rotated"
+	if err := os.WriteFile(rotated, []byte("second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(rotated, tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.Lookup(context.Background(), "after-provider-restart"); err != nil {
+		t.Fatalf("Lookup after rotation: %v", err)
+	}
+}
+
+func TestHTTPClientFailsClosedWhenRotatedTokenIsUnavailable(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("initial\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+	client, err := NewHTTPClientFromTokenFile("http://executor", tokenFile, &http.Client{Transport: handlerTransport{handler: handler}, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.Lookup(context.Background(), "op"); err == nil {
+		t.Fatal("Lookup accepted an unavailable token")
+	}
+	if called {
+		t.Fatal("request was sent without a current token")
+	}
+}

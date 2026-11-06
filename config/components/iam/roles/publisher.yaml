@@ -14,7 +14,9 @@ spec:
     - fleet.datumapis.com/machineclasses.update
     - fleet.datumapis.com/machineclasses.patch
     - fleet.datumapis.com/machineclasses.delete
+    - fleet.datumapis.com/machineclasses.updateStatus
     - fleet.datumapis.com/machineprofiles.create
     - fleet.datumapis.com/machineprofiles.update
     - fleet.datumapis.com/machineprofiles.patch
     - fleet.datumapis.com/machineprofiles.delete
+    - fleet.datumapis.com/machineprofiles.updateStatus

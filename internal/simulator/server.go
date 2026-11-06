@@ -12,15 +12,24 @@ import (
 
 const maxRequestBodyBytes = maxInputsBytes + 8*maxIdentifierBytes
 
+type BearerTokenSource func() (string, error)
+
 func RuntimeHandler(store *Store, bearerToken string, logger *slog.Logger) http.Handler {
 	if bearerToken == "" {
 		panic("runtime bearer token must not be empty")
+	}
+	return RuntimeHandlerWithTokenSource(store, func() (string, error) { return bearerToken, nil }, logger)
+}
+
+func RuntimeHandlerWithTokenSource(store *Store, tokenSource BearerTokenSource, logger *slog.Logger) http.Handler {
+	if tokenSource == nil {
+		panic("runtime bearer token source must not be nil")
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/operations", requireBearer(bearerToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /v1/operations", requireBearer(tokenSource, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req Request
 		if err := decodeRequest(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", "request body is invalid")
@@ -50,7 +59,7 @@ func RuntimeHandler(store *Store, bearerToken string, logger *slog.Logger) http.
 		}
 		writeJSON(w, http.StatusOK, op.ResultView())
 	})))
-	mux.Handle("GET /v1/operations/{id}", requireBearer(bearerToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /v1/operations/{id}", requireBearer(tokenSource, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		op, ok := store.Get(r.PathValue("id"))
 		if !ok {
 			writeError(w, http.StatusNotFound, "not_found", "operation was not found")
@@ -74,11 +83,18 @@ func AdminHandler(store *Store, bearerToken string, logger *slog.Logger) http.Ha
 	if bearerToken == "" {
 		panic("admin bearer token must not be empty")
 	}
+	return AdminHandlerWithTokenSource(store, func() (string, error) { return bearerToken, nil }, logger)
+}
+
+func AdminHandlerWithTokenSource(store *Store, tokenSource BearerTokenSource, logger *slog.Logger) http.Handler {
+	if tokenSource == nil {
+		panic("admin bearer token source must not be nil")
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 	mux := http.NewServeMux()
-	mux.Handle("PUT /v1/faults/{name}", requireBearer(bearerToken, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("PUT /v1/faults/{name}", requireBearer(tokenSource, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Enabled bool `json:"enabled"`
 		}
@@ -103,16 +119,21 @@ func AdminHandler(store *Store, bearerToken string, logger *slog.Logger) http.Ha
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})))
-	mux.Handle("GET /v1/state", requireBearer(bearerToken, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /v1/state", requireBearer(tokenSource, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, store.Snapshot())
 	})))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
 }
 
-func requireBearer(token string, next http.Handler) http.Handler {
-	want := []byte("Bearer " + token)
+func requireBearer(tokenSource BearerTokenSource, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, err := tokenSource()
+		if err != nil || token == "" {
+			writeError(w, http.StatusServiceUnavailable, "authentication_unavailable", "current bearer authentication is unavailable")
+			return
+		}
+		want := []byte("Bearer " + token)
 		got := []byte(r.Header.Get("Authorization"))
 		if len(got) != len(want) || subtle.ConstantTimeCompare(got, want) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -16,7 +17,10 @@ import (
 	"go.datum.net/fleet/internal/simulator"
 )
 
-const maxResponseBytes = 64 << 10
+const (
+	maxResponseBytes = 64 << 10
+	maxTokenBytes    = 4 << 10
+)
 
 var (
 	ErrConflict       = errors.New("executor operation conflicts with retained input")
@@ -34,12 +38,47 @@ type Client interface {
 }
 
 type HTTPClient struct {
-	base  *url.URL
-	token string
-	http  *http.Client
+	base        *url.URL
+	tokenSource func() (string, error)
+	http        *http.Client
 }
 
 func NewHTTPClient(baseURL, bearerToken string, client *http.Client) (*HTTPClient, error) {
+	if err := validateBearerToken(bearerToken); err != nil {
+		return nil, err
+	}
+	return newHTTPClient(baseURL, func() (string, error) { return bearerToken, nil }, client)
+}
+
+// NewHTTPClientFromTokenFile creates a client that reloads the projected token
+// before every request. Kubernetes rotates service-account tokens by replacing
+// the projected file, so retaining its startup value can permanently split the
+// manager and provider after only one container restarts.
+func NewHTTPClientFromTokenFile(baseURL, tokenFile string, client *http.Client) (*HTTPClient, error) {
+	if strings.TrimSpace(tokenFile) == "" {
+		return nil, errors.New("executor bearer token file is required")
+	}
+	tokenSource := func() (string, error) {
+		token, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("read executor bearer token: %w", err)
+		}
+		if len(token) > maxTokenBytes {
+			return "", errors.New("executor bearer token exceeds size limit")
+		}
+		value := strings.TrimSpace(string(token))
+		if err := validateBearerToken(value); err != nil {
+			return "", err
+		}
+		return value, nil
+	}
+	if _, err := tokenSource(); err != nil {
+		return nil, err
+	}
+	return newHTTPClient(baseURL, tokenSource, client)
+}
+
+func newHTTPClient(baseURL string, tokenSource func() (string, error), client *http.Client) (*HTTPClient, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, errors.New("executor base URL must be an absolute HTTP URL without query or fragment")
@@ -47,15 +86,19 @@ func NewHTTPClient(baseURL, bearerToken string, client *http.Client) (*HTTPClien
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, errors.New("executor base URL must use http or https")
 	}
-	if strings.TrimSpace(bearerToken) == "" || strings.ContainsAny(bearerToken, "\r\n") {
-		return nil, errors.New("executor bearer token must be nonempty and single-line")
-	}
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	} else if client.Timeout <= 0 {
 		return nil, errors.New("executor HTTP client must have a positive timeout")
 	}
-	return &HTTPClient{base: parsed, token: bearerToken, http: client}, nil
+	return &HTTPClient{base: parsed, tokenSource: tokenSource, http: client}, nil
+}
+
+func validateBearerToken(token string) error {
+	if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\r\n") {
+		return errors.New("executor bearer token must be nonempty and single-line")
+	}
+	return nil
 }
 
 func (c *HTTPClient) Execute(ctx context.Context, request simulator.Request) (simulator.OperationResult, error) {
@@ -122,13 +165,17 @@ func (c *HTTPClient) Lookup(ctx context.Context, operationID string) (simulator.
 }
 
 func (c *HTTPClient) do(ctx context.Context, method, relative string, body io.Reader) (*http.Response, error) {
+	token, err := c.tokenSource()
+	if err != nil {
+		return nil, err
+	}
 	target := *c.base
 	target.Path = path.Join(c.base.Path, relative)
 	request, err := http.NewRequestWithContext(ctx, method, target.String(), body)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
