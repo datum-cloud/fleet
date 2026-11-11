@@ -31,6 +31,9 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
   source proposals, and unresolved design questions.
 - [Implementation roadmap](docs/roadmap.md): proposed milestones and evidence
   required before enabling infrastructure effects.
+- [Secure customer BMC access](docs/enhancements/secure-bmc-access.md): proposed
+  product experience, allocation-scoped Redfish session architecture, security,
+  routing, and provisional API design.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
 
 The foundation comes from open `datum-cloud/infra` PRs
