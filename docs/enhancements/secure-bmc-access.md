@@ -137,8 +137,8 @@ the transport private key or a reusable BMC credential to disk by default.
 ### Customer provisioning automation
 
 An automated provisioner uses a Datum service identity to create a session for a
-specific MachineClaim UID. A connector sidecar owns the ephemeral transport key
-and presents the provisioner with the same Redfish base URL for the session's
+MachineClaim in its project. A connector sidecar owns the ephemeral transport
+key and presents the provisioner with the same Redfish base URL for the session's
 lifetime. The provisioner can then:
 
 1. read the Redfish service root and computer-system state;
@@ -398,7 +398,6 @@ metadata:
 spec:
   machineClaimRef:
     name: db-01
-    uid: 9ec01bc8-1d45-4dd6-8601-df63c9687047
   protocol: Redfish
   accessProfile: Provisioning
   clientPublicKey: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -420,11 +419,18 @@ status:
       lastTransitionTime: "2026-11-11T19:00:01Z"
 ```
 
-`machineClaimRef.uid` prevents a name reused after deletion from receiving the
-old session. Admission requires the claim to be bound and active. `protocol` is
-initially only `Redfish`. `accessProfile` refers to a versioned platform-defined
-profile; arbitrary methods or paths are not accepted in the spec. `ttl` begins
-no later than connection acceptance and is capped by policy.
+`machineClaimRef.name` is a consumer lookup handle in the authenticated project;
+the consumer does not supply or manage allocation identities. During session
+admission, Fleet resolves the name and retains the current Claim UID, Machine UID,
+binding identifier and binding epoch in the protected session binding before the
+session can become Ready or authorize an effect. Admission requires the resolved
+claim to be bound and active. If the claim or binding changes before that commit,
+admission fails or restarts resolution rather than following stale state. A later
+claim that reuses the same name cannot receive an already admitted session.
+
+`protocol` is initially only `Redfish`. `accessProfile` refers to a versioned
+platform-defined profile; arbitrary methods or paths are not accepted in the
+spec. `ttl` begins no later than connection acceptance and is capped by policy.
 
 `status.connection` is rendezvous information, not a bearer capability. Holding
 the matching ephemeral private key is required to connect. The target is a
