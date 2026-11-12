@@ -1,0 +1,60 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fleet-machineclaim-finalizer-protection
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [fleet.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [UPDATE]
+        resources: [machineclaims]
+  validations:
+    - expression: >-
+        !has(oldObject.metadata.finalizers) ||
+        !oldObject.metadata.finalizers.exists(f, f == 'fleet.datumapis.com/machineclaim-protection') ||
+        (has(object.metadata.finalizers) &&
+         object.metadata.finalizers.exists(f, f == 'fleet.datumapis.com/machineclaim-protection')) ||
+        request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-manager'
+      message: Only the Fleet manager may remove its MachineClaim protection finalizer.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fleet-machineclaim-finalizer-protection
+spec:
+  policyName: fleet-machineclaim-finalizer-protection
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fleet-private-record-protection
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [secrets]
+  matchConditions:
+    - name: private-record
+      expression: >-
+        (request.operation != 'DELETE' && has(object.metadata.labels) &&
+         'fleet.datumapis.com/private-record' in object.metadata.labels) ||
+        (request.operation != 'CREATE' && has(oldObject.metadata.labels) &&
+         'fleet.datumapis.com/private-record' in oldObject.metadata.labels)
+  validations:
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-manager'
+      message: Fleet private coordination records are service-controlled.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fleet-private-record-protection
+spec:
+  policyName: fleet-private-record-protection
+  validationActions: [Deny]

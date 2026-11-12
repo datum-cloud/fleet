@@ -52,8 +52,8 @@ kind load docker-image fleet-gateway:e2e fleet-relay:e2e --name fleet-location-e
 
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -k "${ROOT_DIR}/config/crd"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -k "${ROOT_DIR}/config/crd"
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -k "${ROOT_DIR}/config/base"
-kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -k "${ROOT_DIR}/config/base"
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -k "${ROOT_DIR}/config/machine-management/base"
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -k "${ROOT_DIR}/config/machine-management/base"
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" wait --for=condition=Established --timeout=60s crd/machinemanagementsessions.fleet.datumapis.com
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" wait --for=condition=Established --timeout=60s crd/projectedmachinemanagementsessions.fleet.datumapis.com
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${ROOT_DIR}/config/rbac/controller.yaml"

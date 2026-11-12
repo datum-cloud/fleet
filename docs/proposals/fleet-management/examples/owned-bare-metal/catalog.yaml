@@ -1,0 +1,23 @@
+# PLATFORM-WRITTEN OUTPUT in project acme; not customer apply input.
+# A reference MachineClass contains only spec.source; it cannot override policy.
+# MachineClass is project-scoped (cluster-scoped inside the project API).
+# Publication and source references do not grant entitlement or reserve capacity.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClass
+metadata:
+  name: metal-standard
+spec:
+  source:
+    project: datum-metal
+    name: datum-metal-standard
+status:
+  resolvedClass:
+    arch: amd64
+    capabilities: [baremetal]
+    interfaces:
+      - {name: primary, type: Ethernet}
+    access:
+      consoleModes: [Graphical]
+      powerControl: true
+  conditions:
+    - {type: SourceResolved, status: "True", reason: AuthorizedSource}

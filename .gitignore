@@ -29,6 +29,8 @@ coverage.out
 credentials.json
 ready.json
 ca.pem
+/milo-acceptance-evidence/
+**/milo-acceptance-config.json
 
 # Local agent settings
 .claude/settings.local.json

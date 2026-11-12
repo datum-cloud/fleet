@@ -115,7 +115,7 @@ func (r *SessionReconciler) admit(ctx context.Context, session *fleetv1alpha1.Ma
 	}
 	connect := metav1.NewTime(now.Add(DefaultConnectWindow))
 	expiry := metav1.NewTime(now.Add(ttl))
-	b := &fleetv1alpha1.MachineManagementSessionBinding{TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSessionBinding"}, ObjectMeta: metav1.ObjectMeta{Name: string(session.UID), Namespace: r.systemNamespace(), Labels: map[string]string{SessionUIDLabel: string(session.UID), ClaimUIDLabel: string(claim.UID)}}, Spec: fleetv1alpha1.MachineManagementSessionBindingSpec{SessionNamespace: session.Namespace, SessionName: session.Name, SessionUID: session.UID, RequestingPrincipal: principal, ConsumerProjectUID: a.Spec.ConsumerProjectUID, ProviderProjectUID: a.Spec.ProviderProjectUID, ClaimName: claim.Name, ClaimUID: claim.UID, MachineName: a.Spec.MachineName, MachineUID: a.Spec.MachineUID, BindingID: a.Spec.BindingID, BindingEpoch: a.Spec.BindingEpoch, LocationUID: a.Spec.LocationUID, LocationRevision: a.Spec.LocationRevision, BareMetalMachineUID: a.Spec.BareMetalMachineUID, AccessProfileRevision: a.Spec.AccessProfileRevision, ClientPublicKey: session.Spec.ClientPublicKey, ConnectBefore: connect, ExpiresAt: expiry, SessionCorrelationID: randomID(), OperationCorrelationID: randomID(), AdapterRoute: a.Spec.AdapterRoute, BMCSystemID: a.Spec.BMCSystemID}}
+	b := &fleetv1alpha1.MachineManagementSessionBinding{TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSessionBinding"}, ObjectMeta: metav1.ObjectMeta{Name: string(session.UID), Namespace: r.systemNamespace(), Labels: map[string]string{SessionUIDLabel: string(session.UID), ClaimUIDLabel: string(claim.UID)}}, Spec: fleetv1alpha1.MachineManagementSessionBindingSpec{SessionNamespace: session.Namespace, SessionName: session.Name, SessionUID: session.UID, RequestingPrincipal: principal, ConsumerProjectUID: a.Spec.ConsumerProjectUID, ProviderProjectUID: a.Spec.ProviderProjectUID, ClaimName: claim.Name, ClaimUID: claim.UID, MachineName: a.Spec.MachineName, MachineUID: a.Spec.MachineUID, BindingID: a.Spec.BindingID, BindingEpoch: a.Spec.BindingEpoch, LocationUID: a.Spec.LocationUID, LocationRevision: a.Spec.LocationRevision, BareMetalMachineUID: a.Spec.BareMetalMachineUID, AccessProfileRevision: a.Spec.AccessProfileRevision, ClientPublicKey: session.Spec.ClientPublicKey, ConnectBefore: connect, ExpiresAt: expiry, SessionCorrelationID: randomCorrelationID(), OperationCorrelationID: randomCorrelationID(), AdapterRoute: a.Spec.AdapterRoute, BMCSystemID: a.Spec.BMCSystemID}}
 	if err := r.Create(ctx, b); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return ctrl.Result{Requeue: true}, nil
@@ -277,7 +277,7 @@ func setCondition(cs *[]metav1.Condition, generation int64, status metav1.Condit
 func setNamedCondition(cs *[]metav1.Condition, name string, generation int64, status metav1.ConditionStatus, reason, message string, now time.Time) {
 	apimeta.SetStatusCondition(cs, metav1.Condition{Type: name, Status: status, Reason: reason, Message: message, ObservedGeneration: generation, LastTransitionTime: metav1.NewTime(now)})
 }
-func randomID() string {
+func randomCorrelationID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)

@@ -1,0 +1,22 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-viewer
+  annotations:
+    kubernetes.io/display-name: Fleet Viewer
+    kubernetes.io/description: View project-local Fleet offerings and allocation results
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fleet.datumapis.com/machineclasses.list
+    - fleet.datumapis.com/machineclasses.get
+    - fleet.datumapis.com/machineclasses.watch
+    - fleet.datumapis.com/machineprofiles.list
+    - fleet.datumapis.com/machineprofiles.get
+    - fleet.datumapis.com/machineprofiles.watch
+    - fleet.datumapis.com/machineclaims.list
+    - fleet.datumapis.com/machineclaims.get
+    - fleet.datumapis.com/machineclaims.watch
+    - fleet.datumapis.com/installations.list
+    - fleet.datumapis.com/installations.get
+    - fleet.datumapis.com/installations.watch

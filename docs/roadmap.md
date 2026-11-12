@@ -13,6 +13,11 @@ production relay and therefore does not complete either milestone.
 
 ## 1. Define the service contracts
 
+The [Machine lifecycle enhancement](enhancements/machine-lifecycle/README.md) defines the five
+public resources, private reservation/operation records, Milo tenancy boundaries,
+and recovery acceptance criteria. Its functional target uses a persistent
+simulated provider; real hardware qualification remains in stage 3 below.
+
 Record decisions for API scope and field ownership, project identity and IAM,
 durable reservation/operation storage, artifact retention, provider fact schemas,
 and the initial implementation toolchain and module path. Introduce code and

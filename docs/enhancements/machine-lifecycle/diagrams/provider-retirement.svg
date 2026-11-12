@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="760" viewBox="0 0 960 760" role="img" aria-labelledby="title description">
+<title id="title">Provider-project retirement gates</title><desc id="description">Retirement closes admission for the provider Project UID and retains the project API and cleanup dependencies. Fleet waits for authorized release, verified cleanup and quota settlement, then retires enrollment and execution authority and satisfies history retention. Only then does Fleet allow Milo to purge the provider project. Active allocations, unknown operations, quarantine, and unavailable evidence keep deletion blocked; a retirement request alone does not authorize wiping a machine.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 22px; font-weight: 700; } .label { font-size: 19px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="760" fill="white"/>
+<text x="480" y="35" class="heading" text-anchor="middle">Provider-project retirement</text>
+<rect x="40" y="70" width="880" height="95" rx="10" fill="#eff6ff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="104" class="label" text-anchor="middle">Close admission</text>
+<text x="480" y="134" class="detail" text-anchor="middle">Fence new preparation, bindings, and consumer operations.</text>
+<rect x="40" y="215" width="880" height="95" rx="10" fill="#eff6ff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="249" class="label" text-anchor="middle">Settle existing obligations</text>
+<text x="480" y="279" class="detail" text-anchor="middle">Complete authorized release; verify cleanup and quota settlement.</text>
+<path d="M 480 165 V 215" class="line"/>
+<rect x="40" y="360" width="880" height="95" rx="10" fill="#eff6ff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="394" class="label" text-anchor="middle">Retire authority and satisfy retention</text>
+<text x="480" y="424" class="detail" text-anchor="middle">Retire enrollment and executor authority; retain required history and fences.</text>
+<path d="M 480 310 V 360" class="line"/>
+<rect x="40" y="505" width="880" height="100" rx="10" fill="#fff7ed" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="537" class="label" text-anchor="middle">Any remaining or unknown obligation blocks deletion.</text>
+<text x="480" y="567" class="detail" text-anchor="middle">Keep the project API, records, artifacts, credentials, and cleanup access available.</text>
+<path d="M 480 455 V 505" class="line"/>
+<path d="M 480 605 V 660" class="line"/>
+<text x="495" y="640" class="detail" text-anchor="start">All gates verified</text>
+<rect x="180" y="660" width="600" height="75" rx="10" fill="#f0fdf4" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="691" class="label" text-anchor="middle">Acknowledge retirement</text>
+<text x="480" y="717" class="detail" text-anchor="middle">Milo may purge resources and remove the project control plane.</text>
+</svg>

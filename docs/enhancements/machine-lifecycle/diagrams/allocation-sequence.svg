@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" aria-labelledby="title description">
+<title id="title">Allocation and operation admission</title><desc id="description">Fleet validates current authority, persists preparation in the protected provider project, obtains a correlated quota hold, commits an exclusive binding after selection and rechecking, retains an operation with exact inputs, and dispatches it. Binding must be ordered against invalidation and provider retirement. The provider project owns preparation, reservations, and operations; its storage backend remains undecided. Preparation authorizes no provider effects.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="660" fill="white"/>
+<rect x="15" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="120.0" y="53.0" class="heading" text-anchor="middle">Fleet coordinator</text>
+<path d="M 120 74 L 120 565" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="255" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="360.0" y="53.0" class="heading" text-anchor="middle">IAM and quota</text>
+<path d="M 360 74 L 360 565" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="495" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="600" y="42" class="heading" text-anchor="middle">Provider project</text>
+<text x="600" y="64" class="detail" text-anchor="middle">Coordination records</text>
+<path d="M 600 74 L 600 565" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="735" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="840.0" y="53.0" class="heading" text-anchor="middle">Executor</text>
+<path d="M 840 74 L 840 565" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="240.0" y="110" class="label" text-anchor="middle">Check current caller</text>
+<text x="240.0" y="133" class="label" text-anchor="middle">and policy</text>
+<path d="M 120 145 L 360 145" class="line"/>
+<text x="360.0" y="203" class="label" text-anchor="middle">Protect provider lifetime; retain preparation by Claim UID</text>
+<path d="M 120 215 L 600 215" class="line"/>
+<text x="240.0" y="250" class="label" text-anchor="middle">Obtain one</text>
+<text x="240.0" y="273" class="label" text-anchor="middle">correlated quota hold</text>
+<path d="M 120 285 L 360 285" class="line"/>
+<text x="360.0" y="330" class="label" text-anchor="middle">Select matching supply; recheck all gates</text>
+<text x="360.0" y="353" class="label" text-anchor="middle">Commit occupancy and dispatch intent atomically</text>
+<path d="M 120 365 L 600 365" class="line"/>
+<text x="360.0" y="408" class="label" text-anchor="middle">Binding ID and epoch</text>
+<path d="M 600 420 L 120 420" class="line" stroke-dasharray="5 4"/>
+<text x="360.0" y="468" class="label" text-anchor="middle">Retain operation authority and exact inputs</text>
+<path d="M 120 480 L 600 480" class="line"/>
+<text x="480.0" y="538" class="label" text-anchor="middle">Dispatch the admitted operation</text>
+<path d="M 120 550 L 840 550" class="line"/>
+<rect x="28" y="590" width="904" height="52" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480.0" y="622.0" class="label" text-anchor="middle">Order admission against policy changes and provider retirement; prior checks are insufficient.</text>
+</svg>

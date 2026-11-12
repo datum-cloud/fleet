@@ -1,0 +1,89 @@
+# CONTROLLER-WRITTEN SNAPSHOTS at the indicated stages, not apply inputs.
+# Conditions omit timestamps and other routine bookkeeping for readability.
+# IDs, addresses, MACs, and digests are illustrative.
+
+# After the exact operator preparation plan succeeds, before allocation is enabled.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Machine
+metadata:
+  name: iad1-r12-srv01
+  namespace: infra-ops
+status:
+  conditions:
+    - {type: IdentityVerified, status: "True", reason: DeviceIdentityMatched}
+    - {type: PhysicalReady, status: "True", reason: PlacementAndPathsVerified}
+    - {type: Prepared, status: "True", reason: ApprovedPlanCompleted}
+    - {type: Available, status: "False", reason: AllocationDisabled}
+---
+# During provisioning execution: physical target/tenant resources are prepared,
+# but customer connectivity is not yet active on the maintenance agent's port.
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkAttachment
+metadata:
+  name: db-01-primary
+  namespace: acme
+status:
+  bindingID: alloc-7ab1
+  bindingEpoch: 1
+  interfaceID: if-primary
+  addresses: [10.42.0.23/24]
+  conditions:
+    - {type: Prepared, status: "True", reason: ResourcesReserved}
+    - {type: Ready, status: "False", reason: ProvisioningInProgress}
+---
+# After deployment finishes and the network controller changes the isolated port
+# to the authorized tenant attachment, before normal customer disk boot.
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkAttachment
+metadata:
+  name: db-01-primary
+  namespace: acme
+status:
+  bindingID: alloc-7ab1
+  bindingEpoch: 1
+  interfaceID: if-primary
+  addresses: [10.42.0.23/24]
+  conditions:
+    - {type: Ready, status: "True", reason: TenantAttachmentVerified}
+---
+# After the controller has written the pinned image and qualified bootstrap data,
+# confirmed disk boot configuration, and completed platform handoff.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Installation
+metadata:
+  name: db-01-os-01
+  namespace: acme
+status:
+  bindingID: alloc-7ab1
+  bindingEpoch: 1
+  resolvedImageDigest: "sha256:<pinned disk image digest>"
+  conditions:
+    - {type: ImageDeployed, status: "True", reason: VerifiedDiskWrite}
+    - {type: BootstrapDelivered, status: "True", reason: QualifiedAdapterCompleted}
+    - {type: LocalBootConfigured, status: "True", reason: DeploymentMediaRemoved}
+    - {type: Ready, status: "True", reason: PlatformHandoffComplete}
+---
+# Public consumer view. The physical Machine/BMC/switch mapping stays private.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClaim
+metadata:
+  name: db-01
+  namespace: acme
+status:
+  bindingID: alloc-7ab1
+  bindingEpoch: 1
+  powerState: "On"
+  installationRef: {name: db-01-os-01}
+  interfaces:
+    - name: primary
+      id: if-primary
+      macAddress: "02:00:00:00:12:01"
+      attachmentRef: {name: db-01-primary}
+  access:
+    console:
+      grantedModes: [Graphical]
+      available: true
+  conditions:
+    - {type: Bound, status: "True", reason: ExclusiveReservationCommitted}
+    - {type: Ready, status: "True", reason: PlatformHandoffComplete}
+    - {type: GuestReady, status: Unknown, reason: NoGuestReadinessContract}

@@ -98,7 +98,7 @@ The declared DMTF interoperability profile is
 
 ## Reproducible Linux environment
 
-The qualified prerequisite is Linux with Docker Engine and Compose v2, Kind, kubectl, Go 1.26.1,
+The qualified prerequisite is Linux with Docker Engine and Compose v2, Kind, kubectl, Go 1.26.4,
 Task, jq, OpenSSL, and curl. KVM is used when `/dev/kvm` is available; otherwise
 the same real libvirt domain runs with QEMU software emulation. There is no
 in-memory or static-JSON BMC fallback. The scripts can also attempt the QEMU path
