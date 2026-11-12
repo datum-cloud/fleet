@@ -69,6 +69,11 @@ jobs:
             message=$(tr '\n' ' ' <"${RUNNER_TEMP}/fleet-e2e-error.txt" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
             echo "::error title=E2E failure::${message}"
           fi
+      - name: Prepare non-secret evidence for upload
+        if: always()
+        run: |
+          docker exec fleet-e2e-virtual-bmc sh -c \
+            'find /evidence -maxdepth 1 -type f ! -name "*.key" -exec chmod 0644 {} +' || true
       - name: Upload diagnostics and validator reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -78,6 +83,7 @@ jobs:
             .e2e/diagnostics
             .e2e/validators
             .e2e/virtual-bmc/evidence
+            !.e2e/virtual-bmc/evidence/*.key
             .e2e/*.log
           include-hidden-files: true
           if-no-files-found: ignore

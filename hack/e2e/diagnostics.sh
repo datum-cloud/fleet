@@ -24,5 +24,13 @@ fi
 docker logs fleet-e2e-virtual-bmc >"${OUT}/virtual-bmc.log" 2>&1 || true
 docker exec fleet-e2e-virtual-bmc virsh list --all >"${OUT}/libvirt-domains.txt" 2>&1 || true
 docker exec fleet-e2e-virtual-bmc virsh dumpxml allocated >"${OUT}/allocated-domain.xml" 2>&1 || true
-if [[ -d "${E2E_DIR}/virtual-bmc/evidence" ]]; then cp -R "${E2E_DIR}/virtual-bmc/evidence" "${OUT}/"; fi
+if [[ -d "${E2E_DIR}/virtual-bmc/evidence" ]]; then
+  # libvirt creates console logs as root. Make only non-secret evidence
+  # readable, and never copy the optional OpenVPN key into CI diagnostics.
+  docker exec fleet-e2e-virtual-bmc sh -c \
+    'find /evidence -maxdepth 1 -type f ! -name "*.key" -exec chmod 0644 {} +' >/dev/null 2>&1 || true
+  mkdir -p "${OUT}/evidence"
+  find "${E2E_DIR}/virtual-bmc/evidence" -maxdepth 1 -type f ! -name '*.key' \
+    -exec cp {} "${OUT}/evidence/" \;
+fi
 echo "diagnostics: ${OUT}"
