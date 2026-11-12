@@ -129,8 +129,8 @@ go.miloapis.com/locations v0.0.0-20260825185141-507ac2cbd48c h1:+BQirT3wYCgv7H2l
 go.miloapis.com/locations v0.0.0-20260825185141-507ac2cbd48c/go.mod h1:gzfAfHhSMwl/N68k/uSNYXOKK3IOBJCdXYaBgCE3gdE=
 go.miloapis.com/milo v0.32.5 h1:08tMRuw9jivqJb8XlOOp53usQLmLOncrZSXfmrNIm0Y=
 go.miloapis.com/milo v0.32.5/go.mod h1:GKK3afjCwshfZfvhjNe1wp/H45z4m7x5oG/8xbSgU1M=
-go.miloapis.com/service-catalog v0.3.2-0.20260714005215-6a3cddd298b0 h1:jRjiHCZZt1NO1BGujbq925KgDd/YATPWO8jiWub6UbU=
-go.miloapis.com/service-catalog v0.3.2-0.20260714005215-6a3cddd298b0/go.mod h1:chpaRFLTMODPZBEc7gOx3/e58loYBPSKHCojdKompXA=
+go.miloapis.com/service-catalog v0.13.1 h1:KZzyFrcDg7aUqZNcUXrU5m83qHnNpwW2Zgby5xU9Gm8=
+go.miloapis.com/service-catalog v0.13.1/go.mod h1:8kJJ+kw2GUzJk3ssgwtlsRuqrAHGSRxLE3K65sXaSfo=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
 go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
 go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=
