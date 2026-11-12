@@ -43,10 +43,18 @@ jobs:
       - name: Start virtual-BMC environment
         run: task e2e:up
       - name: End-to-end scenarios
-        run: task e2e:test
+        run: |
+          set -o pipefail
+          task e2e:test 2>&1 | tee .e2e/e2e-test.log
       - name: Collect diagnostics
         if: failure()
-        run: task e2e:diagnostics
+        run: |
+          task e2e:diagnostics || true
+          if [[ -f .e2e/e2e-test.log ]]; then
+            tail -n 100 .e2e/e2e-test.log
+            message=$(tail -n 20 .e2e/e2e-test.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+            echo "::error title=E2E failure::${message}"
+          fi
       - name: Upload diagnostics and validator reports
         if: always()
         uses: actions/upload-artifact@v4
