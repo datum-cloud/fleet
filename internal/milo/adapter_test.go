@@ -275,6 +275,178 @@ func TestAdapterAllocationAndReleaseRequiresExactSettlement(t *testing.T) {
 	}
 }
 
+func TestAdapterRecoversPreparedAuthorityWithoutReauthorizing(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	prepared, err := f.adapter.PrepareClaim(ctx, f.prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.adapter.Sources = &testSource{deny: errors.New("caller is no longer available")}
+	recovered, err := f.adapter.PrepareOrRecoverClaim(ctx, f.prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered != prepared {
+		t.Fatalf("recovered = %#v, want %#v", recovered, prepared)
+	}
+
+	changed := f.prepare
+	changed.LocalProfile = changed.LocalProfile.DeepCopyObject().(*fleetv1.MachineProfile)
+	changed.LocalProfile.Spec.Memory.Capacity.Min = "2Gi"
+	if _, err := f.adapter.PrepareOrRecoverClaim(ctx, changed); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("changed retained inputs error = %v, want ErrAuthorityInvalid", err)
+	}
+}
+
+func TestAdapterRecoveryAcceptsNewRevisionForSameLocationLifetime(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	if _, err := f.adapter.PrepareClaim(ctx, f.prepare); err != nil {
+		t.Fatal(err)
+	}
+
+	current := f.prepare
+	current.Location.Revision = "location-r2"
+	prepared, err := f.adapter.PrepareOrRecoverClaim(ctx, current)
+	if err != nil {
+		t.Fatalf("recover after location status revision = %v", err)
+	}
+	if prepared.Location != current.Location {
+		t.Fatalf("prepared location = %#v, want current %#v", prepared.Location, current.Location)
+	}
+	replacement := current
+	replacement.Location.UID = "replacement-location-uid"
+	if _, err := f.adapter.PrepareOrRecoverClaim(ctx, replacement); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("replacement location lifetime error = %v, want ErrAuthorityInvalid", err)
+	}
+
+	allocation := f.allocation
+	allocation.Location = current.Location
+	if _, err := f.adapter.Allocate(ctx, prepared, allocation); err != nil {
+		t.Fatalf("allocate after location status revision = %v", err)
+	}
+	record, err := f.records.Get(ctx, prepared.Authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.SourceRequest.Location.Revision != f.prepare.Location.Revision {
+		t.Fatalf("retained location revision = %q, want admitted %q", record.SourceRequest.Location.Revision, f.prepare.Location.Revision)
+	}
+}
+
+func TestAdapterRecoveryAcceptsEditForSameSourceClassLifetime(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	if _, err := f.adapter.PrepareClaim(ctx, f.prepare); err != nil {
+		t.Fatal(err)
+	}
+
+	current := f.prepare
+	current.SourceClass = f.prepare.SourceClass.DeepCopyObject().(*fleetv1.MachineClass)
+	current.SourceClass.Status.EvaluatedRevision = "class-r2"
+	current.SourceClass.Spec.Access = &fleetv1.AccessPolicy{PowerControl: true}
+	prepared, err := f.adapter.PrepareOrRecoverClaim(ctx, current)
+	if err != nil {
+		t.Fatalf("recover after source class edit = %v", err)
+	}
+	replacement := current
+	replacement.SourceClass = current.SourceClass.DeepCopyObject().(*fleetv1.MachineClass)
+	replacement.SourceClass.UID = "replacement-class-uid"
+	if _, err := f.adapter.PrepareOrRecoverClaim(ctx, replacement); !errors.Is(err, ErrAuthorityInvalid) {
+		t.Fatalf("replacement source class lifetime error = %v, want ErrAuthorityInvalid", err)
+	}
+
+	allocation := f.allocation
+	allocation.Class = current.SourceClass
+	if _, err := f.adapter.Allocate(ctx, prepared, allocation); err != nil {
+		t.Fatalf("allocate after source class edit = %v", err)
+	}
+	record, err := f.records.Get(ctx, prepared.Authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.SourceRequest.SourceClassRevision != f.prepare.SourceClass.Status.EvaluatedRevision {
+		t.Fatalf("retained class revision = %q, want admitted %q", record.SourceRequest.SourceClassRevision, f.prepare.SourceClass.Status.EvaluatedRevision)
+	}
+}
+
+func TestAdapterRepairsPartialPreparation(t *testing.T) {
+	for _, stage := range []string{"authority", "custody"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx := context.Background()
+			f := newAdapterFixture(t)
+			lost := errors.New("simulated manager crash")
+			if stage == "authority" {
+				f.adapter.afterAuthorityCreate = func() error { return lost }
+			} else {
+				f.adapter.afterCustodyEnsure = func() error { return lost }
+			}
+			if _, err := f.adapter.PrepareClaim(ctx, f.prepare); !errors.Is(err, lost) {
+				t.Fatalf("partial prepare error = %v, want simulated crash", err)
+			}
+			f.adapter.afterAuthorityCreate = nil
+			f.adapter.afterCustodyEnsure = nil
+			prepared, err := f.adapter.PrepareOrRecoverClaim(ctx, f.prepare)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.adapter.Allocate(ctx, prepared, f.allocation); err != nil {
+				t.Fatalf("allocation after repaired preparation: %v", err)
+			}
+		})
+	}
+}
+
+func TestAdapterReleaseClaimNeedsNoPublicInputs(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	prepared, err := f.adapter.PrepareClaim(ctx, f.prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.adapter.Allocate(ctx, prepared, f.allocation); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.adapter.ReleaseClaim(ctx, prepared.ConsumerProject, f.prepare.Claim.UID)
+	if err != nil || !result.SafeToRemoveFinalizer || result.State != controller.AssetReleased {
+		t.Fatalf("release by retained claim lifetime = %#v, %v", result, err)
+	}
+}
+
+func TestAdapterMissingAuthorityDoesNotBypassRetainedCustody(t *testing.T) {
+	ctx := context.Background()
+	f := newAdapterFixture(t)
+	prepared, err := f.adapter.PrepareClaim(ctx, f.prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authority corev1.Secret
+	if err := f.records.client.Get(ctx, client.ObjectKey{Namespace: "fleet-private", Name: prepared.Authority.RecordName}, &authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.records.client.Delete(ctx, &authority); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.adapter.ReleaseClaim(ctx, prepared.ConsumerProject, f.prepare.Claim.UID); !errors.Is(err, controller.ErrRecordInvalid) {
+		t.Fatalf("missing authority with retained custody error = %v, want ErrRecordInvalid", err)
+	}
+	if _, err := f.adapter.PrepareOrRecoverClaim(ctx, f.prepare); !errors.Is(err, controller.ErrRecordInvalid) {
+		t.Fatalf("reprepare with missing authority and retained custody error = %v, want ErrRecordInvalid", err)
+	}
+}
+
+func TestAdapterProvesNeverAdmittedClaimHasNoAuthority(t *testing.T) {
+	f := newAdapterFixture(t)
+	consumer, _, err := f.adapter.Projects.Resolve(context.Background(), "consumer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.adapter.ReleaseClaim(context.Background(), consumer, "never-admitted"); !errors.Is(err, ErrClaimAuthorityNotFound) {
+		t.Fatalf("never-admitted release error = %v, want ErrClaimAuthorityNotFound", err)
+	}
+}
+
 func TestAdapterFailsClosedWithoutProductionAuthorityProtocols(t *testing.T) {
 	ctx := context.Background()
 	f := newAdapterFixture(t)
@@ -310,14 +482,6 @@ func TestAllocationRejectsAuthoritySubstitutionBeforeEffects(t *testing.T) {
 		"source class": func(r *controller.AllocationRequest) {
 			r.Class = r.Class.DeepCopyObject().(*fleetv1.MachineClass)
 			r.Class.UID = "replacement"
-		},
-		"class revision": func(r *controller.AllocationRequest) {
-			r.Class = r.Class.DeepCopyObject().(*fleetv1.MachineClass)
-			r.Class.Status.EvaluatedRevision = "replacement"
-		},
-		"class content": func(r *controller.AllocationRequest) {
-			r.Class = r.Class.DeepCopyObject().(*fleetv1.MachineClass)
-			r.Class.Spec.Capacity.Machines.Namespace = "replacement"
 		},
 		"source profile": func(r *controller.AllocationRequest) {
 			r.Profile = r.Profile.DeepCopyObject().(*fleetv1.MachineProfile)

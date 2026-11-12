@@ -7,15 +7,31 @@ API servers and must be reconciled independently.
 | --- | --- | --- |
 | `config/milo` | Milo root control plane | Fleet CRDs, IAM protected resources and roles, service registration, and machine quota registration |
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
+| `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
+
+`config/overlays/synthetic-staging` is the temporary Milo-routed acceptance
+environment. It uses the real private custody, exclusivity, cleanup, and reuse
+implementation, but substitutes synthetic admission and provider evidence. It
+accepts only powered-off, networkless claims in `us-central-1`; its status
+conditions identify that boundary. When the three publication keys documented
+below are present, it watches one consumer project and one distinct provider
+project, publishes a locked class reference and exact profile copy, and retains
+both project lifetimes in allocation custody. Provider Machine events wake
+consumer claims directly; no polling resync is enabled. The colocated provider uses the Pod's
+projected service-account token for loopback authentication, so no provider
+credential is stored in Git. Its operation log is ephemeral and may be rebuilt
+after a Pod restart; private Fleet authority remains durable and exact requests
+are idempotently recovered. This overlay must never be promoted to production.
 
 Render both production roots before publishing the Kustomize bundle:
 
 ```sh
 kustomize build config/milo >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
+kustomize build config/overlays/synthetic-staging >/dev/null
 ```
 
 ## Published artifacts
@@ -53,6 +69,23 @@ data:
   projectName: <Milo Project name>
 ```
 
+The non-production `synthetic-staging` overlay additionally requires one
+explicit publication contract:
+
+```yaml
+data:
+  providerProjectName: <distinct provider Milo Project name>
+  publishedClassName: <provider MachineClass definition name>
+  publishedProfileName: <allowed provider MachineProfile name>
+```
+
+The publisher refuses name collisions, reference chains, mutable profile-copy
+drift, a profile not allowed by the source class, or replacement source/project
+lifetimes. It writes only a consumer class containing `spec.source`, an exact
+profile copy, and sanitized `resolvedClass` status. These checks exercise the
+publication and shared-allocation shapes, but the resulting conditions remain
+explicitly synthetic authority rather than production IAM/catalog evidence.
+
 These values select the Milo authority and project but do not duplicate the
 project's immutable identity. At startup the manager reads the named Project
 through the root Milo credential, rejects missing, deleting, or UID-less
@@ -88,8 +121,10 @@ deployment is therefore suitable for render, policy, and fail-closed rollout
 validation, not for claiming a functional allocation service.
 
 Provider inventory, MachineClasses, MachineProfiles, project-specific role
-bindings, quota grants, service entitlements, and publication objects are
-environment or provider state. They are not installed by these roots. In
+bindings, quota grants, service entitlements, and publication selection are
+environment or provider state. They are not installed by the production roots.
+The synthetic overlay publishes only the one explicitly named staging class and
+profile; it is not a general production catalog publisher. In
 particular, the proposal's `ServiceConfiguration.spec.provisioning` example is
 explicitly incomplete and source-project-specific, so this bundle does not
 invent a publication source or claim that authorization integration exists.

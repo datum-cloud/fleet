@@ -10,18 +10,23 @@ implementation roadmap, and the first alpha public API encoding for the machine
 lifecycle. The Go types, CRDs, synthetic persistent provider simulator,
 standalone same-cluster allocation/installation lifecycle library, unwired NSO
 network lifecycle adapter, unwired Milo tenancy/quota authority contracts, and
-an event-only controller-manager wiring scaffold are implemented. A separate
+an event-only controller-manager wiring scaffold and MachineClaim orchestration
+handler are implemented. A separate
 [standalone synthetic smoke environment](docs/standalone-smoke.md) packages the
 lifecycle library and persistent simulator for a two-consumer local demonstration.
 Its namespaces are project stand-ins and do not establish Milo acceptance. The
-scaffold has no production caller-preserving authorizer, admission fence,
-protected quota custodian, or replayable Milo event adapters, so its binary
-remains unready and performs no lifecycle or provider effects. Production
-manifest roots now package the manager security boundary and Milo API, IAM,
+handler deliberately accepts only injected authoritative inputs; the repository
+has no production caller-preserving authorizer, trusted provider-observation
+resolver, profile-publication provenance store, admission fence, protected quota
+custodian, or replayable Milo event adapters, so its default production mode
+remains unready and performs no lifecycle or provider effects. An explicit
+Milo-routed synthetic staging mode exercises the real allocator, cleanup, and
+reuse contracts without claiming production admission or provider authority.
+Production manifest roots now package the manager security boundary and Milo API, IAM,
 service-catalog, and quota registration, while environment identity, credentials,
 and immutable image selection remain in `infra`. See
 [`config/README.md`](config/README.md). There is still no real provider
-integration; the standalone smoke manifests remain test fixtures.
+integration; the standalone smoke and synthetic staging modes remain test fixtures.
 
 ## Scope
 
