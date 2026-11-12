@@ -14,9 +14,9 @@ spec:
     - fleet.datumapis.com/machineprofiles.list
     - fleet.datumapis.com/machineprofiles.get
     - fleet.datumapis.com/machineprofiles.watch
-    - fleet.datumapis.com/machineclaims.list
-    - fleet.datumapis.com/machineclaims.get
-    - fleet.datumapis.com/machineclaims.watch
+    - fleet.datumapis.com/machines.list
+    - fleet.datumapis.com/machines.get
+    - fleet.datumapis.com/machines.watch
     - fleet.datumapis.com/installations.list
     - fleet.datumapis.com/installations.get
     - fleet.datumapis.com/installations.watch

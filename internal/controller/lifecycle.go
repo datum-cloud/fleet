@@ -29,8 +29,8 @@ import (
 )
 
 const (
-	MachineClaimFinalizer = "fleet.datumapis.com/machineclaim-protection"
-	recordSchemaVersion   = 1
+	MachineFinalizer    = "fleet.datumapis.com/machine-protection"
+	recordSchemaVersion = 1
 	// Installation records gained retained public routing identities in v2.
 	// v1 is accepted only by the explicit request-bound upgrader below.
 	installationRecordSchemaVersion = 2
@@ -110,32 +110,32 @@ const (
 // release so the next allocation can advance the executor epoch without
 // reconstructing authority from public status.
 type AssetRecord struct {
-	SchemaVersion        int                        `json:"schemaVersion"`
-	State                AssetState                 `json:"state"`
-	AssetID              string                     `json:"assetID"`
-	MachineNamespace     string                     `json:"machineNamespace"`
-	MachineName          string                     `json:"machineName"`
-	MachineUID           types.UID                  `json:"machineUID"`
-	ClaimNamespace       string                     `json:"claimNamespace"`
-	ClaimName            string                     `json:"claimName"`
-	ClaimUID             types.UID                  `json:"claimUID"`
-	ClaimScope           ClaimScope                 `json:"claimScope"`
-	ClassUID             types.UID                  `json:"classUID"`
-	ProfileUID           types.UID                  `json:"profileUID"`
-	LocalClassUID        types.UID                  `json:"localClassUID"`
-	LocalProfileUID      types.UID                  `json:"localProfileUID"`
-	ConsumerProject      ProjectIdentity            `json:"consumerProject,omitempty"`
-	ProviderProject      ProjectIdentity            `json:"providerProject,omitempty"`
-	Authority            AuthorityRef               `json:"authority,omitempty"`
-	ExternalHold         ExternalHoldRef            `json:"externalHold,omitempty"`
-	BindingID            string                     `json:"bindingID"`
-	Epoch                int64                      `json:"epoch"`
-	FenceToken           string                     `json:"fenceToken"`
-	CurrentRevision      string                     `json:"currentRevision"`
-	ActiveOperationID    string                     `json:"activeOperationID,omitempty"`
-	AcceptedRequirements fleetv1.MachineProfileSpec `json:"acceptedRequirements"`
-	Hardware             fleetv1.Hardware           `json:"hardware"`
-	Network              *NetworkRecord             `json:"network,omitempty"`
+	SchemaVersion           int                        `json:"schemaVersion"`
+	State                   AssetState                 `json:"state"`
+	AssetID                 string                     `json:"assetID"`
+	MachineNamespace        string                     `json:"machineNamespace"`
+	MachineName             string                     `json:"machineName"`
+	MachineUID              types.UID                  `json:"machineUID"`
+	ClaimNamespace          string                     `json:"claimNamespace"`
+	ClaimName               string                     `json:"claimName"`
+	ClaimUID                types.UID                  `json:"claimUID"`
+	ClaimScope              ClaimScope                 `json:"claimScope"`
+	ClassUID                types.UID                  `json:"classUID"`
+	ProfileUID              types.UID                  `json:"profileUID"`
+	LocalClassUID           types.UID                  `json:"localClassUID"`
+	LocalProfileUID         types.UID                  `json:"localProfileUID"`
+	ConsumerProject         ProjectIdentity            `json:"consumerProject,omitempty"`
+	ProviderProject         ProjectIdentity            `json:"providerProject,omitempty"`
+	Authority               AuthorityRef               `json:"authority,omitempty"`
+	ExternalHold            ExternalHoldRef            `json:"externalHold,omitempty"`
+	BindingID               string                     `json:"bindingID"`
+	Epoch                   int64                      `json:"epoch"`
+	FenceToken              string                     `json:"fenceToken"`
+	CurrentInstallationName string                     `json:"currentInstallationName"`
+	ActiveOperationID       string                     `json:"activeOperationID,omitempty"`
+	AcceptedRequirements    fleetv1.MachineProfileSpec `json:"acceptedRequirements"`
+	Hardware                fleetv1.Hardware           `json:"hardware"`
+	Network                 *NetworkRecord             `json:"network,omitempty"`
 }
 
 type ResolvedImage struct {
@@ -241,10 +241,10 @@ func NewCoordinator(kube client.Client, privateNamespace string, provider execut
 }
 
 type AllocationRequest struct {
-	Claim              *fleetv1.MachineClaim
+	Claim              *fleetv1.Machine
 	Class              *fleetv1.MachineClass
 	Profile            *fleetv1.MachineProfile
-	Machines           []fleetv1.Machine
+	MachineCapacities  []fleetv1.MachineCapacity
 	EvidenceObservedAt map[types.UID]time.Time
 	NamespaceUID       types.UID
 	Admission          AdmissionAuthority
@@ -270,7 +270,7 @@ func allocationClaimScope(request AllocationRequest) ClaimScope {
 // EnsureClaimCustody must be called before a claim finalizer is installed. It
 // is idempotent for the exact claim lifetime and rejects deterministic-name
 // squatting or reuse with a different identity.
-func (c *Coordinator) EnsureClaimCustody(ctx context.Context, claim *fleetv1.MachineClaim, namespaceUID types.UID, admission AdmissionAuthority, project ...ProjectIdentity) error {
+func (c *Coordinator) EnsureClaimCustody(ctx context.Context, claim *fleetv1.Machine, namespaceUID types.UID, admission AdmissionAuthority, project ...ProjectIdentity) error {
 	if claim == nil || claim.Namespace == "" || claim.Name == "" || claim.UID == "" || namespaceUID == "" || !admission.valid() {
 		return errors.New("claim lifetime identity is required")
 	}
@@ -425,7 +425,7 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 	if request.Class.Spec.Source != nil {
 		return nil, fmt.Errorf("%w: sourced classes must be resolved by an authority adapter", ErrUnsupported)
 	}
-	if request.Claim.DeletionTimestamp != nil || !contains(request.Claim.Finalizers, MachineClaimFinalizer) {
+	if request.Claim.DeletionTimestamp != nil || !contains(request.Claim.Finalizers, MachineFinalizer) {
 		return nil, errors.New("claim must be live and carry the Fleet finalizer before allocation")
 	}
 	scope := allocationClaimScope(request)
@@ -478,17 +478,17 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 		request.networkPlan = &plan
 	}
 
-	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.Machines.Selector)
+	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.MachineCapacities.Selector)
 	if err != nil {
 		return nil, fmt.Errorf("invalid MachineClass selector: %w", err)
 	}
-	candidates := append([]fleetv1.Machine(nil), request.Machines...)
+	candidates := append([]fleetv1.MachineCapacity(nil), request.MachineCapacities...)
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].Namespace+"/"+candidates[i].Name < candidates[j].Namespace+"/"+candidates[j].Name
 	})
 	for i := range candidates {
 		machine := &candidates[i]
-		if machine.Namespace != request.Class.Spec.Capacity.Machines.Namespace || !selector.Matches(labels.Set(machine.Labels)) || !machineEligible(machine, request.EvidenceObservedAt[machine.UID], c.now(), c.maxEvidenceAge) || !matches(request.Profile.Spec, machine.Status.Hardware) {
+		if machine.Namespace != request.Class.Spec.Capacity.MachineCapacities.Namespace || !selector.Matches(labels.Set(machine.Labels)) || !machineEligible(machine, request.EvidenceObservedAt[machine.UID], c.now(), c.maxEvidenceAge) || !matches(request.Profile.Spec, machine.Status.Hardware) {
 			continue
 		}
 		candidateID := machineAssetID(machine, request.ProviderProject)
@@ -529,8 +529,8 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 	return nil, ErrInsufficientCapacity
 }
 
-func machineAssetID(machine *fleetv1.Machine, provider ProjectIdentity) string {
-	asset := fmt.Sprintf("%s/%s/%s/%s", machine.Namespace, machine.Spec.ProviderRef.APIGroup, machine.Spec.ProviderRef.Kind, machine.Spec.ProviderRef.Name)
+func machineAssetID(machine *fleetv1.MachineCapacity, provider ProjectIdentity) string {
+	asset := fmt.Sprintf("%s/%s/%s/%s", machine.Namespace, "inventory.fleet.datumapis.com", "Device", machine.Spec.DeviceRef.Name)
 	if provider.Valid() {
 		return fmt.Sprintf("%s/%s/%s", provider.AuthorityID, provider.UID, asset)
 	}
@@ -538,13 +538,13 @@ func machineAssetID(machine *fleetv1.Machine, provider ProjectIdentity) string {
 }
 
 func (c *Coordinator) recordCandidateEligible(record *AssetRecord, request AllocationRequest) bool {
-	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.Machines.Selector)
+	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.MachineCapacities.Selector)
 	if err != nil {
 		return false
 	}
-	for i := range request.Machines {
-		m := &request.Machines[i]
-		if machineAssetID(m, request.ProviderProject) == record.AssetID && m.UID == record.MachineUID && m.Namespace == record.MachineNamespace && m.Name == record.MachineName && m.Namespace == request.Class.Spec.Capacity.Machines.Namespace && selector.Matches(labels.Set(m.Labels)) && machineEligible(m, request.EvidenceObservedAt[m.UID], c.now(), c.maxEvidenceAge) && matches(request.Profile.Spec, m.Status.Hardware) {
+	for i := range request.MachineCapacities {
+		m := &request.MachineCapacities[i]
+		if machineAssetID(m, request.ProviderProject) == record.AssetID && m.UID == record.MachineUID && m.Namespace == record.MachineNamespace && m.Name == record.MachineName && m.Namespace == request.Class.Spec.Capacity.MachineCapacities.Namespace && selector.Matches(labels.Set(m.Labels)) && machineEligible(m, request.EvidenceObservedAt[m.UID], c.now(), c.maxEvidenceAge) && matches(request.Profile.Spec, m.Status.Hardware) {
 			return true
 		}
 	}
@@ -663,20 +663,20 @@ func (c *Coordinator) CheckCapacity(request AllocationRequest) error {
 	if err := validateCapacityRequest(request); err != nil {
 		return err
 	}
-	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.Machines.Selector)
+	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.MachineCapacities.Selector)
 	if err != nil {
 		return fmt.Errorf("invalid MachineClass selector: %w", err)
 	}
-	for i := range request.Machines {
-		machine := &request.Machines[i]
-		if machine.Namespace == request.Class.Spec.Capacity.Machines.Namespace && selector.Matches(labels.Set(machine.Labels)) && machineEligible(machine, request.EvidenceObservedAt[machine.UID], c.now(), c.maxEvidenceAge) && matches(request.Profile.Spec, machine.Status.Hardware) {
+	for i := range request.MachineCapacities {
+		machine := &request.MachineCapacities[i]
+		if machine.Namespace == request.Class.Spec.Capacity.MachineCapacities.Namespace && selector.Matches(labels.Set(machine.Labels)) && machineEligible(machine, request.EvidenceObservedAt[machine.UID], c.now(), c.maxEvidenceAge) && matches(request.Profile.Spec, machine.Status.Hardware) {
 			return nil
 		}
 	}
 	return ErrInsufficientCapacity
 }
 
-func machineEligible(machine *fleetv1.Machine, observedAt, now time.Time, maxAge time.Duration) bool {
+func machineEligible(machine *fleetv1.MachineCapacity, observedAt, now time.Time, maxAge time.Duration) bool {
 	if machine.UID == "" || machine.Spec.AllocationPolicy != "Enabled" || observedAt.IsZero() || observedAt.After(now) || now.Sub(observedAt) > maxAge {
 		return false
 	}
@@ -689,7 +689,7 @@ func machineEligible(machine *fleetv1.Machine, observedAt, now time.Time, maxAge
 	return true
 }
 
-func (c *Coordinator) prepareAsset(ctx context.Context, request AllocationRequest, machine *fleetv1.Machine) (*AssetRecord, bool, error) {
+func (c *Coordinator) prepareAsset(ctx context.Context, request AllocationRequest, machine *fleetv1.MachineCapacity) (*AssetRecord, bool, error) {
 	assetID := machineAssetID(machine, request.ProviderProject)
 	custody, _, err := c.getCustodyScoped(ctx, allocationClaimScope(request), request.Claim.UID)
 	if err != nil {
@@ -765,7 +765,7 @@ func sameRecord(a, b *AssetRecord) bool {
 	return string(left) == string(right)
 }
 
-func (c *Coordinator) proposeAsset(ctx context.Context, request AllocationRequest, machine *fleetv1.Machine) (*AssetRecord, bool, error) {
+func (c *Coordinator) proposeAsset(ctx context.Context, request AllocationRequest, machine *fleetv1.MachineCapacity) (*AssetRecord, bool, error) {
 	assetID := machineAssetID(machine, request.ProviderProject)
 	epoch := int64(1)
 	existing, _, err := c.getAsset(ctx, assetID)
@@ -791,14 +791,14 @@ func (c *Coordinator) proposeAsset(ctx context.Context, request AllocationReques
 	return newAssetRecord(request, machine, assetID, epoch, binding, fence), true, nil
 }
 
-func newAssetRecord(request AllocationRequest, machine *fleetv1.Machine, assetID string, epoch int64, bindingID, fenceToken string) *AssetRecord {
+func newAssetRecord(request AllocationRequest, machine *fleetv1.MachineCapacity, assetID string, epoch int64, bindingID, fenceToken string) *AssetRecord {
 	record := &AssetRecord{SchemaVersion: recordSchemaVersion, State: AssetPreparing, AssetID: assetID,
 		MachineNamespace: machine.Namespace, MachineName: machine.Name, MachineUID: machine.UID,
 		ClaimNamespace: request.Claim.Namespace, ClaimName: request.Claim.Name, ClaimUID: request.Claim.UID, ClaimScope: allocationClaimScope(request),
 		ClassUID: request.Class.UID, ProfileUID: request.Profile.UID, LocalClassUID: localClassUID(request), LocalProfileUID: localProfileUID(request),
 		ConsumerProject: request.ConsumerProject, ProviderProject: request.ProviderProject, Authority: request.Authority, ExternalHold: request.ExternalHold,
 		BindingID: bindingID, Epoch: epoch,
-		FenceToken: fenceToken, CurrentRevision: "None", AcceptedRequirements: request.Profile.Spec, Hardware: machine.Status.Hardware}
+		FenceToken: fenceToken, CurrentInstallationName: "None", AcceptedRequirements: request.Profile.Spec, Hardware: machine.Status.Hardware}
 	if request.networkPlan != nil {
 		record.Network = &NetworkRecord{Plan: *request.networkPlan}
 	}
@@ -992,7 +992,7 @@ func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID ty
 		// Allocation may have crashed after the exclusive asset create but
 		// before custody was advanced. Adopt that exact preparation solely to
 		// release it; Preparing has admitted no provider effect.
-		claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: record.ClaimNamespace, Name: record.ClaimName, UID: record.ClaimUID}}
+		claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: record.ClaimNamespace, Name: record.ClaimName, UID: record.ClaimUID}}
 		if err := c.bindCustody(ctx, claim, record.AssetID, custody.Scope); err != nil {
 			return ReleaseResult{}, err
 		}
@@ -1186,11 +1186,11 @@ func (c *Coordinator) settleActiveOperation(ctx context.Context, asset *AssetRec
 			return err
 		}
 	}
-	return c.publishInstalledRevision(ctx, asset.AssetID, asset.ClaimUID, operation)
+	return c.publishInstalledName(ctx, asset.AssetID, asset.ClaimUID, operation)
 }
 
 type InstallationRequest struct {
-	Claim           *fleetv1.MachineClaim
+	Claim           *fleetv1.Machine
 	Installation    *fleetv1.Installation
 	NamespaceUID    types.UID
 	ClaimScope      ClaimScope
@@ -1218,10 +1218,10 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	if request.Claim == nil || request.Installation == nil || request.Claim.UID == "" || request.Installation.UID == "" || request.NamespaceUID == "" || !request.Admission.valid() {
 		return InstallationResult{}, errors.New("claim, installation, and namespace lifetime identities are required")
 	}
-	if request.Installation.Namespace != request.Claim.Namespace || request.Installation.Spec.ClaimRef.Name != request.Claim.Name {
+	if request.Installation.Namespace != request.Claim.Namespace || request.Installation.Spec.MachineRef.Name != request.Claim.Name {
 		return InstallationResult{}, errors.New("installation does not target the supplied claim lifetime")
 	}
-	if request.Claim.DeletionTimestamp != nil || !contains(request.Claim.Finalizers, MachineClaimFinalizer) {
+	if request.Claim.DeletionTimestamp != nil || !contains(request.Claim.Finalizers, MachineFinalizer) {
 		return InstallationResult{}, errors.New("claim must be live and carry the Fleet finalizer before installation admission")
 	}
 	if request.Installation.Spec.BootstrapConfigRef != nil {
@@ -1278,12 +1278,12 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 		return InstallationResult{}, ErrPredecessorConflict
 	}
 	if operation.State == OperationSucceeded {
-		if err := c.publishInstalledRevision(ctx, asset.AssetID, asset.ClaimUID, operation); err != nil {
+		if err := c.publishInstalledName(ctx, asset.AssetID, asset.ClaimUID, operation); err != nil {
 			return InstallationResult{}, err
 		}
 		return InstallationResult{Revision: operation.ResultRevision, Record: *operation}, nil
 	}
-	if asset.CurrentRevision != predecessor || (asset.ActiveOperationID != "" && asset.ActiveOperationID != operation.OperationID) {
+	if asset.CurrentInstallationName != predecessor || (asset.ActiveOperationID != "" && asset.ActiveOperationID != operation.OperationID) {
 		return InstallationResult{}, ErrPredecessorConflict
 	}
 	if err := c.activateOperation(ctx, asset.AssetID, asset.ClaimUID, predecessor, operation.OperationID); err != nil {
@@ -1297,7 +1297,7 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	if err != nil {
 		return InstallationResult{}, err
 	}
-	if err := c.publishInstalledRevision(ctx, asset.AssetID, asset.ClaimUID, operation); err != nil {
+	if err := c.publishInstalledName(ctx, asset.AssetID, asset.ClaimUID, operation); err != nil {
 		return InstallationResult{}, err
 	}
 	return InstallationResult{Revision: operation.ResultRevision, Record: *operation}, nil
@@ -1306,15 +1306,15 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 func predecessorValue(value fleetv1.InstallationPredecessor) (string, error) {
 	switch value.Type {
 	case "None":
-		if value.Revision == "" {
+		if value.Name == "" {
 			return "None", nil
 		}
-	case "Revision":
-		if value.Revision != "" {
-			return value.Revision, nil
+	case "Installation":
+		if value.Name != "" {
+			return value.Name, nil
 		}
 	}
-	return "", errors.New("expectedPredecessor must be None without revision or Revision with a nonempty revision")
+	return "", errors.New("expectedPredecessor must be None without a name or Installation with a nonempty name")
 }
 
 func sameNetworkInputs(inputs *fleetnetwork.Observation, record *NetworkRecord) bool {
@@ -1442,7 +1442,7 @@ func (c *Coordinator) activateOperation(ctx context.Context, assetID string, cla
 	if err != nil {
 		return err
 	}
-	if record.ClaimUID != claimUID || record.State != AssetCommitted || record.CurrentRevision != predecessor {
+	if record.ClaimUID != claimUID || record.State != AssetCommitted || record.CurrentInstallationName != predecessor {
 		return ErrPredecessorConflict
 	}
 	if record.ActiveOperationID != "" && record.ActiveOperationID != operationID {
@@ -1455,7 +1455,7 @@ func (c *Coordinator) activateOperation(ctx context.Context, assetID string, cla
 	return c.client.Update(ctx, secret)
 }
 
-func (c *Coordinator) publishInstalledRevision(ctx context.Context, assetID string, claimUID types.UID, operation *InstallationRecord) error {
+func (c *Coordinator) publishInstalledName(ctx context.Context, assetID string, claimUID types.UID, operation *InstallationRecord) error {
 	record, secret, err := c.getAsset(ctx, assetID)
 	if err != nil {
 		return err
@@ -1463,13 +1463,13 @@ func (c *Coordinator) publishInstalledRevision(ctx context.Context, assetID stri
 	if record.ClaimUID != claimUID || record.State != AssetCommitted {
 		return ErrPredecessorConflict
 	}
-	if record.CurrentRevision == operation.ResultRevision && record.ActiveOperationID == "" {
+	if record.CurrentInstallationName == operation.InstallationName && record.ActiveOperationID == "" {
 		return nil
 	}
-	if record.CurrentRevision != operation.Predecessor || record.ActiveOperationID != operation.OperationID {
+	if record.CurrentInstallationName != operation.Predecessor || record.ActiveOperationID != operation.OperationID {
 		return ErrPredecessorConflict
 	}
-	record.CurrentRevision = operation.ResultRevision
+	record.CurrentInstallationName = operation.InstallationName
 	record.ActiveOperationID = ""
 	if err := encodeRecord(secret, record, "asset"); err != nil {
 		return err
@@ -1607,7 +1607,7 @@ func (c *Coordinator) getCustodyForAsset(ctx context.Context, asset *AssetRecord
 	return c.getCustodyScoped(ctx, asset.ClaimScope, asset.ClaimUID)
 }
 
-func (c *Coordinator) bindCustody(ctx context.Context, claim *fleetv1.MachineClaim, assetID string, scopes ...ClaimScope) error {
+func (c *Coordinator) bindCustody(ctx context.Context, claim *fleetv1.Machine, assetID string, scopes ...ClaimScope) error {
 	var record *ClaimCustodyRecord
 	var secret *corev1.Secret
 	var err error
@@ -1988,7 +1988,7 @@ func decodeLegacyOperationSecret(secret *corev1.Secret) (*InstallationRecord, er
 }
 
 func validateAssetRecord(r *AssetRecord) error {
-	if r.SchemaVersion != recordSchemaVersion || r.AssetID == "" || r.MachineNamespace == "" || r.MachineName == "" || r.MachineUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.ClassUID == "" || r.ProfileUID == "" || r.LocalClassUID == "" || r.LocalProfileUID == "" || r.BindingID == "" || r.Epoch < 1 || r.FenceToken == "" || r.CurrentRevision == "" {
+	if r.SchemaVersion != recordSchemaVersion || r.AssetID == "" || r.MachineNamespace == "" || r.MachineName == "" || r.MachineUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.ClassUID == "" || r.ProfileUID == "" || r.LocalClassUID == "" || r.LocalProfileUID == "" || r.BindingID == "" || r.Epoch < 1 || r.FenceToken == "" || r.CurrentInstallationName == "" {
 		return ErrRecordInvalid
 	}
 	projectAuthority := r.ConsumerProject.Valid() || r.ProviderProject.Valid() || r.Authority.Valid() || r.ExternalHold.Valid()

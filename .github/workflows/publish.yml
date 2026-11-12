@@ -30,4 +30,5 @@ jobs:
       bundle-path: config
       images: |
         - { path: config/base/manager, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
+        - { path: config/overlays/synthetic-staging, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
     secrets: inherit

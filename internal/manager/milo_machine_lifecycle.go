@@ -12,10 +12,10 @@ import (
 	"go.datum.net/fleet/internal/milo"
 )
 
-// MiloClaimLifecycle is the durable bridge between the event handler and the
+// MiloMachineLifecycle is the durable bridge between the event handler and the
 // existing Milo authority/allocation adapter. Prepared authority is recovered
 // from private records on every event; no process-local result is required.
-type MiloClaimLifecycle struct {
+type MiloMachineLifecycle struct {
 	Adapter MiloClaimAdapter
 }
 
@@ -25,7 +25,7 @@ type MiloClaimAdapter interface {
 	ReleaseClaim(context.Context, controller.ProjectIdentity, types.UID) (controller.ReleaseResult, error)
 }
 
-func (l MiloClaimLifecycle) RetainAuthority(ctx context.Context, project controller.ProjectIdentity, claim *fleetv1.MachineClaim, inputs ClaimInputs) error {
+func (l MiloMachineLifecycle) RetainAuthority(ctx context.Context, project controller.ProjectIdentity, claim *fleetv1.Machine, inputs MachineInputs) error {
 	if l.Adapter == nil || !project.Valid() || claim == nil || inputs.ConsumerRoute != project.RouteName {
 		return ErrEventWiringUnavailable
 	}
@@ -33,7 +33,7 @@ func (l MiloClaimLifecycle) RetainAuthority(ctx context.Context, project control
 	return claimLifecycleError(err)
 }
 
-func (l MiloClaimLifecycle) Allocate(ctx context.Context, project controller.ProjectIdentity, claim *fleetv1.MachineClaim, inputs ClaimInputs) error {
+func (l MiloMachineLifecycle) Allocate(ctx context.Context, project controller.ProjectIdentity, claim *fleetv1.Machine, inputs MachineInputs) error {
 	if l.Adapter == nil || !project.Valid() || claim == nil || inputs.ConsumerRoute != project.RouteName {
 		return ErrEventWiringUnavailable
 	}
@@ -47,24 +47,24 @@ func (l MiloClaimLifecycle) Allocate(ctx context.Context, project controller.Pro
 	}
 	_, err = l.Adapter.Allocate(ctx, prepared, controller.AllocationRequest{
 		Claim: claim, Class: inputs.SourceClass, Profile: profile,
-		Machines: inputs.Machines, EvidenceObservedAt: inputs.EvidenceObservedAt,
+		MachineCapacities: inputs.Machines, EvidenceObservedAt: inputs.EvidenceObservedAt,
 		Location: inputs.Location,
 	})
 	return claimLifecycleError(err)
 }
 
-func (l MiloClaimLifecycle) Release(ctx context.Context, project controller.ProjectIdentity, claimUID types.UID) (controller.ReleaseResult, error) {
+func (l MiloMachineLifecycle) Release(ctx context.Context, project controller.ProjectIdentity, claimUID types.UID) (controller.ReleaseResult, error) {
 	if l.Adapter == nil || !project.Valid() || claimUID == "" {
 		return controller.ReleaseResult{}, ErrEventWiringUnavailable
 	}
 	result, err := l.Adapter.ReleaseClaim(ctx, project, claimUID)
 	if errors.Is(err, milo.ErrClaimAuthorityNotFound) {
-		return controller.ReleaseResult{}, ErrClaimAuthorityNotFound
+		return controller.ReleaseResult{}, ErrMachineAuthorityNotFound
 	}
 	return result, claimLifecycleError(err)
 }
 
-func prepareRequest(claim *fleetv1.MachineClaim, inputs ClaimInputs) milo.PrepareRequest {
+func prepareRequest(claim *fleetv1.Machine, inputs MachineInputs) milo.PrepareRequest {
 	return milo.PrepareRequest{
 		ConsumerRoute: inputs.ConsumerRoute, ProviderRoute: inputs.ProviderRoute,
 		NamespaceUID: inputs.NamespaceUID, Claim: claim,

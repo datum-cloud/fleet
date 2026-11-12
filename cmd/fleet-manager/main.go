@@ -99,7 +99,7 @@ func main() {
 		})
 	}
 	verifier := verifierFor(projectName)
-	handlers := eventmanager.Handlers{Claim: blocked, Installation: blocked, ClaimProjector: blocked, InstallationProjector: blocked}
+	handlers := eventmanager.Handlers{Machine: blocked, Installation: blocked, MachineProjector: blocked, InstallationProjector: blocked}
 	setupOptions := eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier}
 	ready := eventmanager.ErrEventWiringUnavailable
 	if syntheticStaging {
@@ -132,7 +132,7 @@ func main() {
 			setupOptions.ProviderProject, setupOptions.ProviderCluster, setupOptions.ProviderVerifier = providerProject, providerCluster, providerVerifier
 			must(staging.SetupPublisher(mgr, providerCluster, staging.PublisherOptions{ConsumerProject: project, ProviderProject: providerProject, ClassName: syntheticPublishedClassName, ProfileName: syntheticPublishedProfileName}))
 		}
-		handlers.Claim = handler
+		handlers.Machine = handler
 		ready = nil
 	}
 	setupOptions.Handlers = handlers

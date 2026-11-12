@@ -8,7 +8,7 @@ spec:
   kind: Machine
   plural: machines
   singular: machine
-  permissions: [list, get, watch, create, update, patch, delete, updateStatus]
+  permissions: [list, get, watch, create, update, patch, delete, updateStatus, install]
   parentResources:
     - apiGroup: resourcemanager.miloapis.com
       kind: Project

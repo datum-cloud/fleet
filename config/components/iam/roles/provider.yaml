@@ -24,10 +24,10 @@ spec:
     - fleet.datumapis.com/machineprofiles.patch
     - fleet.datumapis.com/machineprofiles.delete
     - fleet.datumapis.com/machineprofiles.use
-    - fleet.datumapis.com/machines.list
-    - fleet.datumapis.com/machines.get
-    - fleet.datumapis.com/machines.watch
-    - fleet.datumapis.com/machines.create
-    - fleet.datumapis.com/machines.update
-    - fleet.datumapis.com/machines.patch
-    - fleet.datumapis.com/machines.delete
+    - fleet.datumapis.com/machinecapacities.list
+    - fleet.datumapis.com/machinecapacities.get
+    - fleet.datumapis.com/machinecapacities.watch
+    - fleet.datumapis.com/machinecapacities.create
+    - fleet.datumapis.com/machinecapacities.update
+    - fleet.datumapis.com/machinecapacities.patch
+    - fleet.datumapis.com/machinecapacities.delete

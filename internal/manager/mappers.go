@@ -57,7 +57,7 @@ func (m Mappers) installationsForClaimE(ctx context.Context, object client.Objec
 }
 
 func (m Mappers) claimsForMachineE(ctx context.Context, object client.Object) ([]ProjectRequest, error) {
-	machine, ok := object.(*fleetv1.Machine)
+	machine, ok := object.(*fleetv1.MachineCapacity)
 	if !ok || m.Reader == nil {
 		return nil, ErrEventWiringUnavailable
 	}
@@ -71,7 +71,7 @@ func (m Mappers) claimsForMachineE(ctx context.Context, object client.Object) ([
 		if class.Spec.Capacity == nil {
 			continue
 		}
-		selector, err := metav1.LabelSelectorAsSelector(&class.Spec.Capacity.Machines.Selector)
+		selector, err := metav1.LabelSelectorAsSelector(&class.Spec.Capacity.MachineCapacities.Selector)
 		if err != nil || !selector.Matches(labels.Set(machine.Labels)) {
 			continue
 		}
@@ -138,7 +138,7 @@ func (m Mappers) claimsByFieldE(ctx context.Context, field, value string) ([]Pro
 	if m.Reader == nil || value == "" {
 		return nil, ErrEventWiringUnavailable
 	}
-	var list fleetv1.MachineClaimList
+	var list fleetv1.MachineList
 	if err := m.Reader.List(ctx, &list, client.MatchingFields{field: value}); err != nil {
 		return nil, err
 	}

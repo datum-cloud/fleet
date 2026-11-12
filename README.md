@@ -10,7 +10,7 @@ implementation roadmap, and the first alpha public API encoding for the machine
 lifecycle. The Go types, CRDs, synthetic persistent provider simulator,
 standalone same-cluster allocation/installation lifecycle library, unwired NSO
 network lifecycle adapter, unwired Milo tenancy/quota authority contracts, and
-an event-only controller-manager wiring scaffold and MachineClaim orchestration
+an event-only controller-manager wiring scaffold and Machine orchestration
 handler are implemented. A separate
 [standalone synthetic smoke environment](docs/standalone-smoke.md) packages the
 lifecycle library and persistent simulator for a two-consumer local demonstration.

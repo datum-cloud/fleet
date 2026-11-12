@@ -1,7 +1,7 @@
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
-  name: fleet-machineclaim-finalizer-protection
+  name: fleet-machine-finalizer-protection
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -9,22 +9,22 @@ spec:
       - apiGroups: [fleet.datumapis.com]
         apiVersions: [v1alpha1]
         operations: [UPDATE]
-        resources: [machineclaims]
+        resources: [machines]
   validations:
     - expression: >-
         !has(oldObject.metadata.finalizers) ||
-        !oldObject.metadata.finalizers.exists(f, f == 'fleet.datumapis.com/machineclaim-protection') ||
+        !oldObject.metadata.finalizers.exists(f, f == 'fleet.datumapis.com/machine-protection') ||
         (has(object.metadata.finalizers) &&
-         object.metadata.finalizers.exists(f, f == 'fleet.datumapis.com/machineclaim-protection')) ||
+         object.metadata.finalizers.exists(f, f == 'fleet.datumapis.com/machine-protection')) ||
         request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-manager'
-      message: Only the Fleet manager may remove its MachineClaim protection finalizer.
+      message: Only the Fleet manager may remove its Machine protection finalizer.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
-  name: fleet-machineclaim-finalizer-protection
+  name: fleet-machine-finalizer-protection
 spec:
-  policyName: fleet-machineclaim-finalizer-protection
+  policyName: fleet-machine-finalizer-protection
   validationActions: [Deny]
 ---
 apiVersion: admissionregistration.k8s.io/v1

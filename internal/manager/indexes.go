@@ -46,19 +46,19 @@ type indexRegistration struct {
 // cache. Public resources must never be indexed from the host API.
 func RegisterProjectIndexes(ctx context.Context, indexer client.FieldIndexer) error {
 	return registerIndexes(ctx, indexer, []indexRegistration{
-		{&fleetv1.MachineClaim{}, IndexClaimUID, func(o client.Object) []string { return one(string(o.GetUID())) }},
-		{&fleetv1.MachineClaim{}, IndexClaimClassName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name) }},
-		{&fleetv1.MachineClaim{}, IndexClaimProfileName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.MachineProfileRef.Name) }},
-		{&fleetv1.MachineClaim{}, IndexClaimLocationName, func(o client.Object) []string { return one(o.(*fleetv1.MachineClaim).Spec.LocationRef.Name) }},
-		{&fleetv1.MachineClaim{}, IndexClaimInstallation, func(o client.Object) []string {
-			claim := o.(*fleetv1.MachineClaim)
+		{&fleetv1.Machine{}, IndexClaimUID, func(o client.Object) []string { return one(string(o.GetUID())) }},
+		{&fleetv1.Machine{}, IndexClaimClassName, func(o client.Object) []string { return one(o.(*fleetv1.Machine).Spec.MachineClassRef.Name) }},
+		{&fleetv1.Machine{}, IndexClaimProfileName, func(o client.Object) []string { return one(o.(*fleetv1.Machine).Spec.MachineProfileRef.Name) }},
+		{&fleetv1.Machine{}, IndexClaimLocationName, func(o client.Object) []string { return one(o.(*fleetv1.Machine).Spec.LocationRef.Name) }},
+		{&fleetv1.Machine{}, IndexClaimInstallation, func(o client.Object) []string {
+			claim := o.(*fleetv1.Machine)
 			if ref := claim.Spec.InitialInstallationRef; ref != nil && claim.Namespace != "" && ref.Name != "" {
 				return one(claim.Namespace + "/" + ref.Name)
 			}
 			return nil
 		}},
-		{&fleetv1.MachineClaim{}, IndexClaimNetwork, func(o client.Object) []string {
-			claim := o.(*fleetv1.MachineClaim)
+		{&fleetv1.Machine{}, IndexClaimNetwork, func(o client.Object) []string {
+			claim := o.(*fleetv1.Machine)
 			values := make([]string, 0, len(claim.Spec.NetworkInterfaces))
 			for _, attachment := range claim.Spec.NetworkInterfaces {
 				namespace := attachment.Network.Namespace
@@ -73,17 +73,17 @@ func RegisterProjectIndexes(ctx context.Context, indexer client.FieldIndexer) er
 		}},
 		{&fleetv1.Installation{}, IndexInstallationClaim, func(o client.Object) []string {
 			installation := o.(*fleetv1.Installation)
-			if installation.Namespace == "" || installation.Spec.ClaimRef.Name == "" {
+			if installation.Namespace == "" || installation.Spec.MachineRef.Name == "" {
 				return nil
 			}
-			return one(installation.Namespace + "/" + installation.Spec.ClaimRef.Name)
+			return one(installation.Namespace + "/" + installation.Spec.MachineRef.Name)
 		}},
 		{&fleetv1.MachineClass{}, IndexClassMachineNS, func(o client.Object) []string {
 			c := o.(*fleetv1.MachineClass)
 			if c.Spec.Capacity == nil {
 				return nil
 			}
-			return one(c.Spec.Capacity.Machines.Namespace)
+			return one(c.Spec.Capacity.MachineCapacities.Namespace)
 		}},
 	})
 }

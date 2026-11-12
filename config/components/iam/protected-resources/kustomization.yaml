@@ -4,5 +4,6 @@ resources:
   - machineclass.yaml
   - machineprofile.yaml
   - machine.yaml
-  - machineclaim.yaml
+  - machinecapacity.yaml
+  - machineallocation.yaml
   - installation.yaml

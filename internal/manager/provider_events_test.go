@@ -18,8 +18,8 @@ func TestProviderMachineEventWakesEveryConsumerClaimWithoutPolling(t *testing.T)
 	if err := fleetv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	first := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "first", UID: "first-uid"}}
-	second := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "second", UID: "second-uid"}}
+	first := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "first", UID: "first-uid"}}
+	second := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "second", UID: "second-uid"}}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(first, second).Build()
 	consumer := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-zdhcz", UID: "consumer-uid"}
 	provider := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "provider-uid"}
