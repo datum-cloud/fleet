@@ -1,0 +1,23 @@
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineCapacity
+metadata:
+  name: allocated-capacity
+  namespace: fleet-provider
+spec:
+  deviceRef: {name: device-allocated}
+  allocationPolicy: Enabled
+  cleaningPolicyRef: {name: synthetic-e2e}
+  reclaimPolicy: Retain
+---
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineAllocation
+metadata:
+  name: db-01-allocation
+  namespace: fleet-system
+  annotations:
+    fleet.datumapis.com/member-cluster: fleet-location-e2e
+    fleet.datumapis.com/location-name: location-e2e
+    fleet.datumapis.com/provider-project: datum-owned-hardware
+spec:
+  machineRef: {project: project, namespace: default, name: db-01}
+  machineCapacityRef: {namespace: fleet-provider, name: allocated-capacity}

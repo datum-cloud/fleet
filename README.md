@@ -32,6 +32,12 @@ and immutable image selection remain in `infra`. See
 [`config/README.md`](config/README.md). There is still no real provider
 integration; the standalone smoke and synthetic staging modes remain test fixtures.
 
+The repository also contains a deliberately narrow working prototype for
+allocation-scoped customer Redfish access. It is not a complete Fleet allocator,
+installer, or production BMC service. Its synthetic allocation records preserve
+the proposed authority and identity boundaries while exercising the access path
+end to end.
+
 ## Scope
 
 - Plan, register, and verify physical infrastructure and its connections.
@@ -61,11 +67,49 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
   source proposals, and unresolved design questions.
 - [Implementation roadmap](docs/roadmap.md): proposed milestones and evidence
   required before enabling infrastructure effects.
+- [Secure customer BMC access](docs/enhancements/secure-bmc-access.md): proposed
+  product experience, allocation-scoped Redfish session architecture, security,
+  routing, and provisional API design.
 - [Implementation status](docs/implementation.md): implemented simulator
   guarantees, internal interfaces, and explicit gaps.
 - [Milo acceptance harness](test/acceptance/milo/README.md): fail-closed live
   preflight and sanitized evidence contract; live acceptance remains blocked.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
+- [Machine-management prototype](docs/implementation/machine-management-prototype.md):
+  implemented architecture, exact commands, trust boundaries, E2E environment,
+  verified behavior, troubleshooting, and production gaps.
+
+## Build and test
+
+Go 1.26.4 is the selected repository toolchain. The prototype module path is
+`go.datum.net/fleet`; it follows Datum's current Go import convention without
+asserting that the provisional APIs are a stable external contract.
+
+```console
+task generate
+task test
+task build
+```
+
+The complete path requires Linux, Docker with Compose, Kind, kubectl, Helm, jq,
+OpenSSL, curl, and Task. It builds all images locally and loads them into Kind;
+it does not require a registry.
+
+```console
+task e2e:up
+task e2e:test
+task e2e:test:path DIR=machine-management
+task e2e:diagnostics
+task e2e:openvpn:up
+task e2e:down
+```
+
+`e2e:up` installs pinned Karmada into the management Kind cluster and registers
+the location Kind cluster as its member. The repository-local harness does not
+yet consume `datum-cloud/test-infra`; that remains production-environment
+packaging work. `e2e:up` and `e2e:down` are idempotent. The latter removes only the two named
+Kind clusters, the `fleet-bmc-e2e` Compose project, its isolated network, and
+the repository-local `.e2e` directory.
 
 The foundation was developed in `datum-cloud/infra` PRs
 [#5782](https://github.com/datum-cloud/infra/pull/5782) and

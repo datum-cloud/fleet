@@ -1,0 +1,21 @@
+services:
+  virtual-bmc:
+    platform: linux/amd64
+    build: ./virtual-bmc
+    container_name: fleet-e2e-virtual-bmc
+    privileged: true
+    environment:
+      FLEET_FORCE_QEMU: ${FLEET_FORCE_QEMU:-0}
+    networks:
+      management:
+        ipv4_address: 172.30.0.10
+    volumes:
+      - ${FLEET_E2E_STATE:?set FLEET_E2E_STATE}/evidence:/evidence
+      - ${FLEET_E2E_STATE:?set FLEET_E2E_STATE}/images:/var/lib/libvirt/images
+networks:
+  management:
+    name: fleet-management-e2e
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

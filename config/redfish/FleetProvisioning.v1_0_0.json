@@ -1,0 +1,47 @@
+{
+  "SchemaDefinition": "RedfishInteroperabilityProfile.v1_9_0",
+  "ProfileName": "FleetProvisioning",
+  "ProfileVersion": "1.0.0",
+  "OwningEntity": "Datum Technology, Inc.",
+  "Purpose": "Allocation-scoped virtual Redfish for one-time PXE or local-disk boot and bounded power operations.",
+  "License": "Apache-2.0",
+  "Protocol": {
+    "MinVersion": "1.18.0"
+  },
+  "Resources": {
+    "ServiceRoot": {
+      "MinVersion": "1.15.0",
+      "ReadRequirement": "Mandatory",
+      "URIs": ["/redfish/v1/"],
+      "PropertyRequirements": {
+        "RedfishVersion": {"ReadRequirement": "Mandatory"},
+        "Systems": {"ReadRequirement": "Mandatory"},
+        "SessionService": {"ReadRequirement": "Mandatory"},
+        "TaskService": {"ReadRequirement": "Mandatory"}
+      }
+    },
+    "ComputerSystem": {
+      "MinVersion": "1.20.0",
+      "ReadRequirement": "Mandatory",
+      "URIs": ["/redfish/v1/Systems/{ComputerSystemId}"],
+      "PropertyRequirements": {
+        "PowerState": {"ReadRequirement": "Mandatory"},
+        "Boot": {"ReadRequirement": "Mandatory"},
+        "Actions": {"ReadRequirement": "Mandatory"}
+      },
+      "ActionRequirements": {
+        "Reset": {"ReadRequirement": "Mandatory"}
+      }
+    },
+    "SessionService": {
+      "MinVersion": "1.2.0",
+      "ReadRequirement": "Mandatory",
+      "URIs": ["/redfish/v1/SessionService"]
+    },
+    "TaskService": {
+      "MinVersion": "1.2.0",
+      "ReadRequirement": "Mandatory",
+      "URIs": ["/redfish/v1/TaskService"]
+    }
+  }
+}

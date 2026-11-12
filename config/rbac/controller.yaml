@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-controller
+  namespace: fleet-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-session-controller
+rules:
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinemanagementsessions, machines, machinecapacities, machineallocations]
+    verbs: [get, list, watch]
+  # The controller writes only metadata finalizers on the public object. CEL
+  # validation keeps the customer-authored spec immutable.
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinemanagementsessions]
+    verbs: [update, patch]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinemanagementsessions/status]
+    verbs: [get, update, patch]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinemanagementsessions/finalizers]
+    verbs: [update, patch]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinemanagementsessionbindings]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinemanagementsessionbindings/status]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-session-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fleet-session-controller
+subjects:
+  - kind: ServiceAccount
+    name: fleet-controller
+    namespace: fleet-system
+---
+# Machine read and management-session creation are deliberately separate grants.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-machine-viewer
+rules:
+  - apiGroups: [metal.datumapis.com]
+    resources: [machines]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-machine-management-session-creator
+rules:
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinemanagementsessions]
+    verbs: [create, get, list, watch, delete]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-gateway
+  namespace: machine-access-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-gateway
+  namespace: machine-access-system
+rules:
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [projectedmachinemanagementsessions]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [projectedmachinemanagementsessions/status]
+    verbs: [get, update, patch]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machinecapacities]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-gateway
+  namespace: machine-access-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-gateway
+subjects:
+  - kind: ServiceAccount
+    name: fleet-gateway
+    namespace: machine-access-system

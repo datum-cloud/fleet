@@ -1,0 +1,4 @@
+services:
+  virtual-bmc:
+    environment:
+      FLEET_OPENVPN: "1"

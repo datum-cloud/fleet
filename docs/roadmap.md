@@ -1,8 +1,15 @@
 # Implementation roadmap
 
 This proposed sequence follows the [reviewed Fleet designs](design.md). Milestones
-are unimplemented. Owned-metal qualification and rented/managed adoption can
+remain proposed. Owned-metal qualification and rented/managed adoption can
 progress independently while sharing allocation and installation contracts.
+
+An implemented [machine-management vertical slice](implementation/machine-management-prototype.md)
+now supplies evidence for a subset of milestones 1 and 3: immutable session
+admission, retained allocation identity, location projection, bounded Redfish,
+durable operation admission, revocation, and a real virtual-BMC path. It does
+not implement allocator commits, installation, cleanup qualification, or a
+production relay and therefore does not complete either milestone.
 
 ## 1. Define the service contracts
 
