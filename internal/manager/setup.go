@@ -37,8 +37,11 @@ type SetupOptions struct {
 	Project          controller.ProjectIdentity
 	PrivateNamespace string
 	PrivateCluster   ctrlcluster.Cluster
+	ProviderProject  controller.ProjectIdentity
+	ProviderCluster  ctrlcluster.Cluster
 	Handlers         Handlers
 	ProjectVerifier  ProjectVerifier
+	ProviderVerifier ProjectVerifier
 	Clock            clock.WithDelayedExecution
 }
 
@@ -70,6 +73,14 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 	}
 	if err := mgr.Add(options.PrivateCluster); err != nil {
 		return err
+	}
+	if options.ProviderCluster != nil {
+		if !options.ProviderProject.Valid() || options.ProviderVerifier == nil || options.ProviderProject.SameLifetime(options.Project) {
+			return ErrEventWiringUnavailable
+		}
+		if err := mgr.Add(options.ProviderCluster); err != nil {
+			return err
+		}
 	}
 	deadlineClock := options.Clock
 	if deadlineClock == nil {
@@ -124,6 +135,14 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 		Watches(&servicesv1alpha1.ServiceAvailability{}, typedRouteMap(mappers.Route(RouteAvailability, "")), builder.WithPredicates(DependencyPredicate()))
 	if err := claimRoutes.Complete(RouteReconciler{Project: options.Project, Verifier: options.ProjectVerifier, Mappers: mappers, Handler: claimOwner}); err != nil {
 		return err
+	}
+	if options.ProviderCluster != nil {
+		providerEvents := builder.TypedControllerManagedBy[ProviderEventRequest](mgr).
+			Named("fleet-provider-machine-events").
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.Machine{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate()))
+		if err := providerEvents.Complete(ProviderEventReconciler{Consumer: options.Project, Provider: options.ProviderProject, ConsumerVerifier: options.ProjectVerifier, ProviderVerifier: options.ProviderVerifier, Reader: mgr.GetCache(), Handler: claimOwner}); err != nil {
+			return err
+		}
 	}
 	installation := builder.TypedControllerManagedBy[ProjectRequest](mgr).
 		Named("fleet-installation-events").

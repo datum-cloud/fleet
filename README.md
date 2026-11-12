@@ -18,13 +18,15 @@ Its namespaces are project stand-ins and do not establish Milo acceptance. The
 handler deliberately accepts only injected authoritative inputs; the repository
 has no production caller-preserving authorizer, trusted provider-observation
 resolver, profile-publication provenance store, admission fence, protected quota
-custodian, or replayable Milo event adapters, so its binary
-remains unready and performs no lifecycle or provider effects. Production
-manifest roots now package the manager security boundary and Milo API, IAM,
+custodian, or replayable Milo event adapters, so its default production mode
+remains unready and performs no lifecycle or provider effects. An explicit
+Milo-routed synthetic staging mode exercises the real allocator, cleanup, and
+reuse contracts without claiming production admission or provider authority.
+Production manifest roots now package the manager security boundary and Milo API, IAM,
 service-catalog, and quota registration, while environment identity, credentials,
 and immutable image selection remain in `infra`. See
 [`config/README.md`](config/README.md). There is still no real provider
-integration; the standalone smoke manifests remain test fixtures.
+integration; the standalone smoke and synthetic staging modes remain test fixtures.
 
 ## Scope
 
