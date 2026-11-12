@@ -22,16 +22,22 @@ jobs:
           cache: true
       - name: Install pinned tools
         run: |
-          curl -fsSL https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64 -o /usr/local/bin/kind
+          set -euxo pipefail
+          tools_bin="${RUNNER_TEMP}/fleet-tools"
+          mkdir -p "${tools_bin}"
+          curl -fsSL https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64 -o "${tools_bin}/kind"
           curl -fsSL https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64.sha256sum -o /tmp/kind.sha256
-          sed 's#kind-linux-amd64#/usr/local/bin/kind#' /tmp/kind.sha256 | sha256sum -c -
-          chmod 0755 /usr/local/bin/kind
-          curl -fsSL https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+          sed "s#kind-linux-amd64#${tools_bin}/kind#" /tmp/kind.sha256 | sha256sum -c -
+          chmod 0755 "${tools_bin}/kind"
+          curl -fsSL https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl -o "${tools_bin}/kubectl"
           curl -fsSL https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256 -o /tmp/kubectl.sha256
-          echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum -c -
-          chmod 0755 /usr/local/bin/kubectl
-          go install github.com/go-task/task/v3/cmd/task@v3.41.0
-          install -m 0755 "$(go env GOPATH)/bin/task" /usr/local/bin/task
+          echo "$(cat /tmp/kubectl.sha256)  ${tools_bin}/kubectl" | sha256sum -c -
+          chmod 0755 "${tools_bin}/kubectl"
+          GOBIN="${tools_bin}" go install github.com/go-task/task/v3/cmd/task@v3.41.0
+          echo "${tools_bin}" >>"${GITHUB_PATH}"
+          "${tools_bin}/kind" version
+          "${tools_bin}/kubectl" version --client
+          "${tools_bin}/task" --version
       - name: Portable tests
         run: task test
       - name: Start virtual-BMC environment
