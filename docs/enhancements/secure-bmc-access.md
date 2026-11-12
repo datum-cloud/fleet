@@ -326,6 +326,10 @@ unrestricted HTTP CONNECT service to the management network.
 
 ### Authentication and authorization
 
+The [production authorization implementation plan](../implementation/secure-bmc-authorization.md)
+expands the proposed IAM, caller-preservation, durable limits, and acceptance
+contracts. These integrations are not yet production-verified.
+
 Session admission uses Datum's existing human and service identity flows. IAM
 defines a management-session create permission separately from ordinary
 Machine read or update. Admission evaluates that permission against the
