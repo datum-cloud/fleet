@@ -202,7 +202,7 @@ path; the gateway authenticates to the BMC with operator-held credentials.
   client  ── OAuth ──> Fleet project API ──> session admission and binding
     │                                              │
     │                                              v
-    │                                  location-local session projection
+    │                              Karmada hub session projection
     │                                              │
     │              encrypted Redfish data path    v
     └────────> Datum relay ───────────────> location Redfish gateway
@@ -215,11 +215,14 @@ path; the gateway authenticates to the BMC with operator-held credentials.
                                                   BMC
 ```
 
-The exact projection mechanism is not selected here. It must deliver the bound
-session and revocations to the authoritative location without giving the
-location agent broad credentials to the consumer project API. Status returns
-through the same controlled synchronization contract. A location cannot choose
-itself or replace an already bound endpoint through status.
+Karmada carries the admitted session from the federation hub to exactly one
+member cluster at the authoritative location. The edge gateway reads and writes
+only its member-cluster copy; it has no credentials for, or direct egress to,
+the consumer project API or federation hub. Karmada reflects edge status onto
+the hub copy, and the Fleet session controller copies only safe status fields to
+the public project session. Karmada is a control and status path only: Redfish
+traffic continues over the relay and never traverses Karmada or a Kubernetes API
+server.
 
 ### Responsibilities
 
@@ -228,8 +231,9 @@ itself or replace an already bound endpoint through status.
 - **Management-session admission:** resolves the private active allocation,
   checks current capability and conflicts, retains the exact binding and chooses
   the authoritative location from trusted allocation state.
-- **Session projection:** carries the least-privileged location-local session
-  copy and revocation state. It is not the Redfish request path.
+- **Karmada federation:** propagates a protected edge-session copy to exactly
+  one retained member cluster and reflects that cluster's status. It is not the
+  Redfish request path and does not choose a different location.
 - **Relay endpoint:** maintains outbound connectivity from the location and
   forwards an end-to-end encrypted stream. It has no BMC credential and may
   reach only the location gateway.
@@ -296,6 +300,62 @@ If an allocation moves, is released or is replaced, a new session is required.
 The old endpoint cannot be rebound to the successor. A location-revision change
 requires controlled handover or session replacement; mutable discovery must not
 silently redirect an active session.
+
+### Karmada federation
+
+Fleet follows Compute's hub-and-cell session pattern while keeping Fleet's
+allocation authority separate from Karmada placement:
+
+1. The consumer creates a `MachineManagementSession` in its project control
+   plane. The Fleet controller resolves the current allocation and commits the
+   protected session binding before federation.
+2. The controller renders an internal edge-session resource in a service-owned
+   federation-hub namespace. This copy contains the exact retained binding and
+   adapter route needed by the selected edge, but no BMC credential. It also
+   carries a control-plane-issued `validUntil` authority deadline that the edge
+   cannot extend. It is not a consumer API object.
+3. Fleet resolves the retained location route to one Karmada member-cluster
+   identity. A generated or service-owned `PropagationPolicy` names that exact
+   cluster; Karmada is not allowed to schedule the session among candidate
+   locations. Before publishing connection details, Fleet verifies that the
+   resulting `ResourceBinding` contains exactly that one member cluster.
+4. Karmada propagates the edge-session copy to the selected member. The gateway
+   validates the binding epoch and private target, claims the session, and writes
+   connection and lifecycle status only to the member-cluster copy.
+5. A `ResourceInterpreterCustomization` reflects member status and aggregates it
+   onto the hub copy. Aggregation accepts status only from the cluster recorded
+   by Fleet on the hub copy, ignores claims from every other cluster, and never
+   replaces an established endpoint with a different endpoint identity.
+6. The Fleet controller watches the hub copy, verifies the member cluster and
+   binding correlation, and copies the permitted connection and lifecycle fields
+   to the public project session.
+
+The aggregation rule is monotonic. A default or empty member copy cannot erase a
+claim; an older status cannot replace a terminal result; and status from another
+member cannot claim, refuse, complete or revoke the session. Interpreter fixtures
+must cover hostile-first ordering, a hostile-only status, refusal from the wrong
+member, endpoint replacement, no reporting member, terminal status and cleanup
+confirmation.
+
+Revocation updates the protected hub copy before deleting it. Karmada propagates
+the revoke marker to the edge; the gateway closes the relay session, stops
+accepting operations, and records terminal status plus teardown confirmation on
+its local copy. Karmada reflects that confirmation, after which Fleet may delete
+the hub copy and release the public finalizer. Deleting the hub copy first is
+unsafe because Karmada would remove the edge copy before its final status could
+be observed. If confirmation does not arrive by the cleanup deadline, Fleet
+records `CleanupUnconfirmed`, removes the hub copy, and leaves teardown unknown
+rather than reporting success.
+
+Fleet also checks that the selected member continues reporting in the
+`ResourceBinding` aggregated status. A deregistered edge, removed propagated
+copy, or route that no longer reports ends the session as location/agent lost;
+the last status retained on the hub is not proof that the edge is still serving.
+The edge rejects new requests after `validUntil` unless a newer hub-authorized
+projection renews it, which bounds authority during a Karmada or control-plane
+partition. Claim release still fences new central admission immediately and is
+not complete until edge teardown is confirmed or the bounded authority expires
+and the remaining outcome is represented as unknown.
 
 ### Session lifecycle
 
@@ -508,9 +568,10 @@ BMC and unknown execution outcome without disclosing the physical route.
    virtualized or simulated Supermicro-compatible BMC. Exercise common Redfish
    clients through a local connector and verify that unlisted resources and
    fields cannot be reached.
-2. **Location transport prototype:** establish outbound relay connectivity from
-   a lab location, project a synthetic bound session, and prove direct client-to-location
-   traffic without placing the central API in the Redfish data path.
+2. **Location transport prototype:** establish a Karmada hub and member cluster,
+   propagate a synthetic bound session to exactly that member, reflect its status,
+   establish outbound relay connectivity, and prove direct client-to-location
+   traffic without placing Karmada or the central API in the Redfish data path.
 3. **Physical lab qualification:** connect the gateway to disposable Supermicro
    hardware over the management OpenVPN path. Verify correct-host identity,
    one-time PXE boot, supported power actions, task recovery, credential rotation,
@@ -528,6 +589,10 @@ BMC and unknown execution outcome without disclosing the physical route.
 - A standard Redfish client, using the supported connector, can inspect the
   allocated system, select one-time PXE boot and perform each offered power action.
 - The central API is absent from the Redfish request and response data path.
+- Karmada propagates each protected session to exactly the retained member
+  cluster; another member cannot claim, refuse, complete or replace its endpoint.
+- The edge gateway has no project-control-plane or federation-hub credentials,
+  and an expired projected authority is not usable during a partition.
 - The customer cannot discover or reach the BMC address, management VPN, another
   machine, an OEM endpoint or an unlisted Redfish field/action through the gateway.
 - Human and service identities use normal Datum authentication; an explicit IAM
@@ -554,8 +619,8 @@ BMC and unknown execution outcome without disclosing the physical route.
 - Whether an established Datum Connect deployment can satisfy browser, CLI and
   service automation requirements, or whether a dedicated relay profile is
   needed.
-- The session projection and revocation transport, freshness limit and behavior
-  during control-plane or location partitions.
+- The exact Karmada policy ownership, interpreter packaging, freshness limit and
+  behavior during federation-hub or member-cluster partitions.
 - Durable storage and concurrency boundaries between Fleet admission, the
   location operation journal and provider adapters.
 - Whether future regional HTTPS ingress is needed for customers that cannot run
@@ -572,10 +637,14 @@ BMC and unknown execution outcome without disclosing the physical route.
 - [Datum Compute instance shell session proposal][compute-shell]
 - [Datum Compute session protocol][compute-session-protocol]
 - [Datum Compute client-to-location tunnel][compute-tunnel]
+- [Datum Compute session federation controller][compute-session-federation]
+- [Datum Compute Karmada session status interpreter][compute-session-interpreter]
 - [Pinned Fleet infrastructure management proposal][fleet-proposal]
 - [Pinned Fleet bare-metal provisioning proposal][fleet-provisioning]
 
 [compute-session-protocol]: https://github.com/datum-cloud/compute/blob/fe85e3c619d2a774fc9ad45b2d362ced32a43c28/internal/consolesession/protocol.go
+[compute-session-federation]: https://github.com/datum-cloud/compute/blob/fe85e3c619d2a774fc9ad45b2d362ced32a43c28/internal/controller/instanceconsolesession_controller.go
+[compute-session-interpreter]: https://github.com/datum-cloud/compute/blob/fe85e3c619d2a774fc9ad45b2d362ced32a43c28/config/components/federation/instanceconsolesession-interpreter.yaml
 [compute-shell]: https://github.com/datum-cloud/compute/blob/fe85e3c619d2a774fc9ad45b2d362ced32a43c28/docs/enhancements/instance-shell-sessions/README.md
 [compute-tunnel]: https://github.com/datum-cloud/compute/blob/fe85e3c619d2a774fc9ad45b2d362ced32a43c28/internal/consoleclient/tunnel.go
 [fleet-proposal]: https://github.com/datum-cloud/infra/tree/51781e2456367be82281e1443ca56d0686311133/docs/enhancements/fleet-management
