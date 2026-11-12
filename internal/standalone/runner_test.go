@@ -39,15 +39,15 @@ func (c *recreateOnDeleteClient) Delete(ctx context.Context, object client.Objec
 	if err := c.Client.Delete(ctx, object, opts...); err != nil {
 		return err
 	}
-	replacement := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: object.GetNamespace(), Name: object.GetName(), UID: "replacement-uid"}}
+	replacement := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: object.GetNamespace(), Name: object.GetName(), UID: "replacement-uid"}}
 	return c.Client.Create(ctx, replacement)
 }
 
 func (c *conflictOnceClient) Update(ctx context.Context, object client.Object, opts ...client.UpdateOption) error {
 	if c.remaining > 0 {
-		if _, ok := object.(*fleetv1.MachineClaim); ok {
+		if _, ok := object.(*fleetv1.Machine); ok {
 			c.remaining--
-			return apierrors.NewConflict(schema.GroupResource{Group: fleetv1.GroupVersion.Group, Resource: "machineclaims"}, object.GetName(), errors.New("injected conflict"))
+			return apierrors.NewConflict(schema.GroupResource{Group: fleetv1.GroupVersion.Group, Resource: "machines"}, object.GetName(), errors.New("injected conflict"))
 		}
 	}
 	return c.Client.Update(ctx, object, opts...)
@@ -77,7 +77,7 @@ func TestPhasesKeepExclusiveCustodyAndRecoverInstallation(t *testing.T) {
 	}
 	options := DefaultOptions()
 	objects := fixtureObjects(options)
-	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(&fleetv1.Machine{}, &fleetv1.MachineClaim{}, &fleetv1.Installation{}).Build()
+	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithStatusSubresource(&fleetv1.MachineCapacity{}, &fleetv1.Machine{}, &fleetv1.Installation{}).Build()
 	kube := &deleteCaptureClient{Client: base}
 	statePath := t.TempDir() + "/state.json"
 	store, err := simulator.Open(statePath)
@@ -89,7 +89,7 @@ func TestPhasesKeepExclusiveCustodyAndRecoverInstallation(t *testing.T) {
 	if err := runner.Run(context.Background(), PhaseAllocate); err != nil {
 		t.Fatal(err)
 	}
-	var first, second fleetv1.MachineClaim
+	var first, second fleetv1.Machine
 	if err := kube.Get(context.Background(), types.NamespacedName{Namespace: options.FirstNamespace, Name: options.ClaimName}, &first); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestPhasesKeepExclusiveCustodyAndRecoverInstallation(t *testing.T) {
 	if err := kube.Get(context.Background(), types.NamespacedName{Namespace: options.FirstNamespace, Name: options.InstallationName}, &installed); err != nil {
 		t.Fatal(err)
 	}
-	if installed.Status.Phase != "Ready" || installed.Status.InstallationRevision == "" {
+	if installed.Status.Phase != "Ready" || installed.Status.CompletedAt == nil {
 		t.Fatalf("installation was not projected: %#v", installed.Status)
 	}
 	beforeRestart := store.Snapshot()
@@ -202,17 +202,17 @@ func TestFinalizerRemovalRejectsRecreatedClaimAndRetriesConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := client.ObjectKey{Namespace: "project", Name: "allocation"}
-	recreated := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name, UID: "new-uid", Finalizers: []string{controller.MachineClaimFinalizer}}}
+	recreated := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name, UID: "new-uid", Finalizers: []string{controller.MachineFinalizer}}}
 	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(recreated).Build()
 	runner := Runner{Client: base}
 	if err := runner.removeExactFinalizer(context.Background(), key, "old-uid"); !errors.Is(err, controller.ErrRecordInvalid) {
 		t.Fatalf("recreated claim error = %v", err)
 	}
-	var current fleetv1.MachineClaim
+	var current fleetv1.Machine
 	if err := base.Get(context.Background(), key, &current); err != nil {
 		t.Fatal(err)
 	}
-	if !contains(current.Finalizers, controller.MachineClaimFinalizer) {
+	if !contains(current.Finalizers, controller.MachineFinalizer) {
 		t.Fatal("recreated claim finalizer was removed")
 	}
 
@@ -231,7 +231,7 @@ func TestFinalizerRemovalRejectsRecreatedClaimAndRetriesConflict(t *testing.T) {
 	if err := base.Get(context.Background(), key, &current); err != nil {
 		t.Fatal(err)
 	}
-	if contains(current.Finalizers, controller.MachineClaimFinalizer) {
+	if contains(current.Finalizers, controller.MachineFinalizer) {
 		t.Fatal("exact claim finalizer remained after retry")
 	}
 }
@@ -241,13 +241,13 @@ func TestExactDeletionRejectsNameRecreation(t *testing.T) {
 	if err := fleetv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "project", Name: "allocation", UID: "original-uid", ResourceVersion: "1"}}
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "project", Name: "allocation", UID: "original-uid", ResourceVersion: "1"}}
 	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(claim).Build()
 	runner := Runner{Client: &recreateOnDeleteClient{Client: base}}
 	if err := runner.requestExactDeletion(context.Background(), claim, "original-uid", claim.ResourceVersion); !errors.Is(err, controller.ErrRecordInvalid) {
 		t.Fatalf("recreation error = %v", err)
 	}
-	var current fleetv1.MachineClaim
+	var current fleetv1.Machine
 	if err := base.Get(context.Background(), client.ObjectKeyFromObject(claim), &current); err != nil {
 		t.Fatal(err)
 	}
@@ -257,13 +257,13 @@ func TestExactDeletionRejectsNameRecreation(t *testing.T) {
 }
 
 func fixtureObjects(o Options) []client.Object {
-	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: o.ClassName, UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: o.ProviderNamespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/pool": "central"}}}}}}
+	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: o.ClassName, UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: o.ProviderNamespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/pool": "central"}}}}}}
 	minCPU := int64(24)
 	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: o.ProfileName, UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &minCPU}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
-	machine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: o.ProviderNamespace, Name: o.MachineName, UID: "machine-uid", Generation: 1, Labels: map[string]string{"fleet.datumapis.com/pool": "central"}}, Spec: fleetv1.MachineSpec{ProviderRef: fleetv1.TypedLocalReference{APIGroup: "synthetic.fleet.datumapis.com", Kind: "SyntheticMachine", Name: "asset-central-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-clean"}, ReclaimPolicy: "Retain"}}
-	claim := func(ns, uid string) *fleetv1.MachineClaim {
-		return &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: o.ClaimName, UID: types.UID(uid), Generation: 1}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: o.ClassName}, MachineProfileRef: fleetv1.LocalReference{Name: o.ProfileName}, LocationRef: fleetv1.LocalReference{Name: o.LocationName}, PowerState: "Off"}}
+	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: o.ProviderNamespace, Name: o.MachineName, UID: "machine-uid", Generation: 1, Labels: map[string]string{"fleet.datumapis.com/pool": "central"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "asset-central-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-clean"}, ReclaimPolicy: "Retain"}}
+	claim := func(ns, uid string) *fleetv1.Machine {
+		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: o.ClaimName, UID: types.UID(uid), Generation: 1}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: o.ClassName}, MachineProfileRef: fleetv1.LocalReference{Name: o.ProfileName}, LocationRef: fleetv1.LocalReference{Name: o.LocationName}, PowerState: "Off"}}
 	}
-	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: o.FirstNamespace, Name: o.InstallationName, UID: "installation-uid", Generation: 1}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: o.ClaimName}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: o.ImageName}}}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: o.FirstNamespace, Name: o.InstallationName, UID: "installation-uid", Generation: 1}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: o.ClaimName}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: o.ImageName}}}
 	return []client.Object{&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: o.PrivateNamespace, UID: "private-uid"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: o.ProviderNamespace, UID: "provider-uid"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: o.FirstNamespace, UID: "project-a-uid"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: o.SecondNamespace, UID: "project-b-uid"}}, class, profile, machine, claim(o.FirstNamespace, "claim-a-uid"), claim(o.SecondNamespace, "claim-b-uid"), installation}
 }

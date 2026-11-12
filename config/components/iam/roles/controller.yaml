@@ -13,6 +13,13 @@ spec:
   includedPermissions:
     - fleet.datumapis.com/machineclasses.updateStatus
     - fleet.datumapis.com/machineprofiles.updateStatus
+    - fleet.datumapis.com/machinecapacities.updateStatus
     - fleet.datumapis.com/machines.updateStatus
-    - fleet.datumapis.com/machineclaims.updateStatus
+    - fleet.datumapis.com/machineallocations.list
+    - fleet.datumapis.com/machineallocations.get
+    - fleet.datumapis.com/machineallocations.watch
+    - fleet.datumapis.com/machineallocations.create
+    - fleet.datumapis.com/machineallocations.update
+    - fleet.datumapis.com/machineallocations.patch
+    - fleet.datumapis.com/machineallocations.updateStatus
     - fleet.datumapis.com/installations.updateStatus

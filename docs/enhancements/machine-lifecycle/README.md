@@ -42,10 +42,15 @@ Five public resources define the contract: `MachineClass`, `MachineProfile`,
 allocation and operation records in the provider project. These internal records retain
 ownership, execution authority, exact inputs, and cleanup obligations.
 
-The current implementation still uses the legacy provider `Machine` and customer
-`MachineClaim` names. Migrating its Go types, CRDs, controllers, and simulator to
-this contract remains implementation work. Fleet has no allocation controller or
-real provider effects yet. The implemented subset and gaps are recorded in
+The current implementation encodes the renamed allocation surface in Go types,
+CRDs, IAM resources, controller watches, the synthetic fixtures, and tests:
+customer `Machine`, provider `MachineCapacity`, protected `MachineAllocation`,
+and `Installation.machineRef`. API-authored references are names; exact object
+incarnations remain in service-owned records. The existing lifecycle library
+still stores its protected allocation and operation encoding in private Secrets,
+and the simulator's binding and epoch fields are private executor-fencing details,
+not fields in the proposed API contract. Fleet has no production allocation
+controller or real provider effects yet. The implemented subset and gaps are recorded in
 [`docs/implementation.md`](../../implementation.md).
 
 ## Motivation

@@ -46,7 +46,7 @@ for namespace in fleet-system fleet-system-private fleet-provider fleet-project-
     exit 1
   fi
 done
-for crd in installations machineclaims machineclasses machineprofiles machines; do
+for crd in installations machineallocations machinecapacities machineclasses machineprofiles machines; do
   if kubectl --context "$context" get crd "$crd.fleet.datumapis.com" >/dev/null 2>&1; then
     echo "fixed Fleet CRD $crd already exists; use a fresh dedicated kind cluster" >&2
     exit 1
@@ -91,19 +91,19 @@ run_phase() {
 }
 
 run_phase allocate fleet-smoke-allocate-run
-kubectl --context "$context" get machineclaims -A
-test "$(kubectl --context "$context" -n fleet-project-a get machineclaim -o name)" = "machineclaim.fleet.datumapis.com/allocation"
-test "$(kubectl --context "$context" -n fleet-project-b get machineclaim -o name)" = "machineclaim.fleet.datumapis.com/allocation"
-test "$(kubectl --context "$context" -n fleet-project-a get machineclaim allocation -o jsonpath='{.status.phase}')" = "Ready"
-test "$(kubectl --context "$context" -n fleet-project-b get machineclaim allocation -o jsonpath='{.status.phase}')" = "Pending"
+kubectl --context "$context" get machines -A
+test "$(kubectl --context "$context" -n fleet-project-a get machine -o name)" = "machine.fleet.datumapis.com/allocation"
+test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.fleet.datumapis.com/allocation"
+test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.phase}')" = "Ready"
+test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Pending"
 
 run_phase install fleet-smoke-install-run
 kubectl --context "$context" -n fleet-system rollout restart statefulset/fleet-simulator
 kubectl --context "$context" -n fleet-system rollout status statefulset/fleet-simulator --timeout=120s
 run_phase install fleet-smoke-install-recovery-run
-kubectl --context "$context" -n fleet-project-a get installations,machineclaims
+kubectl --context "$context" -n fleet-project-a get installations,machines
 test "$(kubectl --context "$context" -n fleet-project-a get installation debian-12 -o jsonpath='{.status.phase}')" = "Ready"
-test -n "$(kubectl --context "$context" -n fleet-project-a get installation debian-12 -o jsonpath='{.status.installationRevision}')"
+test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.currentInstallationRef.name}')" = "debian-12"
 
 for project in fleet-project-a fleet-project-b; do
   subject="system:serviceaccount:$project:default"
@@ -128,10 +128,10 @@ test "$(kubectl --context "$context" auth can-i update machineclass/standard-met
 test "$(kubectl --context "$context" auth can-i update machineprofile/general-purpose-24c-128g --as="$smoke_subject")" = "no"
 
 run_phase release fleet-smoke-release-run
-kubectl --context "$context" get machineclaims -A
-if kubectl --context "$context" -n fleet-project-a get machineclaim allocation >/dev/null 2>&1; then
+kubectl --context "$context" get machines -A
+if kubectl --context "$context" -n fleet-project-a get machine allocation >/dev/null 2>&1; then
   echo "released project A claim still exists" >&2
   exit 1
 fi
-test "$(kubectl --context "$context" -n fleet-project-b get machineclaim -o name)" = "machineclaim.fleet.datumapis.com/allocation"
-test "$(kubectl --context "$context" -n fleet-project-b get machineclaim allocation -o jsonpath='{.status.phase}')" = "Ready"
+test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.fleet.datumapis.com/allocation"
+test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Ready"

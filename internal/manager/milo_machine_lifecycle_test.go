@@ -37,15 +37,15 @@ func (f *fakeMiloClaimAdapter) ReleaseClaim(_ context.Context, _ controller.Proj
 	return f.release, f.releaseErr
 }
 
-func TestMiloClaimLifecycleRecoversPreparationAndSelectsPublishedProfile(t *testing.T) {
+func TestMiloMachineLifecycleRecoversPreparationAndSelectsPublishedProfile(t *testing.T) {
 	project := controller.ProjectIdentity{AuthorityID: "milo", RouteName: "consumer", UID: "project-uid"}
-	claim := &fleetv1.MachineClaim{}
+	claim := &fleetv1.Machine{}
 	localProfile := &fleetv1.MachineProfile{}
 	sourceProfile := &fleetv1.MachineProfile{}
-	inputs := ClaimInputs{ConsumerRoute: project.RouteName, LocalProfile: localProfile, SourceProfile: sourceProfile, SourceClass: &fleetv1.MachineClass{}}
+	inputs := MachineInputs{ConsumerRoute: project.RouteName, LocalProfile: localProfile, SourceProfile: sourceProfile, SourceClass: &fleetv1.MachineClass{}}
 	prepared := milo.PreparedClaim{Authority: controller.AuthorityRef{Provider: "milo", RecordName: "record", RecordID: "id", ContractDigest: "digest"}}
 	adapter := &fakeMiloClaimAdapter{prepared: prepared}
-	lifecycle := MiloClaimLifecycle{Adapter: adapter}
+	lifecycle := MiloMachineLifecycle{Adapter: adapter}
 	if err := lifecycle.RetainAuthority(context.Background(), project, claim, inputs); err != nil {
 		t.Fatal(err)
 	}
@@ -68,12 +68,12 @@ func TestMiloClaimLifecycleRecoversPreparationAndSelectsPublishedProfile(t *test
 	}
 }
 
-func TestMiloClaimLifecycleClassifiesOnlyWatchedDependencyWaits(t *testing.T) {
+func TestMiloMachineLifecycleClassifiesOnlyWatchedDependencyWaits(t *testing.T) {
 	project := controller.ProjectIdentity{AuthorityID: "milo", RouteName: "consumer", UID: "project-uid"}
-	claim := &fleetv1.MachineClaim{}
-	inputs := ClaimInputs{ConsumerRoute: project.RouteName}
+	claim := &fleetv1.Machine{}
+	inputs := MachineInputs{ConsumerRoute: project.RouteName}
 	adapter := &fakeMiloClaimAdapter{prepareErr: milo.ErrQuotaPending}
-	lifecycle := MiloClaimLifecycle{Adapter: adapter}
+	lifecycle := MiloMachineLifecycle{Adapter: adapter}
 	if err := lifecycle.RetainAuthority(context.Background(), project, claim, inputs); !errors.Is(err, ErrDependencyPending) {
 		t.Fatalf("quota pending error = %v", err)
 	}
@@ -83,15 +83,15 @@ func TestMiloClaimLifecycleClassifiesOnlyWatchedDependencyWaits(t *testing.T) {
 	}
 }
 
-func TestMiloClaimLifecycleMapsOnlyProvenNoAuthority(t *testing.T) {
+func TestMiloMachineLifecycleMapsOnlyProvenNoAuthority(t *testing.T) {
 	project := controller.ProjectIdentity{AuthorityID: "milo", RouteName: "consumer", UID: "project-uid"}
 	adapter := &fakeMiloClaimAdapter{releaseErr: milo.ErrClaimAuthorityNotFound}
-	lifecycle := MiloClaimLifecycle{Adapter: adapter}
-	if _, err := lifecycle.Release(context.Background(), project, "claim-uid"); !errors.Is(err, ErrClaimAuthorityNotFound) {
+	lifecycle := MiloMachineLifecycle{Adapter: adapter}
+	if _, err := lifecycle.Release(context.Background(), project, "claim-uid"); !errors.Is(err, ErrMachineAuthorityNotFound) {
 		t.Fatalf("proven absence error = %v", err)
 	}
 	adapter.releaseErr = errors.New("retained record disappeared after lookup")
-	if _, err := lifecycle.Release(context.Background(), project, "claim-uid"); errors.Is(err, ErrClaimAuthorityNotFound) {
+	if _, err := lifecycle.Release(context.Background(), project, "claim-uid"); errors.Is(err, ErrMachineAuthorityNotFound) {
 		t.Fatalf("later record loss was treated as safe absence: %v", err)
 	}
 }

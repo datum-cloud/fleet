@@ -35,8 +35,7 @@ type CustomProfilePolicy struct {
 	Enabled bool `json:"enabled,omitempty"`
 }
 type CapacityPolicy struct {
-	Machines         MachineSelector           `json:"machines"`
-	ProviderClassRef *TypedNamespacedReference `json:"providerClassRef,omitempty"`
+	MachineCapacities MachineSelector `json:"machineCapacities"`
 }
 type MachineSelector struct {
 	Namespace string               `json:"namespace"`
@@ -167,30 +166,29 @@ type HardwareInterface struct {
 	Type  string `json:"type,omitempty"`
 	Speed string `json:"speed,omitempty"`
 }
-type MachineSpec struct {
-	ProviderRef       TypedLocalReference `json:"providerRef"`
-	DeviceRef         *LocalReference     `json:"deviceRef,omitempty"`
-	AllocationPolicy  string              `json:"allocationPolicy"`
-	CleaningPolicyRef LocalReference      `json:"cleaningPolicyRef"`
-	ReclaimPolicy     string              `json:"reclaimPolicy"`
+type MachineCapacitySpec struct {
+	DeviceRef         LocalReference `json:"deviceRef"`
+	AllocationPolicy  string         `json:"allocationPolicy"`
+	CleaningPolicyRef LocalReference `json:"cleaningPolicyRef"`
+	ReclaimPolicy     string         `json:"reclaimPolicy"`
 }
-type MachineStatus struct {
+type MachineCapacityStatus struct {
 	Hardware   Hardware           `json:"hardware,omitempty"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
-type Machine struct {
+type MachineCapacity struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              MachineSpec   `json:"spec"`
-	Status            MachineStatus `json:"status,omitempty"`
+	Spec              MachineCapacitySpec   `json:"spec"`
+	Status            MachineCapacityStatus `json:"status,omitempty"`
 }
-type MachineList struct {
+type MachineCapacityList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Machine `json:"items"`
+	Items           []MachineCapacity `json:"items"`
 }
 
-type MachineClaimSpec struct {
+type MachineSpec struct {
 	MachineClassRef        LocalReference            `json:"machineClassRef"`
 	MachineProfileRef      LocalReference            `json:"machineProfileRef"`
 	LocationRef            LocalReference            `json:"locationRef"`
@@ -262,47 +260,76 @@ type NetworkStatus struct {
 type PowerStatus struct {
 	State string `json:"state"`
 }
-type MachineClaimStatus struct {
+type MachineStatus struct {
 	Phase                  string                   `json:"phase,omitempty"`
 	Placement              *Placement               `json:"placement,omitempty"`
 	AcceptedProfileRef     *LocalReference          `json:"acceptedProfileRef,omitempty"`
 	AllocatedHardware      *AllocatedHardwareStatus `json:"allocatedHardware,omitempty"`
 	CurrentInstallationRef *LocalReference          `json:"currentInstallationRef,omitempty"`
-	InstallationRevision   string                   `json:"installationRevision,omitempty"`
 	Network                *NetworkStatus           `json:"network,omitempty"`
 	Power                  *PowerStatus             `json:"power,omitempty"`
 	Conditions             []metav1.Condition       `json:"conditions,omitempty"`
 }
-type MachineClaim struct {
+type Machine struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              MachineClaimSpec   `json:"spec"`
-	Status            MachineClaimStatus `json:"status,omitempty"`
+	Spec              MachineSpec   `json:"spec"`
+	Status            MachineStatus `json:"status,omitempty"`
 }
-type MachineClaimList struct {
+type MachineList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []MachineClaim `json:"items"`
+	Items           []Machine `json:"items"`
 }
 
-type ClaimReference struct {
+type MachineReference struct {
 	Name string `json:"name"`
 }
 type InstallationPredecessor struct {
-	Type     string `json:"type"`
-	Revision string `json:"revision,omitempty"`
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
 }
 type InstallationSpec struct {
-	ClaimRef            ClaimReference          `json:"claimRef"`
+	MachineRef          MachineReference        `json:"machineRef"`
 	ExpectedPredecessor InstallationPredecessor `json:"expectedPredecessor"`
 	ImageRef            LocalReference          `json:"imageRef"`
 	BootstrapConfigRef  *LocalReference         `json:"bootstrapConfigRef,omitempty"`
 }
 type InstallationStatus struct {
-	Phase                string             `json:"phase,omitempty"`
-	InstallationRevision string             `json:"installationRevision,omitempty"`
-	CompletedAt          *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions           []metav1.Condition `json:"conditions,omitempty"`
+	Phase       string             `json:"phase,omitempty"`
+	CompletedAt *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions  []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// MachineAllocation is a protected, service-owned record. Its generated name is
+// the allocation identity. The spec is immutable and release is terminal.
+type MachineAllocationSpec struct {
+	MachineRef         ProjectNamespacedReference `json:"machineRef"`
+	MachineCapacityRef NamespacedReference        `json:"machineCapacityRef"`
+}
+
+type ProjectNamespacedReference struct {
+	Project   string `json:"project"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+}
+
+type MachineAllocationStatus struct {
+	Phase      string             `json:"phase,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type MachineAllocation struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              MachineAllocationSpec   `json:"spec"`
+	Status            MachineAllocationStatus `json:"status,omitempty"`
+}
+
+type MachineAllocationList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []MachineAllocation `json:"items"`
 }
 type Installation struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -317,7 +344,7 @@ type InstallationList struct {
 }
 
 func addKnown(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &MachineClass{}, &MachineClassList{}, &MachineProfile{}, &MachineProfileList{}, &Machine{}, &MachineList{}, &MachineClaim{}, &MachineClaimList{}, &Installation{}, &InstallationList{})
+	s.AddKnownTypes(GroupVersion, &MachineClass{}, &MachineClassList{}, &MachineProfile{}, &MachineProfileList{}, &MachineCapacity{}, &MachineCapacityList{}, &Machine{}, &MachineList{}, &MachineAllocation{}, &MachineAllocationList{}, &Installation{}, &InstallationList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }
@@ -344,6 +371,16 @@ func (in *MachineProfileList) DeepCopyObject() runtime.Object {
 	deepCopy(in, out)
 	return out
 }
+func (in *MachineCapacity) DeepCopyObject() runtime.Object {
+	out := new(MachineCapacity)
+	deepCopy(in, out)
+	return out
+}
+func (in *MachineCapacityList) DeepCopyObject() runtime.Object {
+	out := new(MachineCapacityList)
+	deepCopy(in, out)
+	return out
+}
 func (in *Machine) DeepCopyObject() runtime.Object {
 	out := new(Machine)
 	deepCopy(in, out)
@@ -354,13 +391,13 @@ func (in *MachineList) DeepCopyObject() runtime.Object {
 	deepCopy(in, out)
 	return out
 }
-func (in *MachineClaim) DeepCopyObject() runtime.Object {
-	out := new(MachineClaim)
+func (in *MachineAllocation) DeepCopyObject() runtime.Object {
+	out := new(MachineAllocation)
 	deepCopy(in, out)
 	return out
 }
-func (in *MachineClaimList) DeepCopyObject() runtime.Object {
-	out := new(MachineClaimList)
+func (in *MachineAllocationList) DeepCopyObject() runtime.Object {
+	out := new(MachineAllocationList)
 	deepCopy(in, out)
 	return out
 }

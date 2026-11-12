@@ -12,11 +12,11 @@ spec:
   includedPermissions:
     - fleet.datumapis.com/machineclasses.use
     - fleet.datumapis.com/machineprofiles.use
-    - fleet.datumapis.com/machineclaims.create
-    - fleet.datumapis.com/machineclaims.update
-    - fleet.datumapis.com/machineclaims.patch
-    - fleet.datumapis.com/machineclaims.delete
-    - fleet.datumapis.com/machineclaims.install
+    - fleet.datumapis.com/machines.create
+    - fleet.datumapis.com/machines.update
+    - fleet.datumapis.com/machines.patch
+    - fleet.datumapis.com/machines.delete
+    - fleet.datumapis.com/machines.install
     - fleet.datumapis.com/installations.create
     - fleet.datumapis.com/installations.update
     - fleet.datumapis.com/installations.patch

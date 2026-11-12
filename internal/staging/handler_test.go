@@ -44,15 +44,15 @@ func TestOneMachineAllocatesExclusivelyThenReusesAfterRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "namespace-uid"}}
-	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose", UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
+	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose", UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
 	cores := int64(24)
 	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &cores}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
-	machine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "machine-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineSpec{ProviderRef: fleetv1.TypedLocalReference{APIGroup: "synthetic.fleet.datumapis.com", Kind: providerKind, Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
-	claim := func(name, uid string) *fleetv1.MachineClaim {
-		return &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name, UID: types.UID(uid)}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: class.Name}, MachineProfileRef: fleetv1.LocalReference{Name: profile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
+	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "machine-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
+	claim := func(name, uid string) *fleetv1.Machine {
+		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name, UID: types.UID(uid)}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: class.Name}, MachineProfileRef: fleetv1.LocalReference{Name: profile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
 	}
 	first, second := claim("first", "first-uid"), claim("second", "second-uid")
-	public := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.Machine{}, &fleetv1.MachineClaim{}).WithObjects(namespace, class, profile, machine, first, second).Build()
+	public := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineCapacity{}, &fleetv1.Machine{}).WithObjects(namespace, class, profile, machine, first, second).Build()
 	private := fake.NewClientBuilder().WithScheme(scheme).Build()
 	provider := &executor{results: map[string]simulator.OperationResult{}}
 	coordinator, err := controller.NewCoordinator(private, "fleet-system-private", provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
@@ -61,7 +61,7 @@ func TestOneMachineAllocatesExclusivelyThenReusesAfterRelease(t *testing.T) {
 	}
 	project := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "project-uid"}
 	handler := Handler{Public: public, Coordinator: coordinator, Project: project, Location: "us-central-1", Now: time.Now}
-	reconcile := func(object *fleetv1.MachineClaim) manager.Outcome {
+	reconcile := func(object *fleetv1.Machine) manager.Outcome {
 		return handler.ReconcileEvent(ctx, manager.ProjectRequest{AuthorityID: project.AuthorityID, ProjectUID: project.UID, Namespace: object.Namespace, Name: object.Name, UID: object.UID})
 	}
 
@@ -78,7 +78,7 @@ func TestOneMachineAllocatesExclusivelyThenReusesAfterRelease(t *testing.T) {
 	}
 	assertPhase(t, ctx, public, client.ObjectKeyFromObject(second), "Pending")
 
-	var deleting fleetv1.MachineClaim
+	var deleting fleetv1.Machine
 	if err := public.Get(ctx, client.ObjectKeyFromObject(first), &deleting); err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +110,8 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	providerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "provider-project-uid"}
 	cores := int64(24)
 	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &cores}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
-	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "central-metal", UID: "source-class-uid", Generation: 1}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: sourceProfile.Name}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
-	machine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "machine-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineSpec{ProviderRef: fleetv1.TypedLocalReference{APIGroup: "synthetic.fleet.datumapis.com", Kind: providerKind, Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
+	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "central-metal", UID: "source-class-uid", Generation: 1}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: sourceProfile.Name}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
+	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "machine-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
 	revision, err := publicationRevision(sourceClass, providerProject)
 	if err != nil {
 		t.Fatal(err)
@@ -122,9 +122,9 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	localProfile.Annotations = map[string]string{publicationManagedByAnnotation: publicationManager, publicationProviderUIDAnnotation: string(providerProject.UID), publicationSourceUIDAnnotation: string(sourceProfile.UID), publicationSourceNameAnnotation: sourceProfile.Name}
 	localProfile.Status.Conditions = []metav1.Condition{publicationCondition("Published", metav1.ConditionTrue, localProfile.Generation, "SourceCopied", "copied")}
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "namespace-uid"}}
-	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "cross-project", UID: "claim-uid"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: localClass.Name}, MachineProfileRef: fleetv1.LocalReference{Name: localProfile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
-	consumer := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineClaim{}).WithObjects(namespace, localClass, localProfile, claim).Build()
-	providerKube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.Machine{}).WithObjects(sourceClass, sourceProfile, machine).Build()
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "cross-project", UID: "claim-uid"}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: localClass.Name}, MachineProfileRef: fleetv1.LocalReference{Name: localProfile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
+	consumer := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.Machine{}).WithObjects(namespace, localClass, localProfile, claim).Build()
+	providerKube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineCapacity{}).WithObjects(sourceClass, sourceProfile, machine).Build()
 	private := fake.NewClientBuilder().WithScheme(scheme).Build()
 	providerExecutor := &executor{results: map[string]simulator.OperationResult{}}
 	coordinator, err := controller.NewCoordinator(private, "fleet-system-private", providerExecutor, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
@@ -139,7 +139,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 		}
 	}
 	assertPhase(t, ctx, consumer, client.ObjectKeyFromObject(claim), "Ready")
-	var allocated fleetv1.Machine
+	var allocated fleetv1.MachineCapacity
 	if err := providerKube.Get(ctx, client.ObjectKeyFromObject(machine), &allocated); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	if !available {
 		t.Fatal("provider Machine was not marked allocated")
 	}
-	var deleting fleetv1.MachineClaim
+	var deleting fleetv1.Machine
 	if err := consumer.Get(ctx, client.ObjectKeyFromObject(claim), &deleting); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 
 func assertPhase(t *testing.T, ctx context.Context, kube client.Client, key client.ObjectKey, phase string) {
 	t.Helper()
-	var claim fleetv1.MachineClaim
+	var claim fleetv1.Machine
 	if err := kube.Get(ctx, key, &claim); err != nil {
 		t.Fatal(err)
 	}

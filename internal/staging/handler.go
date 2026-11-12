@@ -26,8 +26,6 @@ import (
 	"go.datum.net/fleet/internal/manager"
 )
 
-const providerKind = "SyntheticMachine"
-
 // Handler is an event-driven synthetic provider and claim coordinator. It uses
 // the real durable allocator but substitutes an explicit synthetic admission
 // decision and provider observation. It accepts only powered-off, networkless
@@ -53,7 +51,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	if h.Now == nil {
 		h.Now = time.Now
 	}
-	var claim fleetv1.MachineClaim
+	var claim fleetv1.Machine
 	if err := h.Public.Get(ctx, client.ObjectKey{Namespace: request.Namespace, Name: request.Name}, &claim); apierrors.IsNotFound(err) {
 		return h.release(ctx, request.Namespace, request.UID, nil)
 	} else if err != nil {
@@ -108,21 +106,18 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	} else if class.Spec.Source != nil {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "Synthetic same-project staging requires a local capacity definition.")
 	}
-	if sourceClass.Spec.Capacity == nil || sourceClass.Spec.Capacity.Machines.Namespace == "" {
+	if sourceClass.Spec.Capacity == nil || sourceClass.Spec.Capacity.MachineCapacities.Namespace == "" {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "The resolved MachineClass has no explicit provider namespace.")
 	}
-	var list fleetv1.MachineList
-	if err := machineClient.List(ctx, &list, client.InNamespace(sourceClass.Spec.Capacity.Machines.Namespace)); err != nil {
+	var list fleetv1.MachineCapacityList
+	if err := machineClient.List(ctx, &list, client.InNamespace(sourceClass.Spec.Capacity.MachineCapacities.Namespace)); err != nil {
 		return manager.Outcome{RetryError: err}
 	}
-	machines := make([]fleetv1.Machine, 0, len(list.Items))
+	machines := make([]fleetv1.MachineCapacity, 0, len(list.Items))
 	evidence := make(map[types.UID]time.Time, len(list.Items))
 	now := h.Now().UTC()
 	for i := range list.Items {
 		machine := &list.Items[i]
-		if machine.Spec.ProviderRef.APIGroup != "synthetic.fleet.datumapis.com" || machine.Spec.ProviderRef.Kind != providerKind {
-			continue
-		}
 		available := true
 		if current := apiMeta.FindStatusCondition(machine.Status.Conditions, "Available"); current != nil && current.Status == metav1.ConditionFalse {
 			available = false
@@ -148,16 +143,16 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	} else if err := h.Coordinator.EnsureClaimCustody(ctx, &claim, namespace.UID, admission); err != nil {
 		return manager.Outcome{RetryError: err}
 	}
-	if !contains(claim.Finalizers, controller.MachineClaimFinalizer) {
-		updated := claim.DeepCopyObject().(*fleetv1.MachineClaim)
-		updated.Finalizers = append(updated.Finalizers, controller.MachineClaimFinalizer)
+	if !contains(claim.Finalizers, controller.MachineFinalizer) {
+		updated := claim.DeepCopyObject().(*fleetv1.Machine)
+		updated.Finalizers = append(updated.Finalizers, controller.MachineFinalizer)
 		if err := h.Public.Update(ctx, updated); err != nil {
 			return manager.Outcome{RetryError: err}
 		}
 		return manager.Outcome{}
 	}
 	allocation := controller.AllocationRequest{
-		Claim: &claim, Class: sourceClass, Profile: sourceProfile, Machines: machines,
+		Claim: &claim, Class: sourceClass, Profile: sourceProfile, MachineCapacities: machines,
 		EvidenceObservedAt: evidence, NamespaceUID: namespace.UID, Admission: admission,
 		LocalClassName: class.Name, LocalClassUID: class.UID,
 		LocalProfileName: profile.Name, LocalProfileUID: profile.UID,
@@ -184,7 +179,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	if claim.Status.AllocatedHardware != nil && claim.Status.AllocatedHardware.ObservedAt != nil {
 		observed = *claim.Status.AllocatedHardware.ObservedAt
 	}
-	status := fleetv1.MachineClaimStatus{
+	status := fleetv1.MachineStatus{
 		Phase: "Ready", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: h.Location}},
 		AcceptedProfileRef: &fleetv1.LocalReference{Name: profile.Name},
 		AllocatedHardware:  &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: record.Hardware},
@@ -206,16 +201,16 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	return manager.Outcome{}
 }
 
-func (h Handler) dependency(ctx context.Context, claim *fleetv1.MachineClaim, reason string, err error) manager.Outcome {
+func (h Handler) dependency(ctx context.Context, claim *fleetv1.Machine, reason string, err error) manager.Outcome {
 	if apierrors.IsNotFound(err) {
 		return h.pending(ctx, claim, reason, err.Error(), nil)
 	}
 	return manager.Outcome{RetryError: err}
 }
 
-func (h Handler) pending(ctx context.Context, claim *fleetv1.MachineClaim, reason, message string, retryErr error) manager.Outcome {
+func (h Handler) pending(ctx context.Context, claim *fleetv1.Machine, reason, message string, retryErr error) manager.Outcome {
 	crossProject := h.Provider != nil && h.ProviderProject.Valid() && !h.ProviderProject.SameLifetime(h.Project)
-	status := fleetv1.MachineClaimStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: claim.Spec.LocationRef.Name}}, Conditions: []metav1.Condition{
+	status := fleetv1.MachineStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: claim.Spec.LocationRef.Name}}, Conditions: []metav1.Condition{
 		condition("Accepted", metav1.ConditionTrue, claim.Generation, admissionReason(crossProject), admissionMessage(crossProject)),
 		condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message),
 		condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message),
@@ -229,8 +224,8 @@ func (h Handler) pending(ctx context.Context, claim *fleetv1.MachineClaim, reaso
 	return manager.Outcome{RetryError: retryErr}
 }
 
-func (h Handler) rejected(ctx context.Context, claim *fleetv1.MachineClaim, reason, message string) manager.Outcome {
-	status := fleetv1.MachineClaimStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: claim.Spec.LocationRef.Name}}, Conditions: []metav1.Condition{
+func (h Handler) rejected(ctx context.Context, claim *fleetv1.Machine, reason, message string) manager.Outcome {
+	status := fleetv1.MachineStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: claim.Spec.LocationRef.Name}}, Conditions: []metav1.Condition{
 		condition("Accepted", metav1.ConditionFalse, claim.Generation, reason, message),
 		condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message),
 		condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message),
@@ -244,7 +239,7 @@ func (h Handler) rejected(ctx context.Context, claim *fleetv1.MachineClaim, reas
 	return manager.Outcome{}
 }
 
-func (h Handler) release(ctx context.Context, namespace string, uid types.UID, claim *fleetv1.MachineClaim) manager.Outcome {
+func (h Handler) release(ctx context.Context, namespace string, uid types.UID, claim *fleetv1.Machine) manager.Outcome {
 	crossProject := h.Provider != nil && h.ProviderProject.Valid() && !h.ProviderProject.SameLifetime(h.Project)
 	var result controller.ReleaseResult
 	var err error
@@ -255,7 +250,7 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 	}
 	if err != nil {
 		// A claim that never reached custody needs no synthetic cleanup.
-		if errors.Is(err, controller.ErrRecordInvalid) && (claim == nil || !contains(claim.Finalizers, controller.MachineClaimFinalizer)) {
+		if errors.Is(err, controller.ErrRecordInvalid) && (claim == nil || !contains(claim.Finalizers, controller.MachineFinalizer)) {
 			return manager.Outcome{}
 		}
 		return manager.Outcome{RetryError: err}
@@ -270,14 +265,14 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 	if !result.SafeToRemoveFinalizer {
 		return manager.Outcome{RetryError: fmt.Errorf("synthetic cleanup is not settled")}
 	}
-	if claim != nil && contains(claim.Finalizers, controller.MachineClaimFinalizer) {
+	if claim != nil && contains(claim.Finalizers, controller.MachineFinalizer) {
 		if err := h.removeFinalizer(ctx, client.ObjectKeyFromObject(claim), uid); err != nil {
 			return manager.Outcome{RetryError: err}
 		}
 	}
 	// A Machine event wakes all claims routed through its class. Private
 	// custody remains the authority if more than one synthetic machine exists.
-	var machines fleetv1.MachineList
+	var machines fleetv1.MachineCapacityList
 	machineClient := h.Public
 	if crossProject {
 		machineClient = h.Provider
@@ -287,16 +282,14 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 	}
 	for i := range machines.Items {
 		machine := &machines.Items[i]
-		if machine.Spec.ProviderRef.APIGroup == "synthetic.fleet.datumapis.com" && machine.Spec.ProviderRef.Kind == providerKind {
-			if err := h.ensureObservation(ctx, machineClient, machine, true); err != nil {
-				return manager.Outcome{RetryError: err}
-			}
+		if err := h.ensureObservation(ctx, machineClient, machine, true); err != nil {
+			return manager.Outcome{RetryError: err}
 		}
 	}
 	return manager.Outcome{}
 }
 
-func (h Handler) ensureObservation(ctx context.Context, target client.Client, machine *fleetv1.Machine, available bool) error {
+func (h Handler) ensureObservation(ctx context.Context, target client.Client, machine *fleetv1.MachineCapacity, available bool) error {
 	want := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
 	conditions := []metav1.Condition{
 		condition("Prepared", metav1.ConditionTrue, machine.Generation, "SyntheticProvider", "Synthetic staging provider reports the machine prepared."),
@@ -313,7 +306,7 @@ func (h Handler) ensureObservation(ctx context.Context, target client.Client, ma
 			return nil
 		}
 	}
-	machine.Status = fleetv1.MachineStatus{Hardware: want, Conditions: conditions}
+	machine.Status = fleetv1.MachineCapacityStatus{Hardware: want, Conditions: conditions}
 	return target.Status().Update(ctx, machine)
 }
 
@@ -359,7 +352,7 @@ func dereferenceProfilePolicy(policy *fleetv1.ProfilePolicy) fleetv1.ProfilePoli
 
 func (h Handler) removeFinalizer(ctx context.Context, key client.ObjectKey, uid types.UID) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var current fleetv1.MachineClaim
+		var current fleetv1.Machine
 		if err := h.Public.Get(ctx, key, &current); apierrors.IsNotFound(err) {
 			return nil
 		} else if err != nil {
@@ -370,7 +363,7 @@ func (h Handler) removeFinalizer(ctx context.Context, key client.ObjectKey, uid 
 		}
 		out := current.Finalizers[:0]
 		for _, value := range current.Finalizers {
-			if value != controller.MachineClaimFinalizer {
+			if value != controller.MachineFinalizer {
 				out = append(out, value)
 			}
 		}
@@ -394,7 +387,7 @@ func condition(kind string, status metav1.ConditionStatus, generation int64, rea
 
 // Ignore transition timestamps when deciding whether another status write is
 // necessary; otherwise a dependency event would create a write loop.
-func sameStatus(left, right fleetv1.MachineClaimStatus) bool {
+func sameStatus(left, right fleetv1.MachineStatus) bool {
 	if left.Phase != right.Phase || len(left.Conditions) != len(right.Conditions) || (left.Placement == nil) != (right.Placement == nil) || (left.AcceptedProfileRef == nil) != (right.AcceptedProfileRef == nil) || (left.AllocatedHardware == nil) != (right.AllocatedHardware == nil) {
 		return false
 	}

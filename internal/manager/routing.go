@@ -25,17 +25,17 @@ import (
 type RouteKind string
 
 const (
-	RouteClass        RouteKind = "Class"
-	RouteProfile      RouteKind = "Profile"
-	RouteInstallation RouteKind = "Installation"
-	RouteClaim        RouteKind = "Claim"
-	RouteMachine      RouteKind = "Machine"
-	RoutePrivateUID   RouteKind = "PrivateUID"
-	RouteNetwork      RouteKind = "Network"
-	RouteQuota        RouteKind = "Quota"
-	RouteEntitlement  RouteKind = "Entitlement"
-	RouteLocation     RouteKind = "Location"
-	RouteAvailability RouteKind = "ServiceAvailability"
+	RouteClass           RouteKind = "Class"
+	RouteProfile         RouteKind = "Profile"
+	RouteInstallation    RouteKind = "Installation"
+	RouteMachine         RouteKind = "Machine"
+	RouteMachineCapacity RouteKind = "MachineCapacity"
+	RoutePrivateUID      RouteKind = "PrivateUID"
+	RouteNetwork         RouteKind = "Network"
+	RouteQuota           RouteKind = "Quota"
+	RouteEntitlement     RouteKind = "Entitlement"
+	RouteLocation        RouteKind = "Location"
+	RouteAvailability    RouteKind = "ServiceAvailability"
 )
 
 // RouteRequest keeps the dependency event itself in the workqueue. Index/List
@@ -68,7 +68,7 @@ func (m Mappers) Route(kind RouteKind, field string) func(context.Context, clien
 		}
 		request := RouteRequest{AuthorityID: m.Project.AuthorityID, ProjectUID: m.Project.UID, Kind: kind, Namespace: object.GetNamespace(), Name: object.GetName(), UID: object.GetUID(), Field: field}
 		switch kind {
-		case RouteMachine:
+		case RouteMachineCapacity:
 			encoded, _ := json.Marshal(object.GetLabels())
 			request.Key = string(encoded)
 		case RoutePrivateUID:
@@ -76,7 +76,7 @@ func (m Mappers) Route(kind RouteKind, field string) func(context.Context, clien
 		case RouteNetwork:
 			request.Key = object.GetNamespace() + "/" + object.GetName()
 		case RouteQuota:
-			request.Key = object.GetLabels()["fleet.datumapis.com/machine-claim-uid"]
+			request.Key = object.GetLabels()["fleet.datumapis.com/machine-uid"]
 		case RouteEntitlement:
 			if object.GetName() != "fleet" {
 				return nil
@@ -117,15 +117,15 @@ func (m Mappers) ResolveRoute(ctx context.Context, route RouteRequest) ([]Projec
 		return m.claimsByFieldE(ctx, IndexClaimProfileName, route.Name)
 	case RouteInstallation:
 		return m.claimsByFieldE(ctx, IndexClaimInstallation, route.Namespace+"/"+route.Name)
-	case RouteClaim:
-		claim := fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: route.Namespace, Name: route.Name, UID: route.UID}}
-		return m.installationsForClaimE(ctx, &claim)
 	case RouteMachine:
+		claim := fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: route.Namespace, Name: route.Name, UID: route.UID}}
+		return m.installationsForClaimE(ctx, &claim)
+	case RouteMachineCapacity:
 		var eventLabels map[string]string
 		if json.Unmarshal([]byte(route.Key), &eventLabels) != nil {
 			return nil, ErrEventWiringUnavailable
 		}
-		return m.claimsForMachineE(ctx, &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: route.Namespace, Name: route.Name, UID: route.UID, Labels: eventLabels}})
+		return m.claimsForMachineE(ctx, &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: route.Namespace, Name: route.Name, UID: route.UID, Labels: eventLabels}})
 	case RoutePrivateUID:
 		return m.claimsForPrivateFieldE(ctx, route.Field, route.Key)
 	case RouteNetwork:
@@ -194,10 +194,10 @@ func routeObject(route RouteRequest) (client.Object, error) {
 		return &fleetv1.MachineProfile{}, nil
 	case RouteInstallation:
 		return &fleetv1.Installation{}, nil
-	case RouteClaim:
-		return &fleetv1.MachineClaim{}, nil
 	case RouteMachine:
 		return &fleetv1.Machine{}, nil
+	case RouteMachineCapacity:
+		return &fleetv1.MachineCapacity{}, nil
 	case RoutePrivateUID:
 		switch route.Field {
 		case IndexPrivateNamespaceUID:

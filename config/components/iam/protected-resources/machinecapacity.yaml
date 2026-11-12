@@ -1,14 +1,14 @@
 apiVersion: iam.miloapis.com/v1alpha1
 kind: ProtectedResource
 metadata:
-  name: fleet.datumapis.com-machineclaim
+  name: fleet.datumapis.com-machinecapacity
 spec:
   serviceRef:
     name: fleet.datumapis.com
-  kind: MachineClaim
-  plural: machineclaims
-  singular: machineclaim
-  permissions: [list, get, watch, create, update, patch, delete, updateStatus, install]
+  kind: MachineCapacity
+  plural: machinecapacities
+  singular: machinecapacity
+  permissions: [list, get, watch, create, update, patch, delete, updateStatus]
   parentResources:
     - apiGroup: resourcemanager.miloapis.com
       kind: Project

@@ -30,7 +30,7 @@ type PrepareRequest struct {
 	ConsumerRoute       string
 	ProviderRoute       string
 	NamespaceUID        types.UID
-	Claim               *fleetv1.MachineClaim
+	Claim               *fleetv1.Machine
 	LocalClass          *fleetv1.MachineClass
 	SourceClass         *fleetv1.MachineClass
 	LocalProfile        *fleetv1.MachineProfile
@@ -301,7 +301,7 @@ func (a *Adapter) Allocate(ctx context.Context, prepared PreparedClaim, request 
 	if err := validatePreparedAllocation(record, prepared, request); err != nil {
 		return nil, ErrAuthorityInvalid
 	}
-	if request.Claim.DeletionTimestamp != nil || !containsFinalizer(request.Claim.Finalizers, controller.MachineClaimFinalizer) {
+	if request.Claim.DeletionTimestamp != nil || !containsFinalizer(request.Claim.Finalizers, controller.MachineFinalizer) {
 		return nil, ErrAuthorityInvalid
 	}
 	switch record.State {

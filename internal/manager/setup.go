@@ -27,9 +27,9 @@ import (
 )
 
 type Handlers struct {
-	Claim                 Handler
+	Machine               Handler
 	Installation          Handler
-	ClaimProjector        Handler
+	MachineProjector      Handler
 	InstallationProjector Handler
 }
 
@@ -62,7 +62,7 @@ func PrivateCacheOptions(privateNamespace string) cache.Options {
 }
 
 func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) error {
-	if mgr == nil || options.PrivateCluster == nil || !options.Project.Valid() || options.PrivateNamespace == "" || options.ProjectVerifier == nil || options.Handlers.Claim == nil || options.Handlers.Installation == nil || options.Handlers.ClaimProjector == nil || options.Handlers.InstallationProjector == nil {
+	if mgr == nil || options.PrivateCluster == nil || !options.Project.Valid() || options.PrivateNamespace == "" || options.ProjectVerifier == nil || options.Handlers.Machine == nil || options.Handlers.Installation == nil || options.Handlers.MachineProjector == nil || options.Handlers.InstallationProjector == nil {
 		return ErrEventWiringUnavailable
 	}
 	if err := RegisterProjectIndexes(ctx, mgr.GetFieldIndexer()); err != nil {
@@ -105,26 +105,26 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 	if err := mgr.Add(installationDeadlines); err != nil {
 		return err
 	}
-	claimOwner := NewLifecycleOwner(options.Handlers.Claim, options.Handlers.ClaimProjector, claimDeadlines)
+	claimOwner := NewLifecycleOwner(options.Handlers.Machine, options.Handlers.MachineProjector, claimDeadlines)
 	installationOwner := NewLifecycleOwner(options.Handlers.Installation, options.Handlers.InstallationProjector, installationDeadlines)
 	mappers := Mappers{Reader: mgr.GetCache(), PrivateReader: options.PrivateCluster.GetCache(), Project: options.Project, PrivateNamespace: options.PrivateNamespace}
 	entitlement := &unstructured.Unstructured{}
 	entitlement.SetGroupVersionKind(schema.GroupVersionKind{Group: "services.miloapis.com", Version: "v1alpha1", Kind: "ServiceEntitlement"})
 	claimMap := typedMap(mappers.RequestFor)
 	claim := builder.TypedControllerManagedBy[ProjectRequest](mgr).
-		Named("fleet-machineclaim-events").
-		Watches(&fleetv1.MachineClaim{}, claimMap, builder.WithPredicates(PrimaryPredicate())).
+		Named("fleet-machine-events").
+		Watches(&fleetv1.Machine{}, claimMap, builder.WithPredicates(PrimaryPredicate())).
 		WatchesRawSource(source.TypedKind(options.PrivateCluster.GetCache(), client.Object(&corev1.Secret{}), typedMap(mappers.RequestForPrivate), PrivateRecordPredicate())).
 		WatchesRawSource(deadlineSource(claimDeadlineEvents))
 	if err := claim.Complete(ProjectReconciler{Project: options.Project, Handler: claimOwner, Verifier: options.ProjectVerifier}); err != nil {
 		return err
 	}
 	claimRoutes := builder.TypedControllerManagedBy[RouteRequest](mgr).
-		Named("fleet-machineclaim-routes").
+		Named("fleet-machine-routes").
 		Watches(&fleetv1.MachineClass{}, typedRouteMap(mappers.Route(RouteClass, "")), builder.WithPredicates(DependencyPredicate())).
 		Watches(&fleetv1.MachineProfile{}, typedRouteMap(mappers.Route(RouteProfile, "")), builder.WithPredicates(DependencyPredicate())).
 		Watches(&fleetv1.Installation{}, typedRouteMap(mappers.Route(RouteInstallation, "")), builder.WithPredicates(PrimaryPredicate())).
-		Watches(&fleetv1.Machine{}, typedRouteMap(mappers.Route(RouteMachine, "")), builder.WithPredicates(DependencyPredicate())).
+		Watches(&fleetv1.MachineCapacity{}, typedRouteMap(mappers.Route(RouteMachineCapacity, "")), builder.WithPredicates(DependencyPredicate())).
 		Watches(&corev1.Namespace{}, typedRouteMap(mappers.Route(RoutePrivateUID, IndexPrivateNamespaceUID)), builder.WithPredicates(DependencyPredicate())).
 		Watches(&networkingv1.Network{}, typedRouteMap(mappers.Route(RouteNetwork, "")), builder.WithPredicates(DependencyPredicate())).
 		Watches(&networkingv1.NetworkInterfaceClaim{}, typedRouteMap(mappers.Route(RoutePrivateUID, IndexPrivateNICClaimUID)), builder.WithPredicates(DependencyPredicate())).
@@ -138,8 +138,8 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 	}
 	if options.ProviderCluster != nil {
 		providerEvents := builder.TypedControllerManagedBy[ProviderEventRequest](mgr).
-			Named("fleet-provider-machine-events").
-			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.Machine{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate()))
+			Named("fleet-provider-machinecapacity-events").
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.MachineCapacity{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate()))
 		if err := providerEvents.Complete(ProviderEventReconciler{Consumer: options.Project, Provider: options.ProviderProject, ConsumerVerifier: options.ProjectVerifier, ProviderVerifier: options.ProviderVerifier, Reader: mgr.GetCache(), Handler: claimOwner}); err != nil {
 			return err
 		}
@@ -154,7 +154,7 @@ func Setup(ctx context.Context, mgr ctrlmanager.Manager, options SetupOptions) e
 	}
 	installationRoutes := builder.TypedControllerManagedBy[RouteRequest](mgr).
 		Named("fleet-installation-routes").
-		Watches(&fleetv1.MachineClaim{}, typedRouteMap(mappers.Route(RouteClaim, "")), builder.WithPredicates(PrimaryPredicate()))
+		Watches(&fleetv1.Machine{}, typedRouteMap(mappers.Route(RouteMachine, "")), builder.WithPredicates(PrimaryPredicate()))
 	return installationRoutes.Complete(RouteReconciler{Project: options.Project, Verifier: options.ProjectVerifier, Mappers: mappers, Handler: installationOwner})
 }
 
