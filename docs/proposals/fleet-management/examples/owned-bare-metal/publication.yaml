@@ -11,7 +11,7 @@ spec:
     resources:
       - name: machine-classes
         objects:
-          - apiVersion: fleet.datumapis.com/v1alpha1
+          - apiVersion: metal.datumapis.com/v1alpha1
             kind: MachineClass
             metadata:
               name: metal-standard

@@ -1,4 +1,4 @@
-# Fleet product overview
+# Metal and Fleet product overview
 
 [Project introduction](../README.md)
 
@@ -7,6 +7,13 @@ Its intended product spans physical inventory, machine allocation and
 installation, managed clusters, and platform node services. It replaces repeated
 infrastructure facts and disconnected workflows with explicit ownership and
 recoverable lifecycle transitions.
+
+The customer-facing machine service is **Bare Metal**, with alpha APIs at
+`metal.datumapis.com`. Fleet's physical infrastructure APIs use
+`fleet.datumapis.com`; the intended internal execution handoff uses
+`coordination.fleet.datumapis.com`. See the
+[API boundaries](architecture.md#api-boundaries) for resource ownership and the
+implementation status of each group.
 
 ## Who Fleet serves
 

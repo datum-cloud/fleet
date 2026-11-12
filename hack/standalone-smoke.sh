@@ -47,7 +47,7 @@ for namespace in fleet-system fleet-system-private fleet-provider fleet-project-
   fi
 done
 for crd in installations machineallocations machinecapacities machineclasses machineprofiles machines; do
-  if kubectl --context "$context" get crd "$crd.fleet.datumapis.com" >/dev/null 2>&1; then
+  if kubectl --context "$context" get crd "$crd.metal.datumapis.com" >/dev/null 2>&1; then
     echo "fixed Fleet CRD $crd already exists; use a fresh dedicated kind cluster" >&2
     exit 1
   fi
@@ -92,8 +92,8 @@ run_phase() {
 
 run_phase allocate fleet-smoke-allocate-run
 kubectl --context "$context" get machines -A
-test "$(kubectl --context "$context" -n fleet-project-a get machine -o name)" = "machine.fleet.datumapis.com/allocation"
-test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.fleet.datumapis.com/allocation"
+test "$(kubectl --context "$context" -n fleet-project-a get machine -o name)" = "machine.metal.datumapis.com/allocation"
+test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.metal.datumapis.com/allocation"
 test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.phase}')" = "Ready"
 test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Pending"
 
@@ -133,5 +133,5 @@ if kubectl --context "$context" -n fleet-project-a get machine allocation >/dev/
   echo "released project A claim still exists" >&2
   exit 1
 fi
-test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.fleet.datumapis.com/allocation"
+test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.metal.datumapis.com/allocation"
 test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Ready"

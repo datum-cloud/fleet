@@ -141,7 +141,7 @@ is pending; that Machine's explicit `initialInstallationRef` and
 and power-on.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
   name: alice-compute-0-os-01
@@ -197,7 +197,7 @@ requires a new Installation naming the current predecessor, while admission
 privately retains its exact local incarnation, for example:
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
   name: alice-compute-0-os-02

@@ -225,8 +225,11 @@ contracts. These API shapes are proposed, not implemented CRDs; they do not
 define the entire product or prescribe a user interface. Inventory is designed
 for the target service, independent of today's inventory schema.
 
-Proposed groups are `fleet.datumapis.com` for shared allocation,
-OS, and cluster APIs and `inventory.fleet.datumapis.com` for physical inventory.
+Proposed groups are `metal.datumapis.com` for shared allocation,
+and installation APIs and `fleet.datumapis.com` for physical inventory.
+The intended location handoff uses `coordination.fleet.datumapis.com`; see the
+[API architecture](../../architecture.md) for implementation status and placement.
+Managed cluster and OS-policy group placement remains separate design work.
 Owned-hardware enrollment remains private location-adapter state; vendor and OS
 adapters may have their own typed groups. Group names and administrative
 scope remain schema decisions; subsystem authority does not depend on a domain

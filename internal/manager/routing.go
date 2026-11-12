@@ -17,6 +17,7 @@ import (
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
+	"go.datum.net/fleet/internal/milo"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
 	locationsv1alpha1 "go.miloapis.com/locations/api/v1alpha1"
 	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
@@ -78,14 +79,14 @@ func (m Mappers) Route(kind RouteKind, field string) func(context.Context, clien
 		case RouteQuota:
 			request.Key = object.GetLabels()["fleet.datumapis.com/machine-uid"]
 		case RouteEntitlement:
-			if object.GetName() != "fleet" {
+			if object.GetName() != milo.EntitlementName {
 				return nil
 			}
 		case RouteLocation:
 			request.Key = object.GetName()
 		case RouteAvailability:
 			availability, ok := object.(*servicesv1alpha1.ServiceAvailability)
-			if !ok || availability.Spec.ServiceRef.Name != "fleet" || availability.Spec.LocationRef.Name == "" {
+			if !ok || availability.Spec.ServiceRef.Name != milo.EntitlementName || availability.Spec.LocationRef.Name == "" {
 				return nil
 			}
 			request.Key = availability.Spec.LocationRef.Name

@@ -111,7 +111,7 @@ The operator defines the source class in the provider project:
 
 ```yaml
 # Project context: datum-metal (provider). Project-scoped definition.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata:
   name: datum-metal-standard
@@ -152,7 +152,7 @@ public summary:
 
 ```yaml
 # Project context: acme (consumer). PLATFORM OUTPUT, not customer-authored intent.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata:
   name: metal-standard
@@ -193,7 +193,7 @@ The customer requests capacity using only local names:
 
 ```yaml
 # Project context: acme (consumer). A blank allocation for this short example.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata:
   name: db-01

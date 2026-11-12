@@ -8,6 +8,11 @@ safe reuse. The table below maps that product scope to detailed contracts, not
 to a list of shipped features. Check [implementation status](implementation.md)
 before relying on any capability.
 
+Customer machine allocation and installation are exposed through **Bare Metal**
+at `metal.datumapis.com`. Fleet manages the underlying physical infrastructure;
+see [API boundaries](architecture.md#api-boundaries) for the distinction between
+the customer service, inventory, and intended coordination contracts.
+
 ## Capabilities and contracts
 
 | Capability | Intended experience | Learn more |

@@ -101,12 +101,12 @@ The API groups below are proposed. Shared Fleet ownership does not merge resourc
 lifetimes, write authority, or access controls.
 
 - **Physical identity, components, and placement evidence:** `Device` in
-  `inventory.fleet.datumapis.com/v1alpha1`.
+  `fleet.datumapis.com/v1alpha1`.
 - **Approved installation and wiring:** Inventory `DeviceClaim` and `Cable`, with verified
   bindings to actual components.
 - **Capacity definition, eligibility, exclusive reservation, and consumer operation admission:**
   Provider MachineClass and `MachineCapacity`, plus consumer-local MachineClass
-  references and customer `Machine` in `fleet.datumapis.com/v1alpha1`. Service
+  references and customer `Machine` in `metal.datumapis.com/v1alpha1`. Service
   publication and IAM separately govern reference delivery and source-use
   permission.
 - **Management integration and translation to physical execution:** the

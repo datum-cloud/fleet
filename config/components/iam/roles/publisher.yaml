@@ -1,22 +1,22 @@
 apiVersion: iam.miloapis.com/v1alpha1
 kind: Role
 metadata:
-  name: fleet.datumapis.com-publisher
+  name: metal.datumapis.com-publisher
   annotations:
     kubernetes.io/display-name: Fleet Capacity Publisher
     kubernetes.io/description: Publish provider-approved Fleet offerings into consumer projects
 spec:
   launchStage: Alpha
   inheritedRoles:
-    - name: fleet.datumapis.com-viewer
+    - name: metal.datumapis.com-viewer
   includedPermissions:
-    - fleet.datumapis.com/machineclasses.create
-    - fleet.datumapis.com/machineclasses.update
-    - fleet.datumapis.com/machineclasses.patch
-    - fleet.datumapis.com/machineclasses.delete
-    - fleet.datumapis.com/machineclasses.updateStatus
-    - fleet.datumapis.com/machineprofiles.create
-    - fleet.datumapis.com/machineprofiles.update
-    - fleet.datumapis.com/machineprofiles.patch
-    - fleet.datumapis.com/machineprofiles.delete
-    - fleet.datumapis.com/machineprofiles.updateStatus
+    - metal.datumapis.com/machineclasses.create
+    - metal.datumapis.com/machineclasses.update
+    - metal.datumapis.com/machineclasses.patch
+    - metal.datumapis.com/machineclasses.delete
+    - metal.datumapis.com/machineclasses.updateStatus
+    - metal.datumapis.com/machineprofiles.create
+    - metal.datumapis.com/machineprofiles.update
+    - metal.datumapis.com/machineprofiles.patch
+    - metal.datumapis.com/machineprofiles.delete
+    - metal.datumapis.com/machineprofiles.updateStatus

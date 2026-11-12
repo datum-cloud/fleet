@@ -1,11 +1,11 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: machineclasses.fleet.datumapis.com
+  name: machineclasses.metal.datumapis.com
   annotations:
     discovery.miloapis.com/parent-contexts: Project
 spec:
-  group: fleet.datumapis.com
+  group: metal.datumapis.com
   names: {kind: MachineClass, listKind: MachineClassList, plural: machineclasses, singular: machineclass, shortNames: [mc]}
   scope: Cluster
   versions:
@@ -53,11 +53,11 @@ spec:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: machineprofiles.fleet.datumapis.com
+  name: machineprofiles.metal.datumapis.com
   annotations:
     discovery.miloapis.com/parent-contexts: Project
 spec:
-  group: fleet.datumapis.com
+  group: metal.datumapis.com
   names: {kind: MachineProfile, listKind: MachineProfileList, plural: machineprofiles, singular: machineprofile, shortNames: [mp]}
   scope: Cluster
   versions:
@@ -111,11 +111,11 @@ spec:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: machinecapacities.fleet.datumapis.com
+  name: machinecapacities.metal.datumapis.com
   annotations:
     discovery.miloapis.com/parent-contexts: Project
 spec:
-  group: fleet.datumapis.com
+  group: metal.datumapis.com
   names: {kind: MachineCapacity, listKind: MachineCapacityList, plural: machinecapacities, singular: machinecapacity, shortNames: [mcap]}
   scope: Namespaced
   versions:
@@ -161,11 +161,11 @@ spec:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: machines.fleet.datumapis.com
+  name: machines.metal.datumapis.com
   annotations:
     discovery.miloapis.com/parent-contexts: Project
 spec:
-  group: fleet.datumapis.com
+  group: metal.datumapis.com
   names: {kind: Machine, listKind: MachineList, plural: machines, singular: machine}
   scope: Namespaced
   versions:
@@ -284,11 +284,11 @@ spec:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: machineallocations.fleet.datumapis.com
+  name: machineallocations.metal.datumapis.com
   annotations:
     discovery.miloapis.com/parent-contexts: Project
 spec:
-  group: fleet.datumapis.com
+  group: metal.datumapis.com
   names: {kind: MachineAllocation, listKind: MachineAllocationList, plural: machineallocations, singular: machineallocation, shortNames: [malloc]}
   scope: Namespaced
   versions:
@@ -340,11 +340,11 @@ spec:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: installations.fleet.datumapis.com
+  name: installations.metal.datumapis.com
   annotations:
     discovery.miloapis.com/parent-contexts: Project
 spec:
-  group: fleet.datumapis.com
+  group: metal.datumapis.com
   names: {kind: Installation, listKind: InstallationList, plural: installations, singular: installation, shortNames: [install]}
   scope: Namespaced
   versions:

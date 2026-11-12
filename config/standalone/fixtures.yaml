@@ -1,4 +1,4 @@
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata: {name: standard-metal}
 spec:
@@ -11,14 +11,14 @@ spec:
       namespace: fleet-provider
       selector: {matchLabels: {fleet.datumapis.com/capacity-pool: central-metal}}
 ---
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineProfile
 metadata: {name: general-purpose-24c-128g}
 spec:
   cpu: {architecture: amd64, cores: {min: 24}}
   memory: {capacity: {min: 128Gi}}
 ---
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
   name: central1-baremetal-01
@@ -30,7 +30,7 @@ spec:
   cleaningPolicyRef: {name: synthetic-tenant-reuse-v1}
   reclaimPolicy: Retain
 ---
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata: {name: allocation, namespace: fleet-project-a}
 spec:
@@ -39,7 +39,7 @@ spec:
   locationRef: {name: us-central-1}
   powerState: "Off"
 ---
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata: {name: allocation, namespace: fleet-project-b}
 spec:
@@ -48,7 +48,7 @@ spec:
   locationRef: {name: us-central-1}
   powerState: "Off"
 ---
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata: {name: debian-12, namespace: fleet-project-a}
 spec:

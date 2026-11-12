@@ -4,7 +4,7 @@
 # Registration is allowed only against an accepted, authorized DeviceClaim.
 # The registry creates the Device; hardware does not grant itself acceptance.
 
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Device
 metadata:
   name: server-example-001
@@ -32,7 +32,7 @@ status:
 ---
 # After exclusive binding and evaluation of current identity/placement/path evidence.
 # Binding itself can precede these verification conditions becoming True.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
   name: iad1-r12-u20-server
@@ -60,7 +60,7 @@ status:
 ---
 # Cable remains the source of expected topology. Status resolves a claim port to
 # the physical Device/component and reports evidence; it does not rewrite spec.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-data

@@ -7,7 +7,7 @@
 # inputs. No consumer Machine, Installation, or competing operation may exist.
 # The bound physical DeviceClaim remains required throughout preparation.
 method: POST
-path: /apis/fleet.datumapis.com/v1alpha1/namespaces/infra-ops/machinecapacities/iad1-r12-srv01/prepare
+path: /apis/metal.datumapis.com/v1alpha1/namespaces/infra-ops/machinecapacities/iad1-r12-srv01/prepare
 body:
   idempotencyKey: srv01-initial-preparation-01
   expectedDeviceRef: {name: server-example-001}
@@ -18,7 +18,7 @@ body:
 # The server checks caller entitlement plus the exact live MachineAllocation before issuing
 # a session. It actively terminates the stream on Machine release/revocation.
 method: POST
-path: /apis/fleet.datumapis.com/v1alpha1/namespaces/acme/machines/db-01/console
+path: /apis/metal.datumapis.com/v1alpha1/namespaces/acme/machines/db-01/console
 body:
   mode: Graphical
   requestedDuration: 15m

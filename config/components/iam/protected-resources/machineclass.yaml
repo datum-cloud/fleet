@@ -1,10 +1,10 @@
 apiVersion: iam.miloapis.com/v1alpha1
 kind: ProtectedResource
 metadata:
-  name: fleet.datumapis.com-machineclass
+  name: metal.datumapis.com-machineclass
 spec:
   serviceRef:
-    name: fleet.datumapis.com
+    name: metal.datumapis.com
   kind: MachineClass
   plural: machineclasses
   singular: machineclass

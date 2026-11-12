@@ -1,5 +1,14 @@
 # Fleet deployment manifests
 
+The customer-facing service is **Bare Metal**. The Milo bundle registers one
+Service and ServiceConfiguration named `metal`, with identity
+`metal.datumapis.com` and quota resource type `metal.datumapis.com/machines`.
+Both catalog resources remain Draft. No separate service is registered for
+`fleet.datumapis.com` or `coordination.fleet.datumapis.com`. Environment-owned
+entitlements, ServiceAvailability resources, and publication rules must reference
+`metal`. See the [API architecture](../docs/architecture.md) for group separation
+and breaking alpha rename constraints.
+
 The repository publishes two production manifest roots. They target different
 API servers and must be reconciled independently.
 

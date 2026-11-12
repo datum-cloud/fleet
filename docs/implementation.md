@@ -18,6 +18,15 @@ admission, replayable Milo event adapters, and real providers are not implemente
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
+## API group naming
+
+The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the
+Bare Metal service as `metal`; entitlement and location-availability readers use
+that reference. Physical Device references use `fleet.datumapis.com`. The
+[API architecture](architecture.md) documents the proposed coordination group,
+control-plane placement, and rollout constraints. Group renaming does not migrate
+stored allocations or establish live acceptance.
+
 ## Allocation API migration
 
 The implemented alpha surface follows the current machine-allocation proposal:
@@ -272,7 +281,7 @@ caller-preserving admission, the live verifier, replay integrations, and product
 absent. Installing these manifests is not evidence of functional allocation.
 
 `config/milo` separately packages the Fleet CRDs, ProtectedResources, roles,
-Fleet Service, and `fleet.datumapis.com/machines` quota registration for the
+Fleet Service, and `metal.datumapis.com/machines` quota registration for the
 Milo root control plane. The Service remains `Draft`; the manifest does not
 advertise the inert manager as customer-ready. It does not include
 project-specific entitlements,
@@ -429,7 +438,7 @@ before quota acquire, admission fencing, or any provider effect.
 
 Quota preparation durably records a deterministic intent before creating or
 recovering one exact Milo ResourceClaim for
-`fleet.datumapis.com/machines`. Grant evidence requires the exact object UID,
+`metal.datumapis.com/machines`. Grant evidence requires the exact object UID,
 request, consumer and resource references, and current status
 `observedGeneration`. ResourceClaim deletion or `NotFound` is never
 quota-settlement proof. Allocation requires an injected protected custodian

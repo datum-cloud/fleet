@@ -1,33 +1,33 @@
 apiVersion: iam.miloapis.com/v1alpha1
 kind: Role
 metadata:
-  name: fleet.datumapis.com-provider
+  name: metal.datumapis.com-provider
   annotations:
     kubernetes.io/display-name: Fleet Provider
     kubernetes.io/description: Publish machine capacity and operate provider inventory
 spec:
   launchStage: Alpha
   includedPermissions:
-    - fleet.datumapis.com/machineclasses.list
-    - fleet.datumapis.com/machineclasses.get
-    - fleet.datumapis.com/machineclasses.watch
-    - fleet.datumapis.com/machineclasses.create
-    - fleet.datumapis.com/machineclasses.update
-    - fleet.datumapis.com/machineclasses.patch
-    - fleet.datumapis.com/machineclasses.delete
-    - fleet.datumapis.com/machineclasses.use
-    - fleet.datumapis.com/machineprofiles.list
-    - fleet.datumapis.com/machineprofiles.get
-    - fleet.datumapis.com/machineprofiles.watch
-    - fleet.datumapis.com/machineprofiles.create
-    - fleet.datumapis.com/machineprofiles.update
-    - fleet.datumapis.com/machineprofiles.patch
-    - fleet.datumapis.com/machineprofiles.delete
-    - fleet.datumapis.com/machineprofiles.use
-    - fleet.datumapis.com/machinecapacities.list
-    - fleet.datumapis.com/machinecapacities.get
-    - fleet.datumapis.com/machinecapacities.watch
-    - fleet.datumapis.com/machinecapacities.create
-    - fleet.datumapis.com/machinecapacities.update
-    - fleet.datumapis.com/machinecapacities.patch
-    - fleet.datumapis.com/machinecapacities.delete
+    - metal.datumapis.com/machineclasses.list
+    - metal.datumapis.com/machineclasses.get
+    - metal.datumapis.com/machineclasses.watch
+    - metal.datumapis.com/machineclasses.create
+    - metal.datumapis.com/machineclasses.update
+    - metal.datumapis.com/machineclasses.patch
+    - metal.datumapis.com/machineclasses.delete
+    - metal.datumapis.com/machineclasses.use
+    - metal.datumapis.com/machineprofiles.list
+    - metal.datumapis.com/machineprofiles.get
+    - metal.datumapis.com/machineprofiles.watch
+    - metal.datumapis.com/machineprofiles.create
+    - metal.datumapis.com/machineprofiles.update
+    - metal.datumapis.com/machineprofiles.patch
+    - metal.datumapis.com/machineprofiles.delete
+    - metal.datumapis.com/machineprofiles.use
+    - metal.datumapis.com/machinecapacities.list
+    - metal.datumapis.com/machinecapacities.get
+    - metal.datumapis.com/machinecapacities.watch
+    - metal.datumapis.com/machinecapacities.create
+    - metal.datumapis.com/machinecapacities.update
+    - metal.datumapis.com/machinecapacities.patch
+    - metal.datumapis.com/machinecapacities.delete
