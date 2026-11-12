@@ -40,15 +40,16 @@ Fields and resource shapes below are proposed contracts, not deployed schemas.
 
 ## Summary
 
-Customers choose a supported OS and bootstrap configuration for their claimed
-machine. Fleet resolves the exact approved inputs, coordinates installation,
+Customers choose a supported OS and bootstrap configuration for their Machine.
+Fleet resolves the exact approved inputs, coordinates installation,
 and reports the agreed handoff outcome. General-purpose customer installation
 is part of the first bare-metal release, using OS integrations that qualify
 image, bootstrap, hardware, and execution compatibility. Consumers administer
 their own OS after a standalone handoff.
 
 `Installation` is an immutable initial-install or reinstall request against a
-MachineClaim. MachineClaim holds the reservation and runtime power intent.
+customer `Machine`. Machine holds the customer lifecycle and runtime power intent;
+a private `MachineAllocation` holds the exclusive provider reservation.
 An installation does not require a Cluster, NodeClaim, or ongoing guest agent.
 Supported OS choices extend beyond Talos; the Talos examples below illustrate
 the existing managed environment and its typed integration.
@@ -133,10 +134,11 @@ alone does not release a still-live address.
 ### Installation resource
 
 Managed NodeClaim controllers and standalone project consumers use the same
-Installation contract. It references a MachineClaim, never an independently
-chosen Machine. The request can be created while its claim is pending; the
-claim's explicit `initialInstallationRef` and `networkAttachmentRefs` prevent
-creation order from racing initial placement and power-on.
+Installation contract. It references a customer `Machine`, never independently
+chosen provider `MachineCapacity`. The request can be created while its Machine
+is pending; that Machine's explicit `initialInstallationRef` and
+`networkAttachmentRefs` prevent creation order from racing initial placement
+and power-on.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -149,13 +151,11 @@ metadata:
     fleet.datumapis.com/site: us-east-1
     fleet.datumapis.com/environment: production
 spec:
-  claimRef: {name: alice-compute-0-hardware-01}
+  machineRef: {name: alice-compute-0-hardware-01}
   expectedPredecessor: {type: None}
   imageRef: {name: talos-1.13.7}
   bootstrapConfigRef: {name: alice-compute-0-bootstrap-01}
 status:
-  bindingID: <exclusive-allocation-id>
-  bindingEpoch: 1
   resolvedImageDigest: sha256:<exact-image-digest>
   conditions:
     - type: ImageDeployed
@@ -175,8 +175,8 @@ project's configuration.
 
 The immutable request resolves to a protected execution record containing:
 
-- Installation UID, consumer/project authority, MachineClaim UID, committed
-  Machine/provider identity, binding ID/epoch, and expected predecessor.
+- Exact Installation incarnation, consumer/project authority, customer Machine,
+  immutable MachineAllocation, provider MachineCapacity, and expected predecessor.
 - Retained image, bootstrap, recipe, native configuration, and relevant class
   content with digests; resolved disk/interface identities and required network
   preparation/transition evidence.
@@ -184,15 +184,17 @@ The immutable request resolves to a protected execution record containing:
   epoch or explicit consumer installation authorization. Managed disruptions
   also require the applicable safety checks and predecessor-exclusion evidence.
 
-Reference names are resolved to UIDs before commitment. Secret or source
+Reference names are resolved to exact local object incarnations before commitment.
+Those API-server-local identities remain private evidence; Secret or source
 object recreation does not substitute new contents. The controller persists
 authority and exact inputs before external effects; status can summarize the
 result but is not the only record of irreversible-operation intent. Consumer
 writers cannot forge controller execution authorization.
 
-Image, bootstrap, claim, and predecessor are immutable request inputs. Editing
+Image, bootstrap, Machine, and predecessor are immutable request inputs. Editing
 a MachineImage or policy does not mutate an accepted Installation. Reinstall
-requires a new Installation naming the current predecessor UID, for example:
+requires a new Installation naming the current predecessor, while admission
+privately retains its exact local incarnation, for example:
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -200,30 +202,29 @@ kind: Installation
 metadata:
   name: alice-compute-0-os-02
 spec:
-  claimRef: {name: alice-compute-0-hardware-01}
+  machineRef: {name: alice-compute-0-hardware-01}
   expectedPredecessor:
     type: Installation
     name: alice-compute-0-os-01
-    uid: <predecessor-installation-uid>
   imageRef: {name: talos-next-qualified-release}
   bootstrapConfigRef: {name: alice-compute-0-bootstrap-02}
 ```
 
-The coordinator checks the expected predecessor against the claim's durable
+The coordinator checks the expected predecessor against the Machine's durable
 current-incarnation record and commits with a concurrency check. Two competing
 reinstall requests cannot both win. It does not choose the newest object by
 creation time. Reinstall may retain the same hardware reservation. Hardware
-replacement requires a new MachineClaim with a new immutable asset binding;
+replacement requires a new customer Machine and a new immutable MachineAllocation;
 NodeClaim, where present, coordinates logical identity continuity and the
-separate fence of the predecessor on the old claim.
+separate fence of the predecessor on the old Machine.
 
-A blank claim with no Installation is valid. Its runtime power intent remains
-on MachineClaim. For an initial Installation, the coordinator serializes power
+A blank Machine with no Installation is valid. Its runtime power intent remains
+on Machine. For an initial Installation, the coordinator serializes power
 with provisioning; an independent power loop cannot activate it early.
 Networking first resolves placement feasibility and reserves resources, then
 prepares the restricted connectivity required by the selected method. Consumer
 activation waits for verified installation and exclusion of privileged
-provisioning access, with attachment evidence for the exact binding. A temporary
+provisioning access, with attachment evidence for the exact MachineAllocation. A temporary
 agent, whole-disk image, and powered-off handoff are one possible implementation;
 other methods must meet equivalent isolation and completion requirements. A
 booted installer is not proof of an installed OS. See
@@ -234,7 +235,7 @@ boundary; finalizers and the operation journal retain unresolved obligations.
 Deleting completed request history, when retention allows, does not uninstall
 the OS, release the reservation, or change power intent. The initial-install
 gate is completed durably and does not reopen when old request history is
-removed. Claim release owns access revocation, fencing, cleanup, and eventual
+removed. Machine release owns access revocation, fencing, cleanup, and eventual
 hardware availability. Owned inventory and provider records outlive all of
 these disposable requests.
 
@@ -396,7 +397,7 @@ network handoff, and crash recovery together.
 
 For a self-managed guest, the qualified installer completes image/bootstrap
 handoff and stops OS reconciliation. Runtime power and console access remain
-claim-scoped. `GuestReady` is Unknown unless a separate supported guest-health
+Machine-scoped. `GuestReady` is Unknown unless a separate supported guest-health
 contract supplies evidence; platform handoff does not assert SSH or application
 readiness.
 
@@ -461,7 +462,7 @@ reboot, and policy deletion alone never releases active addresses.
 ## Implementation
 
 The OS subsystem in `datum-cloud/fleet` watches Installation and configuration
-inputs. It resolves a claim's immutable binding and explicit execution contract;
+inputs. It resolves a Machine's immutable MachineAllocation and explicit execution contract;
 it need not watch Cluster/NodeClaim to infer authorization. The cluster
 subsystem supplies managed approvals. Standalone requests use consumer
 installation authority subject to offering/operator policy. Scope, reference

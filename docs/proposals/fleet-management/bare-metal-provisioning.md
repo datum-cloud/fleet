@@ -19,7 +19,7 @@ server from planned installation to a standalone consumer allocation.
 - [Proposal](#proposal)
   - [First-version scope](#first-version-scope)
   - [Responsibility boundaries](#responsibility-boundaries)
-  - [Provider resources](#provider-resources)
+  - [Provider adapter and enrollment](#provider-adapter-and-enrollment)
   - [Enrollment and explicit preparation](#enrollment-and-explicit-preparation)
   - [Installation and network handoff](#installation-and-network-handoff)
   - [Console and runtime control](#console-and-runtime-control)
@@ -49,7 +49,8 @@ Inventory establishes which asset exists and what has been verified. The shared
 allocator reserves compute capacity, and the OS provider supplies approved
 installation inputs. The bare-metal provider executes admitted work through the
 selected execution layer and reports results. These responsibilities support
-the same `Machine`, `MachineClaim`, and `Installation` contracts across backends.
+the same provider `MachineCapacity`, customer `Machine`, and `Installation`
+contracts across backends.
 
 The provisioning backend is an operator integration choice. Different execution
 systems can implement the same Fleet contract through adapters, provided they
@@ -61,7 +62,7 @@ The execution layer may use workflows, remote management, boot services,
 installation media, temporary agents, or other mechanisms. Fleet specifies the
 asset, approved inputs, permitted effects, and completion evidence. Each adapter
 owns the translation and qualifies its implementation. Owned capacity remains
-finite; additional claims stay pending when no eligible server is available.
+finite; additional customer Machines stay pending when no eligible capacity is available.
 
 ## Proposal
 
@@ -72,7 +73,7 @@ The initial service covers the complete standalone machine lifecycle:
 - Plan, register, verify, and prepare owned servers through Fleet inventory and
   operator-authorized provisioning.
 - Discover automatically published MachineClasses in the consumer project,
-  claim compatible provider-owned capacity across projects, and attach authorized
+  request compatible provider-owned capacity across projects, and attach authorized
   customer networks.
 - Install or reinstall a supported OS through an OS-independent request and a
   qualified image/bootstrap integration. A blank, powered-off allocation is
@@ -104,12 +105,13 @@ lifetimes, write authority, or access controls.
 - **Approved installation and wiring:** Inventory `DeviceClaim` and `Cable`, with verified
   bindings to actual components.
 - **Capacity definition, eligibility, exclusive reservation, and consumer operation admission:**
-  Provider MachineClass and Machine, plus consumer-local MachineClass references
-  and MachineClaim in `fleet.datumapis.com/v1alpha1`. Service publication and IAM
-  separately govern reference delivery and source-use permission.
-- **Management integration and translation to physical execution:** `BareMetalMachine`,
-  `BareMetalMachineClass`, and the configured provider adapter in
-  `baremetal.fleet.datumapis.com/v1alpha1`.
+  Provider MachineClass and `MachineCapacity`, plus consumer-local MachineClass
+  references and customer `Machine` in `fleet.datumapis.com/v1alpha1`. Service
+  publication and IAM separately govern reference delivery and source-use
+  permission.
+- **Management integration and translation to physical execution:** the
+  location's private Datum owned-hardware adapter, keyed by `MachineCapacity`
+  and its immutable `Device`.
 - **Execution of admitted hardware work:** A selected provisioning backend through the
   adapter contract. Its native records remain private implementation details.
 - **Image contents and bootstrap/configuration semantics:** The OS provider and immutable
@@ -120,10 +122,10 @@ lifetimes, write authority, or access controls.
   cluster subsystem, using the shared allocation and installation contracts.
 
 A Facility is provider-neutral physical premises. The provider derives identity
-and placement from the Machine's registered Device and current inventory evidence.
+and placement from the MachineCapacity's registered Device and current inventory evidence.
 Neither a backend node ID, reachable management endpoint, nor resource name
 establishes asset identity. DeviceClaim reserves the operator's physical
-installation; MachineClaim reserves consumer use. Neither substitutes for the
+installation; a customer Machine requests consumer use. Neither substitutes for the
 other or grants permission to erase disks.
 
 Fleet remains the sole allocation authority for exposed capacity. A backend must
@@ -132,53 +134,33 @@ same asset outside Fleet's admitted operations. A native scheduler may dispatch
 execution workers; it cannot choose a different customer machine from the one
 Fleet reserved.
 
-### Provider resources
+### Provider adapter and enrollment
 
-`BareMetalMachine` is the one-to-one management extension referenced by a Machine's
-typed `providerRef`. It records operator management policy and the connection
-configuration needed for that hardware integration. Device owns actual physical
-identity; Machine/MachineClaim owns allocation. Native backend enrollment IDs,
-workflow IDs, and progress are retained in private adapter records.
+Fleet has two durable owned-hardware identities: `Device` is the physical asset,
+and `MachineCapacity` is the allocatable capacity permanently backed by that
+Device. `MachineCapacity.spec.deviceRef` is immutable. Hardware replacement
+creates a new Device and MachineCapacity rather than retargeting existing
+capacity. There is no third Fleet `BareMetalMachine` identity.
 
-The following example illustrates direct BMC and console connection configuration.
-It does not require every backend to expose BMC credentials to Fleet or use these
-transports. An integration may instead hold connection material in the backend;
-operator-only configuration must resolve and authenticate the same registered
-asset. The binding and permission contract is common in either case.
+The selected location's Datum owned-hardware adapter privately retains management
+mode, BMC endpoint, physical system selector, credential and trust references,
+console support, native workflow identity and backend progress. The adapter
+enrolls the exact MachineCapacity/Device pair and verifies BMC-reported physical
+identity against inventory. Backend configuration is not a customer API or a
+portable Fleet resource.
 
-```yaml
-apiVersion: baremetal.fleet.datumapis.com/v1alpha1
-kind: BareMetalMachine
-metadata:
-  name: iad1-r12-srv01
-  namespace: infra-ops
-spec:
-  managementMode: ObserveOnly
-  bmc:
-    endpoint: https://srv01.r12.iad1.bmc.example.invalid
-    systemID: /redfish/v1/Systems/System.Embedded.1
-    credentialsSecretRef: {name: srv01-bmc}
-    trustSecretRef: {name: bmc-ca}
-  console:
-    transport: RedfishGraphical
-```
+BMC credentials and trust material remain authoritative in the regional secret
+manager and are materialized only into the location cluster. The central Fleet
+management cluster has neither those Secrets nor BMC-network reachability.
+Credential, certificate, endpoint and route rotation preserve identity when the
+adapter continues to verify the same Device; they do not initiate provisioning
+or require a new MachineCapacity.
 
-Enforce an exclusive UID-based relationship between the managed Device, Machine,
-provider extension, and adapter's enrolled backend identity. Resolve authoring
-references to retained UIDs before effects. Reusing a name or BMC address cannot
-transfer authority to another server. Credential rotation preserves identity and
-does not initiate provisioning. These records outlive disposable installation
-requests and consumer claims.
-
-`BareMetalMachineClass` describes reusable hardware compatibility and preparation
-requirements. The configured adapter resolves supported boot and installation
-methods and deterministic disk-selection rules. Operator integration configuration
-chooses the execution backend. The provider's MachineClass definition references
-the private class and selects eligible supply; automatically registered consumer
-MachineClasses reference that definition and expose only resolved public capabilities.
-Backend connection details or native workflow templates stay in adapter-specific
-operator configuration rather than becoming fields of DeviceClaim, MachineClaim,
-or Installation.
+The provider's MachineClass selects eligible MachineCapacity and advertises safe
+capabilities. The configured adapter resolves supported boot and installation
+methods and deterministic disk-selection rules. Backend connection details and
+native workflow templates stay in adapter-specific operator configuration rather
+than becoming fields of DeviceClaim, Machine, MachineCapacity, or Installation.
 
 Class edits affect future admission. Each accepted operation retains the exact
 resolved inputs and selected execution route. Disk requirements resolve to stable
@@ -187,14 +169,14 @@ OS disk name or a backend's unspecified default disk is insufficient authority.
 
 ### Enrollment and explicit preparation
 
-Management enrollment begins in `ObserveOnly`, with Machine allocation disabled.
+Management enrollment begins in `ObserveOnly`, with MachineCapacity allocation disabled.
 An adapter may read authorized observations, but enrollment or discovery must not
 trigger backend automatic cleaning, power changes, boot-based inspection, or
 configuration changes. If a backend cannot register a running server without
 those effects, that adapter cannot offer non-disruptive adoption.
 
 `Managed` permits execution of separately admitted operations; it does not request
-a wipe or make the Machine available. Initial preparation is an explicit operator
+a wipe or make the MachineCapacity available. Initial preparation is an explicit operator
 operation. The proposed `/prepare` surface admits a retained plan identifying the
 asset, exact targets, required effects, and the owner-selected cleaning/restoration
 policy. An adapter may realize that plan as native jobs, workflow steps, or API
@@ -204,7 +186,7 @@ Admission requires allocation disabled, current physical binding and applicable
 verification, and no conflicting consumer allocation or operation. Retain the
 idempotency key and preconditions before execution. Only completed preparation,
 current physical verification, management health, and enabled allocation together
-allow the shared binder to select the Machine.
+allow the shared allocator to select the MachineCapacity.
 
 Returning to ObserveOnly stops new operation admission. Committed work must reach
 its defined safe boundary before the transition is acknowledged. A mode edit
@@ -213,15 +195,15 @@ server reconciles its existing reservation and never briefly exposes it as free.
 
 ### Installation and network handoff
 
-MachineClaim binding is immutable. Installation requests an explicit first OS
-incarnation or reinstall against that claim, with predecessor preconditions.
+Machine allocation is immutable. Installation requests an explicit first OS
+incarnation or reinstall against the customer Machine, with predecessor preconditions.
 The provider executes the retained plan; a mutable image, class, or backend
-workflow edit cannot silently change it. A blank, powered-off claim is valid.
+workflow edit cannot silently change it. A blank, powered-off Machine is valid.
 
 The common handoff contract is:
 
 1. Validate consumer, image, and network entitlement. Resolve required initial
-   resources, evaluate placement feasibility, and exclusively reserve one Machine.
+   resources, evaluate placement feasibility, and exclusively reserve one MachineCapacity.
    Pin the exact identities and relevant input digests.
 2. Networking resolves verified endpoints, reserves attachment resources, and
    establishes the restricted connectivity required by the selected provisioning
@@ -232,8 +214,8 @@ The common handoff contract is:
    qualified method. The OS provider owns input contents and semantics.
 4. Establish evidence that privileged provisioning access has ended and temporary
    boot paths cannot reactivate unexpectedly. Networking confirms the authorized
-   tenant attachment for the same binding before consumer activation proceeds.
-5. Honor the claim's admitted power intent and verify the offered installation
+   tenant attachment for the same MachineAllocation before consumer activation proceeds.
+5. Honor the customer Machine's admitted power intent and verify the offered installation
    and boot outcome. Report guest/application health separately when supported.
 
 An implementation can use an authenticated temporary agent to write a disk image,
@@ -246,7 +228,7 @@ completion evidence.
 Networking remains the sole authority for switch and logical network configuration.
 A backend's native network integration must operate through that authority. Cable
 specifies physical wiring, not VLANs, routes, or tenant entitlement. Every effect
-carries the current binding and interface identity so stale work cannot alter the
+carries the current MachineAllocation and interface identity so stale work cannot alter the
 next consumer's connection.
 
 The integration must expose a controllable handoff boundary. Observing backend
@@ -263,9 +245,9 @@ upgrade authority.
 
 ### Console and runtime control
 
-Consumers use claim-scoped access. The console gateway authenticates the caller,
-checks capabilities and current allocation, and binds the session to the project,
-principal, Claim UID, Machine UID, and binding epoch. It keeps management
+Consumers use Machine-scoped access. The console gateway authenticates the caller,
+checks capabilities and the current immutable MachineAllocation, and retains
+private same-API-server admission evidence. It keeps management
 credentials private and actively disconnects sessions when authority ends.
 Generally readable status never contains a console bearer capability.
 
@@ -273,9 +255,9 @@ The backend may supply console transport, or the adapter may integrate a separat
 console service. Both implementations satisfy the same authorization and revocation
 contract. Backend support alone does not grant consumer access.
 
-Persistent On/Off intent belongs to MachineClaim. Reset, reboot, and supported
+Persistent On/Off intent belongs to the customer Machine. Reset, reboot, and supported
 rescue/media actions are bounded operations with idempotency keys and current
-binding preconditions. They serialize with installation and release. Unsupported
+MachineAllocation preconditions. They serialize with installation and release. Unsupported
 operations are reported explicitly; an adapter cannot substitute a more disruptive
 action. Operator overrides require coordinated, audited authority.
 
@@ -297,7 +279,7 @@ Missing or replaced disks, incomplete erasure, or unknown restoration results ke
 the asset unavailable according to operator policy. Disk cleaning is distinct
 from firmware integrity and management-state restoration.
 
-Owned Machines normally use Retain: preserve the asset, management identity, and
+Owned MachineCapacity normally uses Retain: preserve the asset, management identity, and
 required operation history after customer release. Reuse requires current physical
 verification and enabled allocation as well as successful reclamation. Unknown
 outcomes retain the reservation or quarantine the asset. Deleting an Installation
@@ -320,7 +302,7 @@ The supporting services each preserve a part of the lifecycle:
   queries, supported cancellation, and recovery into the backend's mechanisms,
   then reports capabilities, progress, uncertainty, and completion evidence.
 - **Durable operation journal** retains the admitted plan, exact identities and
-  input digests, operation epoch, and evidence. It lets recovery continue the
+  input digests, operation resource name, and evidence. It lets recovery continue the
   same operation after a lost response or restart.
 - **Approved artifact store** retains images, configuration, and other admitted
   inputs and delivers them under scoped authorization. The OS provider owns
@@ -344,8 +326,9 @@ and its native workflow identifiers do not become consumer configuration.
 
 ### Durable operation authority
 
-Before external effects, persist the authority, exact asset/provider/binding
-identities, Installation and predecessor where applicable, operation epoch,
+Before external effects, persist the authority, exact MachineAllocation,
+MachineCapacity and Device names, Installation and predecessor where applicable,
+the generated operation resource name,
 resolved input digests, target components, permitted effects, and prerequisites.
 The adapter retains the correspondence between this Fleet operation and its
 backend execution. Only authorized admission writers can create that authority.
@@ -358,7 +341,7 @@ progress alone is not a substitute for the retained authorization and inputs.
 A timeout is an unknown result. Recover or query the existing operation before
 retrying; do not start another installation or wipe just because a response was
 lost. Deduplicate using the Fleet operation identity and backend correlation.
-Late callbacks must match the current operation, binding, and incarnation.
+Late callbacks must match the current operation, allocation, and incarnation.
 
 Exactly one admitted execution authority controls an asset's management effects
 at a time. Epoch checks cannot fence a worker that still possesses usable
@@ -382,11 +365,11 @@ operation. The contract is outcome based, not a mandated set of native endpoints
   policy. The adapter returns evidence of the requested result, including partial failure
   and remaining obligations.
 - **Installation:** Fleet supplies immutable image/configuration requirements, the exact
-  binding and targets, predecessor, and activation gates. The adapter returns the
+  MachineAllocation and targets, predecessor, and activation gates. The adapter returns the
   installation and boot outcome and supported configuration-delivery evidence for the
   admitted inputs.
 - **Power and boot control:** Fleet supplies admitted desired state or bounded action for
-  the current binding. The adapter returns observed result and uncertainty; command
+  the current MachineAllocation. The adapter returns observed result and uncertainty; command
   acceptance is distinct from completion.
 - **Console and optional rescue access:** Fleet supplies scoped grant, capabilities,
   permitted transport/artifacts, and expiry. The adapter returns a revocable session or
@@ -418,7 +401,7 @@ absent, the adapter must still prevent duplicate effects; lack of that guarantee
 blocks the capability. Cancellation is a request to reach a declared safe boundary,
 not a promise that a completed disk write can be undone.
 
-Before continuing after a restart, verify the retained plan, current binding,
+Before continuing after a restart, verify the retained plan, current MachineAllocation,
 prerequisites, and exclusive execution authority. A controller may not reinterpret
 a backend retry as permission to use newly edited images or workflows. Reconcile
 restored state with actual execution before authorizing further effects.
@@ -456,8 +439,8 @@ The selected execution route and backend asset mapping are pinned for active
 operations. Replacing an integration requires a controlled handover: account for
 unfinished work, exclude the previous executor, verify the same physical asset,
 and reconcile state before enabling the successor. Changing configuration must
-not re-enroll a different asset, replay completed work, or release a live claim.
-Inventory and Machine identities remain independent of backend record lifetimes.
+not re-enroll a different asset, replay completed work, or release a live allocation.
+Device and MachineCapacity identities remain independent of backend record lifetimes.
 
 ### Independent management environment
 
@@ -480,7 +463,7 @@ execution ownership remain valid.
    and operation contract, verify lab inventory, and evaluate an implementation.
    Demonstrate correct-host authentication, exact targets, operation deduplication
    and recovery, isolated handoff, and qualified boot and cleaning outcomes.
-2. **General-purpose customer pilot.** Exercise claim, install, operate, reinstall,
+2. **General-purpose customer pilot.** Exercise Machine creation, installation, operation, reinstallation,
    and release with a qualified OS other than Talos and a standalone customer
    workload. Integrate the shared binder, network handoff, power, and console
    access. Prove exclusive allocation, serialized operations, access revocation,
@@ -498,7 +481,7 @@ execution ownership remain valid.
   Kubernetes guest, or mandatory ongoing guest agent. Validate a supported
   OS other than Talos, including recovery through OOB access when the guest
   is unavailable.
-- Keep DeviceClaim, Device, MachineClaim, and Installation semantics independent
+- Keep DeviceClaim, Device, MachineCapacity, customer Machine, and Installation semantics independent
   of backend node identifiers, workflow schemas, and native lifecycle names.
 - Specify capability discovery, operation correlation, deduplication, querying,
   cancellation boundaries, and evidence normalization before enabling effects.

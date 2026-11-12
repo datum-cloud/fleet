@@ -312,7 +312,7 @@ NodeClaim. For each selected pair of node and slot, it delivers one instance to
 the managed cluster through the admitted delivery path, pinned to the Kubernetes
 Node of that NodeClaim. It requests attachments from the networking authority
 and reports instance readiness on the NodeClaim. It does not edit OS
-configuration, MachineClaims, or attachments it did not request.
+configuration, customer Machines, or attachments it did not request.
 
 ## Rollout plan
 

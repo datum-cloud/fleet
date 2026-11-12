@@ -4,7 +4,7 @@
 
 # After the exact operator preparation plan succeeds, before allocation is enabled.
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: Machine
+kind: MachineCapacity
 metadata:
   name: iad1-r12-srv01
   namespace: infra-ops
@@ -23,8 +23,6 @@ metadata:
   name: db-01-primary
   namespace: acme
 status:
-  bindingID: alloc-7ab1
-  bindingEpoch: 1
   interfaceID: if-primary
   addresses: [10.42.0.23/24]
   conditions:
@@ -39,8 +37,6 @@ metadata:
   name: db-01-primary
   namespace: acme
 status:
-  bindingID: alloc-7ab1
-  bindingEpoch: 1
   interfaceID: if-primary
   addresses: [10.42.0.23/24]
   conditions:
@@ -54,8 +50,6 @@ metadata:
   name: db-01-os-01
   namespace: acme
 status:
-  bindingID: alloc-7ab1
-  bindingEpoch: 1
   resolvedImageDigest: "sha256:<pinned disk image digest>"
   conditions:
     - {type: ImageDeployed, status: "True", reason: VerifiedDiskWrite}
@@ -63,15 +57,13 @@ status:
     - {type: LocalBootConfigured, status: "True", reason: DeploymentMediaRemoved}
     - {type: Ready, status: "True", reason: PlatformHandoffComplete}
 ---
-# Public consumer view. The physical Machine/BMC/switch mapping stays private.
+# Public consumer view. MachineCapacity/Device/BMC/switch mapping stays private.
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: MachineClaim
+kind: Machine
 metadata:
   name: db-01
   namespace: acme
 status:
-  bindingID: alloc-7ab1
-  bindingEpoch: 1
   powerState: "On"
   installationRef: {name: db-01-os-01}
   interfaces:
@@ -84,6 +76,6 @@ status:
       grantedModes: [Graphical]
       available: true
   conditions:
-    - {type: Bound, status: "True", reason: ExclusiveReservationCommitted}
+    - {type: Bound, status: "True", reason: MachineAllocationCommitted}
     - {type: Ready, status: "True", reason: PlatformHandoffComplete}
     - {type: GuestReady, status: Unknown, reason: NoGuestReadinessContract}

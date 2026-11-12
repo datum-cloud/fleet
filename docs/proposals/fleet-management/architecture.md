@@ -143,10 +143,12 @@ be completed before continuing work or returning capacity to service.
 
 Fleet retains three kinds of records to support that recovery:
 
-- **Fleet admission records** hold the exclusive reservation and permitted effect
-  plan for provider and consumer Project UIDs, the actual asset, consumer claim,
-  retained source-class contract and revision, quota hold, binding epoch, and
-  expected predecessor. Only authorized admission writers can establish that permission.
+- **Fleet admission records** hold the immutable MachineAllocation and permitted
+  effect plan for the authenticated provider and consumer projects, provider
+  MachineCapacity, physical Device, customer Machine, retained source-class
+  contract and revision, quota hold, and expected predecessor. API-server-local
+  object identity is private evidence rather than an authored cross-control-plane
+  reference. Only authorized admission writers can establish that permission.
 - **Provider operation journal** retains the exact admitted inputs and correlates
   them with backend operations, progress, and evidence before effects begin.
   It preserves existing authority and cannot approve additional work.

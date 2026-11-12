@@ -106,9 +106,9 @@ spec:
     trustSecretRef: {name: network-management-ca}
 ---
 # OPERATOR: create after registration resolves the physical Device (see registration.yaml).
-# Machine is the compute representation, with its own allocation/preparation gates.
+# MachineCapacity is provider supply, with its own allocation/preparation gates.
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: Machine
+kind: MachineCapacity
 metadata:
   name: iad1-r12-srv01
   namespace: infra-ops
@@ -116,35 +116,16 @@ metadata:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:
   deviceRef: {name: server-example-001}
-  providerRef:
-    apiGroup: baremetal.fleet.datumapis.com
-    kind: BareMetalMachine
-    name: iad1-r12-srv01
   allocationPolicy: Disabled
   cleaningPolicyRef: {name: tenant-reuse-v1}
   reclaimPolicy: Retain
----
-# OPERATOR: illustrative direct BMC and console configuration. An adapter may
-# instead integrate backend-owned management without exposing BMC credentials.
-# Secret contents stay private.
-# Physical identity is resolved from Machine -> registered Device.
-apiVersion: baremetal.fleet.datumapis.com/v1alpha1
-kind: BareMetalMachine
-metadata:
-  name: iad1-r12-srv01
-  namespace: infra-ops
-spec:
-  managementMode: ObserveOnly
-  bmc:
-    endpoint: https://srv01.r12.iad1.bmc.example.invalid
-    systemID: /redfish/v1/Systems/System.Embedded.1
-    credentialsSecretRef: {name: srv01-bmc}
-    trustSecretRef: {name: bmc-ca}
-  console:
-    transport: RedfishGraphical
 
-# Later operator updates, after non-destructive identity/physical verification:
-# 1. BareMetalMachine.spec.managementMode = Managed
+# The location's owned-hardware adapter privately retains the BMC endpoint,
+# physical system selector, credential/trust references, and management mode,
+# keyed to this immutable MachineCapacity -> Device relationship. Those details
+# are not Fleet product resources or cross-control-plane fields.
+# Later, after non-destructive identity/physical verification:
+# 1. Enable effects in the private owned-hardware adapter.
 # 2. Explicitly authorize the exact preparation plan (requests.yaml).
-# 3. After successful preparation evidence, Machine.spec.allocationPolicy = Eligible.
-# Managed does not implicitly authorize cleaning, power changes, or installation.
+# 3. After successful evidence, set allocationPolicy = Eligible.
+# Adapter enrollment never implicitly authorizes cleaning, power, or installation.
