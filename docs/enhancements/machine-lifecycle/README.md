@@ -5,6 +5,8 @@ stage: alpha
 
 # Machine allocation and installation
 
+[Documentation overview](../../README.md) · [Functionality guide](../../functionality/README.md)
+
 - [Summary](#summary)
 - [Motivation](#motivation)
 - [Proposal](#proposal)
@@ -51,7 +53,7 @@ still stores its protected allocation and operation encoding in private Secrets,
 and the simulator's binding and epoch fields are private executor-fencing details,
 not fields in the proposed API contract. Fleet has no production allocation
 controller or real provider effects yet. The implemented subset and gaps are recorded in
-[`docs/implementation.md`](../../implementation.md).
+[`docs/development/README.md`](../../development/README.md).
 
 ## Motivation
 
@@ -973,7 +975,7 @@ It reports:
   `InsufficientCapacity`.
 
 Persist the selected configuration, catalog revision, observations, and device
-mapping in the [allocation](#allocation-record). Catalog changes require
+mapping in the [allocation](#machineallocation-record). Catalog changes require
 revalidation before allocation. Admitted work uses its retained inputs; an adapter
 that cannot honor them must stop or recover rather than substitute a configuration.
 

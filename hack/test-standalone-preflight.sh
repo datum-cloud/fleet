@@ -54,4 +54,4 @@ for manager in fleet-manager fleet-milo-manager; do
     exit 1
   fi
 done
-grep -q 'fleet-manager.*fleet-milo-manager' "$root/docs/standalone-smoke.md"
+grep -q 'fleet-manager.*fleet-milo-manager' "$root/docs/operations/standalone-smoke.md"

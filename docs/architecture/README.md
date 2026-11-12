@@ -1,4 +1,51 @@
-# Metal and Fleet API architecture
+# Metal and Fleet architecture guide
+
+[Product overview](../README.md) · [Functionality](../functionality/README.md) ·
+[Operations](../operations/README.md) · [Troubleshooting](../troubleshooting/README.md)
+
+Fleet groups related infrastructure capabilities without making one controller
+the owner of every resource. Physical inventory, allocation, installation, and
+managed node identity remain separate. Standalone and managed consumers use the
+same allocation and installation contracts.
+
+## Start with the boundaries
+
+Read the [design context](design.md) for the subsystem map, authority contracts,
+and unresolved questions. Then read the
+[detailed service architecture proposal](../proposals/fleet-management/architecture.md)
+and [architecture diagrams](../proposals/fleet-management/diagrams/README.md).
+These describe the intended service, not the deployed topology.
+
+Key principles to carry into the detailed design:
+
+- Each configuration surface has one authoritative writer. Networking/IPAM,
+  Galactic routing, DNS, and consumer service policy stay with their owners.
+- Publication and discovery are not authorization. Allocation needs retained
+  consumer authority and exact source identity before effects.
+- Hardware, allocation, installation, and logical node lifetimes are distinct.
+  Replacement must not silently reuse an old incarnation's authority.
+- Execution and cleanup can be uncertain. Unknown outcomes do not establish
+  readiness or permit capacity reuse.
+
+## Choose a deeper view
+
+| Design question | Reference |
+| --- | --- |
+| Which API groups own which resources? | [API boundaries](#api-boundaries) |
+| Where do controllers run and who writes each surface? | [Control-plane placement and writers](#control-plane-placement-and-writers) |
+| How is Bare Metal registered and renamed safely? | [Service registration and rollout](#service-registration-and-rollout) |
+| What are the machine resources and project boundaries? | [Machine lifecycle API design](../enhancements/machine-lifecycle/README.md#api-design) |
+| How are reservations and concurrent operations coordinated? | [Durable coordination](../enhancements/machine-lifecycle/README.md#durable-coordination) |
+| How are provider effects recovered safely? | [Provider execution and recovery](../enhancements/machine-lifecycle/README.md#provider-execution-and-recovery) |
+| What happens on release or project deletion? | [Release and project lifecycle](../enhancements/machine-lifecycle/README.md#release-and-project-lifecycle) |
+| Which internal interfaces and guarantees exist? | [Implementation status](../development/README.md) |
+| Which milestones must precede rollout? | [Implementation roadmap](../development/roadmap.md) |
+| Where did the design originate? | [Pinned source proposals](design.md#source-proposals), [migration record](../proposals/fleet-management/MIGRATION.md) |
+
+For subsystem-specific contracts, use the [functionality map](../functionality/README.md).
+For manifests and environment responsibilities rather than proposed topology,
+use the [operations guide](../operations/README.md).
+## Service and API model
 
 The customer-facing **Bare Metal** service uses `metal.datumapis.com`. Fleet
 manages physical infrastructure beneath it. The intended coordination API uses
@@ -61,7 +108,7 @@ customer source-use grant nor independent provider execution authority.
 Current main implements location resolution and event routing, not this complete
 federation topology. Standalone namespaces are project stand-ins; synthetic
 staging is a test mode. Neither establishes production federation or hardware
-readiness. See the [implementation status](implementation.md).
+readiness. See the [implementation status](../development/README.md).
 
 ## Service registration and rollout
 
@@ -75,7 +122,7 @@ Only Bare Metal is registered with Milo's service catalog:
 The Service and ServiceConfiguration remain Draft until environment-specific
 readiness gates pass. Entitlement and location-availability readers use the same
 `metal` reference. Fleet and coordination receive no separate Service,
-ServiceConfiguration, or customer entitlement. The [deployment guide](../config/README.md)
+ServiceConfiguration, or customer entitlement. The [deployment guide](../../config/README.md)
 describes bundle installation and environment-owned configuration.
 
 This is a breaking alpha rename, not a Kubernetes storage migration. Old CRs,
@@ -89,6 +136,6 @@ before enabling the renamed service. No live environment is changed by this PR.
 
 Repository, Go module, binaries, private record labels and Secret types, and
 release finalizers retain Fleet names. They are implementation identities.
-The [design context](design.md) and [source proposals](proposals/fleet-management/README.md)
+The [design context](design.md) and [source proposals](../proposals/fleet-management/README.md)
 provide the lifecycle rationale; this document supersedes their provisional
 API naming where broader resource placement remains unresolved.
