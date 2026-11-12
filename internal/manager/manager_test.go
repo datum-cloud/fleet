@@ -47,7 +47,7 @@ func TestProjectRequestSeparatesIndependentProjectLifetimes(t *testing.T) {
 }
 
 func TestObjectMapperKeepsSameNameAndUIDInConfiguredProject(t *testing.T) {
-	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "same-uid"}}
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "same-uid"}}
 	left := (Mappers{Project: testProject("milo", "project-1")}).RequestFor(context.Background(), claim)
 	right := (Mappers{Project: testProject("milo", "project-2")}).RequestFor(context.Background(), claim)
 	otherAuthority := (Mappers{Project: testProject("other", "project-1")}).RequestFor(context.Background(), claim)
@@ -82,7 +82,7 @@ func TestMachineRouteReadsPublicAndPrivateCachesSeparately(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := testProject("milo", "project")
-	machine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid"}}
+	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid"}}
 	secret := privateSecret(t, project, "default", "claim", "claim-uid", machine.UID)
 	public := fake.NewClientBuilder().WithScheme(scheme).
 		WithIndex(&fleetv1.MachineClass{}, IndexClassMachineNS, func(client.Object) []string { return nil }).
@@ -101,8 +101,8 @@ func TestMachineRouteReadsPublicAndPrivateCachesSeparately(t *testing.T) {
 }
 
 func TestPrimaryPredicateIgnoresStatusProjection(t *testing.T) {
-	oldClaim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "claim-uid", Generation: 3}}
-	newClaim := oldClaim.DeepCopyObject().(*fleetv1.MachineClaim)
+	oldClaim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "claim-uid", Generation: 3}}
+	newClaim := oldClaim.DeepCopyObject().(*fleetv1.Machine)
 	newClaim.Status.Phase = "Ready"
 	if PrimaryPredicate().Update(event.UpdateEvent{ObjectOld: oldClaim, ObjectNew: newClaim}) {
 		t.Fatal("status-only projector update re-enqueued coordinator")
@@ -111,19 +111,19 @@ func TestPrimaryPredicateIgnoresStatusProjection(t *testing.T) {
 	if !PrimaryPredicate().Update(event.UpdateEvent{ObjectOld: oldClaim, ObjectNew: newClaim}) {
 		t.Fatal("generation change was filtered")
 	}
-	newClaim = oldClaim.DeepCopyObject().(*fleetv1.MachineClaim)
+	newClaim = oldClaim.DeepCopyObject().(*fleetv1.Machine)
 	newClaim.Labels = map[string]string{"fleet.datumapis.com/test": "changed"}
 	if !PrimaryPredicate().Update(event.UpdateEvent{ObjectOld: oldClaim, ObjectNew: newClaim}) {
 		t.Fatal("label change was filtered")
 	}
-	newClaim = oldClaim.DeepCopyObject().(*fleetv1.MachineClaim)
+	newClaim = oldClaim.DeepCopyObject().(*fleetv1.Machine)
 	newClaim.Annotations = map[string]string{"fleet.datumapis.com/test": "changed"}
 	if !PrimaryPredicate().Update(event.UpdateEvent{ObjectOld: oldClaim, ObjectNew: newClaim}) {
 		t.Fatal("annotation change was filtered")
 	}
 
-	oldMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Generation: 2}}
-	newMachine := oldMachine.DeepCopyObject().(*fleetv1.Machine)
+	oldMachine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Generation: 2}}
+	newMachine := oldMachine.DeepCopyObject().(*fleetv1.MachineCapacity)
 	newMachine.Status.Hardware.CPU.Cores = 24
 	if !DependencyPredicate().Update(event.UpdateEvent{ObjectOld: oldMachine, ObjectNew: newMachine}) {
 		t.Fatal("provider dependency status change was filtered")
@@ -151,10 +151,10 @@ func TestRouteRejectsRecreatedDependencyLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "new-class-uid"}}
-	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "claim-uid"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}}}
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "claim-uid"}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}}}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, claim).
-		WithIndex(&fleetv1.MachineClaim{}, IndexClaimClassName, func(object client.Object) []string {
-			return []string{object.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name}
+		WithIndex(&fleetv1.Machine{}, IndexClaimClassName, func(object client.Object) []string {
+			return []string{object.(*fleetv1.Machine).Spec.MachineClassRef.Name}
 		}).Build()
 	mapper := Mappers{Reader: kube, Project: testProject("milo", "project")}
 	stale := RouteRequest{AuthorityID: "milo", ProjectUID: "project", Kind: RouteClass, Name: class.Name, UID: "old-class-uid"}
@@ -178,8 +178,8 @@ func TestMachineDeleteSnapshotRoutesOldLifetimeAfterRecreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := testProject("milo", "project")
-	oldMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "old-machine", Labels: map[string]string{"pool": "old"}}}
-	newMachine := &fleetv1.Machine{ObjectMeta: *oldMachine.ObjectMeta.DeepCopy()}
+	oldMachine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "old-machine", Labels: map[string]string{"pool": "old"}}}
+	newMachine := &fleetv1.MachineCapacity{ObjectMeta: *oldMachine.ObjectMeta.DeepCopy()}
 	newMachine.UID = "new-machine"
 	newMachine.Labels = map[string]string{"pool": "new"}
 	secret := privateSecret(t, project, "default", "claim", "claim-uid", "old-machine")
@@ -188,7 +188,7 @@ func TestMachineDeleteSnapshotRoutesOldLifetimeAfterRecreation(t *testing.T) {
 		WithIndex(&corev1.Secret{}, IndexPrivateMachineUID, func(object client.Object) []string { return []string{"old-machine"} }).Build()
 	mapper := Mappers{Reader: kube, Project: project, PrivateNamespace: "private"}
 	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
-	typedRouteMap(mapper.Route(RouteMachine, "")).Delete(context.Background(), event.TypedDeleteEvent[client.Object]{Object: oldMachine}, queue)
+	typedRouteMap(mapper.Route(RouteMachineCapacity, "")).Delete(context.Background(), event.TypedDeleteEvent[client.Object]{Object: oldMachine}, queue)
 	route, shutdown := queue.Get()
 	if shutdown {
 		t.Fatal("delete snapshot was not queued")
@@ -218,23 +218,23 @@ func TestMachineUpdateRoutesOldAndNewSelectorDependents(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := testProject("milo", "project")
-	oldMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Labels: map[string]string{"pool": "blue"}}}
-	newMachine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Labels: map[string]string{"pool": "red"}}}
-	blue := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "blue", UID: "blue-class"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "blue"}}}}}}
-	red := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "red", UID: "red-class"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "red"}}}}}}
-	blueClaim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "blue", UID: "blue-claim"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "blue"}}}
-	redClaim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "red", UID: "red-claim"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "red"}}}
+	oldMachine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Labels: map[string]string{"pool": "blue"}}}
+	newMachine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine", UID: "machine-uid", Labels: map[string]string{"pool": "red"}}}
+	blue := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "blue", UID: "blue-class"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "blue"}}}}}}
+	red := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "red", UID: "red-class"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "red"}}}}}}
+	blueClaim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "blue", UID: "blue-claim"}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "blue"}}}
+	redClaim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "red", UID: "red-claim"}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "red"}}}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(newMachine, blue, red, blueClaim, redClaim).
 		WithIndex(&fleetv1.MachineClass{}, IndexClassMachineNS, func(object client.Object) []string {
-			return []string{object.(*fleetv1.MachineClass).Spec.Capacity.Machines.Namespace}
+			return []string{object.(*fleetv1.MachineClass).Spec.Capacity.MachineCapacities.Namespace}
 		}).
-		WithIndex(&fleetv1.MachineClaim{}, IndexClaimClassName, func(object client.Object) []string {
-			return []string{object.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name}
+		WithIndex(&fleetv1.Machine{}, IndexClaimClassName, func(object client.Object) []string {
+			return []string{object.(*fleetv1.Machine).Spec.MachineClassRef.Name}
 		}).
 		WithIndex(&corev1.Secret{}, IndexPrivateMachineUID, func(client.Object) []string { return nil }).Build()
 	mapper := Mappers{Reader: kube, Project: project, PrivateNamespace: "private"}
 	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
-	typedRouteMap(mapper.Route(RouteMachine, "")).Update(context.Background(), event.TypedUpdateEvent[client.Object]{ObjectOld: oldMachine, ObjectNew: newMachine}, queue)
+	typedRouteMap(mapper.Route(RouteMachineCapacity, "")).Update(context.Background(), event.TypedUpdateEvent[client.Object]{ObjectOld: oldMachine, ObjectNew: newMachine}, queue)
 	if queue.Len() != 2 {
 		t.Fatalf("machine update queued %d routing snapshots, want 2", queue.Len())
 	}
@@ -259,10 +259,10 @@ func TestMachineUpdateRoutesOldAndNewSelectorDependents(t *testing.T) {
 	}
 }
 
-func TestQuotaUpdateRoutesOldAndNewClaimLabels(t *testing.T) {
+func TestQuotaUpdateRoutesOldAndNewMachineLabels(t *testing.T) {
 	project := testProject("milo", "project")
-	oldQuota := &quotav1alpha1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: "quota", UID: "quota-uid", Labels: map[string]string{"fleet.datumapis.com/machine-claim-uid": "old-claim"}}}
-	newQuota := &quotav1alpha1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: "quota", UID: "quota-uid", Labels: map[string]string{"fleet.datumapis.com/machine-claim-uid": "new-claim"}}}
+	oldQuota := &quotav1alpha1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: "quota", UID: "quota-uid", Labels: map[string]string{"fleet.datumapis.com/machine-uid": "old-machine"}}}
+	newQuota := &quotav1alpha1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: "quota", UID: "quota-uid", Labels: map[string]string{"fleet.datumapis.com/machine-uid": "new-machine"}}}
 	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
 	typedRouteMap((Mappers{Project: project}).Route(RouteQuota, "")).Update(context.Background(), event.TypedUpdateEvent[client.Object]{ObjectOld: oldQuota, ObjectNew: newQuota}, queue)
 	if queue.Len() != 2 {
@@ -278,7 +278,7 @@ func TestQuotaUpdateRoutesOldAndNewClaimLabels(t *testing.T) {
 		queue.Done(route)
 	}
 	queue.ShutDown()
-	if !keys["old-claim"] || !keys["new-claim"] || len(keys) != 2 {
+	if !keys["old-machine"] || !keys["new-machine"] || len(keys) != 2 {
 		t.Fatalf("quota label update retained keys %v", keys)
 	}
 	overlap := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[RouteRequest]())
@@ -422,17 +422,17 @@ func TestMachineMapperUsesExactIndexesAndOnlyMatchingClasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	project := testProject("milo", "project-uid")
-	machine := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "m1", UID: "machine-uid", Labels: map[string]string{"pool": "blue"}}}
-	blue := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "blue", UID: "class-blue"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "blue"}}}}}}
-	red := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "red", UID: "class-red"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "red"}}}}}}
-	blueClaim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "blue-claim", UID: "blue-uid"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "blue"}}}
-	redClaim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "red-claim", UID: "red-uid"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "red"}}}
+	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "m1", UID: "machine-uid", Labels: map[string]string{"pool": "blue"}}}
+	blue := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "blue", UID: "class-blue"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "blue"}}}}}}
+	red := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "red", UID: "class-red"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "provider", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "red"}}}}}}
+	blueClaim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "blue-claim", UID: "blue-uid"}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "blue"}}}
+	redClaim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "red-claim", UID: "red-uid"}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "red"}}}
 	base := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(machine, blue, red, blueClaim, redClaim).
 		WithIndex(&fleetv1.MachineClass{}, IndexClassMachineNS, func(o client.Object) []string {
-			return []string{o.(*fleetv1.MachineClass).Spec.Capacity.Machines.Namespace}
+			return []string{o.(*fleetv1.MachineClass).Spec.Capacity.MachineCapacities.Namespace}
 		}).
-		WithIndex(&fleetv1.MachineClaim{}, IndexClaimClassName, func(o client.Object) []string { return []string{o.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name} }).
+		WithIndex(&fleetv1.Machine{}, IndexClaimClassName, func(o client.Object) []string { return []string{o.(*fleetv1.Machine).Spec.MachineClassRef.Name} }).
 		WithIndex(&corev1.Secret{}, IndexPrivateMachineUID, privateMetadataIndexer("private", func(route controller.PrivateRecordRoute) []string { return uidStrings(route.MachineUIDs) })).Build()
 	reader := &indexedReader{Reader: base}
 	requests, err := (Mappers{Reader: reader, Project: project, PrivateNamespace: "private"}).claimsForMachineE(context.Background(), machine)

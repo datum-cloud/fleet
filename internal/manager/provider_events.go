@@ -14,8 +14,8 @@ import (
 	"go.datum.net/fleet/internal/controller"
 )
 
-// ProviderEventRequest retains the exact provider Machine lifetime so a
-// provider-side availability transition can wake consumer claims without a
+// ProviderEventRequest retains the exact provider MachineCapacity lifetime so a
+// provider-side availability transition can wake consumer Machines without a
 // polling resync.
 type ProviderEventRequest struct {
 	AuthorityID string
@@ -85,16 +85,16 @@ func (r ProviderEventReconciler) Reconcile(ctx context.Context, request Provider
 	if err := r.ProviderVerifier.VerifyProject(ctx, r.Provider); err != nil {
 		return reconcile.Result{}, err
 	}
-	var claims fleetv1.MachineClaimList
-	if err := r.Reader.List(ctx, &claims); err != nil {
+	var machines fleetv1.MachineList
+	if err := r.Reader.List(ctx, &machines); err != nil {
 		return reconcile.Result{}, err
 	}
-	for i := range claims.Items {
-		claim := &claims.Items[i]
-		if claim.UID == "" {
+	for i := range machines.Items {
+		machine := &machines.Items[i]
+		if machine.UID == "" {
 			continue
 		}
-		outcome := r.Handler.ReconcileEvent(ctx, ProjectRequest{AuthorityID: r.Consumer.AuthorityID, ProjectUID: r.Consumer.UID, Namespace: claim.Namespace, Name: claim.Name, UID: claim.UID})
+		outcome := r.Handler.ReconcileEvent(ctx, ProjectRequest{AuthorityID: r.Consumer.AuthorityID, ProjectUID: r.Consumer.UID, Namespace: machine.Namespace, Name: machine.Name, UID: machine.UID})
 		if outcome.RetryError != nil {
 			return reconcile.Result{}, outcome.RetryError
 		}

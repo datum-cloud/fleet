@@ -22,17 +22,17 @@ func TestServiceAvailabilityRoutesOnlyMatchingLocationClaims(t *testing.T) {
 	if err := servicesv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	central := &fleetv1.MachineClaim{
+	central := &fleetv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central", UID: "central-uid"},
-		Spec:       fleetv1.MachineClaimSpec{LocationRef: fleetv1.LocalReference{Name: "us-central-1"}},
+		Spec:       fleetv1.MachineSpec{LocationRef: fleetv1.LocalReference{Name: "us-central-1"}},
 	}
-	east := &fleetv1.MachineClaim{
+	east := &fleetv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "east", UID: "east-uid"},
-		Spec:       fleetv1.MachineClaimSpec{LocationRef: fleetv1.LocalReference{Name: "us-east-1"}},
+		Spec:       fleetv1.MachineSpec{LocationRef: fleetv1.LocalReference{Name: "us-east-1"}},
 	}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(central, east).
-		WithIndex(&fleetv1.MachineClaim{}, IndexClaimLocationName, func(object client.Object) []string {
-			return one(object.(*fleetv1.MachineClaim).Spec.LocationRef.Name)
+		WithIndex(&fleetv1.Machine{}, IndexClaimLocationName, func(object client.Object) []string {
+			return one(object.(*fleetv1.Machine).Spec.LocationRef.Name)
 		}).Build()
 	project := controller.ProjectIdentity{AuthorityID: "milo", RouteName: "consumer", UID: "project-uid"}
 	mappers := Mappers{Reader: reader, Project: project}

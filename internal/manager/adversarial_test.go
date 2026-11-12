@@ -34,10 +34,10 @@ func TestInitialDependencyAddRetriesFirstListFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid"}}
-	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "claim-uid"}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}}}
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "claim", UID: "claim-uid"}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}}}
 	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, claim).
-		WithIndex(&fleetv1.MachineClaim{}, IndexClaimClassName, func(object client.Object) []string {
-			return []string{object.(*fleetv1.MachineClaim).Spec.MachineClassRef.Name}
+		WithIndex(&fleetv1.Machine{}, IndexClaimClassName, func(object client.Object) []string {
+			return []string{object.(*fleetv1.Machine).Spec.MachineClassRef.Name}
 		}).Build()
 	reader := &failFirstListReader{Reader: base, remaining: 1}
 	project := testProject("milo", "project")
@@ -350,14 +350,14 @@ func TestInstallationClaimIndexIncludesNamespace(t *testing.T) {
 	if err := fleetv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	left := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: "left", Name: "install", UID: "left-install"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: "claim"}}}
-	right := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: "right", Name: "install", UID: "right-install"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: "claim"}}}
+	left := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: "left", Name: "install", UID: "left-install"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: "claim"}}}
+	right := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: "right", Name: "install", UID: "right-install"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: "claim"}}}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(left, right).
 		WithIndex(&fleetv1.Installation{}, IndexInstallationClaim, func(object client.Object) []string {
 			installation := object.(*fleetv1.Installation)
-			return []string{installation.Namespace + "/" + installation.Spec.ClaimRef.Name}
+			return []string{installation.Namespace + "/" + installation.Spec.MachineRef.Name}
 		}).Build()
-	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "left", Name: "claim", UID: "claim-uid"}}
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "left", Name: "claim", UID: "claim-uid"}}
 	requests, err := (Mappers{Reader: kube, Project: testProject("milo", "project")}).installationsForClaimE(context.Background(), claim)
 	if err != nil || len(requests) != 1 || requests[0].UID != left.UID {
 		t.Fatalf("requests=%v err=%v", requests, err)
@@ -369,11 +369,11 @@ func TestInstallationEventRoutesOnlySameNamespaceInitialReference(t *testing.T) 
 	if err := fleetv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	left := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "left", Name: "claim", UID: "left-claim"}, Spec: fleetv1.MachineClaimSpec{InitialInstallationRef: &fleetv1.LocalReference{Name: "bootstrap"}}}
-	right := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "right", Name: "claim", UID: "right-claim"}, Spec: fleetv1.MachineClaimSpec{InitialInstallationRef: &fleetv1.LocalReference{Name: "bootstrap"}}}
+	left := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "left", Name: "claim", UID: "left-claim"}, Spec: fleetv1.MachineSpec{InitialInstallationRef: &fleetv1.LocalReference{Name: "bootstrap"}}}
+	right := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "right", Name: "claim", UID: "right-claim"}, Spec: fleetv1.MachineSpec{InitialInstallationRef: &fleetv1.LocalReference{Name: "bootstrap"}}}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(left, right).
-		WithIndex(&fleetv1.MachineClaim{}, IndexClaimInstallation, func(object client.Object) []string {
-			claim := object.(*fleetv1.MachineClaim)
+		WithIndex(&fleetv1.Machine{}, IndexClaimInstallation, func(object client.Object) []string {
+			claim := object.(*fleetv1.Machine)
 			return []string{claim.Namespace + "/" + claim.Spec.InitialInstallationRef.Name}
 		}).Build()
 	project := testProject("milo", "project")

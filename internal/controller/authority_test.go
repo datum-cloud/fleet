@@ -99,7 +99,7 @@ func TestInstallRejectsCustodyAssetCorruptionBeforeEffects(t *testing.T) {
 			if err := f.coordinator.client.Update(ctx, secret); err != nil {
 				t.Fatal(err)
 			}
-			installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "installation-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+			installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "installation-uid"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 			_, err = f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, ClaimScope: ProjectClaimScope(consumer), ConsumerProject: consumer, Admission: installAdmission()})
 			if !errors.Is(err, ErrRecordInvalid) || resolver.calls != 0 || len(f.executor.requests) != 0 {
 				t.Fatalf("Install error=%v image=%d executor=%d", err, resolver.calls, len(f.executor.requests))
@@ -209,7 +209,7 @@ func TestInstallationsAreScopedAcrossProjectAPIsWithEqualClaimUIDs(t *testing.T)
 		if _, err := f.coordinator.Allocate(ctx, request); err != nil {
 			t.Fatal(err)
 		}
-		installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: types.UID(tc.name + "-installation")}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+		installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: types.UID(tc.name + "-installation")}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 		result, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, ClaimScope: ProjectClaimScope(tc.consumer), ConsumerProject: tc.consumer, Admission: installAdmission()})
 		if err != nil || result.Record.ClaimScope != ProjectClaimScope(tc.consumer) || result.Record.ConsumerProject != tc.consumer {
 			t.Fatalf("%s installation = %#v, %v", tc.name, result, err)

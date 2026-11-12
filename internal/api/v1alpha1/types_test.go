@@ -16,8 +16,9 @@ func TestAddToSchemeRegistersPublicKinds(t *testing.T) {
 	for _, kind := range []string{
 		"MachineClass", "MachineClassList",
 		"MachineProfile", "MachineProfileList",
+		"MachineCapacity", "MachineCapacityList",
 		"Machine", "MachineList",
-		"MachineClaim", "MachineClaimList",
+		"MachineAllocation", "MachineAllocationList",
 		"Installation", "InstallationList",
 	} {
 		gvk := GroupVersion.WithKind(kind)
@@ -28,9 +29,9 @@ func TestAddToSchemeRegistersPublicKinds(t *testing.T) {
 }
 
 func TestDeepCopyObjectDoesNotAliasNestedState(t *testing.T) {
-	original := &MachineClaim{
+	original := &Machine{
 		ObjectMeta: metav1.ObjectMeta{Name: "example", Labels: map[string]string{"owner": "consumer-a"}},
-		Spec: MachineClaimSpec{
+		Spec: MachineSpec{
 			MachineClassRef:   LocalReference{Name: "standard"},
 			MachineProfileRef: LocalReference{Name: "general-purpose"},
 			LocationRef:       LocalReference{Name: "us-central-1"},
@@ -42,7 +43,7 @@ func TestDeepCopyObjectDoesNotAliasNestedState(t *testing.T) {
 		},
 	}
 
-	copy := original.DeepCopyObject().(*MachineClaim)
+	copy := original.DeepCopyObject().(*Machine)
 	copy.Labels["owner"] = "consumer-b"
 	copy.Spec.NetworkInterfaces[0].IPFamilies[0] = "IPv4"
 

@@ -31,11 +31,11 @@ kind: Role
 metadata: {name: fleet-synthetic-provider-writer, namespace: fleet-provider}
 rules:
   - apiGroups: [fleet.datumapis.com]
-    resources: [machines]
+    resources: [machinecapacities]
     resourceNames: [central1-baremetal-01]
     verbs: [get]
   - apiGroups: [fleet.datumapis.com]
-    resources: [machines/status]
+    resources: [machinecapacities/status]
     resourceNames: [central1-baremetal-01]
     verbs: [get, update]
 ---
@@ -51,11 +51,11 @@ kind: Role
 metadata: {name: fleet-synthetic-consumer-writer, namespace: fleet-project-a}
 rules:
   - apiGroups: [fleet.datumapis.com]
-    resources: [machineclaims]
+    resources: [machines]
     resourceNames: [allocation]
     verbs: [get, update, delete]
   - apiGroups: [fleet.datumapis.com]
-    resources: [machineclaims/status]
+    resources: [machines/status]
     resourceNames: [allocation]
     verbs: [get, update]
   - apiGroups: [fleet.datumapis.com]
@@ -79,11 +79,11 @@ kind: Role
 metadata: {name: fleet-synthetic-consumer-writer, namespace: fleet-project-b}
 rules:
   - apiGroups: [fleet.datumapis.com]
-    resources: [machineclaims]
+    resources: [machines]
     resourceNames: [allocation]
     verbs: [get, update]
   - apiGroups: [fleet.datumapis.com]
-    resources: [machineclaims/status]
+    resources: [machines/status]
     resourceNames: [allocation]
     verbs: [get, update]
 ---

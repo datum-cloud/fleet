@@ -147,15 +147,15 @@ func newFixture(t *testing.T) *fixture {
 }
 
 func (f *fixture) request(claimUID types.UID) AllocationRequest {
-	claim := &fleetv1.MachineClaim{ObjectMeta: metav1.ObjectMeta{Namespace: "project", Name: "claim-" + string(claimUID), UID: claimUID, Finalizers: []string{MachineClaimFinalizer}}, Spec: fleetv1.MachineClaimSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}, MachineProfileRef: fleetv1.LocalReference{Name: "profile"}}}
-	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{Machines: fleetv1.MachineSelector{Namespace: "provider"}}}}
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "project", Name: "claim-" + string(claimUID), UID: claimUID, Finalizers: []string{MachineFinalizer}}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}, MachineProfileRef: fleetv1.LocalReference{Name: "profile"}}}
+	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "provider"}}}}
 	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "profile", UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64"}, Memory: fleetv1.MemoryRequirement{}}}
 	conditions := []metav1.Condition{}
 	for _, typ := range []string{"Prepared", "Healthy", "Available"} {
 		conditions = append(conditions, metav1.Condition{Type: typ, Status: metav1.ConditionTrue, ObservedGeneration: 2, LastTransitionTime: metav1.Now()})
 	}
-	machine := fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine-1", UID: "machine-uid", Generation: 2}, Spec: fleetv1.MachineSpec{AllocationPolicy: "Enabled", ProviderRef: fleetv1.TypedLocalReference{APIGroup: "test", Kind: "Host", Name: "host-1"}}, Status: fleetv1.MachineStatus{Hardware: fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}, Conditions: conditions}}
-	return AllocationRequest{Claim: claim, Class: class, Profile: profile, Machines: []fleetv1.Machine{machine}, EvidenceObservedAt: map[types.UID]time.Time{machine.UID: f.now}, NamespaceUID: "namespace-uid", Admission: AdmissionAuthority{PrincipalUID: "user-uid", DecisionID: "decision-1"}}
+	machine := fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "machine-1", UID: "machine-uid", Generation: 2}, Spec: fleetv1.MachineCapacitySpec{AllocationPolicy: "Enabled", DeviceRef: fleetv1.LocalReference{Name: "host-1"}}, Status: fleetv1.MachineCapacityStatus{Hardware: fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}, Conditions: conditions}}
+	return AllocationRequest{Claim: claim, Class: class, Profile: profile, MachineCapacities: []fleetv1.MachineCapacity{machine}, EvidenceObservedAt: map[types.UID]time.Time{machine.UID: f.now}, NamespaceUID: "namespace-uid", Admission: AdmissionAuthority{PrincipalUID: "user-uid", DecisionID: "decision-1"}}
 }
 
 func TestAllocationReleaseAndEpochReuse(t *testing.T) {
@@ -195,8 +195,8 @@ func TestConcurrentDifferingCandidatesSelectOnlyOneAsset(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	left, right := f.request("claim"), f.request("claim")
-	right.Machines[0].Name, right.Machines[0].UID, right.Machines[0].Spec.ProviderRef.Name = "machine-2", "machine-2-uid", "host-2"
-	right.EvidenceObservedAt = map[types.UID]time.Time{right.Machines[0].UID: f.now}
+	right.MachineCapacities[0].Name, right.MachineCapacities[0].UID, right.MachineCapacities[0].Spec.DeviceRef.Name = "machine-2", "machine-2-uid", "host-2"
+	right.EvidenceObservedAt = map[types.UID]time.Time{right.MachineCapacities[0].UID: f.now}
 	if err := f.coordinator.EnsureClaimCustody(ctx, left.Claim, left.NamespaceUID, left.Admission); err != nil {
 		t.Fatal(err)
 	}
@@ -232,9 +232,9 @@ func TestOccupiedSelectedCandidateClearsOnlyUnmaterializedSelection(t *testing.T
 	if _, err := f.coordinator.Allocate(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
-	second := waiter.Machines[0]
-	second.Name, second.UID, second.Spec.ProviderRef.Name = "machine-2", "machine-2-uid", "host-2"
-	waiter.Machines = []fleetv1.Machine{waiter.Machines[0], second}
+	second := waiter.MachineCapacities[0]
+	second.Name, second.UID, second.Spec.DeviceRef.Name = "machine-2", "machine-2-uid", "host-2"
+	waiter.MachineCapacities = []fleetv1.MachineCapacity{waiter.MachineCapacities[0], second}
 	waiter.EvidenceObservedAt[second.UID] = f.now
 	record, err := f.coordinator.Allocate(ctx, waiter)
 	if err != nil || record.MachineUID != second.UID {
@@ -246,7 +246,7 @@ func TestReleasedAssetCannotBeReusedBeforeCustodyRecordsCompletion(t *testing.T)
 	ctx := context.Background()
 	f := newFixture(t)
 	first, second := f.request("one"), f.request("two")
-	for _, claim := range []*fleetv1.MachineClaim{first.Claim, second.Claim} {
+	for _, claim := range []*fleetv1.Machine{first.Claim, second.Claim} {
 		if err := f.coordinator.EnsureClaimCustody(ctx, claim, "namespace-uid", AdmissionAuthority{PrincipalUID: "user-uid", DecisionID: "decision-1"}); err != nil {
 			t.Fatal(err)
 		}
@@ -317,7 +317,7 @@ func TestCustodyAloneCannotAllocateWithoutLiveFleetFinalizer(t *testing.T) {
 		t.Fatal("allocation without finalizer succeeded")
 	}
 	now := metav1.Now()
-	request.Claim.Finalizers = []string{MachineClaimFinalizer}
+	request.Claim.Finalizers = []string{MachineFinalizer}
 	request.Claim.DeletionTimestamp = &now
 	if _, err := f.coordinator.Allocate(ctx, request); err == nil {
 		t.Fatal("deleting claim allocated")
@@ -331,14 +331,14 @@ func TestReleaseRecoversPreparationBeforeCustodyAdvanceWithoutCleanup(t *testing
 	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := f.coordinator.proposeAsset(ctx, request, &request.Machines[0])
+	proposal, _, err := f.coordinator.proposeAsset(ctx, request, &request.MachineCapacities[0])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
-	if _, won, err := f.coordinator.prepareAsset(ctx, request, &request.Machines[0]); err != nil || !won {
+	if _, won, err := f.coordinator.prepareAsset(ctx, request, &request.MachineCapacities[0]); err != nil || !won {
 		t.Fatalf("prepare won=%v error=%v", won, err)
 	}
 	result, err := f.coordinator.Release(ctx, request.Claim.UID)
@@ -354,7 +354,7 @@ func TestReleaseBetweenSelectionAndCreateTombstonesProposalAgainstStaleAllocator
 	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
 		t.Fatal(err)
 	}
-	proposal, reusable, err := f.coordinator.proposeAsset(ctx, request, &request.Machines[0])
+	proposal, reusable, err := f.coordinator.proposeAsset(ctx, request, &request.MachineCapacities[0])
 	if err != nil || !reusable {
 		t.Fatalf("proposal=%#v reusable=%v err=%v", proposal, reusable, err)
 	}
@@ -365,7 +365,7 @@ func TestReleaseBetweenSelectionAndCreateTombstonesProposalAgainstStaleAllocator
 	if err != nil || !result.SafeToRemoveFinalizer {
 		t.Fatalf("Release=%#v err=%v", result, err)
 	}
-	if _, won, err := f.coordinator.prepareAsset(ctx, request, &request.Machines[0]); err != nil || won {
+	if _, won, err := f.coordinator.prepareAsset(ctx, request, &request.MachineCapacities[0]); err != nil || won {
 		t.Fatalf("stale prepare won=%v err=%v", won, err)
 	}
 	record, _, err := f.coordinator.getAsset(ctx, proposal.AssetID)
@@ -381,14 +381,14 @@ func TestPreparingRetryRevalidatesInputsAndDuplicateRecordsBlock(t *testing.T) {
 	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
 		t.Fatal(err)
 	}
-	proposal, _, err := f.coordinator.proposeAsset(ctx, request, &request.Machines[0])
+	proposal, _, err := f.coordinator.proposeAsset(ctx, request, &request.MachineCapacities[0])
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
 		t.Fatal(err)
 	}
-	prepared, won, err := f.coordinator.prepareAsset(ctx, request, &request.Machines[0])
+	prepared, won, err := f.coordinator.prepareAsset(ctx, request, &request.MachineCapacities[0])
 	if err != nil || !won {
 		t.Fatalf("prepare = %#v, %v, %v", prepared, won, err)
 	}
@@ -426,8 +426,8 @@ func TestInstallUsesPrivatePredecessorAndRecoversUnknownOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Claim.Status.InstallationRevision = "forged-public-value"
-	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "installation-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "registry/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	request.Claim.Status.CurrentInstallationRef = &fleetv1.LocalReference{Name: "forged-public-value"}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "installation-uid"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "registry/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	f.executor.unknown = true
 	result, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: "namespace-uid", Admission: installAdmission()})
 	if err != nil || result.Revision == "" {
@@ -454,6 +454,21 @@ func TestInstallUsesPrivatePredecessorAndRecoversUnknownOutcome(t *testing.T) {
 	if _, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: "namespace-uid", Admission: changed}); !errors.Is(err, ErrPredecessorConflict) {
 		t.Fatalf("changed admission error = %v", err)
 	}
+	f.coordinator.images = LocalDigestImageResolver{}
+	successor := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install-2", UID: "installation-uid-2"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "Installation", Name: installation.Name}, ImageRef: fleetv1.LocalReference{Name: "registry/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	if _, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: successor, NamespaceUID: "namespace-uid", Admission: installAdmission()}); err != nil {
+		t.Fatalf("named predecessor install: %v", err)
+	}
+	retained, _, err := f.coordinator.getAsset(ctx, asset.AssetID)
+	if err != nil || retained.CurrentInstallationName != successor.Name {
+		t.Fatalf("current installation = %q, %v", retained.CurrentInstallationName, err)
+	}
+	stale := successor.DeepCopyObject().(*fleetv1.Installation)
+	stale.Name, stale.UID = "install-stale", "installation-uid-stale"
+	stale.Spec.ExpectedPredecessor = fleetv1.InstallationPredecessor{Type: "None"}
+	if _, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: stale, NamespaceUID: "namespace-uid", Admission: installAdmission()}); !errors.Is(err, ErrPredecessorConflict) {
+		t.Fatalf("stale predecessor error = %v", err)
+	}
 }
 
 func TestInstallReplayRejectsRetainedRoutingIdentitySubstitution(t *testing.T) {
@@ -478,7 +493,7 @@ func TestInstallReplayRejectsRetainedRoutingIdentitySubstitution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+			installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 			installRequest := InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}
 			image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
 			scope := LocalClaimScope(request.NamespaceUID)
@@ -515,7 +530,7 @@ func TestInstallUpgradesAndRecoversLegacyV1Operation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	installRequest := InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}
 	image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
 	scope := LocalClaimScope(request.NamespaceUID)
@@ -548,7 +563,7 @@ func TestReleaseRecoversRetainedActiveInstallationBeforeCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
 	op, _, err := f.coordinator.getOrCreateOperation(ctx, operationRecordName(LocalClaimScope(request.NamespaceUID), request.Claim.UID, "None"), InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}, asset, "None", image)
 	if err != nil {
@@ -581,7 +596,7 @@ func TestInstallRejectsDeletingOrUnprotectedClaim(t *testing.T) {
 			} else {
 				request.Claim.Finalizers = nil
 			}
-			installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+			installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "install-uid"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 			if _, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}); err == nil {
 				t.Fatal("installation admission remained open")
 			}
@@ -658,7 +673,7 @@ func TestFailClosedInputsAndDiskCount(t *testing.T) {
 	if _, err := f.coordinator.Allocate(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: r.Claim.Namespace, Name: "install", UID: "install"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: r.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:ABC"}}}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: r.Claim.Namespace, Name: "install", UID: "install"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: r.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "image@sha256:ABC"}}}
 	if _, err := f.coordinator.Install(ctx, InstallationRequest{Claim: r.Claim, Installation: installation, NamespaceUID: "namespace", Admission: installAdmission()}); err == nil {
 		t.Fatal("non-canonical digest accepted")
 	}
@@ -675,7 +690,7 @@ func TestNetworkLifecycleRetainsInputsAndGatesProviderCleanup(t *testing.T) {
 	f.coordinator.networks = networks
 	request := f.request("networked")
 	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
-	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
+	request.MachineCapacities[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
 	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
 	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}, IPFamilies: []string{"IPv4"}}}
 	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
@@ -698,7 +713,7 @@ func TestNetworkLifecycleRetainsInputsAndGatesProviderCleanup(t *testing.T) {
 	if ready.Status != metav1.ConditionTrue || status.Interfaces[0].Conditions[0].Reason != "Verified" || status.Interfaces[0].Addresses[0].Address != "10.20.30.42/24" {
 		t.Fatalf("projection = %#v, condition %#v", status, ready)
 	}
-	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "installation-uid"}, Spec: fleetv1.InstallationSpec{ClaimRef: fleetv1.ClaimReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "registry/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
+	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Namespace: request.Claim.Namespace, Name: "install", UID: "installation-uid"}, Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: request.Claim.Name}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}, ImageRef: fleetv1.LocalReference{Name: "registry/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}
 	installed, err := f.coordinator.Install(ctx, InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()})
 	if err != nil || installed.Record.NetworkInputs == nil || installed.Record.NetworkInputs.Revision != "network-r1" {
 		t.Fatalf("Install = %#v, %v", installed, err)
@@ -742,7 +757,7 @@ func TestNetworkRefreshErrorKeepsLastProgrammedObservation(t *testing.T) {
 	f.coordinator.networks = networks
 	request := f.request("network-refresh-error")
 	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
-	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
+	request.MachineCapacities[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
 	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
 	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}, IPFamilies: []string{"IPv4"}}}
 	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
@@ -778,7 +793,7 @@ func TestNetworkPreflightRunsBeforeHardwareSelection(t *testing.T) {
 	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
 	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}}}
 	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
-	request.Machines = nil
+	request.MachineCapacities = nil
 	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
 		t.Fatal(err)
 	}
@@ -838,7 +853,7 @@ func TestNetworkReleaseBeforeEnsurePersistsDeleteIntent(t *testing.T) {
 	f.coordinator.networks = networks
 	request := f.request("network-delete-before-ensure")
 	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}}
-	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
+	request.MachineCapacities[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}}
 	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
 	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}}}
 	request.Location = fleetnetwork.LocationAuthority{Name: "us-central-1", UID: "location-uid", Revision: "location-r1"}
@@ -918,7 +933,7 @@ func TestCoordinatorRejectsPartialNetworkLifecycleWithoutCorruptingRecord(t *tes
 func twoInterfaceNetworkRequest(f *fixture, claimUID types.UID) AllocationRequest {
 	request := f.request(claimUID)
 	request.Profile.Spec.Interfaces = []fleetv1.InterfaceRequirement{{Name: "management"}, {Name: "data"}}
-	request.Machines[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}, {Name: "eno2"}}
+	request.MachineCapacities[0].Status.Hardware.Interfaces = []fleetv1.HardwareInterface{{Name: "eno1"}, {Name: "eno2"}}
 	request.Claim.Spec.LocationRef = fleetv1.LocalReference{Name: "us-central-1"}
 	request.Claim.Spec.NetworkInterfaces = []fleetv1.NetworkInterfaceRequest{
 		{Name: "management", Network: fleetv1.NamespacedReference{Name: "management"}},

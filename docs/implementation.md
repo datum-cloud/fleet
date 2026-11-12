@@ -3,15 +3,43 @@
 Status: public API foundation, standalone synthetic provider simulator,
 same-cluster allocation/installation lifecycle library, unwired NSO network
 lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
-event-only manager wiring scaffold with an injected MachineClaim lifecycle
-handler implemented. A packaged standalone synthetic
-smoke scenario exercises local-scope contention, install recovery, cleanup, and
-epoch reuse. An explicit Milo-routed synthetic staging overlay exercises
-event-driven claim allocation, contention, cleanup, and reuse through the public
-project API. Production caller-preserving
+event-only manager wiring scaffold with an injected Machine lifecycle
+handler implemented. The public allocation API now uses customer `Machine`,
+provider `MachineCapacity`, protected immutable `MachineAllocation`, and
+`Installation.machineRef`; authored references contain names while exact
+incarnation evidence remains private. A packaged standalone synthetic smoke
+scenario exercises local-scope contention, install recovery, cleanup, and
+capacity reuse. An explicit Milo-routed synthetic staging overlay exercises
+event-driven Machine allocation, contention, cleanup, and reuse through the
+public project API. Production caller-preserving
 admission, replayable Milo event adapters, and real providers are not implemented.
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
+
+## Allocation API migration
+
+The implemented alpha surface follows the current machine-allocation proposal:
+
+- consumer projects create `Machine` objects with required
+  `machineClassRef`, `machineProfileRef`, and `locationRef` names;
+- provider projects publish `MachineCapacity` objects whose immutable
+  `deviceRef` names the separately owned physical inventory record;
+- Fleet owns `MachineAllocation` records in the provider project. Their generated
+  names are allocation identities, their specs are immutable, and `Released` is
+  terminal; and
+- `Installation` names its Machine and, for reinstalls, the preceding
+  Installation. Fleet retains exact local object incarnations privately instead
+  of exposing Kubernetes UIDs in authored specs or status.
+
+CRDs, Go types, scheme registration, IAM ProtectedResources and roles, manager
+watches and routes, quota labels, standalone fixtures, and smoke assertions use
+those names. The lifecycle library's existing service-owned Secret is still the
+implemented storage encoding for the protected allocation record; introducing
+the `MachineAllocation` kind does not make that record customer-writable. The
+simulator continues to carry a private binding token and monotonic executor epoch
+to fence its legacy single-file backend. Those values are absent from the public
+and proposed resource contracts and must be replaced by immutable allocation
+name plus executor fencing token before a production backend is connected.
 
 ## Location authority
 
@@ -30,7 +58,7 @@ contract are production-hardening opportunities. They are not prerequisites for
 the MVP because the existing platform contract treats ServiceAvailability as a
 service rollout declaration rather than a renewable health lease.
 
-The event-only manager indexes MachineClaims by requested location and watches
+The event-only manager indexes Machines by requested location and watches
 both Location and ServiceAvailability objects. Semantic updates and deletes
 therefore route every affected claim through its existing durable work key;
 there is no periodic location resync. This implements resolution and event
@@ -133,21 +161,21 @@ a cache read or List failure is retried as the same source event instead of bein
 mistaken for an empty target set. Every direct and routed handler also verifies
 the configured Project lifetime through an injected trusted verifier.
 
-`ClaimHandler` implements the lifecycle ordering at the manager boundary. It
-exact-reads the queued claim and namespace lifetimes, resolves only injected
+`MachineHandler` implements the lifecycle ordering at the manager boundary. It
+exact-reads the queued Machine and namespace lifetimes, resolves only injected
 authoritative inputs, retains authority and custody before adding Fleet's
 finalizer, waits for the finalizer update event before allocation, and removes
 the finalizer only after verified cleanup and external settlement. Dependency
 waits return without a timed requeue. Trusted evidence expiry can request one
 exact coordinator-owned deadline; it is not a polling interval. Deletion and
-same-name recreation use exact claim UIDs.
+same-name recreation use exact Machine incarnation evidence retained privately.
 
-`MiloClaimLifecycle` is the concrete bridge to the existing Milo adapter and
+`MiloMachineLifecycle` is the concrete bridge to the existing Milo adapter and
 allocator. `PrepareOrRecoverClaim` validates current resolved inputs against the
 immutable private authority record, so the finalizer event and manager restart
 reuse the retained caller receipt rather than reauthorizing a different caller.
-Release recovers from the exact consumer Project lifetime and claim UID and does
-not require the public claim, class, or profile to remain present.
+Release recovers from the exact consumer Project and Machine lifetimes and does
+not require the public Machine, class, or profile to remain present.
 
 This handler is an orchestration seam, not a live integration. Watched objects
 do not contain the create-time caller identity, protected publication
