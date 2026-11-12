@@ -1,8 +1,6 @@
 **
 !go.mod
 !go.sum
-!api/
-!api/**
 !cmd/
 !cmd/**
 !internal/
