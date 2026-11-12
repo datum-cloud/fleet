@@ -9,7 +9,7 @@ for cluster in management location; do
   if [[ -f "${kubeconfig}" ]]; then
     kubectl --kubeconfig "${kubeconfig}" get all,events -A -o wide >"${OUT}/${cluster}-resources.txt" 2>&1 || true
     kubectl --kubeconfig "${kubeconfig}" get machines,machinecapacities,machineallocations,machinemanagementsessions,machinemanagementsessionbindings,projectedmachinemanagementsessions -A -o yaml >"${OUT}/${cluster}-fleet.yaml" 2>&1 || true
-    kubectl --kubeconfig "${kubeconfig}" logs -A --all-containers --prefix --tail=-1 >"${OUT}/${cluster}-logs.txt" 2>&1 || true
+    kubectl --kubeconfig "${kubeconfig}" logs --all-namespaces --all-containers --prefix --tail=-1 >"${OUT}/${cluster}-logs.txt" 2>&1 || true
     if [[ "${cluster}" == location ]]; then
       kubectl --kubeconfig "${kubeconfig}" -n machine-access-system exec deployment/fleet-gateway -- \
         sh -c 'for f in /var/lib/fleet/operations/*.json; do test -f "$f" && { echo "$f"; cat "$f"; }; done' \

@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -143,7 +144,7 @@ func (r *SessionReconciler) admit(ctx context.Context, session *fleetv1alpha1.Ma
 	expiry := metav1.NewTime(now.Add(ttl))
 	b := &fleetv1alpha1.MachineManagementSessionBinding{
 		TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSessionBinding"},
-		ObjectMeta: metav1.ObjectMeta{Name: "mms-" + randomCorrelationID(), Namespace: r.systemNamespace(), Labels: map[string]string{
+		ObjectMeta: metav1.ObjectMeta{Name: bindingName(session.UID), Namespace: r.systemNamespace(), Labels: map[string]string{
 			SessionUIDLabel: string(session.UID), MachineUIDLabel: string(machine.UID), AllocationNameLabel: a.Name,
 		}},
 		Spec: fleetv1alpha1.MachineManagementSessionBindingSpec{
@@ -337,6 +338,15 @@ func randomCorrelationID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// bindingName makes admission idempotent even while the controller-runtime
+// cache is briefly stale after a successful create. The domain-separated hash
+// is an opaque rendezvous name; the underlying Kubernetes UID remains only in
+// the protected central binding and is never placed in the location payload.
+func bindingName(uid types.UID) string {
+	sum := sha256.Sum256([]byte("fleet-machine-management-binding-v1\x00" + string(uid)))
+	return "mms-" + hex.EncodeToString(sum[:16])
 }
 
 func equalityStatus(s *fleetv1alpha1.MachineManagementSession, b *fleetv1alpha1.MachineManagementSessionBinding) bool {

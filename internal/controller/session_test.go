@@ -52,8 +52,25 @@ func TestAdmissionPinsMachineAllocationAndCapacity(t *testing.T) {
 		t.Fatalf("bindings=%d", len(bindings.Items))
 	}
 	b := bindings.Items[0]
+	if b.Name != bindingName(session.UID) {
+		t.Fatalf("binding name=%q, want deterministic opaque name %q", b.Name, bindingName(session.UID))
+	}
 	if b.Spec.MachineUID != machine.UID || b.Spec.AllocationUID != allocation.UID || b.Spec.MachineCapacityUID != capacity.UID || b.Spec.DeviceName != "device-a" || b.Spec.ProviderProject != "provider" || b.Spec.RequestingPrincipal != "alice@example.test" {
 		t.Fatalf("binding not pinned: %+v", b.Spec)
+	}
+}
+
+func TestBindingNameIsStableAndOpaque(t *testing.T) {
+	uid := types.UID("b88ddb18-b190-455f-bc91-29331950ca41")
+	got := bindingName(uid)
+	if got != bindingName(uid) {
+		t.Fatal("binding name changed for the same session UID")
+	}
+	if got == bindingName(types.UID("another-session")) {
+		t.Fatal("different session UIDs produced the same binding name")
+	}
+	if got == "mms-"+string(uid) {
+		t.Fatal("binding name exposed the raw session UID")
 	}
 }
 
