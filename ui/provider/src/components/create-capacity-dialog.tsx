@@ -1,6 +1,5 @@
-import { CAPACITY_POOL_LABEL, type MachineClass, type RawMachine } from '../types';
-import { useCreateMachine, useMachineClasses } from '../lib/api';
-import { SYNTHETIC_PROVIDER_API_GROUP } from '../../../shared/fleet-api';
+import { CAPACITY_POOL_LABEL, type MachineClass, type RawMachineCapacity } from '../types';
+import { useCreateMachineCapacity, useMachineClasses } from '../lib/api';
 import { Alert, AlertDescription } from '@datum-cloud/datum-ui/alert';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Form } from '@datum-cloud/datum-ui/form';
@@ -19,44 +18,38 @@ const resourceName = (label: string) =>
   z.string({ error: `${label} is required.` }).max(63, 'At most 63 characters.').regex(NAME_PATTERN, NAME_MESSAGE);
 
 // A class that draws from a namespace and capacity pool; only these can
-// place a new Machine where the class will find it.
-export type MachineTarget = MachineClass & { machineNamespace: string; capacityPool: string };
+// place new capacity where the class will find it.
+export type CapacityTarget = MachineClass & { capacityNamespace: string; capacityPool: string };
 
-export function machineTargets(classes: MachineClass[] | undefined): MachineTarget[] {
+export function capacityTargets(classes: MachineClass[] | undefined): CapacityTarget[] {
   return (classes ?? []).filter(
-    (c): c is MachineTarget => !c.source && !!c.machineNamespace && !!c.capacityPool
+    (c): c is CapacityTarget => !c.source && !!c.capacityNamespace && !!c.capacityPool
   );
 }
 
-// Only the synthetic provider exists so far, so the form fills in the rest
-// of the spec. The provider reference is immutable: these Machines stay
-// synthetic. A real provider brings back a provider choice. The cleaning
-// policy is the name Fleet's standalone fixtures use; nothing defines
-// cleaning policies yet. Allocation stays off unless asked.
-export const SYNTHETIC_PROVIDER_KIND = 'SyntheticMachine';
+// The form fills in the rest of the spec. Fleet has no Device inventory yet,
+// so the device reference is named after the capacity; it can't be changed
+// later. The cleaning policy is the name Fleet's standalone fixtures use;
+// nothing defines cleaning policies yet. Allocation stays off unless asked.
 export const SYNTHETIC_CLEANING_POLICY = 'synthetic-tenant-reuse-v1';
 
-export const machineFormSchema = z.object({
+export const capacityFormSchema = z.object({
   name: resourceName('Name'),
   machineClass: z.string({ error: 'Choose a class.' }).min(1, 'Choose a class.'),
   allocationEnabled: z.boolean().optional(),
 });
 
-export type MachineFormValues = z.infer<typeof machineFormSchema>;
+export type CapacityFormValues = z.infer<typeof capacityFormSchema>;
 
-export function toRawMachine(values: MachineFormValues, target: MachineTarget): RawMachine {
+export function toRawCapacity(values: CapacityFormValues, target: CapacityTarget): RawMachineCapacity {
   return {
     metadata: {
       name: values.name,
-      namespace: target.machineNamespace,
+      namespace: target.capacityNamespace,
       labels: { [CAPACITY_POOL_LABEL]: target.capacityPool },
     },
     spec: {
-      providerRef: {
-        apiGroup: SYNTHETIC_PROVIDER_API_GROUP,
-        kind: SYNTHETIC_PROVIDER_KIND,
-        name: values.name,
-      },
+      deviceRef: { name: values.name },
       allocationPolicy: values.allocationEnabled ? 'Enabled' : 'Disabled',
       cleaningPolicyRef: { name: SYNTHETIC_CLEANING_POLICY },
       reclaimPolicy: 'Retain',
@@ -64,15 +57,15 @@ export function toRawMachine(values: MachineFormValues, target: MachineTarget): 
   };
 }
 
-function Placement({ targets }: { targets: MachineTarget[] }) {
+function Placement({ targets }: { targets: CapacityTarget[] }) {
   const selected = Form.useWatch<string>('machineClass');
   const target = targets.find((t) => t.name === selected);
   if (!target) return null;
   return (
-    <Text as="p" textColor="muted" data-testid="fleet-plugin-machine-placement">
+    <Text as="p" textColor="muted" data-testid="fleet-plugin-capacity-placement">
       Created in namespace{' '}
       <Text textColor="default" weight="medium">
-        {target.machineNamespace}
+        {target.capacityNamespace}
       </Text>{' '}
       with capacity pool{' '}
       <Text textColor="default" weight="medium">
@@ -85,21 +78,21 @@ function Placement({ targets }: { targets: MachineTarget[] }) {
 
 // Errors render in the dialog because staff-portal does not share its toast
 // module with plugins.
-export function CreateMachineDialog() {
+export function CreateCapacityDialog() {
   const [open, setOpen] = useState(false);
-  const mutation = useCreateMachine();
+  const mutation = useCreateMachineCapacity();
   const { data: classes } = useMachineClasses();
-  const targets = machineTargets(classes);
+  const targets = capacityTargets(classes);
 
   const setOpenAndReset = (next: boolean) => {
     if (next) mutation.reset();
     setOpen(next);
   };
 
-  const handleSubmit = (values: MachineFormValues) => {
+  const handleSubmit = (values: CapacityFormValues) => {
     const target = targets.find((t) => t.name === values.machineClass);
     if (!target) return;
-    mutation.mutate(toRawMachine(values, target), { onSuccess: () => setOpen(false) });
+    mutation.mutate(toRawCapacity(values, target), { onSuccess: () => setOpen(false) });
   };
 
   return (
@@ -112,15 +105,15 @@ export function CreateMachineDialog() {
         className="w-full sm:w-auto"
         onClick={() => setOpenAndReset(true)}>
         <Icon icon={PlusIcon} className="size-4" />
-        Create machine
+        Create capacity
       </Button>
       <ConformAdapter>
         <Form.Dialog
           open={open}
           onOpenChange={setOpenAndReset}
-          title="Create a machine"
-          description="Registers a synthetic Machine for a class to draw from. Fleet fills in its hardware and health once discovery reports them."
-          schema={machineFormSchema}
+          title="Create machine capacity"
+          description="Registers a synthetic machine for a class to draw from. Fleet fills in its hardware and health once discovery reports them."
+          schema={capacityFormSchema}
           defaultValues={{ allocationEnabled: false }}
           onSubmit={handleSubmit}
           loading={mutation.isPending}
@@ -131,7 +124,7 @@ export function CreateMachineDialog() {
           // the body scroll instead.
           formClassName="flex min-h-0 flex-col"
           className="w-full focus:ring-0 focus:outline-none sm:max-w-lg">
-          <div className="space-y-4 px-5" data-testid="fleet-plugin-create-machine-form">
+          <div className="space-y-4 px-5" data-testid="fleet-plugin-create-capacity-form">
             {mutation.error && (
               <Alert variant="destructive">
                 <AlertDescription>{mutation.error.message}</AlertDescription>
@@ -143,7 +136,7 @@ export function CreateMachineDialog() {
             <Form.Field
               name="machineClass"
               label="Class"
-              description="The machine goes in this class's namespace and capacity pool."
+              description="It goes in this class's namespace and capacity pool."
               required>
               {targets.length > 0 ? (
                 <Form.Select placeholder="Choose a class">
@@ -161,7 +154,7 @@ export function CreateMachineDialog() {
             </Form.Field>
             <Placement targets={targets} />
             <Form.Field name="allocationEnabled">
-              <Form.Checkbox label="Offer this machine for allocation" />
+              <Form.Checkbox label="Offer for allocation" />
             </Form.Field>
           </div>
         </Form.Dialog>

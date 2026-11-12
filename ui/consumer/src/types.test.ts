@@ -1,22 +1,24 @@
 import {
-  claimPhase,
+  machineStatus,
+  machineSteps,
+  machinePhase,
   toCatalog,
   toCatalogOffering,
-  toClaimDetail,
-  toMachineClaim,
+  toMachineDetail,
+  toMachine,
   type RawMachineProfile,
 } from './types';
-import { FIXTURE_CLAIMS, FIXTURE_CLASSES, FIXTURE_PROFILES } from './lib/fixtures';
+import { FIXTURE_MACHINES, FIXTURE_CLASSES, FIXTURE_PROFILES } from './lib/fixtures';
 import { describe, expect, it } from 'vitest';
 
-describe('claimPhase', () => {
+describe('machinePhase', () => {
   it('treats absent conditions as Pending', () => {
-    expect(claimPhase([]).phase).toBe('Pending');
+    expect(machinePhase([]).phase).toBe('Pending');
   });
 
   it('reports Pending with the Bound reason while unbound', () => {
     expect(
-      claimPhase([
+      machinePhase([
         { type: 'Accepted', status: 'True' },
         { type: 'Bound', status: 'False', reason: 'InsufficientCapacity' },
       ])
@@ -25,7 +27,7 @@ describe('claimPhase', () => {
 
   it('reports Bound until Ready is True', () => {
     expect(
-      claimPhase([
+      machinePhase([
         { type: 'Bound', status: 'True' },
         { type: 'Ready', status: 'Unknown', reason: 'OutcomeUnknown' },
       ])
@@ -34,18 +36,18 @@ describe('claimPhase', () => {
 
   it('reports Rejected when Accepted is False', () => {
     expect(
-      claimPhase([{ type: 'Accepted', status: 'False', reason: 'AuthorizationUnavailable' }])
+      machinePhase([{ type: 'Accepted', status: 'False', reason: 'AuthorizationUnavailable' }])
     ).toEqual({ phase: 'Rejected', reason: 'AuthorizationUnavailable' });
   });
 
   it('lets a pending deletion win over Ready', () => {
-    expect(claimPhase([{ type: 'Ready', status: 'True' }], true).phase).toBe('Releasing');
+    expect(machinePhase([{ type: 'Ready', status: 'True' }], true).phase).toBe('Releasing');
   });
 });
 
-describe('toMachineClaim', () => {
+describe('toMachine', () => {
   it('maps the fixtures to Ready, Pending and Releasing', () => {
-    expect(FIXTURE_CLAIMS.map(toMachineClaim).map((c) => c.phase)).toEqual([
+    expect(FIXTURE_MACHINES.map(toMachine).map((c) => c.phase)).toEqual([
       'Ready',
       'Pending',
       'Releasing',
@@ -53,17 +55,17 @@ describe('toMachineClaim', () => {
   });
 
   it('defaults power intent to Off and leaves unreported hardware absent', () => {
-    const { powerState: _, ...spec } = FIXTURE_CLAIMS[1].spec;
-    const claim = toMachineClaim({ ...FIXTURE_CLAIMS[1], spec });
-    expect(claim.powerIntent).toBe('Off');
-    expect(claim.powerObserved).toBeUndefined();
-    expect(claim.cpu).toBeUndefined();
+    const { powerState: _, ...spec } = FIXTURE_MACHINES[1].spec;
+    const machine = toMachine({ ...FIXTURE_MACHINES[1], spec });
+    expect(machine.powerIntent).toBe('Off');
+    expect(machine.powerObserved).toBeUndefined();
+    expect(machine.cpu).toBeUndefined();
   });
 
   it('summarizes allocated CPU and memory', () => {
-    const claim = toMachineClaim(FIXTURE_CLAIMS[0]);
-    expect(claim.cpu).toBe('24 cores · amd64');
-    expect(claim.memory).toBe('128Gi');
+    const machine = toMachine(FIXTURE_MACHINES[0]);
+    expect(machine.cpu).toBe('24 cores · amd64');
+    expect(machine.memory).toBe('128Gi');
   });
 });
 
@@ -134,9 +136,9 @@ describe('toCatalogOffering', () => {
   });
 });
 
-describe('toClaimDetail', () => {
+describe('toMachineDetail', () => {
   it('lists allocated hardware and the four lifecycle conditions in order', () => {
-    const detail = toClaimDetail(FIXTURE_CLAIMS[0]);
+    const detail = toMachineDetail(FIXTURE_MACHINES[0]);
     expect(detail.placement).toBe('us-central-1');
     expect(detail.acceptedProfile).toBe('general-purpose-24c-128g');
     expect(detail.hardware).toEqual([
@@ -152,22 +154,22 @@ describe('toClaimDetail', () => {
   });
 
   it('fills absent conditions as Unknown and leaves hardware absent before binding', () => {
-    const detail = toClaimDetail({ ...FIXTURE_CLAIMS[1], status: undefined });
+    const detail = toMachineDetail({ ...FIXTURE_MACHINES[1], status: undefined });
     expect(detail.hardware).toBeUndefined();
     expect(detail.conditions.every((c) => c.status === 'Unknown')).toBe(true);
   });
 
   it('keeps conditions Fleet adds beyond the known four', () => {
-    const detail = toClaimDetail({
-      ...FIXTURE_CLAIMS[1],
+    const detail = toMachineDetail({
+      ...FIXTURE_MACHINES[1],
       status: { conditions: [{ type: 'PowerReady', status: 'False', reason: 'Waiting' }] },
     });
     expect(detail.conditions.at(-1)).toMatchObject({ type: 'PowerReady', status: 'False' });
   });
 
   it('summarizes network interfaces', () => {
-    const detail = toClaimDetail({
-      ...FIXTURE_CLAIMS[0],
+    const detail = toMachineDetail({
+      ...FIXTURE_MACHINES[0],
       status: {
         network: {
           interfaces: [
@@ -184,5 +186,31 @@ describe('toClaimDetail', () => {
     expect(detail.interfaces).toEqual([
       { name: 'primary', network: 'default/production', addresses: ['2001:db8::10'], ready: 'True' },
     ]);
+  });
+});
+
+describe('machineStatus', () => {
+  it('names a pending machine that Fleet accepted as waiting for capacity', () => {
+    expect(machineStatus(toMachine(FIXTURE_MACHINES[1]))).toEqual({ tone: 'warning', label: 'Waiting for capacity' });
+    expect(machineStatus({ phase: 'Pending', waitingForCapacity: false })).toEqual({ tone: 'muted', label: 'Pending' });
+    expect(machineStatus(toMachine(FIXTURE_MACHINES[0]))).toEqual({ tone: 'success', label: 'Ready' });
+  });
+});
+
+describe('machineSteps', () => {
+  it('marks the first condition that is not True as current and the rest as upcoming', () => {
+    const steps = machineSteps(toMachineDetail(FIXTURE_MACHINES[1]).conditions);
+    expect(steps.map((s) => s.state)).toEqual(['done', 'current', 'upcoming', 'upcoming']);
+    expect(steps[1].detail).toMatch(/allocated to another consumer/);
+    expect(steps[2].detail).toBe('After bound');
+  });
+
+  it('shows a rejected request as a failed first step', () => {
+    const steps = machineSteps([{ type: 'Accepted', status: 'False', reason: 'ProfileNotAllowed' }]);
+    expect(steps[0]).toMatchObject({ state: 'failed', detail: 'ProfileNotAllowed' });
+  });
+
+  it('treats a missing condition as still to come, not unknown', () => {
+    expect(machineSteps([]).map((s) => s.state)).toEqual(['current', 'upcoming', 'upcoming', 'upcoming']);
   });
 });

@@ -1,23 +1,23 @@
-// View model for the claim list. The wire shape is the shared
-// fleet.datumapis.com/v1alpha1 MachineClaim in ui/shared/fleet-api.ts.
+// View model for the machine list. The wire shape is the shared
+// fleet.datumapis.com/v1alpha1 Machine in ui/shared/fleet-api.ts.
 
 import { findCondition, isConditionTrue, type Condition } from '../../shared/conditions';
 import type {
   List,
-  MachineClaim as RawMachineClaim,
+  Machine as RawMachine,
   MachineClass as RawMachineClass,
   MachineProfile as RawMachineProfile,
 } from '../../shared/fleet-api';
 import { summarizeProfile, type ProfileSummary } from '../../shared/profile-summary';
 
-export type { Condition, RawMachineClaim };
-export type RawMachineClaimList = List<RawMachineClaim>;
+export type { Condition, RawMachine };
+export type RawMachineList = List<RawMachine>;
 
-export type ClaimPhase = 'Pending' | 'Bound' | 'Ready' | 'Releasing' | 'Rejected';
+export type MachinePhase = 'Pending' | 'Bound' | 'Ready' | 'Releasing' | 'Rejected';
 
-export interface MachineClaim {
+export interface Machine {
   name: string;
-  phase: ClaimPhase;
+  phase: MachinePhase;
   phaseReason?: string;
   machineClass: string;
   machineProfile: string;
@@ -28,14 +28,40 @@ export interface MachineClaim {
   powerObserved?: 'On' | 'Off' | 'Unknown';
   cpu?: string;
   memory?: string;
+  createdAt?: string;
+  /** Accepted but no capacity bound yet: the common Pending case. */
+  waitingForCapacity: boolean;
 }
 
-// Only an explicit True moves a claim past Pending. A deleted claim stays
+export type StatusTone = 'success' | 'warning' | 'danger' | 'muted';
+
+/** The label and colour a Machine's phase shows as, in the list and on its page. */
+export function machineStatus(machine: Pick<Machine, 'phase' | 'waitingForCapacity'>): {
+  tone: StatusTone;
+  label: string;
+} {
+  switch (machine.phase) {
+    case 'Ready':
+      return { tone: 'success', label: 'Ready' };
+    case 'Bound':
+      return { tone: 'warning', label: 'Preparing' };
+    case 'Releasing':
+      return { tone: 'muted', label: 'Releasing' };
+    case 'Rejected':
+      return { tone: 'danger', label: 'Rejected' };
+    default:
+      return machine.waitingForCapacity
+        ? { tone: 'warning', label: 'Waiting for capacity' }
+        : { tone: 'muted', label: 'Pending' };
+  }
+}
+
+// Only an explicit True moves a machine past Pending. A deleted machine stays
 // listed, held by Fleet's finalizer, until release and cleanup complete.
-export function claimPhase(
+export function machinePhase(
   conditions: Condition[],
   deleting = false
-): { phase: ClaimPhase; reason?: string } {
+): { phase: MachinePhase; reason?: string } {
   const isTrue = (type: string) => isConditionTrue(conditions, type);
   if (deleting) return { phase: 'Releasing' };
   const accepted = findCondition(conditions, 'Accepted');
@@ -45,8 +71,9 @@ export function claimPhase(
   return { phase: 'Pending', reason: findCondition(conditions, 'Bound')?.reason };
 }
 
-export function toMachineClaim(raw: RawMachineClaim): MachineClaim {
-  const { phase, reason } = claimPhase(raw.status?.conditions ?? [], !!raw.metadata.deletionTimestamp);
+export function toMachine(raw: RawMachine): Machine {
+  const conditions = raw.status?.conditions ?? [];
+  const { phase, reason } = machinePhase(conditions, !!raw.metadata.deletionTimestamp);
   const hw = raw.status?.allocatedHardware?.hardware;
   return {
     name: raw.metadata.name,
@@ -59,10 +86,12 @@ export function toMachineClaim(raw: RawMachineClaim): MachineClaim {
     powerObserved: raw.status?.power?.state,
     cpu: hw?.cpu?.cores !== undefined ? `${hw.cpu.cores} cores${hw.cpu.architecture ? ` · ${hw.cpu.architecture}` : ''}` : undefined,
     memory: hw?.memory?.capacity,
+    createdAt: raw.metadata.creationTimestamp,
+    waitingForCapacity: phase === 'Pending' && isConditionTrue(conditions, 'Accepted'),
   };
 }
 
-// ---- Catalog: what this project can claim ----
+// ---- Catalog: what this project can deploy ----
 
 export type { RawMachineClass, RawMachineProfile };
 export type RawMachineClassList = List<RawMachineClass>;
@@ -75,7 +104,7 @@ export interface CatalogProfile extends ProfileSummary {
 }
 
 export interface CatalogOffering {
-  /** The project-local class name a claim references. */
+  /** The project-local class name a machine references. */
   className: string;
   /** "datum-cloud/standard-metal" for a published class; absent for the project's own. */
   source?: string;
@@ -134,12 +163,12 @@ export function toCatalog(classes: RawMachineClass[], profiles: RawMachineProfil
     .sort((a, b) => a.className.localeCompare(b.className));
 }
 
-// ---- Claim detail ----
+// ---- Machine detail ----
 
-/** The conditions Fleet writes on a claim, in lifecycle order. */
-export const CLAIM_CONDITIONS = ['Accepted', 'Bound', 'NetworkReady', 'Ready'] as const;
+/** The conditions Fleet writes on a machine, in lifecycle order. */
+export const MACHINE_CONDITIONS = ['Accepted', 'Bound', 'NetworkReady', 'Ready'] as const;
 
-export interface ClaimCondition {
+export interface MachineCondition {
   type: string;
   status: 'True' | 'False' | 'Unknown';
   reason?: string;
@@ -147,15 +176,14 @@ export interface ClaimCondition {
   lastTransitionTime?: string;
 }
 
-export interface ClaimInterface {
+export interface MachineInterface {
   name: string;
   network: string;
   addresses: string[];
   ready?: 'True' | 'False' | 'Unknown';
 }
 
-export interface ClaimDetail extends MachineClaim {
-  createdAt?: string;
+export interface MachineDetail extends Machine {
   /** Set while Fleet releases the machine after deletion. */
   deletingSince?: string;
   /** The profile Fleet accepted; differs from the request only if Fleet says so. */
@@ -164,12 +192,12 @@ export interface ClaimDetail extends MachineClaim {
   /** Allocated hardware, one line per part; absent until a machine is bound. */
   hardware?: { label: string; value: string }[];
   hardwareObservedAt?: string;
-  interfaces: ClaimInterface[];
+  interfaces: MachineInterface[];
   installation?: string;
-  conditions: ClaimCondition[];
+  conditions: MachineCondition[];
 }
 
-function hardwareLines(hw: NonNullable<NonNullable<RawMachineClaim['status']>['allocatedHardware']>['hardware']) {
+function hardwareLines(hw: NonNullable<NonNullable<RawMachine['status']>['allocatedHardware']>['hardware']) {
   const lines: { label: string; value: string }[] = [];
   const cpu = hw.cpu;
   if (cpu) {
@@ -194,13 +222,12 @@ function hardwareLines(hw: NonNullable<NonNullable<RawMachineClaim['status']>['a
   return lines;
 }
 
-export function toClaimDetail(raw: RawMachineClaim): ClaimDetail {
+export function toMachineDetail(raw: RawMachine): MachineDetail {
   const status = raw.status ?? {};
   const conditions = status.conditions ?? [];
-  const known = new Set<string>(CLAIM_CONDITIONS);
+  const known = new Set<string>(MACHINE_CONDITIONS);
   return {
-    ...toMachineClaim(raw),
-    createdAt: raw.metadata.creationTimestamp,
+    ...toMachine(raw),
     deletingSince: raw.metadata.deletionTimestamp,
     acceptedProfile: status.acceptedProfileRef?.name,
     placement: status.placement?.locationRef.name,
@@ -215,10 +242,56 @@ export function toClaimDetail(raw: RawMachineClaim): ClaimDetail {
     installation: status.currentInstallationRef?.name,
     // An absent condition is Unknown; extra conditions follow the known ones.
     conditions: [
-      ...CLAIM_CONDITIONS.map(
+      ...MACHINE_CONDITIONS.map(
         (type) => findCondition(conditions, type) ?? { type, status: 'Unknown' as const }
       ),
       ...conditions.filter((c) => !known.has(c.type)),
     ],
   };
+}
+
+// ---- Progress: the four lifecycle conditions as ordered steps ----
+
+export type StepState = 'done' | 'current' | 'upcoming' | 'failed';
+
+export interface MachineStep {
+  type: string;
+  label: string;
+  state: StepState;
+  /** The condition's message, or its reason; for upcoming steps, what they wait for. */
+  detail?: string;
+  at?: string;
+}
+
+const STEP_LABELS: Record<string, string> = {
+  Accepted: 'Accepted',
+  Bound: 'Bound',
+  NetworkReady: 'Network ready',
+  Ready: 'Ready',
+};
+
+// A condition Fleet hasn't written yet is a step still to come, not "Unknown".
+// The first step that isn't True is the current one; a False Accepted means
+// the request was rejected.
+export function machineSteps(conditions: MachineCondition[]): MachineStep[] {
+  let reachedCurrent = false;
+  return MACHINE_CONDITIONS.map((type, i) => {
+    const c = conditions.find((x) => x.type === type);
+    const label = STEP_LABELS[type];
+    if (c?.status === 'True' && !reachedCurrent) {
+      return { type, label, state: 'done', detail: c.message ?? c.reason, at: c.lastTransitionTime };
+    }
+    if (reachedCurrent) {
+      return { type, label, state: 'upcoming', detail: `After ${STEP_LABELS[MACHINE_CONDITIONS[i - 1]].toLowerCase()}` };
+    }
+    reachedCurrent = true;
+    const failed = type === 'Accepted' && c?.status === 'False';
+    return {
+      type,
+      label,
+      state: failed ? 'failed' : 'current',
+      detail: c?.message ?? c?.reason ?? 'In progress',
+      at: c?.lastTransitionTime,
+    };
+  });
 }

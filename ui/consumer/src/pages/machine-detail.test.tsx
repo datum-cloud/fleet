@@ -1,8 +1,8 @@
-import ClaimDetail from './claim-detail';
+import MachineDetail from './machine-detail';
 import * as api from '../lib/api';
 import { ApiError } from '../lib/api';
-import { FIXTURE_CLAIMS } from '../lib/fixtures';
-import { toClaimDetail } from '../types';
+import { FIXTURE_MACHINES } from '../lib/fixtures';
+import { toMachineDetail } from '../types';
 import { toast } from '@datum-cloud/datum-ui/toast';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -11,17 +11,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof api>('../lib/api');
-  return { ...actual, useMachineClaim: vi.fn(), useReleaseMachineClaim: vi.fn() };
+  return { ...actual, useMachine: vi.fn(), useReleaseMachine: vi.fn() };
 });
 
-const useClaimMock = vi.mocked(api.useMachineClaim);
+const useMachineMock = vi.mocked(api.useMachine);
 const releaseMock = vi.fn<(name: string) => Promise<void>>();
-const useReleaseMock = vi.mocked(api.useReleaseMachineClaim);
+const useReleaseMock = vi.mocked(api.useReleaseMachine);
 
 vi.mock('@datum-cloud/datum-ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 function mockResult(result: { data?: unknown; isLoading?: boolean; error?: unknown }) {
-  useClaimMock.mockReturnValue({
+  useMachineMock.mockReturnValue({
     data: undefined,
     isLoading: false,
     error: null,
@@ -36,7 +36,7 @@ function renderPage(name = 'example') {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/project/p1/services/fleet-datumapis-com/${name}`]}>
         <Routes>
-          <Route path="/project/:projectId/services/:serviceSlug/:claimName" element={<ClaimDetail />} />
+          <Route path="/project/:projectId/services/:serviceSlug/:machineName" element={<MachineDetail />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -44,13 +44,13 @@ function renderPage(name = 'example') {
 }
 
 beforeEach(() => {
-  useClaimMock.mockReset();
+  useMachineMock.mockReset();
   releaseMock.mockReset();
   useReleaseMock.mockReturnValue({ mutateAsync: releaseMock } as never);
 });
 
-describe('ClaimDetail', () => {
-  it('links back to the claims list', () => {
+describe('MachineDetail', () => {
+  it('links back to the machines list', () => {
     mockResult({ isLoading: true });
     renderPage();
     expect(screen.getByRole('link', { name: 'Machines' })).toHaveAttribute(
@@ -63,7 +63,7 @@ describe('ClaimDetail', () => {
   it('shows a not-found state on a 404', () => {
     mockResult({ error: new ApiError(404, 'not found') });
     renderPage('gone');
-    expect(screen.getByTestId('fleet-plugin-claim-not-found')).toBeInTheDocument();
+    expect(screen.getByTestId('fleet-plugin-machine-not-found')).toBeInTheDocument();
   });
 
   it('shows the restricted state on a 403', () => {
@@ -72,43 +72,51 @@ describe('ClaimDetail', () => {
     expect(screen.getByTestId('fleet-plugin-restricted')).toBeInTheDocument();
   });
 
-  it('shows the request, the allocated machine and every condition for a ready claim', () => {
-    mockResult({ data: toClaimDetail(FIXTURE_CLAIMS[0]) });
+  it('shows the request, the allocated hardware and every step done for a ready machine', () => {
+    mockResult({ data: toMachineDetail(FIXTURE_MACHINES[0]) });
     renderPage();
-    expect(within(screen.getByTestId('fleet-plugin-claim-request')).getByText('standard-metal')).toBeInTheDocument();
-    const machine = screen.getByTestId('fleet-plugin-claim-machine');
-    expect(within(machine).getByText('2 sockets / 24 cores / 48 threads · amd64')).toBeInTheDocument();
-    expect(within(machine).getByText('Off')).toBeInTheDocument();
-    expect(within(screen.getByTestId('fleet-plugin-condition-Ready')).getByText('PoweredOffHandoff')).toBeInTheDocument();
-    expect(screen.queryByTestId('fleet-plugin-claim-network')).toBeNull();
+    expect(within(screen.getByTestId('fleet-plugin-machine-request')).getByText('standard-metal')).toBeInTheDocument();
+    const hardware = screen.getByTestId('fleet-plugin-machine-hardware');
+    expect(within(hardware).getByText('2 sockets / 24 cores / 48 threads · amd64')).toBeInTheDocument();
+    expect(within(hardware).getByText(/^Off/)).toBeInTheDocument();
+    expect(within(screen.getByTestId('fleet-plugin-machine-network')).getByText('None requested')).toBeInTheDocument();
+    expect(within(screen.getByTestId('fleet-plugin-machine-overview')).getByText('Ready · powered off')).toBeInTheDocument();
+    for (const type of ['Accepted', 'Bound', 'NetworkReady', 'Ready']) {
+      expect(screen.getByTestId(`fleet-plugin-step-${type}`)).toHaveAttribute('data-state', 'done');
+    }
+    expect(within(screen.getByTestId('fleet-plugin-step-Ready')).getByText('PoweredOffHandoff')).toBeInTheDocument();
   });
 
-  it('explains a claim waiting for capacity', () => {
-    mockResult({ data: toClaimDetail(FIXTURE_CLAIMS[1]) });
+  it('explains a machine waiting for capacity and shows later steps as upcoming', () => {
+    mockResult({ data: toMachineDetail(FIXTURE_MACHINES[1]) });
     renderPage('build-runner');
-    expect(within(screen.getByTestId('fleet-plugin-claim-machine')).getByText(/No machine is allocated yet/)).toBeInTheDocument();
-    const bound = screen.getByTestId('fleet-plugin-condition-Bound');
-    expect(within(bound).getByText('InsufficientCapacity')).toBeInTheDocument();
+    expect(within(screen.getByTestId('fleet-plugin-machine-overview')).getByText('Waiting for capacity')).toBeInTheDocument();
+    expect(within(screen.getByTestId('fleet-plugin-machine-hardware')).getByText(/No free server matches/)).toBeInTheDocument();
+    const bound = screen.getByTestId('fleet-plugin-step-Bound');
+    expect(bound).toHaveAttribute('data-state', 'current');
     expect(within(bound).getByText(/allocated to another consumer/)).toBeInTheDocument();
+    expect(screen.getByTestId('fleet-plugin-step-NetworkReady')).toHaveAttribute('data-state', 'upcoming');
+    expect(screen.getByTestId('fleet-plugin-step-Ready')).toHaveAttribute('data-state', 'upcoming');
+    expect(screen.queryByText('Unknown')).toBeNull();
   });
 
-  it('shows when a releasing claim was deleted', () => {
-    mockResult({ data: toClaimDetail(FIXTURE_CLAIMS[2]) });
+  it('shows when a releasing machine was deleted', () => {
+    mockResult({ data: toMachineDetail(FIXTURE_MACHINES[2]) });
     renderPage('old-worker');
-    expect(within(screen.getByTestId('fleet-plugin-claim-request')).getByText('Releasing since')).toBeInTheDocument();
+    expect(screen.getByText(/releasing since/)).toBeInTheDocument();
   });
 
-  it('hides Release once the claim is already releasing', () => {
-    mockResult({ data: toClaimDetail(FIXTURE_CLAIMS[2]) });
+  it('hides Release once the machine is already releasing', () => {
+    mockResult({ data: toMachineDetail(FIXTURE_MACHINES[2]) });
     renderPage('old-worker');
-    expect(screen.queryByTestId('fleet-plugin-claim-release')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Release' })).toBeNull();
   });
 
-  it('releases only after the claim name is typed', async () => {
+  it('releases only after the machine name is typed', async () => {
     releaseMock.mockResolvedValue();
-    mockResult({ data: toClaimDetail(FIXTURE_CLAIMS[0]) });
+    mockResult({ data: toMachineDetail(FIXTURE_MACHINES[0]) });
     renderPage();
-    fireEvent.click(within(screen.getByTestId('fleet-plugin-claim-release')).getByRole('button', { name: 'Release' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }));
 
     const dialog = await screen.findByRole('dialog');
     const confirm = within(dialog).getByRole('button', { name: 'Release' });
@@ -124,10 +132,10 @@ describe('ClaimDetail', () => {
   });
 
   it('keeps the dialog open and explains a forbidden release', async () => {
-    releaseMock.mockRejectedValue(new ApiError(403, 'machineclaims "example" is forbidden'));
-    mockResult({ data: toClaimDetail(FIXTURE_CLAIMS[0]) });
+    releaseMock.mockRejectedValue(new ApiError(403, 'machines "example" is forbidden'));
+    mockResult({ data: toMachineDetail(FIXTURE_MACHINES[0]) });
     renderPage();
-    fireEvent.click(within(screen.getByTestId('fleet-plugin-claim-release')).getByRole('button', { name: 'Release' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Release' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'example' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Release' }));
@@ -135,7 +143,7 @@ describe('ClaimDetail', () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
         "You don't have permission to release machines in this project.",
-        { description: 'machineclaims "example" is forbidden' }
+        { description: 'machines "example" is forbidden' }
       )
     );
     expect(screen.getByRole('dialog')).toBeInTheDocument();

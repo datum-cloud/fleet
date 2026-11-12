@@ -1,6 +1,5 @@
-import Catalog from './pages/catalog';
-import ClaimDetail from './pages/claim-detail';
-import ClaimList from './pages/claim-list';
+import MachineDetail from './pages/machine-detail';
+import MachineList from './pages/machine-list';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -20,9 +19,8 @@ createRoot(document.getElementById('root')!).render(
         </p>
         <MemoryRouter initialEntries={['/project/demo-project/services/fleet']}>
           <Routes>
-            <Route path="/project/:projectId/services/:serviceSlug" element={<ClaimList />} />
-            <Route path="/project/:projectId/services/:serviceSlug/catalog" element={<Catalog />} />
-            <Route path="/project/:projectId/services/:serviceSlug/:claimName" element={<ClaimDetail />} />
+            <Route path="/project/:projectId/services/:serviceSlug" element={<MachineList />} />
+            <Route path="/project/:projectId/services/:serviceSlug/:machineName" element={<MachineDetail />} />
           </Routes>
         </MemoryRouter>
       </div>

@@ -142,7 +142,7 @@ describe('MachineClassList', () => {
       toRawMachineClass({
         name: 'standard-metal',
         allowedProfiles: ['general-purpose-24c'],
-        machineNamespace: 'default',
+        capacityNamespace: 'default',
         capacityPool: 'central-metal',
         powerControl: true,
       })
@@ -181,7 +181,7 @@ describe('toRawMachineClass', () => {
       toRawMachineClass({
         name: 'c',
         allowedProfiles: ['a', 'b'],
-        machineNamespace: 'default',
+        capacityNamespace: 'default',
         capacityPool: 'pool',
         powerControl: false,
       })
@@ -194,7 +194,7 @@ describe('toRawMachineClass', () => {
         },
         access: { consoleModes: [], powerControl: false },
         capacity: {
-          machines: {
+          machineCapacities: {
             namespace: 'default',
             selector: { matchLabels: { 'fleet.datumapis.com/capacity-pool': 'pool' } },
           },

@@ -91,10 +91,10 @@ beforeEach(() => {
 });
 
 describe('MachineProfileList', () => {
-  it('links the Machines and Profiles tabs under the plugin mount', () => {
+  it('links the Capacity and Profiles tabs under the plugin mount', () => {
     mockList({ data: [] });
     renderPage();
-    expect(screen.getByRole('tab', { name: 'Machines' }).closest('a')).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Capacity' }).closest('a')).toHaveAttribute(
       'href',
       '/plugins/fleet-datumapis-com'
     );

@@ -1,12 +1,12 @@
 import { ApiError } from './api';
-import { MACHINE_CLAIM_FINALIZER } from '../../../shared/fleet-api';
-import type { RawMachineClaim, RawMachineClass, RawMachineProfile } from '../types';
+import { MACHINE_FINALIZER } from '../../../shared/fleet-api';
+import type { RawMachine, RawMachineClass, RawMachineProfile } from '../types';
 
-// Synthetic claims used while the Fleet API cannot be read
+// Synthetic machines used while the Fleet API cannot be read
 // (VITE_FLEET_FIXTURES=true). Class, profile and location names come from
 // config/standalone/fixtures.yaml, and each status is what Fleet's standalone
-// runner writes (internal/standalone/runner.go): a powered-off handoff, a claim
-// waiting for capacity, and a deleted claim still held by the release
+// runner writes (internal/standalone/runner.go): a powered-off handoff, a machine
+// waiting for capacity, and a deleted machine still held by the release
 // finalizer.
 
 const SPEC = {
@@ -18,7 +18,7 @@ const SPEC = {
 
 const PLACEMENT = { locationRef: { name: 'us-central-1' } };
 
-const BOUND_STATUS: RawMachineClaim['status'] = {
+const BOUND_STATUS: RawMachine['status'] = {
   phase: 'Ready',
   placement: PLACEMENT,
   acceptedProfileRef: { name: 'general-purpose-24c-128g' },
@@ -38,14 +38,14 @@ const BOUND_STATUS: RawMachineClaim['status'] = {
   ],
 };
 
-export const FIXTURE_CLAIMS: RawMachineClaim[] = [
+export const FIXTURE_MACHINES: RawMachine[] = [
   {
-    metadata: { name: 'example', namespace: 'default', finalizers: [MACHINE_CLAIM_FINALIZER] },
+    metadata: { name: 'example', namespace: 'default', finalizers: [MACHINE_FINALIZER] },
     spec: SPEC,
     status: BOUND_STATUS,
   },
   {
-    metadata: { name: 'build-runner', namespace: 'default', finalizers: [MACHINE_CLAIM_FINALIZER] },
+    metadata: { name: 'build-runner', namespace: 'default', finalizers: [MACHINE_FINALIZER] },
     spec: SPEC,
     status: {
       phase: 'Pending',
@@ -67,41 +67,41 @@ export const FIXTURE_CLAIMS: RawMachineClaim[] = [
       name: 'old-worker',
       namespace: 'default',
       deletionTimestamp: '2026-11-05T12:30:00Z',
-      finalizers: [MACHINE_CLAIM_FINALIZER],
+      finalizers: [MACHINE_FINALIZER],
     },
     spec: SPEC,
     status: BOUND_STATUS,
   },
 ];
 
-// Claims created in fixture mode are kept in memory until the page reloads.
-// A new claim has no status, so it lists as Pending, as it would before
+// Machines created in fixture mode are kept in memory until the page reloads.
+// A new machine has no status, so it lists as Pending, as it would before
 // Fleet admits it.
-const claims = [...FIXTURE_CLAIMS];
+const machines = [...FIXTURE_MACHINES];
 
-export const fixtureClaims = {
-  list: (): RawMachineClaim[] => [...claims],
-  create: (claim: RawMachineClaim): RawMachineClaim => {
-    if (claims.some((c) => c.metadata.name === claim.metadata.name)) {
-      throw new ApiError(409, `machineclaims "${claim.metadata.name}" already exists`);
+export const fixtureMachines = {
+  list: (): RawMachine[] => [...machines],
+  create: (machine: RawMachine): RawMachine => {
+    if (machines.some((c) => c.metadata.name === machine.metadata.name)) {
+      throw new ApiError(409, `machines "${machine.metadata.name}" already exists`);
     }
     const created = {
-      ...claim,
-      metadata: { ...claim.metadata, creationTimestamp: new Date().toISOString() },
+      ...machine,
+      metadata: { ...machine.metadata, creationTimestamp: new Date().toISOString() },
     };
-    claims.push(created);
+    machines.push(created);
     return created;
   },
-  // Releasing keeps the claim until Fleet frees the machine and removes the
+  // Releasing keeps the Machine until Fleet frees its capacity and removes the
   // finalizer; nothing does that in fixture mode, so it stays Releasing.
   release: (name: string): void => {
-    const index = claims.findIndex((c) => c.metadata.name === name);
-    if (index === -1) throw new ApiError(404, `machineclaims "${name}" not found`);
-    const claim = claims[index];
-    if (claim.metadata.deletionTimestamp) return;
-    claims[index] = {
-      ...claim,
-      metadata: { ...claim.metadata, deletionTimestamp: new Date().toISOString() },
+    const index = machines.findIndex((c) => c.metadata.name === name);
+    if (index === -1) throw new ApiError(404, `machines "${name}" not found`);
+    const machine = machines[index];
+    if (machine.metadata.deletionTimestamp) return;
+    machines[index] = {
+      ...machine,
+      metadata: { ...machine.metadata, deletionTimestamp: new Date().toISOString() },
     };
   },
 };

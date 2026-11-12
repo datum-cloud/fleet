@@ -16,13 +16,13 @@ const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 const NAME_MESSAGE =
   'Lowercase letters, numbers, and hyphens only. Must start and end with a letter or number.';
 
-// A class is the offering: the profiles consumers may claim and the pool of
-// Machines that serves them. Custom profiles and console access stay off;
+// A class is the offering: the profiles consumers may deploy and the pool of
+// MachineCapacities that serves them. Custom profiles and console access stay off;
 // the first implementation supports power control but no console sessions.
 export const classFormSchema = z.object({
   name: z.string({ error: 'Name is required.' }).max(63, 'At most 63 characters.').regex(NAME_PATTERN, NAME_MESSAGE),
   allowedProfiles: z.array(z.string(), { error: 'Choose at least one profile.' }).min(1, 'Choose at least one profile.'),
-  machineNamespace: z
+  capacityNamespace: z
     .string({ error: 'Namespace is required.' })
     .max(63, 'At most 63 characters.')
     .regex(NAME_PATTERN, NAME_MESSAGE),
@@ -45,8 +45,8 @@ export function toRawMachineClass(values: ClassFormValues): RawMachineClass {
       },
       access: { consoleModes: [], powerControl: !!values.powerControl },
       capacity: {
-        machines: {
-          namespace: values.machineNamespace,
+        machineCapacities: {
+          namespace: values.capacityNamespace,
           selector: { matchLabels: { [CAPACITY_POOL_LABEL]: values.capacityPool } },
         },
       },
@@ -107,9 +107,9 @@ export function CreateClassDialog() {
           open={open}
           onOpenChange={setOpenAndReset}
           title="Create a machine class"
-          description="An offering consumers can claim from: the profiles it allows and the Machines that serve it."
+          description="An offering consumers can deploy from: the profiles it allows and the capacity that serves it."
           schema={classFormSchema}
-          defaultValues={{ machineNamespace: 'default', powerControl: true }}
+          defaultValues={{ capacityNamespace: 'default', powerControl: true }}
           onSubmit={(values) =>
             mutation.mutate(toRawMachineClass(values), { onSuccess: () => setOpen(false) })
           }
@@ -130,16 +130,16 @@ export function CreateClassDialog() {
               <ProfileChoices profiles={profiles} />
             </Form.Field>
             <Form.Field
-              name="machineNamespace"
-              label="Machine namespace"
-              description="Where this class's Machines live in the provider project."
+              name="capacityNamespace"
+              label="Capacity namespace"
+              description="Where this class's MachineCapacities live in the provider project."
               required>
               <Form.Input />
             </Form.Field>
             <Form.Field
               name="capacityPool"
               label="Capacity pool"
-              description={`Machines labelled ${CAPACITY_POOL_LABEL} with this value can serve the class.`}
+              description={`MachineCapacities labelled ${CAPACITY_POOL_LABEL} with this value can serve the class.`}
               required>
               <Form.Input placeholder="e.g. central-metal" />
             </Form.Field>

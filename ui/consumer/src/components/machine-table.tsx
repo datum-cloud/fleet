@@ -1,47 +1,35 @@
+import { MachineStatus } from './machine-status';
 import { usePluginBase } from './machines-page';
 import { ReleaseButton } from './release-dialog';
-import { StatusBadge, type BadgeType } from './status-badge';
-import type { ClaimPhase, MachineClaim } from '../types';
+import type { Machine } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
-import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
+import { DateTime } from '@datum-cloud/datum-ui/date-time';
 import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useMemo } from 'react';
 import { Link } from 'react-router';
 
-type ClaimColumn = ColumnDef<DataTableFeatures, MachineClaim, unknown>;
-
-const PHASE_BADGE: Record<ClaimPhase, { type: BadgeType; pending: boolean }> = {
-  Ready: { type: 'success', pending: false },
-  Bound: { type: 'warning', pending: true },
-  Pending: { type: 'muted', pending: true },
-  Releasing: { type: 'warning', pending: true },
-  Rejected: { type: 'danger', pending: false },
-};
-
-export function PhaseBadge({ claim }: { claim: Pick<MachineClaim, 'phase' | 'phaseReason'> }) {
-  return (
-    <Tooltip message={claim.phaseReason} hidden={!claim.phaseReason}>
-      <span><StatusBadge {...PHASE_BADGE[claim.phase]}>{claim.phase}</StatusBadge></span>
-    </Tooltip>
-  );
-}
+type MachineColumn = ColumnDef<DataTableFeatures, Machine, unknown>;
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <Text textColor="muted">{children}</Text>;
 }
 
-function matchesSearch(claim: MachineClaim, search: string): boolean {
+function Mono({ children }: { children: React.ReactNode }) {
+  return <span className="font-mono text-xs whitespace-nowrap">{children}</span>;
+}
+
+function matchesSearch(machine: Machine, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
-  return [claim.name, claim.phase, claim.machineClass, claim.machineProfile, claim.location]
+  return [machine.name, machine.phase, machine.machineClass, machine.machineProfile, machine.location]
     .join(' ')
     .toLowerCase()
     .includes(needle);
 }
 
-// A claim's page sits directly under the plugin's mount root.
-function ClaimLink({ name }: { name: string }) {
+// A machine's page sits directly under the plugin's mount root.
+function MachineLink({ name }: { name: string }) {
   const base = usePluginBase();
   return (
     <Link
@@ -53,20 +41,32 @@ function ClaimLink({ name }: { name: string }) {
   );
 }
 
-const columns: ClaimColumn[] = [
+const columns: MachineColumn[] = [
   {
     id: 'name',
     accessorKey: 'name',
     header: 'Name',
-    cell: ({ row }) => <ClaimLink name={row.original.name} />,
+    cell: ({ row }) => <MachineLink name={row.original.name} />,
   },
   {
     id: 'status',
     header: 'Status',
-    cell: ({ row }) => <PhaseBadge claim={row.original} />,
+    cell: ({ row }) => <MachineStatus machine={row.original} />,
   },
-  { id: 'class', header: 'Class', cell: ({ row }) => <Muted>{row.original.machineClass}</Muted> },
-  { id: 'profile', header: 'Profile', cell: ({ row }) => <Muted>{row.original.machineProfile}</Muted> },
+  {
+    id: 'profile',
+    header: 'Profile',
+    cell: ({ row }) => <Mono>{row.original.machineProfile}</Mono>,
+  },
+  {
+    id: 'hardware',
+    header: 'Hardware',
+    // Allocated hardware, once Fleet has bound some.
+    cell: ({ row }) => {
+      const { cpu, memory } = row.original;
+      return cpu || memory ? <Mono>{[cpu, memory].filter(Boolean).join(' · ')}</Mono> : <Muted>—</Muted>;
+    },
+  },
   { id: 'location', header: 'Location', cell: ({ row }) => <Muted>{row.original.location}</Muted> },
   {
     id: 'power',
@@ -83,19 +83,32 @@ const columns: ClaimColumn[] = [
       );
     },
   },
-  { id: 'cpu', header: 'CPU', cell: ({ row }) => <Muted>{row.original.cpu ?? '—'}</Muted> },
-  { id: 'memory', header: 'Memory', cell: ({ row }) => <Muted>{row.original.memory ?? '—'}</Muted> },
+  {
+    id: 'created',
+    header: 'Created',
+    cell: ({ row }) =>
+      row.original.createdAt ? (
+        <DateTime
+          date={row.original.createdAt}
+          variant="relative"
+          addSuffix
+          className="text-muted-foreground text-sm whitespace-nowrap"
+        />
+      ) : (
+        <Muted>—</Muted>
+      ),
+  },
 ];
 
-// A claim already releasing has nothing left to release.
-export function ClaimTable({
-  claims,
+// A machine already releasing has nothing left to release.
+export function MachineTable({
+  machines,
   onRelease,
 }: {
-  claims: MachineClaim[];
-  onRelease: (claim: MachineClaim) => void;
+  machines: Machine[];
+  onRelease: (machine: Machine) => void;
 }) {
-  const withActions = useMemo<ClaimColumn[]>(
+  const withActions = useMemo<MachineColumn[]>(
     () => [
       ...columns,
       {
@@ -114,14 +127,14 @@ export function ClaimTable({
 
   return (
     <DataTable.Client
-      data={claims}
+      data={machines}
       columns={withActions}
-      getRowId={(claim) => claim.name}
+      getRowId={(machine) => machine.name}
       defaultSort={[{ id: 'name', desc: false }]}
       searchFn={matchesSearch}
-      className="space-y-6">
+      className="space-y-4">
       <DataTable.Search placeholder="Search machines" className="w-full sm:max-w-xs" />
-      <div className="overflow-hidden rounded-lg border" data-testid="fleet-plugin-claim-table">
+      <div className="overflow-hidden rounded-lg border" data-testid="fleet-plugin-machine-table">
         <DataTable.Content
           emptyMessage={
             <Text as="p" textColor="muted" className="py-8 text-center">

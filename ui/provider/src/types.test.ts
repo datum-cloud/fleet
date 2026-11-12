@@ -1,12 +1,12 @@
-import { formatConstraint, toMachine, toMachineProfile, type RawMachine } from './types';
-import { FIXTURE_MACHINES, fixtureProfiles } from './lib/fixtures';
+import { formatConstraint, toMachineCapacity, toMachineProfile, type RawMachineCapacity } from './types';
+import { FIXTURE_CAPACITIES, fixtureProfiles } from './lib/fixtures';
 import { describe, expect, it } from 'vitest';
 
-function bare(spec: Partial<RawMachine['spec']> = {}): RawMachine {
+function bare(spec: Partial<RawMachineCapacity['spec']> = {}): RawMachineCapacity {
   return {
     metadata: { name: 'bare' },
     spec: {
-      providerRef: { apiGroup: 'example.com', kind: 'ExampleMachine', name: 'asset-1' },
+      deviceRef: { name: 'device-1' },
       allocationPolicy: 'Disabled',
       cleaningPolicyRef: { name: 'wipe' },
       reclaimPolicy: 'Retain',
@@ -15,9 +15,9 @@ function bare(spec: Partial<RawMachine['spec']> = {}): RawMachine {
   };
 }
 
-describe('toMachine', () => {
-  it('maps a synthetic machine written by the standalone runner', () => {
-    expect(toMachine(FIXTURE_MACHINES[0])).toEqual({
+describe('toMachineCapacity', () => {
+  it('maps synthetic capacity written by the standalone runner', () => {
+    expect(toMachineCapacity(FIXTURE_CAPACITIES[0])).toEqual({
       name: 'central1-baremetal-01',
       namespace: 'fleet-provider',
       pool: 'central-metal',
@@ -31,15 +31,15 @@ describe('toMachine', () => {
   });
 
   it('treats absent conditions as Unknown', () => {
-    const machine = toMachine(bare());
-    expect(machine.prepared).toEqual({ state: 'Unknown', reason: undefined });
-    expect(machine.available.state).toBe('Unknown');
+    const capacity = toMachineCapacity(bare());
+    expect(capacity.prepared).toEqual({ state: 'Unknown', reason: undefined });
+    expect(capacity.available.state).toBe('Unknown');
   });
 
   it('leaves unobserved hardware absent', () => {
-    const machine = toMachine(bare());
-    expect(machine.cpu).toBeUndefined();
-    expect(machine.memory).toBeUndefined();
+    const capacity = toMachineCapacity(bare());
+    expect(capacity.cpu).toBeUndefined();
+    expect(capacity.memory).toBeUndefined();
   });
 });
 

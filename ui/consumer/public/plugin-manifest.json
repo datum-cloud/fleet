@@ -4,9 +4,8 @@
   "sdk": { "name": "@datum-cloud/portal-plugin-sdk", "range": "^1.0.0" },
   "remoteEntry": "remoteEntry.js",
   "exposedModules": {
-    "ClaimList": "./src/pages/claim-list.tsx",
-    "Catalog": "./src/pages/catalog.tsx",
-    "ClaimDetail": "./src/pages/claim-detail.tsx"
+    "MachineList": "./src/pages/machine-list.tsx",
+    "MachineDetail": "./src/pages/machine-detail.tsx"
   },
   "extensions": [
     {
@@ -24,21 +23,14 @@
       "type": "portal.page/project",
       "properties": {
         "path": "",
-        "component": { "$codeRef": "ClaimList" }
+        "component": { "$codeRef": "MachineList" }
       }
     },
     {
       "type": "portal.page/project",
       "properties": {
-        "path": "catalog",
-        "component": { "$codeRef": "Catalog" }
-      }
-    },
-    {
-      "type": "portal.page/project",
-      "properties": {
-        "path": ":claimName",
-        "component": { "$codeRef": "ClaimDetail" }
+        "path": ":machineName",
+        "component": { "$codeRef": "MachineDetail" }
       }
     }
   ]

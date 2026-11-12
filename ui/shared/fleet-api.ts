@@ -4,7 +4,8 @@
 //
 // Wire shapes of fleet.datumapis.com/v1alpha1, transcribed by hand from
 // internal/api/v1alpha1/types.go and config/base/crd/fleet.datumapis.com.yaml
-// as of codex/fleet-location-admission, which matches staging. Fields
+// as of api/machine-allocation-model (#44), which renames MachineClaim to
+// Machine and Machine to MachineCapacity. Fields
 // keep the Go JSON names; `omitempty` fields are optional. Installation is left
 // out until a page reads it.
 
@@ -20,7 +21,7 @@ export interface ObjectMeta {
   resourceVersion?: string;
   generation?: number;
   creationTimestamp?: string;
-  /** Set while finalizers (such as claim release) are still running. */
+  /** Set while finalizers (such as Machine release) are still running. */
   deletionTimestamp?: string;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
@@ -51,7 +52,7 @@ export interface LabelSelector {
   matchExpressions?: { key: string; operator: string; values?: string[] }[];
 }
 
-// ---- Observed hardware (Machine status and MachineClaim allocatedHardware) ----
+// ---- Observed hardware (MachineCapacity status and Machine allocatedHardware) ----
 
 export interface Hardware {
   cpu?: { architecture?: string; model?: string; sockets?: number; cores?: number; threads?: number };
@@ -81,10 +82,9 @@ export interface MachineClass {
     source?: { project: string; name: string };
     profilePolicy?: ProfilePolicy;
     access?: AccessPolicy;
-    /** Set on the provider's class: where its Machines live. */
+    /** Set on the provider's class: where its MachineCapacities live. */
     capacity?: {
-      machines: { namespace: string; selector?: LabelSelector };
-      providerClassRef?: TypedNamespacedReference;
+      machineCapacities: { namespace: string; selector?: LabelSelector };
     };
   };
   status?: {
@@ -121,16 +121,15 @@ export interface MachineProfile {
   status?: { conditions?: Condition[] };
 }
 
-// ---- Machine (namespaced, provider project only) ----
+// ---- MachineCapacity (namespaced, provider project only) ----
 
 export type AllocationPolicy = 'Enabled' | 'Disabled';
 
-export interface Machine {
+export interface MachineCapacity {
   metadata: ObjectMeta;
   spec: {
-    /** Immutable. A synthetic provider uses SYNTHETIC_PROVIDER_API_GROUP. */
-    providerRef: TypedLocalReference;
-    deviceRef?: LocalReference;
+    /** Immutable. Names the physical Device; nothing resolves it yet. */
+    deviceRef: LocalReference;
     /** Defaults to Disabled. */
     allocationPolicy: AllocationPolicy;
     cleaningPolicyRef: LocalReference;
@@ -143,9 +142,7 @@ export interface Machine {
   };
 }
 
-export const SYNTHETIC_PROVIDER_API_GROUP = 'synthetic.fleet.datumapis.com';
-
-// ---- MachineClaim (namespaced, consumer project) ----
+// ---- Machine (namespaced, consumer project) ----
 
 export type PowerState = 'On' | 'Off';
 
@@ -169,7 +166,7 @@ export interface NetworkInterfaceStatus {
   conditions?: Condition[];
 }
 
-export interface MachineClaim {
+export interface Machine {
   metadata: ObjectMeta;
   spec: {
     machineClassRef: LocalReference;
@@ -187,7 +184,6 @@ export interface MachineClaim {
     acceptedProfileRef?: LocalReference;
     allocatedHardware?: { observedAt?: string; hardware: Hardware };
     currentInstallationRef?: LocalReference;
-    installationRevision?: string;
     network?: { revision?: string; interfaces?: NetworkInterfaceStatus[] };
     power?: { state: PowerState | 'Unknown' };
     /** Accepted, Bound, NetworkReady and Ready. */
@@ -195,5 +191,5 @@ export interface MachineClaim {
   };
 }
 
-/** Held on a claim until Fleet's release and cleanup complete. */
-export const MACHINE_CLAIM_FINALIZER = 'fleet.datumapis.com/machineclaim-protection';
+/** Held on a Machine until Fleet's release and cleanup complete. */
+export const MACHINE_FINALIZER = 'fleet.datumapis.com/machine-protection';

@@ -44,7 +44,7 @@ export function DeleteDialog({
 }: {
   /** The record to delete; the dialog is closed when absent. */
   name: string | undefined;
-  /** e.g. "machine", used in the title. */
+  /** e.g. "machine capacity", used in the title. */
   resource: string;
   warning: ReactNode;
   pending: boolean;

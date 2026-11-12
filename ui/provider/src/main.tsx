@@ -1,5 +1,5 @@
 import MachineClassList from './pages/machine-class-list';
-import MachineList from './pages/machine-list';
+import CapacityList from './pages/capacity-list';
 import MachineProfileList from './pages/machine-profile-list';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
@@ -20,7 +20,7 @@ createRoot(document.getElementById('root')!).render(
         </p>
         <MemoryRouter initialEntries={['/plugins/fleet-datumapis-com']}>
           <Routes>
-            <Route path="/plugins/:slug" element={<MachineList />} />
+            <Route path="/plugins/:slug" element={<CapacityList />} />
             <Route path="/plugins/:slug/profiles" element={<MachineProfileList />} />
             <Route path="/plugins/:slug/classes" element={<MachineClassList />} />
           </Routes>

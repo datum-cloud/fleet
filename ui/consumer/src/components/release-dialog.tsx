@@ -1,5 +1,5 @@
 import { ConfirmDeleteDialog } from './confirm-delete-dialog';
-import { ApiError, useReleaseMachineClaim } from '../lib/api';
+import { ApiError, useReleaseMachine } from '../lib/api';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Icon } from '@datum-cloud/datum-ui/icons';
 import { toast } from '@datum-cloud/datum-ui/toast';
@@ -21,19 +21,19 @@ export function ReleaseButton({ name, onClick }: { name: string; onClick: () => 
   );
 }
 
-// Releasing deletes the claim after the user types its name. The claim stays,
-// listed as Releasing, until Fleet frees the machine. Errors go to a toast and
+// Releasing deletes the machine after the user types its name. The machine stays,
+// listed as Releasing, until Fleet frees its capacity. Errors go to a toast and
 // the dialog stays open to retry.
 export function ReleaseDialog({
   name,
   onOpenChange,
 }: {
-  /** The claim to release; the dialog is closed when absent. */
+  /** The machine to release; the dialog is closed when absent. */
   name: string | undefined;
   onOpenChange: (open: boolean) => void;
 }) {
   const { projectId } = useParams<{ projectId: string }>();
-  const mutation = useReleaseMachineClaim(projectId);
+  const mutation = useReleaseMachine(projectId);
 
   const release = async () => {
     if (!name) return;

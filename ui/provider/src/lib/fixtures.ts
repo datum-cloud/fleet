@@ -1,18 +1,18 @@
 import { ApiError } from './api';
-import type { RawMachine, RawMachineClass, RawMachineProfile } from '../types';
+import type { RawMachineCapacity, RawMachineClass, RawMachineProfile } from '../types';
 
-// Synthetic Machines used while the Fleet API cannot be read
+// Synthetic MachineCapacities used while the Fleet API cannot be read
 // (VITE_FLEET_FIXTURES=true). The namespace, pool label and provider come from
 // config/standalone/fixtures.yaml, and the hardware and conditions are what
 // Fleet's standalone runner writes (internal/standalone/runner.go): one
-// machine free, one allocated, and one just enrolled with nothing observed.
+// capacity free, one allocated, and one just enrolled with nothing observed.
 
 const NAMESPACE = 'fleet-provider';
 const LABELS = { 'fleet.datumapis.com/capacity-pool': 'central-metal' };
 
-function spec(asset: string, allocationPolicy: RawMachine['spec']['allocationPolicy']): RawMachine['spec'] {
+function spec(device: string, allocationPolicy: RawMachineCapacity['spec']['allocationPolicy']): RawMachineCapacity['spec'] {
   return {
-    providerRef: { apiGroup: 'synthetic.fleet.datumapis.com', kind: 'SyntheticMachine', name: asset },
+    deviceRef: { name: device },
     allocationPolicy,
     cleaningPolicyRef: { name: 'synthetic-tenant-reuse-v1' },
     reclaimPolicy: 'Retain',
@@ -29,10 +29,10 @@ const EVIDENCE_CURRENT = [
   { type: 'Healthy', status: 'True', reason: 'SyntheticEvidence' },
 ] as const;
 
-export const FIXTURE_MACHINES: RawMachine[] = [
+export const FIXTURE_CAPACITIES: RawMachineCapacity[] = [
   {
     metadata: { name: 'central1-baremetal-01', namespace: NAMESPACE, labels: LABELS },
-    spec: spec('asset-central-01', 'Enabled'),
+    spec: spec('synthetic-device-central-01', 'Enabled'),
     status: {
       hardware: HARDWARE,
       conditions: [...EVIDENCE_CURRENT, { type: 'Available', status: 'True', reason: 'SyntheticEvidence' }],
@@ -40,7 +40,7 @@ export const FIXTURE_MACHINES: RawMachine[] = [
   },
   {
     metadata: { name: 'central1-baremetal-02', namespace: NAMESPACE, labels: LABELS },
-    spec: spec('asset-central-02', 'Enabled'),
+    spec: spec('synthetic-device-central-02', 'Enabled'),
     status: {
       hardware: HARDWARE,
       conditions: [...EVIDENCE_CURRENT, { type: 'Available', status: 'False', reason: 'Allocated' }],
@@ -48,30 +48,30 @@ export const FIXTURE_MACHINES: RawMachine[] = [
   },
   {
     metadata: { name: 'central1-baremetal-03', namespace: NAMESPACE, labels: LABELS },
-    spec: spec('asset-central-03', 'Disabled'),
+    spec: spec('synthetic-device-central-03', 'Disabled'),
   },
 ];
 
-// Created machines are kept in memory until the page reloads. A new machine
+// Created capacity is kept in memory until the page reloads. A new record
 // has no status: only Fleet's discovery reports hardware and conditions.
-const machines = [...FIXTURE_MACHINES];
+const capacities = [...FIXTURE_CAPACITIES];
 
-export const fixtureMachines = {
-  list: (): RawMachine[] => [...machines],
-  create: (machine: RawMachine): RawMachine => {
-    const { name, namespace } = machine.metadata;
-    if (machines.some((m) => m.metadata.name === name && m.metadata.namespace === namespace)) {
-      throw new ApiError(409, `machines "${name}" already exists`);
+export const fixtureCapacities = {
+  list: (): RawMachineCapacity[] => [...capacities],
+  create: (capacity: RawMachineCapacity): RawMachineCapacity => {
+    const { name, namespace } = capacity.metadata;
+    if (capacities.some((m) => m.metadata.name === name && m.metadata.namespace === namespace)) {
+      throw new ApiError(409, `machinecapacities "${name}" already exists`);
     }
     const created = {
-      ...machine,
-      metadata: { ...machine.metadata, creationTimestamp: new Date().toISOString() },
+      ...capacity,
+      metadata: { ...capacity.metadata, creationTimestamp: new Date().toISOString() },
     };
-    machines.push(created);
+    capacities.push(created);
     return created;
   },
   delete: (namespace: string, name: string): void =>
-    remove(machines, 'machines', name, (m) => m.metadata.name === name && m.metadata.namespace === namespace),
+    remove(capacities, 'machinecapacities', name, (m) => m.metadata.name === name && m.metadata.namespace === namespace),
 };
 
 // Removes the first record matching `match`, or fails like the API does.
@@ -124,7 +124,7 @@ const classes: RawMachineClass[] = [
       },
       access: { consoleModes: [], powerControl: false },
       capacity: {
-        machines: {
+        machineCapacities: {
           namespace: 'fleet-provider',
           selector: { matchLabels: { 'fleet.datumapis.com/capacity-pool': 'central-metal' } },
         },

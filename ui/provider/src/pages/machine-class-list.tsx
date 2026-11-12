@@ -37,7 +37,7 @@ export default function MachineClassList() {
         <div data-testid="fleet-plugin-class-empty">
           <EmptyContent
             title="No classes yet"
-            subtitle="A class offers profiles to consumers and names the Machines that serve them."
+            subtitle="A class offers profiles to consumers and names the capacity that serves them."
             className="w-full"
           />
         </div>
@@ -50,7 +50,7 @@ export default function MachineClassList() {
       <DeleteDialog
         name={deleting?.name}
         resource="class"
-        warning="Consumers can no longer deploy from it. Claims that already use it keep pointing at a class that no longer exists, and its Machines stay as they are."
+        warning="Consumers can no longer deploy from it. Machines that already use it keep pointing at a class that no longer exists, and its capacity stays as it is."
         pending={deletion.isPending}
         error={deletion.error}
         onConfirm={() =>

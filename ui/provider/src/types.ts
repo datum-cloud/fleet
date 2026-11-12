@@ -1,18 +1,18 @@
-// View model for the machine list. The wire shape is the shared
-// fleet.datumapis.com/v1alpha1 Machine in ui/shared/fleet-api.ts.
+// View model for the capacity list. The wire shape is the shared
+// fleet.datumapis.com/v1alpha1 MachineCapacity in ui/shared/fleet-api.ts.
 
 import { findCondition, type Condition } from '../../shared/conditions';
 import { formatConstraint, summarizeProfile, type ProfileSummary } from '../../shared/profile-summary';
 import type {
   List,
-  Machine as RawMachine,
+  MachineCapacity as RawMachineCapacity,
   MachineClass as RawMachineClass,
   MachineProfile as RawMachineProfile,
 } from '../../shared/fleet-api';
 
-export type { Condition, RawMachine, RawMachineClass, RawMachineProfile };
+export type { Condition, RawMachineCapacity, RawMachineClass, RawMachineProfile };
 export type RawMachineClassList = List<RawMachineClass>;
-export type RawMachineList = List<RawMachine>;
+export type RawMachineCapacityList = List<RawMachineCapacity>;
 export type RawMachineProfileList = List<RawMachineProfile>;
 
 export const CAPACITY_POOL_LABEL = 'fleet.datumapis.com/capacity-pool';
@@ -24,7 +24,7 @@ export interface ConditionSummary {
   reason?: string;
 }
 
-export interface Machine {
+export interface MachineCapacity {
   name: string;
   namespace?: string;
   pool?: string;
@@ -42,14 +42,14 @@ function summarize(conditions: Condition[], type: string): ConditionSummary {
   return { state: c?.status ?? 'Unknown', reason: c?.reason };
 }
 
-function cpuSummary(cpu: NonNullable<NonNullable<RawMachine['status']>['hardware']>['cpu']) {
+function cpuSummary(cpu: NonNullable<NonNullable<RawMachineCapacity['status']>['hardware']>['cpu']) {
   if (cpu?.cores === undefined) return undefined;
   const threads = cpu.threads !== undefined ? ` / ${cpu.threads} threads` : '';
   const arch = cpu.architecture ? ` · ${cpu.architecture}` : '';
   return `${cpu.cores} cores${threads}${arch}`;
 }
 
-export function toMachine(raw: RawMachine): Machine {
+export function toMachineCapacity(raw: RawMachineCapacity): MachineCapacity {
   const conditions = raw.status?.conditions ?? [];
   const hw = raw.status?.hardware;
   return {
@@ -90,9 +90,9 @@ export interface MachineClass {
   source?: string;
   allowedProfiles: string[];
   customProfiles: boolean;
-  /** "default / central-metal": the Machines namespace and capacity pool. */
+  /** "default / central-metal": the MachineCapacities namespace and capacity pool. */
   capacity?: string;
-  machineNamespace?: string;
+  capacityNamespace?: string;
   capacityPool?: string;
   powerControl: boolean;
   accepted: ConditionSummary;
@@ -101,15 +101,15 @@ export interface MachineClass {
 
 export function toMachineClass(raw: RawMachineClass): MachineClass {
   const spec = raw.spec ?? {};
-  const machines = spec.capacity?.machines;
-  const pool = machines?.selector?.matchLabels?.[CAPACITY_POOL_LABEL];
+  const capacities = spec.capacity?.machineCapacities;
+  const pool = capacities?.selector?.matchLabels?.[CAPACITY_POOL_LABEL];
   return {
     name: raw.metadata.name,
     source: spec.source && `${spec.source.project}/${spec.source.name}`,
     allowedProfiles: (spec.profilePolicy?.allowedProfiles ?? []).map((p) => p.name),
     customProfiles: !!spec.profilePolicy?.customProfiles?.enabled,
-    capacity: machines && (pool ? `${machines.namespace} / ${pool}` : machines.namespace),
-    machineNamespace: machines?.namespace,
+    capacity: capacities && (pool ? `${capacities.namespace} / ${pool}` : capacities.namespace),
+    capacityNamespace: capacities?.namespace,
     capacityPool: pool,
     powerControl: !!spec.access?.powerControl,
     accepted: summarize(raw.status?.conditions ?? [], 'Accepted'),

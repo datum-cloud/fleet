@@ -1,3 +1,4 @@
+import { FleetStyles } from './fleet-styles';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -8,10 +9,9 @@ import {
 } from '@datum-cloud/datum-ui/breadcrumb';
 import { Icon } from '@datum-cloud/datum-ui/icons';
 import { PageTitle } from '@datum-cloud/datum-ui/page-title';
-import { Tabs, TabsLinkTrigger, TabsList } from '@datum-cloud/datum-ui/tabs';
 import { HomeIcon } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { Fragment, type ReactNode } from 'react';
+import { Link, useParams } from 'react-router';
 
 /** The plugin's mount root: /project/:projectId/services/:serviceSlug. */
 export function usePluginBase(): string {
@@ -19,34 +19,38 @@ export function usePluginBase(): string {
   return `/project/${projectId}/services/${serviceSlug}`;
 }
 
-// The Machines nav item opens on the claims list; the catalog sits beside it
-// as a tab, so the project nav keeps a single entry.
+export interface Crumb {
+  label: string;
+  /** Omitted on the current page. */
+  href?: string;
+}
+
+// Breadcrumb, title and actions, laid out like the other service plugins'
+// pages (NLB in particular). The list has no tabs: deploying starts from the
+// list itself.
 export function MachinesPage({
   testId,
+  title,
   description,
+  actions,
+  crumbs,
   children,
 }: {
   testId: string;
-  description: string;
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+  /** Crumbs after the project home icon. */
+  crumbs: Crumb[];
   children: ReactNode;
 }) {
   const { projectId } = useParams<{ projectId: string }>();
-  const { pathname } = useLocation();
-  const base = usePluginBase();
-  const tabs = [
-    { label: 'Machines', href: base },
-    { label: 'Catalog', href: `${base}/catalog` },
-  ];
-  // Longest matching href wins, since the Machines tab is the mount root.
-  const active =
-    tabs
-      .filter((t) => pathname === t.href || pathname.startsWith(`${t.href}/`))
-      .sort((a, b) => b.href.length - a.href.length)[0]?.href ?? base;
 
   return (
     <div data-testid={testId} className="flex min-w-0 flex-col gap-6">
-      <Breadcrumb>
-        <BreadcrumbList>
+      <FleetStyles />
+      <Breadcrumb className="min-w-0 overflow-x-auto">
+        <BreadcrumbList className="flex-nowrap">
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
               <Link to={projectId ? `/project/${projectId}` : '/'}>
@@ -54,31 +58,29 @@ export function MachinesPage({
               </Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage>Machines</BreadcrumbPage>
-          </BreadcrumbItem>
+          {crumbs.map((crumb) => (
+            <Fragment key={crumb.label}>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem className="min-w-0">
+                {crumb.href ? (
+                  <BreadcrumbLink asChild>
+                    <Link to={crumb.href}>{crumb.label}</Link>
+                  </BreadcrumbLink>
+                ) : (
+                  <BreadcrumbPage className="truncate">{crumb.label}</BreadcrumbPage>
+                )}
+              </BreadcrumbItem>
+            </Fragment>
+          ))}
         </BreadcrumbList>
       </Breadcrumb>
 
-      <PageTitle title="Machines" description={description} />
-
-      <div className="border-border border-b">
-        <Tabs value={active} className="gap-0">
-          <TabsList variant="line">
-            {tabs.map((tab) => (
-              <TabsLinkTrigger
-                key={tab.href}
-                value={tab.href}
-                href={tab.href}
-                linkComponent={Link}
-                className="text-xs md:py-2">
-                {tab.label}
-              </TabsLinkTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
+      <PageTitle
+        title={title}
+        description={description}
+        descriptionClassName="max-w-none"
+        actions={actions}
+      />
 
       {children}
     </div>

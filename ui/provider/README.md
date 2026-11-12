@@ -6,22 +6,23 @@ portal fetches `plugin-manifest.json` and `remoteEntry.js` server-side and
 mounts its pages under `/plugins/<slug>/`, with a **Fleet** item under
 Operations in the navigation. The page has three tabs:
 
-- **Machines** (the mount root, where the nav item points) lists the provider's Machines in every namespace
-  and creates new ones. The form asks only for a name, a class, and whether to
-  offer the machine for allocation (off by default). The Machine goes in the
-  class's namespace and capacity pool, with the synthetic provider (named after
-  the Machine) and the standalone fixtures' cleaning policy, since no real
-  provider exists yet. The provider reference can't be changed later.
-  Hardware and conditions stay empty until Fleet's discovery reports them.
+- **Capacity** (the mount root, where the nav item points) lists the
+  provider's MachineCapacities in every namespace and creates new ones. The
+  form asks only for a name, a class, and whether to offer the capacity for
+  allocation (off by default). It goes in the class's namespace and capacity
+  pool, with a device reference named after the record (Fleet has no Device
+  inventory yet) and the standalone fixtures' cleaning policy. The device
+  reference can't be changed later. Hardware and conditions stay empty until
+  Fleet's discovery reports them.
 - **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
   profile can't be changed after it is created, so there is no edit.
 - **Classes** (`classes`) lists MachineClasses and creates new ones: the
   profiles a class allows, the namespace and capacity-pool label of the
-  Machines that serve it, and whether consumers get power control. Custom
+  MachineCapacities that serve it, and whether consumers get power control. Custom
   profiles and console access stay off.
 
-The portal proxy forwards the staff member's own token, so creating machines,
-profiles and classes needs a Fleet role with `machines.create`,
+The portal proxy forwards the staff member's own token, so creating capacity,
+profiles and classes needs a Fleet role with `machinecapacities.create`,
 `machineprofiles.create` and `machineclasses.create` in the provider project,
 such as `fleet.datumapis.com-provider`. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
@@ -42,15 +43,15 @@ list's view.
 | `npm test`               | Run the vitest suite.                                   |
 | `npm run typecheck`      | Type-check without emitting.                            |
 | `npm run build`          | Build into `dist/`, reading the live Fleet API.         |
-| `npm run build:fixtures` | Build with synthetic Machines instead of the API.       |
+| `npm run build:fixtures` | Build with synthetic capacity instead of the API.       |
 | `npm run preview`        | Serve `dist/` on http://localhost:7781.                 |
 | `npm run dev`            | Vite dev server for the standalone `index.html` only.   |
 
 ## Fixture mode
 
 The Fleet CRDs are on staging, but reading them needs a Fleet role. Setting
-`VITE_FLEET_FIXTURES=true` at build time makes `useMachines` return the
-synthetic Machines in `src/lib/fixtures.ts`: one free, one allocated and one
+`VITE_FLEET_FIXTURES=true` at build time makes `useMachineCapacities` return
+the synthetic MachineCapacities in `src/lib/fixtures.ts`: one free, one allocated and one
 just enrolled, following Fleet's standalone fixtures and the statuses its
 standalone runner writes. Profiles start with the standalone fixture's
 profile; profiles you create are kept in memory until the page reloads. The

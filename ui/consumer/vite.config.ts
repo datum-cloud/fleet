@@ -34,9 +34,8 @@ export default defineConfig({
       manifest: true,
       // Keys map 1:1 to the manifest's `exposedModules` keys / $codeRefs.
       exposes: {
-        './ClaimList': './src/pages/claim-list.tsx',
-        './Catalog': './src/pages/catalog.tsx',
-        './ClaimDetail': './src/pages/claim-detail.tsx',
+        './MachineList': './src/pages/machine-list.tsx',
+        './MachineDetail': './src/pages/machine-detail.tsx',
       },
       // requiredVersion:false everywhere: the host's copy always wins, so a
       // host major bump cannot reject the plugin.
@@ -55,12 +54,12 @@ export default defineConfig({
         '@datum-cloud/datum-ui/date-time': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/dialog': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/empty-content': { singleton: true, requiredVersion: false },
+        '@datum-cloud/datum-ui/hooks': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/icons': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/input': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/label': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/page-title': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/skeleton': { singleton: true, requiredVersion: false },
-        '@datum-cloud/datum-ui/tabs': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/toast': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/tooltip': { singleton: true, requiredVersion: false },
         '@datum-cloud/datum-ui/typography': { singleton: true, requiredVersion: false },

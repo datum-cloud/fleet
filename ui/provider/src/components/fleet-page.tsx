@@ -19,10 +19,10 @@ export function FleetPage({
   const { slug } = useParams();
   const { pathname } = useLocation();
   const base = `/plugins/${slug}`;
-  // Machines is the plugin root, where the nav item points, so staff-portal
+  // Capacity is the plugin root, where the nav item points, so staff-portal
   // keeps the Operations sidebar for every tab under it.
   const tabs = [
-    { label: 'Machines', href: base },
+    { label: 'Capacity', href: base },
     { label: 'Profiles', href: `${base}/profiles` },
     { label: 'Classes', href: `${base}/classes` },
   ];

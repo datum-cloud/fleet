@@ -34,7 +34,7 @@ export default defineConfig({
       manifest: true,
       // Keys map 1:1 to the manifest's `exposedModules` keys / $codeRefs.
       exposes: {
-        './MachineList': './src/pages/machine-list.tsx',
+        './CapacityList': './src/pages/capacity-list.tsx',
         './MachineProfileList': './src/pages/machine-profile-list.tsx',
         './MachineClassList': './src/pages/machine-class-list.tsx',
       },

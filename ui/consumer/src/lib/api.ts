@@ -1,13 +1,13 @@
-import { FIXTURE_CLASSES, FIXTURE_PROFILES, fixtureClaims } from './fixtures';
+import { FIXTURE_CLASSES, FIXTURE_PROFILES, fixtureMachines } from './fixtures';
 import {
   toCatalog,
-  toClaimDetail,
-  toMachineClaim,
-  type ClaimDetail,
+  toMachineDetail,
+  toMachine,
+  type MachineDetail,
   type CatalogOffering,
-  type MachineClaim,
-  type RawMachineClaim,
-  type RawMachineClaimList,
+  type Machine,
+  type RawMachine,
+  type RawMachineList,
   type RawMachineClassList,
   type RawMachineProfileList,
 } from '../types';
@@ -23,10 +23,21 @@ export const PLUGIN_ID = 'fleet.datumapis.com';
 
 const USE_FIXTURES = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const REFETCH_INTERVAL_MS = 10_000;
+// Faster while a Machine is still changing, so Ready or a finished release
+// shows up without a reload.
+const SETTLING_INTERVAL_MS = 3_000;
+
+const settling = (machines: Pick<Machine, 'phase'>[] = []) =>
+  machines.some((m) => m.phase === 'Pending' || m.phase === 'Bound' || m.phase === 'Releasing');
+
+// cloud-portal's QueryClient turns refetchOnWindowFocus off for every query,
+// and polling pauses in a background tab, so without this a Machine that
+// changed while the tab was hidden stays stale until a reload.
+const MACHINE_QUERY = { refetchOnWindowFocus: 'always' as const, retry: false };
 
 const FLEET_API = '/apis/fleet.datumapis.com/v1alpha1';
-const CLAIM_NAMESPACE = 'default';
-const MACHINECLAIMS_PATH = `${FLEET_API}/namespaces/${CLAIM_NAMESPACE}/machineclaims`;
+const MACHINE_NAMESPACE = 'default';
+const MACHINES_PATH = `${FLEET_API}/namespaces/${MACHINE_NAMESPACE}/machines`;
 
 /** The only location offered for now. */
 export const DEFAULT_LOCATION = 'us-central-1';
@@ -67,21 +78,21 @@ async function proxyFetch<T>(
   return res.json() as Promise<T>;
 }
 
-export async function fetchMachineClaims(projectId: string): Promise<MachineClaim[]> {
-  if (USE_FIXTURES) return fixtureClaims.list().map(toMachineClaim);
-  const body = await proxyFetch<RawMachineClaimList>(projectId, `${MACHINECLAIMS_PATH}?limit=100`);
-  return (body.items ?? []).map(toMachineClaim);
+export async function fetchMachines(projectId: string): Promise<Machine[]> {
+  if (USE_FIXTURES) return fixtureMachines.list().map(toMachine);
+  const body = await proxyFetch<RawMachineList>(projectId, `${MACHINES_PATH}?limit=100`);
+  return (body.items ?? []).map(toMachine);
 }
 
-export function useMachineClaims(
+export function useMachines(
   projectId: string | undefined
-): UseQueryResult<MachineClaim[], ApiError> {
+): UseQueryResult<Machine[], ApiError> {
   return useQuery({
-    queryKey: [PLUGIN_ID, 'machineclaims', projectId],
+    queryKey: [PLUGIN_ID, 'machines', projectId],
     enabled: !!projectId,
-    queryFn: () => fetchMachineClaims(projectId as string),
-    refetchInterval: REFETCH_INTERVAL_MS,
-    retry: false,
+    queryFn: () => fetchMachines(projectId as string),
+    refetchInterval: (query) => (settling(query.state.data) ? SETTLING_INTERVAL_MS : REFETCH_INTERVAL_MS),
+    ...MACHINE_QUERY,
   });
 }
 
@@ -106,33 +117,36 @@ export function useCatalog(projectId: string | undefined): UseQueryResult<Catalo
   });
 }
 
-export async function fetchMachineClaim(projectId: string, name: string): Promise<ClaimDetail> {
+export async function fetchMachine(projectId: string, name: string): Promise<MachineDetail> {
   if (USE_FIXTURES) {
-    const claim = fixtureClaims.list().find((c) => c.metadata.name === name);
-    if (!claim) throw new ApiError(404, `machineclaims "${name}" not found`);
-    return toClaimDetail(claim);
+    const machine = fixtureMachines.list().find((c) => c.metadata.name === name);
+    if (!machine) throw new ApiError(404, `machines "${name}" not found`);
+    return toMachineDetail(machine);
   }
-  const claim = await proxyFetch<RawMachineClaim>(
+  const machine = await proxyFetch<RawMachine>(
     projectId,
-    `${MACHINECLAIMS_PATH}/${encodeURIComponent(name)}`
+    `${MACHINES_PATH}/${encodeURIComponent(name)}`
   );
-  return toClaimDetail(claim);
+  return toMachineDetail(machine);
 }
 
-export function useMachineClaim(
+export function useMachine(
   projectId: string | undefined,
   name: string | undefined
-): UseQueryResult<ClaimDetail, ApiError> {
+): UseQueryResult<MachineDetail, ApiError> {
   return useQuery({
-    queryKey: [PLUGIN_ID, 'machineclaims', projectId, name],
+    queryKey: [PLUGIN_ID, 'machines', projectId, name],
     enabled: !!projectId && !!name,
-    queryFn: () => fetchMachineClaim(projectId as string, name as string),
-    refetchInterval: REFETCH_INTERVAL_MS,
-    retry: false,
+    queryFn: () => fetchMachine(projectId as string, name as string),
+    refetchInterval: (query) => {
+      const machine = query.state.data;
+      return machine && settling([machine]) ? SETTLING_INTERVAL_MS : REFETCH_INTERVAL_MS;
+    },
+    ...MACHINE_QUERY,
   });
 }
 
-export interface CreateClaimInput {
+export interface CreateMachineInput {
   name: string;
   machineClass: string;
   machineProfile: string;
@@ -140,9 +154,9 @@ export interface CreateClaimInput {
 
 // Deploying allocates a machine and hands it over powered off; installing an
 // OS is a separate Installation, which this plugin does not offer yet.
-export function toRawMachineClaim(input: CreateClaimInput): RawMachineClaim {
+export function toRawMachine(input: CreateMachineInput): RawMachine {
   return {
-    metadata: { name: input.name, namespace: CLAIM_NAMESPACE },
+    metadata: { name: input.name, namespace: MACHINE_NAMESPACE },
     spec: {
       machineClassRef: { name: input.machineClass },
       machineProfileRef: { name: input.machineProfile },
@@ -152,45 +166,45 @@ export function toRawMachineClaim(input: CreateClaimInput): RawMachineClaim {
   };
 }
 
-export async function createMachineClaim(
+export async function createMachine(
   projectId: string,
-  input: CreateClaimInput
-): Promise<RawMachineClaim> {
-  const claim = toRawMachineClaim(input);
-  if (USE_FIXTURES) return fixtureClaims.create(claim);
-  return proxyFetch<RawMachineClaim>(projectId, MACHINECLAIMS_PATH, {
+  input: CreateMachineInput
+): Promise<RawMachine> {
+  const machine = toRawMachine(input);
+  if (USE_FIXTURES) return fixtureMachines.create(machine);
+  return proxyFetch<RawMachine>(projectId, MACHINES_PATH, {
     method: 'POST',
-    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'MachineClaim', ...claim },
+    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'Machine', ...machine },
   });
 }
 
-export function useCreateMachineClaim(
+export function useCreateMachine(
   projectId: string | undefined
-): UseMutationResult<RawMachineClaim, ApiError, CreateClaimInput> {
+): UseMutationResult<RawMachine, ApiError, CreateMachineInput> {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input) => createMachineClaim(projectId as string, input),
+    mutationFn: (input) => createMachine(projectId as string, input),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclaims', projectId] }),
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machines', projectId] }),
   });
 }
 
-// Releasing deletes the claim. Fleet's finalizer keeps it, listed as
-// Releasing, until the machine is freed; the claim then disappears.
-export async function releaseMachineClaim(projectId: string, name: string): Promise<void> {
-  if (USE_FIXTURES) return fixtureClaims.release(name);
-  await proxyFetch<unknown>(projectId, `${MACHINECLAIMS_PATH}/${encodeURIComponent(name)}`, {
+// Releasing deletes the machine. Fleet's finalizer keeps it, listed as
+// Releasing, until its capacity is freed; the Machine then disappears.
+export async function releaseMachine(projectId: string, name: string): Promise<void> {
+  if (USE_FIXTURES) return fixtureMachines.release(name);
+  await proxyFetch<unknown>(projectId, `${MACHINES_PATH}/${encodeURIComponent(name)}`, {
     method: 'DELETE',
   });
 }
 
-export function useReleaseMachineClaim(
+export function useReleaseMachine(
   projectId: string | undefined
 ): UseMutationResult<void, ApiError, string> {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (name) => releaseMachineClaim(projectId as string, name),
+    mutationFn: (name) => releaseMachine(projectId as string, name),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclaims', projectId] }),
+      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machines', projectId] }),
   });
 }
