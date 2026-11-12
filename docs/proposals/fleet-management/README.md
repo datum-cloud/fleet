@@ -7,7 +7,7 @@ latest-milestone: "v0.1"
 <!-- omit from toc -->
 # Fleet infrastructure management service
 
-[Documentation overview](../../README.md) · [Functionality guide](../../functionality.md)
+[Documentation overview](../../README.md) · [Functionality guide](../../functionality/README.md)
 
 > Provisional design imported from infra PRs #5782 and #7705. See the
 > [migration record](MIGRATION.md) for exact source revisions, review history,
@@ -228,7 +228,7 @@ for the target service, independent of today's inventory schema.
 Proposed groups are `metal.datumapis.com` for shared allocation,
 and installation APIs and `fleet.datumapis.com` for physical inventory.
 The intended location handoff uses `coordination.fleet.datumapis.com`; see the
-[API architecture](../../architecture.md) for implementation status and placement.
+[API architecture](../../architecture/README.md) for implementation status and placement.
 Managed cluster and OS-policy group placement remains separate design work.
 Owned-hardware enrollment remains private location-adapter state; vendor and OS
 adapters may have their own typed groups. Group names and administrative

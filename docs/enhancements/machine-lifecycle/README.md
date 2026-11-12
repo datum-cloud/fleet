@@ -5,7 +5,7 @@ stage: alpha
 
 # Machine allocation and installation
 
-[Documentation overview](../../README.md) · [Functionality guide](../../functionality.md)
+[Documentation overview](../../README.md) · [Functionality guide](../../functionality/README.md)
 
 - [Summary](#summary)
 - [Motivation](#motivation)
@@ -53,7 +53,7 @@ still stores its protected allocation and operation encoding in private Secrets,
 and the simulator's binding and epoch fields are private executor-fencing details,
 not fields in the proposed API contract. Fleet has no production allocation
 controller or real provider effects yet. The implemented subset and gaps are recorded in
-[`docs/implementation.md`](../../implementation.md).
+[`docs/development/README.md`](../../development/README.md).
 
 ## Motivation
 

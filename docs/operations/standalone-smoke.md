@@ -1,6 +1,6 @@
 # Standalone synthetic smoke environment
 
-[Operations guide](operations.md) · [Troubleshooting](troubleshooting.md)
+[Operations guide](README.md) · [Troubleshooting](../troubleshooting/README.md)
 
 This environment exercises Fleet's implemented local-scope lifecycle library
 against the persistent provider simulator. It is a development smoke test, not

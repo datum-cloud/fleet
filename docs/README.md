@@ -2,17 +2,16 @@
 
 [Project introduction](../README.md)
 
-Fleet is Datum's infrastructure management service for owned and rented capacity.
-Its intended product spans physical inventory, machine allocation and
-installation, managed clusters, and platform node services. It replaces repeated
-infrastructure facts and disconnected workflows with explicit ownership and
-recoverable lifecycle transitions.
+Fleet manages owned and rented infrastructure. Its design covers equipment
+inventory, machine allocation, OS installation, managed clusters, and node
+services. It gives each resource one owner and records work so controllers can
+recover after failures.
 
 The customer-facing machine service is **Bare Metal**, with alpha APIs at
 `metal.datumapis.com`. Fleet's physical infrastructure APIs use
 `fleet.datumapis.com`; the intended internal execution handoff uses
 `coordination.fleet.datumapis.com`. See the
-[API boundaries](architecture.md#api-boundaries) for resource ownership and the
+[API boundaries](architecture/README.md#api-boundaries) for resource ownership and the
 implementation status of each group.
 
 ## Who Fleet serves
@@ -27,8 +26,7 @@ implementation status of each group.
   allocation and installation contracts, adding membership, logical node identity,
   replacement, and service readiness above the shared machine lifecycle.
 
-These are intended experiences, not a statement that every capability is
-available today.
+These capabilities are planned. Not all are implemented.
 
 ## How the product fits together
 
@@ -47,47 +45,44 @@ available today.
 
 Physical assets, allocations, OS installations, and managed logical nodes have
 separate identities. Fleet does not take over networking, IPAM, routing, DNS, or
-service policy from their owners. See [architecture](architecture.md) for these
+service policy from their owners. See [architecture](architecture/README.md) for these
 boundaries and their rationale.
 
 ## What exists today
 
-The repository implements alpha API types and CRDs, a local-scope machine
-lifecycle library, a persistent synthetic provider simulator, and manager wiring
-with injected lifecycle handling. Standalone smoke and Milo-routed synthetic
-staging environments exercise subsets of the lifecycle. They are test fixtures,
-not production service or hardware qualification.
+The repository includes alpha APIs, Kubernetes custom resource definitions
+(CRDs), machine lifecycle code, and a provider simulator. Test environments
+exercise allocation, installation, cleanup, and reuse. They do not prove that
+Fleet can operate production hardware.
 
-Production authority and event integrations remain incomplete, and no real
-provider integration exists. The default production manager remains unready and
-performs no lifecycle or provider effects. Deployment packaging does not change
-that boundary. The [implementation status](implementation.md) is the detailed
-record of implemented behavior and gaps; the [roadmap](roadmap.md) describes
-future milestones and required evidence.
+Production authorization and event handling remain incomplete. No real provider
+integration exists. The production manager remains unready and makes no provider
+changes. See [implementation status](development/README.md) for details and the
+[roadmap](development/roadmap.md) for planned work.
 
 ## Explore the documentation
 
-| If you want to… | Start here |
+Each topic folder has a `README.md` entry point:
+
+| Folder | Contents |
 | --- | --- |
-| Understand capabilities and user journeys | [Functionality](functionality.md) |
-| Understand components, authority, and design decisions | [Architecture](architecture.md) |
-| Build, validate, or prepare a deployment | [Operations](operations.md) |
-| Investigate a blocked run or unexpected state | [Troubleshooting](troubleshooting.md) |
-| Review the current machine API contract | [Machine allocation and installation](enhancements/machine-lifecycle/README.md) |
-| Review the broader proposed service | [Service proposal](proposals/fleet-management/README.md) |
+| [Functionality](functionality/README.md) | Capabilities and user journeys |
+| [Architecture](architecture/README.md) | API boundaries, ownership, and design context |
+| [Operations](operations/README.md) | Deployment, validation, and local smoke tests |
+| [Troubleshooting](troubleshooting/README.md) | Common problems and safe recovery |
+| [Development](development/README.md) | Implementation status, local commands, and roadmap |
+| [Enhancements](enhancements/machine-lifecycle/README.md) | Focused machine lifecycle contracts and acceptance requirements |
+| [Proposals](proposals/fleet-management/README.md) | Broader service proposals, examples, diagrams, and provenance |
 
-## How to read these docs
+## Read implementation and design separately
 
-The overview and topic guides organize the product by reader task. Detailed
-contracts stay in their existing proposal and enhancement documents so their
-links, examples, and review history remain intact. Commands and environment
-requirements stay with the relevant implementation or operational guide rather
-than being duplicated across entry points.
+Topic guides link to detailed instructions rather than repeat them. Proposals
+and enhancements retain their examples and review history.
 
 - **Implementation status and operational guides** describe the implemented
   subset and its limits; passing a synthetic test does not prove live acceptance.
 - **Enhancements and proposals** describe intended contracts. API examples and
   rollout plans are provisional unless implementation evidence says otherwise.
 - **Design context and migration history** explain source revisions and open
-  questions. Start with the [design context](design.md) and
+  questions. Start with the [design context](architecture/design.md) and
   [proposal migration record](proposals/fleet-management/MIGRATION.md) for provenance.
