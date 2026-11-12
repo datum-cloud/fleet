@@ -1,5 +1,7 @@
 # Implementation roadmap
 
+[Documentation overview](README.md) · [Architecture guide](architecture.md)
+
 This proposed sequence follows the [reviewed Fleet designs](design.md). Milestones
 are unimplemented. Owned-metal qualification and rented/managed adoption can
 progress independently while sharing allocation and installation contracts.

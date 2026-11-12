@@ -7,6 +7,8 @@ latest-milestone: "v0.1"
 <!-- omit from toc -->
 # Fleet infrastructure management service
 
+[Documentation overview](../../README.md) · [Functionality guide](../../functionality.md)
+
 > Provisional design imported from infra PRs #5782 and #7705. See the
 > [migration record](MIGRATION.md) for exact source revisions, review history,
 > and unresolved follow-ups. Examples are proposed contracts, not deployable APIs.

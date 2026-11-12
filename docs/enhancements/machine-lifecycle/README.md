@@ -5,6 +5,8 @@ stage: alpha
 
 # Machine allocation and installation
 
+[Documentation overview](../../README.md) · [Functionality guide](../../functionality.md)
+
 - [Summary](#summary)
 - [Motivation](#motivation)
 - [Proposal](#proposal)
@@ -973,7 +975,7 @@ It reports:
   `InsufficientCapacity`.
 
 Persist the selected configuration, catalog revision, observations, and device
-mapping in the [allocation](#allocation-record). Catalog changes require
+mapping in the [allocation](#machineallocation-record). Catalog changes require
 revalidation before allocation. Admitted work uses its retained inputs; an adapter
 that cannot honor them must stop or recover rather than substitute a configuration.
 

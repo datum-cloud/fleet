@@ -1,5 +1,7 @@
 # Standalone synthetic smoke environment
 
+[Operations guide](operations.md) · [Troubleshooting](troubleshooting.md)
+
 This environment exercises Fleet's implemented local-scope lifecycle library
 against the persistent provider simulator. It is a development smoke test, not
 the Milo acceptance suite and not hardware qualification.

@@ -1,5 +1,7 @@
 # Fleet implementation status
 
+[Documentation overview](README.md) · [Operations guide](operations.md)
+
 Status: public API foundation, standalone synthetic provider simulator,
 same-cluster allocation/installation lifecycle library, unwired NSO network
 lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an

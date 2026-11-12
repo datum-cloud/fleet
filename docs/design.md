@@ -1,5 +1,7 @@
 # Fleet design context
 
+[Documentation overview](README.md) · [Architecture guide](architecture.md)
+
 Reviewed on 2026-10-27. This is a synthesis for implementation planning, not a
 replacement for the source proposals or a claim that their APIs exist.
 
