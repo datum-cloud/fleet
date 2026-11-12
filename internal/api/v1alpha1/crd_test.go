@@ -12,7 +12,7 @@ import (
 )
 
 func TestAllocationCRDContract(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "base", "crd", "fleet.datumapis.com.yaml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "base", "crd", "metal.datumapis.com.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,13 +31,13 @@ func TestAllocationCRDContract(t *testing.T) {
 		}
 	}
 
-	for _, legacy := range []string{"machineclaims.fleet.datumapis.com"} {
+	for _, legacy := range []string{"machineclaims.fleet.datumapis.com", "machineclaims.metal.datumapis.com"} {
 		if crds[legacy] != nil {
 			t.Fatalf("legacy CRD %q remains in the allocation API", legacy)
 		}
 	}
 
-	capacity := crds["machinecapacities.fleet.datumapis.com"]
+	capacity := crds["machinecapacities.metal.datumapis.com"]
 	assertCRDKind(t, capacity, "MachineCapacity")
 	capacitySpec := schemaProperty(t, capacity, "spec")
 	assertRequired(t, capacitySpec.Required, "deviceRef")
@@ -48,12 +48,12 @@ func TestAllocationCRDContract(t *testing.T) {
 		t.Fatal("MachineCapacity.spec.deviceRef is not immutable")
 	}
 
-	machine := crds["machines.fleet.datumapis.com"]
+	machine := crds["machines.metal.datumapis.com"]
 	assertCRDKind(t, machine, "Machine")
 	machineSpec := schemaProperty(t, machine, "spec")
 	assertRequired(t, machineSpec.Required, "machineClassRef", "machineProfileRef", "locationRef")
 
-	allocation := crds["machineallocations.fleet.datumapis.com"]
+	allocation := crds["machineallocations.metal.datumapis.com"]
 	assertCRDKind(t, allocation, "MachineAllocation")
 	allocationSpec := schemaProperty(t, allocation, "spec")
 	assertRequired(t, allocationSpec.Required, "machineRef", "machineCapacityRef")
@@ -65,7 +65,7 @@ func TestAllocationCRDContract(t *testing.T) {
 		t.Fatal("MachineAllocation.status does not enforce terminal release")
 	}
 
-	installation := crds["installations.fleet.datumapis.com"]
+	installation := crds["installations.metal.datumapis.com"]
 	installationSpec := schemaProperty(t, installation, "spec")
 	assertRequired(t, installationSpec.Required, "machineRef")
 	if _, found := installationSpec.Properties["claimRef"]; found {

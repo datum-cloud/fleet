@@ -30,9 +30,9 @@ var (
 )
 
 const (
-	ServiceName          = "fleet.datumapis.com"
-	EntitlementName      = "fleet"
-	MachineQuotaResource = "fleet.datumapis.com/machines"
+	ServiceName          = "metal.datumapis.com"
+	EntitlementName      = "metal"
+	MachineQuotaResource = "metal.datumapis.com/machines"
 )
 
 type ProjectResolver interface {

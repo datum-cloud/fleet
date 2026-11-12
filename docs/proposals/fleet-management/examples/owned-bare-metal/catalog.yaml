@@ -2,7 +2,7 @@
 # A reference MachineClass contains only spec.source; it cannot override policy.
 # MachineClass is project-scoped (cluster-scoped inside the project API).
 # Publication and source references do not grant entitlement or reserve capacity.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata:
   name: metal-standard
@@ -27,7 +27,7 @@ status:
 ---
 # PLATFORM-WRITTEN immutable hardware requirements published with the offering.
 # This local name carries protected source provenance; copying the fields does not.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineProfile
 metadata:
   name: standard-metal

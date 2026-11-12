@@ -1,10 +1,10 @@
 apiVersion: iam.miloapis.com/v1alpha1
 kind: ProtectedResource
 metadata:
-  name: fleet.datumapis.com-machinecapacity
+  name: metal.datumapis.com-machinecapacity
 spec:
   serviceRef:
-    name: fleet.datumapis.com
+    name: metal.datumapis.com
   kind: MachineCapacity
   plural: machinecapacities
   singular: machinecapacity

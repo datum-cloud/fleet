@@ -7,7 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-var GroupVersion = schema.GroupVersion{Group: "fleet.datumapis.com", Version: "v1alpha1"}
+var GroupVersion = schema.GroupVersion{Group: "metal.datumapis.com", Version: "v1alpha1"}
 
 type ConditionedStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

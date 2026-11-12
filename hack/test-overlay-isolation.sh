@@ -105,7 +105,7 @@ metadata:
   name: fleet-standalone-fixture-reader
   annotations: {fleet.datumapis.com/standalone-only: "true"}
 rules:
-  - apiGroups: [fleet.datumapis.com]
+  - apiGroups: [metal.datumapis.com]
     resources: [machineprofiles, machineclasses]
     resourceNames: [general-purpose-24c-128g, standard-metal]
     verbs: [get, list]
@@ -353,23 +353,23 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: innocuous-reader}
 rules:
-  - apiGroups: [fleet.datumapis.com]
+  - apiGroups: [metal.datumapis.com]
     resources: [machineprofiles]
     resourceNames: [renamed-profile, renamed-profile]
     verbs: [get, get]
-  - apiGroups: [fleet.datumapis.com]
+  - apiGroups: [metal.datumapis.com]
     resources: [machineprofiles]
     resourceNames: [duplicate-renamed-profile]
     verbs: [get]
-  - apiGroups: [fleet.datumapis.com, fleet.datumapis.com]
+  - apiGroups: [metal.datumapis.com, metal.datumapis.com]
     resources: [machineprofiles]
     resourceNames: [another-renamed-profile]
     verbs: [list]
-  - apiGroups: [fleet.datumapis.com]
+  - apiGroups: [metal.datumapis.com]
     resources: [machineclasses, machineclasses]
     resourceNames: [renamed-class]
     verbs: [get, list, list]
-  - apiGroups: [fleet.datumapis.com]
+  - apiGroups: [metal.datumapis.com]
     resources: [machineclasses]
     resourceNames: [second-renamed-class, second-renamed-class]
     verbs: [get]

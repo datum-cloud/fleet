@@ -16,7 +16,7 @@ production timing requirements. The enhancement owns field semantics and lifecyc
 ## Provider MachineClass
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 # Classes span the provider project so namespaces can share an offering.
 metadata:
@@ -67,7 +67,7 @@ status:
 ## Consumer MachineClass
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 # Project-wide references give every namespace a local name for an offering.
 metadata:
@@ -110,7 +110,7 @@ status:
 ## MachineProfile
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineProfile
 metadata:
   name: accelerated-16c-64g
@@ -169,7 +169,7 @@ status:
 ## MachineCapacity
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 # MachineCapacity identity is independent of consumer allocations. Replacement hardware
 # gets a new resource lifetime; labels only group capacity for selection.
@@ -252,7 +252,7 @@ status:
 ## Machine
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 # Machine identity belongs to the consumer project, separately from MachineCapacity.
 # A new name creates a distinct request rather than retrying an existing one.
@@ -431,7 +431,7 @@ status:
 ## Installation
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 # Installation shares its Machine's project and namespace. The Machine's
 # initialInstallationRef identifies the request that satisfies its initial gate.

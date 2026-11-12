@@ -42,10 +42,12 @@ All names below describe proposed resources, not implemented schemas.
 | Cluster lifecycle | `Site`, `Cluster`, `MachinePool`, `NodeClaim`, and `Rollout`: placement policy, capacity, membership, logical node continuity, and admission of bounded configuration changes. |
 | Node services | `NodeService`: per-region service intent, stable slots on managed NodeClaims, placement, rolling updates, and readiness reporting. |
 
-The proposed groups are `fleet.datumapis.com` and
-`inventory.fleet.datumapis.com`, with private provider-adapter state and typed OS
-adapter groups. Exact versions, scopes, and packaging remain design decisions. A
-separate public resource is not required for every internal record.
+The Bare Metal service uses `metal.datumapis.com` for allocation and installation.
+Physical inventory uses `fleet.datumapis.com`; the intended internal location
+handoff uses `coordination.fleet.datumapis.com`. The [API architecture](architecture.md)
+records implemented resources, proposed contracts, control-plane placement, and
+writer ownership. A separate public resource or catalog service is not required
+for every internal record.
 
 Location owns geography; Facility represents physical premises; Site expresses
 operational placement policy over eligible Facilities. Networking/IPAM owns

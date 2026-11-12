@@ -57,7 +57,7 @@ useful operational outcomes.
 
 `Site` is an operational placement and capacity-sharing boundary. Geography
 belongs to `Location`; physical premises belong to the provider-neutral
-`Facility` in `inventory.fleet.datumapis.com`. A Site selects permitted
+`Facility` in `fleet.datumapis.com`. A Site selects permitted
 Facilities rather than maintaining a second list of provider facility codes.
 For owned assets, physical placement derives from the inventory Device and
 Rack; Site policy does not edit that placement. Provider-reported placement

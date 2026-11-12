@@ -4,7 +4,7 @@
 # Existing dependencies are listed in README.md.
 
 # OPERATOR: describe the existing rack in the provider-neutral Facility.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Rack
 metadata:
   name: iad1-r12
@@ -15,7 +15,7 @@ spec:
 ---
 # OPERATOR: plan one physical installation before any Device is registered.
 # DeviceClaim is a physical commissioning expectation, not a customer allocation.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
   name: iad1-r12-u20-server
@@ -48,7 +48,7 @@ spec:
     - {name: iad1-r12-srv01-power-b}
 ---
 # OPERATOR: BMC to the existing management switch.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-management
@@ -60,7 +60,7 @@ spec:
 ---
 # OPERATOR: the data NIC can serve protected provisioning and later tenant
 # connectivity. The network controller controls the transition between them.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-data
@@ -70,7 +70,7 @@ spec:
   a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: nic1-p1}]
   b: [{deviceRef: {name: iad1-r12-leaf-a}, componentID: ethernet20}]
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-power-a
@@ -80,7 +80,7 @@ spec:
   a: [{deviceRef: {name: iad1-r12-pdu-a}, componentID: outlet20}]
   b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu1}]
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-power-b
@@ -107,7 +107,7 @@ spec:
 ---
 # OPERATOR: create after registration resolves the physical Device (see registration.yaml).
 # MachineCapacity is provider supply, with its own allocation/preparation gates.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
   name: iad1-r12-srv01

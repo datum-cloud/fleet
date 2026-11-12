@@ -44,7 +44,7 @@ Neither registering a Device nor making its DeviceClaim Ready authorizes power
 changes, boot-based inspection, installation, cleaning, or consumer allocation.
 
 This is the target Fleet inventory model, independent of the existing inventory
-service's schema. The proposed group is `inventory.fleet.datumapis.com/v1alpha1`;
+service's schema. The proposed group is `fleet.datumapis.com/v1alpha1`;
 the API group, fields, and scopes remain provisional. Examples show operator
 resources in `infra-ops`, not implemented CRDs or manifests to apply. Hardware
 identifiers and evidence handles are illustrative; Kubernetes UIDs remain private
@@ -120,7 +120,7 @@ Facilities as operational policy without moving their assets. Location remains
 the geographic reference; neither Site nor Facility is a provider identifier.
 
 ```yaml
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
   name: iad1
@@ -130,7 +130,7 @@ spec:
   locationRef:
     name: us-east-1
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Rack
 metadata:
   name: iad1-r12
@@ -139,7 +139,7 @@ spec:
   facilityRef: {name: iad1}
   heightUnits: 42
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
   name: iad1-r12-u20-server
@@ -177,7 +177,7 @@ must exist and be verified. These four Cable plans describe the server's
 required connections before the server Device exists:
 
 ```yaml
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-management
@@ -187,7 +187,7 @@ spec:
   a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: bmc}]
   b: [{deviceRef: {name: iad1-oob01}, componentID: port12}]
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-data
@@ -197,7 +197,7 @@ spec:
   a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: nic1-p1}]
   b: [{deviceRef: {name: iad1-r12-leaf-a}, componentID: ethernet20}]
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-power-a
@@ -207,7 +207,7 @@ spec:
   a: [{deviceRef: {name: iad1-r12-pdu-a}, componentID: outlet20}]
   b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu1}]
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
 metadata:
   name: iad1-r12-srv01-power-b
@@ -302,7 +302,7 @@ Device can exist in commissioning with a placement or wiring discrepancy:
 
 ```yaml
 # Registrar-created snapshot, not an operator-authored apply input.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Device
 metadata:
   name: server-example-001
@@ -406,7 +406,7 @@ the applicable result; an old `Ready=True` is not blanket authorization.
 ```yaml
 # Abbreviated controller-written verification snapshot after successful checks.
 # Routine condition timestamps/messages are omitted for readability.
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
   name: iad1-r12-u20-server

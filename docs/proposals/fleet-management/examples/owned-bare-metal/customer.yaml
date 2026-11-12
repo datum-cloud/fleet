@@ -3,7 +3,7 @@
 # Its capacity remains in the distinct datum-metal provider project.
 # These objects can be submitted together or in any creation order.
 # The allocator waits for all named initial resources and validated network inputs.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata:
   name: db-01
@@ -26,7 +26,7 @@ metadata:
   namespace: acme
 spec:
   targetRef:
-    apiGroup: fleet.datumapis.com
+    apiGroup: metal.datumapis.com
     kind: Machine
     name: db-01
   interface: primary
@@ -34,7 +34,7 @@ spec:
 ---
 # CUSTOMER: an immutable request for the first OS incarnation.
 # Linux image/bootstrap behavior is assumed qualified for the offered class.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
   name: db-01-os-01

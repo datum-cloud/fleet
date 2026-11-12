@@ -195,7 +195,7 @@ references. The example uses provider types from the
 [bare-metal proposal][allocation].
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 # Classes span the provider project so namespaces can share an offering.
 metadata:
@@ -250,7 +250,7 @@ Publication, quota, image, and network policy remain separate from the definitio
 The publication service creates the consumer reference:
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 # Project-wide references give every namespace a local name for an offering.
 metadata:
@@ -297,7 +297,7 @@ custom profiles with the same schema; Fleet retains publication provenance
 internally to distinguish the two paths.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineProfile
 metadata:
   name: accelerated-16c-64g
@@ -362,7 +362,7 @@ Provider operators own MachineCapacity policy. The location backend owns BMC
 enrollment, credentials, and adapter routing as private state.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 # MachineCapacity identity is independent of consumer allocations. Replacement hardware
 # gets a new resource lifetime; labels only group capacity for selection.
@@ -444,7 +444,7 @@ The consumer creates and lists Machines in its own project. The Machine remains 
 management handle after allocation; its status describes the allocated machine.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 # Machine identity belongs to the consumer project, separately from MachineCapacity.
 # A new name creates a distinct request rather than retrying an existing one.
@@ -596,7 +596,7 @@ Consumers change an OS by creating a new Installation against the same Machine.
 The first request uses the following precondition:
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 # Installation shares its Machine's project and namespace. The Machine's
 # initialInstallationRef identifies the request that satisfies its initial gate.
