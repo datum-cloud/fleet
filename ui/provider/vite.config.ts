@@ -29,7 +29,7 @@ export default defineConfig({
     react(),
     federation({
       // MUST equal the manifest `name`; the host keys the remote by this id.
-      name: 'fleet.staff-portal.datumapis.com',
+      name: 'metal.staff-portal.datumapis.com',
       filename: 'remoteEntry.js',
       manifest: true,
       // Keys map 1:1 to the manifest's `exposedModules` keys / $codeRefs.

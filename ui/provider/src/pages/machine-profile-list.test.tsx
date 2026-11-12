@@ -70,7 +70,7 @@ function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/plugins/fleet-datumapis-com/profiles']}>
+      <MemoryRouter initialEntries={['/plugins/metal-datumapis-com/profiles']}>
         <Routes>
           <Route path="/plugins/:slug/profiles" element={<MachineProfileList />} />
         </Routes>
@@ -96,7 +96,7 @@ describe('MachineProfileList', () => {
     renderPage();
     expect(screen.getByRole('tab', { name: 'Capacity' }).closest('a')).toHaveAttribute(
       'href',
-      '/plugins/fleet-datumapis-com'
+      '/plugins/metal-datumapis-com'
     );
     expect(screen.getByRole('tab', { name: 'Profiles' })).toHaveAttribute('data-state', 'active');
   });
@@ -147,7 +147,7 @@ describe('MachineProfileList', () => {
 
   it('shows a failed create inside the dialog', async () => {
     mockList({ data: [] });
-    mockCreate({ error: new ApiError(403, 'machineprofiles.fleet.datumapis.com is forbidden') });
+    mockCreate({ error: new ApiError(403, 'machineprofiles.metal.datumapis.com is forbidden') });
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: /Create profile/ }));
     const form = await screen.findByTestId('fleet-plugin-create-profile-form');

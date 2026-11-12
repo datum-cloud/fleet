@@ -19,7 +19,7 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query';
 
-export const PLUGIN_ID = 'fleet.datumapis.com';
+export const PLUGIN_ID = 'metal.datumapis.com';
 
 const USE_FIXTURES = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const REFETCH_INTERVAL_MS = 10_000;
@@ -35,9 +35,9 @@ const settling = (machines: Pick<Machine, 'phase'>[] = []) =>
 // changed while the tab was hidden stays stale until a reload.
 const MACHINE_QUERY = { refetchOnWindowFocus: 'always' as const, retry: false };
 
-const FLEET_API = '/apis/fleet.datumapis.com/v1alpha1';
+const METAL_API = '/apis/metal.datumapis.com/v1alpha1';
 const MACHINE_NAMESPACE = 'default';
-const MACHINES_PATH = `${FLEET_API}/namespaces/${MACHINE_NAMESPACE}/machines`;
+const MACHINES_PATH = `${METAL_API}/namespaces/${MACHINE_NAMESPACE}/machines`;
 
 /** The only location offered for now. */
 export const DEFAULT_LOCATION = 'us-central-1';
@@ -101,8 +101,8 @@ export function useMachines(
 export async function fetchCatalog(projectId: string): Promise<CatalogOffering[]> {
   if (USE_FIXTURES) return toCatalog(FIXTURE_CLASSES, FIXTURE_PROFILES);
   const [classes, profiles] = await Promise.all([
-    proxyFetch<RawMachineClassList>(projectId, `${FLEET_API}/machineclasses?limit=100`),
-    proxyFetch<RawMachineProfileList>(projectId, `${FLEET_API}/machineprofiles?limit=100`),
+    proxyFetch<RawMachineClassList>(projectId, `${METAL_API}/machineclasses?limit=100`),
+    proxyFetch<RawMachineProfileList>(projectId, `${METAL_API}/machineprofiles?limit=100`),
   ]);
   return toCatalog(classes.items ?? [], profiles.items ?? []);
 }
@@ -174,7 +174,7 @@ export async function createMachine(
   if (USE_FIXTURES) return fixtureMachines.create(machine);
   return proxyFetch<RawMachine>(projectId, MACHINES_PATH, {
     method: 'POST',
-    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'Machine', ...machine },
+    body: { apiVersion: 'metal.datumapis.com/v1alpha1', kind: 'Machine', ...machine },
   });
 }
 

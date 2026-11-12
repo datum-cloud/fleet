@@ -32,7 +32,7 @@ export default function MachineList() {
     <MachinesPage
       testId="fleet-plugin-machine-list"
       title="Machines"
-      description="Dedicated bare-metal servers, allocated to this project from Datum's fleet."
+      description="Dedicated bare-metal servers, allocated to this project."
       crumbs={[{ label: 'Machines' }]}
       actions={
         machines &&

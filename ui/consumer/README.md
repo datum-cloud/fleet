@@ -1,4 +1,4 @@
-# Fleet consumer portal plugin
+# Bare Metal consumer portal plugin
 
 A [cloud-portal](https://github.com/datum-cloud/cloud-portal) plugin for a
 project's machines. It is a Module Federation remote: the portal fetches
@@ -59,7 +59,7 @@ Fleet's Go API types and CRDs; `src/types.ts` maps them to the list's view.
 
 ## Fixture mode
 
-The Fleet CRDs are on staging, but reading them needs a Fleet role. Setting
+The Fleet CRDs are on staging, but reading them needs a Bare Metal role. Setting
 `VITE_FLEET_FIXTURES=true` at build time makes `useMachines` return the
 synthetic Machines in `src/lib/fixtures.ts` instead of calling the project
 control plane. Machines deployed in fixture mode are kept in memory until the
@@ -77,14 +77,14 @@ host-absolute URLs that break behind the portal's `/api/plugins/<slug>/` proxy.
 npm run build:fixtures && npm run preview
 
 # cloud-portal, in another terminal
-PORTAL_PLUGINS='fleet-datumapis-com=http://localhost:7780' AUTH_DEV_TOKEN_EXCHANGE=1 bun run dev
+PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7780' AUTH_DEV_TOKEN_EXCHANGE=1 bun run dev
 ```
 
 If cloud-portal's `.env` already sets `PORTAL_PLUGINS_JSON` for other plugins,
-add `{"slug":"fleet-datumapis-com","assets":{"baseURL":"http://localhost:7780"}}`
+add `{"slug":"metal-datumapis-com","assets":{"baseURL":"http://localhost:7780"}}`
 to that array instead. The slug follows the services-operator convention
 (service name with dots as dashes) and assumes the service is registered as
-`fleet.datumapis.com`; the plugin code does not depend on it.
+`metal.datumapis.com` (Bare Metal); the plugin code does not depend on it.
 
 Open any project; **Machines** appears in the Build section of the project
 navigation. Plugins loaded through `PORTAL_PLUGINS` skip the entitlement gate

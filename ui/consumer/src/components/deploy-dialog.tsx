@@ -97,7 +97,7 @@ export function DeployDialog({
         open={open}
         onOpenChange={onOpenChange}
         title="Deploy a machine"
-        description="Fleet binds a server matching the profile and hands it over powered off."
+        description="We bind a server matching the profile and hand it over powered off."
         schema={deployFormSchema}
         defaultValues={{ option: initial }}
         onSubmit={handleSubmit}

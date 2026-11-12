@@ -1,5 +1,5 @@
 // View model for the machine list. The wire shape is the shared
-// fleet.datumapis.com/v1alpha1 Machine in ui/shared/fleet-api.ts.
+// metal.datumapis.com/v1alpha1 Machine in ui/shared/fleet-api.ts.
 
 import { findCondition, isConditionTrue, type Condition } from '../../shared/conditions';
 import type {

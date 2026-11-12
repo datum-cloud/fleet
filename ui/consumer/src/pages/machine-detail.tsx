@@ -82,7 +82,7 @@ function HardwareCard({ machine }: { machine: MachineDetailModel }) {
   if (!machine.hardware) {
     const tone = machine.phase === 'Rejected' ? 'danger' : machine.waitingForCapacity ? 'warning' : undefined;
     return (
-      <FlowCard icon={CpuIcon} title="Fleet allocates" testId="fleet-plugin-machine-hardware">
+      <FlowCard icon={CpuIcon} title="Hardware" testId="fleet-plugin-machine-hardware">
         <div className="flex flex-col gap-2.5" aria-hidden>
           <Skeleton className="h-2.5 w-44 rounded" />
           <Skeleton className="h-2.5 w-60 rounded" />
@@ -92,15 +92,15 @@ function HardwareCard({ machine }: { machine: MachineDetailModel }) {
           <Icon icon={HourglassIcon} size={14} className="mt-0.5 shrink-0" />
           <span>
             {machine.waitingForCapacity
-              ? `No free server matches ${machine.machineProfile} in ${machine.machineClass} yet. Fleet binds one as soon as capacity frees up; you don't need to do anything.`
-              : 'No hardware is allocated yet. Fleet binds a server when capacity matching the profile is available.'}
+              ? `No free server matches ${machine.machineProfile} in ${machine.machineClass} yet. We'll bind one as soon as capacity frees up; you don't need to do anything.`
+              : 'No hardware is allocated yet. We bind a server when capacity matching the profile is available.'}
           </span>
         </p>
       </FlowCard>
     );
   }
   return (
-    <FlowCard icon={CpuIcon} title="Fleet allocated" testId="fleet-plugin-machine-hardware">
+    <FlowCard icon={CpuIcon} title="Allocated hardware" testId="fleet-plugin-machine-hardware">
       <Facts>
         {machine.acceptedProfile && machine.acceptedProfile !== machine.machineProfile && (
           <Fact label="Accepted profile" mono>{machine.acceptedProfile}</Fact>
@@ -182,7 +182,7 @@ function Progress({ machine }: { machine: MachineDetailModel }) {
         <span className="flex items-center gap-2">
           <Icon icon={ActivityIcon} size={14} className="text-muted-foreground" />
           <span className="text-sm font-semibold">Progress</span>
-          <span className="text-muted-foreground text-xs">from Fleet's conditions</span>
+          <span className="text-muted-foreground text-xs">from the machine's conditions</span>
         </span>
         <ol className="fleet-steps">
           {steps.map((step, i) => {

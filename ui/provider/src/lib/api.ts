@@ -21,7 +21,7 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query';
 
-export const PLUGIN_ID = 'fleet.staff-portal.datumapis.com';
+export const PLUGIN_ID = 'metal.staff-portal.datumapis.com';
 
 // The single provider project. Its MachineCapacities can live in any namespace: each
 // class names the namespace and capacity pool it draws from.
@@ -30,7 +30,7 @@ export const PROVIDER_PROJECT = 'datum-cloud';
 const USE_FIXTURES = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const REFETCH_INTERVAL_MS = 10_000;
 
-const FLEET_API = '/apis/fleet.datumapis.com/v1alpha1';
+const METAL_API = '/apis/metal.datumapis.com/v1alpha1';
 
 export class ApiError extends Error {
   status: number;
@@ -79,7 +79,7 @@ async function proxyFetch<T>(
 // MachineCapacities are namespaced; the list spans every namespace in the project.
 export async function fetchMachineCapacities(): Promise<MachineCapacity[]> {
   if (USE_FIXTURES) return fixtureCapacities.list().map(toMachineCapacity);
-  const body = await proxyFetch<RawMachineCapacityList>(PROVIDER_PROJECT, `${FLEET_API}/machinecapacities?limit=100`);
+  const body = await proxyFetch<RawMachineCapacityList>(PROVIDER_PROJECT, `${METAL_API}/machinecapacities?limit=100`);
   return (body.items ?? []).map(toMachineCapacity);
 }
 
@@ -95,9 +95,9 @@ export function useMachineCapacities(): UseQueryResult<MachineCapacity[], ApiErr
 export async function createMachineCapacity(capacity: RawMachineCapacity): Promise<RawMachineCapacity> {
   if (USE_FIXTURES) return fixtureCapacities.create(capacity);
   const namespace = encodeURIComponent(capacity.metadata.namespace ?? '');
-  return proxyFetch<RawMachineCapacity>(PROVIDER_PROJECT, `${FLEET_API}/namespaces/${namespace}/machinecapacities`, {
+  return proxyFetch<RawMachineCapacity>(PROVIDER_PROJECT, `${METAL_API}/namespaces/${namespace}/machinecapacities`, {
     method: 'POST',
-    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'MachineCapacity', ...capacity },
+    body: { apiVersion: 'metal.datumapis.com/v1alpha1', kind: 'MachineCapacity', ...capacity },
   });
 }
 
@@ -115,7 +115,7 @@ export async function deleteMachineCapacity(capacity: { namespace?: string; name
   const namespace = encodeURIComponent(capacity.namespace ?? '');
   await proxyFetch<unknown>(
     PROVIDER_PROJECT,
-    `${FLEET_API}/namespaces/${namespace}/machinecapacities/${encodeURIComponent(capacity.name)}`,
+    `${METAL_API}/namespaces/${namespace}/machinecapacities/${encodeURIComponent(capacity.name)}`,
     { method: 'DELETE' }
   );
 }
@@ -139,7 +139,7 @@ export async function fetchMachineProfiles(): Promise<MachineProfile[]> {
   if (USE_FIXTURES) return fixtureProfiles.list().map(toMachineProfile);
   const body = await proxyFetch<RawMachineProfileList>(
     PROVIDER_PROJECT,
-    `${FLEET_API}/machineprofiles?limit=100`
+    `${METAL_API}/machineprofiles?limit=100`
   );
   return (body.items ?? []).map(toMachineProfile);
 }
@@ -155,9 +155,9 @@ export function useMachineProfiles(): UseQueryResult<MachineProfile[], ApiError>
 
 export async function createMachineProfile(profile: RawMachineProfile): Promise<RawMachineProfile> {
   if (USE_FIXTURES) return fixtureProfiles.create(profile);
-  return proxyFetch<RawMachineProfile>(PROVIDER_PROJECT, `${FLEET_API}/machineprofiles`, {
+  return proxyFetch<RawMachineProfile>(PROVIDER_PROJECT, `${METAL_API}/machineprofiles`, {
     method: 'POST',
-    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'MachineProfile', ...profile },
+    body: { apiVersion: 'metal.datumapis.com/v1alpha1', kind: 'MachineProfile', ...profile },
   });
 }
 
@@ -178,7 +178,7 @@ export async function deleteMachineProfile(name: string): Promise<void> {
   if (USE_FIXTURES) return fixtureProfiles.delete(name);
   await proxyFetch<unknown>(
     PROVIDER_PROJECT,
-    `${FLEET_API}/machineprofiles/${encodeURIComponent(name)}`,
+    `${METAL_API}/machineprofiles/${encodeURIComponent(name)}`,
     { method: 'DELETE' }
   );
 }
@@ -199,7 +199,7 @@ export async function fetchMachineClasses(): Promise<MachineClass[]> {
   if (USE_FIXTURES) return fixtureClasses.list().map(toMachineClass);
   const body = await proxyFetch<RawMachineClassList>(
     PROVIDER_PROJECT,
-    `${FLEET_API}/machineclasses?limit=100`
+    `${METAL_API}/machineclasses?limit=100`
   );
   return (body.items ?? []).map(toMachineClass);
 }
@@ -215,9 +215,9 @@ export function useMachineClasses(): UseQueryResult<MachineClass[], ApiError> {
 
 export async function createMachineClass(machineClass: RawMachineClass): Promise<RawMachineClass> {
   if (USE_FIXTURES) return fixtureClasses.create(machineClass);
-  return proxyFetch<RawMachineClass>(PROVIDER_PROJECT, `${FLEET_API}/machineclasses`, {
+  return proxyFetch<RawMachineClass>(PROVIDER_PROJECT, `${METAL_API}/machineclasses`, {
     method: 'POST',
-    body: { apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'MachineClass', ...machineClass },
+    body: { apiVersion: 'metal.datumapis.com/v1alpha1', kind: 'MachineClass', ...machineClass },
   });
 }
 
@@ -238,7 +238,7 @@ export async function deleteMachineClass(name: string): Promise<void> {
   if (USE_FIXTURES) return fixtureClasses.delete(name);
   await proxyFetch<unknown>(
     PROVIDER_PROJECT,
-    `${FLEET_API}/machineclasses/${encodeURIComponent(name)}`,
+    `${METAL_API}/machineclasses/${encodeURIComponent(name)}`,
     { method: 'DELETE' }
   );
 }

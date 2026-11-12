@@ -1,5 +1,5 @@
 {
-  "name": "fleet.datumapis.com",
+  "name": "metal.datumapis.com",
   "version": "0.1.0",
   "sdk": { "name": "@datum-cloud/portal-plugin-sdk", "range": "^1.0.0" },
   "remoteEntry": "remoteEntry.js",
