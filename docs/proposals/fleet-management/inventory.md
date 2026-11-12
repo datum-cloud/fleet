@@ -37,16 +37,18 @@ cables. Acceptance reserves the physical resources. A trusted registrar matches
 the equipment to that accepted plan and creates an exclusively bound `Device`.
 Controllers compare physical evidence with the plan before reporting readiness.
 
-A `DeviceClaim` is a physical installation expectation. A `MachineClaim` is a
-consumer's reservation of compute capacity. They have independent lifetimes.
+A `DeviceClaim` is a physical installation expectation. A customer `Machine` is
+the consumer lifecycle resource whose private MachineAllocation reserves provider
+compute capacity. They have independent lifetimes.
 Neither registering a Device nor making its DeviceClaim Ready authorizes power
 changes, boot-based inspection, installation, cleaning, or consumer allocation.
 
 This is the target Fleet inventory model, independent of the existing inventory
 service's schema. The proposed group is `inventory.fleet.datumapis.com/v1alpha1`;
 the API group, fields, and scopes remain provisional. Examples show operator
-resources in `infra-ops`, not implemented CRDs or manifests to apply. UIDs,
-hardware identifiers, and evidence handles are illustrative.
+resources in `infra-ops`, not implemented CRDs or manifests to apply. Hardware
+identifiers and evidence handles are illustrative; Kubernetes UIDs remain private
+same-API-server recreation evidence rather than authored references.
 
 ## Goals
 
@@ -90,10 +92,11 @@ inlets/outlets, console ports, and pass-through terminations have different
 connection rules. Component identity must remain distinct from mutable OS names
 such as `eth0` and from logical interfaces such as a VLAN or bond.
 
-For owned servers, `Machine` references the registered Device by UID. It is the
-compute representation, with allocation and reclamation policy; it does not
-independently edit the asset's serial number, rack placement, or cabling. A
-switch or patch panel can be a Device without being a Machine. Inventory owns
+For owned servers, `MachineCapacity` has an immutable `deviceRef` to the
+registered Device. It is provider capacity with allocation and reclamation
+policy; it does not independently edit the asset's serial number, rack placement,
+or cabling. A switch or patch panel can be a Device without being
+MachineCapacity. Inventory owns
 physical observations; the provider owns management configuration and hardware
 operations; networking owns network configuration. An inventory relationship
 is not a Kubernetes garbage-collection ownership relationship.
@@ -101,7 +104,7 @@ is not a Kubernetes garbage-collection ownership relationship.
 A Device represents identifiable physical equipment. Do not fabricate a Device,
 rack, or physical port for a provider VM or an offering that discloses no
 physical asset identity. Such providers still participate through the generic
-Machine contract and their own observed capabilities.
+MachineCapacity contract and their own observed capabilities.
 
 Operator authorization controls claims, physical plans, and manual evidence.
 Only the trusted registration service creates registered Devices and writes
@@ -218,9 +221,9 @@ spec:
 `cableRefs` identifies prerequisites; it does not repeat expected peers. Cable
 owns the endpoint declarations. A planned endpoint references a DeviceClaim
 and its declared port ID; a registered endpoint references a Device and stable
-component ID. Names are convenient authoring references. Acceptance resolves
-them to exact UIDs and records the approved dependency revisions. Recreating an
-object with the same name never inherits a reservation or binding.
+component ID. Names are convenient authoring references. Acceptance retains the
+exact local object incarnations privately and records approved dependency
+revisions. Recreating an object with the same name never inherits a reservation.
 
 Placement may instead name `placement.facilityRef` without a rack. This covers
 unracked equipment and rented bare metal whose physical Facility is known but
@@ -254,8 +257,9 @@ front/rear constraints, full-depth equipment, and pending installations. The
 model also supports 0U mounting and equipment outside a rack; it must not assign
 them fictitious rack-unit positions.
 
-Endpoint reservations belong to the Cable UID and identify the Device or
-DeviceClaim UID plus termination/position. Two cables cannot reserve the same
+Endpoint reservations belong to one exact Cable incarnation and identify one
+exact Device or DeviceClaim incarnation plus termination/position. Local object
+identity is retained as private same-API-server evidence. Two cables cannot reserve the same
 exclusive termination. Resolving a claim endpoint to a registered component
 must preserve that reservation, including conflicts with direct Device
 references. A successor placement cannot reserve an occupied resource merely
@@ -283,9 +287,10 @@ addresses, and SMBIOS UUIDs are matching attributes, not authentication.
 Passive devices register through an authorized technician or integration;
 they do not need to run a host agent.
 
-The registrar commits reciprocal claim-to-Device UID ownership and a durable
-binding identity. One claim binds one Device UID for one installation
-incarnation. One physical asset cannot acquire duplicate Device identities,
+The registrar commits one reciprocal DeviceClaim-to-Device relationship and
+retains both local object incarnations as private same-API-server evidence. One
+claim binds one Device for one installation incarnation. One physical asset
+cannot acquire duplicate Device identities,
 and one Device has at most one active placement authority. Recovery after a
 lost response finds the committed registration instead of creating a second
 asset. Ambiguous matches, unexpected identities, expired authorization, or
@@ -302,12 +307,10 @@ kind: Device
 metadata:
   name: server-example-001
   namespace: infra-ops
-  uid: d1111111-1111-4111-8111-111111111111
 spec:
   # Registry-owned. A raw reference edit cannot move the asset.
   claimRef:
     name: iad1-r12-u20-server
-    uid: c1111111-1111-4111-8111-111111111111
   identity:
     manufacturer: Dell
     model: PowerEdge-R650
@@ -316,7 +319,6 @@ status:
   observedPlacement:
     rackRef:
       name: iad1-r12
-      uid: a1111111-1111-4111-8111-111111111111
     position: 20
     face: Front
     evidenceRef: installation-scan-001
@@ -387,8 +389,9 @@ inapplicable, such as power for a passive panel; absence of evidence must not
 silently become an exemption. Downstream controllers require the specific
 verified facts their operation or offering needs, not an unqualified Ready bit.
 
-Each evaluation records the relevant claim/Cable/Rack/PowerFeed UIDs and
-revisions, Device identity/component/trust revision, evaluated input digest,
+Each evaluation privately retains the exact local claim, Cable, Rack, PowerFeed,
+and Device incarnations and records their revisions, Device
+identity/component/trust revision, evaluated input digest,
 evidence provenance, and verification time. Standard condition fields include
 `observedGeneration`, reason, message, and transition time. The owning object's
 generation alone is insufficient: recabling, a NIC replacement, or new trust
@@ -408,7 +411,6 @@ kind: DeviceClaim
 metadata:
   name: iad1-r12-u20-server
   namespace: infra-ops
-  uid: c1111111-1111-4111-8111-111111111111
 status:
   observedGeneration: 1
   evaluatedPlanDigest: "sha256:<claim and resolved dependency inputs>"
@@ -416,7 +418,6 @@ status:
   evidenceRef: commissioning-evaluation-001
   deviceRef:
     name: server-example-001
-    uid: d1111111-1111-4111-8111-111111111111
   portBindings:
     - {claimPortID: bmc, deviceComponentID: management-port-1}
     - {claimPortID: nic1-p1, deviceComponentID: nic-slot2-port1}
@@ -432,8 +433,9 @@ status:
     - {type: Ready, status: "True", reason: RequiredEvidenceCurrent, observedGeneration: 1}
 ```
 
-Cable status similarly reports resolved Device UIDs/component IDs and the
-separate evidence for endpoint adjacency, cable identity, and any pass-through
+Cable status similarly reports resolved Device names/component IDs; protected
+evidence privately retains the exact local Device incarnations. It separately
+reports evidence for endpoint adjacency, cable identity, and any pass-through
 path. It never rewrites spec to agree with discovery. Physical drift blocks
 new allocations and operations that require the invalidated fact and alerts
 operators. It does not independently authorize eviction, power-off, wiping, or
@@ -451,7 +453,8 @@ schema or implementation.
 
 A PDU is a Device. Its component model maps each outlet to the input that
 supplies it. Power cables connect feeds to PDU inputs and outlets to device
-inlets; a feed termination uses a typed `powerFeedRef`, resolved to its UID.
+inlets; a feed termination uses a typed `powerFeedRef`, resolved by name with its
+exact local incarnation retained privately.
 PowerFeed records include rated/usable capacity and known upstream
 sources; unknown dependencies remain explicit. Reservation calculations must
 account for the declared redundancy/failure scenario, not assume that each of
@@ -476,14 +479,14 @@ This physical/logical separation is consistent with
 ### Moves, replacements, and retirement
 
 - **Move the same asset:** create a successor DeviceClaim naming the existing
-  Device UID and reserve the destination. A coordinated maintenance transition
+  Device and reserve the destination. A coordinated maintenance transition
   transfers active placement authority with exact predecessor/binding
   preconditions. The successor cannot become a second active placement claim.
-  Preserve the Device and Machine identities; verify the new placement and
+  Preserve the Device and MachineCapacity identities; verify the new placement and
   paths before restoring eligibility. Release old physical reservations only
   after the affected space/terminations are confirmed free.
-- **Replace the whole server:** create a new DeviceClaim, Device, and Machine.
-  Do not transfer an existing MachineClaim or inherit identity from a reused
+- **Replace the whole server:** create a new DeviceClaim, Device, and MachineCapacity.
+  Do not transfer an existing customer Machine or inherit identity from a reused
   name, BMC address, serial field, or rack position. Managed-node replacement
   uses the separate NodeClaim/fencing contract.
 - **Repair a component:** retain Device identity where the asset remains the
@@ -492,9 +495,10 @@ This physical/logical separation is consistent with
   Reusing a slot ID must not make old component evidence current.
 - **Retire or remove equipment:** coordinate physical removal, active consumer
   obligations, and reference cleanup explicitly. Deleting an inventory object
-  does not destroy equipment, release a MachineClaim, or prove a rack is empty.
+  does not destroy equipment, release a customer Machine, or prove a rack is empty.
 
-Bound claims retain their committed Device UID as history. A placement handover
+Bound claims retain their committed Device name and private incarnation evidence
+as history. A placement handover
 changes the registry-owned active relationship, not the historical binding.
 Required Cable plans must be explicitly changed or replaced during a move;
 they do not silently follow a Device into another rack. Retain fulfilled claims
@@ -531,7 +535,7 @@ controllers to assume inventory ownership.
    paths. Demonstrate wrong identity, wrong port, wrong rack placement, missing
    evidence, and stale evidence remaining unavailable without destructive
    side effects. Verify patch-panel/breakout paths used by that facility.
-3. Integrate current physical-readiness evidence with Machine eligibility and
+3. Integrate current physical-readiness evidence with MachineCapacity eligibility and
    network attachment prerequisites. Test concurrent claims, duplicate
    registration, lost responses, controller restart, object-name reuse, and
    changes to dependencies during evaluation.

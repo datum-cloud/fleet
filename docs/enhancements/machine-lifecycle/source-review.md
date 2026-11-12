@@ -64,7 +64,7 @@ The published APIs inform the proposed provider boundary:
 These public API shapes inform the proposed adapters; they do not demonstrate
 Fleet's fencing, retry, or cleanup guarantees. Each adapter needs qualification.
 The first implementation only matches existing simulated supply. Neither profile
-validation nor an unbound claim authorizes procurement. Future acquisition needs
+validation nor an unbound Machine authorizes procurement. Future acquisition needs
 explicit purchasing authority, limits, and cancellation obligations. Consumer
 release follows the retained cleaning contract and keeps the asset; it does not
 cancel a supplier subscription or dispose of hardware.

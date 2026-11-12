@@ -8,19 +8,17 @@ metadata:
 spec:
   arch: amd64
   capabilities: [baremetal]
+  profilePolicy:
+    allowedProfiles:
+      - {name: standard-metal}
   interfaces:
     - {name: primary, type: Ethernet}
   access:
     consoleModes: [Graphical]
     powerControl: true
   capacity:
-    machines:
+    machineCapacities:
       namespace: infra-ops
       selector:
         matchLabels:
           fleet.datumapis.com/capacity-pool: general-metal
-    providerClassRef:
-      apiGroup: baremetal.fleet.datumapis.com
-      kind: BareMetalMachineClass
-      namespace: infra-ops
-      name: qualified-server-v1

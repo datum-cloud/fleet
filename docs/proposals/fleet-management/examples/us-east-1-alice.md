@@ -121,8 +121,8 @@ requirements, not particular installations:
   artifact resolution.
 - **InterfaceClass fabric-loopback / srv6-locator:** Managed interface requirements and
   IPAM allocation behavior.
-- **BareMetalMachineClass:** Qualified owned-server preparation/boot/disk requirements,
-  used in the separate owned-server journey.
+- **Owned-hardware adapter configuration:** Qualified preparation, boot, disk,
+  and management requirements used in the separate owned-server journey.
 
 Operator MachineClass definitions reference the private vendor classes; Fleet
 registers local source references for managed consumers. This example places both
@@ -240,6 +240,8 @@ spec:
   role: compute
   machineClassRef:
     name: serverscom-compute-2u
+  machineProfileRef:
+    name: compute-2u
   imageRef:
     name: talos-1.13.7
   replicas: 1
@@ -262,7 +264,7 @@ spec:
     whenRolloutPausedOrCancelled: Block
     missingAdmission: Block
 ```
-Direct bare-metal customers create MachineClaims without a MachinePool or
+Direct bare-metal customers create Machines without a MachinePool or
 NodeClaim. Managed pool controllers use that same allocation service and add
 logical node identity and cluster membership above it.
 
@@ -298,14 +300,14 @@ the property was verified. Rack/path observations remain Unknown until proven.
 An owned-rack installation instead declares the placement, ports, and Cable set
 shown in the [owned-server plan](owned-bare-metal/operator.yaml).
 
-After trusted registration creates the actual Device, the Machine references it.
+After trusted registration creates the actual Device, MachineCapacity references it.
 The following provider extension shape is illustrative. Its provider ID and BMC
 endpoint must be resolved and verified before use; they are not supplied by the
 historical record. Observation/adoption must preserve the active workload.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: Machine
+kind: MachineCapacity
 metadata:
   name: was4-c3c04f474834
   namespace: infra-ops
@@ -341,13 +343,13 @@ migration observations, not durable physical connector identities. The
 `170.23.227.193/31` and `2600:9c07:0:43::2/64` inputs must be reconciled with their
 network/IPAM authorities before they are admitted.
 
-Reconcile the existing consumer's binding before enabling any future allocation.
+Reconcile the existing consumer's allocation before enabling any future allocation.
 A running machine must never briefly appear free during migration. Adoption does
 not execute an initial installation or cleaning plan. A provider-created
 NetActuate VM follows the same allocation contract, with provider-observed
 placement and no invented physical Device or rack record.
 
-## Managed node, claim, and installation
+## Managed node, Machine, and installation
 
 The controller examples below show a future admitted activation using this model,
 not instructions to reinstall the running production host. A real adoption
@@ -375,7 +377,7 @@ spec:
     epoch: 1
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: MachineClaim
+kind: Machine
 metadata:
   name: mc-4k2p9
   namespace: infra-ops
@@ -384,6 +386,8 @@ spec:
     name: us-east-1
   machineClassRef:
     name: serverscom-compute-2u
+  machineProfileRef:
+    name: compute-2u
   powerState: 'On'
   networkAttachmentRefs:
     - name: alice-compute-0-uplink
@@ -402,7 +406,7 @@ metadata:
     fleet.datumapis.com/profile: cell
     fleet.datumapis.com/environment: production
 spec:
-  claimRef:
+  machineRef:
     name: mc-4k2p9
   expectedPredecessor:
     type: None
@@ -414,10 +418,10 @@ spec:
 The controller creates the initial resources before binding. Networking checks
 placement feasibility, then resolves the exact physical attachment after exclusive
 allocation. Normal customer/managed-node boot waits for the protected provisioning
-handoff. The machine binding cannot change inside `mc-4k2p9`.
+handoff. The immutable MachineAllocation for `mc-4k2p9` cannot be retargeted.
 
 A reinstall requests a new Installation with the current incarnation as its
-expected predecessor. Hardware replacement creates a new MachineClaim and
+expected predecessor. Hardware replacement creates a new Machine and
 Installation under the same NodeClaim. The managed coordinator fences the old
 incarnation before activating the node name and stable IPAM identity on the new
 one. Deleting an Installation alone does not release capacity or erase disks.
@@ -431,7 +435,7 @@ metadata:
   name: us-east-1-alice-compute-0
   namespace: infra-ops
 status:
-  claimRef:
+  machineRef:
     name: mc-4k2p9
   installationRef:
     name: alice-compute-0-os-01
@@ -446,10 +450,10 @@ status:
       addresses:
         - 2607:ed40:8004:1::/64
 ```
-The private allocation record pins the exact Machine and Claim UIDs and binding
-epoch. Status examples omit timestamps and full UID/digest bookkeeping; production
-execution may not omit those preconditions. No customer-visible status contains
-BMC credentials or a reusable console bearer URL.
+The private, immutable MachineAllocation retains exact local object-incarnation
+evidence and admitted input digests. Status examples omit timestamps and that
+private bookkeeping; production execution may not omit those preconditions. No
+customer-visible status contains BMC credentials or a reusable console bearer URL.
 
 ## Managed OS contributions
 
@@ -556,7 +560,7 @@ unadmitted reinstall or silently change an in-progress deployment.
   informed by verified physical endpoints.
 - **Vendor BGP peers and `HOSTING-AS7979` policy:** Provider observations supplied to
   networking/routing authority; not hardware-class routing policy.
-- **Host assignment to production versus lab:** Exclusive MachineClaim binding; Device
+- **Host assignment to production versus lab:** Exclusive MachineAllocation; Device
   identity remains stable.
 - **Stable node name, fabric loopback and SRv6 identity:** NodeClaim/IPAM lifecycle with
   predecessor fencing on replacement.

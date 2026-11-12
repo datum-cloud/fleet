@@ -6,7 +6,9 @@ lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
 event-only manager wiring scaffold with an injected MachineClaim lifecycle
 handler implemented. A packaged standalone synthetic
 smoke scenario exercises local-scope contention, install recovery, cleanup, and
-epoch reuse. Production caller-preserving
+epoch reuse. An explicit Milo-routed synthetic staging overlay exercises
+event-driven claim allocation, contention, cleanup, and reuse through the public
+project API. Production caller-preserving
 admission, replayable Milo event adapters, and real providers are not implemented.
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
@@ -199,12 +201,31 @@ remain integration-owner responsibilities.
 `cmd/fleet-manager` validates an exact project lifetime, derives the routed Milo
 REST host from an environment-owned root kubeconfig, keeps host-private records
 and leader election on the management cluster, starts the event graph, and
-reports the integration readiness check as failed. Its handlers deliberately
-perform no lifecycle or provider effects until trusted create-time
+reports the integration readiness check as failed in its default mode. Its
+production handlers deliberately perform no lifecycle or provider effects until trusted create-time
 caller/finalizer admission and live, replayable Milo adapters are supplied. A
 watch controller cannot recover the original `user.Info` or atomically capture
 it after object creation, so this increment does not fabricate that authority
 with annotations or controller credentials.
+
+The opt-in `--synthetic-staging` mode is a temporary acceptance boundary. It
+accepts only powered-off, networkless claims in `us-central-1`, synthesizes
+clearly labelled admission and provider evidence, and invokes the same durable
+coordinator used by the standalone and future production adapters. It is
+event-driven: claim, class, profile, Machine, namespace, private-record, and
+deletion events route exact work; it adds no periodic re-sync. One synthetic
+Machine is exclusively bound, competing claims remain pending, cleanup must
+complete before finalizer removal, and release wakes waiting claims for reuse.
+Public conditions say `SyntheticStagingAdmission`, so this result cannot be
+mistaken for Milo caller-preserving authorization.
+
+`config/overlays/synthetic-staging` is the only packaged activation path. It
+adds a loopback simulator sidecar from the same immutable Fleet image and uses
+the Pod's projected service-account token for authentication, avoiding a
+credential in Git. Simulator operation state is intentionally ephemeral; the
+durable private coordinator records exact operation input and can recover an
+idempotent synthetic operation after restart. This is sufficient for staging
+API validation, not production provider qualification.
 
 `config/overlays/management-plane` now packages the manager Deployment so its
 identity, RBAC, admission, image, and readiness boundary can be reviewed and
@@ -216,8 +237,8 @@ generated `milo-configuration-kubeconfig` Secret, and pin the image. The
 manager resolves the immutable Project UID from Milo at startup and fails
 closed when the named Project cannot be read, is being deleted, or has no UID;
 operators do not copy an opaque Project UID into deployment configuration. The
-packaged binary is intentionally inert and unready because caller-preserving admission,
-the live verifier, replay integrations, and production handlers are still
+default packaged deployment is intentionally inert and unready because
+caller-preserving admission, the live verifier, replay integrations, and production handlers are still
 absent. Installing these manifests is not evidence of functional allocation.
 
 `config/milo` separately packages the Fleet CRDs, ProtectedResources, roles,
@@ -533,7 +554,12 @@ acceptance inventory.
   completion sources are not implemented. They must support durable replay;
   polling is intentionally not a fallback.
 - Cross-project class sources and bootstrap secret retention are rejected rather
-  than partially executed by the standalone coordinator. The Milo adapter can
+  than partially executed by the production and standalone entry points. The
+  explicit synthetic-staging mode can publish and allocate one configured class
+  and profile across two exact Milo project lifetimes. It uses synthetic
+  admission, quota-hold, and source-use evidence, labels that boundary in public
+  status, refuses publication collisions or profile drift, and is not production
+  authorization. The Milo adapter can
   resolve a canonical source only when injected with trusted source authority,
   fence, and custody implementations. The network adapter remains deliberately
   unwired until production location, authorization, and object-guard owners are

@@ -224,9 +224,9 @@ define the entire product or prescribe a user interface. Inventory is designed
 for the target service, independent of today's inventory schema.
 
 Proposed groups are `fleet.datumapis.com` for shared allocation,
-OS, and cluster APIs; `inventory.fleet.datumapis.com` for physical inventory;
-and `baremetal.fleet.datumapis.com` for the owned bare-metal provider. Vendor
-and OS adapters have their own typed groups. Group names and administrative
+OS, and cluster APIs and `inventory.fleet.datumapis.com` for physical inventory.
+Owned-hardware enrollment remains private location-adapter state; vendor and OS
+adapters may have their own typed groups. Group names and administrative
 scope remain schema decisions; subsystem authority does not depend on a domain
 name.
 
@@ -234,9 +234,10 @@ MachineClass defines capacity in the provider project or references that definit
 from a consumer project through `spec.source`. Definition and reference are
 mutually exclusive forms. Service publication and IAM determine which projects
 receive and may use those references, separately from the capacity definition.
-MachineClaim is the consumer's request; its private binding can reserve a Machine
-in a different project. Class discovery, permission, and exclusive allocation
-have separate authority and lifetimes.
+A customer Machine is the consumer's durable request; its private immutable
+MachineAllocation can reserve a provider MachineCapacity in a different project.
+Class discovery, permission, and exclusive allocation have separate authority
+and lifetimes.
 
 A Facility represents physical premises, independent of vendors. A Site expresses
 operational placement policy under a Location, including a selector over eligible
@@ -249,34 +250,36 @@ its verified location, or terminate existing allocations.
 1. **Expected installation and actual asset are different objects.** Operators
    author DeviceClaim and Cable plans. A trusted registration service creates a
    Device only against an accepted, authorized claim and commits an exclusive
-   UID binding. Equipment cannot manufacture its own approval. Registration can
+   association, retaining local object identity as private evidence. Equipment cannot manufacture its own approval. Registration can
    precede complete physical verification so wiring errors remain diagnosable.
 2. **Cable owns expected topology.** Planned endpoints may reference DeviceClaim
    ports before registration. Status resolves them to Device components after
    binding; no competing expected-peer list lives on DeviceClaim. Rack position,
    passive cable identity, and power paths need appropriate trusted evidence.
 3. **Physical readiness is not effect authorization.** DeviceClaim readiness,
-   provider management mode, Machine preparation, and allocation eligibility are
+   provider management mode, MachineCapacity preparation, and allocation eligibility are
    separate gates. None implicitly grants permission to erase disks.
-4. **One binder owns allocation.** MachineClaim binds one immutable Machine UID.
-   A DeviceClaim reserves an operator installation; a MachineClaim reserves
-   consumer use. They cannot release or garbage-collect each other. The binder
+4. **One allocator owns allocation.** A customer Machine receives one immutable,
+   terminal MachineAllocation to a provider MachineCapacity. A DeviceClaim
+   reserves an operator installation; a customer Machine requests consumer use.
+   They cannot release or garbage-collect each other. The allocator
    validates publication provenance, current cross-project entitlement, and
-   quota, and commits provider/consumer Project UIDs with the reservation.
+   quota, and privately retains the authenticated provider and consumer project
+   identities with the reservation.
 5. **Installation names the allocation.** It requests an immutable initial
-   install or reinstall through `claimRef`, with predecessor preconditions.
-   Before effects, persist exact asset/binding identities, resolved input
+   install or reinstall through `machineRef`, with predecessor preconditions.
+   Before effects, persist exact allocation and asset identities, resolved input
    digests, disk targets, and operation authority. Changing a class or policy
    cannot silently authorize a new installation.
 6. **Managed node identity is above allocation.** NodeClaim retains a managed
    node's name and permitted network identity across replacement using a new
-   MachineClaim and Installation. The predecessor is fenced before shared
+   customer Machine and Installation. The predecessor is fenced before shared
    identity is activated. Standalone consumers do not implicitly get this
    continuity contract.
 7. **Reference permission is explicit.** Customers may reference only entitled
    classes, images, and networks. Private Device, switch, and BMC details stay in
    operator scope. Controllers retain the initiating authority and enforce
-   UID/binding preconditions; a reference is not itself authorization.
+   local source-identity and allocation preconditions; a reference is not itself authorization.
 8. **Deletion does not bypass release.** Finalizers or equivalent durable
    protocols retain reservations until sessions are revoked, networking is
    detached or fenced, and required cleanup succeeds. Owned assets use Retain
@@ -331,7 +334,7 @@ operable independently of the workload machines they manage.
 - **Compute:** consumes managed pools on shared cell clusters. It sizes them
   from tenant demand and gates node readiness and disruption with its own
   conditions. It may offer a standalone machine to its customers as a runtime
-  class backed by a MachineClaim. Per-node platform services that Compute hosts
+  class backed by a customer Machine. Per-node platform services that Compute hosts
   run as Fleet [node services](node-services.md), not as Compute tenants.
 - **Existing inventory records:** migration inputs or optional read models. They
   must not become a second writable authority over Fleet inventory. Adoption

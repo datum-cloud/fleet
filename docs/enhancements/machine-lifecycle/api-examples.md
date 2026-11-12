@@ -8,8 +8,8 @@ production timing requirements. The enhancement owns field semantics and lifecyc
 - [Provider MachineClass](#provider-machineclass)
 - [Consumer MachineClass](#consumer-machineclass)
 - [MachineProfile](#machineprofile)
+- [MachineCapacity](#machinecapacity)
 - [Machine](#machine)
-- [MachineClaim](#machineclaim)
 - [Installation](#installation)
 - [Reinstallation predecessor](#reinstallation-predecessor)
 
@@ -43,19 +43,13 @@ spec:
   # Capacity limits selection to existing supply in one provider namespace.
   # Labels identify candidates; they confer no eligibility or purchase authority.
   capacity:
-    machines:
+    machineCapacities:
       namespace: infra-ops
       selector:
         matchLabels:
           fleet.datumapis.com/capacity-pool: general-metal
 
-    # This provider-local contract adds backend compatibility requirements.
-    # Retained identity and revision keep later edits from changing accepted work.
-    providerClassRef:
-      apiGroup: baremetal.fleet.datumapis.com
-      kind: BareMetalMachineClass
-      namespace: infra-ops
-      name: qualified-server-v1
+    # Provider backend qualification and BMC enrollment are private cell state.
 
 # The projector reports the definition that the class evaluator accepted.
 # Acceptance validates the offering; it does not reserve or promise capacity.
@@ -172,12 +166,12 @@ status:
       message: "Hardware requirements are well formed."
 ```
 
-## Machine
+## MachineCapacity
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: Machine
-# Machine identity is independent of consumer allocations. Replacement hardware
+kind: MachineCapacity
+# MachineCapacity identity is independent of consumer allocations. Replacement hardware
 # gets a new resource lifetime; labels only group capacity for selection.
 metadata:
   generation: 1
@@ -186,15 +180,7 @@ metadata:
   labels:
     fleet.datumapis.com/capacity-pool: general-metal
 spec:
-  # This required reference keeps provider details in the provider namespace.
-  # Enrollment fixes the provider and asset identities to prevent retargeting.
-  providerRef:
-    apiGroup: baremetal.fleet.datumapis.com
-    kind: BareMetalMachine
-    name: lab-server-01
-
-  # Qualified owned hardware requires a link to its physical inventory identity.
-  # Supply without a physical Device needs no invented inventory record.
+  # Qualified owned hardware has one immutable physical inventory identity.
   deviceRef:
     name: server-example-001
 
@@ -202,7 +188,7 @@ spec:
   # Eligible still depends on preparation, health, readiness, and placement.
   allocationPolicy: Disabled
 
-  # Each reservation pins this required cleanup policy, preserving its
+  # Each allocation pins this required cleanup policy, preserving its
   # release obligations even if the operator later weakens the policy.
   cleaningPolicyRef:
     name: tenant-reuse-v1
@@ -211,7 +197,7 @@ spec:
   reclaimPolicy: Retain
 
 # The projector derives these observations from executor evidence and private
-# reservations. Operators cannot make capacity available by editing status.
+# allocations. Operators cannot make capacity available by editing status.
 status:
   # Fleet normalizes discovery observations and checks their evidence internally.
   # Logical device names keep serial numbers and management IDs private.
@@ -260,15 +246,15 @@ status:
       observedGeneration: 1
       lastTransitionTime: "2026-10-27T12:00:00Z"
       reason: AllocationDisabled
-      message: "Operator policy excludes this Machine from new allocations."
+      message: "Operator policy excludes this MachineCapacity from new allocations."
 ```
 
-## MachineClaim
+## Machine
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: MachineClaim
-# Claim identity belongs to the consumer project, separately from the Machine.
+kind: Machine
+# Machine identity belongs to the consumer project, separately from MachineCapacity.
 # A new name creates a distinct request rather than retrying an existing one.
 metadata:
   generation: 1
@@ -286,13 +272,13 @@ spec:
     name: lab
 
   # This optional gate delays activation until the initial installation succeeds.
-  # A reciprocal claim reference in the same project and namespace ties the
+  # A reciprocal Machine reference in the same project and namespace ties the
   # Installation to this allocation.
   initialInstallationRef:
     name: example-os-1
 
   # Immutable entries connect profile slots to project Networks. Omission
-  # requests no attachment; a Network namespace defaults to the claim namespace.
+  # requests no attachment; a Network namespace defaults to the Machine namespace.
   networkInterfaces:
     - name: primary
       network:
@@ -306,17 +292,17 @@ spec:
       # Omission requests none. Delete is the default and requires verified release.
       addresses: []
       reclaimPolicy: Delete
-  # Off is the default so creating a claim does not request runtime power-on.
+  # Off is the default so creating a Machine does not request runtime power-on.
   # On expresses intent; authorization and activation gates still control effects.
   powerState: "On"
 
 # The projector reports allocation progress without exposing the provider
-# Machine identity. These fields describe the binding; they cannot authorize it.
+# Machine identity. These fields describe the allocation; they cannot authorize it.
 status:
   # Admission retains the selected local profile through source deletion.
   acceptedProfileRef:
     name: accelerated-16c-64g
-  # Binding captures this hardware snapshot and its observation time.
+  # Allocation captures this hardware snapshot and its observation time.
   # Later observations can change readiness without rewriting the snapshot.
   allocatedHardware:
     observedAt: "2026-10-27T12:00:00Z"
@@ -347,12 +333,10 @@ status:
         - name: primary
           type: Ethernet
           speed: "25G"
-  # This name identifies the successful request for display, not replacement authority.
+  # A successor Installation names this request as its expected predecessor.
+  # Fleet resolves and pins the exact local incarnation privately.
   currentInstallationRef:
     name: example-os-1
-  # The opaque revision guards replacement of the current installation state.
-  # It belongs to this allocation and remains independent of request names.
-  installationRevision: installation-revision-example-1
   placement:
     locationRef:
       name: lab
@@ -387,7 +371,7 @@ status:
             - "2001:db8::53"
           searchDomains: []
         # NSO separates address allocation, preparation, and programming.
-        # The claim aggregates these facts without asserting guest health.
+        # The Machine aggregates these facts without asserting guest health.
         conditions:
           - type: Allocated
             status: "True"
@@ -422,8 +406,8 @@ status:
       status: "True"
       observedGeneration: 1
       lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: ReservationCommitted
-      message: "The private reservation holds exclusive capacity."
+      reason: AllocationCommitted
+      message: "The private allocation holds exclusive capacity."
     - type: Ready
       status: "True"
       observedGeneration: 1
@@ -449,17 +433,17 @@ status:
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Installation
-# Installation shares its claim's project and namespace. The claim's
+# Installation shares its Machine's project and namespace. The Machine's
 # initialInstallationRef identifies the request that satisfies its initial gate.
 metadata:
   generation: 1
   name: example-os-1
   namespace: default
 # The entire spec is immutable so recovery uses the same authorized inputs.
-# Claim and approved image are required. Fleet checks install and image-use
-# permissions and internally pins the claim lifetime, image artifacts, and digests.
+# Machine and approved image are required. Fleet checks install and image-use
+# permissions and internally pins the Machine lifetime, image artifacts, and digests.
 spec:
-  claimRef:
+  machineRef:
     name: example
   # This required precondition prevents competing installs from replacing
   # an unexpected OS. None identifies a blank allocation with no admitted install.
@@ -476,8 +460,6 @@ spec:
 
 # The projector reports the retained installation outcome, not guest health.
 status:
-  # This is the historical result revision. The claim reports the current one.
-  installationRevision: installation-revision-example-1
   completedAt: "2026-10-27T12:00:00Z"
   conditions:
     - type: Accepted
@@ -503,17 +485,18 @@ status:
 ## Reinstallation predecessor
 
 This fragment belongs to a new Installation named `example-os-2`, in the same
-project and namespace as the claim. Its `spec.claimRef.name` remains `example`;
+project and namespace as the Machine. Its `spec.machineRef.name` remains `example`;
 its image and bootstrap references describe the new installation inputs. The
-claim's `initialInstallationRef` stays `example-os-1`. The revision comes from
-`MachineClaim.status.installationRevision`. Fleet consumes it when admitting the
-replacement; it does not modify the earlier Installation. See the
-[revision contract](README.md#installation) for conflicts, retries, and recovery.
+Machine's `initialInstallationRef` stays `example-os-1`. The predecessor comes
+from `Machine.status.currentInstallationRef`. Fleet resolves its exact local
+incarnation when admitting the replacement; it does not modify the earlier
+Installation. See the [predecessor contract](README.md#installation) for
+conflicts, retries, and recovery.
 
 ```yaml
-# The claim's current installation revision guards this replacement.
-# It cannot authorize work on another allocation or an older installation state.
+# Fleet resolves the readable predecessor name to the exact local incarnation.
+# The name is a precondition, not bearer authority.
 expectedPredecessor:
-  type: Revision
-  revision: installation-revision-example-1
+  type: Installation
+  name: example-os-1
 ```

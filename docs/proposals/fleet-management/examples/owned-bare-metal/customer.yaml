@@ -2,14 +2,15 @@
 # Project context: acme. The local MachineClass is registered by Fleet (catalog.yaml).
 # Its capacity remains in the distinct datum-metal provider project.
 # These objects can be submitted together or in any creation order.
-# The binder waits for all named initial resources and validated network inputs.
+# The allocator waits for all named initial resources and validated network inputs.
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: MachineClaim
+kind: Machine
 metadata:
   name: db-01
   namespace: acme
 spec:
   machineClassRef: {name: metal-standard}
+  machineProfileRef: {name: standard-metal}
   locationRef: {name: us-east-1}
   powerState: "On"
   networkAttachmentRefs:
@@ -26,7 +27,7 @@ metadata:
 spec:
   targetRef:
     apiGroup: fleet.datumapis.com
-    kind: MachineClaim
+    kind: Machine
     name: db-01
   interface: primary
   networkRef: {name: acme-private}
@@ -39,7 +40,7 @@ metadata:
   name: db-01-os-01
   namespace: acme
 spec:
-  claimRef: {name: db-01}
+  machineRef: {name: db-01}
   expectedPredecessor: {type: None}
   imageRef: {name: linux-lts-v1}
   bootstrapConfigRef: {name: db-01-bootstrap}
