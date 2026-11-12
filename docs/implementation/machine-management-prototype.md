@@ -15,14 +15,16 @@ an ephemeral Ed25519 key pair, and creates a public
 
 The management-cluster controller authenticates through the Kubernetes delegated
 request identity retained by the mutating admission webhook. Kubernetes RBAC
-provides the prototype authorization decision: `machineclaims` read and
+provides the prototype authorization decision: `machines` read and
 `machinemanagementsessions` create are separate grants. The controller resolves
-the claim against a service-owned `MachineAllocationBinding` and creates a
-protected `MachineManagementSessionBinding`. The latter pins the principal,
-consumer and provider Project UIDs, claim and machine name/UID pairs, binding ID
-and epoch, location UID/revision, private BareMetalMachine UID, profile revision,
-client key, deadlines, adapter route, and correlation IDs. None of the private
-target fields are copied to the public session.
+the customer `Machine` through the immutable, terminal `MachineAllocation` to a
+provider `MachineCapacity` and creates a protected
+`MachineManagementSessionBinding`. The latter pins the principal, consumer and
+provider project identities, the Machine, allocation, MachineCapacity and
+immutable `deviceRef`, authoritative location and Karmada member, client key,
+deadlines, and correlation IDs. Local object UIDs are retained only in that
+management-API record as recreation preconditions. None cross through Karmada
+or enter the public session.
 
 The controller writes a least-privileged session to the separate Karmada API and
 creates an exact-cluster `PropagationPolicy` using the member identity retained
@@ -39,10 +41,11 @@ Redfish request/response path.
 
 The client consumes the route once, pins the per-session gateway TLS certificate,
 and signs every request with a timestamped, nonce-bearing, domain-separated
-Ed25519 proof. The gateway rejects changed inputs, audiences, expired timestamps,
-nonce replay, stale authority, and adapter-route mismatch. Relay registration and
-gateway TLS/proof credentials are separate. The relay only pairs an opaque route;
-it cannot select a BMC target and does not implement unrestricted CONNECT.
+Ed25519 proof bound to that one-use route and gateway audience. The gateway
+rejects changed projected inputs, audiences, expired timestamps, nonce replay,
+and stale authority. Relay registration and gateway TLS/proof credentials are
+separate. The relay only pairs an opaque route; it cannot select a BMC target and
+does not implement unrestricted CONNECT.
 
 The plugin exposes a TLS endpoint only on loopback. It writes a one-time local
 username/password and CA bundle at mode `0600`, publishes a non-secret readiness
@@ -50,8 +53,13 @@ JSON file, deletes local login tokens on Redfish logout, and removes all tempora
 files at shutdown. These credentials are unrelated to the gateway's private
 sushy credential.
 
-At the location, the gateway exposes one virtual system named `allocated`. Its
-adapter selects the physical sushy system solely from protected binding state.
+At the location, the gateway exposes one virtual system named `allocated`. The
+projected session contains only the selected MachineCapacity name and session
+authority. The gateway resolves a safe location-local MachineCapacity copy
+through its immutable `deviceRef`, then selects exactly one service-owned
+management-enrollment Secret carrying the adapter, endpoint, physical system and
+credential inputs. Its adapter selects the physical sushy system only from that
+resolved enrollment.
 Customer paths, Hosts, OData links, and guessed identifiers never participate in
 physical routing. The only supported mutations are one-time `Pxe` or `Hdd` boot
 selection and `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, or
@@ -59,11 +67,12 @@ selection and `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, or
 
 ## Session and operation sequence
 
-1. `datumctl fleet machine-management proxy CLAIM` generates a key and asks the
-   management API for a session using only the claim name.
+1. `datumctl fleet machine-management proxy MACHINE` generates a key and asks the
+   management API for a session using only the customer Machine name.
 2. Admission retains the authenticated principal. The controller resolves the
-   current claim UID and exact active allocation, enforces limits, and persists
-   the protected binding before projection.
+   current Machine, exact active MachineAllocation, provider MachineCapacity and
+   immutable device relationship, enforces limits, and persists the protected
+   binding before projection.
 3. The projector checks the authoritative allocation on every refresh, creates a
    Karmada hub copy and exact-member policy, and waits for status from that member.
    The gateway reads only its cell-local copy, establishes an outbound relay
@@ -71,11 +80,12 @@ selection and `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, or
 4. The plugin consumes the route, verifies the pinned TLS identity, proves its
    admitted private key, and opens the loopback Redfish service.
 5. Before a boot or reset effect, the gateway fsyncs an operation containing the
-   session/allocation/correlation identities, normalized method and virtual URI,
-   exact accepted body, internally selected physical target, idempotency key,
-   operation and binding epochs, conflict/freshness preconditions, adapter route,
-   and later execution evidence. Effects for a machine are serialized across all
-   sessions in the gateway process.
+   location-session, MachineCapacity and Device identities, normalized method
+   and virtual URI, exact accepted body, internally selected physical target,
+   idempotency key, operation epoch, conflict/freshness preconditions, and later
+   execution evidence. Effects for a Device are serialized across all sessions
+   in the gateway process. The protected central binding supplies durable
+   correlation back to the MachineAllocation.
 6. A lost adapter response becomes `Unknown`; replaying the exact request returns
    the existing task without a second adapter call. Failed or unknown effects are
    never rewritten as success.
@@ -83,16 +93,19 @@ selection and `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, or
    the hub copy's desired state to `Revoked`. Karmada carries the fence to the
    selected cell; the gateway closes the stream and writes `CleanupConfirmed`
    before the controller removes the policy and hub copy. Release also writes a
-   terminal revocation annotation so later claim-name reuse or reactivation cannot
-   resurrect the session. Deletion alone is never teardown proof; if the cell
-   cannot acknowledge the fence, central cleanup is `Unknown`.
+   terminal revocation annotation so later Machine-name reuse or a new allocation
+   cannot resurrect the session. Deletion alone is never teardown proof; if the
+   cell cannot acknowledge the fence, central cleanup is `Unknown`.
 
 ## API and deployment artifacts
 
-Kubebuilder-style Go types and generated CRDs are under `api/v1alpha1` and
-`config/crd/bases`. CEL makes the public spec immutable and constrains protocol,
-profile, key encoding, and TTL. Conditions carry `observedGeneration`, explicit
-reasons, and true/false/unknown outcomes.
+Kubebuilder-style session types are under `internal/api/session/v1alpha1`; they
+share `fleet.datumapis.com/v1alpha1` with the canonical lifecycle types under
+`internal/api/v1alpha1`. Generated session CRDs are under `config/crd/bases`,
+while the lifecycle CRD bundle remains under `config/base/crd`. CEL makes the
+public spec immutable and constrains protocol, profile, key encoding, and TTL.
+Conditions carry `observedGeneration`, explicit reasons, and true/false/unknown
+outcomes.
 
 RBAC is in `config/rbac`; controller and location workloads are in
 `config/manager` and `config/location`. `config/federation` contains the Karmada
@@ -159,9 +172,9 @@ using datumctl's unmanaged-plugin trust command. The test requires a real Karmad
 `Work` in `karmada-es-fleet-location-e2e`, verifies the hub received the selected
 cell's route status, and proves management has no direct location credential. It
 exercises generic DMTF client login, profile narrowing, distinct RBAC,
-per-claim and per-project limits, one-shot rendezvous, real PXE and libvirt power
+per-Machine and per-project limits, one-shot rendezvous, real PXE and libvirt power
 effects, DMTF validators, central API loss and freshness failure, release fencing,
-claim recreation, route isolation, response-loss recovery, and bounded BMC errors.
+Machine recreation, route isolation, response-loss recovery, and bounded BMC errors.
 
 Validator versions are `redfish` 3.4.2,
 `redfish-service-validator` 3.1.8, and
@@ -193,7 +206,8 @@ BMC logs, validator reports, acceleration selection, and PXE callbacks.
 Implemented-and-tested code must not be confused with a production-ready
 contract. Important gaps are:
 
-- Allocation and claim data are synthetic and pre-bound. There is no allocator,
+- Machine, MachineAllocation, MachineCapacity, location registration, and local
+  enrollment data are synthetic and pre-bound. There is no production allocator,
   quota transaction, installation controller, cleanup/quarantine workflow, or
   cross-project Milo policy integration.
 - Delegated Kubernetes authentication/RBAC models the intended Compute/Milo

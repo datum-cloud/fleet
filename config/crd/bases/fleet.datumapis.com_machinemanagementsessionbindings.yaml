@@ -17,8 +17,10 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: MachineManagementSessionBinding is the service-owned admission
-          record.
+        description: |-
+          MachineManagementSessionBinding is protected admission evidence. Local UIDs
+          are retained only as same-API-server recreation preconditions and are never
+          projected through Karmada.
         properties:
           apiVersion:
             description: |-
@@ -39,26 +41,11 @@ spec:
             type: object
           spec:
             properties:
-              accessProfileRevision:
+              accessProfile:
                 type: string
-              adapterRoute:
+              allocationName:
                 type: string
-              bareMetalMachineUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
-                type: string
-              bindingEpoch:
-                format: int64
-                type: integer
-              bindingID:
-                type: string
-              bmcSystemID:
-                type: string
-              claimName:
-                type: string
-              claimUID:
+              allocationUID:
                 description: |-
                   UID is a type that holds unique ID values, including UUIDs.  Because we
                   don't ONLY use UUIDs, this is an alias to string.  Being a type captures
@@ -69,24 +56,28 @@ spec:
               connectBefore:
                 format: date-time
                 type: string
-              consumerProjectUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
+              consumerProject:
+                type: string
+              deviceName:
                 type: string
               expiresAt:
                 format: date-time
                 type: string
-              locationRevision:
+              locationName:
                 type: string
-              locationUID:
+              machineCapacityName:
+                type: string
+              machineCapacityNamespace:
+                type: string
+              machineCapacityUID:
                 description: |-
                   UID is a type that holds unique ID values, including UUIDs.  Because we
                   don't ONLY use UUIDs, this is an alias to string.  Being a type captures
                   intent and helps make sure that UIDs and names do not get conflated.
                 type: string
               machineName:
+                type: string
+              machineNamespace:
                 type: string
               machineUID:
                 description: |-
@@ -98,11 +89,9 @@ spec:
                 type: string
               operationCorrelationID:
                 type: string
-              providerProjectUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
+              protocol:
+                type: string
+              providerProject:
                 type: string
               requestingPrincipal:
                 type: string
@@ -119,25 +108,25 @@ spec:
                   intent and helps make sure that UIDs and names do not get conflated.
                 type: string
             required:
-            - accessProfileRevision
-            - adapterRoute
-            - bareMetalMachineUID
-            - bindingEpoch
-            - bindingID
-            - bmcSystemID
-            - claimName
-            - claimUID
+            - accessProfile
+            - allocationName
+            - allocationUID
             - clientPublicKey
             - connectBefore
-            - consumerProjectUID
+            - consumerProject
+            - deviceName
             - expiresAt
-            - locationRevision
-            - locationUID
+            - locationName
+            - machineCapacityName
+            - machineCapacityNamespace
+            - machineCapacityUID
             - machineName
+            - machineNamespace
             - machineUID
             - memberCluster
             - operationCorrelationID
-            - providerProjectUID
+            - protocol
+            - providerProject
             - requestingPrincipal
             - sessionCorrelationID
             - sessionName
@@ -206,9 +195,8 @@ spec:
                   type: object
                 type: array
               connection:
-                description: |-
-                  SessionConnection is non-secret rendezvous information. It never names a
-                  physical endpoint or adapter target.
+                description: SessionConnection contains non-secret rendezvous information
+                  only.
                 properties:
                   gatewayAudience:
                     type: string

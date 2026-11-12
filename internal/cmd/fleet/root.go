@@ -34,9 +34,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.datum.net/datumctl/plugin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 
-	fleetv1alpha1 "go.datum.net/fleet/api/v1alpha1"
+	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
 	"go.datum.net/fleet/internal/gateway"
 	"go.datum.net/fleet/internal/protocol"
 	"go.datum.net/fleet/internal/relay"
@@ -67,8 +66,8 @@ func Command() *cobra.Command {
 	root := plugin.NewRootCmd("fleet", "Manage Datum Fleet resources")
 	mm := &cobra.Command{Use: "machine-management", Short: "Access allocation-scoped machine management"}
 	o := &proxyOptions{}
-	proxy := &cobra.Command{Use: "proxy CLAIM", Short: "Open a short-lived local Redfish endpoint", Args: cobra.ExactArgs(1), SilenceUsage: true, RunE: func(cmd *cobra.Command, args []string) error { return o.run(cmd.Context(), cmd, args[0]) }}
-	proxy.Flags().StringVar(&o.namespace, "namespace", "default", "MachineClaim namespace")
+	proxy := &cobra.Command{Use: "proxy MACHINE", Short: "Open a short-lived local Redfish endpoint", Args: cobra.ExactArgs(1), SilenceUsage: true, RunE: func(cmd *cobra.Command, args []string) error { return o.run(cmd.Context(), cmd, args[0]) }}
+	proxy.Flags().StringVar(&o.namespace, "namespace", "default", "Machine namespace")
 	proxy.Flags().StringVar(&o.listen, "listen", "127.0.0.1:0", "loopback address for the local Redfish endpoint")
 	proxy.Flags().DurationVar(&o.ttl, "ttl", 15*time.Minute, "session lifetime (1m-15m)")
 	proxy.Flags().StringVar(&o.credentialFile, "credential-file", "", "0600 JSON credential file (temporary when omitted)")
@@ -81,7 +80,7 @@ func Command() *cobra.Command {
 	return root
 }
 
-func (o *proxyOptions) run(parent context.Context, cmd *cobra.Command, claim string) error {
+func (o *proxyOptions) run(parent context.Context, cmd *cobra.Command, machine string) error {
 	if o.ttl < time.Minute || o.ttl > 15*time.Minute {
 		return &ExitError{ExitUsage, errors.New("--ttl must be between 1m and 15m")}
 	}
@@ -107,7 +106,7 @@ func (o *proxyOptions) run(parent context.Context, cmd *cobra.Command, claim str
 	defer clear(privateKey)
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	session, err := api.create(ctx, o.namespace, claim, protocol.PublicKey(privateKey), o.ttl)
+	session, err := api.create(ctx, o.namespace, machine, protocol.PublicKey(privateKey), o.ttl)
 	if err != nil {
 		return classifyAPI(err)
 	}
@@ -126,7 +125,7 @@ func (o *proxyOptions) run(parent context.Context, cmd *cobra.Command, claim str
 		return &ExitError{ExitConnect, err}
 	}
 	defer conn.Close()
-	cleanup, endpoint, err := o.serveLocal(ctx, privateKey, session.UID, session.Status.Connection, conn)
+	cleanup, endpoint, err := o.serveLocal(ctx, privateKey, session.Name, session.Status.Connection, conn)
 	if err != nil {
 		return &ExitError{ExitConnect, err}
 	}
@@ -202,8 +201,8 @@ func (a *apiClient) do(ctx context.Context, method, u string, body io.Reader, ou
 	}
 	return nil
 }
-func (a *apiClient) create(ctx context.Context, ns, claim, key string, ttl time.Duration) (*fleetv1alpha1.MachineManagementSession, error) {
-	s := &fleetv1alpha1.MachineManagementSession{TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSession"}, ObjectMeta: metav1.ObjectMeta{GenerateName: claim + "-", Namespace: ns}, Spec: fleetv1alpha1.MachineManagementSessionSpec{MachineClaimRef: fleetv1alpha1.LocalObjectReference{Name: claim}, Protocol: "Redfish", AccessProfile: "Provisioning", ClientPublicKey: key, TTL: metav1.Duration{Duration: ttl}}}
+func (a *apiClient) create(ctx context.Context, ns, machine, key string, ttl time.Duration) (*fleetv1alpha1.MachineManagementSession, error) {
+	s := &fleetv1alpha1.MachineManagementSession{TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSession"}, ObjectMeta: metav1.ObjectMeta{GenerateName: machine + "-", Namespace: ns}, Spec: fleetv1alpha1.MachineManagementSessionSpec{MachineRef: fleetv1alpha1.LocalReference{Name: machine}, Protocol: "Redfish", AccessProfile: "Provisioning", ClientPublicKey: key, TTL: metav1.Duration{Duration: ttl}}}
 	b, _ := json.Marshal(s)
 	var out fleetv1alpha1.MachineManagementSession
 	if err := a.do(ctx, http.MethodPost, a.url(ns, ""), strings.NewReader(string(b)), &out); err != nil {
@@ -297,7 +296,7 @@ func connectLocation(ctx context.Context, key ed25519.PrivateKey, s *fleetv1alph
 	return tlsConn, nil
 }
 
-func (o *proxyOptions) serveLocal(ctx context.Context, key ed25519.PrivateKey, sessionUID types.UID, c *fleetv1alpha1.SessionConnection, remote net.Conn) (func(), string, error) {
+func (o *proxyOptions) serveLocal(ctx context.Context, key ed25519.PrivateKey, sessionName string, c *fleetv1alpha1.SessionConnection, remote net.Conn) (func(), string, error) {
 	listener, err := net.Listen("tcp", o.listen)
 	if err != nil {
 		return nil, "", err
@@ -348,7 +347,7 @@ func (o *proxyOptions) serveLocal(ctx context.Context, key ed25519.PrivateKey, s
 		cleanup()
 		return nil, "", err
 	}
-	ready := map[string]any{"ready": true, "endpoint": endpoint, "credentialFile": o.credentialFile, "caBundle": o.caFile, "sessionUID": string(sessionUID)}
+	ready := map[string]any{"ready": true, "endpoint": endpoint, "credentialFile": o.credentialFile, "caBundle": o.caFile, "session": sessionName}
 	if err := writeJSONFile(o.readyFile, ready, 0o644); err != nil {
 		cleanup()
 		return nil, "", err
@@ -362,8 +361,8 @@ func (o *proxyOptions) serveLocal(ctx context.Context, key ed25519.PrivateKey, s
 		r.Host = "fleet-gateway"
 		r.Header.Del("Authorization")
 		r.Header.Del("X-Auth-Token")
-		p, _ := protocol.Sign(key, string(sessionUID), c.GatewayAudience, time.Now())
-		r.Header.Set(gateway.HeaderSession, string(sessionUID))
+		p, _ := protocol.Sign(key, c.RouteID, c.GatewayAudience, time.Now())
+		r.Header.Set(gateway.HeaderSession, c.RouteID)
 		r.Header.Set(gateway.HeaderAudience, c.GatewayAudience)
 		r.Header.Set(gateway.HeaderTimestamp, p.Timestamp)
 		r.Header.Set(gateway.HeaderNonce, p.Nonce)

@@ -17,8 +17,9 @@ kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system create se
   --from-file=openvpn.key="${FLEET_E2E_STATE}/evidence/openvpn.key" --dry-run=client -o yaml | kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f -
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${TEST_DIR}/openvpn/client.yaml"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status daemonset/fleet-openvpn-client --timeout=120s
-kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system patch deployment fleet-gateway --type=json \
-  -p='[{"op":"replace","path":"/spec/template/spec/containers/0/args/5","value":"--bmc-url=http://10.88.0.1:8000"}]'
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system patch secret enrollment-device-allocated --type=merge \
+  -p="{\"stringData\":{\"endpoint\":\"http://10.88.0.1:8000\"}}"
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout restart deployment/fleet-gateway
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status deployment/fleet-gateway --timeout=120s
 pod=$(kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system get pod -l app.kubernetes.io/name=fleet-openvpn-client -o jsonpath='{.items[0].metadata.name}')
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system exec "${pod}" -- curl --fail --silent http://10.88.0.1:8000/redfish/v1/Systems >/dev/null

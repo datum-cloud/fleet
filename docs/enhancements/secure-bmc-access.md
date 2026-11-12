@@ -11,9 +11,10 @@ API without exposing a BMC, its management network, or its credentials directly.
 It extends the provisional [Fleet design context](../design.md) and the pinned
 [bare-metal provisioning proposal][fleet-provisioning]. No API or behavior in
 this document is an accepted production contract. The repository contains a
-[working prototype](../implementation/machine-management-prototype.md), but its
-internal binding and projection schemas predate the simplified design below and
-must not be treated as the proposed product API.
+[working prototype](../implementation/machine-management-prototype.md) aligned
+with the Machine, MachineAllocation and MachineCapacity identity model below.
+Its synthetic allocation, location registration and enrollment records remain
+prototype fixtures and must not be treated as accepted product APIs.
 
 The architecture borrows the session and data-path separation used by Datum
 Compute's provisional [instance shell sessions][compute-shell]: the platform

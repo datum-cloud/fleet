@@ -10,7 +10,7 @@ metadata:
   name: fleet-session-controller
 rules:
   - apiGroups: [fleet.datumapis.com]
-    resources: [machinemanagementsessions, machineclaims]
+    resources: [machinemanagementsessions, machines, machinecapacities, machineallocations]
     verbs: [get, list, watch]
   # The controller writes only metadata finalizers on the public object. CEL
   # validation keeps the customer-authored spec immutable.
@@ -24,7 +24,7 @@ rules:
     resources: [machinemanagementsessions/finalizers]
     verbs: [update, patch]
   - apiGroups: [fleet.datumapis.com]
-    resources: [machineallocationbindings, machinemanagementsessionbindings]
+    resources: [machinemanagementsessionbindings]
     verbs: [get, list, watch, create, update, patch]
   - apiGroups: [fleet.datumapis.com]
     resources: [machinemanagementsessionbindings/status]
@@ -43,14 +43,14 @@ subjects:
     name: fleet-controller
     namespace: fleet-system
 ---
-# Claim read and management-session creation are deliberately separate grants.
+# Machine read and management-session creation are deliberately separate grants.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: fleet-machineclaim-viewer
+  name: fleet-machine-viewer
 rules:
   - apiGroups: [fleet.datumapis.com]
-    resources: [machineclaims]
+    resources: [machines]
     verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -80,6 +80,12 @@ rules:
   - apiGroups: [fleet.datumapis.com]
     resources: [projectedmachinemanagementsessions/status]
     verbs: [get, update, patch]
+  - apiGroups: [fleet.datumapis.com]
+    resources: [machinecapacities]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

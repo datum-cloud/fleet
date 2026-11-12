@@ -17,8 +17,9 @@ spec:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ProjectedMachineManagementSession is the least-privileged location
-          copy.
+        description: |-
+          ProjectedMachineManagementSession is the least-privileged Karmada-delivered
+          location copy. Its generated name is the location session identity.
         properties:
           apiVersion:
             description: |-
@@ -39,31 +40,10 @@ spec:
             type: object
           spec:
             properties:
-              accessProfileRevision:
-                type: string
-              adapterRoute:
+              accessProfile:
                 type: string
               authorityFreshUntil:
                 format: date-time
-                type: string
-              bareMetalMachineUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
-                type: string
-              bindingEpoch:
-                format: int64
-                type: integer
-              bindingID:
-                type: string
-              bmcSystemID:
-                type: string
-              claimUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
                 type: string
               clientPublicKey:
                 type: string
@@ -78,50 +58,36 @@ spec:
               expiresAt:
                 format: date-time
                 type: string
-              locationRevision:
-                type: string
-              locationUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
-                type: string
-              machineUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
-                type: string
-              operationCorrelationID:
-                type: string
-              sessionCorrelationID:
-                type: string
-              sessionUID:
-                description: |-
-                  UID is a type that holds unique ID values, including UUIDs.  Because we
-                  don't ONLY use UUIDs, this is an alias to string.  Being a type captures
-                  intent and helps make sure that UIDs and names do not get conflated.
+              machineCapacityRef:
+                properties:
+                  name:
+                    type: string
+                required:
+                - name
+                type: object
+              protocol:
                 type: string
             required:
-            - accessProfileRevision
-            - adapterRoute
+            - accessProfile
             - authorityFreshUntil
-            - bareMetalMachineUID
-            - bindingEpoch
-            - bindingID
-            - bmcSystemID
-            - claimUID
             - clientPublicKey
             - connectBefore
             - desiredState
             - expiresAt
-            - locationRevision
-            - locationUID
-            - machineUID
-            - operationCorrelationID
-            - sessionCorrelationID
-            - sessionUID
+            - machineCapacityRef
+            - protocol
             type: object
+            x-kubernetes-validations:
+            - message: projected authority inputs are immutable
+              rule: self.machineCapacityRef == oldSelf.machineCapacityRef && self.protocol
+                == oldSelf.protocol && self.accessProfile == oldSelf.accessProfile
+                && self.clientPublicKey == oldSelf.clientPublicKey && self.connectBefore
+                == oldSelf.connectBefore && self.expiresAt == oldSelf.expiresAt
+            - message: revocation is terminal
+              rule: oldSelf.desiredState == 'Active' || self.desiredState == 'Revoked'
+            - message: authority freshness may only advance within expiry
+              rule: timestamp(self.authorityFreshUntil) >= timestamp(oldSelf.authorityFreshUntil)
+                && timestamp(self.authorityFreshUntil) <= timestamp(self.expiresAt)
           status:
             properties:
               conditions:
@@ -184,9 +150,8 @@ spec:
                 format: date-time
                 type: string
               connection:
-                description: |-
-                  SessionConnection is non-secret rendezvous information. It never names a
-                  physical endpoint or adapter target.
+                description: SessionConnection contains non-secret rendezvous information
+                  only.
                 properties:
                   gatewayAudience:
                     type: string

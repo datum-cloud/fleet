@@ -12,7 +12,7 @@ func TestAdmissionIsDurableAndDeduplicated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op := Operation{ID: "op-1", MachineUID: "machine-1", Method: "POST", VirtualTarget: "/reset", AcceptedBody: json.RawMessage(`{"ResetType":"On"}`)}
+	op := Operation{ID: "op-1", DeviceName: "device-1", Method: "POST", VirtualTarget: "/reset", AcceptedBody: json.RawMessage(`{"ResetType":"On"}`)}
 	if _, fresh, err := s.Admit(op); err != nil || !fresh {
 		t.Fatalf("admit fresh=%v err=%v", fresh, err)
 	}

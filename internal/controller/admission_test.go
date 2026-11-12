@@ -11,11 +11,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	fleetv1alpha1 "go.datum.net/fleet/api/v1alpha1"
+	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
 )
 
 func TestAdmissionRetainsAuthenticatedPrincipal(t *testing.T) {
-	s := fleetv1alpha1.MachineManagementSession{Spec: fleetv1alpha1.MachineManagementSessionSpec{MachineClaimRef: fleetv1alpha1.LocalObjectReference{Name: "db-01"}, Protocol: "Redfish", AccessProfile: "Provisioning", ClientPublicKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}
+	s := fleetv1alpha1.MachineManagementSession{Spec: fleetv1alpha1.MachineManagementSessionSpec{MachineRef: fleetv1alpha1.LocalReference{Name: "db-01"}, Protocol: "Redfish", AccessProfile: "Provisioning", ClientPublicKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}
 	raw, _ := json.Marshal(s)
 	resp := SessionAdmission{}.Handle(context.Background(), admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{Operation: admissionv1.Create, Object: runtime.RawExtension{Raw: raw}, UserInfo: authnv1.UserInfo{Username: "alice@example.test"}}})
 	if !resp.Allowed || len(resp.Patches) == 0 {

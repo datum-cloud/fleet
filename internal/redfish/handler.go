@@ -4,6 +4,7 @@ package redfish
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -22,17 +23,12 @@ import (
 const SystemID = "allocated"
 
 type Authority struct {
-	SessionUID             string
-	SessionCorrelationID   string
-	OperationCorrelationID string
-	ClaimUID               string
-	MachineUID             string
-	BindingID              string
-	BindingEpoch           int64
-	AdapterRoute           string
-	OperationEpoch         int64
-	ExpiresAt              time.Time
-	FreshUntil             time.Time
+	SessionName         string
+	MachineCapacityName string
+	DeviceName          string
+	OperationEpoch      int64
+	ExpiresAt           time.Time
+	FreshUntil          time.Time
 }
 
 type Handler struct {
@@ -114,7 +110,15 @@ func (h *Handler) checkRequest(r *http.Request) error {
 }
 
 func (h *Handler) serviceRoot(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, map[string]any{"@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot", "@odata.id": "/redfish/v1/", "Id": "RootService", "Name": "Fleet Virtual Redfish Service", "RedfishVersion": "1.18.0", "UUID": h.authority().SessionUID, "Systems": odata("/redfish/v1/Systems"), "SessionService": odata("/redfish/v1/SessionService"), "TaskService": odata("/redfish/v1/TaskService")})
+	writeJSON(w, http.StatusOK, map[string]any{"@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot", "@odata.id": "/redfish/v1/", "Id": "RootService", "Name": "Fleet Virtual Redfish Service", "RedfishVersion": "1.18.0", "UUID": virtualUUID(h.authority().SessionName), "Systems": odata("/redfish/v1/Systems"), "SessionService": odata("/redfish/v1/SessionService"), "TaskService": odata("/redfish/v1/TaskService")})
+}
+
+func virtualUUID(sessionName string) string {
+	sum := sha256.Sum256([]byte("go.datum.net/fleet/redfish-service-root/v1\n" + sessionName))
+	b := sum[:16]
+	b[6] = (b[6] & 0x0f) | 0x50
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 func (h *Handler) sessionService(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, map[string]any{"@odata.type": "#SessionService.v1_2_0.SessionService", "@odata.id": "/redfish/v1/SessionService", "Id": "SessionService", "Name": "Session Service", "ServiceEnabled": true, "SessionTimeout": 900, "Sessions": odata("/redfish/v1/SessionService/Sessions")})
@@ -219,10 +223,10 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, raw []byte, eff
 		writeError(w, http.StatusServiceUnavailable, "Fleet.1.0.AuthorityStale", "Allocation authority is stale; the gateway has failed closed.")
 		return
 	}
-	id := journal.Identity(authority.SessionUID, r.Method, r.URL.Path, raw)
-	unlock := h.Journal.MachineLock(authority.MachineUID)
+	id := journal.Identity(authority.SessionName, r.Method, r.URL.Path, raw)
+	unlock := h.Journal.MachineLock(authority.DeviceName)
 	defer unlock()
-	op, fresh, err := h.Journal.Admit(journal.Operation{ID: id, SessionUID: authority.SessionUID, SessionCorrelationID: authority.SessionCorrelationID, OperationCorrelationID: authority.OperationCorrelationID, ClaimUID: authority.ClaimUID, MachineUID: authority.MachineUID, BindingID: authority.BindingID, BindingEpoch: authority.BindingEpoch, Method: r.Method, VirtualTarget: r.URL.Path, AcceptedBody: append([]byte(nil), raw...), PhysicalTarget: h.Adapter.PhysicalTarget(), IdempotencyIdentity: id, OperationEpoch: authority.OperationEpoch, ConflictPrecondition: fmt.Sprintf("binding=%s epoch=%d fresh-before=%s", authority.BindingID, authority.BindingEpoch, authority.FreshUntil.UTC().Format(time.RFC3339)), AdapterRoute: authority.AdapterRoute})
+	op, fresh, err := h.Journal.Admit(journal.Operation{ID: id, SessionName: authority.SessionName, MachineCapacityName: authority.MachineCapacityName, DeviceName: authority.DeviceName, Method: r.Method, VirtualTarget: r.URL.Path, AcceptedBody: append([]byte(nil), raw...), PhysicalTarget: h.Adapter.PhysicalTarget(), IdempotencyIdentity: id, OperationEpoch: authority.OperationEpoch, ConflictPrecondition: fmt.Sprintf("capacity=%s device=%s fresh-before=%s", authority.MachineCapacityName, authority.DeviceName, authority.FreshUntil.UTC().Format(time.RFC3339))})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Fleet.1.0.JournalUnavailable", "The mutation could not be durably admitted.")
 		return
@@ -265,7 +269,7 @@ func (h *Handler) tasks(w http.ResponseWriter) {
 	}
 	members := make([]any, 0, len(operations))
 	for _, operation := range operations {
-		if operation.SessionUID == h.authority().SessionUID {
+		if operation.SessionName == h.authority().SessionName {
 			members = append(members, odata("/redfish/v1/TaskService/Tasks/"+operation.ID))
 		}
 	}
@@ -273,7 +277,7 @@ func (h *Handler) tasks(w http.ResponseWriter) {
 }
 func (h *Handler) task(w http.ResponseWriter, id string) {
 	op, err := h.Journal.Get(id)
-	if err != nil || op.SessionUID != h.authority().SessionUID {
+	if err != nil || op.SessionName != h.authority().SessionName {
 		writeError(w, http.StatusNotFound, "Base.1.18.ResourceMissingAtURI", "Task not found.")
 		return
 	}

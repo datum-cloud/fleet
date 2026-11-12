@@ -14,21 +14,26 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	fleetv1alpha1 "go.datum.net/fleet/api/v1alpha1"
+	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/journal"
 	fleetmetrics "go.datum.net/fleet/internal/metrics"
 	"go.datum.net/fleet/internal/protocol"
@@ -37,11 +42,13 @@ import (
 )
 
 const (
-	HeaderTimestamp = "X-Datum-Fleet-Timestamp"
-	HeaderNonce     = "X-Datum-Fleet-Nonce"
-	HeaderSignature = "X-Datum-Fleet-Signature"
-	HeaderSession   = "X-Datum-Fleet-Session"
-	HeaderAudience  = "X-Datum-Fleet-Audience"
+	HeaderTimestamp            = "X-Datum-Fleet-Timestamp"
+	HeaderNonce                = "X-Datum-Fleet-Nonce"
+	HeaderSignature            = "X-Datum-Fleet-Signature"
+	HeaderSession              = "X-Datum-Fleet-Session"
+	HeaderAudience             = "X-Datum-Fleet-Audience"
+	EnrollmentDeviceLabel      = "fleet.datumapis.com/device-name"
+	DefaultEnrollmentNamespace = "machine-access-system"
 )
 
 type Config struct {
@@ -49,10 +56,8 @@ type Config struct {
 	RelayPublicURL        string
 	RelayGatewayToken     string
 	Audience              string
-	AdapterRoute          string
-	BMCBaseURL            string
-	BMCUsername           string
-	BMCPassword           string
+	SupportedAdapter      string
+	EnrollmentNamespace   string
 	JournalDir            string
 	StateDir              string
 	DropResetResponseOnce bool
@@ -69,6 +74,17 @@ type activeSession struct {
 	cancel context.CancelFunc
 	mu     sync.RWMutex
 	spec   fleetv1alpha1.ProjectedMachineManagementSessionSpec
+	target resolvedTarget
+}
+
+type resolvedTarget struct {
+	MachineCapacityName string
+	DeviceName          string
+	Adapter             string
+	BaseURL             string
+	SystemID            string
+	Username            string
+	Password            string
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -99,18 +115,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		setCondition(&p, metav1.ConditionFalse, "ConnectWindowExpired", "No client connected before the admitted connection deadline.")
 		return ctrl.Result{}, r.Status().Update(ctx, &p)
 	}
-	if p.Spec.AdapterRoute != r.Config.AdapterRoute {
-		setCondition(&p, metav1.ConditionFalse, "AdapterRouteRejected", "The projected adapter route is not served by this gateway.")
-		return ctrl.Result{}, r.Status().Update(ctx, &p)
-	}
 	r.mu.Lock()
 	if r.active == nil {
 		r.active = map[client.ObjectKey]*activeSession{}
 	}
 	a := r.active[req.NamespacedName]
 	if a == nil {
+		target, err := r.resolveTarget(ctx, p.Spec)
+		if err != nil {
+			r.mu.Unlock()
+			setCondition(&p, metav1.ConditionFalse, "ManagementUnavailable", "The allocated capacity does not have a verified local management enrollment.")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.Status().Update(ctx, &p)
+		}
 		runCtx, cancel := context.WithCancel(context.Background())
-		a = &activeSession{cancel: cancel, spec: p.Spec}
+		a = &activeSession{cancel: cancel, spec: p.Spec, target: target}
 		r.active[req.NamespacedName] = a
 		go r.run(runCtx, req.NamespacedName, a)
 	} else {
@@ -167,16 +185,16 @@ func (r *Reconciler) run(ctx context.Context, key client.ObjectKey, a *activeSes
 	}
 	r.connectedStatus(key)
 	a.mu.RLock()
-	spec := a.spec
+	target := a.target
 	a.mu.RUnlock()
-	adapter := &redfish.SushyAdapter{BaseURL: r.Config.BMCBaseURL, SystemID: spec.BMCSystemID, Username: r.Config.BMCUsername, Password: r.Config.BMCPassword, DropResetResponseOnce: r.Config.DropResetResponseOnce}
+	adapter := &redfish.SushyAdapter{BaseURL: target.BaseURL, SystemID: target.SystemID, Username: target.Username, Password: target.Password, DropResetResponseOnce: r.Config.DropResetResponseOnce}
 	h := &redfish.Handler{Adapter: adapter, Journal: store, CurrentAuthority: func() redfish.Authority {
 		a.mu.RLock()
 		defer a.mu.RUnlock()
 		s := a.spec
-		return redfish.Authority{SessionUID: string(s.SessionUID), SessionCorrelationID: s.SessionCorrelationID, OperationCorrelationID: s.OperationCorrelationID, ClaimUID: string(s.ClaimUID), MachineUID: string(s.MachineUID), BindingID: s.BindingID, BindingEpoch: s.BindingEpoch, AdapterRoute: s.AdapterRoute, OperationEpoch: 1, ExpiresAt: s.ExpiresAt.Time, FreshUntil: s.AuthorityFreshUntil.Time}
+		return redfish.Authority{SessionName: key.Name, MachineCapacityName: target.MachineCapacityName, DeviceName: target.DeviceName, OperationEpoch: 1, ExpiresAt: s.ExpiresAt.Time, FreshUntil: s.AuthorityFreshUntil.Time}
 	}}
-	protected := r.proofMiddleware(a, h)
+	protected := r.proofMiddleware(a, routeID, h)
 	tlsConn := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"datum-fleet-redfish/1"}})
 	// The relay admits one connector for the session, so an HTTP idle timeout
 	// would permanently strand a valid session during a long PXE boot. Expiry,
@@ -200,19 +218,19 @@ func (r *Reconciler) dialRelay(ctx context.Context, routeID string) (net.Conn, e
 	return c, nil
 }
 
-func (r *Reconciler) proofMiddleware(a *activeSession, next http.Handler) http.Handler {
+func (r *Reconciler) proofMiddleware(a *activeSession, routeID string, next http.Handler) http.Handler {
 	used := map[string]bool{}
 	var mu sync.Mutex
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		a.mu.RLock()
 		spec := a.spec
 		a.mu.RUnlock()
-		if req.Header.Get(HeaderSession) != string(spec.SessionUID) || req.Header.Get(HeaderAudience) != r.Config.Audience {
+		if req.Header.Get(HeaderSession) != routeID || req.Header.Get(HeaderAudience) != r.Config.Audience {
 			http.Error(w, "session proof target mismatch", http.StatusUnauthorized)
 			return
 		}
 		proof := protocol.Proof{Timestamp: req.Header.Get(HeaderTimestamp), Nonce: req.Header.Get(HeaderNonce), Signature: req.Header.Get(HeaderSignature)}
-		err := protocol.Verify(spec.ClientPublicKey, string(spec.SessionUID), r.Config.Audience, proof, time.Now(), func(n string) bool {
+		err := protocol.Verify(spec.ClientPublicKey, routeID, r.Config.Audience, proof, time.Now(), func(n string) bool {
 			mu.Lock()
 			defer mu.Unlock()
 			if used[n] {
@@ -277,12 +295,47 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&fleetv1alpha1.ProjectedMachineManagementSession{}).Complete(r)
 }
 
+func (r *Reconciler) resolveTarget(ctx context.Context, spec fleetv1alpha1.ProjectedMachineManagementSessionSpec) (resolvedTarget, error) {
+	namespace := r.Config.EnrollmentNamespace
+	if namespace == "" {
+		namespace = DefaultEnrollmentNamespace
+	}
+	var capacity fleetv1.MachineCapacity
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: spec.MachineCapacityRef.Name}, &capacity); err != nil {
+		return resolvedTarget{}, err
+	}
+	if capacity.Spec.DeviceRef.Name == "" {
+		return resolvedTarget{}, fmt.Errorf("MachineCapacity has no deviceRef")
+	}
+	var secrets corev1.SecretList
+	if err := r.List(ctx, &secrets, client.InNamespace(namespace), client.MatchingLabels{EnrollmentDeviceLabel: capacity.Spec.DeviceRef.Name}); err != nil {
+		return resolvedTarget{}, err
+	}
+	if len(secrets.Items) != 1 {
+		return resolvedTarget{}, fmt.Errorf("expected one management enrollment")
+	}
+	data := secrets.Items[0].Data
+	target := resolvedTarget{
+		MachineCapacityName: capacity.Name,
+		DeviceName:          capacity.Spec.DeviceRef.Name,
+		Adapter:             strings.TrimSpace(string(data["adapter"])),
+		BaseURL:             strings.TrimSpace(string(data["endpoint"])),
+		SystemID:            strings.TrimSpace(string(data["system-id"])),
+		Username:            strings.TrimSpace(string(data["username"])),
+		Password:            strings.TrimSpace(string(data["password"])),
+	}
+	if target.Adapter == "" || target.Adapter != r.Config.SupportedAdapter || target.BaseURL == "" || target.SystemID == "" || target.Username == "" || target.Password == "" {
+		return resolvedTarget{}, fmt.Errorf("management enrollment is incomplete or unsupported")
+	}
+	return target, nil
+}
+
 func sameBinding(a, b fleetv1alpha1.ProjectedMachineManagementSessionSpec) bool {
 	a.AuthorityFreshUntil = metav1.Time{}
 	b.AuthorityFreshUntil = metav1.Time{}
 	a.DesiredState = ""
 	b.DesiredState = ""
-	return a.SessionUID == b.SessionUID && a.ClaimUID == b.ClaimUID && a.MachineUID == b.MachineUID && a.BindingID == b.BindingID && a.BindingEpoch == b.BindingEpoch && a.LocationUID == b.LocationUID && a.LocationRevision == b.LocationRevision && a.BareMetalMachineUID == b.BareMetalMachineUID && a.AccessProfileRevision == b.AccessProfileRevision && a.ClientPublicKey == b.ClientPublicKey && a.ConnectBefore.Equal(&b.ConnectBefore) && a.ExpiresAt.Equal(&b.ExpiresAt) && a.AdapterRoute == b.AdapterRoute && a.BMCSystemID == b.BMCSystemID
+	return reflect.DeepEqual(a, b)
 }
 func setCondition(p *fleetv1alpha1.ProjectedMachineManagementSession, status metav1.ConditionStatus, reason, message string) {
 	apimeta.SetStatusCondition(&p.Status.Conditions, metav1.Condition{Type: fleetv1alpha1.ConditionReady, Status: status, Reason: reason, Message: message, ObservedGeneration: p.Generation, LastTransitionTime: metav1.Now()})

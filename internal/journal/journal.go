@@ -26,32 +26,27 @@ const (
 )
 
 type Operation struct {
-	ID                     string          `json:"id"`
-	SessionUID             string          `json:"sessionUID"`
-	SessionCorrelationID   string          `json:"sessionCorrelationID"`
-	OperationCorrelationID string          `json:"operationCorrelationID"`
-	ClaimUID               string          `json:"claimUID"`
-	MachineUID             string          `json:"machineUID"`
-	BindingID              string          `json:"bindingID"`
-	BindingEpoch           int64           `json:"bindingEpoch"`
-	Method                 string          `json:"method"`
-	VirtualTarget          string          `json:"virtualTarget"`
-	AcceptedBody           json.RawMessage `json:"acceptedBody"`
-	PhysicalTarget         string          `json:"physicalTarget"`
-	IdempotencyIdentity    string          `json:"idempotencyIdentity"`
-	OperationEpoch         int64           `json:"operationEpoch"`
-	ConflictPrecondition   string          `json:"conflictPrecondition"`
-	AdapterRoute           string          `json:"adapterRoute"`
-	CreatedAt              time.Time       `json:"createdAt"`
-	UpdatedAt              time.Time       `json:"updatedAt"`
-	Outcome                Outcome         `json:"outcome"`
-	Evidence               string          `json:"evidence,omitempty"`
-	HTTPStatus             int             `json:"httpStatus,omitempty"`
+	ID                   string          `json:"id"`
+	SessionName          string          `json:"sessionName"`
+	MachineCapacityName  string          `json:"machineCapacityName"`
+	DeviceName           string          `json:"deviceName"`
+	Method               string          `json:"method"`
+	VirtualTarget        string          `json:"virtualTarget"`
+	AcceptedBody         json.RawMessage `json:"acceptedBody"`
+	PhysicalTarget       string          `json:"physicalTarget"`
+	IdempotencyIdentity  string          `json:"idempotencyIdentity"`
+	OperationEpoch       int64           `json:"operationEpoch"`
+	ConflictPrecondition string          `json:"conflictPrecondition"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	UpdatedAt            time.Time       `json:"updatedAt"`
+	Outcome              Outcome         `json:"outcome"`
+	Evidence             string          `json:"evidence,omitempty"`
+	HTTPStatus           int             `json:"httpStatus,omitempty"`
 }
 
-func Identity(sessionUID, method, target string, body []byte) string {
+func Identity(sessionName, method, target string, body []byte) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\n%s\n%s\n", sessionUID, method, target)
+	_, _ = fmt.Fprintf(h, "%s\n%s\n%s\n", sessionName, method, target)
 	_, _ = h.Write(body)
 	return hex.EncodeToString(h.Sum(nil))
 }

@@ -65,10 +65,8 @@ spec:
             - --relay-public-url=tcp://127.0.0.1:30443
             - --relay-token-file=/var/run/secrets/fleet/relay-token
             - --audience=fleet-gateway/location-prototype/r1
-            - --adapter-route=sushy-libvirt-v1
-            - --bmc-url=http://172.30.0.10:8000
-            - --bmc-username-file=/var/run/secrets/fleet/bmc-username
-            - --bmc-password-file=/var/run/secrets/fleet/bmc-password
+            - --supported-adapter=sushy-libvirt-v1
+            - --enrollment-namespace=machine-access-system
             - --journal-dir=/var/lib/fleet
           ports: [{name: metrics, containerPort: 8080}, {name: health, containerPort: 8081}]
           livenessProbe: {httpGet: {path: /healthz, port: health}}
@@ -92,7 +90,6 @@ spec:
             defaultMode: 0440
             sources:
               - secret: {name: fleet-relay-token}
-              - secret: {name: fleet-bmc-credentials}
         - name: journal
           persistentVolumeClaim: {claimName: fleet-gateway-journal}
         - name: tmp

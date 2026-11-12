@@ -8,7 +8,7 @@ for cluster in management location; do
   kubeconfig="${E2E_DIR}/${cluster}.kubeconfig"
   if [[ -f "${kubeconfig}" ]]; then
     kubectl --kubeconfig "${kubeconfig}" get all,events -A -o wide >"${OUT}/${cluster}-resources.txt" 2>&1 || true
-    kubectl --kubeconfig "${kubeconfig}" get machinemanagementsessions,machineallocationbindings,machinemanagementsessionbindings,projectedmachinemanagementsessions -A -o yaml >"${OUT}/${cluster}-fleet.yaml" 2>&1 || true
+    kubectl --kubeconfig "${kubeconfig}" get machines,machinecapacities,machineallocations,machinemanagementsessions,machinemanagementsessionbindings,projectedmachinemanagementsessions -A -o yaml >"${OUT}/${cluster}-fleet.yaml" 2>&1 || true
     kubectl --kubeconfig "${kubeconfig}" logs -A --all-containers --prefix --tail=-1 >"${OUT}/${cluster}-logs.txt" 2>&1 || true
     if [[ "${cluster}" == location ]]; then
       kubectl --kubeconfig "${kubeconfig}" -n machine-access-system exec deployment/fleet-gateway -- \

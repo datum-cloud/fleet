@@ -15,21 +15,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	fleetv1alpha1 "go.datum.net/fleet/api/v1alpha1"
+	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/gateway"
 )
 
 func main() {
 	var cfg gateway.Config
-	var tokenFile, userFile, passwordFile string
+	var tokenFile string
 	flag.StringVar(&cfg.RelayAddress, "relay-address", "fleet-relay.machine-access-system.svc:8443", "relay address")
 	flag.StringVar(&cfg.RelayPublicURL, "relay-public-url", "tcp://127.0.0.1:8443", "client-visible relay URL")
 	flag.StringVar(&tokenFile, "relay-token-file", "/var/run/secrets/fleet/relay-token", "relay registration token")
 	flag.StringVar(&cfg.Audience, "audience", "fleet-gateway/location-prototype/r1", "proof audience")
-	flag.StringVar(&cfg.AdapterRoute, "adapter-route", "sushy-libvirt-v1", "qualified adapter route")
-	flag.StringVar(&cfg.BMCBaseURL, "bmc-url", "http://sushy-emulator:8000", "private sushy-emulator URL")
-	flag.StringVar(&userFile, "bmc-username-file", "/var/run/secrets/fleet/bmc-username", "BMC username file")
-	flag.StringVar(&passwordFile, "bmc-password-file", "/var/run/secrets/fleet/bmc-password", "BMC password file")
+	flag.StringVar(&cfg.SupportedAdapter, "supported-adapter", "sushy-libvirt-v1", "qualified local enrollment adapter")
+	flag.StringVar(&cfg.EnrollmentNamespace, "enrollment-namespace", "machine-access-system", "namespace containing safe capacity copies and private enrollments")
 	flag.StringVar(&cfg.JournalDir, "journal-dir", "/var/lib/fleet", "durable journal directory")
 	flag.StringVar(&cfg.StateDir, "state-dir", "/var/lib/fleet/sessions", "gateway state directory")
 	flag.BoolVar(&cfg.DropResetResponseOnce, "fault-drop-reset-response-once", false, "test-only lost response injection")
@@ -37,10 +36,9 @@ func main() {
 	probe := flag.String("health-probe-bind-address", ":8081", "probe address")
 	flag.Parse()
 	cfg.RelayGatewayToken = readSecret(tokenFile)
-	cfg.BMCUsername = readSecret(userFile)
-	cfg.BMCPassword = readSecret(passwordFile)
 	scheme := runtime.NewScheme()
 	must(clientgoscheme.AddToScheme(scheme))
+	must(fleetv1.AddToScheme(scheme))
 	must(fleetv1alpha1.AddToScheme(scheme))
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
@@ -54,7 +52,7 @@ func main() {
 	must((&gateway.Reconciler{Config: cfg}).SetupWithManager(mgr))
 	must(mgr.AddHealthzCheck("healthz", healthz.Ping))
 	must(mgr.AddReadyzCheck("readyz", healthz.Ping))
-	slog.Info("starting location gateway", "audience", cfg.Audience, "adapterRoute", cfg.AdapterRoute)
+	slog.Info("starting location gateway", "audience", cfg.Audience, "supportedAdapter", cfg.SupportedAdapter)
 	must(mgr.Start(ctrl.SetupSignalHandler()))
 }
 func readSecret(path string) string {

@@ -7,7 +7,7 @@ tasks:
   generate:
     desc: Regenerate the provisional CRDs from Kubebuilder markers
     cmds:
-      - go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0 crd paths=./api/... output:crd:artifacts:config=config/crd/bases
+      - go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0 crd paths=./internal/api/session/... output:crd:artifacts:config=config/crd/bases
 
   test:
     desc: Run portable unit and API/controller integration tests

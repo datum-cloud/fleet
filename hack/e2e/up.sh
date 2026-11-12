@@ -123,6 +123,8 @@ docker build -t fleet-redfish-tools:e2e "${TEST_DIR}/tools"
 kind load docker-image fleet-controller:e2e --name fleet-management-e2e
 kind load docker-image fleet-gateway:e2e fleet-relay:e2e --name fleet-location-e2e
 
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -k "${ROOT_DIR}/config/base/crd"
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -k "${ROOT_DIR}/config/base/crd"
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -k "${ROOT_DIR}/config/crd"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -k "${ROOT_DIR}/config/crd"
 kubectl --kubeconfig "${KARMADA_KUBECONFIG}" apply \
@@ -140,9 +142,6 @@ kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${ROOT_DIR}/config/rbac/
 relay_token=$(openssl rand -hex 32)
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system create secret generic fleet-relay-token \
   --from-literal=relay-token="${relay_token}" --dry-run=client -o yaml | kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f -
-kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system create secret generic fleet-bmc-credentials \
-  --from-literal=bmc-username=fleet-gateway --from-literal=bmc-password=synthetic-e2e-only \
-  --dry-run=client -o yaml | kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f -
 unset relay_token
 
 kubectl --kubeconfig "${KARMADA_KUBECONFIG}" create namespace fleet-system --dry-run=client -o yaml |
@@ -202,12 +201,17 @@ kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout s
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machinemanagementsessions --all --timeout=40s --ignore-not-found
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system delete projectedmachinemanagementsessions --all --ignore-not-found
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system delete machinemanagementsessionbindings --all --ignore-not-found
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machineclaims db-02 db-03 --ignore-not-found
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system delete machineallocationbindings db-02-allocation db-03-allocation --ignore-not-found
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machines db-01 db-02 db-03 --ignore-not-found
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system delete machineallocations --all --ignore-not-found
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-provider delete machinecapacities --all --ignore-not-found 2>/dev/null || true
 
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/claim.yaml"
-claim_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machineclaim db-01 -o jsonpath='{.metadata.uid}')
-sed "s/CLAIM_UID/${claim_uid}/g" "${TEST_DIR}/seed/allocation.yaml" | kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f -
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" create namespace fleet-provider --dry-run=client -o yaml | kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f -
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/machine.yaml"
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/allocation.yaml"
+machine_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-01 -o jsonpath='{.metadata.uid}')
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system annotate machineallocation db-01-allocation fleet.datumapis.com/machine-uid="${machine_uid}" --overwrite
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-01-allocation --subresource=status --type=merge -p '{"status":{"phase":"Active"}}'
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${TEST_DIR}/seed/location-management.yaml"
 
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/test-identities.yaml"
 authorized_token=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default create token fleet-authorized --duration=2h)

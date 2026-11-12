@@ -50,7 +50,7 @@ file_mode() {
 
 api_server=$(kubectl config view --kubeconfig "${MGMT_KUBECONFIG}" --raw -o jsonpath='{.clusters[0].cluster.server}')
 
-# A claim reader cannot create a management session. This invokes datumctl's
+# A Machine reader cannot create a management session. This invokes datumctl's
 # actual plugin discovery/dispatch and credential-helper path.
 set +e
 HOME="${E2E_DIR}/home-viewer" datumctl fleet machine-management proxy db-01 -- \
@@ -58,7 +58,7 @@ HOME="${E2E_DIR}/home-viewer" datumctl fleet machine-management proxy db-01 -- \
   --ready-file "${E2E_DIR}/viewer-ready.json" >"${E2E_DIR}/viewer.log" 2>&1
 viewer_status=$?
 set -e
-[[ ${viewer_status} -eq 11 ]] || fail "claim-only principal exit=${viewer_status}, expected permission exit 11"
+[[ ${viewer_status} -eq 11 ]] || fail "Machine-read-only principal exit=${viewer_status}, expected permission exit 11"
 [[ ! -e "${E2E_DIR}/viewer-ready.json" ]] || fail "unauthorized principal received a local endpoint"
 
 start_proxy() {
@@ -99,14 +99,15 @@ if curl --fail --silent --connect-timeout 2 http://172.30.0.10:8000/redfish/v1/ 
 fi
 session_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsessions -o jsonpath='{.items[0].metadata.name}')
 session_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsession "${session_name}" -o jsonpath='{.metadata.uid}')
+binding_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbindings -l "fleet.datumapis.com/session-uid=${session_uid}" -o jsonpath='{.items[0].metadata.name}')
 # This is an actual Karmada Work proof, not a direct controller write to the
 # member API: the selected cell owns the one Work containing this projection,
 # and status has returned through the hub copy before the public session readied.
-work_clusters=$(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" get works.work.karmada.io -A -o json | jq -r --arg uid "${session_uid}" '
-  .items[] | select(any(.spec.workload.manifests[]?; .kind == "ProjectedMachineManagementSession" and .metadata.name == $uid)) | .metadata.namespace' | sort -u)
+work_clusters=$(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" get works.work.karmada.io -A -o json | jq -r --arg name "${binding_name}" '
+  .items[] | select(any(.spec.workload.manifests[]?; .kind == "ProjectedMachineManagementSession" and .metadata.name == $name)) | .metadata.namespace' | sort -u)
 [[ "${work_clusters}" == karmada-es-fleet-location-e2e ]] || fail "projection Work was not isolated to fleet-location-e2e: ${work_clusters}"
-[[ $(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n machine-access-system get projectedmachinemanagementsession "${session_uid}" -o jsonpath='{.metadata.labels.fleet\.datumapis\.com/member-cluster}') == fleet-location-e2e ]] || fail "hub projection lost its admitted member identity"
-[[ -n $(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n machine-access-system get projectedmachinemanagementsession "${session_uid}" -o jsonpath='{.status.connection.routeID}') ]] || fail "cell status was not reflected through Karmada"
+[[ $(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n machine-access-system get projectedmachinemanagementsession "${binding_name}" -o jsonpath='{.metadata.labels.fleet\.datumapis\.com/member-cluster}') == fleet-location-e2e ]] || fail "hub projection lost its admitted member identity"
+[[ -n $(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n machine-access-system get projectedmachinemanagementsession "${binding_name}" -o jsonpath='{.status.connection.routeID}') ]] || fail "cell status was not reflected through Karmada"
 if kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get secret fleet-location-kubeconfig >/dev/null 2>&1; then
   fail "management cluster retained a direct location credential"
 fi
@@ -155,55 +156,60 @@ route=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanageme
 replay=$(run_timeout 3 bash -c "exec 9<>/dev/tcp/127.0.0.1/30443; printf 'CLIENT %s\\n' '${route}' >&9; IFS= read -r line <&9; printf '%s' \"\${line}\"")
 [[ "${replay}" == ERROR* ]] || fail "relay route replay was not rejected: ${replay}"
 
-# Per-claim admission limit remains distinct from claim read permission.
+# Per-Machine admission limit remains distinct from Machine read permission.
 set +e
 run_timeout 20 env HOME="${E2E_DIR}/home-authorized" datumctl fleet machine-management proxy db-01 -- \
   --api-server "${api_server}" --api-ca-file "${E2E_DIR}/management-ca.crt" >"${E2E_DIR}/second-session.log" 2>&1
 second_status=$?
 set -e
-[[ ${second_status} -ne 0 ]] || fail "second concurrent claim session was admitted"
+[[ ${second_status} -ne 0 ]] || fail "second concurrent Machine session was admitted"
 grep -q SessionLimitExceeded "${E2E_DIR}/second-session.log" || fail "session limit rejection was not actionable"
 
 # The E2E controller uses a test-only project limit of two. A second distinct,
-# pre-bound claim is admitted; a third is rejected by the real plugin workflow.
-for claim in db-02 db-03; do
+# pre-bound Machine is admitted; a third is rejected by the real plugin workflow.
+for machine in db-02 db-03; do
   kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f - <<EOF
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: MachineClaim
-metadata: {name: ${claim}, namespace: default}
-spec: {machineClassRef: {name: synthetic-libvirt}}
+kind: Machine
+metadata: {name: ${machine}, namespace: default}
+spec:
+  machineClassRef: {name: synthetic-libvirt}
+  machineProfileRef: {name: synthetic-libvirt}
+  locationRef: {name: location-e2e}
+  powerState: "Off"
 EOF
 done
-db02_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machineclaim db-02 -o jsonpath='{.metadata.uid}')
-db03_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machineclaim db-03 -o jsonpath='{.metadata.uid}')
-for pair in "db-02:${db02_uid}:77777777-7777-4777-8777-777777777777:unallocated" "db-03:${db03_uid}:88888888-8888-4888-8888-888888888888:rejected-before-routing"; do
-  IFS=: read -r claim claim_uid machine_uid bmc_id <<<"${pair}"
+db02_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-02 -o jsonpath='{.metadata.uid}')
+db03_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-03 -o jsonpath='{.metadata.uid}')
+for pair in "db-02:${db02_uid}:db02-capacity:device-unallocated" "db-03:${db03_uid}:db03-capacity:device-rejected"; do
+  IFS=: read -r machine machine_uid capacity device <<<"${pair}"
   kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f - <<EOF
 apiVersion: fleet.datumapis.com/v1alpha1
-kind: MachineAllocationBinding
+kind: MachineCapacity
 metadata:
-  name: ${claim}-allocation
-  namespace: fleet-system
-  labels: {fleet.datumapis.com/claim-uid: "${claim_uid}"}
+  name: ${capacity}
+  namespace: fleet-provider
 spec:
-  consumerProjectUID: 11111111-1111-4111-8111-111111111111
-  providerProjectUID: 22222222-2222-4222-8222-222222222222
-  claimNamespace: default
-  claimName: ${claim}
-  claimUID: "${claim_uid}"
-  machineName: ${claim}-machine
-  machineUID: "${machine_uid}"
-  bindingID: ${claim}-binding
-  bindingEpoch: 1
-  locationUID: 44444444-4444-4444-8444-444444444444
-  locationRevision: location-prototype-r1
-  memberCluster: fleet-location-e2e
-  bareMetalMachineUID: "${machine_uid}"
-  accessProfileRevision: fleet-provisioning-v1.0.0
-  adapterRoute: sushy-libvirt-v1
-  bmcSystemID: ${bmc_id}
-  active: true
+  deviceRef: {name: ${device}}
+  allocationPolicy: Enabled
+  cleaningPolicyRef: {name: synthetic-e2e}
+  reclaimPolicy: Retain
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineAllocation
+metadata:
+  name: ${machine}-allocation
+  namespace: fleet-system
+  annotations:
+    fleet.datumapis.com/machine-uid: "${machine_uid}"
+    fleet.datumapis.com/member-cluster: fleet-location-e2e
+    fleet.datumapis.com/location-name: location-e2e
+    fleet.datumapis.com/provider-project: datum-owned-hardware
+spec:
+  machineRef: {project: project, namespace: default, name: ${machine}}
+  machineCapacityRef: {namespace: fleet-provider, name: ${capacity}}
 EOF
+  kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation "${machine}-allocation" --subresource=status --type=merge -p '{"status":{"phase":"Active"}}'
 done
 HOME="${E2E_DIR}/home-authorized" datumctl fleet machine-management proxy db-02 -- \
   --api-server "${api_server}" --api-ca-file "${E2E_DIR}/management-ca.crt" \
@@ -220,6 +226,7 @@ set -e
 [[ ${project_status} -ne 0 ]] || fail "third project session was admitted over the limit"
 grep -q SessionLimitExceeded "${E2E_DIR}/project-limit.log" || fail "project limit rejection was not actionable"
 kill -TERM "${second_proxy_pid}"; wait "${second_proxy_pid}" || true; second_proxy_pid=
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-02-allocation --subresource=status --type=merge -p '{"status":{"phase":"Released"}}'
 
 # Real sushy -> libvirt PXE effect, correlated by the allocated VM MAC callback.
 pxe_body='{"Boot":{"BootSourceOverrideEnabled":"Once","BootSourceOverrideTarget":"Pxe"}}'
@@ -266,22 +273,37 @@ management_paused=false
 wait_for "authority refresh" "[[ \$(rf_status '${root}/redfish/v1/Systems/allocated') == 200 ]]"
 
 # Allocation release is a terminal fence for this admitted binding.
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocationbinding db-01-allocation --type=merge -p '{"spec":{"active":false}}'
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-01-allocation --subresource=status --type=merge -p '{"status":{"phase":"Released"}}'
 wait_for "released stream closure" "[[ \$(rf_status '${root}/redfish/v1/Systems/allocated') != 200 ]]"
 old_session_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsessions -o jsonpath='{.items[0].metadata.uid}')
-old_claim_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machineclaim db-01 -o jsonpath='{.metadata.uid}')
+old_machine_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-01 -o jsonpath='{.metadata.uid}')
+old_binding_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbindings -l "fleet.datumapis.com/session-uid=${old_session_uid}" -o jsonpath='{.items[0].metadata.name}')
 stop_proxy
 
-# Recreate the same claim name for the other real libvirt domain. The old
-# admitted binding stays revoked and cannot inherit the new claim UID.
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machineclaim db-01 --wait=true
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/claim.yaml"
-new_claim_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machineclaim db-01 -o jsonpath='{.metadata.uid}')
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocationbinding db-01-allocation --type=merge \
-  -p "{\"metadata\":{\"labels\":{\"fleet.datumapis.com/claim-uid\":\"${new_claim_uid}\"}},\"spec\":{\"claimUID\":\"${new_claim_uid}\",\"machineName\":\"synthetic-reallocated\",\"machineUID\":\"66666666-6666-4666-8666-666666666666\",\"bindingID\":\"allocation-e2e-2\",\"bindingEpoch\":2,\"bareMetalMachineUID\":\"99999999-9999-4999-8999-999999999999\",\"bmcSystemID\":\"unallocated\",\"active\":true}}"
-[[ "${new_claim_uid}" != "${old_claim_uid}" ]] || fail "recreated claim retained its old UID"
-[[ $(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${old_session_uid}" -o jsonpath='{.spec.claimUID}') == "${old_claim_uid}" ]] || fail "old session binding inherited the recreated claim"
-old_binding_revoked=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${old_session_uid}" -o jsonpath='{.metadata.annotations.fleet\.datumapis\.com/revoked-at}')
+# Recreate the same Machine name for the other real libvirt domain. The old
+# terminal allocation and admitted binding remain pinned to the old incarnation.
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machine db-01 --wait=true
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/machine.yaml"
+new_machine_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-01 -o jsonpath='{.metadata.uid}')
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f - <<EOF
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineAllocation
+metadata:
+  name: db-01-allocation-2
+  namespace: fleet-system
+  annotations:
+    fleet.datumapis.com/machine-uid: "${new_machine_uid}"
+    fleet.datumapis.com/member-cluster: fleet-location-e2e
+    fleet.datumapis.com/location-name: location-e2e
+    fleet.datumapis.com/provider-project: datum-owned-hardware
+spec:
+  machineRef: {project: project, namespace: default, name: db-01}
+  machineCapacityRef: {namespace: fleet-provider, name: db02-capacity}
+EOF
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-01-allocation-2 --subresource=status --type=merge -p '{"status":{"phase":"Active"}}'
+[[ "${new_machine_uid}" != "${old_machine_uid}" ]] || fail "recreated Machine retained its old UID"
+[[ $(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${old_binding_name}" -o jsonpath='{.spec.machineUID}') == "${old_machine_uid}" ]] || fail "old session binding inherited the recreated Machine"
+old_binding_revoked=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${old_binding_name}" -o jsonpath='{.metadata.annotations.fleet\.datumapis\.com/revoked-at}')
 [[ -n "${old_binding_revoked}" ]] || fail "released old binding was not terminally revoked"
 
 start_proxy
@@ -331,10 +353,11 @@ docker exec fleet-e2e-virtual-bmc iptables -D INPUT 1
 # If the location cannot acknowledge explicit deletion, the public object may
 # finish deleting only with a protected Unknown teardown outcome.
 unknown_session_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsessions -o jsonpath='{.items[0].metadata.uid}')
+unknown_binding_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbindings -l "fleet.datumapis.com/session-uid=${unknown_session_uid}" -o jsonpath='{.items[0].metadata.name}')
 docker pause fleet-location-e2e-control-plane >/dev/null
 location_paused=true
 stop_proxy
-cleanup_status=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${unknown_session_uid}" -o json | jq -r '.status.conditions[] | select(.type=="CleanupConfirmed") | .status + ":" + .reason')
+cleanup_status=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${unknown_binding_name}" -o json | jq -r '.status.conditions[] | select(.type=="CleanupConfirmed") | .status + ":" + .reason')
 [[ "${cleanup_status}" == "Unknown:LocationUnconfirmed" ]] || fail "unconfirmed teardown was not Unknown: ${cleanup_status}"
 docker unpause fleet-location-e2e-control-plane >/dev/null
 location_paused=false

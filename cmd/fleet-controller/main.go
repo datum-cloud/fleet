@@ -18,7 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	fleetv1alpha1 "go.datum.net/fleet/api/v1alpha1"
+	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 )
 
@@ -37,6 +38,7 @@ func main() {
 	}
 	scheme := runtime.NewScheme()
 	must(clientgoscheme.AddToScheme(scheme))
+	must(fleetv1.AddToScheme(scheme))
 	must(fleetv1alpha1.AddToScheme(scheme))
 	federationConfig, err := clientcmd.BuildConfigFromFlags("", *federationKubeconfig)
 	must(err)

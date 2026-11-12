@@ -40,7 +40,7 @@ func newHandler(t *testing.T, a Adapter) *Handler {
 		t.Fatal(err)
 	}
 	now := time.Unix(1000, 0)
-	return &Handler{Adapter: a, Journal: s, Now: func() time.Time { return now }, Authority: Authority{SessionUID: "session", ClaimUID: "claim", MachineUID: "machine", BindingID: "binding", BindingEpoch: 7, AdapterRoute: "sushy-libvirt", OperationEpoch: 1, ExpiresAt: now.Add(time.Hour), FreshUntil: now.Add(time.Minute)}}
+	return &Handler{Adapter: a, Journal: s, Now: func() time.Time { return now }, Authority: Authority{SessionName: "session", MachineCapacityName: "capacity", DeviceName: "device", OperationEpoch: 1, ExpiresAt: now.Add(time.Hour), FreshUntil: now.Add(time.Minute)}}
 }
 
 func request(h http.Handler, method, path, body string) *httptest.ResponseRecorder {

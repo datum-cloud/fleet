@@ -18,7 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	fleetv1alpha1 "go.datum.net/fleet/api/v1alpha1"
+	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 )
 
 // ProjectionReconciler writes only to the Karmada hub. Karmada carries the
@@ -109,12 +110,29 @@ func (r *ProjectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 func (r *ProjectionReconciler) allocationStillActive(ctx context.Context, b *fleetv1alpha1.MachineManagementSessionBinding) bool {
-	var list fleetv1alpha1.MachineAllocationBindingList
-	if err := r.List(ctx, &list, client.InNamespace(r.systemNamespace()), client.MatchingLabels{ClaimUIDLabel: string(b.Spec.ClaimUID)}); err != nil || len(list.Items) != 1 {
+	var allocation fleetv1.MachineAllocation
+	if err := r.Get(ctx, types.NamespacedName{Namespace: r.systemNamespace(), Name: b.Spec.AllocationName}, &allocation); err != nil {
 		return false
 	}
-	a := list.Items[0].Spec
-	return a.Active && a.ClaimUID == b.Spec.ClaimUID && a.MachineUID == b.Spec.MachineUID && a.BindingID == b.Spec.BindingID && a.BindingEpoch == b.Spec.BindingEpoch && a.LocationUID == b.Spec.LocationUID && a.LocationRevision == b.Spec.LocationRevision && a.MemberCluster == b.Spec.MemberCluster && a.AdapterRoute == b.Spec.AdapterRoute
+	if allocation.UID != b.Spec.AllocationUID || allocation.Status.Phase != "Active" ||
+		allocation.Spec.MachineRef.Project != b.Spec.ConsumerProject ||
+		allocation.Spec.MachineRef.Namespace != b.Spec.MachineNamespace || allocation.Spec.MachineRef.Name != b.Spec.MachineName ||
+		allocation.Spec.MachineCapacityRef.Namespace != b.Spec.MachineCapacityNamespace || allocation.Spec.MachineCapacityRef.Name != b.Spec.MachineCapacityName ||
+		allocation.Annotations[AllocationMachineUIDAnnotation] != string(b.Spec.MachineUID) ||
+		allocation.Annotations[MemberClusterAnnotation] != b.Spec.MemberCluster ||
+		allocation.Annotations[LocationNameAnnotation] != b.Spec.LocationName ||
+		allocation.Annotations[ProviderProjectAnnotation] != b.Spec.ProviderProject {
+		return false
+	}
+	var machine fleetv1.Machine
+	if err := r.Get(ctx, types.NamespacedName{Namespace: b.Spec.MachineNamespace, Name: b.Spec.MachineName}, &machine); err != nil || machine.UID != b.Spec.MachineUID {
+		return false
+	}
+	var capacity fleetv1.MachineCapacity
+	if err := r.Get(ctx, types.NamespacedName{Namespace: b.Spec.MachineCapacityNamespace, Name: b.Spec.MachineCapacityName}, &capacity); err != nil {
+		return false
+	}
+	return capacity.UID == b.Spec.MachineCapacityUID && capacity.Spec.DeviceRef.Name == b.Spec.DeviceName
 }
 
 func (r *ProjectionReconciler) revokeProjection(ctx context.Context, b *fleetv1alpha1.MachineManagementSessionBinding, p *fleetv1alpha1.ProjectedMachineManagementSession) (ctrl.Result, error) {
@@ -146,14 +164,22 @@ func (r *ProjectionReconciler) build(b *fleetv1alpha1.MachineManagementSessionBi
 	s := b.Spec
 	return &fleetv1alpha1.ProjectedMachineManagementSession{
 		TypeMeta:   metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "ProjectedMachineManagementSession"},
-		ObjectMeta: metav1.ObjectMeta{Name: b.Name, Namespace: r.hubNamespace(), Labels: map[string]string{SessionUIDLabel: string(s.SessionUID), ClaimUIDLabel: string(s.ClaimUID), MemberClusterLabel: s.MemberCluster}},
-		Spec:       fleetv1alpha1.ProjectedMachineManagementSessionSpec{DesiredState: fleetv1alpha1.ProjectionActive, SessionUID: s.SessionUID, ClaimUID: s.ClaimUID, MachineUID: s.MachineUID, BindingID: s.BindingID, BindingEpoch: s.BindingEpoch, LocationUID: s.LocationUID, LocationRevision: s.LocationRevision, BareMetalMachineUID: s.BareMetalMachineUID, AccessProfileRevision: s.AccessProfileRevision, ClientPublicKey: s.ClientPublicKey, ConnectBefore: s.ConnectBefore, ExpiresAt: s.ExpiresAt, AuthorityFreshUntil: metav1.NewTime(r.now().Add(r.freshness())), SessionCorrelationID: s.SessionCorrelationID, OperationCorrelationID: s.OperationCorrelationID, AdapterRoute: s.AdapterRoute, BMCSystemID: s.BMCSystemID},
+		ObjectMeta: metav1.ObjectMeta{Name: b.Name, Namespace: r.hubNamespace(), Labels: map[string]string{MemberClusterLabel: s.MemberCluster}},
+		Spec: fleetv1alpha1.ProjectedMachineManagementSessionSpec{
+			DesiredState:       fleetv1alpha1.ProjectionActive,
+			MachineCapacityRef: fleetv1alpha1.LocalReference{Name: s.MachineCapacityName},
+			Protocol:           s.Protocol, AccessProfile: s.AccessProfile, ClientPublicKey: s.ClientPublicKey,
+			ConnectBefore: s.ConnectBefore, ExpiresAt: s.ExpiresAt,
+			AuthorityFreshUntil: metav1.NewTime(r.now().Add(r.freshness())),
+		},
 	}
 }
 
 func projectionMatches(b *fleetv1alpha1.MachineManagementSessionBinding, p *fleetv1alpha1.ProjectedMachineManagementSession) bool {
 	s, x := b.Spec, p.Spec
-	return p.Labels[MemberClusterLabel] == s.MemberCluster && x.SessionUID == s.SessionUID && x.ClaimUID == s.ClaimUID && x.MachineUID == s.MachineUID && x.BindingID == s.BindingID && x.BindingEpoch == s.BindingEpoch && x.LocationUID == s.LocationUID && x.LocationRevision == s.LocationRevision && x.BareMetalMachineUID == s.BareMetalMachineUID && x.AccessProfileRevision == s.AccessProfileRevision && x.ClientPublicKey == s.ClientPublicKey && x.ConnectBefore.Equal(&s.ConnectBefore) && x.ExpiresAt.Equal(&s.ExpiresAt) && x.AdapterRoute == s.AdapterRoute && x.BMCSystemID == s.BMCSystemID
+	return p.Labels[MemberClusterLabel] == s.MemberCluster &&
+		x.MachineCapacityRef.Name == s.MachineCapacityName && x.Protocol == s.Protocol && x.AccessProfile == s.AccessProfile &&
+		x.ClientPublicKey == s.ClientPublicKey && x.ConnectBefore.Equal(&s.ConnectBefore) && x.ExpiresAt.Equal(&s.ExpiresAt)
 }
 
 func (r *ProjectionReconciler) ensurePolicy(ctx context.Context, b *fleetv1alpha1.MachineManagementSessionBinding) error {
@@ -201,10 +227,10 @@ func (r *ProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Client = mgr.GetClient()
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fleetv1alpha1.MachineManagementSessionBinding{}).
-		Watches(&fleetv1alpha1.MachineAllocationBinding{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-			a := obj.(*fleetv1alpha1.MachineAllocationBinding)
+		Watches(&fleetv1.MachineAllocation{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+			a := obj.(*fleetv1.MachineAllocation)
 			var list fleetv1alpha1.MachineManagementSessionBindingList
-			if err := r.List(ctx, &list, client.InNamespace(r.systemNamespace()), client.MatchingLabels{ClaimUIDLabel: string(a.Spec.ClaimUID)}); err != nil {
+			if err := r.List(ctx, &list, client.InNamespace(r.systemNamespace()), client.MatchingLabels{AllocationNameLabel: a.Name}); err != nil {
 				return nil
 			}
 			out := make([]reconcile.Request, 0, len(list.Items))

@@ -18,8 +18,8 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          MachineManagementSession is a short-lived public request for the machine
-          currently bound to a claim. Resolved allocation details never enter it.
+          MachineManagementSession is a short-lived public request for the Machine's
+          current allocation. Provider and location details never enter this object.
         properties:
           apiVersion:
             description: |-
@@ -47,7 +47,7 @@ spec:
               clientPublicKey:
                 pattern: ^[0-9a-f]{64}$
                 type: string
-              machineClaimRef:
+              machineRef:
                 properties:
                   name:
                     type: string
@@ -66,7 +66,7 @@ spec:
             required:
             - accessProfile
             - clientPublicKey
-            - machineClaimRef
+            - machineRef
             - protocol
             - ttl
             type: object
@@ -135,9 +135,8 @@ spec:
                 format: date-time
                 type: string
               connection:
-                description: |-
-                  SessionConnection is non-secret rendezvous information. It never names a
-                  physical endpoint or adapter target.
+                description: SessionConnection contains non-secret rendezvous information
+                  only.
                 properties:
                   gatewayAudience:
                     type: string
