@@ -1,25 +1,25 @@
 apiVersion: iam.miloapis.com/v1alpha1
 kind: Role
 metadata:
-  name: fleet.datumapis.com-controller
+  name: metal.datumapis.com-controller
   annotations:
     kubernetes.io/display-name: Fleet Controller
     kubernetes.io/description: Internal Fleet status and retained-record authority
 spec:
   launchStage: Alpha
   inheritedRoles:
-    - name: fleet.datumapis.com-provider
-    - name: fleet.datumapis.com-consumer
+    - name: metal.datumapis.com-provider
+    - name: metal.datumapis.com-consumer
   includedPermissions:
-    - fleet.datumapis.com/machineclasses.updateStatus
-    - fleet.datumapis.com/machineprofiles.updateStatus
-    - fleet.datumapis.com/machinecapacities.updateStatus
-    - fleet.datumapis.com/machines.updateStatus
-    - fleet.datumapis.com/machineallocations.list
-    - fleet.datumapis.com/machineallocations.get
-    - fleet.datumapis.com/machineallocations.watch
-    - fleet.datumapis.com/machineallocations.create
-    - fleet.datumapis.com/machineallocations.update
-    - fleet.datumapis.com/machineallocations.patch
-    - fleet.datumapis.com/machineallocations.updateStatus
-    - fleet.datumapis.com/installations.updateStatus
+    - metal.datumapis.com/machineclasses.updateStatus
+    - metal.datumapis.com/machineprofiles.updateStatus
+    - metal.datumapis.com/machinecapacities.updateStatus
+    - metal.datumapis.com/machines.updateStatus
+    - metal.datumapis.com/machineallocations.list
+    - metal.datumapis.com/machineallocations.get
+    - metal.datumapis.com/machineallocations.watch
+    - metal.datumapis.com/machineallocations.create
+    - metal.datumapis.com/machineallocations.update
+    - metal.datumapis.com/machineallocations.patch
+    - metal.datumapis.com/machineallocations.updateStatus
+    - metal.datumapis.com/installations.updateStatus

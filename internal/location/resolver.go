@@ -19,7 +19,7 @@ import (
 	fleetnetwork "go.datum.net/fleet/internal/network"
 )
 
-const FleetServiceName = "fleet"
+const FleetServiceName = "metal"
 
 var (
 	ErrUnavailable        = errors.New("location authority is unavailable")

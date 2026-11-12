@@ -54,7 +54,7 @@ strings or create new physical premises. No existing allocation moves when a
 label or selector changes.
 
 ```yaml
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
   name: iad3
@@ -65,7 +65,7 @@ spec:
   locationRef:
     name: us-east-1
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
   name: was4
@@ -76,7 +76,7 @@ spec:
   locationRef:
     name: us-east-1
 ---
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: Facility
 metadata:
   name: was1
@@ -136,7 +136,7 @@ are prerequisites. No customer or node claim supplies raw switch or BMC
 credentials. Two representative local catalog entries are:
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata:
   name: serverscom-compute-2u
@@ -277,7 +277,7 @@ verified canonical Facility, authorize the registration channel, and obtain the
 evidence required for the offered placement and connectivity guarantees.
 
 ```yaml
-apiVersion: inventory.fleet.datumapis.com/v1alpha1
+apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
 metadata:
   name: was4-c3c04f474834-adoption
@@ -306,7 +306,7 @@ endpoint must be resolved and verified before use; they are not supplied by the
 historical record. Observation/adoption must preserve the active workload.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
   name: was4-c3c04f474834
@@ -376,7 +376,7 @@ spec:
       digest: sha256:<retained approved recipe digest>
     epoch: 1
 ---
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata:
   name: mc-4k2p9
@@ -394,7 +394,7 @@ spec:
   initialInstallationRef:
     name: alice-compute-0-os-01
 ---
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
   name: alice-compute-0-os-01

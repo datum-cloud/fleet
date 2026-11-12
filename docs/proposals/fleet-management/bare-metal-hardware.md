@@ -83,7 +83,7 @@ another Fleet machine identity. OS images, cluster membership, BGP policy, and
 tenant network topology remain separate from the hardware offering.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineClass
 metadata:
   name: metal-standard
@@ -117,7 +117,7 @@ hardware creates a new `Device` and a new `MachineCapacity` rather than retarget
 existing capacity.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
   name: iad1-r12-srv01
@@ -173,7 +173,7 @@ grant permission to use the class. Admission resolves and retains both contracts
 before allocation.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata:
   name: db-01

@@ -39,7 +39,7 @@ func TestServiceAvailabilityRoutesOnlyMatchingLocationClaims(t *testing.T) {
 	availability := &servicesv1alpha1.ServiceAvailability{
 		ObjectMeta: metav1.ObjectMeta{Name: "fleet--us-central-1", UID: "availability-uid"},
 		Spec: servicesv1alpha1.ServiceAvailabilitySpec{
-			ServiceRef:  servicesv1alpha1.ServiceRef{Name: "fleet"},
+			ServiceRef:  servicesv1alpha1.ServiceRef{Name: "metal"},
 			LocationRef: servicesv1alpha1.LocationRef{Name: "us-central-1"},
 		},
 	}
@@ -54,5 +54,9 @@ func TestServiceAvailabilityRoutesOnlyMatchingLocationClaims(t *testing.T) {
 	}
 	if len(requests) != 1 || requests[0].Name != central.Name || requests[0].UID != central.UID {
 		t.Fatalf("requests = %#v", requests)
+	}
+	availability.Spec.ServiceRef.Name = "fleet"
+	if routes := mappers.Route(RouteAvailability, "")(context.Background(), availability); len(routes) != 0 {
+		t.Fatalf("legacy Fleet service availability routed Metal work: %#v", routes)
 	}
 }

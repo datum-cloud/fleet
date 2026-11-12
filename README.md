@@ -1,4 +1,8 @@
-# Datum Fleet
+# Datum Metal and Fleet
+
+Bare Metal is Datum's customer-facing machine service at `metal.datumapis.com`.
+Fleet manages physical infrastructure at `fleet.datumapis.com`; the intended
+internal handoff API uses `coordination.fleet.datumapis.com`.
 
 Fleet is Datum's infrastructure management platform for owned and rented capacity.
 It brings physical inventory, machine allocation, provisioning, operating system
@@ -45,6 +49,9 @@ qualified OS other than Talos, without requiring a managed cluster or an ongoing
 guest agent. Provisioning engines and provider integrations remain pluggable.
 
 ## Start here
+
+- [API architecture](docs/architecture.md): group boundaries, control-plane
+  placement, writer ownership, and Bare Metal service registration.
 
 - [Machine allocation and installation](docs/enhancements/machine-lifecycle/README.md): the
   smallest durable machine lifecycle, integrated with Milo project tenancy.

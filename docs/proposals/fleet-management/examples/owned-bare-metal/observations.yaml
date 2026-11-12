@@ -3,7 +3,7 @@
 # IDs, addresses, MACs, and digests are illustrative.
 
 # After the exact operator preparation plan succeeds, before allocation is enabled.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
   name: iad1-r12-srv01
@@ -44,7 +44,7 @@ status:
 ---
 # After the controller has written the pinned image and qualified bootstrap data,
 # confirmed disk boot configuration, and completed platform handoff.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
 metadata:
   name: db-01-os-01
@@ -58,7 +58,7 @@ status:
     - {type: Ready, status: "True", reason: PlatformHandoffComplete}
 ---
 # Public consumer view. MachineCapacity/Device/BMC/switch mapping stays private.
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: Machine
 metadata:
   name: db-01

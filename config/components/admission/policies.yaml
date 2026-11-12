@@ -6,7 +6,7 @@ spec:
   failurePolicy: Fail
   matchConstraints:
     resourceRules:
-      - apiGroups: [fleet.datumapis.com]
+      - apiGroups: [metal.datumapis.com]
         apiVersions: [v1alpha1]
         operations: [UPDATE]
         resources: [machines]

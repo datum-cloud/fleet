@@ -530,7 +530,7 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 }
 
 func machineAssetID(machine *fleetv1.MachineCapacity, provider ProjectIdentity) string {
-	asset := fmt.Sprintf("%s/%s/%s/%s", machine.Namespace, "inventory.fleet.datumapis.com", "Device", machine.Spec.DeviceRef.Name)
+	asset := fmt.Sprintf("%s/%s/%s/%s", machine.Namespace, "fleet.datumapis.com", "Device", machine.Spec.DeviceRef.Name)
 	if provider.Valid() {
 		return fmt.Sprintf("%s/%s/%s", provider.AuthorityID, provider.UID, asset)
 	}
