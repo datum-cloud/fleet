@@ -60,7 +60,8 @@ consumer.
 
 - Separate reusable hardware requirements from provider offerings and observed
   hardware.
-- Allocate each `MachineCapacity` to at most one customer `Machine` through one shared allocator.
+- Allocate each `MachineCapacity` to at most one customer `Machine` through one
+  shared allocator.
 - Preserve distinct asset, allocation, installation, and managed-node identities.
 - Retain authorized inputs before execution and recover work after failures.
 - Complete release even when a consumer deletes its namespace or project.
@@ -128,8 +129,8 @@ with a dashed arrow:
 ![Public resource relationships across provider and consumer projects](diagrams/public-resources.svg)
 
 Projects can share an offering's capacity without sharing networks or provider
-inventory access. MachineCapacity resources stay in the provider project; networks stay in the
-consumer project.
+inventory access. MachineCapacity resources stay in the provider project;
+networks stay in the consumer project.
 
 Fleet retains allocation and cleanup state in the provider project when a
 consumer project is deleted:
@@ -930,9 +931,9 @@ retries selection or remains pending.
 #### Quota custody
 
 Milo owns quota. Initially request one unit of machine-count quota per allocation.
-Its [ResourceClaim][milo-quota-Machine] and [references][milo-quota-refs] identify
+Its [ResourceClaim][milo-quota-claim] and [references][milo-quota-refs] identify
 consumers and resources by name. Fleet must also retain ProjectKey and the exact
-quota-Machine UID to distinguish lifetimes.
+quota claim incarnation as private evidence to distinguish lifetimes.
 
 The adapter needs a service-owned anchor or protected transfer that preserves the
 hold through consumer garbage collection. Define its claiming resource,
@@ -1146,8 +1147,8 @@ release without Milo downtime or machine reprovisioning.
 
 #### Does enabling the feature change any default behavior?
 
-No. MachineCapacity resources default to `Disabled` and Machines to power `Off`. Creating or
-importing records cannot trigger provisioning.
+No. MachineCapacity resources default to `Disabled` and Machines to power `Off`.
+Creating or importing records cannot trigger provisioning.
 
 #### Can operators disable the feature after enabling it?
 
@@ -1367,7 +1368,7 @@ select the storage backend and deployment layout.
 [milo-protected]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/iam/v1alpha1/protectedresource_types.go
 [milo-cleanup]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/internal/controllers/resourcemanager/project_controller.go
 [milo-suspension]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/internal/apiserver/admission/plugin/projectsuspension/admission.go
-[milo-quota-Machine]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/quota/v1alpha1/resourceclaim_types.go
+[milo-quota-claim]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/quota/v1alpha1/resourceclaim_types.go
 [milo-quota-refs]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/quota/v1alpha1/shared_types.go
 [ipam-tenancy]: https://github.com/milo-os/ipam/blob/ed3f54151a3f0a08014caec150567ed1012007f2/internal/tenant/tenant.go
 [ipam-class-use]: https://github.com/milo-os/ipam/blob/ed3f54151a3f0a08014caec150567ed1012007f2/internal/access/class.go

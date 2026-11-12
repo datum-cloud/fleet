@@ -75,14 +75,15 @@ component, lose responses, and delay old workers to verify recovery.
   once the other gates pass; omit current installation status. Admit a later
   first Installation against the same Machine with predecessor `None`.
 - **Consumer reinstalls an allocated machine:** Create a new Installation with
-  the same Machine name and its current Installation as predecessor. Preserve the allocation
-  and `initialInstallationRef`; report disruptive work through Machine readiness
-  and the new request's status. Reject edits to an existing Installation's spec.
+  the same Machine name and its current Installation as predecessor. Preserve the
+  allocation and `initialInstallationRef`; report disruptive work through Machine
+  readiness and the new request's status. Reject edits to an existing
+  Installation's spec.
 - **Initial Installation or network input arrives after the Machine:** Resolve
   dependencies without deadlock or premature activation. Admit only the retained
   initial request while its gate remains unsatisfied.
-- **Two first installs use `None`, or two reinstalls name the same predecessor:** Admit
-  one operation. Consume the precondition and retain exact inputs atomically
+- **Two first installs use `None`, or two reinstalls name the same predecessor:**
+  Admit one operation. Consume the precondition and retain exact inputs atomically
   before dispatch; reject the loser with `InstallationPredecessorConflict` even
   when public status has not caught up.
 - **Reinstall names a stale or foreign predecessor, or a Machine name is recreated:**
