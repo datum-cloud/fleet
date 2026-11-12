@@ -4,3 +4,4 @@ resources:
   - service.yaml
   - service-configuration.yaml
   - machine-quota.yaml
+  - legacy-machine-quota.yaml
