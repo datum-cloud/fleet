@@ -23,13 +23,13 @@ if [[ $(uname -s) == Darwin ]]; then
     --authtype Session --nooemcheck --logdir "${REPORT_DIR}/interop" \
     "${ROOT_DIR}/config/redfish/FleetProvisioning.v1_0_0.json"
 else
-  docker run --rm --network host --workdir /state/validators/service \
+  docker run --rm --network host --user "$(id -u):$(id -g)" --workdir /state/validators/service \
     -e REQUESTS_CA_BUNDLE=/state/ca.pem \
     -v "${ROOT_DIR}:/work:ro" -v "${E2E_DIR}:/state" \
     fleet-redfish-tools:e2e \
     "rf_service_validator --rhost '${endpoint%/redfish/v1/}' --user '${username}' --password '${password}' --authtype Session --nooemcheck --logdir /state/validators/service"
 
-  docker run --rm --network host --workdir /state/validators/interop \
+  docker run --rm --network host --user "$(id -u):$(id -g)" --workdir /state/validators/interop \
     -e REQUESTS_CA_BUNDLE=/state/ca.pem \
     -v "${ROOT_DIR}:/work:ro" -v "${E2E_DIR}:/state" \
     fleet-redfish-tools:e2e \

@@ -280,6 +280,8 @@ wait_for "new allocation domain power-on" "[[ \$(docker exec fleet-e2e-virtual-b
 # Fault-inject a lost BMC response. Retrying the identical admitted operation
 # must recover its Unknown task without sending a second physical reset.
 stop_proxy
+wait_for "prior location projection teardown" \
+  "! kubectl --kubeconfig '${LOCATION_KUBECONFIG}' -n machine-access-system get projectedmachinemanagementsessions.fleet.datumapis.com -o name 2>/dev/null | grep -q ."
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system patch deployment fleet-gateway --type=json \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--fault-drop-reset-response-once"}]'
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status deployment/fleet-gateway --timeout=120s

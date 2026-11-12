@@ -52,7 +52,14 @@ jobs:
           task e2e:diagnostics || true
           if [[ -f .e2e/e2e-test.log ]]; then
             tail -n 100 .e2e/e2e-test.log
-            message=$(tail -n 20 .e2e/e2e-test.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+            {
+              tail -n 20 .e2e/e2e-test.log
+              if [[ -f .e2e/proxy.log ]]; then
+                echo "proxy log:"
+                tail -n 20 .e2e/proxy.log
+              fi
+            } >"${RUNNER_TEMP}/fleet-e2e-error.txt"
+            message=$(tr '\n' ' ' <"${RUNNER_TEMP}/fleet-e2e-error.txt" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
             echo "::error title=E2E failure::${message}"
           fi
       - name: Upload diagnostics and validator reports
