@@ -29,11 +29,42 @@ conditions identify that boundary. When the three publication keys documented
 below are present, it watches one consumer project and one distinct provider
 project, publishes a locked class reference and exact profile copy, and retains
 both project lifetimes in allocation custody. Provider Machine events wake
-consumer claims directly; no polling resync is enabled. The colocated provider uses the Pod's
-projected service-account token for loopback authentication, so no provider
-credential is stored in Git. Its operation log is ephemeral and may be rebuilt
-after a Pod restart; private Fleet authority remains durable and exact requests
-are idempotently recovered. This overlay must never be promoted to production.
+consumer claims directly; no polling resync is enabled.
+
+The simulator runs in a separate `fleet-synthetic-provider` Deployment behind a
+ClusterIP Service. The manager uses Service DNS and mounts the same dedicated
+runtime credential as the provider. The environment must supply the
+`fleet-system/fleet-synthetic-provider-auth` Secret with a `token` key; the
+staging infra overlay generates it through External Secrets with `CreatedOnce`.
+Neither process uses a Kubernetes API token to authenticate provider requests.
+The provider has its own service account with token automount disabled and no
+RBAC grants. Its NetworkPolicy permits runtime ingress only from manager pods
+in the same namespace and denies egress. The runtime uses cluster-local HTTP;
+this is a synthetic staging boundary, not a production transport-security design.
+The admin listener is disabled.
+
+The provider keeps its operation log on a retained 1 Gi ReadWriteOnce PVC using
+the cluster's default StorageClass. It runs one replica with a `Recreate` strategy:
+its file store is not safe for multiple writers. Do not scale it above one or
+force-delete a running provider pod. Manager rollouts do not restart the provider
+or discard its state. Provider rollouts briefly interrupt runtime calls; private
+Fleet authority and the persisted simulator log retain exact inputs and outcomes.
+Both mounts read the credential from the projected Secret directory, allowing
+rotation without a restart; projection skew may temporarily reject requests.
+This overlay must never be promoted to production.
+
+### Moving from the colocated simulator
+
+Deploy the environment's generated credential before publishing this overlay.
+Stop the old manager and verify all synthetic allocations and private custody
+have completed release before replacing the sidecar. Do not treat missing public
+Machines as proof of cleanup. The new PVC starts empty: this change does not copy
+the sidecar's ephemeral state and must not be used to abandon active operations.
+After rollout, verify both Deployments, Service routing, PVC binding, and a fresh
+allocation and verified release. Check provider restart recovery with an active
+synthetic claim before treating persistent-state recovery as verified in staging.
+Do not delete the PVC as a recovery shortcut.
+
 
 Render both production roots before publishing the Kustomize bundle:
 
