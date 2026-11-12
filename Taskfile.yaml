@@ -1,0 +1,60 @@
+version: '3'
+
+vars:
+  GO_CACHE: '{{default "/tmp/fleet-go-cache" .GO_CACHE}}'
+
+tasks:
+  generate:
+    desc: Regenerate the provisional CRDs from Kubebuilder markers
+    cmds:
+      - go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0 crd paths=./api/... output:crd:artifacts:config=config/crd/bases
+
+  test:
+    desc: Run portable unit and API/controller integration tests
+    cmds:
+      - env GOCACHE={{.GO_CACHE}} go test ./...
+      - git diff --check
+
+  build:
+    desc: Build every prototype executable
+    cmds:
+      - mkdir -p bin
+      - env GOCACHE={{.GO_CACHE}} go build -o bin/datumctl-fleet ./cmd/datumctl-fleet
+      - env GOCACHE={{.GO_CACHE}} go build -o bin/fleet-controller ./cmd/fleet-controller
+      - env GOCACHE={{.GO_CACHE}} go build -o bin/fleet-gateway ./cmd/fleet-gateway
+      - env GOCACHE={{.GO_CACHE}} go build -o bin/fleet-relay ./cmd/fleet-relay
+
+  e2e:up:
+    desc: Create the two Kind clusters and real sushy/libvirt BMC environment
+    cmds:
+      - ./hack/e2e/up.sh
+
+  e2e:test:
+    desc: Run every machine-management scenario and both DMTF validators
+    cmds:
+      - ./hack/e2e/test.sh
+
+  e2e:test:path:
+    desc: Run one E2E path (currently DIR=machine-management)
+    requires:
+      vars: [DIR]
+    preconditions:
+      - sh: test '{{.DIR}}' = machine-management
+        msg: 'the only implemented E2E path is DIR=machine-management'
+    cmds:
+      - ./hack/e2e/test.sh
+
+  e2e:diagnostics:
+    desc: Collect cluster, gateway, libvirt, and PXE evidence
+    cmds:
+      - ./hack/e2e/diagnostics.sh
+
+  e2e:down:
+    desc: Remove only the named Fleet E2E resources
+    cmds:
+      - ./hack/e2e/down.sh
+
+  e2e:openvpn:up:
+    desc: Replace the default private route with the separate OpenVPN qualification profile
+    cmds:
+      - ./hack/e2e/openvpn-up.sh

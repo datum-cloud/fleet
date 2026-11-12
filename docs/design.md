@@ -3,6 +3,11 @@
 Reviewed on 2026-10-27. This is a synthesis for implementation planning, not a
 replacement for the source proposals or a claim that their APIs exist.
 
+The [secure machine-management prototype](implementation/machine-management-prototype.md)
+is the first concrete implementation. It intentionally uses synthetic,
+pre-bound allocation input and does not turn the proposal's illustrative APIs
+into accepted product contracts.
+
 ## Source proposals
 
 | Source | Reviewed revision | Contribution |
@@ -29,7 +34,8 @@ and coordinated changes above that shared service.
 
 ## Subsystem boundaries
 
-All names below describe proposed resources, not implemented schemas.
+Except for the explicitly documented machine-management prototype, names below
+describe proposed resources, not implemented schemas.
 
 | Subsystem | Responsibilities and principal resources |
 | --- | --- |
@@ -146,9 +152,10 @@ inventory remains finite and reports `InsufficientCapacity` when exhausted.
 - **Node service policy:** Resolve permitted roles, runtime/template privileges,
   region scoping, and the remaining regional DNS writer work.
 - **Repository ownership:** Source text uses `milo-os/fleet` in implementation
-  examples and leaves subsystem ownership open. This local `fleet` repository is
-  the requested starting point; remote organization, module path, license, and
-  any provider repository split still need to be chosen.
+  examples and leaves subsystem ownership open. The prototype selects
+  `go.datum.net/fleet` to match Datum Go conventions. Repository ownership,
+  stable API import guarantees, license policy, and any provider split still
+  require product decisions.
 
 The [review of #7705][node-review] requested clarity on readiness, regional rollout,
 fencing, and procurement policy. Its latest text addresses those points with the

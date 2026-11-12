@@ -5,9 +5,11 @@ It brings physical inventory, machine allocation, provisioning, operating system
 configuration, managed clusters, and node services into a shared service with
 explicit ownership and lifecycle boundaries.
 
-This repository is the starting point for building that platform. It currently
-contains design context and an implementation roadmap. There are no implemented
-APIs, controllers, deployment manifests, or build/test commands yet.
+This repository contains design context, an implementation roadmap, and one
+deliberately narrow working prototype: allocation-scoped customer Redfish access.
+The prototype is not a complete Fleet allocator, installer, or production BMC
+service. Its synthetic allocation records preserve those proposed authority and
+identity boundaries while exercising the access path end to end.
 
 ## Scope
 
@@ -35,6 +37,38 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
   product experience, allocation-scoped Redfish session architecture, security,
   routing, and provisional API design.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
+- [Machine-management prototype](docs/implementation/machine-management-prototype.md):
+  implemented architecture, exact commands, trust boundaries, E2E environment,
+  verified behavior, troubleshooting, and production gaps.
+
+## Build and test
+
+Go 1.26.1 is the selected prototype toolchain. The module path is
+`go.datum.net/fleet`; it follows Datum's current Go import convention without
+asserting that the provisional APIs are a stable external contract.
+
+```console
+task generate
+task test
+task build
+```
+
+The complete path requires Linux, Docker with Compose, Kind, kubectl, jq,
+OpenSSL, curl, and Task. It builds all images locally and loads them into Kind;
+it does not require a registry.
+
+```console
+task e2e:up
+task e2e:test
+task e2e:test:path DIR=machine-management
+task e2e:diagnostics
+task e2e:openvpn:up
+task e2e:down
+```
+
+`e2e:up` and `e2e:down` are idempotent. The latter removes only the two named
+Kind clusters, the `fleet-bmc-e2e` Compose project, its isolated network, and
+the repository-local `.e2e` directory.
 
 The foundation comes from open `datum-cloud/infra` PRs
 [#5782](https://github.com/datum-cloud/infra/pull/5782) and

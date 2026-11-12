@@ -1,0 +1,55 @@
+name: machine-management-e2e
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  virtual-bmc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install pinned tools
+        run: |
+          curl -fsSL https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64 -o /usr/local/bin/kind
+          curl -fsSL https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64.sha256sum -o /tmp/kind.sha256
+          sed 's#kind-linux-amd64#/usr/local/bin/kind#' /tmp/kind.sha256 | sha256sum -c -
+          chmod 0755 /usr/local/bin/kind
+          curl -fsSL https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+          curl -fsSL https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl.sha256 -o /tmp/kubectl.sha256
+          echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum -c -
+          chmod 0755 /usr/local/bin/kubectl
+          go install github.com/go-task/task/v3/cmd/task@v3.41.0
+          install -m 0755 "$(go env GOPATH)/bin/task" /usr/local/bin/task
+      - name: Portable tests
+        run: task test
+      - name: Start virtual-BMC environment
+        run: task e2e:up
+      - name: End-to-end scenarios
+        run: task e2e:test
+      - name: Collect diagnostics
+        if: failure()
+        run: task e2e:diagnostics
+      - name: Upload diagnostics and validator reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fleet-machine-management-evidence
+          path: |
+            .e2e/diagnostics
+            .e2e/validators
+            .e2e/virtual-bmc/evidence
+            .e2e/*.log
+          if-no-files-found: ignore
+      - name: Tear down
+        if: always()
+        run: task e2e:down

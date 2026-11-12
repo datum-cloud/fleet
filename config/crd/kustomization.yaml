@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - bases/fleet.datumapis.com_machineclaims.yaml
+  - bases/fleet.datumapis.com_machinemanagementsessions.yaml
+  - bases/fleet.datumapis.com_machineallocationbindings.yaml
+  - bases/fleet.datumapis.com_machinemanagementsessionbindings.yaml
+  - bases/fleet.datumapis.com_projectedmachinemanagementsessions.yaml

@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-relay
+  namespace: machine-access-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-relay}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-relay}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {seccompProfile: {type: RuntimeDefault}, runAsNonRoot: true, fsGroup: 65532, fsGroupChangePolicy: OnRootMismatch}
+      containers:
+        - name: relay
+          image: fleet-relay:e2e
+          imagePullPolicy: IfNotPresent
+          args: ["--listen=:8443", "--gateway-token-file=/var/run/secrets/fleet/relay-token"]
+          ports: [{name: relay, containerPort: 8443}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts: [{name: relay-token, mountPath: /var/run/secrets/fleet, readOnly: true}]
+      volumes: [{name: relay-token, secret: {secretName: fleet-relay-token, defaultMode: 0440}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-relay
+  namespace: machine-access-system
+spec:
+  type: NodePort
+  selector: {app.kubernetes.io/name: fleet-relay}
+  ports: [{name: relay, port: 8443, targetPort: relay, nodePort: 30443}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-gateway
+  namespace: machine-access-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-gateway}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-gateway}
+    spec:
+      serviceAccountName: fleet-gateway
+      securityContext: {seccompProfile: {type: RuntimeDefault}, runAsNonRoot: true, fsGroup: 65532, fsGroupChangePolicy: OnRootMismatch}
+      containers:
+        - name: gateway
+          image: fleet-gateway:e2e
+          imagePullPolicy: IfNotPresent
+          args:
+            - --relay-address=fleet-relay.machine-access-system.svc:8443
+            - --relay-public-url=tcp://127.0.0.1:30443
+            - --relay-token-file=/var/run/secrets/fleet/relay-token
+            - --audience=fleet-gateway/location-prototype/r1
+            - --adapter-route=sushy-libvirt-v1
+            - --bmc-url=http://172.30.0.10:8000
+            - --bmc-username-file=/var/run/secrets/fleet/bmc-username
+            - --bmc-password-file=/var/run/secrets/fleet/bmc-password
+            - --journal-dir=/var/lib/fleet
+          ports: [{name: metrics, containerPort: 8080}, {name: health, containerPort: 8081}]
+          livenessProbe: {httpGet: {path: /healthz, port: health}}
+          readinessProbe: {httpGet: {path: /readyz, port: health}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: credentials, mountPath: /var/run/secrets/fleet, readOnly: true}
+            - {name: journal, mountPath: /var/lib/fleet}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: credentials
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret: {name: fleet-relay-token}
+              - secret: {name: fleet-bmc-credentials}
+        - name: journal
+          persistentVolumeClaim: {claimName: fleet-gateway-journal}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fleet-gateway-journal
+  namespace: machine-access-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 256Mi}}

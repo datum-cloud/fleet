@@ -1,0 +1,7 @@
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: MachineClaim
+metadata:
+  name: db-01
+  namespace: default
+spec:
+  machineClassRef: {name: synthetic-libvirt}
