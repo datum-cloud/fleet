@@ -1,5 +1,7 @@
 # Fleet design context
 
+[Documentation overview](../README.md) · [Architecture guide](README.md)
+
 Reviewed on 2026-10-27. This is a synthesis for implementation planning, not a
 replacement for the source proposals or a claim that their APIs exist.
 
@@ -12,8 +14,8 @@ replacement for the source proposals or a claim that their APIs exist.
 
 Read the [core proposal at its reviewed revision][proposal] and the
 [extension at its reviewed revision][extension]. The latter includes the core
-proposal plus the extension. The [combined proposal](proposals/fleet-management/README.md),
-examples, and diagrams now live in this repository. The [migration record](proposals/fleet-management/MIGRATION.md)
+proposal plus the extension. The [combined proposal](../proposals/fleet-management/README.md),
+examples, and diagrams now live in this repository. The [migration record](../proposals/fleet-management/MIGRATION.md)
 preserves provenance and outstanding review points; the original discussions remain in `infra`.
 
 ## Problem and intended outcome
@@ -44,7 +46,7 @@ All names below describe proposed resources, not implemented schemas.
 
 The Bare Metal service uses `metal.datumapis.com` for allocation and installation.
 Physical inventory uses `fleet.datumapis.com`; the intended internal location
-handoff uses `coordination.fleet.datumapis.com`. The [API architecture](architecture.md)
+handoff uses `coordination.fleet.datumapis.com`. The [API architecture](README.md)
 records implemented resources, proposed contracts, control-plane placement, and
 writer ownership. A separate public resource or catalog service is not required
 for every internal record.
