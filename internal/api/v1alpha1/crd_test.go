@@ -31,6 +31,21 @@ func TestAllocationCRDContract(t *testing.T) {
 		}
 	}
 
+	if GroupVersion.Group != "metal.datumapis.com" || GroupVersion.Version != "v1alpha1" {
+		t.Fatalf("unexpected public API identity: %s", GroupVersion)
+	}
+	if len(crds) != 6 {
+		t.Fatalf("got %d allocation CRDs, want 6", len(crds))
+	}
+	for _, crd := range crds {
+		if crd.Spec.Group != GroupVersion.Group || crd.Name != crd.Spec.Names.Plural+"."+GroupVersion.Group {
+			t.Fatalf("CRD %s does not match Go group %s", crd.Name, GroupVersion.Group)
+		}
+		if len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Name != GroupVersion.Version || !crd.Spec.Versions[0].Served || !crd.Spec.Versions[0].Storage {
+			t.Fatalf("CRD %s does not serve/store Go version %s", crd.Name, GroupVersion.Version)
+		}
+	}
+
 	for _, legacy := range []string{"machineclaims.fleet.datumapis.com", "machineclaims.metal.datumapis.com"} {
 		if crds[legacy] != nil {
 			t.Fatalf("legacy CRD %q remains in the allocation API", legacy)

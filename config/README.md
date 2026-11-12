@@ -140,3 +140,20 @@ invent a publication source or claim that authorization integration exists.
 The Fleet Service is registered in `Draft`; promotion to `Published` is a later,
 forward-only rollout decision after the production integration and live
 acceptance gates pass.
+
+## Metal quota registration migration
+
+The Metal allocation quota uses a new ResourceRegistration named `metal-machines`.
+Milo makes `spec.resourceType` immutable, so the existing `fleet-machines`
+registration cannot be retargeted. The bundle retains that legacy registration
+with `fleet.datumapis.com/machines` and disables Flux pruning for it. This is a
+quota compatibility record, not a second Service registration. Do not remove it
+until old grants, claims, and accounting obligations have settled.
+
+Coordinate environment changes before publishing the corrected bundle: publication
+patches must target the `metal` Service and ServiceConfiguration, provider inventory
+must use `metal.datumapis.com/v1alpha1`, location availability must reference
+`metal`, and staff bindings must reference the Metal IAM roles. Gate the manager
+on inventory and service availability as well as the Milo configuration. Confirm
+old allocations are released immediately before rollout; absence of public
+Machines alone does not prove private cleanup is complete.

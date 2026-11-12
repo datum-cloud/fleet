@@ -948,3 +948,19 @@ func int64ptr(value int64) *int64 { return &value }
 func installAdmission() InstallationAdmissionAuthority {
 	return InstallationAdmissionAuthority{PrincipalUID: "user-uid", DecisionID: "install-decision-1", CatalogAuthority: "local-test-catalog", CatalogRevision: "local-test-v1", ImageDecisionID: "local-test-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 }
+
+// The physical group participates in durable asset identity. Changing this
+// encoding can make occupied capacity appear new and requires a migration.
+func TestMachineAssetIdentityUsesPhysicalFleetGroup(t *testing.T) {
+	machine := &fleetv1.MachineCapacity{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "provider", Name: "capacity"},
+		Spec:       fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "host-1"}},
+	}
+	if got := machineAssetID(machine, ProjectIdentity{}); got != "provider/fleet.datumapis.com/Device/host-1" {
+		t.Fatalf("standalone asset identity changed: %s", got)
+	}
+	provider := ProjectIdentity{AuthorityID: "milo", RouteName: "provider-project", UID: "provider-uid"}
+	if got := machineAssetID(machine, provider); got != "milo/provider-uid/provider/fleet.datumapis.com/Device/host-1" {
+		t.Fatalf("project asset identity changed: %s", got)
+	}
+}

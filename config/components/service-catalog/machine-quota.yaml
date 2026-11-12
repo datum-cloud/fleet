@@ -1,7 +1,7 @@
 apiVersion: quota.miloapis.com/v1alpha1
 kind: ResourceRegistration
 metadata:
-  name: fleet-machines
+  name: metal-machines
 spec:
   consumerType:
     apiGroup: resourcemanager.miloapis.com
