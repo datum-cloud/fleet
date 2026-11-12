@@ -24,7 +24,7 @@
 <text x="480.0" y="373" class="label" text-anchor="middle">Verified installation outcome</text>
 <path d="M 800 385 L 160 385" class="line" stroke-dasharray="5 4"/>
 <text x="320.0" y="430" class="label" text-anchor="middle">Programmed evidence</text>
-<text x="320.0" y="453" class="label" text-anchor="middle">for the accepted binding</text>
+<text x="320.0" y="453" class="label" text-anchor="middle">for the accepted MachineAllocation</text>
 <path d="M 480 465 L 160 465" class="line" stroke-dasharray="5 4"/>
 <rect x="30" y="550" width="900" height="52" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
 <text x="480.0" y="582.0" class="label" text-anchor="middle">Handoff waits for requested installation and network readiness.</text>

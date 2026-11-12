@@ -156,6 +156,7 @@ spec:
   clusterRef: {name: us-east-1-alice}
   role: compute
   machineClassRef: {name: serverscom-compute-2u}
+  machineProfileRef: {name: compute-2u}
   imageRef: {name: talos-1.13.7}
   replicas: 1
   labels:
@@ -482,6 +483,7 @@ spec:
   clusterRef: {name: us-east-1-bob}
   role: controlplane
   machineClassRef: {name: netactuate-controlplane}
+  machineProfileRef: {name: controlplane-standard}
   imageRef: {name: talos-1.13.7}
   replicas: 3
 ```

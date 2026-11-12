@@ -6,7 +6,7 @@ Implement the following tests through Milo tenancy, IAM, entitlement, and quota.
 No implementation tests exist yet.
 
 The end-to-end scenario uses two consumer projects competing for one provider
-machine. One claim binds while the other remains pending. The winner installs,
+machine. One Machine binds while the other remains pending. The winner installs,
 reinstalls, and releases; the waiting consumer acquires the machine only after
 cleanup. The simulator persists state independently of Fleet. Tests restart each
 component, lose responses, and delay old workers to verify recovery.
@@ -38,11 +38,11 @@ component, lose responses, and delay old workers to verify recovery.
 - **Inactive entitlement or suspension:** Block new work while preserving
   authorized cleanup.
 - **Two projects, overlapping classes, or duplicate enrollment target one
-  asset:** Commit one binding; reject duplicate supply.
-- **Replicas reconcile one claim after lost quota/binding responses:** Recover
+  asset:** Commit one allocation; reject duplicate supply.
+- **Replicas reconcile one Machine after lost quota/allocation responses:** Recover
   one hold and one machine; repair status from private state.
 - **Revocation, deletion, suspension, quota loss, or policy withdrawal races
-  binding:** Enforce the defined admission order through real integrations.
+  allocation:** Enforce the defined admission order through real integrations.
 - **Quota denial or interrupted preparation:** Produce no effects; settle the
   same hold before aborting.
 - **Existing project networks, namespace reuse, or a forged foreign reference:**
@@ -58,7 +58,7 @@ component, lose responses, and delay old workers to verify recovery.
   limits. Report affected machine and network conditions as `Unknown` with
   `EvidenceStale`, and power state as `Unknown`; preserve known blocking results
   as `False`. Withhold readiness that depends on the missing evidence. Keep the
-  binding, completed installation results, and dated hardware snapshot intact.
+  allocation, completed installation results, and dated hardware snapshot intact.
 - **The status projector stops while conditions remain successful:** Block any
   allocation, installation, power change, or release whose required internal
   evidence is stale or unavailable. Condition timestamps and generations cannot
@@ -66,48 +66,47 @@ component, lose responses, and delay old workers to verify recovery.
 - **Assignment drift or stale network evidence during installation:** Block
   affected effects and readiness; never replace retained execution inputs.
 - **Reinstall, network deletion, or release with a reserved address:** Preserve
-  valid assignments through reinstall; verify old-binding detachment and address
+  valid assignments through reinstall; verify old-allocation detachment and address
   obligations before reuse. Machine release must preserve the shared Network.
-- **Consumer lists requested and allocated machines:** Return its claims with
+- **Consumer lists requested and allocated machines:** Return its Machines with
   pending or bound state and sanitized allocation details, without requiring
-  access to provider Machines.
-- **Claim omits the initial Installation:** Allow prepared, powered-off handoff
+  access to provider MachineCapacity resources.
+- **Machine omits the initial Installation:** Allow prepared, powered-off handoff
   once the other gates pass; omit current installation status. Admit a later
-  first Installation against the same claim with predecessor `None`.
+  first Installation against the same Machine with predecessor `None`.
 - **Consumer reinstalls an allocated machine:** Create a new Installation with
-  the same claim name and its current installation revision. Preserve the binding
-  and `initialInstallationRef`; report disruptive work through claim readiness
+  the same Machine name and its current Installation as predecessor. Preserve the allocation
+  and `initialInstallationRef`; report disruptive work through Machine readiness
   and the new request's status. Reject edits to an existing Installation's spec.
-- **Initial Installation or network input arrives after the claim:** Resolve
+- **Initial Installation or network input arrives after the Machine:** Resolve
   dependencies without deadlock or premature activation. Admit only the retained
   initial request while its gate remains unsatisfied.
-- **Two first installs use `None`, or two reinstalls share a revision:** Admit
+- **Two first installs use `None`, or two reinstalls name the same predecessor:** Admit
   one operation. Consume the precondition and retain exact inputs atomically
-  before dispatch; reject the loser with `InstallationRevisionConflict` even
+  before dispatch; reject the loser with `InstallationPredecessorConflict` even
   when public status has not caught up.
-- **Reinstall uses a stale or foreign revision, or a claim name is recreated:**
-  Reject the precondition with no effects. Internal claim and allocation identity
-  prevent a revision from moving to another lifetime. Revision possession does
+- **Reinstall names a stale or foreign predecessor, or a Machine name is recreated:**
+  Reject the precondition with no effects. Internal Machine and allocation identity
+  prevent a predecessor from moving to another lifetime. Name possession does
   not bypass permissions.
 - **Admission succeeds but its response is lost:** Recover the same operation
-  for the same retained request identity without consuming another revision.
+  for the same retained request identity without consuming another predecessor.
   Recreating its name cannot inherit that operation.
-- **Installation succeeds:** Publish a fresh claim revision and the resulting
-  Installation name. Record that revision on the completed Installation as a
-  historical result; subsequent work changes only the claim's current revision.
-- **Cancellation or failure proves the prior state is unchanged:** Issue a fresh
-  revision only after fencing work and verifying no effects. Keep the initial
-  handoff gate; never restore a consumed revision or reset to `None`.
+- **Installation succeeds:** Publish the resulting Installation name as the
+  Machine's current installation; subsequent work changes only that reference.
+- **Cancellation or failure proves the prior state is unchanged:** Admit another
+  successor only after fencing work and verifying no effects. Keep the initial
+  handoff gate; do not reset an allocated machine to predecessor `None`.
 - **Inputs change or dependency names recur after resolution:** Execute only
   retained identities and content; public names cannot retarget admitted work.
 - **Executor response disappears or a retired worker returns after reuse:**
   Recover the existing operation; reject stale effects and callbacks.
 - **Installation fails after partial effects:** Retain a dirty/unknown
-  incarnation and withhold a usable revision; resume recovery or release.
-- **Consumer claim, namespace, class, or project disappears during work:**
-  Preserve reservations, operations, and required inputs in the provider project;
+  incarnation and withhold a usable predecessor; resume recovery or release.
+- **Consumer Machine, namespace, class, or project disappears during work:**
+  Preserve allocations, operations, and required inputs in the provider project;
   complete cleanup or quarantine without reconstructing authority from status.
-- **Provider retirement races preparation, quota acquisition, binding, or operation
+- **Provider retirement races preparation, quota acquisition, allocation, or operation
   admission:** Order the transition. Either reject new work or retain its
   obligations before retirement can proceed.
 - **Provider project or namespace deletion, record deletion, or finalizer removal
@@ -125,16 +124,16 @@ component, lose responses, and delay old workers to verify recovery.
   blocks effects and deletion.
 - **Cleanup or quota-release acknowledgment remains unknown:** Keep the machine
   unavailable.
-- **Consumer deletes a completed Installation:** Preserve the OS, binding,
-  initial gate, and installation revision. Reusing its name cannot replace the
+- **Consumer deletes a completed Installation:** Preserve the OS, allocation,
+  initial gate, and predecessor history. Reusing its name cannot replace the
   retained predecessor identity or authorize another operation.
 - **Fleet, project API, simulator, or backing store restarts/restores:** Recover
-  the same identities and revision consumption; verify fences before resuming
-  effects. Restoring an old public revision cannot make it usable again.
+  the same identities and predecessor admission; verify fences before resuming
+  effects. Restoring an old public object cannot make it usable again.
 
 ## Lifecycle reference
 
-The tests cover these reservation transitions, including later installation and
+The tests cover these allocation transitions, including later installation and
 reinstallation on an active allocation, as well as the required
 [release gates](README.md#release-and-project-lifecycle).
 

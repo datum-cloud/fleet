@@ -240,6 +240,8 @@ spec:
   role: compute
   machineClassRef:
     name: serverscom-compute-2u
+  machineProfileRef:
+    name: compute-2u
   imageRef:
     name: talos-1.13.7
   replicas: 1
@@ -384,6 +386,8 @@ spec:
     name: us-east-1
   machineClassRef:
     name: serverscom-compute-2u
+  machineProfileRef:
+    name: compute-2u
   powerState: 'On'
   networkAttachmentRefs:
     - name: alice-compute-0-uplink

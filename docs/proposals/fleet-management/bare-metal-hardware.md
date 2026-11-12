@@ -74,7 +74,8 @@ for the publication YAML, lifecycle, and authorization contract.
 A MachineClass is either a provider definition or a consumer reference. Both are
 project-scoped: cluster-scoped within their project's API, with no namespace.
 The source definition holds hardware and access capabilities, private supply
-selection, and the typed provider-class reference. A reference has only
+selection, and permitted profile policy. Private backend qualification is not a
+public Fleet reference. A reference has only
 `spec.source`; its controller-written status presents safe resolved capabilities
 and permitted availability. For owned metal, the private location adapter retains
 qualified preparation, boot, and disk-selection configuration without adding
@@ -160,10 +161,16 @@ A standalone project can request capacity directly. A Fleet NodeClaim controller
 creates the same resource for a managed node. The customer-facing `Machine` never
 needs a Cluster or NodeClaim reference to execute its contract.
 
-The `Machine` and referenced MachineClass are local to the consumer project. Its
+The `Machine` and referenced MachineClass and MachineProfile are local to the consumer project. Its
 eventual `MachineCapacity` can be in a different provider project; only the
 shared allocator resolves that private relationship. The caller cannot select
 foreign capacity or grant itself provider access through a reference.
+
+Both `machineClassRef` and `machineProfileRef` are required and immutable. The
+class selects an offering, access policy, and eligible supply; the profile selects
+the requested hardware shape. A profile is not a capacity identifier and does not
+grant permission to use the class. Admission resolves and retains both contracts
+before allocation.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -174,6 +181,8 @@ metadata:
 spec:
   machineClassRef:
     name: metal-standard
+  machineProfileRef:
+    name: standard-metal
   locationRef:
     name: us-east-1
   powerState: "On"
@@ -206,7 +215,7 @@ as defined in [OS configuration](os-configuration.md#installation-resource).
 Before committing an allocation, the allocator:
 
 1. Derives the consumer project identity from authenticated context, authorizes the
-   caller, and resolves the local class through protected publication provenance.
+   caller, and resolves the local class and profile through protected publication provenance.
    It validates current source-use permission, consumer entitlement and
    allocation quota, location/Site, networks, and image/configuration inputs.
 2. Resolves every required initial reference, retains its exact local incarnation
@@ -214,7 +223,7 @@ Before committing an allocation, the allocator:
    leave the Machine pending; creation order cannot accidentally bypass them.
 3. Selects an eligible, prepared `MachineCapacity` from the canonical class's
    provider project and explicit supply namespace, matching physical placement,
-   capacity, capability, and network constraints.
+   capacity, profile, capability, and network constraints.
 4. Creates one immutable, service-owned `MachineAllocation` and commits its quota
    hold with current policy preconditions. The allocation references the consumer
    `Machine` and provider `MachineCapacity` by their authoritative project context

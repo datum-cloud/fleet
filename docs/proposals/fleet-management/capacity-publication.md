@@ -24,8 +24,8 @@ shared capacity.
 ## Customer and operator experience
 
 An operator defines a MachineClass in the provider project: the hardware and
-access capabilities offered, the eligible supply, and the private provider class
-that governs acquisition or preparation. Service publication determines which
+access capabilities offered, eligible MachineProfiles, and the eligible supply.
+Private backend configuration governs acquisition or preparation. Service publication determines which
 consumer projects receive a local MachineClass referencing that definition.
 Project selection and entitlement are separate from the capacity definition.
 
@@ -37,11 +37,16 @@ Availability is an observation with an evaluation time, not a reservation or a
 promise that a subsequent request will succeed. An unknown or stale observation
 must not appear as zero stock or guaranteed capacity.
 
-A customer creates a `Machine` referencing a local class. Fleet checks current
+A customer creates a `Machine` referencing a local class and MachineProfile. Fleet checks current
 source-use permission, entitlement, and quota, then attempts to reserve compatible
 inventory in the provider project. Multiple projects can reference the same
 source class and compete for the same finite supply. A valid request remains
 pending with `InsufficientCapacity` when no eligible machine can satisfy it.
+
+The two references are required and immutable: `machineClassRef` selects the
+published offering and its eligible supply, while `machineProfileRef` selects the
+requested hardware shape. Neither a copied profile nor knowledge of its name
+grants use of the offering.
 
 The selected `MachineCapacity`, its `Device`, and private management configuration
 remain in the provider project throughout allocation. The customer operates its
@@ -55,7 +60,7 @@ onboarding and marketplace behavior are separate enhancements.
 ## Class and publication responsibilities
 
 - **Provider MachineClass definition:** The canonical hardware and access
-  contract, private supply selection, and typed provider-class reference. It does
+  contract, permitted profile policy, and private supply selection. It does
   not select consumer projects or contain publication policy.
 - **Consumer MachineClass reference:** A project-local name whose entire spec is
   `source: {project, name}`. Consumers cannot override the source definition.
@@ -65,6 +70,10 @@ onboarding and marketplace behavior are separate enhancements.
   govern who may use each source class. Class delivery and permission are separate
   responsibilities. Neither a copied reference nor a controller's broad provider
   credentials grant the consumer access.
+- **MachineProfile:** Immutable hardware requirements published into the consumer
+  project alongside an offering, or customer-authored when the class explicitly
+  permits custom profiles. A profile describes desired shape; it neither selects
+  provider inventory nor grants allocation authority.
 - **Provider adapter configuration:** Reusable acquisition or hardware
   preparation requirements remain private to the selected provider adapter and
   do not decide which projects receive the capacity definition.
@@ -109,6 +118,9 @@ metadata:
 spec:
   arch: amd64
   capabilities: [baremetal]
+  profilePolicy:
+    allowedProfiles:
+      - name: standard-metal
   interfaces:
     - {name: primary, type: Ethernet}
   access:
@@ -122,10 +134,10 @@ spec:
           fleet.datumapis.com/capacity-pool: general-metal
 ```
 
-The selector is restricted to Machines in the source class's provider project
+The selector is restricted to MachineCapacity resources in the source class's provider project
 and explicit namespace. It cannot override preparation, physical verification,
-or compatibility checks. The provider-class reference resolves in that same
-project and its declared namespace. Matching labels never authorize purchasing
+or compatibility checks. Private backend configuration resolves within the
+provider location. Matching labels never authorize purchasing
 or creating more owned servers.
 
 Separately, Fleet's service registration supplies local references through
@@ -152,6 +164,9 @@ status:
   resolvedClass:
     arch: amd64
     capabilities: [baremetal]
+    profilePolicy:
+      allowedProfiles:
+        - name: standard-metal
     interfaces:
       - {name: primary, type: Ethernet}
     access:
@@ -185,6 +200,7 @@ metadata:
   namespace: acme
 spec:
   machineClassRef: {name: metal-standard}
+  machineProfileRef: {name: standard-metal}
   locationRef: {name: us-east-1}
   powerState: "Off"
 ```
@@ -201,7 +217,7 @@ allocation. Its authorization and commit protocol must span the project APIs:
 
 1. Derive the consumer project identity from authenticated context and authorize
    the caller's Machine operation. Resolve the local class and its single-hop
-   source through protected identity records. Retain the exact local object
+   source and referenced profile through protected identity records. Retain the exact local object
    incarnations, provider project identity, admitted public requirements, and
    source revision as private evidence.
 2. Verify current consumer-scoped source-use permission, service entitlement,
@@ -213,7 +229,7 @@ allocation. Its authorization and commit protocol must span the project APIs:
    access rules. Customer inputs stay in consumer scope; scoped artifact
    delivery gives execution only the approved inputs it needs. Provider
    credentials remain in provider scope.
-4. Select compatible MachineCapacity from the canonical class's authorized provider
+4. Select MachineCapacity compatible with the resolved profile from the canonical class's authorized provider
    project and explicit supply namespace. Revalidate physical eligibility,
    preparation, network feasibility, and the admitted public requirements.
 5. Create one immutable, service-owned MachineAllocation and commit its quota hold

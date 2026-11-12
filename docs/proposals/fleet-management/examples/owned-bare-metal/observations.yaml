@@ -76,6 +76,6 @@ status:
       grantedModes: [Graphical]
       available: true
   conditions:
-    - {type: Bound, status: "True", reason: ExclusiveReservationCommitted}
+    - {type: Bound, status: "True", reason: MachineAllocationCommitted}
     - {type: Ready, status: "True", reason: PlatformHandoffComplete}
     - {type: GuestReady, status: Unknown, reason: NoGuestReadinessContract}

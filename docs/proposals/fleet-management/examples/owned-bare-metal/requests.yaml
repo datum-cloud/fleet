@@ -15,7 +15,7 @@ body:
   approvedPlanDigest: "sha256:<retained preparation plan digest>"
 ---
 # CUSTOMER: request OOB access only after the allocation has become active.
-# The server checks caller entitlement plus the exact live binding before issuing
+# The server checks caller entitlement plus the exact live MachineAllocation before issuing
 # a session. It actively terminates the stream on Machine release/revocation.
 method: POST
 path: /apis/fleet.datumapis.com/v1alpha1/namespaces/acme/machines/db-01/console

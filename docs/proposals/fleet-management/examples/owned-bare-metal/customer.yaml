@@ -10,6 +10,7 @@ metadata:
   namespace: acme
 spec:
   machineClassRef: {name: metal-standard}
+  machineProfileRef: {name: standard-metal}
   locationRef: {name: us-east-1}
   powerState: "On"
   networkAttachmentRefs:

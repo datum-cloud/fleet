@@ -8,6 +8,9 @@ metadata:
 spec:
   arch: amd64
   capabilities: [baremetal]
+  profilePolicy:
+    allowedProfiles:
+      - {name: standard-metal}
   interfaces:
     - {name: primary, type: Ethernet}
   access:

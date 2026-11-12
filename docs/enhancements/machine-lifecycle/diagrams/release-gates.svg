@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="800" viewBox="0 0 960 800" role="img" aria-labelledby="title description">
-<title id="title">Release gates and quarantine</title><desc id="description">Release closes admission, settles or fences operations, revokes issued access, detaches or fences networking and settles address obligations, verifies cleaning, and waits for quota release acknowledgment. The provider project retains the reservation and operation records throughout release. Unknown obligations quarantine capacity and block provider-project deletion. Released capacity still needs fresh eligibility evidence before reuse.</desc>
+<title id="title">Release gates and quarantine</title><desc id="description">Release closes admission, settles or fences operations, revokes issued access, detaches or fences networking and settles address obligations, verifies cleaning, and waits for quota release acknowledgment. The provider project retains the MachineAllocation and operation records throughout release. Unknown obligations quarantine capacity and block provider-project deletion. Released capacity still needs fresh eligibility evidence before reuse.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
 <rect width="960" height="800" fill="white"/>
@@ -27,7 +27,7 @@
 <rect x="644" y="235" width="294" height="160" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
 <text x="791.0" y="286.5" class="label" text-anchor="middle">Unverified → Quarantined</text>
 <text x="791.0" y="309.5" class="label" text-anchor="middle">Keep capacity unavailable.</text>
-<text x="791.0" y="332.5" class="label" text-anchor="middle">Retain the binding and</text>
+<text x="791.0" y="332.5" class="label" text-anchor="middle">Retain MachineAllocation and</text>
 <text x="791.0" y="355.5" class="label" text-anchor="middle">unsettled quota custody.</text>
 <path d="M 592 315 L 644 315" class="line"/>
 <path d="M 790 235 L 790 140 L 592 140" class="line" stroke-dasharray="5 4"/>
