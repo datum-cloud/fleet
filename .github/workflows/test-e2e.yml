@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - prototype/secure-bmc-access-ci
 
 permissions:
   contents: read
