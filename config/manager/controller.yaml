@@ -22,7 +22,7 @@ spec:
           image: fleet-controller:e2e
           imagePullPolicy: IfNotPresent
           args:
-            - --location-kubeconfig=/var/run/fleet-location/kubeconfig
+            - --federation-kubeconfig=/var/run/fleet-federation/kubeconfig
             - --webhook-cert-dir=/var/run/fleet-webhook
             # Test-only short window; the binary's product-oriented default is 2m.
             - --authority-freshness=15s
@@ -44,12 +44,12 @@ spec:
             requests: {cpu: 25m, memory: 64Mi}
             limits: {memory: 256Mi}
           volumeMounts:
-            - {name: location, mountPath: /var/run/fleet-location, readOnly: true}
+            - {name: federation, mountPath: /var/run/fleet-federation, readOnly: true}
             - {name: webhook, mountPath: /var/run/fleet-webhook, readOnly: true}
             - {name: tmp, mountPath: /tmp}
       volumes:
-        - name: location
-          secret: {secretName: fleet-location-kubeconfig, defaultMode: 0440}
+        - name: federation
+          secret: {secretName: fleet-federation-kubeconfig, defaultMode: 0440}
         - name: webhook
           secret: {secretName: fleet-webhook-tls, defaultMode: 0440}
         - name: tmp

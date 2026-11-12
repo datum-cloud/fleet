@@ -82,7 +82,7 @@ task test
 task build
 ```
 
-The complete path requires Linux, Docker with Compose, Kind, kubectl, jq,
+The complete path requires Linux, Docker with Compose, Kind, kubectl, Helm, jq,
 OpenSSL, curl, and Task. It builds all images locally and loads them into Kind;
 it does not require a registry.
 
@@ -95,7 +95,10 @@ task e2e:openvpn:up
 task e2e:down
 ```
 
-`e2e:up` and `e2e:down` are idempotent. The latter removes only the two named
+`e2e:up` installs pinned Karmada into the management Kind cluster and registers
+the location Kind cluster as its member. The repository-local harness does not
+yet consume `datum-cloud/test-infra`; that remains production-environment
+packaging work. `e2e:up` and `e2e:down` are idempotent. The latter removes only the two named
 Kind clusters, the `fleet-bmc-e2e` Compose project, its isolated network, and
 the repository-local `.e2e` directory.
 

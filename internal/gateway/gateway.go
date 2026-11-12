@@ -81,6 +81,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, err
 	}
 	now := time.Now()
+	if p.Spec.DesiredState == fleetv1alpha1.ProjectionRevoked {
+		r.stop(req.NamespacedName)
+		if cleanup := apimeta.FindStatusCondition(p.Status.Conditions, "CleanupConfirmed"); cleanup != nil && cleanup.Status == metav1.ConditionTrue {
+			return ctrl.Result{}, nil
+		}
+		setCondition(&p, metav1.ConditionFalse, "Revoked", "The central allocation authority revoked this session.")
+		apimeta.SetStatusCondition(&p.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, Reason: "GatewayStopped", Message: "The location gateway closed the relay stream and discarded session authority.", ObservedGeneration: p.Generation, LastTransitionTime: metav1.Now()})
+		return ctrl.Result{}, r.Status().Update(ctx, &p)
+	}
 	if !p.DeletionTimestamp.IsZero() || now.After(p.Spec.ExpiresAt.Time) {
 		r.stop(req.NamespacedName)
 		return ctrl.Result{}, nil
@@ -271,6 +280,8 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 func sameBinding(a, b fleetv1alpha1.ProjectedMachineManagementSessionSpec) bool {
 	a.AuthorityFreshUntil = metav1.Time{}
 	b.AuthorityFreshUntil = metav1.Time{}
+	a.DesiredState = ""
+	b.DesiredState = ""
 	return a.SessionUID == b.SessionUID && a.ClaimUID == b.ClaimUID && a.MachineUID == b.MachineUID && a.BindingID == b.BindingID && a.BindingEpoch == b.BindingEpoch && a.LocationUID == b.LocationUID && a.LocationRevision == b.LocationRevision && a.BareMetalMachineUID == b.BareMetalMachineUID && a.AccessProfileRevision == b.AccessProfileRevision && a.ClientPublicKey == b.ClientPublicKey && a.ConnectBefore.Equal(&b.ConnectBefore) && a.ExpiresAt.Equal(&b.ExpiresAt) && a.AdapterRoute == b.AdapterRoute && a.BMCSystemID == b.BMCSystemID
 }
 func setCondition(p *fleetv1alpha1.ProjectedMachineManagementSession, status metav1.ConditionStatus, reason, message string) {

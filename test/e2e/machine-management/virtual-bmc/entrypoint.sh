@@ -2,6 +2,13 @@
 set -euo pipefail
 
 mkdir -p /run/libvirt /var/lib/libvirt/images /var/lib/sushy-emulator /evidence
+# Karmada's controllers increase the number of inotify instances in the shared
+# CI Docker kernel. The privileged, disposable BMC appliance raises the common
+# Kind test ceiling so libvirt's dnsmasq can still create its required watcher.
+current_inotify=$(sysctl -n fs.inotify.max_user_instances)
+if (( current_inotify < 1024 )); then
+  sysctl -w fs.inotify.max_user_instances=1024 >/dev/null
+fi
 # Docker/Lima exposes cgroup v2 to this privileged test appliance, but nested
 # per-domain cgroup creation is not portable across runners. Libvirt still owns
 # the QEMU process lifecycle; resource isolation is supplied by the container.
@@ -95,7 +102,14 @@ cat >/tmp/provisioning.xml <<'XML'
 </network>
 XML
 virsh net-define /tmp/provisioning.xml >/dev/null 2>&1 || true
-virsh net-start fleet-provisioning >/dev/null 2>&1 || true
+if [[ $(virsh net-info fleet-provisioning | awk '/Active:/ {print $2}') != yes ]]; then
+  virsh net-start fleet-provisioning >/dev/null
+fi
+for _ in $(seq 1 30); do
+  ip addr show virbr-pxe 2>/dev/null | grep -q '192.168.124.1' && break
+  sleep 1
+done
+ip addr show virbr-pxe | grep -q '192.168.124.1'
 
 define_domain() {
   local name=$1 mac=$2

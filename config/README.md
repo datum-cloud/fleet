@@ -8,6 +8,13 @@ API servers and must be reconciled independently.
 | `config/milo` | Milo root control plane | Fleet CRDs, IAM protected resources and roles, service registration, and machine quota registration |
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
 
+The secure machine-management prototype additionally applies
+`config/federation` to the Karmada API. It contains the projected-session status
+interpreter and least-privilege hub RBAC; the generated projected-session CRD is
+applied to the Karmada API separately. This component is not yet part of either
+published production root because environment-owned Karmada identity and member
+registration have not been selected.
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
 

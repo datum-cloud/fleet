@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	SessionFinalizer = "fleet.datumapis.com/machine-management-session"
-	ConditionReady   = "Ready"
+	SessionFinalizer  = "fleet.datumapis.com/machine-management-session"
+	ConditionReady    = "Ready"
+	ProjectionActive  = "Active"
+	ProjectionRevoked = "Revoked"
 )
 
 // MachineClaim is the public allocation handle. The prototype seeds it; the
@@ -100,17 +102,20 @@ type MachineAllocationBinding struct {
 }
 
 type MachineAllocationBindingSpec struct {
-	ConsumerProjectUID    types.UID `json:"consumerProjectUID"`
-	ProviderProjectUID    types.UID `json:"providerProjectUID"`
-	ClaimNamespace        string    `json:"claimNamespace"`
-	ClaimName             string    `json:"claimName"`
-	ClaimUID              types.UID `json:"claimUID"`
-	MachineName           string    `json:"machineName"`
-	MachineUID            types.UID `json:"machineUID"`
-	BindingID             string    `json:"bindingID"`
-	BindingEpoch          int64     `json:"bindingEpoch"`
-	LocationUID           types.UID `json:"locationUID"`
-	LocationRevision      string    `json:"locationRevision"`
+	ConsumerProjectUID types.UID `json:"consumerProjectUID"`
+	ProviderProjectUID types.UID `json:"providerProjectUID"`
+	ClaimNamespace     string    `json:"claimNamespace"`
+	ClaimName          string    `json:"claimName"`
+	ClaimUID           types.UID `json:"claimUID"`
+	MachineName        string    `json:"machineName"`
+	MachineUID         types.UID `json:"machineUID"`
+	BindingID          string    `json:"bindingID"`
+	BindingEpoch       int64     `json:"bindingEpoch"`
+	LocationUID        types.UID `json:"locationUID"`
+	LocationRevision   string    `json:"locationRevision"`
+	// MemberCluster is the protected Karmada member identity selected by the
+	// allocator/location registry. It is never supplied by the customer.
+	MemberCluster         string    `json:"memberCluster"`
 	BareMetalMachineUID   types.UID `json:"bareMetalMachineUID"`
 	AccessProfileRevision string    `json:"accessProfileRevision"`
 	AdapterRoute          string    `json:"adapterRoute"`
@@ -151,6 +156,7 @@ type MachineManagementSessionBindingSpec struct {
 	BindingEpoch           int64       `json:"bindingEpoch"`
 	LocationUID            types.UID   `json:"locationUID"`
 	LocationRevision       string      `json:"locationRevision"`
+	MemberCluster          string      `json:"memberCluster"`
 	BareMetalMachineUID    types.UID   `json:"bareMetalMachineUID"`
 	AccessProfileRevision  string      `json:"accessProfileRevision"`
 	ClientPublicKey        string      `json:"clientPublicKey"`
@@ -185,6 +191,8 @@ type ProjectedMachineManagementSession struct {
 }
 
 type ProjectedMachineManagementSessionSpec struct {
+	// +kubebuilder:validation:Enum=Active;Revoked
+	DesiredState           string      `json:"desiredState"`
 	SessionUID             types.UID   `json:"sessionUID"`
 	ClaimUID               types.UID   `json:"claimUID"`
 	MachineUID             types.UID   `json:"machineUID"`

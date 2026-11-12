@@ -70,6 +70,11 @@ spec:
               connectBefore:
                 format: date-time
                 type: string
+              desiredState:
+                enum:
+                - Active
+                - Revoked
+                type: string
               expiresAt:
                 format: date-time
                 type: string
@@ -108,6 +113,7 @@ spec:
             - claimUID
             - clientPublicKey
             - connectBefore
+            - desiredState
             - expiresAt
             - locationRevision
             - locationUID

@@ -17,6 +17,7 @@ spec:
   bindingEpoch: 1
   locationUID: 44444444-4444-4444-8444-444444444444
   locationRevision: location-prototype-r1
+  memberCluster: fleet-location-e2e
   bareMetalMachineUID: 55555555-5555-4555-8555-555555555555
   accessProfileRevision: fleet-provisioning-v1.0.0
   adapterRoute: sushy-libvirt-v1

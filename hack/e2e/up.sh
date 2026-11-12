@@ -8,7 +8,7 @@ MGMT_KUBECONFIG="${E2E_DIR}/management.kubeconfig"
 LOCATION_KUBECONFIG="${E2E_DIR}/location.kubeconfig"
 export FLEET_E2E_STATE="${E2E_DIR}/virtual-bmc"
 
-for tool in docker kind kubectl go jq openssl; do
+for tool in docker kind kubectl helm curl go jq openssl; do
   command -v "${tool}" >/dev/null || { echo "missing required tool: ${tool}" >&2; exit 1; }
 done
 if [[ $(uname -s) != Linux ]]; then
@@ -39,8 +39,81 @@ if ! docker network inspect fleet-management-e2e | jq -e '.[0].Containers | to_e
   docker network connect --ip 172.30.0.20 fleet-management-e2e fleet-location-e2e-control-plane
 fi
 
+# Install the same pinned Karmada release used by Datum Compute. The Karmada
+# API is a separate control plane hosted inside the management Kind cluster;
+# only it receives the member-cluster credential.
+KARMADA_VERSION=v1.16.0
+KARMADA_KUBECONFIG="${E2E_DIR}/karmada.kubeconfig"
+if [[ ! -x "${E2E_DIR}/bin/karmadactl" ]]; then
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+  curl -sSfL "https://github.com/karmada-io/karmada/releases/download/${KARMADA_VERSION}/karmadactl-${os}-${arch}.tgz" |
+    tar -xz -C "${E2E_DIR}/bin" karmadactl
+  chmod 0755 "${E2E_DIR}/bin/karmadactl"
+fi
+if ! helm repo list 2>/dev/null | grep -q '^karmada-charts'; then
+  helm repo add karmada-charts https://raw.githubusercontent.com/karmada-io/karmada/master/charts
+fi
+helm repo update karmada-charts
+if ! kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n karmada-system get deployment karmada-apiserver >/dev/null 2>&1; then
+  helm install karmada karmada-charts/karmada \
+    --kubeconfig "${MGMT_KUBECONFIG}" --namespace karmada-system --create-namespace \
+    --version "${KARMADA_VERSION}" --set apiServer.serviceType=NodePort \
+    --set apiServer.nodePort=32443 --wait --timeout 10m
+fi
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n karmada-system wait \
+  --for=condition=Available deployment --all --timeout=10m
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n karmada-system get secret karmada-kubeconfig \
+  -o jsonpath='{.data.kubeconfig}' | base64 -d >"${KARMADA_KUBECONFIG}"
+karmada_cluster=$(kubectl config get-clusters --kubeconfig "${KARMADA_KUBECONFIG}" | tail -n 1)
+kubectl config set-cluster "${karmada_cluster}" --kubeconfig "${KARMADA_KUBECONFIG}" \
+  --server=https://127.0.0.1:32443 --insecure-skip-tls-verify=true >/dev/null
+chmod 0600 "${KARMADA_KUBECONFIG}"
+
+for _ in $(seq 1 90); do
+  kubectl --kubeconfig "${KARMADA_KUBECONFIG}" get clusters >/dev/null 2>&1 && break
+  sleep 2
+done
+if ! kubectl --kubeconfig "${KARMADA_KUBECONFIG}" get cluster fleet-location-e2e >/dev/null 2>&1; then
+  for attempt in 1 2 3 4 5; do
+    if "${E2E_DIR}/bin/karmadactl" join fleet-location-e2e \
+      --kubeconfig "${KARMADA_KUBECONFIG}" \
+      --cluster-kubeconfig "${LOCATION_KUBECONFIG}" \
+      --cluster-context kind-fleet-location-e2e; then
+      break
+    fi
+    [[ ${attempt} -lt 5 ]] || { echo "failed to join location cluster to Karmada" >&2; exit 1; }
+    sleep 10
+  done
+fi
+cp "${LOCATION_KUBECONFIG}" "${E2E_DIR}/location-internal.kubeconfig"
+location_cluster=$(kubectl config get-clusters --kubeconfig "${E2E_DIR}/location-internal.kubeconfig" | tail -n 1)
+location_ip=$(docker inspect fleet-location-e2e-control-plane | jq -r '.[0].NetworkSettings.Networks.kind.IPAddress')
+kubectl config set-cluster "${location_cluster}" --kubeconfig "${E2E_DIR}/location-internal.kubeconfig" \
+  --server="https://${location_ip}:6443" --insecure-skip-tls-verify=true >/dev/null
+member_secret=$(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" get cluster fleet-location-e2e -o jsonpath='{.spec.secretRef.name}')
+member_secret_namespace=$(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" get cluster fleet-location-e2e -o jsonpath='{.spec.secretRef.namespace}')
+member_secret_namespace=${member_secret_namespace:-karmada-system}
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n "${member_secret_namespace}" create secret generic "${member_secret}" \
+  --from-file=kubeconfig="${E2E_DIR}/location-internal.kubeconfig" --dry-run=client -o yaml |
+  kubectl --kubeconfig "${KARMADA_KUBECONFIG}" apply -f -
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" patch cluster fleet-location-e2e --type=merge \
+  -p "{\"spec\":{\"apiEndpoint\":\"https://${location_ip}:6443\"}}"
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" label cluster fleet-location-e2e \
+  topology.datum.net/location=44444444-4444-4444-8444-444444444444 --overwrite
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" wait cluster/fleet-location-e2e \
+  --for=condition=Ready --timeout=180s
+
 build_image() {
   local image=$1 package=$2 binary=$3
+  if [[ $(uname -s) == Darwin ]]; then
+    mkdir -p "${E2E_DIR}/image-bin/${binary}"
+    env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOCACHE="${E2E_DIR}/go-cache" \
+      go build -trimpath -ldflags='-s -w' -o "${E2E_DIR}/image-bin/${binary}/${binary}" "${package}"
+    docker build -t "${image}:e2e" --build-arg "BINARY=${binary}" \
+      -f "${TEST_DIR}/Dockerfile.prebuilt" "${E2E_DIR}/image-bin/${binary}"
+    return
+  fi
   docker build -t "${image}:e2e" --build-arg "PACKAGE=${package}" --build-arg "BINARY=${binary}" "${ROOT_DIR}"
 }
 build_image fleet-controller ./cmd/fleet-controller fleet-controller
@@ -52,13 +125,17 @@ kind load docker-image fleet-gateway:e2e fleet-relay:e2e --name fleet-location-e
 
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -k "${ROOT_DIR}/config/crd"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -k "${ROOT_DIR}/config/crd"
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" apply \
+  -f "${ROOT_DIR}/config/crd/bases/fleet.datumapis.com_projectedmachinemanagementsessions.yaml" --server-side --validate=false
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" apply -k "${ROOT_DIR}/config/federation" --server-side --validate=false
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" create namespace machine-access-system --dry-run=client -o yaml |
+  kubectl --kubeconfig "${KARMADA_KUBECONFIG}" apply -f -
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -k "${ROOT_DIR}/config/machine-management/base"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -k "${ROOT_DIR}/config/machine-management/base"
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" wait --for=condition=Established --timeout=60s crd/machinemanagementsessions.fleet.datumapis.com
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" wait --for=condition=Established --timeout=60s crd/projectedmachinemanagementsessions.fleet.datumapis.com
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${ROOT_DIR}/config/rbac/controller.yaml"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${ROOT_DIR}/config/rbac/controller.yaml"
-kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${ROOT_DIR}/config/rbac/projector-location.yaml"
 
 relay_token=$(openssl rand -hex 32)
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system create secret generic fleet-relay-token \
@@ -68,30 +145,32 @@ kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system create se
   --dry-run=client -o yaml | kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f -
 unset relay_token
 
-projector_token=$(kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system create token fleet-projector --duration=2h)
-location_ca=$(kubectl config view --kubeconfig "${LOCATION_KUBECONFIG}" --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
-location_ip=$(docker inspect fleet-location-e2e-control-plane | jq -r '.[0].NetworkSettings.Networks.kind.IPAddress')
-cat >"${E2E_DIR}/projector.kubeconfig" <<EOF
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" create namespace fleet-system --dry-run=client -o yaml |
+  kubectl --kubeconfig "${KARMADA_KUBECONFIG}" apply -f -
+kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n fleet-system create serviceaccount fleet-controller --dry-run=client -o yaml |
+  kubectl --kubeconfig "${KARMADA_KUBECONFIG}" apply -f -
+federation_token=$(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n fleet-system create token fleet-controller --duration=2h)
+cat >"${E2E_DIR}/federation.kubeconfig" <<EOF
 apiVersion: v1
 kind: Config
 clusters:
-  - name: location
+  - name: karmada
     cluster:
-      server: https://${location_ip}:6443
-      certificate-authority-data: ${location_ca}
+      server: https://karmada-apiserver.karmada-system.svc.cluster.local:5443
+      insecure-skip-tls-verify: true
 users:
-  - name: projector
+  - name: fleet-controller
     user:
-      token: ${projector_token}
+      token: ${federation_token}
 contexts:
-  - name: location
-    context: {cluster: location, user: projector, namespace: machine-access-system}
-current-context: location
+  - name: karmada
+    context: {cluster: karmada, user: fleet-controller, namespace: machine-access-system}
+current-context: karmada
 EOF
-chmod 0600 "${E2E_DIR}/projector.kubeconfig"
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system create secret generic fleet-location-kubeconfig \
-  --from-file=kubeconfig="${E2E_DIR}/projector.kubeconfig" --dry-run=client -o yaml | kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f -
-unset projector_token location_ca
+chmod 0600 "${E2E_DIR}/federation.kubeconfig"
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system create secret generic fleet-federation-kubeconfig \
+  --from-file=kubeconfig="${E2E_DIR}/federation.kubeconfig" --dry-run=client -o yaml | kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f -
+unset federation_token
 
 mkdir -p "${E2E_DIR}/webhook"
 openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
@@ -109,6 +188,11 @@ unset webhook_ca
 
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${ROOT_DIR}/config/location/access.yaml"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${ROOT_DIR}/config/location/networkpolicy.yaml"
+# Local images intentionally reuse stable :e2e tags and the synthetic relay and
+# webhook credentials may be regenerated. Restart all consumers together so an
+# idempotent rerun cannot leave a process using a stale image or secret value.
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system rollout restart deployment/fleet-controller
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout restart deployment/fleet-relay deployment/fleet-gateway
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system rollout status deployment/fleet-controller --timeout=120s
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status deployment/fleet-relay --timeout=120s
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status deployment/fleet-gateway --timeout=120s

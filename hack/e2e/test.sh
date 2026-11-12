@@ -6,10 +6,11 @@ E2E_DIR="${ROOT_DIR}/.e2e"
 TEST_DIR="${ROOT_DIR}/test/e2e/machine-management"
 MGMT_KUBECONFIG="${E2E_DIR}/management.kubeconfig"
 LOCATION_KUBECONFIG="${E2E_DIR}/location.kubeconfig"
+KARMADA_KUBECONFIG="${E2E_DIR}/karmada.kubeconfig"
 PATH="${E2E_DIR}/bin:${PATH}"
 export PATH
 
-for file in "${MGMT_KUBECONFIG}" "${LOCATION_KUBECONFIG}" "${E2E_DIR}/management-ca.crt"; do
+for file in "${MGMT_KUBECONFIG}" "${LOCATION_KUBECONFIG}" "${KARMADA_KUBECONFIG}" "${E2E_DIR}/management-ca.crt"; do
   [[ -f "${file}" ]] || { echo "missing ${file}; run task e2e:up" >&2; exit 1; }
 done
 # Each run must prove a new boot rather than accepting evidence left by an
@@ -97,6 +98,18 @@ if curl --fail --silent --connect-timeout 2 http://172.30.0.10:8000/redfish/v1/ 
   fail "customer test process reached the private sushy endpoint"
 fi
 session_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsessions -o jsonpath='{.items[0].metadata.name}')
+session_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsession "${session_name}" -o jsonpath='{.metadata.uid}')
+# This is an actual Karmada Work proof, not a direct controller write to the
+# member API: the selected cell owns the one Work containing this projection,
+# and status has returned through the hub copy before the public session readied.
+work_clusters=$(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" get works.work.karmada.io -A -o json | jq -r --arg uid "${session_uid}" '
+  .items[] | select(any(.spec.workload.manifests[]?; .kind == "ProjectedMachineManagementSession" and .metadata.name == $uid)) | .metadata.namespace' | sort -u)
+[[ "${work_clusters}" == karmada-es-fleet-location-e2e ]] || fail "projection Work was not isolated to fleet-location-e2e: ${work_clusters}"
+[[ $(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n machine-access-system get projectedmachinemanagementsession "${session_uid}" -o jsonpath='{.metadata.labels.fleet\.datumapis\.com/member-cluster}') == fleet-location-e2e ]] || fail "hub projection lost its admitted member identity"
+[[ -n $(kubectl --kubeconfig "${KARMADA_KUBECONFIG}" -n machine-access-system get projectedmachinemanagementsession "${session_uid}" -o jsonpath='{.status.connection.routeID}') ]] || fail "cell status was not reflected through Karmada"
+if kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get secret fleet-location-kubeconfig >/dev/null 2>&1; then
+  fail "management cluster retained a direct location credential"
+fi
 if kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default patch machinemanagementsession "${session_name}" --type=merge -p '{"spec":{"ttl":"10m"}}' >/dev/null 2>&1; then
   fail "immutable public session spec was mutable"
 fi
@@ -184,6 +197,7 @@ spec:
   bindingEpoch: 1
   locationUID: 44444444-4444-4444-8444-444444444444
   locationRevision: location-prototype-r1
+  memberCluster: fleet-location-e2e
   bareMetalMachineUID: "${machine_uid}"
   accessProfileRevision: fleet-provisioning-v1.0.0
   adapterRoute: sushy-libvirt-v1

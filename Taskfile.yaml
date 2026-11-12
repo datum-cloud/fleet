@@ -25,7 +25,7 @@ tasks:
       - env GOCACHE={{.GO_CACHE}} go build -o bin/fleet-relay ./cmd/fleet-relay
 
   e2e:up:
-    desc: Create the two Kind clusters and real sushy/libvirt BMC environment
+    desc: Create Karmada management/member Kind clusters and the real sushy/libvirt BMC environment
     cmds:
       - ./hack/e2e/up.sh
 

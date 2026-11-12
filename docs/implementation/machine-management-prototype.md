@@ -24,9 +24,15 @@ and epoch, location UID/revision, private BareMetalMachine UID, profile revision
 client key, deadlines, adapter route, and correlation IDs. None of the private
 target fields are copied to the public session.
 
-The projector writes a least-privileged session to the location API and refreshes
-only its cached-authority deadline while every pinned input still matches. The
-location gateway registers an outbound opaque route with the relay. Public status
+The controller writes a least-privileged session to the separate Karmada API and
+creates an exact-cluster `PropagationPolicy` using the member identity retained
+from protected allocation state. It has a Karmada-scoped credential and no cell
+kubeconfig. Karmada creates a `Work` only for that member and reflects cell-written
+status through a Fleet-specific `ResourceInterpreterCustomization`; the
+interpreter rejects status from any other member and prevents a claimed route
+from changing identity. The controller refreshes only the cached-authority
+deadline while every pinned input still matches. The location gateway registers
+an outbound opaque route with the relay. Public status
 contains only its relay URL, random route, proof audience, protocol version, and
 gateway certificate fingerprint. The central API and controllers are not in the
 Redfish request/response path.
@@ -58,9 +64,10 @@ selection and `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, or
 2. Admission retains the authenticated principal. The controller resolves the
    current claim UID and exact active allocation, enforces limits, and persists
    the protected binding before projection.
-3. The projector checks the authoritative allocation on every refresh. The
-   location gateway establishes an outbound relay route and publishes non-secret
-   rendezvous status back through the projector.
+3. The projector checks the authoritative allocation on every refresh, creates a
+   Karmada hub copy and exact-member policy, and waits for status from that member.
+   The gateway reads only its cell-local copy, establishes an outbound relay
+   route, and writes non-secret rendezvous status to that copy.
 4. The plugin consumes the route, verifies the pinned TLS identity, proves its
    admitted private key, and opens the loopback Redfish service.
 5. Before a boot or reset effect, the gateway fsyncs an operation containing the
@@ -72,10 +79,13 @@ selection and `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, or
 6. A lost adapter response becomes `Unknown`; replaying the exact request returns
    the existing task without a second adapter call. Failed or unknown effects are
    never rewritten as success.
-7. Expiry, public deletion, allocation release, or changed binding inputs closes
-   the location stream. Release writes a terminal revocation annotation so later
-   claim-name reuse or record reactivation cannot resurrect the session. If the
-   location cannot confirm deletion, the central cleanup condition is `Unknown`.
+7. Expiry, public deletion, allocation release, or changed binding inputs changes
+   the hub copy's desired state to `Revoked`. Karmada carries the fence to the
+   selected cell; the gateway closes the stream and writes `CleanupConfirmed`
+   before the controller removes the policy and hub copy. Release also writes a
+   terminal revocation annotation so later claim-name reuse or reactivation cannot
+   resurrect the session. Deletion alone is never teardown proof; if the cell
+   cannot acknowledge the fence, central cleanup is `Unknown`.
 
 ## API and deployment artifacts
 
@@ -85,7 +95,8 @@ profile, key encoding, and TTL. Conditions carry `observedGeneration`, explicit
 reasons, and true/false/unknown outcomes.
 
 RBAC is in `config/rbac`; controller and location workloads are in
-`config/manager` and `config/location`. Containers run as non-root with read-only
+`config/manager` and `config/location`. `config/federation` contains the Karmada
+status interpreter and hub-only projector RBAC. Containers run as non-root with read-only
 root filesystems, no added Linux capabilities, and `RuntimeDefault` seccomp.
 NetworkPolicy permits the outbound relay, the one private BMC address, DNS, and
 the Kubernetes API; it does not expose gateway ingress. Metrics cover admission,
@@ -98,8 +109,8 @@ The declared DMTF interoperability profile is
 
 ## Reproducible Linux environment
 
-The qualified prerequisite is Linux with Docker Engine and Compose v2, Kind, kubectl, Go 1.26.4,
-Task, jq, OpenSSL, and curl. KVM is used when `/dev/kvm` is available; otherwise
+The qualified prerequisite is Linux with Docker Engine and Compose v2, Kind,
+kubectl, Helm, Go 1.26.4, Task, jq, OpenSSL, and curl. KVM is used when `/dev/kvm` is available; otherwise
 the same real libvirt domain runs with QEMU software emulation. There is no
 in-memory or static-JSON BMC fallback. The scripts can also attempt the QEMU path
 on Docker-backed macOS for development, but CI qualification remains Linux.
@@ -107,6 +118,8 @@ on Docker-backed macOS for development, but CI qualification remains Linux.
 `task e2e:up` builds and starts:
 
 - management and location Kind clusters;
+- pinned Karmada 1.16.0 in the management cluster, with the location Kind
+  cluster registered as a member;
 - locally built controller, relay, and gateway images;
 - a privileged test-only Ubuntu 24.04 container running libvirt/QEMU and pinned
   sushy-tools 2.2.0;
@@ -115,6 +128,12 @@ on Docker-backed macOS for development, but CI qualification remains Linux.
 - an internal Docker management network reachable only from the attached location
   Kind node; and
 - pinned DMTF Python Redfish client and validator tools.
+
+The harness is repository-local and does not currently consume
+`datum-cloud/test-infra`. Production/environment installation is expected to be
+owned there (or in `infra`) once hub identity, member registration, and location
+registration contracts are selected. This is a prototype choice, not a proposal
+change.
 
 The sushy port accepts only the location node address. The customer process sees
 only loopback ports for the relay and local Redfish connector. The default CI
@@ -136,7 +155,10 @@ The test calls the actual `datumctl fleet ...` command. A repository-local test
 Datum session stores synthetic service-account tokens through datumctl's file
 keyring format, after which the plugin must still call datumctl's credential
 helper. `e2e:up` explicitly trusts the locally built plugin by its path and SHA-256
-using datumctl's unmanaged-plugin trust command. It exercises generic DMTF client login, profile narrowing, distinct RBAC,
+using datumctl's unmanaged-plugin trust command. The test requires a real Karmada
+`Work` in `karmada-es-fleet-location-e2e`, verifies the hub received the selected
+cell's route status, and proves management has no direct location credential. It
+exercises generic DMTF client login, profile narrowing, distinct RBAC,
 per-claim and per-project limits, one-shot rendezvous, real PXE and libvirt power
 effects, DMTF validators, central API loss and freshness failure, release fencing,
 claim recreation, route isolation, response-loss recovery, and bounded BMC errors.
@@ -149,11 +171,14 @@ Validator versions are `redfish` 3.4.2,
 ## Troubleshooting
 
 Run `task e2e:diagnostics` before teardown. It captures both clusters' resources,
-events and logs, protected/public session state, libvirt domain state/XML, virtual
+events and logs, Karmada clusters/Works/bindings and hub session state,
+protected/public session state, libvirt domain state/XML, virtual
 BMC logs, validator reports, acceleration selection, and PXE callbacks.
 
 - A gateway stuck on `RelayUnavailable` usually indicates relay DNS/token or
   NetworkPolicy failure in the location cluster.
+- A missing cell projection: inspect the hub `PropagationPolicy`, the Work in
+  `karmada-es-<member>`, member `Ready`, and the Fleet status interpreter.
 - `BMCUnavailable` is intentionally bounded; inspect the gateway and virtual-BMC
   diagnostics rather than expecting a private address in the customer response.
 - No PXE callback: inspect `allocated-console.log`, libvirt network state, and the
@@ -174,6 +199,11 @@ contract. Important gaps are:
 - Delegated Kubernetes authentication/RBAC models the intended Compute/Milo
   pattern, but the production Datum API aggregation and IAM permission names are
   not selected.
+- Karmada projection and status aggregation are implemented and exercised, but
+  the prototype stores the member name directly in the protected synthetic
+  allocation. Production needs an authoritative location-to-member registration
+  controller, credential rotation, HA operations, failover policy, and
+  environment packaging in `test-infra`/`infra`.
 - The relay is a small Fleet-specific opaque TCP rendezvous with inner TLS, not
   Compute's maintained relay deployment. A shared public transport package and
   operational ownership decision are still required; Fleet does not import

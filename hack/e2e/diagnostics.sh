@@ -17,6 +17,10 @@ for cluster in management location; do
     fi
   fi
 done
+if [[ -f "${E2E_DIR}/karmada.kubeconfig" ]]; then
+  kubectl --kubeconfig "${E2E_DIR}/karmada.kubeconfig" get clusters,works.work.karmada.io,resourcebindings.work.karmada.io -A -o yaml >"${OUT}/karmada-resources.yaml" 2>&1 || true
+  kubectl --kubeconfig "${E2E_DIR}/karmada.kubeconfig" get projectedmachinemanagementsessions,propagationpolicies -A -o yaml >"${OUT}/karmada-fleet.yaml" 2>&1 || true
+fi
 docker logs fleet-e2e-virtual-bmc >"${OUT}/virtual-bmc.log" 2>&1 || true
 docker exec fleet-e2e-virtual-bmc virsh list --all >"${OUT}/libvirt-domains.txt" 2>&1 || true
 docker exec fleet-e2e-virtual-bmc virsh dumpxml allocated >"${OUT}/allocated-domain.xml" 2>&1 || true

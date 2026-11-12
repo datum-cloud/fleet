@@ -33,6 +33,7 @@ const (
 	ClaimUIDLabel             = "fleet.datumapis.com/claim-uid"
 	SessionUIDLabel           = "fleet.datumapis.com/session-uid"
 	RevokedAtAnnotation       = "fleet.datumapis.com/revoked-at"
+	MemberClusterLabel        = "fleet.datumapis.com/member-cluster"
 	DefaultConnectWindow      = time.Minute
 	DefaultAuthorityFreshness = 2 * time.Minute
 )
@@ -115,7 +116,10 @@ func (r *SessionReconciler) admit(ctx context.Context, session *fleetv1alpha1.Ma
 	}
 	connect := metav1.NewTime(now.Add(DefaultConnectWindow))
 	expiry := metav1.NewTime(now.Add(ttl))
-	b := &fleetv1alpha1.MachineManagementSessionBinding{TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSessionBinding"}, ObjectMeta: metav1.ObjectMeta{Name: string(session.UID), Namespace: r.systemNamespace(), Labels: map[string]string{SessionUIDLabel: string(session.UID), ClaimUIDLabel: string(claim.UID)}}, Spec: fleetv1alpha1.MachineManagementSessionBindingSpec{SessionNamespace: session.Namespace, SessionName: session.Name, SessionUID: session.UID, RequestingPrincipal: principal, ConsumerProjectUID: a.Spec.ConsumerProjectUID, ProviderProjectUID: a.Spec.ProviderProjectUID, ClaimName: claim.Name, ClaimUID: claim.UID, MachineName: a.Spec.MachineName, MachineUID: a.Spec.MachineUID, BindingID: a.Spec.BindingID, BindingEpoch: a.Spec.BindingEpoch, LocationUID: a.Spec.LocationUID, LocationRevision: a.Spec.LocationRevision, BareMetalMachineUID: a.Spec.BareMetalMachineUID, AccessProfileRevision: a.Spec.AccessProfileRevision, ClientPublicKey: session.Spec.ClientPublicKey, ConnectBefore: connect, ExpiresAt: expiry, SessionCorrelationID: randomCorrelationID(), OperationCorrelationID: randomCorrelationID(), AdapterRoute: a.Spec.AdapterRoute, BMCSystemID: a.Spec.BMCSystemID}}
+	if a.Spec.MemberCluster == "" {
+		return r.reject(ctx, session, "LocationNotFederated", "The authoritative location has no registered federation member.")
+	}
+	b := &fleetv1alpha1.MachineManagementSessionBinding{TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSessionBinding"}, ObjectMeta: metav1.ObjectMeta{Name: string(session.UID), Namespace: r.systemNamespace(), Labels: map[string]string{SessionUIDLabel: string(session.UID), ClaimUIDLabel: string(claim.UID)}}, Spec: fleetv1alpha1.MachineManagementSessionBindingSpec{SessionNamespace: session.Namespace, SessionName: session.Name, SessionUID: session.UID, RequestingPrincipal: principal, ConsumerProjectUID: a.Spec.ConsumerProjectUID, ProviderProjectUID: a.Spec.ProviderProjectUID, ClaimName: claim.Name, ClaimUID: claim.UID, MachineName: a.Spec.MachineName, MachineUID: a.Spec.MachineUID, BindingID: a.Spec.BindingID, BindingEpoch: a.Spec.BindingEpoch, LocationUID: a.Spec.LocationUID, LocationRevision: a.Spec.LocationRevision, MemberCluster: a.Spec.MemberCluster, BareMetalMachineUID: a.Spec.BareMetalMachineUID, AccessProfileRevision: a.Spec.AccessProfileRevision, ClientPublicKey: session.Spec.ClientPublicKey, ConnectBefore: connect, ExpiresAt: expiry, SessionCorrelationID: randomCorrelationID(), OperationCorrelationID: randomCorrelationID(), AdapterRoute: a.Spec.AdapterRoute, BMCSystemID: a.Spec.BMCSystemID}}
 	if err := r.Create(ctx, b); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return ctrl.Result{Requeue: true}, nil

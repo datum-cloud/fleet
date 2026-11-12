@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -25,17 +26,17 @@ func TestReleasedAllocationTerminallyRevokesProjection(t *testing.T) {
 		Spec: fleetv1alpha1.MachineManagementSessionBindingSpec{
 			SessionUID: "session-uid", ClaimUID: "claim-uid", MachineUID: "machine-uid",
 			BindingID: "binding", BindingEpoch: 1, LocationUID: "location", LocationRevision: "r1",
-			AdapterRoute: "sushy-libvirt-v1", ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			MemberCluster: "cell-a", AdapterRoute: "sushy-libvirt-v1", ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
 		},
 	}
 	allocation := &fleetv1alpha1.MachineAllocationBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: "allocation", Namespace: SystemNamespace, Labels: map[string]string{ClaimUIDLabel: "claim-uid"}},
-		Spec:       fleetv1alpha1.MachineAllocationBindingSpec{ClaimUID: "claim-uid", MachineUID: "machine-uid", BindingID: "binding", BindingEpoch: 1, LocationUID: "location", LocationRevision: "r1", AdapterRoute: "sushy-libvirt-v1", Active: false},
+		Spec:       fleetv1alpha1.MachineAllocationBindingSpec{ClaimUID: "claim-uid", MachineUID: "machine-uid", BindingID: "binding", BindingEpoch: 1, LocationUID: "location", LocationRevision: "r1", MemberCluster: "cell-a", AdapterRoute: "sushy-libvirt-v1", Active: false},
 	}
-	projection := &fleetv1alpha1.ProjectedMachineManagementSession{ObjectMeta: metav1.ObjectMeta{Name: binding.Name, Namespace: LocationNamespace}}
+	projection := &fleetv1alpha1.ProjectedMachineManagementSession{ObjectMeta: metav1.ObjectMeta{Name: binding.Name, Namespace: LocationNamespace, Labels: map[string]string{MemberClusterLabel: "cell-a"}}, Spec: fleetv1alpha1.ProjectedMachineManagementSessionSpec{DesiredState: fleetv1alpha1.ProjectionActive, SessionUID: "session-uid", ClaimUID: "claim-uid", MachineUID: "machine-uid", BindingID: "binding", BindingEpoch: 1, LocationUID: "location", LocationRevision: "r1", AdapterRoute: "sushy-libvirt-v1", ExpiresAt: metav1.NewTime(now.Add(time.Hour))}}
 	primary := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(binding).WithObjects(binding, allocation).Build()
-	location := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(projection).WithObjects(projection).Build()
-	r := &ProjectionReconciler{Client: primary, LocationClient: location, Now: func() time.Time { return now }}
+	federation := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(projection).WithObjects(projection).Build()
+	r := &ProjectionReconciler{Client: primary, FederationClient: federation, Now: func() time.Time { return now }}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: SystemNamespace, Name: binding.Name}})
 	if err != nil {
 		t.Fatal(err)
@@ -47,8 +48,21 @@ func TestReleasedAllocationTerminallyRevokesProjection(t *testing.T) {
 	if got.Annotations[RevokedAtAnnotation] == "" {
 		t.Fatal("released allocation did not permanently revoke admitted binding")
 	}
-	var removed fleetv1alpha1.ProjectedMachineManagementSession
-	if err := location.Get(context.Background(), types.NamespacedName{Namespace: LocationNamespace, Name: binding.Name}, &removed); err == nil {
-		t.Fatal("location projection survived allocation release")
+	var revoked fleetv1alpha1.ProjectedMachineManagementSession
+	if err := federation.Get(context.Background(), types.NamespacedName{Namespace: LocationNamespace, Name: binding.Name}, &revoked); err != nil {
+		t.Fatal(err)
+	}
+	if revoked.Spec.DesiredState != fleetv1alpha1.ProjectionRevoked {
+		t.Fatal("allocation release was not propagated as revocation")
+	}
+	apimeta.SetStatusCondition(&revoked.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, Reason: "GatewayStopped", Message: "stopped", ObservedGeneration: revoked.Generation})
+	if err := federation.Status().Update(context.Background(), &revoked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: SystemNamespace, Name: binding.Name}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := federation.Get(context.Background(), types.NamespacedName{Namespace: LocationNamespace, Name: binding.Name}, &revoked); err == nil {
+		t.Fatal("acknowledged federated projection survived cleanup")
 	}
 }
