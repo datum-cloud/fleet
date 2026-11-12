@@ -3,7 +3,9 @@ name: machine-management-e2e
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - prototype/secure-bmc-access-ci
 
 permissions:
   contents: read
