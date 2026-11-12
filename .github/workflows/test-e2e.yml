@@ -79,6 +79,7 @@ jobs:
             .e2e/validators
             .e2e/virtual-bmc/evidence
             .e2e/*.log
+          include-hidden-files: true
           if-no-files-found: ignore
       - name: Tear down
         if: always()

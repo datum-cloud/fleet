@@ -34,7 +34,10 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 wait_for() {
   local description=$1 command=$2
-  for _ in $(seq 1 90); do eval "${command}" && return 0; sleep 1; done
+  # A freshly installed Karmada control plane can need more than 90 seconds to
+  # schedule the first Work and reflect member status on shared CI runners.
+  # Keep the bound explicit and configurable without weakening any assertion.
+  for _ in $(seq 1 "${FLEET_E2E_WAIT_SECONDS:-240}"); do eval "${command}" && return 0; sleep 1; done
   fail "timed out waiting for ${description}"
 }
 run_timeout() {
