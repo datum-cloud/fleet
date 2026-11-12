@@ -9,7 +9,7 @@ skinparam defaultFontName Arial
 skinparam shadowing false
 skinparam nodesep 40
 skinparam ranksep 60
-AddRelTag("authority", $textColor="#9A3412", $lineColor="#C2410C", $lineStyle=BoldLine(), $legendText="Admitted effects for an exact binding")
+AddRelTag("authority", $textColor="#9A3412", $lineColor="#C2410C", $lineStyle=BoldLine(), $legendText="Admitted effects for an exact allocation")
 AddRelTag("evidence", $textColor="#475569", $lineColor="#64748B", $lineStyle=DashedLine(), $legendText="Observations; do not grant effect authority")
 
 System_Ext(identity, "Identity and authorization", "Shared platform identity, project policy, and delegation.")
@@ -33,12 +33,12 @@ Rel_R(api, state, "Persists authority and status", "Storage transaction")
 Rel_D(catalog, api, "Registers source references; resolves public summaries", "Authenticated project APIs")
 Rel_R(inventory, api, "Publishes verified inventory", "Kubernetes API / HTTPS", $tags="evidence")
 Rel_D(cluster, api, "Requests managed capacity and OS", "Kubernetes API / HTTPS")
-Rel_L(allocation, api, "Commits bindings and effect authority", "Kubernetes API / HTTPS")
+Rel_L(allocation, api, "Commits allocations and effect authority", "Kubernetes API / HTTPS")
 Rel_R(allocation, networking, "Coordinates network readiness", "Authenticated service API")
 Rel_U(os, api, "Pins OS inputs; reports results", "Kubernetes API / HTTPS")
 Rel_D(os, artifacts, "Retains approved revisions", "HTTPS object API")
 Rel_L(os, os_execution, "Applies admitted OS changes", "Authenticated OS/provider API", $tags="authority")
-Rel_D(api, provider, "Admitted effects for exact binding", "Authenticated watch / HTTPS", $tags="authority")
+Rel_D(api, provider, "Admitted effects for exact allocation", "Authenticated watch / HTTPS", $tags="authority")
 Rel_U(provider, api, "Reports execution evidence", "Kubernetes API / HTTPS", $tags="evidence")
 Rel_L(provider, artifacts, "Reads approved digests", "HTTPS")
 

@@ -39,9 +39,9 @@ and field names below are proposed contracts, not implemented schemas.
 
 An operator declares a `Site`, a `Cluster` using that Site, and a
 `MachinePool` for each role. Controllers maintain one durable `NodeClaim`
-per logical node slot. Each NodeClaim obtains hardware through an exclusive
-`MachineClaim` and an explicit `Installation` request. The reservation and
-installation have shorter lifetimes than the logical node.
+per logical node slot. Each NodeClaim owns a customer `Machine` and an explicit
+`Installation` request. Its private `MachineAllocation` and Installation have
+shorter lifetimes than the logical node.
 
 A `Rollout` advances an exact, retained configuration through managed clusters
 and nodes under declared safety constraints. Editing an input creates a
@@ -208,7 +208,7 @@ A consumer gate that is missing or stale blocks the transition it guards; it
 never counts as passed. Pool sizing that orders new rented capacity follows the
 provider's procurement policy (see [Providers](README.md#providers)).
 
-Standalone consumers create a MachineClaim directly, with optional initial
+Standalone consumers create a Machine directly, with optional initial
 Installation and network attachment requirements. A `membership: standalone`
 branch that creates no NodeClaim is unnecessary: cluster pools and direct
 allocations have explicit, separate entry points into the same allocator.
@@ -219,7 +219,7 @@ The pool controller maintains a `NodeClaim` for each logical node slot. It is
 the continuity point for the managed hostname, movable IPAM identity, and the
 configuration approved for that node. It is distinct from an inventory
 `DeviceClaim`, which records an operator's physical commissioning expectation,
-and from a MachineClaim, which reserves a specific asset.
+and from a customer Machine, whose private MachineAllocation reserves provider capacity.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -238,11 +238,10 @@ spec:
     epoch: 1
 status:
   phase: Ready
-  claimRef: {name: alice-compute-0-hardware-01}
+  machineRef: {name: alice-compute-0-hardware-01}
   installationRef: {name: alice-compute-0-os-01}
   node:
     name: us-east-1-alice-compute-0
-    uid: <kubernetes-node-incarnation-uid>
     ready: true
   interfaces:
     - name: fabric0
@@ -260,27 +259,28 @@ revision record. Pool template ownership, operator maintenance intent, and
 configuration admission have explicitly assigned writers. Labels support
 policy selection; they do not grant allocation or disruption authority.
 
-The node controller creates a [MachineClaim](bare-metal-hardware.md#claim-resource)
-using the same allocation service as standalone consumers. Its committed
-binding to a Machine UID is immutable. It declares the complete required
-network attachment set and initial
+The node controller creates a [Machine](bare-metal-hardware.md#customer-machine-resource)
+using the same allocation service as standalone consumers. Its private,
+service-owned MachineAllocation to one MachineCapacity is immutable. It declares
+the complete required network attachment set and initial
 [Installation](os-configuration.md#installation-resource) reference before
-binding can proceed. Names are resolved to UIDs and input digests; the allocator
+allocation can proceed. Names are resolved to exact local object incarnations and
+input digests; the allocator
 waits for those inputs and current network placement validation. It must not
 wait for a tenant attachment to be fully active before selecting hardware.
 
 The node controller supplies the exact admitted bootstrap/configuration and
 identity context to the Installation. Installation does not discover permission
 to act by reading NodeClaim labels. Initial power-on is serialized with
-installation and networking through MachineClaim runtime intent. A direct
+installation and networking through Machine runtime intent. A direct
 power reconciler cannot turn the host on in the middle of the maintenance-to-
 production network handoff.
 
-A reinstall on the same hardware may retain the MachineClaim and creates a
+A reinstall on the same hardware may retain the customer Machine and creates a
 new Installation naming the expected predecessor incarnation. Hardware
-replacement creates a new MachineClaim and Installation. It preserves the
+replacement creates a new Machine and Installation. It preserves the
 NodeClaim's admitted recipe and logical address reservations; it does not
-rebind the old MachineClaim or mutate a Machine to represent another asset.
+reuse the old MachineAllocation or retarget a MachineCapacity to another Device.
 The Kubernetes Node incarnation changes even if its name remains stable.
 
 Before a replacement activates shared credentials, addresses, routes, or
@@ -291,9 +291,9 @@ remains reserved or quarantined, but block unsafe identity activation.
 Quorum/drain coordination, network withdrawal, and storage fencing have their
 own completion evidence.
 
-Node deletion or scale-down initiates release through the claim protocol.
-Inventory Device, Machine, and provider management records must not be
-removed by garbage collection of logical nodes. Child claim/installation
+Node deletion or scale-down initiates release through the Machine protocol.
+Inventory Device, MachineCapacity, and provider management records must not be
+removed by garbage collection of logical nodes. Child Machine/Installation
 finalizers, if used, retain obligations until their effects are accounted for;
 no safety rule assumes a particular sibling deletion order. Logical IPAM
 reservations are released only after all prior attachments/incarnations have
@@ -304,8 +304,9 @@ separate concepts.
 
 A `Rollout` declares a bounded transition to exact revisions, across resolved
 cluster identities and waves. A selector may choose initial candidates, but
-the durable plan freezes Cluster UIDs, baseline selections, target recipes,
-and wave membership before execution. Later label matches do not silently
+the durable plan freezes Cluster names, privately retained local incarnation
+evidence, baseline selections, target recipes, and wave membership before
+execution. Later label matches do not silently
 join an in-progress rollout.
 
 ```yaml
@@ -318,7 +319,6 @@ spec:
   targets:
     - clusterRef:
         name: us-east-1-alice
-        uid: <alice-cluster-uid>
       recipeRef:
         name: alice-r2
         digest: sha256:<retained-target-recipe-digest>
@@ -423,7 +423,7 @@ as `3/3`. Useful questions include:
 
 - Which clusters support Kata: observed capabilities rolled up from provider
   and NodeClaim runtime readiness, not merely a requested feature flag.
-- Which nodes await capacity: `AwaitingMachine` with the claim's reason.
+- Which nodes await capacity: `AwaitingMachine` with the customer Machine's reason.
 - Whether the intended cell configuration arrived: observed delivery plus
   applied revision and freshness, rather than a submitted reference.
 - Whether a replacement can activate: predecessor exclusion and attachment
@@ -502,11 +502,11 @@ or logical addresses while the old reservation is still releasing.
 ## Implementation
 
 The cluster subsystem in `datum-cloud/fleet` watches Site, Cluster, MachinePool,
-NodeClaim, and Rollout. It creates shared MachineClaim/Installation requests,
+NodeClaim, and Rollout. It creates shared Machine/Installation requests,
 managed identity contexts, and admitted delivery outputs, then consumes their
 status. It does not edit physical inventory, provider credentials, or private
-hardware bindings. The same shared binder arbitrates direct consumers and
-managed clusters; an infrastructure backend must not allocate those machines
+hardware allocations. The same shared allocator arbitrates direct consumers and
+managed clusters; an infrastructure backend must not allocate those MachineCapacities
 independently.
 
 `fleet-provider-omni` implements the cluster contract and, where selected, the
