@@ -1,5 +1,5 @@
 // View model for the capacity list. The wire shape is the shared
-// fleet.datumapis.com/v1alpha1 MachineCapacity in ui/shared/fleet-api.ts.
+// metal.datumapis.com/v1alpha1 MachineCapacity in ui/shared/fleet-api.ts.
 
 import { findCondition, type Condition } from '../../shared/conditions';
 import { formatConstraint, summarizeProfile, type ProfileSummary } from '../../shared/profile-summary';

@@ -2,8 +2,8 @@
 // imports: each plugin has its own node_modules, and a bare import here would
 // not resolve from either.
 //
-// Wire shapes of fleet.datumapis.com/v1alpha1, transcribed by hand from
-// internal/api/v1alpha1/types.go and config/base/crd/fleet.datumapis.com.yaml
+// Wire shapes of metal.datumapis.com/v1alpha1, transcribed by hand from
+// internal/api/v1alpha1/types.go and config/base/crd/metal.datumapis.com.yaml
 // as of api/machine-allocation-model (#44), which renames MachineClaim to
 // Machine and Machine to MachineCapacity. Fields
 // keep the Go JSON names; `omitempty` fields are optional. Installation is left
@@ -11,8 +11,10 @@
 
 import type { Condition } from './conditions';
 
-export const FLEET_API_GROUP = 'fleet.datumapis.com';
-export const FLEET_API_VERSION = 'v1alpha1';
+// The resources moved from fleet.datumapis.com in #46; label, annotation and
+// finalizer keys below still use the fleet.datumapis.com prefix.
+export const METAL_API_GROUP = 'metal.datumapis.com';
+export const METAL_API_VERSION = 'v1alpha1';
 
 export interface ObjectMeta {
   name: string;

@@ -1,9 +1,9 @@
-# Fleet staff portal plugin
+# Bare Metal staff portal plugin
 
 A [staff-portal](https://github.com/datum-cloud/staff-portal) plugin for the
-provider project's Fleet resources. It is a Module Federation remote: the
+provider project's Bare Metal resources (`metal.datumapis.com`). It is a Module Federation remote: the
 portal fetches `plugin-manifest.json` and `remoteEntry.js` server-side and
-mounts its pages under `/plugins/<slug>/`, with a **Fleet** item under
+mounts its pages under `/plugins/<slug>/`, with a **Bare Metal** item under
 Operations in the navigation. The page has three tabs:
 
 - **Capacity** (the mount root, where the nav item points) lists the
@@ -22,9 +22,9 @@ Operations in the navigation. The page has three tabs:
   profiles and console access stay off.
 
 The portal proxy forwards the staff member's own token, so creating capacity,
-profiles and classes needs a Fleet role with `machinecapacities.create`,
+profiles and classes needs a Bare Metal role with `machinecapacities.create`,
 `machineprofiles.create` and `machineclasses.create` in the provider project,
-such as `fleet.datumapis.com-provider`. Errors show inside the create dialog,
+such as `metal.datumapis.com-provider`. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
 
 This started as the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17).
@@ -49,7 +49,7 @@ list's view.
 
 ## Fixture mode
 
-The Fleet CRDs are on staging, but reading them needs a Fleet role. Setting
+The Fleet CRDs are on staging, but reading them needs a Bare Metal role. Setting
 `VITE_FLEET_FIXTURES=true` at build time makes `useMachineCapacities` return
 the synthetic MachineCapacities in `src/lib/fixtures.ts`: one free, one allocated and one
 just enrolled, following Fleet's standalone fixtures and the statuses its
@@ -64,11 +64,11 @@ flag is baked into the build.
 npm run build:fixtures && npm run preview
 
 # staff-portal, in another terminal (you must be in the staff-users group)
-PORTAL_PLUGINS='fleet-datumapis-com=http://localhost:7781' npm run dev
+PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7781' npm run dev
 ```
 
 If staff-portal's `.env` already sets `PORTAL_PLUGINS_JSON`, add
-`{"slug":"fleet-datumapis-com","assets":{"baseURL":"http://localhost:7781"}}`
+`{"slug":"metal-datumapis-com","assets":{"baseURL":"http://localhost:7781"}}`
 to that array instead.
 
 ## Differences from the consumer plugin

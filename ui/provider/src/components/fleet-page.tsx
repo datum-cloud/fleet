@@ -4,7 +4,7 @@ import { Tabs, TabsLinkTrigger, TabsList } from '@datum-cloud/datum-ui/tabs';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
 
-// One "Fleet" nav item with tabs for each resource, so the Operations menu
+// One "Bare Metal" nav item with tabs for each resource, so the Operations menu
 // does not grow with every page. staff-portal adds no padding around plugin
 // pages, so this pads itself like the host's pages (p-6).
 export function FleetPage({
@@ -31,7 +31,7 @@ export function FleetPage({
   return (
     <div data-testid={testId} className="flex min-w-0 flex-col gap-6 p-4 sm:p-6">
       <PageTitle
-        title="Fleet"
+        title="Bare Metal"
         description={`Provider resources in ${PROVIDER_PROJECT}`}
         actions={actions}
       />

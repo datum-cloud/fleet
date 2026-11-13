@@ -141,7 +141,7 @@ export function MachinesEmptyState({
             <Eyebrow className="text-foreground">
               <span id={startersId}>Start from a profile</span>
             </Eyebrow>
-            <span className="text-muted-foreground ml-2">picks the profile, you name the machine</span>
+            <span className="text-muted-foreground ml-2">Choose one and give your machine a name.</span>
           </p>
           {options.length > 0 ? (
             <div className="fleet-profile-grid">

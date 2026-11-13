@@ -34,7 +34,7 @@ function renderPage(name = 'example') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/project/p1/services/fleet-datumapis-com/${name}`]}>
+      <MemoryRouter initialEntries={[`/project/p1/services/metal-datumapis-com/${name}`]}>
         <Routes>
           <Route path="/project/:projectId/services/:serviceSlug/:machineName" element={<MachineDetail />} />
         </Routes>
@@ -55,7 +55,7 @@ describe('MachineDetail', () => {
     renderPage();
     expect(screen.getByRole('link', { name: 'Machines' })).toHaveAttribute(
       'href',
-      '/project/p1/services/fleet-datumapis-com'
+      '/project/p1/services/metal-datumapis-com'
     );
     expect(screen.getByTestId('fleet-plugin-loading')).toBeInTheDocument();
   });

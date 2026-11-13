@@ -58,7 +58,7 @@ function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/plugins/fleet-datumapis-com/classes']}>
+      <MemoryRouter initialEntries={['/plugins/metal-datumapis-com/classes']}>
         <Routes>
           <Route path="/plugins/:slug/classes" element={<MachineClassList />} />
         </Routes>
