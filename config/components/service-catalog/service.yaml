@@ -12,5 +12,7 @@ spec:
   owner:
     producerProjectRef:
       name: datum-cloud
+  # A project's entitlement stays pending until the provider approves its
+  # ServiceConsumer (spec.approval) in the producer project.
   enablementPolicy:
-    mode: SelfService
+    mode: GatedByProvider
