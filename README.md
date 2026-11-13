@@ -53,6 +53,9 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
 - [API architecture](docs/architecture.md): group boundaries, control-plane
   placement, writer ownership, and Bare Metal service registration.
 
+- [Fleet management enhancement](docs/enhancements/fleet-management/README.md):
+  proposed service scope, physical inventory APIs, project ownership, and Fleet
+  and federation control-plane responsibilities.
 - [Machine allocation and installation](docs/enhancements/machine-lifecycle/README.md): the
   smallest durable machine lifecycle, integrated with Milo project tenancy.
 - [Service proposal](docs/proposals/fleet-management/README.md): detailed contracts,
