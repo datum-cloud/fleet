@@ -18,6 +18,7 @@ the customer service, inventory, and intended coordination contracts.
 | --- | --- | --- |
 | Physical inventory | Plan installations and verify actual equipment, cables, and power connections | [Inventory](../proposals/fleet-management/inventory.md), [bare-metal hardware](../proposals/fleet-management/bare-metal-hardware.md) |
 | Capacity discovery | Discover eligible provider offerings without exposing private inventory or reserving supply | [Capacity publication](../proposals/fleet-management/capacity-publication.md) |
+| Offering and profile access | Provider offerings with default and additional assignments, optionally restricted by profile (proposed) | [Offering access enhancement](../enhancements/profile-access/README.md) |
 | Machine allocation | Request hardware in a project through the shared allocator | [Machine allocation and installation](../enhancements/machine-lifecycle/README.md) |
 | Provisioning and access | Perform authorized preparation, installation, power, console, and cleanup work | [Bare-metal provisioning](../proposals/fleet-management/bare-metal-provisioning.md) |
 | OS installation and configuration | Select approved artifacts and retain exact inputs with one configuration writer | [OS configuration](../proposals/fleet-management/os-configuration.md) |
