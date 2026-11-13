@@ -38,6 +38,9 @@ service-owned Secret custody and serializes sessions against installation and
 release, rather than trusting pre-bound allocation CRDs. Production access
 authorization, trusted observation resolution, and executor fencing remain
 unwired; the session controller defaults to unready and denies new sessions.
+An explicit [synthetic fixture mode](docs/implementation/synthetic-bmc-fixture.md)
+wires the runnable prototype to real Coordinator custody without enabling a
+production fallback.
 See the [implemented lifecycle contract](docs/implementation/secure-bmc-lifecycle.md).
 
 ## Scope

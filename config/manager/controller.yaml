@@ -22,6 +22,8 @@ spec:
           image: fleet-controller:e2e
           imagePullPolicy: IfNotPresent
           args:
+            - --lifecycle-mode=synthetic
+            - --private-namespace=fleet-system
             - --federation-kubeconfig=/var/run/fleet-federation/kubeconfig
             - --webhook-cert-dir=/var/run/fleet-webhook
             # Test-only short window; the binary's product-oriented default is 2m.

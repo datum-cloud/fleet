@@ -23,6 +23,7 @@ import (
 	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
+	"go.datum.net/fleet/internal/staging/sessionfixture"
 )
 
 func main() {
@@ -33,6 +34,8 @@ func main() {
 	authorityFreshness := flag.Duration("authority-freshness", 2*time.Minute, "maximum cached allocation-authority lifetime at a location")
 	perClaimLimit := flag.Int("per-claim-session-limit", 1, "maximum concurrent sessions for one claim")
 	perProjectLimit := flag.Int("per-project-session-limit", 5, "maximum concurrent sessions for one consumer project")
+	lifecycleMode := flag.String("lifecycle-mode", "production", "production (unready) or synthetic (test-only private fixture grants)")
+	privateNamespace := flag.String("private-namespace", controller.SystemNamespace, "private Coordinator Secret namespace")
 	flag.Parse()
 	if *federationKubeconfig == "" {
 		slog.Error("--federation-kubeconfig is required")
@@ -50,13 +53,33 @@ func main() {
 	wh := webhook.NewServer(webhook.Options{CertDir: *webhookCertDir})
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{Scheme: scheme, Metrics: metricsserver.Options{BindAddress: *metrics}, HealthProbeBindAddress: *probe, WebhookServer: wh})
 	must(err)
+	privateClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: scheme})
+	must(err)
+	lifecycle, readiness, err := lifecycleWiring(*lifecycleMode, privateClient, *privateNamespace)
+	must(err)
 	mgr.GetWebhookServer().Register("/mutate-metal-datumapis-com-v1alpha1-machinemanagementsession", &admission.Webhook{Handler: controller.SessionAdmission{}})
-	must((&controller.SessionReconciler{PerClaimLimit: *perClaimLimit, PerProjectLimit: *perProjectLimit}).SetupWithManager(mgr))
-	must((&controller.ProjectionReconciler{FederationClient: federationClient, Freshness: *authorityFreshness}).SetupWithManager(mgr))
+	must((&controller.SessionReconciler{Lifecycle: lifecycle, PerClaimLimit: *perClaimLimit, PerProjectLimit: *perProjectLimit}).SetupWithManager(mgr))
+	must((&controller.ProjectionReconciler{Lifecycle: lifecycle, FederationClient: federationClient, Freshness: *authorityFreshness}).SetupWithManager(mgr))
 	must(mgr.AddHealthzCheck("healthz", healthz.Ping))
-	must(mgr.AddReadyzCheck("lifecycle-authority", func(*http.Request) error { return controller.ErrUnsupported }))
+	must(mgr.AddReadyzCheck("lifecycle-authority", readiness))
 	slog.Info("starting Fleet session controllers")
 	must(mgr.Start(ctrl.SetupSignalHandler()))
+}
+
+func lifecycleWiring(mode string, kube client.Client, namespace string) (controller.SessionLifecycle, healthz.Checker, error) {
+	switch mode {
+	case "production":
+		return nil, func(*http.Request) error { return controller.ErrUnsupported }, nil
+	case "synthetic":
+		authority, err := sessionfixture.NewAuthority(kube, namespace)
+		if err != nil {
+			return nil, nil, err
+		}
+		slog.Warn("SYNTHETIC TEST ONLY: fixture grants replace production authorization and provider observations", "privateNamespace", namespace)
+		return authority, healthz.Ping, nil
+	default:
+		return nil, nil, controller.ErrUnsupported
+	}
 }
 
 func must(err error) {

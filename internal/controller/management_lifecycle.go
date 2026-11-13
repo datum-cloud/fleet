@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -185,6 +186,8 @@ func (a *LifecycleSessionAuthority) resolve(ctx context.Context, binding session
 }
 
 func (a *LifecycleSessionAuthority) Acquire(ctx context.Context, proposed sessionv1.MachineManagementSessionBindingSpec) (sessionv1.MachineManagementSessionBindingSpec, error) {
+	proposed.ConnectBefore = metav1.NewTime(proposed.ConnectBefore.UTC().Truncate(time.Second))
+	proposed.ExpiresAt = metav1.NewTime(proposed.ExpiresAt.UTC().Truncate(time.Second))
 	var retained sessionv1.MachineManagementSessionBindingSpec
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		asset, access, err := a.resolve(ctx, proposed)

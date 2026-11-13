@@ -10,7 +10,7 @@ metadata:
   name: fleet-session-controller
 rules:
   - apiGroups: [metal.datumapis.com]
-    resources: [machinemanagementsessions, machines, machinecapacities, machineallocations]
+    resources: [machinemanagementsessions, machines, machinecapacities]
     verbs: [get, list, watch]
   # The controller writes only metadata finalizers on the public object. CEL
   # validation keeps the customer-authored spec immutable.
@@ -20,6 +20,9 @@ rules:
   - apiGroups: [metal.datumapis.com]
     resources: [machinemanagementsessions/status]
     verbs: [get, update, patch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
   - apiGroups: [metal.datumapis.com]
     resources: [machinemanagementsessions/finalizers]
     verbs: [update, patch]
@@ -29,6 +32,30 @@ rules:
   - apiGroups: [metal.datumapis.com]
     resources: [machinemanagementsessionbindings/status]
     verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-session-custody
+  namespace: fleet-system
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-session-custody
+  namespace: fleet-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-session-custody
+subjects:
+  - kind: ServiceAccount
+    name: fleet-controller
+    namespace: fleet-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

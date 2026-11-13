@@ -26,8 +26,10 @@ Missing integrations fail closed.
 Supply an authoritative private-record client with resource-version CAS, not a
 public API cache interpreted as authority. Inject the same lifecycle authority
 into `SessionReconciler.Lifecycle` and `ProjectionReconciler.Lifecycle`. The current
-`fleet-controller` executable supplies neither a production resolver nor a
-synthetic fallback; its readiness check reports unavailable. The manager and
+`fleet-controller` executable defaults to production-unavailable readiness. An
+explicit [synthetic fixture mode](synthetic-bmc-fixture.md) injects private grants
+and real Coordinator custody for test-only runnable integration; it is not a
+production fallback. The manager and
 staging handler remain allocation owners, and their shared Coordinator release
 path includes this barrier. The projector checks custody on its existing bounded
 refresh cadence, without allocation CRD watches or cluster-wide Secret access.
@@ -109,7 +111,8 @@ arbitrary Redfish response. Stable protected journal storage is required. Unknow
 operations still need qualified recovery evidence; this change does not auto-clear
 tasks or redesign quota, nonce persistence, or general idempotency.
 
-Pre-bound-CRD E2E fixtures are not an integration source. The separate E2E owner
-must explicitly wire a synthetic resolver backed by real lifecycle custody for
-test use without enabling a production fallback. No Kind/Docker environment or
-`hack/e2e` files were changed or run for this implementation.
+Pre-bound-CRD E2E fixtures are not an integration source. The
+[synthetic fixture executable](synthetic-bmc-fixture.md#exact-harness-recipe)
+provides real allocation/release transitions and explicit resolver wiring. The
+separate E2E owner integrates those commands into the harness. No Kind/Docker
+environment or `hack/e2e` files were changed or run for this integration repair.
