@@ -28,7 +28,8 @@ such as `metal.datumapis.com-provider`. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
 
 This started as the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17).
-It has no deployment manifests yet.
+It is deployed by `config/components/provider-ui-plugin` and registered through
+the `metal` ServiceConfiguration's `userInterface`.
 
 The provider project is `datum-cloud`, the only one for now, set in
 `src/lib/api.ts`. The wire types are in `../shared/fleet-api.ts`, transcribed

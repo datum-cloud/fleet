@@ -82,10 +82,21 @@ as `ghcr.io/datum-cloud/fleet` and then publishes `config` as
 manager image tag into `config/base/manager`, so an environment consumes one
 matched image and manifest revision.
 
-The manager image can be built locally with:
+The same workflow publishes the portal plugins as
+`ghcr.io/datum-cloud/fleet-consumer-ui-plugin` (cloud-portal) and
+`ghcr.io/datum-cloud/fleet-provider-ui-plugin` (staff-portal), and stamps their
+tags into `config/components/consumer-ui-plugin` and
+`config/components/provider-ui-plugin`. The management-plane overlay includes
+both components. Each serves its plugin over HTTPS inside the cluster only; the
+portals' servers fetch it from the URLs in the `metal` ServiceConfiguration's
+`userInterface`.
+
+The images can be built locally with:
 
 ```sh
 docker build -f build/manager.Dockerfile .
+docker build -f build/ui-plugin.Dockerfile --build-arg PLUGIN=consumer .
+docker build -f build/ui-plugin.Dockerfile --build-arg PLUGIN=provider .
 ```
 
 Publishing an image does not relax the readiness boundary below. Deployment

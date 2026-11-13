@@ -8,6 +8,18 @@ spec:
   # Promotion is forward-only. Environment overlays may publish this only
   # after the location and lifecycle integrations for that environment pass.
   phase: Draft
+  # The portals fetch the plugins from these in-cluster Services
+  # (config/components/{consumer,provider}-ui-plugin). Cloud-portal shows
+  # Machines only to projects with an Active entitlement to the service.
+  userInterface:
+    consumer:
+      assets:
+        baseURL: https://fleet-consumer-ui-plugin.fleet-system.svc.cluster.local
+      visibility:
+        entitlement: Required
+    provider:
+      assets:
+        baseURL: https://fleet-provider-ui-plugin.fleet-system.svc.cluster.local
   locations:
     supportedClasses:
       - datum-managed

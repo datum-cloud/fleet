@@ -4,3 +4,6 @@ resources:
   - ../../base/crd
   - ../../base/manager
   - ../../components/admission
+components:
+  - ../../components/consumer-ui-plugin
+  - ../../components/provider-ui-plugin

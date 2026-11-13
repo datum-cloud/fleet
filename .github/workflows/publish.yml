@@ -18,8 +18,41 @@ jobs:
       platforms: linux/amd64,linux/arm64
     secrets: inherit
 
+  # The plugin images are deployed by config/components/{consumer,provider}-ui-plugin
+  # in the same kustomize bundle.
+  publish-consumer-ui-plugin-image:
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
+    with:
+      image-name: fleet-consumer-ui-plugin
+      dockerfile-path: build/ui-plugin.Dockerfile
+      extra-build-args: |
+        PLUGIN=consumer
+    secrets: inherit
+
+  publish-provider-ui-plugin-image:
+    permissions:
+      id-token: write
+      contents: read
+      packages: write
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
+    with:
+      image-name: fleet-provider-ui-plugin
+      dockerfile-path: build/ui-plugin.Dockerfile
+      extra-build-args: |
+        PLUGIN=provider
+    secrets: inherit
+
   publish-kustomize-bundle:
-    needs: publish-container-image
+    needs:
+      [
+        publish-container-image,
+        publish-consumer-ui-plugin-image,
+        publish-provider-ui-plugin-image,
+      ]
     permissions:
       id-token: write
       contents: read
@@ -31,4 +64,6 @@ jobs:
       images: |
         - { path: config/base/manager, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
         - { path: config/overlays/synthetic-staging, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
+        - { path: config/components/consumer-ui-plugin, name: ghcr.io/datum-cloud/fleet-consumer-ui-plugin, tag: "${{ needs.publish-consumer-ui-plugin-image.outputs.tag }}" }
+        - { path: config/components/provider-ui-plugin, name: ghcr.io/datum-cloud/fleet-provider-ui-plugin, tag: "${{ needs.publish-provider-ui-plugin-image.outputs.tag }}" }
     secrets: inherit
