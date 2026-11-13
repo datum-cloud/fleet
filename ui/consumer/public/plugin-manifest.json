@@ -16,7 +16,8 @@
         "icon": "server",
         "path": "/",
         "order": 20,
-        "section": "build"
+        "section": "build",
+        "serviceRef": "metal.datumapis.com"
       }
     },
     {
