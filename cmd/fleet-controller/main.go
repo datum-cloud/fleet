@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -53,7 +54,7 @@ func main() {
 	must((&controller.SessionReconciler{PerClaimLimit: *perClaimLimit, PerProjectLimit: *perProjectLimit}).SetupWithManager(mgr))
 	must((&controller.ProjectionReconciler{FederationClient: federationClient, Freshness: *authorityFreshness}).SetupWithManager(mgr))
 	must(mgr.AddHealthzCheck("healthz", healthz.Ping))
-	must(mgr.AddReadyzCheck("readyz", healthz.Ping))
+	must(mgr.AddReadyzCheck("lifecycle-authority", func(*http.Request) error { return controller.ErrUnsupported }))
 	slog.Info("starting Fleet session controllers")
 	must(mgr.Start(ctrl.SetupSignalHandler()))
 }

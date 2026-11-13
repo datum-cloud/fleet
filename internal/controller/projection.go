@@ -15,12 +15,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	coordinationv1 "go.datum.net/fleet/internal/api/coordination/v1alpha1"
 	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
-	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 )
 
 // ProjectionReconciler writes only to the Karmada hub. Karmada carries the
@@ -33,6 +30,7 @@ type ProjectionReconciler struct {
 	HubNamespace     string
 	Now              func() time.Time
 	Freshness        time.Duration
+	Lifecycle        SessionLifecycle
 }
 
 func (r *ProjectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -43,8 +41,11 @@ func (r *ProjectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if req.Namespace != r.systemNamespace() {
 		return ctrl.Result{}, nil
 	}
+	if cleanup := apimeta.FindStatusCondition(b.Status.Conditions, "CleanupConfirmed"); cleanup != nil && cleanup.Status == metav1.ConditionTrue {
+		return r.finishTeardown(ctx, &b)
+	}
 	key := types.NamespacedName{Namespace: r.hubNamespace(), Name: b.Name}
-	active := r.allocationStillActive(ctx, &b)
+	active := r.now().Before(b.Spec.ExpiresAt.Time) && r.allocationStillActive(ctx, &b)
 	if !active && b.Annotations[RevokedAtAnnotation] == "" {
 		patch := client.MergeFrom(b.DeepCopy())
 		if b.Annotations == nil {
@@ -60,7 +61,23 @@ func (r *ProjectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	err := r.FederationClient.Get(ctx, key, &p)
 	if apierrors.IsNotFound(err) {
 		if b.Annotations[RevokedAtAnnotation] != "" || !active {
+			if r.Lifecycle != nil {
+				completed, err := r.Lifecycle.CancelUnprojected(ctx, &b)
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+				if completed {
+					setNamedCondition(&b.Status.Conditions, "CleanupConfirmed", b.Generation, metav1.ConditionTrue, "NeverProjected", "Private custody proves no projection was admitted.", r.now())
+					if err := r.Status().Update(ctx, &b); err != nil {
+						return ctrl.Result{}, err
+					}
+					return r.finishTeardown(ctx, &b)
+				}
+			}
 			return ctrl.Result{}, nil
+		}
+		if err := r.Lifecycle.BeginProjection(ctx, &b); err != nil {
+			return ctrl.Result{}, err
 		}
 		p = *r.build(&b)
 		if err := r.FederationClient.Create(ctx, &p); err != nil {
@@ -111,29 +128,7 @@ func (r *ProjectionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 func (r *ProjectionReconciler) allocationStillActive(ctx context.Context, b *fleetv1alpha1.MachineManagementSessionBinding) bool {
-	var allocation fleetv1.MachineAllocation
-	if err := r.Get(ctx, types.NamespacedName{Namespace: r.systemNamespace(), Name: b.Spec.AllocationName}, &allocation); err != nil {
-		return false
-	}
-	if allocation.UID != b.Spec.AllocationUID || allocation.Status.Phase != "Active" ||
-		allocation.Spec.MachineRef.Project != b.Spec.ConsumerProject ||
-		allocation.Spec.MachineRef.Namespace != b.Spec.MachineNamespace || allocation.Spec.MachineRef.Name != b.Spec.MachineName ||
-		allocation.Spec.MachineCapacityRef.Namespace != b.Spec.MachineCapacityNamespace || allocation.Spec.MachineCapacityRef.Name != b.Spec.MachineCapacityName ||
-		allocation.Annotations[AllocationMachineUIDAnnotation] != string(b.Spec.MachineUID) ||
-		allocation.Annotations[MemberClusterAnnotation] != b.Spec.MemberCluster ||
-		allocation.Annotations[LocationNameAnnotation] != b.Spec.LocationName ||
-		allocation.Annotations[ProviderProjectAnnotation] != b.Spec.ProviderProject {
-		return false
-	}
-	var machine fleetv1.Machine
-	if err := r.Get(ctx, types.NamespacedName{Namespace: b.Spec.MachineNamespace, Name: b.Spec.MachineName}, &machine); err != nil || machine.UID != b.Spec.MachineUID {
-		return false
-	}
-	var capacity fleetv1.MachineCapacity
-	if err := r.Get(ctx, types.NamespacedName{Namespace: b.Spec.MachineCapacityNamespace, Name: b.Spec.MachineCapacityName}, &capacity); err != nil {
-		return false
-	}
-	return capacity.UID == b.Spec.MachineCapacityUID && capacity.Spec.DeviceRef.Name == b.Spec.DeviceName
+	return r.Lifecycle != nil && r.Lifecycle.Active(ctx, b)
 }
 
 func (r *ProjectionReconciler) revokeProjection(ctx context.Context, b *fleetv1alpha1.MachineManagementSessionBinding, p *coordinationv1.ProjectedMachineManagementSession) (ctrl.Result, error) {
@@ -146,18 +141,29 @@ func (r *ProjectionReconciler) revokeProjection(ctx context.Context, b *fleetv1a
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	cleanup := apimeta.FindStatusCondition(p.Status.Conditions, "CleanupConfirmed")
-	if cleanup == nil || cleanup.Status != metav1.ConditionTrue {
+	if cleanup == nil || cleanup.Status != metav1.ConditionTrue || p.Status.TeardownSpecDigest != coordinationv1.TeardownDigest(p) {
 		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+	setNamedCondition(&b.Status.Conditions, "CleanupConfirmed", b.Generation, metav1.ConditionTrue, "LocationTeardownConfirmed", "The selected location gateway confirmed session teardown through Karmada status aggregation.", r.now())
+	setNamedCondition(&b.Status.Conditions, fleetv1alpha1.ConditionReady, b.Generation, metav1.ConditionFalse, "Revoked", "The session authority has ended.", r.now())
+	if err := r.Status().Update(ctx, b); err != nil {
+		return ctrl.Result{}, err
+	}
+	return r.finishTeardown(ctx, b)
+}
+
+func (r *ProjectionReconciler) finishTeardown(ctx context.Context, b *fleetv1alpha1.MachineManagementSessionBinding) (ctrl.Result, error) {
+	if r.Lifecycle == nil {
+		return ctrl.Result{}, ErrUnsupported
+	}
+	if err := r.Lifecycle.Complete(ctx, b); err != nil {
+		return ctrl.Result{}, err
 	}
 	if err := r.deletePolicy(ctx, b.Name); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := r.FederationClient.Delete(ctx, p); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, err
-	}
-	setNamedCondition(&b.Status.Conditions, "CleanupConfirmed", b.Generation, metav1.ConditionTrue, "LocationTeardownConfirmed", "The selected location gateway confirmed session teardown through Karmada status aggregation.", r.now())
-	setNamedCondition(&b.Status.Conditions, fleetv1alpha1.ConditionReady, b.Generation, metav1.ConditionFalse, "Revoked", "The session authority has ended.", r.now())
-	return ctrl.Result{}, r.Status().Update(ctx, b)
+	projection := &coordinationv1.ProjectedMachineManagementSession{ObjectMeta: metav1.ObjectMeta{Namespace: r.hubNamespace(), Name: b.Name}}
+	return ctrl.Result{}, client.IgnoreNotFound(r.FederationClient.Delete(ctx, projection))
 }
 
 func (r *ProjectionReconciler) build(b *fleetv1alpha1.MachineManagementSessionBinding) *coordinationv1.ProjectedMachineManagementSession {
@@ -226,19 +232,7 @@ func (r *ProjectionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	r.Client = mgr.GetClient()
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&fleetv1alpha1.MachineManagementSessionBinding{}).
-		Watches(&fleetv1.MachineAllocation{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-			a := obj.(*fleetv1.MachineAllocation)
-			var list fleetv1alpha1.MachineManagementSessionBindingList
-			if err := r.List(ctx, &list, client.InNamespace(r.systemNamespace()), client.MatchingLabels{AllocationNameLabel: a.Name}); err != nil {
-				return nil
-			}
-			out := make([]reconcile.Request, 0, len(list.Items))
-			for i := range list.Items {
-				out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: list.Items[i].Namespace, Name: list.Items[i].Name}})
-			}
-			return out
-		})).Complete(r)
+		For(&fleetv1alpha1.MachineManagementSessionBinding{}).Complete(r)
 }
 
 func (r *ProjectionReconciler) systemNamespace() string {

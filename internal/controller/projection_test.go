@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -54,14 +55,15 @@ func TestReleasedAllocationTerminallyRevokesProjection(t *testing.T) {
 		t.Fatal("allocation release was not propagated as revocation")
 	}
 	apimeta.SetStatusCondition(&revoked.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, Reason: "GatewayStopped", Message: "stopped", ObservedGeneration: revoked.Generation})
+	revoked.Status.TeardownSpecDigest = coordinationv1.TeardownDigest(&revoked)
 	if err := federation.Status().Update(context.Background(), &revoked); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Reconcile(context.Background(), req); err != nil {
-		t.Fatal(err)
+	if _, err := r.Reconcile(context.Background(), req); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("missing lifecycle authority must block completion: %v", err)
 	}
-	if err := federation.Get(context.Background(), key, &revoked); err == nil {
-		t.Fatal("acknowledged federated projection survived cleanup")
+	if err := federation.Get(context.Background(), key, &revoked); err != nil {
+		t.Fatal("projection evidence removed without lifecycle settlement")
 	}
 }
 

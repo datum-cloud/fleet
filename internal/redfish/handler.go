@@ -226,6 +226,22 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, raw []byte, eff
 	id := journal.Identity(authority.SessionName, r.Method, r.URL.Path, raw)
 	unlock := h.Journal.MachineLock(authority.DeviceName)
 	defer unlock()
+	current := h.authority()
+	if current.SessionName != authority.SessionName || current.DeviceName != authority.DeviceName || current.MachineCapacityName != authority.MachineCapacityName || current.OperationEpoch != authority.OperationEpoch || !h.now().Before(current.ExpiresAt) || !h.now().Before(current.FreshUntil) {
+		writeError(w, http.StatusServiceUnavailable, "Fleet.1.0.AuthorityStale", "Hardware authority changed while waiting for serialization.")
+		return
+	}
+	operations, err := h.Journal.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Fleet.1.0.JournalUnavailable", "Prior hardware effects could not be verified.")
+		return
+	}
+	for _, operation := range operations {
+		if operation.DeviceName == authority.DeviceName && operation.ID != id && operation.Outcome != journal.Succeeded {
+			writeError(w, http.StatusConflict, "Fleet.1.0.OperationUnconfirmed", "A previous hardware effect has not been verified.")
+			return
+		}
+	}
 	op, fresh, err := h.Journal.Admit(journal.Operation{ID: id, SessionName: authority.SessionName, MachineCapacityName: authority.MachineCapacityName, DeviceName: authority.DeviceName, Method: r.Method, VirtualTarget: r.URL.Path, AcceptedBody: append([]byte(nil), raw...), PhysicalTarget: h.Adapter.PhysicalTarget(), IdempotencyIdentity: id, OperationEpoch: authority.OperationEpoch, ConflictPrecondition: fmt.Sprintf("capacity=%s device=%s fresh-before=%s", authority.MachineCapacityName, authority.DeviceName, authority.FreshUntil.UTC().Format(time.RFC3339))})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Fleet.1.0.JournalUnavailable", "The mutation could not be durably admitted.")
@@ -243,8 +259,9 @@ func (h *Handler) mutate(w http.ResponseWriter, r *http.Request, raw []byte, eff
 			h.writeExistingTask(w, op)
 			return
 		}
-		op, _ = h.Journal.Finish(id, journal.Failed, http.StatusBadGateway, "adapter returned a bounded non-secret failure")
-		fleetmetrics.Operations.WithLabelValues("failed").Inc()
+		op, _ = h.Journal.Finish(id, journal.Unknown, http.StatusBadGateway, "adapter failure does not establish whether the effect occurred")
+		fleetmetrics.Operations.WithLabelValues("unknown").Inc()
+		fleetmetrics.UnknownOperations.Inc()
 		writeError(w, http.StatusBadGateway, "Fleet.1.0.BMCOperationFailed", "The allocated system did not complete the requested operation.")
 		return
 	}

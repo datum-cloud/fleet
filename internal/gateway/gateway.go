@@ -4,6 +4,7 @@ package gateway
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -12,6 +13,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -72,10 +74,13 @@ type Reconciler struct {
 }
 
 type activeSession struct {
-	cancel context.CancelFunc
-	mu     sync.RWMutex
-	spec   coordinationv1.ProjectedMachineManagementSessionSpec
-	target resolvedTarget
+	cancel  context.CancelFunc
+	mu      sync.RWMutex
+	effects sync.RWMutex
+	stopped bool
+	done    chan struct{}
+	spec    coordinationv1.ProjectedMachineManagementSessionSpec
+	target  resolvedTarget
 }
 
 type resolvedTarget struct {
@@ -100,10 +105,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	now := time.Now()
 	if p.Spec.DesiredState == fleetv1alpha1.ProjectionRevoked {
 		r.stop(req.NamespacedName)
-		if cleanup := apimeta.FindStatusCondition(p.Status.Conditions, "CleanupConfirmed"); cleanup != nil && cleanup.Status == metav1.ConditionTrue {
+		if cleanup := apimeta.FindStatusCondition(p.Status.Conditions, "CleanupConfirmed"); cleanup != nil && cleanup.Status == metav1.ConditionTrue && cleanup.ObservedGeneration == p.Generation && p.Status.TeardownSpecDigest == coordinationv1.TeardownDigest(&p) {
 			return ctrl.Result{}, nil
 		}
+		if err := r.verifyTeardown(req.NamespacedName, p.Spec.MachineCapacityRef.Name); err != nil {
+			apimeta.SetStatusCondition(&p.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionUnknown, Reason: "EffectsUnconfirmed", Message: "Session shutdown or durable effect settlement is unconfirmed.", ObservedGeneration: p.Generation, LastTransitionTime: metav1.Now()})
+			return ctrl.Result{RequeueAfter: time.Second}, r.Status().Update(ctx, &p)
+		}
 		setCondition(&p, metav1.ConditionFalse, "Revoked", "The central allocation authority revoked this session.")
+		p.Status.TeardownSpecDigest = coordinationv1.TeardownDigest(&p)
 		apimeta.SetStatusCondition(&p.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, Reason: "GatewayStopped", Message: "The location gateway closed the relay stream and discarded session authority.", ObservedGeneration: p.Generation, LastTransitionTime: metav1.Now()})
 		return ctrl.Result{}, r.Status().Update(ctx, &p)
 	}
@@ -129,7 +139,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.Status().Update(ctx, &p)
 		}
 		runCtx, cancel := context.WithCancel(context.Background())
-		a = &activeSession{cancel: cancel, spec: p.Spec, target: target}
+		a = &activeSession{cancel: cancel, spec: p.Spec, target: target, done: make(chan struct{})}
 		r.active[req.NamespacedName] = a
 		go r.run(runCtx, req.NamespacedName, a)
 	} else {
@@ -153,6 +163,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 func (r *Reconciler) run(ctx context.Context, key client.ObjectKey, a *activeSession) {
+	defer close(a.done)
 	fleetmetrics.ActiveSessions.Inc()
 	defer fleetmetrics.ActiveSessions.Dec()
 	cert, der, fingerprint, err := loadOrCreateCertificate(r.Config.StateDir, key.Name)
@@ -160,9 +171,31 @@ func (r *Reconciler) run(ctx context.Context, key client.ObjectKey, a *activeSes
 		r.failStatus(key, "GatewayCertificateError", "The location gateway could not create its session certificate.")
 		return
 	}
-	store, err := journal.Open(filepath.Join(r.Config.JournalDir, "operations"))
+	sessionStore, err := journal.Open(filepath.Join(r.Config.JournalDir, "sessions"))
+	if err != nil {
+		return
+	}
+	if _, err := sessionStore.Get(journal.Identity(key.Name, "REVOKED", "", nil)); !errors.Is(err, os.ErrNotExist) {
+		r.failStatus(key, "SessionRevoked", "The durable journal does not permit this session to start.")
+		return
+	}
+	marker := journal.Identity(key.Name, "SESSION", "", nil)
+	var store *journal.Store
+	if _, markerErr := sessionStore.Get(marker); markerErr == nil {
+		store, err = r.existingOperations()
+	} else if errors.Is(markerErr, os.ErrNotExist) {
+		store, err = journal.Open(filepath.Join(r.Config.JournalDir, "operations"))
+	} else {
+		err = markerErr
+	}
 	if err != nil {
 		r.failStatus(key, "JournalUnavailable", "The durable operation journal is unavailable.")
+		return
+	}
+	a.mu.RLock()
+	sessionSpec, sessionTarget := a.spec, a.target
+	a.mu.RUnlock()
+	if err := retainSession(sessionStore, key.Name, sessionSpec, sessionTarget); err != nil {
 		return
 	}
 	routeID := randomHex(24)
@@ -200,7 +233,8 @@ func (r *Reconciler) run(ctx context.Context, key client.ObjectKey, a *activeSes
 	// The relay admits one connector for the session, so an HTTP idle timeout
 	// would permanently strand a valid session during a long PXE boot. Expiry,
 	// revocation, and projection teardown bound the stream lifetime instead.
-	server := &http.Server{Handler: protected, ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 16 << 10}
+	server := &http.Server{Handler: protected, ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
+	defer server.Close()
 	_ = server.Serve(newOneConnListener(tlsConn))
 	_ = der // DER is retained only to make certificate pin derivation explicit.
 	r.endedStatus(key, "Disconnected", "The client connection ended.")
@@ -223,6 +257,12 @@ func (r *Reconciler) proofMiddleware(a *activeSession, routeID string, next http
 	used := map[string]bool{}
 	var mu sync.Mutex
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		a.effects.RLock()
+		defer a.effects.RUnlock()
+		if a.stopped {
+			http.Error(w, "session revoked", http.StatusForbidden)
+			return
+		}
 		a.mu.RLock()
 		spec := a.spec
 		a.mu.RUnlock()
@@ -288,8 +328,86 @@ func (r *Reconciler) stop(key client.ObjectKey) {
 	defer r.mu.Unlock()
 	if a := r.active[key]; a != nil {
 		a.cancel()
-		delete(r.active, key)
+		a.effects.Lock()
+		a.stopped = true
+		a.effects.Unlock()
 	}
+}
+
+func (r *Reconciler) verifyTeardown(key client.ObjectKey, capacity string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if active := r.active[key]; active != nil {
+		select {
+		case <-active.done:
+		default:
+			return fmt.Errorf("gateway stream has not stopped")
+		}
+	}
+	store, err := r.existingOperations()
+	if err != nil {
+		return err
+	}
+	markerID := journal.Identity(key.Name, "SESSION", "", nil)
+	sessionStore, err := journal.Open(filepath.Join(r.Config.JournalDir, "sessions"))
+	if err != nil {
+		return err
+	}
+	marker, err := sessionStore.Get(markerID)
+	if err != nil || marker.SessionName != key.Name || marker.MachineCapacityName != capacity || marker.Outcome != journal.Succeeded {
+		return fmt.Errorf("session journal custody is unavailable")
+	}
+	operations, err := store.List()
+	if err != nil {
+		return err
+	}
+	for _, operation := range operations {
+		if operation.SessionName == key.Name && (operation.MachineCapacityName != capacity || operation.Outcome != journal.Succeeded) {
+			return fmt.Errorf("session effects are not verified")
+		}
+	}
+	tombstone := journal.Identity(key.Name, "REVOKED", "", nil)
+	if _, _, err := sessionStore.Admit(journal.Operation{ID: tombstone, SessionName: key.Name, MachineCapacityName: capacity, DeviceName: marker.DeviceName}); err != nil {
+		return err
+	}
+	if _, err := sessionStore.Finish(tombstone, journal.Succeeded, 0, "session terminally revoked after request and effect settlement"); err != nil {
+		return err
+	}
+	delete(r.active, key)
+	return nil
+}
+
+func (r *Reconciler) existingOperations() (*journal.Store, error) {
+	directory := filepath.Join(r.Config.JournalDir, "operations")
+	if info, err := os.Stat(directory); err != nil {
+		return nil, err
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("operation journal directory is unavailable")
+	}
+	return journal.Open(directory)
+}
+
+func retainSession(store *journal.Store, name string, spec coordinationv1.ProjectedMachineManagementSessionSpec, target resolvedTarget) error {
+	spec.AuthorityFreshUntil = metav1.Time{}
+	inputs, err := json.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	marker := journal.Identity(name, "SESSION", "", nil)
+	physical := target.Adapter + ":" + target.SystemID
+	retained, _, err := store.Admit(journal.Operation{ID: marker, SessionName: name, MachineCapacityName: target.MachineCapacityName, DeviceName: target.DeviceName, PhysicalTarget: physical, AcceptedBody: inputs})
+	if err != nil {
+		return err
+	}
+	var retainedInputs bytes.Buffer
+	if err := json.Compact(&retainedInputs, retained.AcceptedBody); err != nil {
+		return err
+	}
+	if retained.SessionName != name || retained.MachineCapacityName != target.MachineCapacityName || retained.DeviceName != target.DeviceName || retained.PhysicalTarget != physical || !bytes.Equal(retainedInputs.Bytes(), inputs) {
+		return fmt.Errorf("retained session inputs differ")
+	}
+	_, err = store.Finish(marker, journal.Succeeded, 0, "session journal retained before route registration")
+	return err
 }
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Client = mgr.GetClient()

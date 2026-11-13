@@ -29,20 +29,16 @@ import (
 )
 
 const (
-	SystemNamespace                = "fleet-system"
-	LocationNamespace              = "machine-access-system"
-	PrincipalAnnotation            = "fleet.datumapis.com/requesting-principal"
-	MachineUIDLabel                = "fleet.datumapis.com/machine-uid"
-	AllocationNameLabel            = "fleet.datumapis.com/allocation-name"
-	SessionUIDLabel                = "fleet.datumapis.com/session-uid"
-	RevokedAtAnnotation            = "fleet.datumapis.com/revoked-at"
-	MemberClusterLabel             = "fleet.datumapis.com/member-cluster"
-	MemberClusterAnnotation        = "fleet.datumapis.com/member-cluster"
-	ProviderProjectAnnotation      = "fleet.datumapis.com/provider-project"
-	LocationNameAnnotation         = "fleet.datumapis.com/location-name"
-	AllocationMachineUIDAnnotation = "fleet.datumapis.com/machine-uid"
-	DefaultConnectWindow           = time.Minute
-	DefaultAuthorityFreshness      = 2 * time.Minute
+	SystemNamespace           = "fleet-system"
+	LocationNamespace         = "machine-access-system"
+	PrincipalAnnotation       = "fleet.datumapis.com/requesting-principal"
+	MachineUIDLabel           = "fleet.datumapis.com/machine-uid"
+	AllocationNameLabel       = "fleet.datumapis.com/allocation-name"
+	SessionUIDLabel           = "fleet.datumapis.com/session-uid"
+	RevokedAtAnnotation       = "fleet.datumapis.com/revoked-at"
+	MemberClusterLabel        = "fleet.datumapis.com/member-cluster"
+	DefaultConnectWindow      = time.Minute
+	DefaultAuthorityFreshness = 2 * time.Minute
 )
 
 type SessionReconciler struct {
@@ -51,12 +47,32 @@ type SessionReconciler struct {
 	Now             func() time.Time
 	PerClaimLimit   int
 	PerProjectLimit int
+	Lifecycle       SessionLifecycle
 }
 
 func (r *SessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var session fleetv1alpha1.MachineManagementSession
 	if err := r.Get(ctx, req.NamespacedName, &session); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if session.UID != "" && r.Lifecycle != nil {
+		binding, err := r.bindingForSession(ctx, session.UID)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if binding == nil {
+			retained, err := r.Lifecycle.Recover(ctx, &session)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if retained != nil {
+				binding = &fleetv1alpha1.MachineManagementSessionBinding{ObjectMeta: metav1.ObjectMeta{Name: bindingName(session.UID), Namespace: r.systemNamespace(), Labels: map[string]string{SessionUIDLabel: string(session.UID), MachineUIDLabel: string(retained.MachineUID), AllocationNameLabel: retained.AllocationName}}, Spec: *retained}
+				if err := r.Create(ctx, binding); err != nil && !apierrors.IsAlreadyExists(err) {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			}
+		}
 	}
 	if !session.DeletionTimestamp.IsZero() {
 		return r.revoke(ctx, &session)
@@ -94,46 +110,8 @@ func (r *SessionReconciler) admit(ctx context.Context, session *fleetv1alpha1.Ma
 		}
 		return ctrl.Result{}, err
 	}
-	var allocations fleetv1.MachineAllocationList
-	if err := r.List(ctx, &allocations, client.InNamespace(r.systemNamespace())); err != nil {
-		return ctrl.Result{}, err
-	}
-	matching := make([]*fleetv1.MachineAllocation, 0, 1)
-	for i := range allocations.Items {
-		a := &allocations.Items[i]
-		if a.Status.Phase == "Active" && a.Spec.MachineRef.Namespace == machine.Namespace && a.Spec.MachineRef.Name == machine.Name {
-			matching = append(matching, a)
-		}
-	}
-	if len(matching) != 1 {
-		return r.reject(ctx, session, "MachineNotAllocated", "The Machine does not have exactly one active authoritative allocation.")
-	}
-	a := matching[0]
-	if a.Annotations[AllocationMachineUIDAnnotation] != string(machine.UID) {
-		return r.reject(ctx, session, "AllocationChanged", "The active allocation does not belong to this Machine incarnation.")
-	}
-	var capacity fleetv1.MachineCapacity
-	capacityKey := types.NamespacedName{Namespace: a.Spec.MachineCapacityRef.Namespace, Name: a.Spec.MachineCapacityRef.Name}
-	if err := r.Get(ctx, capacityKey, &capacity); err != nil {
-		if apierrors.IsNotFound(err) {
-			return r.reject(ctx, session, "CapacityNotFound", "The allocated MachineCapacity is unavailable.")
-		}
-		return ctrl.Result{}, err
-	}
-	member := a.Annotations[MemberClusterAnnotation]
-	location := a.Annotations[LocationNameAnnotation]
-	providerProject := a.Annotations[ProviderProjectAnnotation]
-	if member == "" || location == "" {
-		return r.reject(ctx, session, "LocationNotFederated", "The allocation location has no registered federation member.")
-	}
-	if providerProject == "" || capacity.Spec.DeviceRef.Name == "" {
-		return r.reject(ctx, session, "ProviderTargetUnresolved", "The allocation does not resolve to registered provider capacity.")
-	}
-	if result, err := r.enforceLimits(ctx, a.Spec.MachineRef.Project, machine.UID); err != nil || result != nil {
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		return r.reject(ctx, session, "SessionLimitExceeded", *result)
+	if r.Lifecycle == nil {
+		return r.reject(ctx, session, "AuthorityUnavailable", "Authoritative lifecycle access is unavailable.")
 	}
 	now := r.now()
 	ttl := session.Spec.TTL.Duration
@@ -145,20 +123,36 @@ func (r *SessionReconciler) admit(ctx context.Context, session *fleetv1alpha1.Ma
 	b := &fleetv1alpha1.MachineManagementSessionBinding{
 		TypeMeta: metav1.TypeMeta{APIVersion: fleetv1alpha1.GroupVersion.String(), Kind: "MachineManagementSessionBinding"},
 		ObjectMeta: metav1.ObjectMeta{Name: bindingName(session.UID), Namespace: r.systemNamespace(), Labels: map[string]string{
-			SessionUIDLabel: string(session.UID), MachineUIDLabel: string(machine.UID), AllocationNameLabel: a.Name,
+			SessionUIDLabel: string(session.UID), MachineUIDLabel: string(machine.UID),
 		}},
 		Spec: fleetv1alpha1.MachineManagementSessionBindingSpec{
 			SessionNamespace: session.Namespace, SessionName: session.Name, SessionUID: session.UID,
-			RequestingPrincipal: principal, ConsumerProject: a.Spec.MachineRef.Project, ProviderProject: providerProject,
-			MachineNamespace: machine.Namespace, MachineName: machine.Name, MachineUID: machine.UID,
-			AllocationName: a.Name, AllocationUID: a.UID,
-			MachineCapacityNamespace: capacity.Namespace, MachineCapacityName: capacity.Name, MachineCapacityUID: capacity.UID,
-			DeviceName: capacity.Spec.DeviceRef.Name, LocationName: location, MemberCluster: member,
+			RequestingPrincipal: principal,
+			MachineNamespace:    machine.Namespace, MachineName: machine.Name, MachineUID: machine.UID,
 			Protocol: session.Spec.Protocol, AccessProfile: session.Spec.AccessProfile,
 			ClientPublicKey: session.Spec.ClientPublicKey, ConnectBefore: connect, ExpiresAt: expiry,
 			SessionCorrelationID: randomCorrelationID(), OperationCorrelationID: randomCorrelationID(),
 		},
 	}
+	if !machine.DeletionTimestamp.IsZero() {
+		return r.reject(ctx, session, "MachineDeleting", "The Machine is being released.")
+	}
+	prepared, err := r.Lifecycle.Prepare(ctx, b.Spec)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if result, err := r.enforceLimits(ctx, prepared.ConsumerProject, machine.UID); err != nil || result != nil {
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return r.reject(ctx, session, "SessionLimitExceeded", *result)
+	}
+	retained, err := r.Lifecycle.Acquire(ctx, prepared)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: time.Second}, err
+	}
+	b.Spec = retained
+	b.Labels[AllocationNameLabel] = retained.AllocationName
 	if err := r.Create(ctx, b); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			return ctrl.Result{Requeue: true}, nil
@@ -167,7 +161,7 @@ func (r *SessionReconciler) admit(ctx context.Context, session *fleetv1alpha1.Ma
 	}
 	fleetmetrics.SessionAdmissions.WithLabelValues("admitted").Inc()
 	slog.InfoContext(ctx, "machine-management session admitted",
-		"session", session.Name, "machine", machine.Name, "allocation", a.Name,
+		"session", session.Name, "machine", machine.Name, "allocation", retained.AllocationName,
 		"principal", principal, "sessionCorrelationID", b.Spec.SessionCorrelationID)
 	return ctrl.Result{RequeueAfter: time.Second}, nil
 }
@@ -251,6 +245,9 @@ func (r *SessionReconciler) revoke(ctx context.Context, s *fleetv1alpha1.Machine
 	if !controllerutil.ContainsFinalizer(s, fleetv1alpha1.SessionFinalizer) {
 		return ctrl.Result{}, nil
 	}
+	if r.Lifecycle == nil {
+		return ctrl.Result{}, ErrUnsupported
+	}
 	b, err := r.bindingForSession(ctx, s.UID)
 	if err == nil && b != nil {
 		if b.Annotations[RevokedAtAnnotation] == "" {
@@ -265,6 +262,9 @@ func (r *SessionReconciler) revoke(ctx context.Context, s *fleetv1alpha1.Machine
 			slog.InfoContext(ctx, "machine-management session revocation requested", "session", s.Name, "allocation", b.Spec.AllocationName, "sessionCorrelationID", b.Spec.SessionCorrelationID)
 		}
 		if c := apimeta.FindStatusCondition(b.Status.Conditions, "CleanupConfirmed"); c != nil && c.Status == metav1.ConditionTrue {
+			if err := r.Lifecycle.Complete(ctx, b); err != nil {
+				return ctrl.Result{}, err
+			}
 			fleetmetrics.RevocationLatency.Observe(r.now().Sub(s.DeletionTimestamp.Time).Seconds())
 			patch := client.MergeFrom(s.DeepCopy())
 			controllerutil.RemoveFinalizer(s, fleetv1alpha1.SessionFinalizer)
@@ -276,9 +276,7 @@ func (r *SessionReconciler) revoke(ctx context.Context, s *fleetv1alpha1.Machine
 			if err := r.Status().Update(ctx, b); err != nil {
 				return ctrl.Result{}, err
 			}
-			patch := client.MergeFrom(s.DeepCopy())
-			controllerutil.RemoveFinalizer(s, fleetv1alpha1.SessionFinalizer)
-			return ctrl.Result{}, r.Patch(ctx, s, patch)
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	} else if err != nil {

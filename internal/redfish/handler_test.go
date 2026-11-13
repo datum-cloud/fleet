@@ -107,6 +107,28 @@ func TestLostResponseIsUnknownAndNeverDuplicatesReset(t *testing.T) {
 	if !strings.Contains(w2.Body.String(), "Unknown") {
 		t.Fatalf("retry did not preserve unknown: %s", w2.Body.String())
 	}
+	conflicting := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"ForceOff"}`)
+	if conflicting.Code != http.StatusConflict || a.resets != 1 {
+		t.Fatal("a new power effect bypassed an unresolved prior effect")
+	}
+}
+
+func TestQueuedMutationRechecksAuthority(t *testing.T) {
+	adapter := &fakeAdapter{}
+	handler := newHandler(t, adapter)
+	reads := 0
+	handler.CurrentAuthority = func() Authority {
+		reads++
+		authority := handler.Authority
+		if reads > 1 {
+			authority.FreshUntil = handler.Now().Add(-time.Second)
+		}
+		return authority
+	}
+	response := request(handler, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"On"}`)
+	if response.Code != http.StatusServiceUnavailable || adapter.resets != 0 {
+		t.Fatalf("stale queued mutation executed: %d, %d", response.Code, adapter.resets)
+	}
 }
 
 func TestTaskCollectionListsOnlyCurrentSession(t *testing.T) {

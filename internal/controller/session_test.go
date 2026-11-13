@@ -17,6 +17,13 @@ import (
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 )
 
+const (
+	MemberClusterAnnotation        = "fleet.datumapis.com/member-cluster"
+	ProviderProjectAnnotation      = "fleet.datumapis.com/provider-project"
+	LocationNameAnnotation         = "fleet.datumapis.com/location-name"
+	AllocationMachineUIDAnnotation = "fleet.datumapis.com/machine-uid"
+)
+
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -32,7 +39,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func TestAdmissionPinsMachineAllocationAndCapacity(t *testing.T) {
+func TestPreboundAllocationCannotAuthorizeSession(t *testing.T) {
 	scheme := testScheme(t)
 	now := time.Unix(1000, 0)
 	machine := testMachine("machine-uid")
@@ -52,15 +59,8 @@ func TestAdmissionPinsMachineAllocationAndCapacity(t *testing.T) {
 	if err := c.List(context.Background(), &bindings, client.InNamespace(SystemNamespace)); err != nil {
 		t.Fatal(err)
 	}
-	if len(bindings.Items) != 1 {
+	if len(bindings.Items) != 0 {
 		t.Fatalf("bindings=%d", len(bindings.Items))
-	}
-	b := bindings.Items[0]
-	if b.Name != bindingName(session.UID) {
-		t.Fatalf("binding name=%q, want deterministic opaque name %q", b.Name, bindingName(session.UID))
-	}
-	if b.Spec.MachineUID != machine.UID || b.Spec.AllocationUID != allocation.UID || b.Spec.MachineCapacityUID != capacity.UID || b.Spec.DeviceName != "device-a" || b.Spec.ProviderProject != "provider" || b.Spec.RequestingPrincipal != "alice@example.test" {
-		t.Fatalf("binding not pinned: %+v", b.Spec)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestRecreatedMachineNameCannotInheritAllocation(t *testing.T) {
 	if err := c.Get(context.Background(), req.NamespacedName, &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Status.Conditions) == 0 || got.Status.Conditions[0].Reason != "AllocationChanged" {
+	if len(got.Status.Conditions) == 0 || got.Status.Conditions[0].Reason != "AuthorityUnavailable" {
 		t.Fatalf("conditions %+v", got.Status.Conditions)
 	}
 }

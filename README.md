@@ -32,11 +32,13 @@ and immutable image selection remain in `infra`. See
 [`config/README.md`](config/README.md). There is still no real provider
 integration; the standalone smoke and synthetic staging modes remain test fixtures.
 
-The repository also contains a deliberately narrow working prototype for
-allocation-scoped customer Redfish access. It is not a complete Fleet allocator,
-installer, or production BMC service. Its synthetic allocation records preserve
-the proposed authority and identity boundaries while exercising the access path
-end to end.
+The repository also contains a deliberately narrow prototype for
+allocation-scoped customer Redfish access. Its lifecycle integration consumes
+service-owned Secret custody and serializes sessions against installation and
+release, rather than trusting pre-bound allocation CRDs. Production access
+authorization, trusted observation resolution, and executor fencing remain
+unwired; the session controller defaults to unready and denies new sessions.
+See the [implemented lifecycle contract](docs/implementation/secure-bmc-lifecycle.md).
 
 ## Scope
 

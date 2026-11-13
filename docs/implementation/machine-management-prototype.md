@@ -17,13 +17,14 @@ The management-cluster controller authenticates through the Kubernetes delegated
 request identity retained by the mutating admission webhook. Kubernetes RBAC
 provides the prototype authorization decision: `machines` read and
 `machinemanagementsessions` create are separate grants. The controller resolves
-the customer `Machine` through the immutable, terminal `MachineAllocation` to a
+the customer `Machine` through service-owned claim and asset custody Secrets to a
 provider `MachineCapacity` and creates a protected
 `MachineManagementSessionBinding`. The latter pins the principal, consumer and
 provider project identities, the Machine, allocation, MachineCapacity and
-immutable `deviceRef`, authoritative location and Karmada member, client key,
+immutable `deviceRef`, an injected authoritative location and Karmada member, client key,
 deadlines, and correlation IDs. Local object UIDs are retained only in that
-management-API record as recreation preconditions. None cross through Karmada
+management-API record as recreation preconditions. `AllocationUID` now identifies
+the private allocation binding, not a `MachineAllocation` CRD UID. None cross through Karmada
 or enter the public session.
 
 The controller writes a least-privileged session to the separate Karmada API and
@@ -69,10 +70,10 @@ selection and `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, or
 
 1. `datumctl fleet machine-management proxy MACHINE` generates a key and asks the
    management API for a session using only the customer Machine name.
-2. Admission retains the authenticated principal. The controller resolves the
-   current Machine, exact active MachineAllocation, provider MachineCapacity and
-   immutable device relationship, enforces limits, and persists the protected
-   binding before projection.
+2. Admission retains the authenticated principal. With an explicitly injected
+   access resolver, the controller resolves current Machine and provider identities
+   against protected lifecycle custody, enforces advisory limits, and acquires an
+   exclusive session hold in the asset Secret before publishing the binding.
 3. The projector checks the authoritative allocation on every refresh, creates a
    Karmada hub copy and exact-member policy, and waits for status from that member.
    The gateway reads only its cell-local copy, establishes an outbound relay
@@ -209,22 +210,19 @@ BMC logs, validator reports, acceleration selection, and PXE callbacks.
 Implemented-and-tested code must not be confused with a production-ready
 contract. Important gaps are:
 
-- Machine, MachineAllocation, MachineCapacity, location registration, and local
-  enrollment data are synthetic and pre-bound. This access path does not consume the lifecycle library
-  or its protected Secret custody records. That library implements synthetic
-  allocation, installation and cleanup, but does not publish the synthetic
-  Active allocation annotations expected here. The BMC controller therefore
-  cannot be enabled against real allocations merely by installing its CRDs.
-  Production caller-preserving Milo admission, an authoritative allocation reader,
-  shared hardware-operation serialization, and a release barrier that waits for
-  session teardown remain integration work.
+- The [lifecycle integration](secure-bmc-lifecycle.md) now reads protected Secret
+  custody, retains an exclusive hardware session hold, and blocks installation,
+  cleanup and reuse until verified teardown. It does not trust synthetic Active
+  allocation annotations. Its production access resolver remains absent, so
+  installing CRDs does not enable BMC access. Portable tests use explicit injected
+  authorization and observation fixtures; they are not production IAM evidence.
 - Delegated Kubernetes authentication/RBAC models the intended Compute/Milo
   pattern, but the production Datum API aggregation and session IAM
   registration are not wired. Sessions belong to the existing `metal` service;
   default Machine read access must not imply session-create permission.
 - Karmada projection and status aggregation are implemented and exercised, but
-  the prototype stores the member name directly in the protected synthetic
-  allocation. Production needs an authoritative location-to-member registration
+  member selection now requires the injected access resolver rather than allocation
+  annotations. Production needs an authoritative location-to-member registration
   controller, credential rotation, HA operations, failover policy, and
   environment packaging in `test-infra`/`infra`.
 - The relay is a small Fleet-specific opaque TCP rendezvous with inner TLS, not

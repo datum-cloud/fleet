@@ -38,10 +38,11 @@ type ProjectedMachineManagementSessionSpec struct {
 }
 
 type ProjectedMachineManagementSessionStatus struct {
-	Connection  *sessionv1.SessionConnection `json:"connection,omitempty"`
-	ConnectedAt *metav1.Time                 `json:"connectedAt,omitempty"`
-	EndedAt     *metav1.Time                 `json:"endedAt,omitempty"`
-	Conditions  []metav1.Condition           `json:"conditions,omitempty"`
+	TeardownSpecDigest string                       `json:"teardownSpecDigest,omitempty"`
+	Connection         *sessionv1.SessionConnection `json:"connection,omitempty"`
+	ConnectedAt        *metav1.Time                 `json:"connectedAt,omitempty"`
+	EndedAt            *metav1.Time                 `json:"endedAt,omitempty"`
+	Conditions         []metav1.Condition           `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
