@@ -5,7 +5,7 @@ production authorization work for Secure BMC Access. It does not enable producti
 admission or claim live Milo acceptance.
 
 Read with the [Secure BMC proposal](../enhancements/secure-bmc-access.md),
-[prototype status](machine-management-prototype.md), [API architecture](../architecture.md),
+[prototype status](machine-management-prototype.md), [API architecture](../architecture/README.md),
 and [pinned provisioning proposal](../proposals/fleet-management/bare-metal-provisioning.md).
 
 ## Current implementation and gap

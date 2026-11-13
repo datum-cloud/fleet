@@ -56,7 +56,7 @@ These textual responses are preserved, not treated as proof of a completed
 implementation or a new reviewer approval. In particular, clarify replacement
 joining versus activation of shared identity, and how a stuck occupied logical
 slot interacts with demand-based pool sizing. These are implementation questions
-identified in the [design context](../../design.md), separate from the original
+identified in the [design context](../../architecture/design.md), separate from the original
 reviewer's requests.
 
 ### Historical CI discussion
@@ -70,7 +70,7 @@ runtime readiness. Fleet validation covers the imported documentation and assets
 ## Continuing review
 
 Review and amend the [service proposal](README.md) in this repository. Open design
-questions in each companion document and the [design context](../../design.md)
+questions in each companion document and the [design context](../../architecture/design.md)
 remain unresolved unless a subsequent change explicitly records a decision.
 The two original infra PRs are superseded by the combined Fleet proposal PR;
 their discussions remain accessible through the links above.

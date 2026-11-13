@@ -1,10 +1,12 @@
 # Implementation roadmap
 
-This proposed sequence follows the [reviewed Fleet designs](design.md). Milestones
+[Documentation overview](../README.md) · [Architecture guide](../architecture/README.md)
+
+This proposed sequence follows the [reviewed Fleet designs](../architecture/design.md). Milestones
 remain proposed. Owned-metal qualification and rented/managed adoption can
 progress independently while sharing allocation and installation contracts.
 
-An implemented [machine-management vertical slice](implementation/machine-management-prototype.md)
+An implemented [machine-management vertical slice](../implementation/machine-management-prototype.md)
 now supplies evidence for a subset of milestones 1 and 3: immutable session
 admission, retained allocation identity, location projection, bounded Redfish,
 durable operation admission, revocation, and a real virtual-BMC path. It does
@@ -13,7 +15,7 @@ production relay and therefore does not complete either milestone.
 
 ## 1. Define the service contracts
 
-The [Machine lifecycle enhancement](enhancements/machine-lifecycle/README.md) defines the five
+The [Machine lifecycle enhancement](../enhancements/machine-lifecycle/README.md) defines the five
 public resources, private reservation/operation records, Milo tenancy boundaries,
 and recovery acceptance criteria. Its functional target uses a persistent
 simulated provider; real hardware qualification remains in stage 3 below.

@@ -1,0 +1,37 @@
+{
+  "name": "fleet.datumapis.com",
+  "version": "0.1.0",
+  "sdk": { "name": "@datum-cloud/portal-plugin-sdk", "range": "^1.0.0" },
+  "remoteEntry": "remoteEntry.js",
+  "exposedModules": {
+    "MachineList": "./src/pages/machine-list.tsx",
+    "MachineDetail": "./src/pages/machine-detail.tsx"
+  },
+  "extensions": [
+    {
+      "type": "portal.nav/project",
+      "properties": {
+        "id": "machines",
+        "title": "Machines",
+        "icon": "server",
+        "path": "/",
+        "order": 20,
+        "section": "build"
+      }
+    },
+    {
+      "type": "portal.page/project",
+      "properties": {
+        "path": "",
+        "component": { "$codeRef": "MachineList" }
+      }
+    },
+    {
+      "type": "portal.page/project",
+      "properties": {
+        "path": ":machineName",
+        "component": { "$codeRef": "MachineDetail" }
+      }
+    }
+  ]
+}
