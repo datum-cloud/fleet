@@ -24,26 +24,30 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	synthetic := flag.Bool("synthetic", false, "required acknowledgment: test-only admission, observations and cleanup; never use with real assets")
-	kubeconfig := flag.String("kubeconfig", "", "management kubeconfig")
-	phase := flag.String("phase", "allocate", "allocate or release")
-	namespace := flag.String("namespace", "default", "Machine namespace")
-	machine := flag.String("machine", "db-01", "Machine name")
-	uid := flag.String("machine-uid", "", "exact retained Machine UID, required for release")
-	capacityNamespace := flag.String("capacity-namespace", "fleet-provider", "MachineCapacity namespace")
-	capacity := flag.String("capacity", "", "MachineCapacity name, required for allocation")
-	principal := flag.String("principal", "", "exact authenticated username authorized by this synthetic fixture")
-	member := flag.String("member-cluster", "", "synthetic member route")
-	privateNamespace := flag.String("private-namespace", "fleet-system", "Coordinator and immutable synthetic grant Secret namespace")
-	state := flag.String("state", "", "persistent synthetic executor file; retain across all release retries and reuse")
-	flag.Parse()
+func run(args []string) error {
+	// controller-runtime registers kubeconfig globally; keep this CLI isolated.
+	flags := flag.NewFlagSet("fleet-session-fixture", flag.ContinueOnError)
+	synthetic := flags.Bool("synthetic", false, "required acknowledgment: test-only admission, observations and cleanup; never use with real assets")
+	kubeconfig := flags.String("kubeconfig", "", "management kubeconfig")
+	phase := flags.String("phase", "allocate", "allocate or release")
+	namespace := flags.String("namespace", "default", "Machine namespace")
+	machine := flags.String("machine", "db-01", "Machine name")
+	uid := flags.String("machine-uid", "", "exact retained Machine UID, required for release")
+	capacityNamespace := flags.String("capacity-namespace", "fleet-provider", "MachineCapacity namespace")
+	capacity := flags.String("capacity", "", "MachineCapacity name, required for allocation")
+	principal := flags.String("principal", "", "exact authenticated username authorized by this synthetic fixture")
+	member := flags.String("member-cluster", "", "synthetic member route")
+	privateNamespace := flags.String("private-namespace", "fleet-system", "Coordinator and immutable synthetic grant Secret namespace")
+	state := flags.String("state", "", "persistent synthetic executor file; retain across all release retries and reuse")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
 	if !*synthetic || *kubeconfig == "" || *state == "" || (*phase != "allocate" && *phase != "release") {
 		return errors.New("--synthetic, --kubeconfig, --state and --phase=allocate|release are required")
 	}
