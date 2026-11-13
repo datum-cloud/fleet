@@ -80,39 +80,72 @@ previews and diagnostics. Reviewers have not yet been assigned.
 
 ### Resource model
 
-| Resource | Responsibility |
+| API group | Resources and responsibility |
 | --- | --- |
-| MachineProfile | Immutable hardware requirements. |
-| MachineClass | Provider offering: supported profiles, capabilities, and eligible supply. |
-| MachineOfferingAssignment (proposed) | Audience and optional profile restrictions for one offering. |
-| Machine | Consumer request for an allowed class/profile combination. |
+| `metal.datumapis.com` | MachineProfile defines hardware requirements; MachineClass is the consumer view of an offering; Machine and Installation carry consumer requests. |
+| `provider.metal.datumapis.com` (proposed) | MachineOffering defines a provider product; MachineOfferingAssignment controls its audience and profile restrictions. |
+| `fleet.datumapis.com` | Physical inventory for providers using Fleet. |
+| `coordination.fleet.datumapis.com` | Fleet's admitted execution handoffs to locations. |
 
-The registered service, such as Bare Metal, is the outer entitlement boundary.
-A MachineClass is an offering within that service. Service enablement does not
-automatically grant every offering.
+MachineProfile stays in Metal, using one immutable requirements schema for
+published and custom profiles. API placement does not determine who can author
+an object: providers may maintain source profiles in their project, while the
+publisher owns protected consumer copies. Consumers can create custom profiles
+where offering policy permits them. No provider-specific profile type is added.
 
-Assignments belong to the provider project and have no namespace. Class and
-profile names resolve there; consumer project names resolve through Milo.
-References must identify provider-owned definitions, not chains of references.
-Protected records retain exact object and project identities so a replacement
-under the same name cannot inherit access.
+The registered Metal service is the outer entitlement boundary. Service
+enablement does not automatically grant every offering. Provider offerings and
+assignments are project-scoped, without namespaces. Offering and profile names
+resolve in that provider project; consumer project names resolve through Milo.
+Protected records retain exact identities so name reuse cannot inherit access.
 
-The API name and group below are provisional. Platform review must decide whether
-to expose a generic service assignment or a Fleet API backed by that platform
-contract. There must be one writable source of access policy.
+### Provider offering
+
+MachineOffering describes supported Metal profiles, locations, installation
+options, and operations such as power or console access. It describes the
+provider's service promise; inventory selectors, credentials, and provisioning
+configuration belong to the provider's implementation.
+
+A consumer MachineClass becomes a publisher-managed, one-hop reference to a
+MachineOffering in the provider API. Its status contains the permitted summary.
+The consumer still selects a local class and profile when creating a Machine.
+The offering schema and revised MachineClass source-reference schema need a
+separate API review; existing references must not be silently reinterpreted.
+
+### Provider independence
+
+A provider can fulfill Metal requests using its own infrastructure systems.
+For example, servers.com could publish an offering without creating Fleet
+inventory or running Fleet provisioning. Fleet is one possible implementation
+of the provider fulfillment contract.
+
+That contract must cover reservation, authorized operations, release, duplicate
+request handling, and recovery from unknown outcomes. Metal retains consumer
+admission authority; providers report fulfillment results against exact requests.
+The transport and any reservation or operation resources remain separate design
+work. Individual MachineCapacity records are not required by this catalog API;
+external supply and reservation must be defined before external fulfillment ships.
+
+### Platform integration
+
+The proposed provider group is part of the Metal service. It introduces no
+separate service entitlement. Generic audience and IAM policy stay with their
+platform owners, with one writable source of access policy. The exact platform
+assignment integration remains open; Fleet coordination is not the source of
+consumer grants.
 
 ### Assignment API
 
 ```yaml
 # Proposed API in provider project example-metal.
-apiVersion: metal.datumapis.com/v1alpha1
+apiVersion: provider.metal.datumapis.com/v1alpha1
 kind: MachineOfferingAssignment
 metadata:
   name: standard-default
 spec:
   serviceRef:
-    name: bare-metal
-  machineClassRef:
+    name: metal
+  machineOfferingRef:
     name: standard
   profiles:
     mode: Selected
@@ -124,14 +157,14 @@ spec:
       enabled: true
   state: Active
 ---
-apiVersion: metal.datumapis.com/v1alpha1
+apiVersion: provider.metal.datumapis.com/v1alpha1
 kind: MachineOfferingAssignment
 metadata:
   name: consumer-a-standard-extra
 spec:
   serviceRef:
-    name: bare-metal
-  machineClassRef:
+    name: metal
+  machineOfferingRef:
     name: standard
   profiles:
     mode: Selected
@@ -143,7 +176,7 @@ spec:
   state: Active
 ```
 
-`serviceRef`, `machineClassRef`, and `audience` are immutable. The service must
+`serviceRef`, `machineOfferingRef`, and `audience` are immutable. The service must
 belong to the provider and contain the referenced offering; the platform types
 for those relationships remain undecided. Exactly one audience field is required:
 
@@ -155,32 +188,32 @@ for those relationships remain undecided. Exactly one audience field is required
 `profiles` and `state` are mutable with resource-version checks to prevent lost
 updates. State is `Active` or `Suspended`. Profile modes are:
 
-- `AllSupported`: the default when `profiles` is omitted. Follows current class
-  policy and forbids an explicit list. Class additions can therefore expand
+- `AllSupported`: the default when `profiles` is omitted. Follows current offering
+  policy and forbids an explicit list. Offering additions can therefore expand
   access; previews must show affected assignments.
 - `Selected`: requires a nonempty, bounded list of unique provider profiles
-  allowed by the class. It excludes custom profiles.
+  allowed by the offering. It excludes custom profiles.
 
-Custom profiles require both an AllSupported assignment and class policy that
+Custom profiles require both an AllSupported assignment and offering policy that
 permits them. Existing validation and local profile-use checks still apply;
 custom profiles need no canonical provider-profile grant. Copying a named
 profile into a local custom profile cannot bypass a Selected assignment.
 
 ### Effective access and changes
 
-For each class, combine all applicable assignments, then intersect the result
-with current class policy, service entitlement, and caller permissions. Grants
-are additive: removing one leaves access supplied by another. Evaluate class
+For each offering, combine all applicable assignments, then intersect the result
+with current offering policy, service entitlement, and caller permissions. Grants
+are additive: removing one leaves access supplied by another. Evaluate offering
 and profile together; access through one offering cannot authorize another.
 
 Changing restrictions stages a candidate revision. Invalid changes leave the
 previous effective revision in place, still subject to current source policy.
-Suspension or deletion overrides staged changes. Removing a profile from class
+Suspension or deletion overrides staged changes. Removing a profile from offering
 policy blocks it even if an older assignment still lists it.
 
-Hardware changes require a new immutable profile and class approval. Recreating
-a class or consumer project requires a fresh assignment. Recreated profiles need
-fresh approval and resolution under the existing lifecycle rules. Pending
+Hardware changes require a new immutable profile and offering approval. Recreating
+an offering or consumer project requires a fresh assignment. Recreated profiles need
+fresh approval and resolution under the same identity safeguards. Pending
 Machines keep their exact inputs and never switch to replacement identities.
 
 Revocation blocks new allocations. A request that loses authority before
@@ -219,13 +252,13 @@ Machines require no assignment reference.
 
 | Owner | Writes or decides |
 | --- | --- |
-| Provider operator | Class/profile intent and assignments, subject to separate management permissions. |
+| Provider operator | Offering/profile intent and assignments, subject to separate management permissions. |
 | Service/entitlement authority | Service ownership, project eligibility, and effective assignment membership. |
 | IAM | Current caller permissions in authenticated project context. |
-| Fleet catalog evaluator | Source validation and publishable class/profile combinations. |
+| Metal catalog evaluator | Source validation and publishable class/profile combinations. |
 | Existing publisher | Consumer reference specs, profile copies, and protected source mappings. |
 | Status reconciler/projector | Assignment status and consumer status respectively. |
-| Shared coordinator | Admission, quota, exclusive allocation, and retained operation authority. |
+| Metal coordinator | Admission, quota, exclusive allocation, and retained operation authority. |
 
 These roles may share a process, but each field has one writer. This enhancement
 adds no allocator or hardware execution path. Physical asset, allocation,
@@ -236,7 +269,7 @@ installation, and managed-node identities remain separate.
 1. Validate the assignment, provider ownership, source identities, and audience.
 2. Commit its effective revision and durable publication work together, using an
    outbox or equivalent recovery protocol.
-3. Reconcile each consumer's combined grants. Create one local class reference
+3. Reconcile each consumer's combined grants. Create one local reference to the offering
    and one profile copy per distinct source identity. Retain protected mappings
    to the actual local objects; never adopt a conflicting customer object.
 4. Report delivery independently for each pair. A new pair cannot allocate
@@ -268,20 +301,29 @@ Required tests, not yet implemented for assignments:
 
 - Default delivery on service enablement and withdrawal on suspension.
 - Shared offerings with independent grants, including overlapping defaults.
-- Extra profiles within one class without enabling other profiles or classes.
+- Extra profiles within one offering without enabling other profiles or offerings.
 - AllSupported expansion, Selected restrictions, and custom-copy bypass attempts.
 - Forged copies, name collisions, and recreated sources or projects.
+- Provider Metal offerings publishing Metal profiles without Fleet inventory.
+- Protected published profiles and permitted custom profiles using one schema.
+- Migration rejecting ambiguous source mappings and preserving active allocations.
 - Revocation racing allocation, lost responses, reordered events, and restart.
 - Read/list/watch revocation without leaking protected catalog details.
-- Invalid updates retaining the previous effective revision; class withdrawal
+- Invalid updates retaining the previous effective revision; offering withdrawal
   overriding it; existing allocations remaining operable and releasable.
 
 ### Implementation plan and decisions
 
-First agree on platform placement, service reference types, caller/project IAM,
-and the admission fence. Then implement validation and previews without effects,
+First agree on the provider API schemas, service reference types, caller/project
+IAM, and the admission fence. Then implement validation and previews without effects,
 extend synthetic publication to multiple consumers, and qualify production
 authorization before enabling allocation for a small cohort.
+
+Migrate provider MachineClass definitions to MachineOffering explicitly, retaining
+source identity and access evidence. Create new consumer references only after
+checking ownership and mapping the old source. Existing allocations keep their
+original contracts and cleanup authority. A group rename cannot perform this
+migration. Fleet-specific supply policy stays in its provider adapter.
 
 Other release decisions are naming rules, resource limits, delivery-view storage,
 and watch revocation. Do not introduce CRDs until the platform ownership decision
@@ -310,7 +352,6 @@ All answers describe proposed requirements. No production readiness, performance
 or upgrade tests have been completed for this feature.
 
 ### Feature Enablement and Rollback
-
 
 #### How can this feature be enabled / disabled in a live cluster?
 
@@ -343,7 +384,6 @@ disabled, and reenablement after source or project replacement.
 
 ### Rollout, Upgrade and Rollback Planning
 
-
 #### How can a rollout or rollback fail? Can it impact already running workloads?
 
 Mixed versions may interpret restrictions differently or lose publication
@@ -363,11 +403,12 @@ lost responses, and restart during revocation.
 
 #### Is the rollout accompanied by any deprecations and/or removals of features, APIs, fields of API types, flags, etc.?
 
-No API removals are proposed. The migration of existing publication records must
-be designed before rollout.
+Provider MachineClass definition mode would be replaced by MachineOffering.
+Consumer references need a versioned migration; see the
+[implementation plan](#implementation-plan-and-decisions). No implemented API is
+removed by this documentation change.
 
 ### Monitoring Requirements
-
 
 #### How can an operator determine if the feature is in use by workloads?
 
@@ -399,7 +440,6 @@ revocation separately from removal of stale catalog copies.
 
 ### Dependencies
 
-
 #### Does this feature depend on any specific services running in the cluster?
 
 Milo supplies project identity and routing; service catalog supplies entitlement;
@@ -410,7 +450,6 @@ is required. Supported dependency versions still need qualification.
 
 ### Scalability
 
-
 #### Will enabling / using this feature result in any new API calls?
 
 Yes: assignment writes and previews, dependency watches, catalog writes, and
@@ -419,8 +458,9 @@ has not been measured.
 
 #### Will enabling / using this feature result in introducing new API types?
 
-One proposed MachineOfferingAssignment contract, subject to platform placement
-review. Limits per provider and profiles per assignment remain undecided.
+MachineOffering and MachineOfferingAssignment in the proposed provider group.
+MachineProfile remains in Metal. Limits per provider and profiles per assignment
+remain undecided.
 
 #### Will enabling / using this feature result in any new calls to the cloud provider?
 
@@ -451,7 +491,6 @@ prolonged outages, and event replay before setting supported limits.
 
 ### Troubleshooting
 
-
 #### How does this feature react if the API server is unavailable?
 
 Provider or platform API loss blocks dependent authorization. Consumer API loss
@@ -480,18 +519,20 @@ records and keep revocation and cleanup running during recovery.
 
 - 2026-11-12: Initial research and design draft.
 - 2026-11-13: Reframed access around offerings and adopted the Datum template.
-  No implementation or release approval is claimed.
+  Separated provider offerings from consumer profiles and made Fleet optional
+  for fulfillment. No implementation or release approval is claimed.
 
 ## Drawbacks
 
 Cross-project access adds coordination and recovery costs. Large default audiences
 increase publication work. Unrestricted assignments reduce maintenance but make
-class changes affect more consumers; explicit selections require more updates.
+offering changes affect more consumers; explicit selections require more updates.
 
 ## Alternatives
 
 - **Audiences on MachineProfile:** mixes hardware requirements with access policy.
-- **One MachineClass per consumer:** duplicates offering policy.
+- **Consumer classes containing provider policy:** duplicates the offering
+  definition instead of referencing it.
 - **Local copies as permission:** cannot enforce timely revocation.
 - **Required profile sets:** adds a resource before reuse needs justify it. A
   future convenience set should contain profiles only, with no audience policy.
