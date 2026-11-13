@@ -263,12 +263,20 @@ Public conditions say `SyntheticStagingAdmission`, so this result cannot be
 mistaken for Milo caller-preserving authorization.
 
 `config/overlays/synthetic-staging` is the only packaged activation path. It
-adds a loopback simulator sidecar from the same immutable Fleet image and uses
-the Pod's projected service-account token for authentication, avoiding a
-credential in Git. Simulator operation state is intentionally ephemeral; the
-durable private coordinator records exact operation input and can recover an
-idempotent synthetic operation after restart. This is sufficient for staging
-API validation, not production provider qualification.
+packages the simulator as a separate single-replica Deployment and ClusterIP
+Service using the same immutable Fleet release image. The manager reaches it
+through Service DNS with an environment-owned shared runtime Secret; the provider
+has no Kubernetes API credential or RBAC grants. A NetworkPolicy restricts access
+to same-namespace manager pods, and the admin listener stays disabled.
+The simulator's operation state resides on a retained PVC and survives manager
+and provider pod replacement. A `Recreate` rollout avoids overlapping file-store
+writers. The durable private coordinator continues to retain exact operation
+inputs and recover idempotently. Store persistence and credential reload are
+covered by local tests; independent Deployment restart recovery still requires
+live staging verification after rollout. This remains synthetic API validation,
+not production provider qualification. See the
+[deployment and migration contract](../../config/README.md#moving-from-the-colocated-simulator).
+
 
 `config/overlays/management-plane` now packages the manager Deployment so its
 identity, RBAC, admission, image, and readiness boundary can be reviewed and
