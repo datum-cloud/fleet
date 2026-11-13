@@ -44,5 +44,8 @@ today. Then choose a topic:
 | [Operations](docs/operations/README.md) | Local validation, deployment packaging, and acceptance |
 | [Troubleshooting](docs/troubleshooting/README.md) | Expected limitations, diagnostic entry points, and safe recovery boundaries |
 
+The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
+`datumctl metal` discovery, machine management, and safe recovery workflows.
+
 Contributors should also read the [repository guidance](AGENTS.md) and
 [implementation roadmap](docs/development/roadmap.md).
