@@ -18,8 +18,8 @@ are proposed contracts. Plugin distribution, host CLI integration, and runtime
 access APIs must be settled before shipping the corresponding commands.
 
 The [machine lifecycle enhancement](../machine-lifecycle/README.md) defines the
-current allocation and installation contract. The [API architecture](../../architecture.md)
-defines service boundaries; [implementation status](../../implementation.md)
+current allocation and installation contract. The [API architecture](../../architecture/README.md)
+defines service boundaries; [implementation status](../../development/README.md)
 distinguishes implemented synthetic behavior from missing production authority
 and provider integrations. Historical foundations are the pinned
 [allocation proposal][allocation-source] and [installation proposal][installation-source].

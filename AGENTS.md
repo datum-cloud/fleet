@@ -1,6 +1,6 @@
 # Working in Fleet
 
-Read `README.md`, `docs/design.md`, and the relevant pinned source proposal before
+Read `README.md`, `docs/architecture/design.md`, and the relevant pinned source proposal before
 changing subsystem behavior. The repository currently contains planning documents;
 the API names in them are provisional, and there are no build or test commands yet.
 
