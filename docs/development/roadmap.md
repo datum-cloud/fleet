@@ -1,12 +1,14 @@
 # Implementation roadmap
 
-This proposed sequence follows the [reviewed Fleet designs](design.md). Milestones
+[Documentation overview](../README.md) · [Architecture guide](../architecture/README.md)
+
+This proposed sequence follows the [reviewed Fleet designs](../architecture/design.md). Milestones
 are unimplemented. Owned-metal qualification and rented/managed adoption can
 progress independently while sharing allocation and installation contracts.
 
 ## 1. Define the service contracts
 
-The [Machine lifecycle enhancement](enhancements/machine-lifecycle/README.md) defines the five
+The [Machine lifecycle enhancement](../enhancements/machine-lifecycle/README.md) defines the five
 public resources, private reservation/operation records, Milo tenancy boundaries,
 and recovery acceptance criteria. Its functional target uses a persistent
 simulated provider; real hardware qualification remains in stage 3 below.

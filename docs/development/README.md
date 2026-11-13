@@ -1,5 +1,11 @@
 # Fleet implementation status
 
+[Documentation overview](../README.md) · [Operations guide](../operations/README.md)
+
+This development guide records the implemented subset and its limitations.
+See [build, test, and run](#build-test-and-run) for local commands and the
+[implementation roadmap](roadmap.md) for proposed milestones and required evidence.
+
 Status: public API foundation, standalone synthetic provider simulator,
 same-cluster allocation/installation lifecycle library, unwired NSO network
 lifecycle adapter, unwired Milo tenancy/quota authority contracts, and an
@@ -21,7 +27,7 @@ Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the
 Bare Metal service as `metal`; entitlement and location-availability readers use
 that reference. Physical Device references use `fleet.datumapis.com`. The
-[API architecture](architecture.md) documents the proposed coordination group,
+[API architecture](../architecture/README.md) documents the proposed coordination group,
 control-plane placement, and rollout constraints. Group renaming does not migrate
 stored allocations or establish live acceptance.
 
@@ -111,7 +117,7 @@ This is not the proposal acceptance environment. Namespace stand-ins do not
 model Milo project APIs, caller identity, IAM, entitlement, quota, purge, or
 same-named `default` namespaces. No interface is requested, so network and
 address output is blank and no NSO/IPAM/Galactic behavior is claimed. See
-[`docs/standalone-smoke.md`](standalone-smoke.md) for the runnable scenario.
+[`docs/operations/standalone-smoke.md`](../operations/standalone-smoke.md) for the runnable scenario.
 
 Standalone-only Kustomize roots mark every rendered object with
 `fleet.datumapis.com/standalone-only: "true"`. CI discovers and builds every

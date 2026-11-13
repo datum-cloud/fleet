@@ -6,7 +6,7 @@ Service and ServiceConfiguration named `metal`, with identity
 Both catalog resources remain Draft. No separate service is registered for
 `fleet.datumapis.com` or `coordination.fleet.datumapis.com`. Environment-owned
 entitlements, ServiceAvailability resources, and publication rules must reference
-`metal`. See the [API architecture](../docs/architecture.md) for group separation
+`metal`. See the [API architecture](../docs/architecture/README.md) for group separation
 and breaking alpha rename constraints.
 
 The repository publishes two production manifest roots. They target different

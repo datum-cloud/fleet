@@ -20,8 +20,8 @@ to selected location control planes. These are distinct ownership, coordination,
 and execution boundaries, not four interchangeable stores of the same objects.
 
 This enhancement scopes the service and proposes its project and control-plane
-placement. It builds on the [design context](../../design.md), the
-[API architecture](../../architecture.md), and the imported
+placement. It builds on the [design context](../../architecture/design.md), the
+[API architecture](../../architecture/README.md), and the imported
 [source proposal](../../proposals/fleet-management/README.md), whose reviewed
 revisions are recorded in the [migration record](../../proposals/fleet-management/MIGRATION.md).
 The detailed [inventory contract](../../proposals/fleet-management/inventory.md)
@@ -34,7 +34,7 @@ The repository contains six alpha Metal CRDs, a lifecycle library, synthetic
 provider and staging fixtures, and partially wired management components.
 Physical inventory CRDs, the federation handoff CRD, and real provider execution
 are not implemented. Production authority integrations remain incomplete. See
-[implementation status](../../implementation.md) for the actual supported paths.
+[implementation status](../../development/README.md) for the actual supported paths.
 
 Every new API, control-plane assignment, workflow, and acceptance criterion below
 is proposed, not a claim of deployed behavior. This document adds no CRDs,
