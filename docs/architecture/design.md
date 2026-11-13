@@ -32,6 +32,11 @@ and coordinated changes above that shared service.
 
 ## Subsystem boundaries
 
+The [Fleet management enhancement](../enhancements/fleet-management/README.md) scopes
+the operator service and proposes how provider projects, consumer projects, the
+Fleet control plane, and the Federation Control Plane share responsibilities.
+Its inventory placement and delivery milestones remain proposed.
+
 All names below describe proposed resources, not implemented schemas.
 
 | Subsystem | Responsibilities and principal resources |

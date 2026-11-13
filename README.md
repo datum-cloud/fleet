@@ -44,5 +44,9 @@ today. Then choose a topic:
 | [Operations](docs/operations/README.md) | Local validation, deployment packaging, and acceptance |
 | [Troubleshooting](docs/troubleshooting/README.md) | Expected limitations, diagnostic entry points, and safe recovery boundaries |
 
+Review the [Fleet management enhancement](docs/enhancements/fleet-management/README.md)
+for proposed service scope, physical inventory APIs, project ownership, and Fleet
+and federation control-plane responsibilities.
+
 Contributors should also read the [repository guidance](AGENTS.md) and
 [implementation roadmap](docs/development/roadmap.md).

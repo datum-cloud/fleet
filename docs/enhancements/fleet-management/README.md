@@ -1,0 +1,724 @@
+---
+status: provisional
+stage: alpha
+---
+
+# Fleet management service
+
+- [Summary](#summary)
+- [Motivation](#motivation)
+- [Proposal](#proposal)
+  - [User stories](#user-stories)
+  - [Managing facilities and physical capacity](#managing-facilities-and-physical-capacity)
+  - [Planning installations and registering equipment](#planning-installations-and-registering-equipment)
+  - [Operating and maintaining infrastructure](#operating-and-maintaining-infrastructure)
+  - [Providing capacity to consumers](#providing-capacity-to-consumers)
+- [Design details](#design-details)
+  - [API design](#api-design)
+  - [References, identity, and scope](#references-identity-and-scope)
+  - [Status contract](#status-contract)
+  - [Project and control-plane responsibilities](#project-and-control-plane-responsibilities)
+  - [Components and authoritative writers](#components-and-authoritative-writers)
+  - [End-to-end lifecycle](#end-to-end-lifecycle)
+  - [Platform integration](#platform-integration)
+  - [Recovery and project lifecycle](#recovery-and-project-lifecycle)
+  - [Acceptance tests](#acceptance-tests)
+- [Production readiness review questionnaire](#production-readiness-review-questionnaire)
+- [Drawbacks](#drawbacks)
+- [Alternatives](#alternatives)
+- [Open design questions](#open-design-questions)
+- [Infrastructure needed](#infrastructure-needed)
+
+## Summary
+
+Fleet will let infrastructure operators plan installations, register equipment,
+verify physical dependencies, and make eligible capacity available to consumers.
+Six resources define its physical inventory contract: `Facility`, `Rack`,
+`DeviceClaim`, `Device`, `Cable`, and `PowerFeed`. They share the
+`fleet.datumapis.com` API group while retaining separate identities and lifecycles.
+
+Service Provider Projects own infrastructure and supply. Consumer Projects own
+requests for that supply. The Fleet control plane reconciles these contracts and
+retains operation authority; the Federation Control Plane delivers admitted work
+to selected location control planes. These are distinct ownership, coordination,
+and execution boundaries, not four interchangeable stores of the same objects.
+
+## Motivation
+
+The [Fleet proposal](../../proposals/fleet-management/README.md) describes a broad
+infrastructure platform. This enhancement defines the operator experience,
+physical inventory API, and control-plane responsibilities that support it.
+The [machine lifecycle enhancement](../machine-lifecycle/README.md) defines the
+shared allocation and installation contract above that inventory.
+
+Fleet deployments need more than a geographic label on a server. Operators need
+to know which premises and racks are available, what is reserved or installed,
+which power and network paths support equipment, and which facts have actually
+been verified. Consumers need usable capacity without access to those private
+physical and management details.
+
+Keeping this information in unrelated configuration files makes it difficult to
+distinguish a plan from a completed installation, prevent conflicting physical
+reservations, diagnose shared dependencies, or adopt existing equipment safely.
+Combining all of it into a Device would instead couple facility lifetime to an
+individual asset and duplicate shared infrastructure facts.
+
+### Goals
+
+- Establish a coherent facility, rack, device, cabling, and power inventory.
+- Separate approved plans, physical reservations, actual assets, and evidence.
+- Make project ownership and each control plane's authority explicit.
+- Integrate verified supply with the existing shared Metal allocator.
+- Support owned infrastructure and the facts actually disclosed for rented supply.
+- Preserve recoverable operation authority across failures and project deletion.
+- Give operators actionable progress without exposing privileged data to consumers.
+
+### Non-goals
+
+- A second allocator or a replacement for the Metal consumer API.
+- A full building-management, procurement, lease, billing, or warehouse system.
+- Owning geographic Location, IPAM, logical networks, routing, or service policy.
+- Selecting a provisioning backend, database, or new federation technology.
+- Implementing managed clusters, node services, or automatic procurement in the
+  first delivery; those remain later consumers and extensions.
+- Making facility registration, discovery, or inventory import authorize effects.
+
+## Proposal
+
+Fleet will let authorized operators manage infrastructure in Service Provider
+Projects while consumers request capacity through Metal in their own projects.
+Operators retain ownership of physical assets throughout preparation, allocation,
+release, and reuse. The service reports plans, observed facts, and outstanding
+work separately so neither a declaration nor a successful API write implies that
+an installation is complete.
+
+### User stories
+
+- An infrastructure operator registers a facility and plans rack, power, and
+  cabling capacity before equipment arrives.
+- A technician registers delivered equipment against an accepted installation
+  plan and records evidence without gaining permission to provision it.
+- A provider publishes verified, prepared supply without exposing management
+  endpoints or private topology to consumers.
+- A consumer requests a machine in its project without managing physical
+  inventory or requiring a managed cluster.
+- A service operator identifies affected assets during maintenance and recovers
+  interrupted work without losing reservations or cleanup obligations.
+
+### Managing facilities and physical capacity
+
+Operators register physical premises independently of their provider codes and
+commercial relationships. A Facility references a geographic Location; a Rack
+belongs to a Facility. Optional rooms, suites, and cages can be added when a
+qualified installation requires them rather than imposing a universal hierarchy.
+
+Fleet records mounting constraints, power supply dependencies, and known physical
+connectivity. It distinguishes planned, reserved, installed, and verified usable
+capacity. Free rack units alone do not establish that another server can be
+installed. Power accounting must consider shared upstream limits and the required
+redundancy scenario rather than adding nameplate ratings or double-counting feeds.
+Cooling limits may be recorded as operator-supplied constraints; sensor integration
+and automatic cooling control are outside the first delivery.
+
+Facility identity is not a provider account, a region, or a failure-domain label.
+Multiple suppliers at the same premises should reference one authorized canonical
+Facility when that relationship is established, rather than create competing
+authorities merely because their provider codes differ.
+
+### Planning installations and registering equipment
+
+An operator creates a DeviceClaim describing expected equipment, placement, and
+required connections. Acceptance reserves conflicting rack space, terminations,
+and required power capacity durably before equipment arrives. Registration binds
+one actual Device to the accepted claim through a trusted registrar. Verification
+compares independent observations or authorized technician evidence with the plan.
+
+Servers, switches, routers, PDUs, console servers, and passive panels can all be
+Devices; only appropriate supply becomes MachineCapacity. Ports and components
+have stable IDs within their Device. Cables exclusively own expected connection
+mappings; Devices do not maintain a second editable peer map.
+
+Rack-mounted placement references a Rack, from which Facility membership is
+derived. Facility-only placement is allowed when rack placement is unavailable.
+Neither path implies more verification than the evidence supports. Rented supply
+with no disclosed physical identity must not acquire a fabricated Device or Rack.
+
+### Operating and maintaining infrastructure
+
+Operators can inspect discrepancies, identify assets affected by a physical
+dependency, and plan installation, repair, movement, and retirement. Planned work
+and completion evidence remain separate. The initial workflow can reference an
+external work ticket and authorized manual evidence; a general-purpose work-order
+API is not required to introduce Fleet.
+
+Maintenance policy can block new reservations or admission of affected work.
+It cannot by itself authorize tenant eviction, power-off, reinstall, or wiping.
+Effects on active allocations require their lifecycle authority and applicable
+disruption gates. Moving equipment preserves Device identity, but requires an
+approved placement transition and re-verification; replacing hardware creates a
+new Device. Deleting a record does not prove physical removal or free capacity.
+
+### Providing capacity to consumers
+
+Once registration, verification, provider management policy, and preparation
+requirements permit it, provider-owned MachineCapacity can offer a Device through
+Metal. Inventory readiness is a prerequisite, not allocation or execution authority.
+MachineClass publication exposes approved offerings and sanitized summaries to
+eligible Consumer Projects, not raw physical inventory.
+
+The shared allocator handles both standalone customers and internal managed
+platforms. Provider adapters execute admitted preparation, installation, power,
+console, and cleanup operations. Backend-specific capabilities stay behind those
+contracts. Managed clusters and node services later add their own policy above
+allocation without taking over physical identity or creating a second allocator.
+
+### Notes, constraints, and caveats
+
+API shapes remain provisional. The [inventory proposal](../../proposals/fleet-management/inventory.md)
+provides the detailed physical reservation and verification contracts; the
+[API architecture](../../architecture/README.md) defines group boundaries.
+Examples use synthetic identities and scoped names. They do not carry credentials
+or independently authorize hardware effects.
+
+### Risks and mitigations
+
+- **Conflicting installations:** reserve rack space, terminations, and power
+  capacity through one durable admission authority before accepting a plan.
+- **False readiness:** evaluate attributable evidence against the approved
+  dependency revisions and expire it when its freshness bound is exceeded.
+- **Cross-project privilege escalation:** separate publication from source-use
+  permission and preserve caller identity through admission.
+- **Duplicate execution:** retain exact operation inputs before dispatch and
+  fence previous executors before takeover.
+- **Lost cleanup obligations:** retain provider-side custody through consumer
+  deletion and block provider retirement until obligations settle or transfer.
+
+## Design details
+
+### API design
+
+#### API groups and service identity
+
+| Group | Contract | Intended audience |
+| --- | --- | --- |
+| `fleet.datumapis.com/v1alpha1` | Facility, Rack, DeviceClaim, Device, Cable, PowerFeed | Authorized infrastructure operators and Fleet components |
+| `metal.datumapis.com/v1alpha1` | MachineClass, MachineProfile, MachineCapacity, Machine, MachineAllocation, Installation | Providers and consumers, with resource-specific access restrictions |
+| `coordination.fleet.datumapis.com/v1alpha1` | Candidate MachineAllocationHandoff for admitted location work | Fleet management, federation, and selected location executors only |
+
+One inventory group does not imply one controller, permission set, or process.
+Facility and Device are independent resources because they have independent
+lifetimes, but no separate facilities group is needed for this scope.
+
+Fleet is an operational service, not a new consumer entitlement in this proposal.
+The existing catalog service remains `metal`, displayed as Bare Metal, with
+`metal.datumapis.com` service identity. Inventory access uses explicit operator
+authorization. Neither Fleet nor coordination receives an additional Service or
+ServiceConfiguration merely because it has an API group. Any future independent
+Fleet offering and catalog enrollment requires a separate decision.
+
+#### Resource relationships
+
+| Kind | Desired or registered facts | Controller-owned results |
+| --- | --- | --- |
+| Facility | Premises identity, display metadata, Location reference, provider aliases | Validation and attributable operational summaries |
+| Rack | Facility reference, mounting geometry and constraints | Reserved/occupied capacity and validated constraints |
+| DeviceClaim | Expected identity, planned placement, ports, required Cable references and verification policy | Acceptance, physical reservation, committed Device binding, verification conditions |
+| Device | Canonical physical asset identity and registered components, written by the registrar | Observations and verified placement tied to an accepted installation |
+| Cable | Typed endpoints and termination mappings; the authoritative connection plan | Reservation and physical path verification |
+| PowerFeed | Supply termination, rated/usable limits, known upstream dependencies | Verified dependency evidence and capacity accounting |
+
+Admission and narrowly scoped writers separate operator intent, registrar-owned
+identity, and verifier-owned observations. Status is controller-owned; operators
+cannot mark equipment ready or capacity free by editing a condition.
+
+The resource diagram separates physical inventory from the Metal capacity it
+supports. Arrows are labeled relationships, not cascading deletion ownership.
+
+![Physical inventory resources and their relationship to provider-owned Metal capacity](diagrams/inventory-resources.svg)
+
+#### Facility and Rack
+
+A Facility identifies physical premises and references its geographic Location.
+Provider aliases describe the premises but do not define its identity. A Rack
+references the Facility and declares mounting geometry. The following records
+establish a location for installation planning; they reserve no equipment slots:
+
+```yaml
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Facility
+metadata:
+  name: example-facility
+  namespace: infra-ops
+spec:
+  displayName: Example Facility
+  locationRef:
+    name: example-location
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Rack
+metadata:
+  name: example-rack
+  namespace: infra-ops
+spec:
+  facilityRef:
+    name: example-facility
+  heightUnits: 42
+```
+
+`infra-ops` is an illustrative namespace within the owning project API surface,
+not a project identity or an authorization boundary by itself.
+
+Changing a display name does not change physical identity. Moving a Rack to
+another Facility requires a placement transition that accounts for every dependent
+reservation and installed Device; a reference edit cannot move equipment.
+Reducing mounting capacity must reject conflicts with retained reservations.
+Deleting either record must retain dependent placement and cleanup obligations.
+
+#### DeviceClaim
+
+A DeviceClaim describes one expected physical installation, not a consumer
+allocation. It selects rack placement or facility-only placement, declares expected
+identity and ports, and names the Cable plans and verification checks it requires.
+
+```yaml
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: DeviceClaim
+metadata:
+  name: example-server-installation
+  namespace: infra-ops
+spec:
+  role: Server
+  expectedIdentity:
+    manufacturer: Example Manufacturer
+    model: Example Server
+    serialNumber: EXAMPLE-SERVER-001
+  placement:
+    rackRef: {name: example-rack}
+    position: 20
+    heightUnits: 1
+    face: Front
+    fullDepth: true
+  verification:
+    requiredChecks: [Identity, RackPlacement, NetworkPaths, PowerPaths]
+  ports:
+    - {id: data1, type: EthernetPort, role: Data, physicalLabel: DATA1}
+    - {id: psu1, type: PowerInlet, physicalLabel: PSU1}
+  cableRefs:
+    - {name: example-server-data}
+    - {name: example-server-power}
+```
+
+Acceptance validates the complete installation graph and retains its exact
+dependencies before committing physical reservations. Concurrent claims for the
+same rack space, exclusive termination, or unavailable power capacity cannot both
+succeed. A partial reservation is not an accepted installation; recovery must
+finish or safely unwind the same admission attempt.
+
+Accepted placement and connection changes require explicit readmission. They
+cannot rewrite the retained plan underneath registration or verification. One
+claim binds one Device for its installation incarnation. Claim deletion does not
+prove that installed equipment or its connections have been removed.
+
+#### Device
+
+Only the trusted registrar creates a Device and commits its binding to an accepted
+DeviceClaim. Enrollment must authenticate the channel and approved plan revision;
+a matching serial number is a matching attribute, not authentication. Passive
+equipment can use authorized technician evidence instead of a host agent.
+
+This registrar-created record identifies the actual equipment. It is not an
+operator-authored request to create or move a physical asset:
+
+```yaml
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Device
+metadata:
+  name: example-server-001
+  namespace: infra-ops
+spec:
+  claimRef: {name: example-server-installation}
+  identity:
+    manufacturer: Example Manufacturer
+    model: Example Server
+    serialNumber: EXAMPLE-SERVER-001
+status:
+  components:
+    - {id: data-port-1, type: EthernetPort, physicalLabel: DATA1}
+    - {id: power-supply-1, type: PowerInlet, physicalLabel: PSU1}
+```
+
+The registrar retains one reciprocal binding and prevents duplicate enrollment
+of an asset. A lost response must recover that binding rather than register another
+Device. Component IDs identify physical components independently of OS interface
+names. The verifier maps claim ports to components using qualified hardware facts;
+it cannot swap the mapping to conceal a wiring discrepancy.
+
+A Device can be registered while placement or wiring remains unverified. A move
+preserves its asset identity and establishes a new approved placement authority;
+replacement hardware receives a new identity. Neither transition bypasses active
+allocation or physical reservation obligations.
+
+#### Cable and PowerFeed
+
+Cable is the sole writer of expected physical connections. Its typed endpoints
+can reference an accepted claim port, a registered Device component, or a
+PowerFeed termination. The example connects a planned server port to a component
+on an already registered switch:
+
+```yaml
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Cable
+metadata:
+  name: example-server-data
+  namespace: infra-ops
+spec:
+  medium: CopperEthernet
+  a: [{deviceClaimRef: {name: example-server-installation}, portID: data1}]
+  b: [{deviceRef: {name: example-switch}, componentID: port20}]
+```
+
+The referenced switch, power connection, and supporting paths must be registered
+or planned and verified as required; this data Cable alone cannot make the claim
+ready. Endpoint admission checks type compatibility and exclusive termination
+occupancy. Patch panels and breakout cables require explicit pass-through or lane
+mappings. Unsupported topology remains unverified rather than being treated as a
+direct link. Editing a cable plan does not certify that a technician moved it.
+
+PowerFeed records supply limits and upstream dependencies. A PDU is a Device whose
+components map outlets to their supplying inputs. Reservation accounting follows
+the whole power path and the required failure scenario. Two feeds with different
+names do not prove independent upstream supply. Missing upstream evidence cannot
+be replaced with a failure-domain label or interpreted as unlimited capacity.
+
+### References, identity, and scope
+
+Inventory objects are proposed as project-scoped operator resources, canonically
+stored in an infrastructure-owning Service Provider Project. Local references use
+names. Cross-project references must also identify the owning project and resource
+kind and be authorized at both ends; their exact public encoding remains open.
+The service resolves and privately retains exact project and object incarnations
+and approved revisions before reservations or effects. Kubernetes UIDs are
+API-server-local evidence, not portable authored cross-control-plane references.
+
+The first delivery keeps a physical installation graph in one provider project.
+Shared facilities across provider projects require an explicit canonical owner,
+authorized reference resolution, and coordinated reservation authority before
+enablement. Mirrored views must be read-only, carry provenance, and never become
+alternative reservation authorities. An external duplicate asset record must not
+create additional supply; enforce enrolled asset uniqueness across provider
+projects before enabling multi-provider allocation.
+
+Facility, Device, MachineCapacity, MachineAllocation, Installation, and managed
+NodeClaim identities remain distinct. A relationship does not imply cascading
+garbage collection or ownership transfer. Recreating a same-named object cannot
+inherit the predecessor's reservations, evidence, or execution authority.
+
+### Status contract
+
+Use `True`, `False`, and `Unknown` conditions with observed generation, reason,
+message, and transition time. The inventory contract separates `Accepted`,
+`Registered`, identity/placement/path verification, and `Ready`. A summary must
+identify its evaluated scope: verified Facility presence is not verified rack
+position. Missing or stale evidence is unknown, not successful or not applicable.
+
+Fleet privately retains observation time, evidence provenance, dependency
+revisions, and freshness bounds, and reevaluates affected gates when evidence
+expires. Conditions alone do not authorize effects. Facility-level summaries
+must not replace per-asset and per-operation checks.
+
+Consumers receive permitted location, capabilities, allocation progress, and
+their own operation results. Serial numbers, BMC endpoints, physical topology,
+provider credentials, evidence internals, and other tenants' usage remain private
+unless a separately authorized contract explicitly exposes a safe subset.
+
+### Project and control-plane responsibilities
+
+| Boundary | Canonical state and responsibilities | Must not do |
+| --- | --- | --- |
+| Service Provider Project | Infrastructure inventory, provider offerings and capacity, protected allocation/operation custody under service-only permissions | Transfer Device ownership to consumers or let providers edit allocator-owned bindings |
+| Consumer Project | Local published offering references, permitted profiles, Machine and Installation requests, consumer-owned network intent | Edit source inventory, self-authorize source use, or inspect other allocations |
+| Fleet control plane | Independently recoverable controllers, admission coordination, registry/verifier, publication integration, lifecycle orchestration, private evidence and operation services | Treat its deployment cluster as the implicit canonical store for project objects or federation intent |
+| Federation Control Plane | Canonical admitted handoff objects and explicit targeting policy for delivery to selected location/cell control planes | Allocate capacity, grant consumer authority, broadcast privileged work, or change admitted inputs |
+| Location/cell control plane | Delivered work and local execution/evidence adapters; integration with networking and qualified provider executors | Select another asset, expand permitted effects, or release global reservations independently |
+
+A project is a tenancy and authorization boundary, not necessarily a dedicated
+physical cluster. A single organization can operate provider and consumer projects;
+Datum's managed platforms use Consumer Projects like other customers. Service
+Provider Projects are not automatically federation members, and Consumer Projects
+are not execution cells.
+
+The Fleet control plane is the service's management runtime and trust boundary.
+It accesses project APIs through authenticated, scoped clients. Provider-project
+allocation custody remains canonical under the existing lifecycle contract;
+private evidence and journals need a documented durable placement and retention
+policy. Runtime caches and indexes are rebuildable views, never new allocation
+authorities. This proposal does not move all provider inventory into one global
+Fleet API server.
+
+The Federation Control Plane is the intended Karmada hub described in the API
+architecture. Coordination CRDs must exist on the hub and participating cells.
+Fleet writes admitted intent to the hub, federation delivers only to the selected
+cell, and that cell reports execution status directly to the hub. Federation must
+not overwrite cell-owned status. No wholesale replication of provider or consumer
+projects is required, and privileged credentials do not travel in handoff objects.
+
+### Components and authoritative writers
+
+The control-plane diagram distinguishes canonical project state from the Fleet
+runtime and federation delivery. Returned evidence cannot grant additional
+execution authority.
+
+![Provider and consumer project ownership, Fleet management, federation delivery, and selected cell execution](diagrams/control-planes.svg)
+
+- **Inventory admission and registrar:** validate plans and reserve physical
+  resources; the trusted registrar establishes actual asset identity and binding.
+- **Collectors and verifier:** accept attributable observations and evaluate the
+  exact approved dependency graph without modifying operator intent.
+- **Publication integration:** deliver provider-owned offering references and safe
+  summaries through Milo service enablement; publication does not grant source use.
+- **Shared lifecycle coordinator:** preserve caller identity, check IAM,
+  entitlement, quota and current prerequisites, and retain exclusive allocation
+  and exact authorized operation inputs before execution.
+- **Handoff controller:** publish retained operation intent to the federation hub
+  and validate returned evidence against the selected asset, cell, and operation.
+- **Location adapters and provider executors:** execute only admitted effects,
+  journal attempts before effects, and return evidence without granting new work.
+- **Status projectors:** expose audience-appropriate progress without becoming
+  writers of intent, reservations, or source-use grants.
+
+These are logical responsibilities, not a requirement for a separate deployment
+per component. Admission, privileged execution, and consumer access nevertheless
+require enforced trust boundaries even when components share infrastructure.
+
+### End-to-end lifecycle
+
+1. **Plan and verify:** an operator in a Service Provider Project registers a
+   Facility and Rack, submits installation claims and connections, and obtains
+   physical reservations. Trusted registration and evidence establish actual
+   equipment and verified prerequisites without powering or provisioning it.
+2. **Prepare and publish:** separately authorized provider work prepares eligible
+   equipment. Provider capacity and class definitions remain in that project;
+   service publication places references in eligible Consumer Projects.
+3. **Request and admit:** a consumer creates a Machine and, when needed, an
+   Installation. Fleet validates the authenticated caller's source-use authority,
+   project state, entitlement, quota, location eligibility, and current provider
+   evidence. It retains an exclusive allocation and exact operation plan before
+   submitting any executable handoff.
+4. **Dispatch and execute:** Fleet publishes the admitted location work to the
+   Federation Control Plane. Targeting chooses exactly the authorized cell, whose
+   adapters request networking work from its owner and invoke only the permitted
+   provider effects. The retained recipe defines ordering and prerequisites;
+   delivery is not permission to run every operation concurrently.
+5. **Verify and report:** the cell reports attributable results to the hub. Fleet
+   checks target identity, operation revision, freshness, and required evidence
+   before projecting readiness into the Consumer Project. Successful replication
+   or a running controller is not successful execution.
+6. **Release and recover:** release blocks new consumer effects, accounts for
+   in-flight work, revokes sessions and capabilities, and verifies location network
+   cleanup or fencing before required provider cleanup and quota settlement.
+   Capacity returns to supply only after all release obligations are proven.
+
+The durable admission-to-handoff protocol must recover a crash between reservation
+and publication without reserving twice or losing cleanup ownership. An unpublished
+admission remains reserved and recoverable; replay of a published handoff retains
+the original operation identity. Storage and commit mechanisms remain an
+implementation decision, not an assumed cross-API-server transaction.
+
+The sequence below expands admission and execution. Checks precede retained
+authority; handoff publication follows it. Evidence must be verified before the
+consumer receives readiness, regardless of delivery or controller health.
+
+![Durable admission, exact-target federation delivery, and verified results before consumer readiness](diagrams/admitted-work.svg)
+
+See [diagram maintenance](diagrams/README.md) for editable sources and local
+rendering instructions.
+
+### Platform integration
+
+- **Milo:** project identity, IAM, protected resources, service enablement, quota,
+  and project lifecycle. Broad controller credentials do not stand in for caller
+  authorization; a project name or delivered class reference is not a grant.
+- **Location:** geographic identity and permitted location availability. A
+  Facility references geography; a future Site expresses placement policy over
+  eligible Facilities rather than being another premises identity.
+- **Networking/IPAM:** logical attachments, address allocation, switch
+  configuration, and their cleanup evidence. Fleet supplies authorized physical
+  prerequisites and consumes results, not a second network configuration writer.
+- **Galactic and other services:** fabric/routing intent, DNS, certificates, and
+  service addresses remain with their owners.
+- **Provider backends:** hardware operations and observations through qualified
+  adapters. Exact management endpoints and credentials remain private to execution.
+
+### Recovery and project lifecycle
+
+Unknown execution, verification, or cleanup retains reservations or quarantines
+capacity. Recovery queries the retained operation and evidence before retrying.
+Executor takeover requires fencing at the actual effect boundary; a controller
+lease or federation retarget alone cannot exclude an old remote worker.
+
+If a project API, Fleet runtime, or federation hub becomes unavailable, new work
+requiring that authority stops. Previously admitted work may proceed only within
+its retained scope and fencing contract; disconnected cells cannot admit new
+allocations or infer cleanup success. Buffered evidence must be attributable and
+reconciled when connectivity returns. Running workloads must not be disrupted
+merely because management is unavailable.
+
+Consumer project deletion does not remove provider-side cleanup obligations.
+Provider project retirement must block while inventory reservations, allocations,
+or cleanup custody remain, unless an explicit authorized custody transfer is
+completed. Deleting a Facility cannot cascade into destroying devices. Restoring
+old state must not resurrect released authority or replay work on a new consumer.
+
+Fleet management, provisioning, artifact delivery, credential custody, and recovery
+storage must be independently recoverable from the workloads they manage. The
+deployment design must identify their bootstrap dependencies and failure domains.
+Federation is a delivery mechanism, not a substitute for that recovery design.
+
+### Acceptance tests
+
+#### Physical inventory
+
+Finalize scopes, IAM and field writers for the six inventory kinds. Introduce
+schemas and validation, durable physical reservations, trusted registration, and
+verification for one qualified installation graph in one provider project.
+Import occupied equipment observationally, preserving existing ownership and
+unavailable capacity until explicit adoption is complete.
+
+Acceptance requires conflicting rack, port, power, and identity claims to be
+rejected under concurrency; wrong-host and stale evidence must not become ready.
+Imports and ordinary record creation must cause no power, boot, network, or
+allocation effects. Facility-only placement must not claim rack verification.
+
+#### Provider and consumer integration
+
+Connect verified inventory prerequisites to Metal supply and its existing shared
+allocator. Exercise one Service Provider Project and two Consumer Projects with
+real project identity, source-use checks, entitlement, quota, and durable custody.
+
+Acceptance requires exactly one winner for competing allocations, no physical
+data leakage, no grant through forged publication, and cleanup that survives
+consumer project deletion. Namespace stand-ins alone do not establish this gate.
+
+#### Federation and execution
+
+Define the coordination schema, exact-target propagation policy, status writer,
+credential boundaries, admission-to-handoff recovery, and executor fencing.
+Qualify one location and disposable hardware/backend combination before expansion.
+
+Acceptance requires lost responses, duplicate delivery, stale status, hub/cell
+outages, wrong-cell targeting, credential revocation, and stale executor takeover
+to fail safely. No uncertain cleanup may expose reusable supply. Complete the
+standalone lifecycle with a supported non-Talos OS and no managed-cluster or
+ongoing guest-agent prerequisite.
+
+#### Maintenance and retirement
+
+Add qualified moves, maintenance, retirement, and authorized shared-facility
+references, followed by additional providers and managed consumers. Evaluate
+whether field work warrants a dedicated operation resource from actual use.
+
+Acceptance requires movement to preserve asset history without releasing old
+physical reservations prematurely, replacement to create a new asset identity,
+and maintenance to respect active allocation authority. Test backup restoration
+and project retirement before expanding the ownership graph.
+
+## Production readiness review questionnaire
+
+### How is the feature enabled or disabled?
+
+Enable observation before reservation, and reservation before any provider
+effects. Stop new admissions on rollback while keeping recovery and cleanup
+available for retained operations; disabling controllers does not cancel remote
+work or erase custody. Each output changes authoritative writer only through an
+explicit transition after observational comparison.
+
+### What must operators monitor?
+
+Track reservation conflicts, verification age, blocked prerequisites, handoff
+delivery/status lag, unknown operations, cleanup backlog, and quarantined supply.
+Audit actor, project, admitted operation, exact target, and result without logging
+credentials or rendered secrets. Service objectives and retention periods remain
+to be selected from pilot evidence.
+
+### How are failures diagnosed and recovered?
+
+Operators correlate the accepted claim, retained dependency revisions, allocation,
+operation, and location handoff. Diagnostics must identify the first unresolved
+prerequisite and whether it is known false or unknown. Recovery resumes the retained
+operation or follows its authorized cleanup path; it does not create a new request
+to bypass occupied capacity or missing evidence.
+
+### What must upgrades and restoration preserve?
+
+Upgrades preserve canonical asset identities, physical reservations, active
+bindings, exact admitted inputs, and cleanup obligations. A restored controller
+must reconcile retained authority with executor evidence before allowing new
+effects. Exercise mixed-version readers, stale handoff delivery, and backup
+restoration against active allocations before accepting an upgrade or rollback.
+
+### What bounds resource usage?
+
+Index claims by their referenced placement and connection dependencies so a change
+reevaluates affected installations rather than scanning all inventory. Bound
+observation payloads and retain large evidence privately. Set admission limits
+for pending physical reservations and execution concurrency; neither queue growth
+nor an exhausted evidence store may relax authorization or verification gates.
+
+## Drawbacks
+
+Separating plans, assets, connections, and provider capacity introduces more
+resources and permissions than a flat device list. Operators must reconcile
+discrepancies instead of treating discovery as authoritative completion. Strict
+evidence and cleanup requirements can keep otherwise usable equipment unavailable
+until an operator resolves uncertainty.
+
+The project and federation boundaries also require durable coordination across
+independent APIs. They preserve ownership and limit execution authority, but add
+recovery, monitoring, and deployment responsibilities.
+
+## Alternatives
+
+Keeping Facility data embedded in Device duplicates shared facts and loses its
+independent lifecycle. A separate facilities API group is possible if facilities
+become an independently owned product, but adds no useful boundary for this scope.
+Putting all inventory on the federation hub would confuse delivery authority with
+project ownership; putting all state in the Fleet deployment cluster would also
+hide the canonical project contracts. Neither is proposed.
+
+## Open design questions
+
+Before implementation, decide:
+
+- Exact project/API namespace scopes, cross-project reference encoding, and IAM
+  permissions for operator intent, registration, evidence, and destructive work.
+- Canonical Facility ownership and deduplication, and the shared reservation
+  protocol when multiple providers operate within one premises.
+- Durable reservation, journal, and evidence storage; atomicity, restoration,
+  retention, and explicit project-retirement custody transfer.
+- Qualified geometry, power/redundancy accounting, evidence sources and freshness,
+  and which technician attestations are accepted for the first facility.
+- Coordination schema, federation targeting/status enforcement, transport identity,
+  and executor fencing; criteria for keeping any provider work management-local.
+- Deployment topology and bootstrap dependencies for independent Fleet recovery.
+- Whether maintenance and field work need public kinds after the initial pilot.
+
+Record these choices and their rationale before enabling the corresponding
+workflow. Illustrative names do not select a storage backend or execution engine.
+
+## Infrastructure needed
+
+The integration environment needs an infrastructure-owning Service Provider
+Project, two Consumer Projects, Milo IAM and quota, durable protected custody,
+and independently recoverable Fleet management capacity. Federation tests need
+a hub and a selected location control plane with separately scoped execution
+credentials and networking-owner integration.
+
+Physical qualification needs disposable equipment, representative rack and power
+paths, trusted enrollment, and attributable installation evidence. Test tooling
+must inject conflicting reservations, lost responses, stale workers, control-plane
+outages, and restored storage without targeting active customer infrastructure.
+
+Fleet owns service contracts and controller implementation in this repository.
+Environment-specific deployment, credentials, and rollout configuration remain
+in `infra`. Bootstrap and recovery dependencies must not rely exclusively on the
+workload cluster being managed.
