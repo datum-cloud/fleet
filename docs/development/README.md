@@ -275,7 +275,7 @@ inputs and recover idempotently. Store persistence and credential reload are
 covered by local tests; independent Deployment restart recovery still requires
 live staging verification after rollout. This remains synthetic API validation,
 not production provider qualification. See the
-[deployment and migration contract](../config/README.md#moving-from-the-colocated-simulator).
+[deployment and migration contract](../../config/README.md#moving-from-the-colocated-simulator).
 
 
 `config/overlays/management-plane` now packages the manager Deployment so its
