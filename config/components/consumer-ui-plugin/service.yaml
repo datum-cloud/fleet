@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/instance: fleet-consumer-ui-plugin
+    app.kubernetes.io/name: fleet-consumer-ui-plugin
+  name: fleet-consumer-ui-plugin
+  namespace: fleet-system
+spec:
+  type: ClusterIP
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP
+  selector:
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/instance: fleet-consumer-ui-plugin
+    app.kubernetes.io/name: fleet-consumer-ui-plugin

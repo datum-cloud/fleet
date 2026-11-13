@@ -36,7 +36,10 @@ Machine that is already releasing. In fixture mode a released Machine stays
 Releasing until the page reloads.
 
 This started as the MVP from [#16](https://github.com/datum-cloud/fleet/issues/16).
-It has no deployment manifests yet.
+It is deployed by `config/components/consumer-ui-plugin` and registered through
+the `metal` ServiceConfiguration's `userInterface`, with
+`visibility.entitlement: Required`: a project sees **Machines** only with an
+Active entitlement to the service.
 
 Consumers see their own Machines, never the provider's MachineCapacity or the
 private MachineAllocation between them: allocated hardware comes from
