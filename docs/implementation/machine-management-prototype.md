@@ -185,12 +185,40 @@ Validator versions are `redfish` 3.4.2,
 `redfish-interop-validator` 3.0.3. Reports and PXE correlation evidence are under
 `.e2e/validators` and `.e2e/virtual-bmc/evidence`.
 
+Setup downloads the DMTF Redfish-Publications 2026.2 CSDL snapshot at
+`4f81814e399213c9055863ddaff42791c6b3706a`, verifies its archive SHA-256, and
+extracts it into `.e2e/redfish-schemas`. The pin and checksum are in
+[`prepare-schemas.sh`](../../hack/e2e/prepare-schemas.sh). Validation uses that
+explicit cache with `--skipschema`; it does not download schemas while a
+short-lived management session is active or change TLS trust for the loopback
+service. Reports retain schema provenance and summary counts. A zero exit code
+alone is insufficient: each validator must perform positive checks with zero
+warnings and failures. Optional-property skips remain visible and are not
+counted as successful checks.
+
 ## Troubleshooting
 
 Run `task e2e:diagnostics` before teardown. It captures both clusters' resources,
 events and logs, Karmada clusters/Works/bindings and hub session state,
 protected/public session state, libvirt domain state/XML, virtual
 BMC logs, validator reports, acceleration selection, and PXE callbacks.
+
+The harness writes timestamped successful scenario checkpoints to
+`.e2e/checkpoints.log` and retains earlier proxy logs across session restarts.
+On failure it attempts a bounded diagnostic snapshot before terminating proxies
+or undoing injected outages; CI also collects diagnostics on successful runs.
+Resource reads are separate so a CRD absent from one cluster does not hide that
+cluster's other evidence. Workload logs target explicit deployments, and BMC
+evidence is exported through Docker rather than assuming a remote bind mount is
+visible on the client. Only named non-secret evidence files are exported.
+
+`FLEET_E2E_WAIT_SECONDS` bounds polling by elapsed seconds, not by the number of
+potentially slow requests (an in-flight probe can still add its own timeout).
+Proxy readiness fails when the process exits instead of waiting for the entire
+polling budget. API errors do not count as confirmed session deletion. These
+harness checks do not change the admitted one-minute connection window, session
+expiry, or the gateway freshness fence. Portable helper regressions run with
+`bash hack/e2e/test-common.sh` and in the Linux E2E workflow.
 
 - A gateway stuck on `RelayUnavailable` usually indicates relay DNS/token or
   NetworkPolicy failure in the location cluster.
@@ -297,11 +325,67 @@ files at the container writer and copies them through Docker, so verification
 does not depend on host/VM bind-mount visibility. It also waits for valid authority
 after the expensive emulated boot before attempting another mutation.
 
-The full `task e2e:test` run did **not** pass in this environment: repeated sessions
+The initial synchronized `task e2e:test` run did **not** pass: repeated sessions
 intermittently exhausted the one-minute connection window, and a post-PXE disk-boot
-request failed before journal admission. The latter may reflect delayed freshness
-renewal under emulation; the added wait has not been verified by a complete run.
-Do not count the later validator, central-outage, release/recreation, expiry, or
-lost-response scenarios as verified for this synchronization. The qualified Linux
-CI run and the remaining production integration gates are still required. The
-local test environment was torn down after collecting these results.
+request failed before journal admission. Its cause was not established by that
+run. At that point the added authority wait and later validator, central-outage,
+release/recreation, expiry, and lost-response scenarios remained unverified. That
+environment was torn down. The follow-up below records subsequent evidence
+separately rather than attributing the earlier failures to emulation.
+
+### E2E reliability follow-up (2026-11-12)
+
+A fresh run from the synchronized prototype completed every lifecycle scenario,
+including disk restoration, both outages, release/recreation, expiry, and the
+lost-response duplicate-reset check. However, inspection invalidated its service
+validator result: version 3.1.8 returned zero with **zero schema checks and ten
+warnings** after the loopback-only CA bundle prevented the external DMTF schema
+download. The narrow service also has no schema metadata endpoint, so no schema
+source remained. That run is lifecycle evidence, not successful schema validation.
+
+The pinned offline schema cache and coverage guard now fail closed on that case.
+Real schema validation then exposed two ServiceRoot errors: the task-service link
+was named `TaskService` instead of the standard `Tasks`, and mandatory `Links`
+was missing. The root now publishes `Tasks` and `Links.Sessions`; the declared
+interoperability profile and a focused regression test agree with those fields.
+The next run performed 91 schema checks but failed the zero-warning guard on
+three deprecated task-message `Severity` fields. Messages now use the standard
+`MessageSeverity`, with regression coverage preserving success, failure, pending,
+and unknown task outcomes. This intermediate result is not a validator pass.
+No provider route, admitted connection deadline, expiry, freshness fence, or
+operation-authority behavior changes as part of these corrections.
+
+The final corrected pre-lifecycle run on November 12 (November 13 UTC) did **not**
+complete. Setup, RBAC denial, generic DMTF client, Karmada projection, local login
+revocation, route isolation, session limits, and a fresh PXE callback with libvirt
+poweroff passed. At 00:21:08 UTC the boot proof completed; the subsequent bounded
+authority wait failed. At 00:23:26 the member projection still had
+`authorityFreshUntil=00:15:41Z`, while the hub had `00:17:43Z` and admitted expiry
+was `00:28:47Z`. Karmada's API server had restarted twice and its controller manager
+six times; previous manager logs show refused connections to the Karmada API, and
+API-server logs show failed etcd connectivity. These observations establish stale
+authority and control-plane interruption, not the underlying cause of those
+restarts. No Hdd mutation or validators were reached in this run. The gateway did
+not relax its freshness fence. Diagnostics now retain pod termination status and
+previous workload logs as well as current logs for this failure class.
+
+Evidence is retained locally under
+`/tmp/fleet-bmc-reliability-evidence/run-{1,2,3}`; the final setup/test logs are
+`/tmp/fleet-bmc-reliability-{up,test}-3.log`. Only allowlisted diagnostics,
+validator reports, and non-secret logs are archived, not kubeconfigs or proxy
+credentials. Run 1 proves the baseline lifecycle scenarios but not schema
+validation; run 2 proves schema traversal and identifies the deprecated fields;
+run 3 does not establish that the final schema correction passes live validation.
+Portable full Go tests, targeted race tests, shell helper regressions on macOS
+and Linux, schema checksum rejection, shell syntax/ShellCheck, documentation
+links, and whitespace checks pass. The original intermittent connection-window
+failure remains unresolved; its cause was not reproduced or established here.
+
+These results are for the synchronized `bccf896` pre-lifecycle baseline, **not**
+the later Coordinator custody integration. Combined validation must use the
+explicit synthetic fixture, real Secret-backed lifecycle custody and release,
+and the updated coordination CRD. Its lost-response/unknown-operation scenario
+must be last or isolated: unknown effects legitimately prevent teardown and
+allocation reuse, and cannot be cleared merely to continue the test. No native
+Linux/CI full run, physical BMC, or OpenVPN qualification was obtained in this
+environment. A complete warning-free validator and lifecycle run remains required.

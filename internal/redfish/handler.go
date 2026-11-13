@@ -110,7 +110,7 @@ func (h *Handler) checkRequest(r *http.Request) error {
 }
 
 func (h *Handler) serviceRoot(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, map[string]any{"@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot", "@odata.id": "/redfish/v1/", "Id": "RootService", "Name": "Fleet Virtual Redfish Service", "RedfishVersion": "1.18.0", "UUID": virtualUUID(h.authority().SessionName), "Systems": odata("/redfish/v1/Systems"), "SessionService": odata("/redfish/v1/SessionService"), "TaskService": odata("/redfish/v1/TaskService")})
+	writeJSON(w, http.StatusOK, map[string]any{"@odata.type": "#ServiceRoot.v1_15_0.ServiceRoot", "@odata.id": "/redfish/v1/", "Id": "RootService", "Name": "Fleet Virtual Redfish Service", "RedfishVersion": "1.18.0", "UUID": virtualUUID(h.authority().SessionName), "Systems": odata("/redfish/v1/Systems"), "SessionService": odata("/redfish/v1/SessionService"), "Tasks": odata("/redfish/v1/TaskService"), "Links": map[string]any{"Sessions": odata("/redfish/v1/SessionService/Sessions")}})
 }
 
 func virtualUUID(sessionName string) string {
@@ -314,7 +314,7 @@ func taskBody(op journal.Operation) map[string]any {
 		state = "Exception"
 		status = "Warning"
 	}
-	return map[string]any{"@odata.type": "#Task.v1_7_4.Task", "@odata.id": "/redfish/v1/TaskService/Tasks/" + op.ID, "Id": op.ID, "Name": "Fleet machine operation", "TaskState": state, "TaskStatus": status, "Messages": []any{map[string]any{"MessageId": "Fleet.1.0." + string(op.Outcome), "Message": op.Evidence, "Severity": status, "Resolution": "Inspect or recover the existing operation; do not resubmit an unknown effect."}}}
+	return map[string]any{"@odata.type": "#Task.v1_7_4.Task", "@odata.id": "/redfish/v1/TaskService/Tasks/" + op.ID, "Id": op.ID, "Name": "Fleet machine operation", "TaskState": state, "TaskStatus": status, "Messages": []any{map[string]any{"MessageId": "Fleet.1.0." + string(op.Outcome), "Message": op.Evidence, "MessageSeverity": status, "Resolution": "Inspect or recover the existing operation; do not resubmit an unknown effect."}}}
 }
 func odata(path string) map[string]string { return map[string]string{"@odata.id": path} }
 func setODataHeaders(w http.ResponseWriter) {

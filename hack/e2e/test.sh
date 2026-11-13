@@ -9,6 +9,8 @@ LOCATION_KUBECONFIG="${E2E_DIR}/location.kubeconfig"
 KARMADA_KUBECONFIG="${E2E_DIR}/karmada.kubeconfig"
 PATH="${E2E_DIR}/bin:${PATH}"
 export PATH
+source "${ROOT_DIR}/hack/e2e/common.sh"
+rm -f "${E2E_DIR}/checkpoints.log" "${E2E_DIR}/viewer-ready.json" "${E2E_DIR}/ready-2.json"
 
 for file in "${MGMT_KUBECONFIG}" "${LOCATION_KUBECONFIG}" "${KARMADA_KUBECONFIG}" "${E2E_DIR}/management-ca.crt"; do
   [[ -f "${file}" ]] || { echo "missing ${file}; run task e2e:up" >&2; exit 1; }
@@ -27,30 +29,17 @@ proxy_pid=
 second_proxy_pid=
 management_paused=false
 location_paused=false
+bmc_blocked=false
 cleanup() {
+  local result=$?
+  if [[ ${result} -ne 0 ]]; then run_timeout 90 "${ROOT_DIR}/hack/e2e/diagnostics.sh" || true; fi
   if [[ -n "${proxy_pid}" ]]; then kill -TERM "${proxy_pid}" 2>/dev/null || true; wait "${proxy_pid}" 2>/dev/null || true; fi
   if [[ -n "${second_proxy_pid}" ]]; then kill -TERM "${second_proxy_pid}" 2>/dev/null || true; wait "${second_proxy_pid}" 2>/dev/null || true; fi
   if [[ "${management_paused}" == true ]]; then docker unpause fleet-management-e2e-control-plane >/dev/null 2>&1 || true; fi
   if [[ "${location_paused}" == true ]]; then docker unpause fleet-location-e2e-control-plane >/dev/null 2>&1 || true; fi
+  if [[ "${bmc_blocked}" == true ]]; then docker exec fleet-e2e-virtual-bmc iptables -D INPUT -p tcp --dport 8000 -s 172.30.0.20 -j REJECT >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT
-
-fail() { echo "FAIL: $*" >&2; exit 1; }
-wait_for() {
-  local description=$1 command=$2
-  # A freshly installed Karmada control plane can need more than 90 seconds to
-  # schedule the first Work and reflect member status on shared CI runners.
-  # Keep the bound explicit and configurable without weakening any assertion.
-  for _ in $(seq 1 "${FLEET_E2E_WAIT_SECONDS:-240}"); do eval "${command}" && return 0; sleep 1; done
-  fail "timed out waiting for ${description}"
-}
-run_timeout() {
-  local seconds=$1
-  shift
-  if command -v timeout >/dev/null; then timeout "${seconds}" "$@"; return; fi
-  if command -v gtimeout >/dev/null; then gtimeout "${seconds}" "$@"; return; fi
-  perl -e '$seconds = shift; alarm $seconds; exec @ARGV' "${seconds}" "$@"
-}
 file_mode() {
   if stat -c %a "$1" >/dev/null 2>&1; then stat -c %a "$1"; else stat -f %Lp "$1"; fi
 }
@@ -70,6 +59,9 @@ set -e
 
 start_proxy() {
   local ttl=${1:-15m}
+  local attempt
+  attempt=$(date -u '+%Y%m%dT%H%M%SZ')
+  [[ ! -f "${E2E_DIR}/proxy.log" ]] || cp "${E2E_DIR}/proxy.log" "${E2E_DIR}/proxy-${attempt}.log"
   rm -f "${E2E_DIR}/ready.json" "${E2E_DIR}/credentials.json" "${E2E_DIR}/ca.pem"
   DATUM_TOKEN=must-not-be-used HOME="${E2E_DIR}/home-authorized" datumctl fleet machine-management proxy db-01 -- \
     --api-server "${api_server}" --api-ca-file "${E2E_DIR}/management-ca.crt" \
@@ -77,7 +69,7 @@ start_proxy() {
     --ready-file "${E2E_DIR}/ready.json" --credential-file "${E2E_DIR}/credentials.json" \
     --ca-file "${E2E_DIR}/ca.pem" >"${E2E_DIR}/proxy.log" 2>&1 &
   proxy_pid=$!
-  wait_for "datumctl fleet proxy readiness" "jq -e '.ready == true' '${E2E_DIR}/ready.json' >/dev/null 2>&1"
+  wait_for "datumctl fleet proxy readiness" "jq -e '.ready == true' '${E2E_DIR}/ready.json' >/dev/null 2>&1" "${proxy_pid}"
   endpoint=$(jq -r .endpoint "${E2E_DIR}/credentials.json")
   username=$(jq -r .username "${E2E_DIR}/credentials.json")
   password=$(jq -r .password "${E2E_DIR}/credentials.json")
@@ -88,7 +80,7 @@ stop_proxy() {
   kill -TERM "${proxy_pid}" 2>/dev/null || true
   wait "${proxy_pid}" 2>/dev/null || true
   proxy_pid=
-  wait_for "session deletion" "! kubectl --kubeconfig '${MGMT_KUBECONFIG}' -n default get machinemanagementsessions.metal.datumapis.com -o name 2>/dev/null | grep -q ."
+  wait_for "session deletion" "sessions_absent '${MGMT_KUBECONFIG}' default machinemanagementsessions.metal.datumapis.com"
 }
 
 # Nested x86 QEMU on non-x86 developer hosts can take tens of seconds to apply
@@ -98,6 +90,7 @@ stop_proxy() {
 rf() { curl --silent --show-error --max-time 90 --cacert "${E2E_DIR}/ca.pem" --user "${username}:${password}" "$@"; }
 rf_status() { curl --silent --max-time 90 --output /dev/null --write-out '%{http_code}' --cacert "${E2E_DIR}/ca.pem" --user "${username}:${password}" "$@"; }
 
+checkpoint "Machine reader denied session creation"
 start_proxy
 [[ $(file_mode "${E2E_DIR}/credentials.json") == 600 ]] || fail "credential file is not 0600"
 [[ $(file_mode "${E2E_DIR}/ca.pem") == 600 ]] || fail "CA file is not 0600"
@@ -136,6 +129,7 @@ else
     -v "${E2E_DIR}:/state:ro" -v "${TEST_DIR}:/work:ro" fleet-redfish-tools:e2e \
     "python /work/generic-client.py"
 fi
+checkpoint "generic DMTF client and Karmada projection"
 
 # Session-local login credentials are revocable and are not BMC credentials.
 login_headers="${E2E_DIR}/login.headers"
@@ -224,7 +218,7 @@ HOME="${E2E_DIR}/home-authorized" datumctl fleet machine-management proxy db-02 
   --credential-file "${E2E_DIR}/credentials-2.json" --ca-file "${E2E_DIR}/ca-2.pem" \
   >"${E2E_DIR}/proxy-2.log" 2>&1 &
 second_proxy_pid=$!
-wait_for "second project session" "jq -e '.ready == true' '${E2E_DIR}/ready-2.json' >/dev/null 2>&1"
+wait_for "second project session" "jq -e '.ready == true' '${E2E_DIR}/ready-2.json' >/dev/null 2>&1" "${second_proxy_pid}"
 set +e
 run_timeout 20 env HOME="${E2E_DIR}/home-authorized" datumctl fleet machine-management proxy db-03 -- \
   --api-server "${api_server}" --api-ca-file "${E2E_DIR}/management-ca.crt" >"${E2E_DIR}/project-limit.log" 2>&1
@@ -234,6 +228,8 @@ set -e
 grep -q SessionLimitExceeded "${E2E_DIR}/project-limit.log" || fail "project limit rejection was not actionable"
 kill -TERM "${second_proxy_pid}"; wait "${second_proxy_pid}" || true; second_proxy_pid=
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-02-allocation --subresource=status --type=merge -p '{"status":{"phase":"Released"}}'
+
+checkpoint "local login revocation, route isolation, and session limits"
 
 # Real sushy -> libvirt PXE effect, correlated by the allocated VM MAC callback.
 pxe_body='{"Boot":{"BootSourceOverrideEnabled":"Once","BootSourceOverrideTarget":"Pxe"}}'
@@ -256,10 +252,8 @@ wait_for "PXE fixture poweroff in libvirt" "[[ \$(docker exec fleet-e2e-virtual-
 jq -n --arg operationID "$(jq -r .Id <<<"${power_task}")" --arg mac 52:54:00:aa:00:01 \
   --argjson callback "$(grep '/pxe/52-54-00-aa-00-01' "${E2E_DIR}/virtual-bmc/evidence/pxe-callbacks.jsonl" | tail -1)" \
   '{operationID:$operationID,vmMAC:$mac,callback:$callback}' >"${E2E_DIR}/virtual-bmc/evidence/pxe-operation-correlation.json"
+checkpoint "fresh allocated PXE callback and libvirt poweroff"
 
-# Software-emulated guest boot can starve the control planes long enough to
-# exceed the deliberately short test freshness window. Require renewed authority
-# before admitting the next effect; do not loosen the gateway's fail-closed gate.
 wait_for "authority after PXE boot" "[[ \$(rf_status '${root}/redfish/v1/Systems/allocated') == 200 ]]"
 
 hdd_body='{"Boot":{"BootSourceOverrideEnabled":"Once","BootSourceOverrideTarget":"Hdd"}}'
@@ -271,9 +265,11 @@ grep -A6 "<disk type='file' device='disk'>" <<<"${domain_xml}" | grep -q "<boot 
 if grep -A6 "<interface type='network'>" <<<"${domain_xml}" | grep -q '<boot order='; then
   fail "libvirt retained a network boot override after local-disk restoration"
 fi
+checkpoint "Hdd restoration in Redfish and libvirt XML"
 
 # Both pinned DMTF validators run against the live virtual service.
 FLEET_CREDENTIAL_FILE="${E2E_DIR}/credentials.json" "${ROOT_DIR}/hack/e2e/validators.sh"
+checkpoint "DMTF service and interoperability validators"
 
 # The established data path survives loss of the central API, then fails closed
 # after the bounded cached-authority deadline.
@@ -285,6 +281,7 @@ sleep 18
 docker unpause fleet-management-e2e-control-plane >/dev/null
 management_paused=false
 wait_for "authority refresh" "[[ \$(rf_status '${root}/redfish/v1/Systems/allocated') == 200 ]]"
+checkpoint "central API outage, stale-authority rejection, and recovery"
 
 # Allocation release is a terminal fence for this admitted binding.
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-01-allocation --subresource=status --type=merge -p '{"status":{"phase":"Released"}}'
@@ -326,12 +323,13 @@ start_proxy
 # is never addressable through the customer's virtual ID.
 rf -X POST -H 'Content-Type: application/json' -d '{"ResetType":"On"}' "${root}/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset" >/dev/null
 wait_for "new allocation domain power-on" "[[ \$(docker exec fleet-e2e-virtual-bmc virsh domstate unallocated | tr -d '\\r') == running ]]"
+checkpoint "release fence and same-name Machine recreation"
 
 # Fault-inject a lost BMC response. Retrying the identical admitted operation
 # must recover its Unknown task without sending a second physical reset.
 stop_proxy
 wait_for "prior location projection teardown" \
-  "! kubectl --kubeconfig '${LOCATION_KUBECONFIG}' -n machine-access-system get projectedmachinemanagementsessions.coordination.fleet.datumapis.com -o name 2>/dev/null | grep -q ."
+  "sessions_absent '${LOCATION_KUBECONFIG}' machine-access-system projectedmachinemanagementsessions.coordination.fleet.datumapis.com"
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system patch deployment fleet-gateway --type=json \
   -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--fault-drop-reset-response-once"}]'
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status deployment/fleet-gateway --timeout=120s
@@ -345,6 +343,7 @@ lost_second=$(rf -X POST -H 'Content-Type: application/json' -d "${lost_body}" "
 [[ $(jq -r .Id <<<"${lost_first}") == $(jq -r .Id <<<"${lost_second}") ]] || fail "retry created a second operation"
 reset_after=$(docker logs fleet-e2e-virtual-bmc 2>&1 | grep -c "POST ${reset_path}" || true)
 [[ $((reset_after - reset_before)) -eq 1 ]] || fail "lost-response retry sent $((reset_after - reset_before)) physical resets"
+checkpoint "lost response remains Unknown and retry sends no second reset"
 
 # The gateway schedules the admitted expiry and closes the stream rather than
 # treating a still-live client or relay connection as authority.
@@ -352,17 +351,20 @@ stop_proxy
 start_proxy 1m
 sleep 65
 [[ $(rf_status "${root}/redfish/v1/Systems/allocated") != 200 ]] || fail "expired session retained Redfish access"
+checkpoint "admitted expiry closes access"
 stop_proxy
 start_proxy
 
 # Stop only the private sushy route. The customer receives a bounded error that
 # does not disclose the private endpoint or credential.
-gateway_pod=$(kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system get pod -l app.kubernetes.io/name=fleet-gateway -o jsonpath='{.items[0].metadata.name}')
 docker exec fleet-e2e-virtual-bmc iptables -I INPUT 1 -p tcp --dport 8000 -s 172.30.0.20 -j REJECT
+bmc_blocked=true
 bmc_error=$(rf "${root}/redfish/v1/Systems/allocated")
 [[ $(jq -r .error.code <<<"${bmc_error}") == Fleet.1.0.BMCUnavailable ]] || fail "BMC failure was not actionable"
 ! grep -Eq '172\.30\.0\.10|fleet-gateway|synthetic-e2e-only' <<<"${bmc_error}" || fail "BMC failure disclosed private data"
-docker exec fleet-e2e-virtual-bmc iptables -D INPUT 1
+docker exec fleet-e2e-virtual-bmc iptables -D INPUT -p tcp --dport 8000 -s 172.30.0.20 -j REJECT
+bmc_blocked=false
+checkpoint "bounded private BMC outage without credential disclosure"
 
 # If the location cannot acknowledge explicit deletion, the public object may
 # finish deleting only with a protected Unknown teardown outcome.
@@ -376,4 +378,5 @@ cleanup_status=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get m
 docker unpause fleet-location-e2e-control-plane >/dev/null
 location_paused=false
 [[ ! -e "${E2E_DIR}/credentials.json" && ! -e "${E2E_DIR}/ca.pem" ]] || fail "proxy secret files survived shutdown"
+checkpoint "unconfirmed location teardown remains Unknown; local secrets removed"
 echo "machine-management end-to-end scenarios: PASS"

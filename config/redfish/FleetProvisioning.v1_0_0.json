@@ -17,7 +17,10 @@
         "RedfishVersion": {"ReadRequirement": "Mandatory"},
         "Systems": {"ReadRequirement": "Mandatory"},
         "SessionService": {"ReadRequirement": "Mandatory"},
-        "TaskService": {"ReadRequirement": "Mandatory"}
+        "Tasks": {"ReadRequirement": "Mandatory"},
+        "Links": {"ReadRequirement": "Mandatory", "PropertyRequirements": {
+          "Sessions": {"ReadRequirement": "Mandatory"}
+        }}
       }
     },
     "ComputerSystem": {

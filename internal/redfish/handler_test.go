@@ -92,6 +92,31 @@ func TestUnsupportedMutationsRejected(t *testing.T) {
 	}
 }
 
+func TestServiceRootUsesStandardTaskAndSessionLinks(t *testing.T) {
+	handler := newHandler(t, &fakeAdapter{})
+	response := request(handler, http.MethodGet, "/redfish/v1/", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("service root: %d %s", response.Code, response.Body.String())
+	}
+	var root struct {
+		Tasks       map[string]string
+		Links       map[string]map[string]string
+		TaskService json.RawMessage
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &root); err != nil {
+		t.Fatal(err)
+	}
+	if root.TaskService != nil {
+		t.Fatal("ServiceRoot exposed the nonstandard TaskService property")
+	}
+	if root.Tasks["@odata.id"] != "/redfish/v1/TaskService" {
+		t.Fatalf("incorrect task link: %v", root.Tasks)
+	}
+	if root.Links["Sessions"]["@odata.id"] != "/redfish/v1/SessionService/Sessions" {
+		t.Fatalf("incorrect session link: %v", root.Links)
+	}
+}
+
 func TestLostResponseIsUnknownAndNeverDuplicatesReset(t *testing.T) {
 	a := &fakeAdapter{lost: true}
 	h := newHandler(t, a)
@@ -165,5 +190,32 @@ func TestExpiredSessionFailsClosed(t *testing.T) {
 func TestAdapterResponseLostSentinel(t *testing.T) {
 	if !errors.Is(ErrResponseLost, ErrResponseLost) {
 		t.Fatal("sentinel")
+	}
+}
+
+func TestTaskMessageSeverityPreservesOperationOutcome(t *testing.T) {
+	for _, test := range []struct {
+		outcome journal.Outcome
+		state   string
+		status  string
+	}{
+		{journal.Pending, "Running", "OK"},
+		{journal.Succeeded, "Completed", "OK"},
+		{journal.Failed, "Exception", "Critical"},
+		{journal.Unknown, "Exception", "Warning"},
+	} {
+		t.Run(string(test.outcome), func(t *testing.T) {
+			body := taskBody(journal.Operation{ID: "operation", Outcome: test.outcome, Evidence: "retained evidence"})
+			if body["TaskState"] != test.state || body["TaskStatus"] != test.status {
+				t.Fatalf("operation outcome changed: %v", body)
+			}
+			message := body["Messages"].([]any)[0].(map[string]any)
+			if message["MessageSeverity"] != test.status || message["MessageId"] != "Fleet.1.0."+string(test.outcome) {
+				t.Fatalf("incorrect operation message: %v", message)
+			}
+			if _, present := message["Severity"]; present {
+				t.Fatal("deprecated message Severity remains exposed")
+			}
+		})
 	}
 }

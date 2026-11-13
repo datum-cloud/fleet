@@ -18,6 +18,7 @@ if [[ $(uname -s) != Linux ]]; then
   export FLEET_FORCE_QEMU=${FLEET_FORCE_QEMU:-1}
 fi
 mkdir -p "${E2E_DIR}/bin" "${FLEET_E2E_STATE}/evidence" "${FLEET_E2E_STATE}/images"
+bash "${ROOT_DIR}/hack/e2e/prepare-schemas.sh"
 find "${FLEET_E2E_STATE}/evidence" -maxdepth 1 -type f -delete
 
 docker compose -p fleet-bmc-e2e -f "${TEST_DIR}/compose.yaml" up -d --build

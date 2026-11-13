@@ -46,7 +46,9 @@ jobs:
           "${tools_bin}/helm" version
           "${tools_bin}/task" --version
       - name: Portable tests
-        run: task test
+        run: |
+          task test
+          bash hack/e2e/test-common.sh
       - name: Start virtual-BMC environment
         run: task e2e:up
       - name: End-to-end scenarios
@@ -54,9 +56,11 @@ jobs:
           set -o pipefail
           task e2e:test 2>&1 | tee .e2e/e2e-test.log
       - name: Collect diagnostics
+        if: always()
+        run: task e2e:diagnostics || true
+      - name: Summarize failure
         if: failure()
         run: |
-          task e2e:diagnostics || true
           if [[ -f .e2e/e2e-test.log ]]; then
             tail -n 100 .e2e/e2e-test.log
             {
@@ -69,11 +73,6 @@ jobs:
             message=$(tr '\n' ' ' <"${RUNNER_TEMP}/fleet-e2e-error.txt" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
             echo "::error title=E2E failure::${message}"
           fi
-      - name: Prepare non-secret evidence for upload
-        if: always()
-        run: |
-          docker exec fleet-e2e-virtual-bmc sh -c \
-            'find /evidence -maxdepth 1 -type f ! -name "*.key" -exec chmod 0644 {} +' || true
       - name: Upload diagnostics and validator reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -82,8 +81,6 @@ jobs:
           path: |
             .e2e/diagnostics
             .e2e/validators
-            .e2e/virtual-bmc/evidence
-            !.e2e/virtual-bmc/evidence/*.key
             .e2e/*.log
           include-hidden-files: true
           if-no-files-found: ignore
