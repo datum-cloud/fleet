@@ -1,0 +1,10 @@
+apiVersion: metal.datumapis.com/v1alpha1
+kind: Machine
+metadata:
+  name: db-01
+  namespace: default
+spec:
+  machineClassRef: {name: synthetic-libvirt}
+  machineProfileRef: {name: synthetic-libvirt}
+  locationRef: {name: location-e2e}
+  powerState: "Off"

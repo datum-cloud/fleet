@@ -18,6 +18,17 @@ API servers and must be reconciled independently.
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
+The secure machine-management prototype additionally applies
+`config/federation` to the Karmada API. It contains the projected-session status
+interpreter and least-privilege hub RBAC; the generated projected-session CRD is
+applied to the Karmada API separately. This component is not yet part of either
+published production root because environment-owned Karmada identity and member
+registration have not been selected. Its public session and private binding CRDs
+use `metal.datumapis.com`; the projected-session CRD and hub RBAC use
+`coordination.fleet.datumapis.com`. The prototype RBAC grants session creation
+separately from Machine viewing. It adds no Milo service, session IAM registration,
+or production release integration. See the [prototype integration gaps](../docs/implementation/machine-management-prototype.md#prototype-choices-and-remaining-production-gaps).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
 

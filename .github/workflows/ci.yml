@@ -14,6 +14,14 @@ jobs:
       with: {go-version-file: go.mod, cache: true}
     - uses: imranismail/setup-kustomize@v2
       with: {kustomize-version: 5.8.1}
+    - name: Verify session and coordination CRD generation
+      run: |
+        go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0 crd paths="./internal/api/session/...;./internal/api/coordination/..." output:crd:artifacts:config=config/crd/bases
+        git diff --exit-code -- config/crd/bases
+    - run: kustomize build config/crd >/dev/null
+    - run: kustomize build config/federation >/dev/null
+    - run: kustomize build config/manager >/dev/null
+    - run: kustomize build config/location >/dev/null
     - run: go test ./...
     - run: go test -race ./...
     - run: go vet ./...

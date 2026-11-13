@@ -1,0 +1,10 @@
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineCapacity
+metadata:
+  name: allocated-capacity
+  namespace: fleet-provider
+spec:
+  deviceRef: {name: device-allocated}
+  allocationPolicy: Enabled
+  cleaningPolicyRef: {name: synthetic-e2e}
+  reclaimPolicy: Retain

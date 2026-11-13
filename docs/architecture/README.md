@@ -57,9 +57,9 @@ processes or service-catalog entries.
 
 | Group | Resources and responsibility | Status |
 | --- | --- | --- |
-| `metal.datumapis.com` | `MachineClass`: offerings and consumer references. `MachineProfile`: hardware requirements. `MachineCapacity`: provider supply. `Machine`: customer allocation and runtime intent. `MachineAllocation`: protected allocation identity. `Installation`: immutable OS installation or reinstall request. | Six alpha CRDs at `v1alpha1`. Production admission and real providers remain incomplete. |
+| `metal.datumapis.com` | `MachineClass`: offerings and consumer references. `MachineProfile`: hardware requirements. `MachineCapacity`: provider supply. `Machine`: customer allocation and runtime intent. `MachineAllocation`: protected allocation identity. `Installation`: immutable OS installation or reinstall request. | Six lifecycle alpha CRDs at `v1alpha1`, plus separately packaged prototype `MachineManagementSession` and protected `MachineManagementSessionBinding` CRDs. Production admission and real providers remain incomplete. |
 | `fleet.datumapis.com` | Physical inventory: `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`. Physical preparation and provider execution remain operator responsibilities. | Proposed inventory APIs; no physical inventory CRDs or real provider executor are implemented here. |
-| `coordination.fleet.datumapis.com` | Intended management-to-location execution handoff, retaining exact allocation identity, location, admitted inputs, release intent, and execution evidence. `MachineAllocationHandoff` is a candidate resource. | Architecture decision only on the current main implementation: no coordination CRD or cell controller is packaged. Replaces the earlier prototype name `internal.fleet.datumapis.com`. |
+| `coordination.fleet.datumapis.com` | Intended management-to-location execution handoff, retaining exact allocation identity, location, admitted inputs, release intent, and execution evidence. `MachineAllocationHandoff` is a candidate resource. | The separate BMC prototype implements `ProjectedMachineManagementSession` with a Karmada projector and location gateway. Allocation handoff remains proposed. Replaces `internal.fleet.datumapis.com`. |
 
 MachineCapacity and MachineAllocation belong to the Metal allocation contract
 but remain provider- or service-owned. Membership in the customer service's API
@@ -105,8 +105,10 @@ Networking/IPAM and Galactic retain authority over attachments, addresses,
 switch configuration, and routing. A coordination reference is neither a
 customer source-use grant nor independent provider execution authority.
 
-Current main implements location resolution and event routing, not this complete
-federation topology. Standalone namespaces are project stand-ins; synthetic
+The lifecycle manager implements location resolution and event routing, not this complete
+federation topology. The separately packaged BMC prototype exercises session
+federation with pre-bound synthetic allocations; it is not wired to lifecycle
+admission or release custody. Standalone namespaces are project stand-ins; synthetic
 staging is a test mode. Neither establishes production federation or hardware
 readiness. See the [implementation status](../development/README.md).
 

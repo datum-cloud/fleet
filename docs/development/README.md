@@ -22,6 +22,11 @@ admission, replayable Milo event adapters, and real providers are not implemente
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
+The separately packaged [BMC access prototype](implementation/machine-management-prototype.md)
+adds Metal management sessions and coordination-group location projections.
+It still uses pre-bound synthetic allocation records and is not integrated with
+the lifecycle library's admission, execution serialization, or release barrier.
+
 ## API group naming
 
 The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the

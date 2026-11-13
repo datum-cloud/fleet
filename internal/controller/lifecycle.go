@@ -29,8 +29,9 @@ import (
 )
 
 const (
-	MachineFinalizer    = "fleet.datumapis.com/machine-protection"
-	recordSchemaVersion = 1
+	MachineFinalizer         = "fleet.datumapis.com/machine-protection"
+	recordSchemaVersion      = 1
+	assetRecordSchemaVersion = 2
 	// Installation records gained retained public routing identities in v2.
 	// v1 is accepted only by the explicit request-bound upgrader below.
 	installationRecordSchemaVersion = 2
@@ -116,6 +117,8 @@ type AssetRecord struct {
 	MachineNamespace        string                     `json:"machineNamespace"`
 	MachineName             string                     `json:"machineName"`
 	MachineUID              types.UID                  `json:"machineUID"`
+	DeviceName              string                     `json:"deviceName,omitempty"`
+	LocationName            string                     `json:"locationName,omitempty"`
 	ClaimNamespace          string                     `json:"claimNamespace"`
 	ClaimName               string                     `json:"claimName"`
 	ClaimUID                types.UID                  `json:"claimUID"`
@@ -133,6 +136,7 @@ type AssetRecord struct {
 	FenceToken              string                     `json:"fenceToken"`
 	CurrentInstallationName string                     `json:"currentInstallationName"`
 	ActiveOperationID       string                     `json:"activeOperationID,omitempty"`
+	Management              *ManagementSessionRecord   `json:"management,omitempty"`
 	AcceptedRequirements    fleetv1.MachineProfileSpec `json:"acceptedRequirements"`
 	Hardware                fleetv1.Hardware           `json:"hardware"`
 	Network                 *NetworkRecord             `json:"network,omitempty"`
@@ -552,6 +556,9 @@ func (c *Coordinator) recordCandidateEligible(record *AssetRecord, request Alloc
 }
 
 func validateAssetForRequest(record *AssetRecord, request AllocationRequest) error {
+	if record.SchemaVersion == assetRecordSchemaVersion && record.LocationName != request.Claim.Spec.LocationRef.Name {
+		return fmt.Errorf("%w: retained allocation location differs from retry", ErrRecordInvalid)
+	}
 	// Specs contain slices, so compare their canonical JSON rather than
 	// allowing a recovered Preparing record to drift across retries.
 	got, _ := json.Marshal(record.AcceptedRequirements)
@@ -792,8 +799,9 @@ func (c *Coordinator) proposeAsset(ctx context.Context, request AllocationReques
 }
 
 func newAssetRecord(request AllocationRequest, machine *fleetv1.MachineCapacity, assetID string, epoch int64, bindingID, fenceToken string) *AssetRecord {
-	record := &AssetRecord{SchemaVersion: recordSchemaVersion, State: AssetPreparing, AssetID: assetID,
+	record := &AssetRecord{SchemaVersion: assetRecordSchemaVersion, State: AssetPreparing, AssetID: assetID,
 		MachineNamespace: machine.Namespace, MachineName: machine.Name, MachineUID: machine.UID,
+		DeviceName: machine.Spec.DeviceRef.Name, LocationName: request.Claim.Spec.LocationRef.Name,
 		ClaimNamespace: request.Claim.Namespace, ClaimName: request.Claim.Name, ClaimUID: request.Claim.UID, ClaimScope: allocationClaimScope(request),
 		ClassUID: request.Class.UID, ProfileUID: request.Profile.UID, LocalClassUID: localClassUID(request), LocalProfileUID: localProfileUID(request),
 		ConsumerProject: request.ConsumerProject, ProviderProject: request.ProviderProject, Authority: request.Authority, ExternalHold: request.ExternalHold,
@@ -1000,6 +1008,12 @@ func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID ty
 	}
 	if custody.State != CustodyBound || custody.AssetID != record.AssetID {
 		return ReleaseResult{}, fmt.Errorf("%w: custody and asset authority disagree", ErrRecordInvalid)
+	}
+	if managementHeld(record) {
+		if err := c.revokeManagement(ctx, record.AssetID, claimUID, true); err != nil {
+			return ReleaseResult{}, err
+		}
+		return ReleaseResult{State: AssetReleasing}, ErrManagementActive
 	}
 	if record.ActiveOperationID != "" {
 		if err := c.settleActiveOperation(ctx, record); err != nil {
@@ -1445,6 +1459,12 @@ func (c *Coordinator) activateOperation(ctx context.Context, assetID string, cla
 	if record.ClaimUID != claimUID || record.State != AssetCommitted || record.CurrentInstallationName != predecessor {
 		return ErrPredecessorConflict
 	}
+	if managementHeld(record) {
+		if err := c.revokeManagement(ctx, assetID, claimUID, false); err != nil {
+			return err
+		}
+		return ErrManagementActive
+	}
 	if record.ActiveOperationID != "" && record.ActiveOperationID != operationID {
 		return ErrOperationActive
 	}
@@ -1539,7 +1559,7 @@ func (c *Coordinator) setAssetState(ctx context.Context, assetID string, claimUI
 	if err != nil {
 		return nil, err
 	}
-	if record.ClaimUID != claimUID || record.State != from || record.ActiveOperationID != "" {
+	if record.ClaimUID != claimUID || record.State != from || record.ActiveOperationID != "" || managementHeld(record) {
 		return nil, fmt.Errorf("%w: asset transition %s to %s rejected", ErrRecordInvalid, record.State, to)
 	}
 	record.State = to
@@ -1988,7 +2008,7 @@ func decodeLegacyOperationSecret(secret *corev1.Secret) (*InstallationRecord, er
 }
 
 func validateAssetRecord(r *AssetRecord) error {
-	if r.SchemaVersion != recordSchemaVersion || r.AssetID == "" || r.MachineNamespace == "" || r.MachineName == "" || r.MachineUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.ClassUID == "" || r.ProfileUID == "" || r.LocalClassUID == "" || r.LocalProfileUID == "" || r.BindingID == "" || r.Epoch < 1 || r.FenceToken == "" || r.CurrentInstallationName == "" {
+	if (r.SchemaVersion != recordSchemaVersion && r.SchemaVersion != assetRecordSchemaVersion) || r.SchemaVersion == recordSchemaVersion && r.Management != nil || r.AssetID == "" || r.MachineNamespace == "" || r.MachineName == "" || r.MachineUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.ClassUID == "" || r.ProfileUID == "" || r.LocalClassUID == "" || r.LocalProfileUID == "" || r.BindingID == "" || r.Epoch < 1 || r.FenceToken == "" || r.CurrentInstallationName == "" {
 		return ErrRecordInvalid
 	}
 	projectAuthority := r.ConsumerProject.Valid() || r.ProviderProject.Valid() || r.Authority.Valid() || r.ExternalHold.Valid()
@@ -1996,6 +2016,9 @@ func validateAssetRecord(r *AssetRecord) error {
 		return ErrRecordInvalid
 	}
 	if r.ConsumerProject.Valid() && r.ClaimScope != ProjectClaimScope(r.ConsumerProject) {
+		return ErrRecordInvalid
+	}
+	if r.Management != nil && validateManagementRecord(r) != nil {
 		return ErrRecordInvalid
 	}
 	switch r.State {

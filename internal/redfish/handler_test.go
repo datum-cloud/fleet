@@ -1,0 +1,221 @@
+package redfish
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"go.datum.net/fleet/internal/journal"
+)
+
+type fakeAdapter struct {
+	resets int
+	boots  int
+	lost   bool
+}
+
+func (a *fakeAdapter) Observe(context.Context) (System, error) {
+	return System{PowerState: "Off", BootTarget: "Hdd"}, nil
+}
+func (a *fakeAdapter) SetOneTimeBoot(context.Context, string) error { a.boots++; return nil }
+func (a *fakeAdapter) Reset(context.Context, string) error {
+	a.resets++
+	if a.lost {
+		a.lost = false
+		return ErrResponseLost
+	}
+	return nil
+}
+func (a *fakeAdapter) PhysicalTarget() string { return "private-target" }
+
+func newHandler(t *testing.T, a Adapter) *Handler {
+	t.Helper()
+	s, err := journal.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1000, 0)
+	return &Handler{Adapter: a, Journal: s, Now: func() time.Time { return now }, Authority: Authority{SessionName: "session", MachineCapacityName: "capacity", DeviceName: "device", OperationEpoch: 1, ExpiresAt: now.Add(time.Hour), FreshUntil: now.Add(time.Minute)}}
+}
+
+func request(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Host = "127.0.0.1:9443"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+func TestNarrowProfileAndSingleSystem(t *testing.T) {
+	h := newHandler(t, &fakeAdapter{})
+	for _, p := range []string{"/redfish/v1/AccountService", "/redfish/v1/Managers", "/redfish/v1/UpdateService", "/redfish/v1/Systems/guessed", "/redfish/v1/Systems/allocated/Oem/Reset"} {
+		if got := request(h, http.MethodGet, p, "").Code; got != http.StatusNotFound {
+			t.Errorf("%s: %d", p, got)
+		}
+	}
+	w := request(h, http.MethodGet, "/redfish/v1/Systems", "")
+	if w.Code != 200 || strings.Contains(w.Body.String(), "private-target") {
+		t.Fatalf("systems: %d %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if json.Unmarshal(w.Body.Bytes(), &body) != nil || body["Members@odata.count"].(float64) != 1 {
+		t.Fatalf("unexpected collection %s", w.Body.String())
+	}
+	r := httptest.NewRequest(http.MethodGet, "/redfish/v1/Systems", nil)
+	r.Host = "second-bmc.internal"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, r)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Host manipulation accepted: %d", rr.Code)
+	}
+}
+
+func TestUnsupportedMutationsRejected(t *testing.T) {
+	a := &fakeAdapter{}
+	h := newHandler(t, a)
+	bad := []string{`{"Boot":{"BootSourceOverrideEnabled":"Once","BootSourceOverrideTarget":"Usb"}}`, `{"AssetTag":"x"}`}
+	for _, body := range bad {
+		if got := request(h, http.MethodPatch, "/redfish/v1/Systems/allocated", body).Code; got != 400 {
+			t.Fatalf("patch %s: %d", body, got)
+		}
+	}
+	if got := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"Nmi"}`).Code; got != 400 {
+		t.Fatalf("reset: %d", got)
+	}
+	if a.boots != 0 || a.resets != 0 {
+		t.Fatal("rejected request reached adapter")
+	}
+}
+
+func TestServiceRootUsesStandardTaskAndSessionLinks(t *testing.T) {
+	handler := newHandler(t, &fakeAdapter{})
+	response := request(handler, http.MethodGet, "/redfish/v1/", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("service root: %d %s", response.Code, response.Body.String())
+	}
+	var root struct {
+		Tasks       map[string]string
+		Links       map[string]map[string]string
+		TaskService json.RawMessage
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &root); err != nil {
+		t.Fatal(err)
+	}
+	if root.TaskService != nil {
+		t.Fatal("ServiceRoot exposed the nonstandard TaskService property")
+	}
+	if root.Tasks["@odata.id"] != "/redfish/v1/TaskService" {
+		t.Fatalf("incorrect task link: %v", root.Tasks)
+	}
+	if root.Links["Sessions"]["@odata.id"] != "/redfish/v1/SessionService/Sessions" {
+		t.Fatalf("incorrect session link: %v", root.Links)
+	}
+}
+
+func TestLostResponseIsUnknownAndNeverDuplicatesReset(t *testing.T) {
+	a := &fakeAdapter{lost: true}
+	h := newHandler(t, a)
+	body := `{"ResetType":"ForceRestart"}`
+	w1 := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", body)
+	w2 := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", body)
+	if w1.Code != 202 || w2.Code != 202 {
+		t.Fatalf("codes %d %d", w1.Code, w2.Code)
+	}
+	if a.resets != 1 {
+		t.Fatalf("reset executed %d times", a.resets)
+	}
+	if !strings.Contains(w2.Body.String(), "Unknown") {
+		t.Fatalf("retry did not preserve unknown: %s", w2.Body.String())
+	}
+	conflicting := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"ForceOff"}`)
+	if conflicting.Code != http.StatusConflict || a.resets != 1 {
+		t.Fatal("a new power effect bypassed an unresolved prior effect")
+	}
+}
+
+func TestQueuedMutationRechecksAuthority(t *testing.T) {
+	adapter := &fakeAdapter{}
+	handler := newHandler(t, adapter)
+	reads := 0
+	handler.CurrentAuthority = func() Authority {
+		reads++
+		authority := handler.Authority
+		if reads > 1 {
+			authority.FreshUntil = handler.Now().Add(-time.Second)
+		}
+		return authority
+	}
+	response := request(handler, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"On"}`)
+	if response.Code != http.StatusServiceUnavailable || adapter.resets != 0 {
+		t.Fatalf("stale queued mutation executed: %d, %d", response.Code, adapter.resets)
+	}
+}
+
+func TestTaskCollectionListsOnlyCurrentSession(t *testing.T) {
+	h := newHandler(t, &fakeAdapter{})
+	mutation := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"On"}`)
+	if mutation.Code != http.StatusAccepted {
+		t.Fatalf("mutation: %d %s", mutation.Code, mutation.Body.String())
+	}
+	collection := request(h, http.MethodGet, "/redfish/v1/TaskService/Tasks", "")
+	if collection.Code != http.StatusOK || !strings.Contains(collection.Body.String(), `"Members@odata.count":1`) {
+		t.Fatalf("tasks: %d %s", collection.Code, collection.Body.String())
+	}
+}
+
+func TestStaleAuthorityFailsClosed(t *testing.T) {
+	h := newHandler(t, &fakeAdapter{})
+	h.Authority.FreshUntil = time.Unix(999, 0)
+	w := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"On"}`)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "AuthorityStale") {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestExpiredSessionFailsClosed(t *testing.T) {
+	a := &fakeAdapter{}
+	h := newHandler(t, a)
+	h.Authority.ExpiresAt = time.Unix(999, 0)
+	w := request(h, http.MethodPost, "/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset", `{"ResetType":"On"}`)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "SessionExpired") || a.resets != 0 {
+		t.Fatalf("expired request: code=%d resets=%d body=%s", w.Code, a.resets, w.Body.String())
+	}
+}
+
+func TestAdapterResponseLostSentinel(t *testing.T) {
+	if !errors.Is(ErrResponseLost, ErrResponseLost) {
+		t.Fatal("sentinel")
+	}
+}
+
+func TestTaskMessageSeverityPreservesOperationOutcome(t *testing.T) {
+	for _, test := range []struct {
+		outcome journal.Outcome
+		state   string
+		status  string
+	}{
+		{journal.Pending, "Running", "OK"},
+		{journal.Succeeded, "Completed", "OK"},
+		{journal.Failed, "Exception", "Critical"},
+		{journal.Unknown, "Exception", "Warning"},
+	} {
+		t.Run(string(test.outcome), func(t *testing.T) {
+			body := taskBody(journal.Operation{ID: "operation", Outcome: test.outcome, Evidence: "retained evidence"})
+			if body["TaskState"] != test.state || body["TaskStatus"] != test.status {
+				t.Fatalf("operation outcome changed: %v", body)
+			}
+			message := body["Messages"].([]any)[0].(map[string]any)
+			if message["MessageSeverity"] != test.status || message["MessageId"] != "Fleet.1.0."+string(test.outcome) {
+				t.Fatalf("incorrect operation message: %v", message)
+			}
+			if _, present := message["Severity"]; present {
+				t.Fatal("deprecated message Severity remains exposed")
+			}
+		})
+	}
+}

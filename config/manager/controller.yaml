@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-controller
+  namespace: fleet-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-controller}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-controller}
+    spec:
+      serviceAccountName: fleet-controller
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+        runAsNonRoot: true
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: controller
+          image: fleet-controller:e2e
+          imagePullPolicy: IfNotPresent
+          args:
+            - --lifecycle-mode=synthetic
+            - --private-namespace=fleet-system
+            - --federation-kubeconfig=/var/run/fleet-federation/kubeconfig
+            - --webhook-cert-dir=/var/run/fleet-webhook
+            # Test-only short window; the binary's product-oriented default is 2m.
+            - --authority-freshness=15s
+            # Lower than the product-oriented default so E2E can prove the limit.
+            - --per-project-session-limit=2
+          ports:
+            - {name: webhook, containerPort: 9443}
+            - {name: metrics, containerPort: 8080}
+            - {name: health, containerPort: 8081}
+          livenessProbe: {httpGet: {path: /healthz, port: health}}
+          readinessProbe: {httpGet: {path: /readyz, port: health}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: federation, mountPath: /var/run/fleet-federation, readOnly: true}
+            - {name: webhook, mountPath: /var/run/fleet-webhook, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: federation
+          secret: {secretName: fleet-federation-kubeconfig, defaultMode: 0440}
+        - name: webhook
+          secret: {secretName: fleet-webhook-tls, defaultMode: 0440}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-webhook
+  namespace: fleet-system
+spec:
+  selector: {app.kubernetes.io/name: fleet-controller}
+  ports:
+    - {name: https, port: 443, targetPort: webhook}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: fleet-machine-management-session
+webhooks:
+  - name: mmssessions.metal.datumapis.com
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      service:
+        namespace: fleet-system
+        name: fleet-webhook
+        path: /mutate-metal-datumapis-com-v1alpha1-machinemanagementsession
+    rules:
+      - apiGroups: [metal.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [machinemanagementsessions]
+        scope: Namespaced
