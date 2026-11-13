@@ -180,6 +180,11 @@ keeps operator intent apart from registrar-owned identity and verifier-owned
 observations using admission, status subresources, and narrowly scoped writers.
 Exact field paths and resource scopes require schema review before generation.
 
+The resource diagram separates physical inventory from the Metal capacity it
+supports. Arrows are labeled relationships, not cascading deletion ownership.
+
+![Physical inventory resources and their relationship to provider-owned Metal capacity](diagrams/inventory-resources.svg)
+
 The following illustrates local authoring references only; it is not deployable
 configuration and omits the evidence and policy needed for acceptance:
 
@@ -284,6 +289,12 @@ projects is required, and privileged credentials do not travel in handoff object
 
 ### Components and authoritative writers
 
+The control-plane diagram distinguishes canonical project state from the Fleet
+runtime and federation delivery. It shows the proposed topology, not existing
+deployments; returned evidence cannot grant additional execution authority.
+
+![Provider and consumer project ownership, Fleet management, federation delivery, and selected cell execution](diagrams/control-planes.svg)
+
 - **Inventory admission and registrar:** validate plans and reserve physical
   resources; the trusted registrar establishes actual asset identity and binding.
 - **Collectors and verifier:** accept attributable observations and evaluate the
@@ -337,6 +348,15 @@ and publication without reserving twice or losing cleanup ownership. An unpublis
 admission remains reserved and recoverable; replay of a published handoff retains
 the original operation identity. Storage and commit mechanisms remain an
 implementation decision, not an assumed cross-API-server transaction.
+
+The sequence below expands admission and execution. Checks precede retained
+authority; handoff publication follows it. Evidence must be verified before the
+consumer receives readiness, regardless of delivery or controller health.
+
+![Durable admission, exact-target federation delivery, and verified results before consumer readiness](diagrams/admitted-work.svg)
+
+See [diagram maintenance](diagrams/README.md) for editable sources and local
+rendering instructions.
 
 ### Integrations and boundaries
 
