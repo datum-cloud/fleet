@@ -49,13 +49,13 @@ Fleet's Go API types and CRDs; `src/types.ts` maps them to the list's view.
 
 | Command                  | What it does                                            |
 | ------------------------ | ------------------------------------------------------- |
-| `npm install`            | Install dependencies (Node 26, see `.nvmrc`).           |
-| `npm test`               | Run the vitest suite.                                   |
-| `npm run typecheck`      | Type-check without emitting.                            |
-| `npm run build`          | Build into `dist/`, reading the live Fleet API.         |
-| `npm run build:fixtures` | Build with synthetic Machines instead of the API.       |
-| `npm run preview`        | Serve `dist/` on http://localhost:7780.                 |
-| `npm run dev`            | Vite dev server for the standalone `index.html` only.   |
+| `pnpm install`           | Install dependencies (Node 26, see `.nvmrc`).           |
+| `pnpm test`              | Run the vitest suite.                                   |
+| `pnpm typecheck`         | Type-check without emitting.                            |
+| `pnpm build`             | Build into `dist/`, reading the live Fleet API.         |
+| `pnpm build:fixtures`    | Build with synthetic Machines instead of the API.       |
+| `pnpm preview`           | Serve `dist/` on http://localhost:7780.                 |
+| `pnpm dev`               | Vite dev server for the standalone `index.html` only.   |
 
 ## Fixture mode
 
@@ -74,7 +74,7 @@ host-absolute URLs that break behind the portal's `/api/plugins/<slug>/` proxy.
 
 ```bash
 # fleet/ui/consumer
-npm run build:fixtures && npm run preview
+pnpm build:fixtures && pnpm preview
 
 # cloud-portal, in another terminal
 PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7780' AUTH_DEV_TOKEN_EXCHANGE=1 bun run dev

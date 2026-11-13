@@ -39,13 +39,13 @@ list's view.
 
 | Command                  | What it does                                            |
 | ------------------------ | ------------------------------------------------------- |
-| `npm install`            | Install dependencies (Node 26, see `.nvmrc`).           |
-| `npm test`               | Run the vitest suite.                                   |
-| `npm run typecheck`      | Type-check without emitting.                            |
-| `npm run build`          | Build into `dist/`, reading the live Fleet API.         |
-| `npm run build:fixtures` | Build with synthetic capacity instead of the API.       |
-| `npm run preview`        | Serve `dist/` on http://localhost:7781.                 |
-| `npm run dev`            | Vite dev server for the standalone `index.html` only.   |
+| `pnpm install`           | Install dependencies (Node 26, see `.nvmrc`).           |
+| `pnpm test`              | Run the vitest suite.                                   |
+| `pnpm typecheck`         | Type-check without emitting.                            |
+| `pnpm build`             | Build into `dist/`, reading the live Fleet API.         |
+| `pnpm build:fixtures`    | Build with synthetic capacity instead of the API.       |
+| `pnpm preview`           | Serve `dist/` on http://localhost:7781.                 |
+| `pnpm dev`               | Vite dev server for the standalone `index.html` only.   |
 
 ## Fixture mode
 
@@ -61,7 +61,7 @@ flag is baked into the build.
 
 ```bash
 # fleet/ui/provider
-npm run build:fixtures && npm run preview
+pnpm build:fixtures && pnpm preview
 
 # staff-portal, in another terminal (you must be in the staff-users group)
 PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7781' npm run dev

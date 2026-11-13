@@ -1,0 +1,19 @@
+# pnpm settings for this plugin. It is a single package with its own lockfile,
+# not a workspace member, so there is no `packages:` list.
+
+# Our own packages are published and consumed across repos on the same day, so
+# the one-day release delay must not hold them back.
+minimumReleaseAgeExclude:
+  - '@datum-cloud/*'
+
+# esbuild checks its platform binary on install. The image installs with
+# --ignore-scripts.
+allowBuilds:
+  esbuild: true
+  fsevents: false
+
+# Carried over from package.json's npm overrides.
+overrides:
+  '@module-federation/dts-plugin>adm-zip': 0.6.1
+  '@module-federation/dts-plugin>undici': 7.30.1
+  'vitest>tinypool': ^2.1.2
