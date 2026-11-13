@@ -55,6 +55,8 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
 
 - [Machine allocation and installation](docs/enhancements/machine-lifecycle/README.md): the
   smallest durable machine lifecycle, integrated with Milo project tenancy.
+- [Bare Metal CLI experience](docs/enhancements/metal-cli/README.md): proposed
+  `datumctl metal` discovery, machine management, and safe recovery workflows.
 - [Service proposal](docs/proposals/fleet-management/README.md): detailed contracts,
   examples, and architecture diagrams imported from the infra proposals.
 - [Design context](docs/design.md): subsystem boundaries, lifecycle contracts,
