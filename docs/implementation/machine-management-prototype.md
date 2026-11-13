@@ -389,3 +389,32 @@ must be last or isolated: unknown effects legitimately prevent teardown and
 allocation reuse, and cannot be cleared merely to continue the test. No native
 Linux/CI full run, physical BMC, or OpenVPN qualification was obtained in this
 environment. A complete warning-free validator and lifecycle run remains required.
+
+### Combined lifecycle harness integration (2026-11-12)
+
+The harness now builds and invokes the explicit
+[synthetic lifecycle fixture](synthetic-bmc-fixture.md), rather than creating or
+patching MachineAllocation CRDs. Initial and extra allocations use real
+Secret-backed Coordinator custody. Live-session release must return the specific
+management-teardown blocking error and durably mark the asset Releasing. The
+harness then waits for current-generation `CleanupConfirmed=True` before retrying
+the exact old Machine UID's release, deleting/recreating the Machine, and proving
+that capacity reuse advances its allocation epoch.
+
+Repeated setup attempts release retained fixture Machine lifetimes before
+resetting domains or replacing workloads. They never delete custody, grants,
+private session bindings, or operation journals to bypass an uncertain result.
+An unresolved release fails setup; use whole-environment teardown only for these
+disposable synthetic resources. Location-outage deletion must retain its session
+finalizer while cleanup is Unknown, then wait for verified recovery. The final
+lost-response scenario proves duplicate suppression and rejects a distinct new
+mutation, release, finalizer removal, and competing allocation while the effect
+remains Unknown. It intentionally leaves occupied custody for diagnostics and
+whole-environment teardown rather than attempting another session on that asset.
+
+These combined script assertions are implemented, not yet full-harness verified.
+Shell syntax/ShellCheck and helper regressions pass, including rejection of
+missing/API-error custody evidence and stale-generation/Unknown cleanup. Focused
+Go tests cover the fixture, controller, Redfish, and gateway. Per the integration
+handoff, native Linux GitHub CI is the next full-run evidence source; no new local
+emulated run was started and no CI success is claimed here.

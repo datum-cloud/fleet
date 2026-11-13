@@ -10,6 +10,7 @@ KARMADA_KUBECONFIG="${E2E_DIR}/karmada.kubeconfig"
 PATH="${E2E_DIR}/bin:${PATH}"
 export PATH
 source "${ROOT_DIR}/hack/e2e/common.sh"
+source "${ROOT_DIR}/hack/e2e/lifecycle.sh"
 rm -f "${E2E_DIR}/checkpoints.log" "${E2E_DIR}/viewer-ready.json" "${E2E_DIR}/ready-2.json"
 
 for file in "${MGMT_KUBECONFIG}" "${LOCATION_KUBECONFIG}" "${KARMADA_KUBECONFIG}" "${E2E_DIR}/management-ca.crt"; do
@@ -77,10 +78,13 @@ start_proxy() {
 }
 
 stop_proxy() {
+  local confirm=${1:-true}
   kill -TERM "${proxy_pid}" 2>/dev/null || true
   wait "${proxy_pid}" 2>/dev/null || true
   proxy_pid=
-  wait_for "session deletion" "sessions_absent '${MGMT_KUBECONFIG}' default machinemanagementsessions.metal.datumapis.com"
+  if [[ "${confirm}" == true ]]; then
+    wait_for "session deletion" "sessions_absent '${MGMT_KUBECONFIG}' default machinemanagementsessions.metal.datumapis.com"
+  fi
 }
 
 # Nested x86 QEMU on non-x86 developer hosts can take tens of seconds to apply
@@ -181,9 +185,8 @@ spec:
 EOF
 done
 db02_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-02 -o jsonpath='{.metadata.uid}')
-db03_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-03 -o jsonpath='{.metadata.uid}')
-for pair in "db-02:${db02_uid}:db02-capacity:device-unallocated" "db-03:${db03_uid}:db03-capacity:device-rejected"; do
-  IFS=: read -r machine machine_uid capacity device <<<"${pair}"
+for pair in "db-02:db02-capacity:device-unallocated" "db-03:db03-capacity:device-rejected"; do
+  IFS=: read -r machine capacity device <<<"${pair}"
   kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f - <<EOF
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
@@ -195,22 +198,8 @@ spec:
   allocationPolicy: Enabled
   cleaningPolicyRef: {name: synthetic-e2e}
   reclaimPolicy: Retain
----
-apiVersion: metal.datumapis.com/v1alpha1
-kind: MachineAllocation
-metadata:
-  name: ${machine}-allocation
-  namespace: fleet-system
-  annotations:
-    fleet.datumapis.com/machine-uid: "${machine_uid}"
-    fleet.datumapis.com/member-cluster: fleet-location-e2e
-    fleet.datumapis.com/location-name: location-e2e
-    fleet.datumapis.com/provider-project: datum-owned-hardware
-spec:
-  machineRef: {project: project, namespace: default, name: ${machine}}
-  machineCapacityRef: {namespace: fleet-provider, name: ${capacity}}
 EOF
-  kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation "${machine}-allocation" --subresource=status --type=merge -p '{"status":{"phase":"Active"}}'
+  allocate_fixture "${machine}" "${capacity}"
 done
 HOME="${E2E_DIR}/home-authorized" datumctl fleet machine-management proxy db-02 -- \
   --api-server "${api_server}" --api-ca-file "${E2E_DIR}/management-ca.crt" \
@@ -227,7 +216,7 @@ set -e
 [[ ${project_status} -ne 0 ]] || fail "third project session was admitted over the limit"
 grep -q SessionLimitExceeded "${E2E_DIR}/project-limit.log" || fail "project limit rejection was not actionable"
 kill -TERM "${second_proxy_pid}"; wait "${second_proxy_pid}" || true; second_proxy_pid=
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-02-allocation --subresource=status --type=merge -p '{"status":{"phase":"Released"}}'
+release_fixture db-02 "${db02_uid}"
 
 checkpoint "local login revocation, route isolation, and session limits"
 
@@ -284,11 +273,13 @@ wait_for "authority refresh" "[[ \$(rf_status '${root}/redfish/v1/Systems/alloca
 checkpoint "central API outage, stale-authority rejection, and recovery"
 
 # Allocation release is a terminal fence for this admitted binding.
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-01-allocation --subresource=status --type=merge -p '{"status":{"phase":"Released"}}'
-wait_for "released stream closure" "[[ \$(rf_status '${root}/redfish/v1/Systems/allocated') != 200 ]]"
 old_session_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsessions -o jsonpath='{.items[0].metadata.uid}')
 old_machine_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-01 -o jsonpath='{.metadata.uid}')
 old_binding_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbindings -l "fleet.datumapis.com/session-uid=${old_session_uid}" -o jsonpath='{.items[0].metadata.name}')
+release_blocked db-01 "${old_machine_uid}"
+wait_for "released stream closure" "[[ \$(rf_status '${root}/redfish/v1/Systems/allocated') != 200 ]]"
+wait_for "verified release teardown" "binding_clean '${old_binding_name}'"
+release_fixture db-01 "${old_machine_uid}"
 stop_proxy
 
 # Recreate the same Machine name for the other real libvirt domain. The old
@@ -296,22 +287,8 @@ stop_proxy
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machine db-01 --wait=true
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/machine.yaml"
 new_machine_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-01 -o jsonpath='{.metadata.uid}')
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f - <<EOF
-apiVersion: metal.datumapis.com/v1alpha1
-kind: MachineAllocation
-metadata:
-  name: db-01-allocation-2
-  namespace: fleet-system
-  annotations:
-    fleet.datumapis.com/machine-uid: "${new_machine_uid}"
-    fleet.datumapis.com/member-cluster: fleet-location-e2e
-    fleet.datumapis.com/location-name: location-e2e
-    fleet.datumapis.com/provider-project: datum-owned-hardware
-spec:
-  machineRef: {project: project, namespace: default, name: db-01}
-  machineCapacityRef: {namespace: fleet-provider, name: db02-capacity}
-EOF
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-01-allocation-2 --subresource=status --type=merge -p '{"status":{"phase":"Active"}}'
+allocate_fixture db-01 db02-capacity >"${E2E_DIR}/recreated-allocation.json"
+jq -e '.epoch > 1' "${E2E_DIR}/recreated-allocation.json" >/dev/null || fail "capacity reuse did not advance allocation epoch"
 [[ "${new_machine_uid}" != "${old_machine_uid}" ]] || fail "recreated Machine retained its old UID"
 [[ $(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${old_binding_name}" -o jsonpath='{.spec.machineUID}') == "${old_machine_uid}" ]] || fail "old session binding inherited the recreated Machine"
 old_binding_revoked=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${old_binding_name}" -o jsonpath='{.metadata.annotations.fleet\.datumapis\.com/revoked-at}')
@@ -324,26 +301,6 @@ start_proxy
 rf -X POST -H 'Content-Type: application/json' -d '{"ResetType":"On"}' "${root}/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset" >/dev/null
 wait_for "new allocation domain power-on" "[[ \$(docker exec fleet-e2e-virtual-bmc virsh domstate unallocated | tr -d '\\r') == running ]]"
 checkpoint "release fence and same-name Machine recreation"
-
-# Fault-inject a lost BMC response. Retrying the identical admitted operation
-# must recover its Unknown task without sending a second physical reset.
-stop_proxy
-wait_for "prior location projection teardown" \
-  "sessions_absent '${LOCATION_KUBECONFIG}' machine-access-system projectedmachinemanagementsessions.coordination.fleet.datumapis.com"
-kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system patch deployment fleet-gateway --type=json \
-  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--fault-drop-reset-response-once"}]'
-kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status deployment/fleet-gateway --timeout=120s
-start_proxy
-reset_path='/redfish/v1/Systems/unallocated/Actions/ComputerSystem.Reset'
-reset_before=$(docker logs fleet-e2e-virtual-bmc 2>&1 | grep -c "POST ${reset_path}" || true)
-lost_body='{"ResetType":"ForceRestart"}'
-lost_first=$(rf -X POST -H 'Content-Type: application/json' -d "${lost_body}" "${root}/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset")
-lost_second=$(rf -X POST -H 'Content-Type: application/json' -d "${lost_body}" "${root}/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset")
-[[ $(jq -r .TaskState <<<"${lost_first}") == Exception && $(jq -r .TaskStatus <<<"${lost_first}") == Warning ]] || fail "lost response was not reported Unknown"
-[[ $(jq -r .Id <<<"${lost_first}") == $(jq -r .Id <<<"${lost_second}") ]] || fail "retry created a second operation"
-reset_after=$(docker logs fleet-e2e-virtual-bmc 2>&1 | grep -c "POST ${reset_path}" || true)
-[[ $((reset_after - reset_before)) -eq 1 ]] || fail "lost-response retry sent $((reset_after - reset_before)) physical resets"
-checkpoint "lost response remains Unknown and retry sends no second reset"
 
 # The gateway schedules the admitted expiry and closes the stream rather than
 # treating a still-live client or relay connection as authority.
@@ -372,11 +329,59 @@ unknown_session_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get m
 unknown_binding_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbindings -l "fleet.datumapis.com/session-uid=${unknown_session_uid}" -o jsonpath='{.items[0].metadata.name}')
 docker pause fleet-location-e2e-control-plane >/dev/null
 location_paused=true
-stop_proxy
-cleanup_status=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbinding "${unknown_binding_name}" -o json | jq -r '.status.conditions[] | select(.type=="CleanupConfirmed") | .status + ":" + .reason')
-[[ "${cleanup_status}" == "Unknown:LocationUnconfirmed" ]] || fail "unconfirmed teardown was not Unknown: ${cleanup_status}"
+stop_proxy false
+wait_for "unconfirmed location teardown" "[[ \$(kubectl --request-timeout=10s --kubeconfig '${MGMT_KUBECONFIG}' -n fleet-system get machinemanagementsessionbinding '${unknown_binding_name}' -o json | jq -r '.status.conditions[] | select(.type==\"CleanupConfirmed\") | .status + \":\" + .reason') == Unknown:LocationUnconfirmed ]]"
+unconfirmed_session=$(kubectl --request-timeout=10s --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsessions -o json)
+jq -e --arg uid "${unknown_session_uid}" 'any(.items[]; .metadata.uid == $uid and .metadata.deletionTimestamp != null and (.metadata.finalizers | length > 0))' <<<"${unconfirmed_session}" >/dev/null || fail "unconfirmed session deletion discarded custody"
 docker unpause fleet-location-e2e-control-plane >/dev/null
 location_paused=false
 [[ ! -e "${E2E_DIR}/credentials.json" && ! -e "${E2E_DIR}/ca.pem" ]] || fail "proxy secret files survived shutdown"
 checkpoint "unconfirmed location teardown remains Unknown; local secrets removed"
+wait_for "location recovery verified teardown" "binding_clean '${unknown_binding_name}'"
+wait_for "recovered session deletion" "sessions_absent '${MGMT_KUBECONFIG}' default machinemanagementsessions"
+
+wait_for "prior location projection teardown" \
+  "sessions_absent '${LOCATION_KUBECONFIG}' machine-access-system projectedmachinemanagementsessions.coordination.fleet.datumapis.com"
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system patch deployment fleet-gateway --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--fault-drop-reset-response-once"}]'
+kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout status deployment/fleet-gateway --timeout=120s
+start_proxy
+lost_session_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsessions -o jsonpath='{.items[0].metadata.name}')
+lost_session_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsession "${lost_session_name}" -o jsonpath='{.metadata.uid}')
+lost_binding_name=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system get machinemanagementsessionbindings -l "fleet.datumapis.com/session-uid=${lost_session_uid}" -o jsonpath='{.items[0].metadata.name}')
+reset_path='/redfish/v1/Systems/unallocated/Actions/ComputerSystem.Reset'
+reset_before=$(docker logs fleet-e2e-virtual-bmc 2>&1 | grep -c "POST ${reset_path}" || true)
+lost_body='{"ResetType":"ForceRestart"}'
+lost_first=$(rf -X POST -H 'Content-Type: application/json' -d "${lost_body}" "${root}/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset")
+lost_second=$(rf -X POST -H 'Content-Type: application/json' -d "${lost_body}" "${root}/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset")
+[[ $(jq -r .TaskState <<<"${lost_first}") == Exception && $(jq -r .TaskStatus <<<"${lost_first}") == Warning ]] || fail "lost response was not reported Unknown"
+[[ $(jq -r .Id <<<"${lost_first}") == $(jq -r .Id <<<"${lost_second}") ]] || fail "retry created a second operation"
+reset_after=$(docker logs fleet-e2e-virtual-bmc 2>&1 | grep -c "POST ${reset_path}" || true)
+[[ $((reset_after - reset_before)) -eq 1 ]] || fail "lost-response retry sent $((reset_after - reset_before)) physical resets"
+[[ $(rf_status -X POST -H 'Content-Type: application/json' -d '{"ResetType":"ForceOff"}' "${root}/redfish/v1/Systems/allocated/Actions/ComputerSystem.Reset") == 409 ]] || fail "unknown effect allowed a new mutation"
+release_blocked db-01 "${new_machine_uid}"
+stop_proxy false
+sleep 35
+release_blocked db-01 "${new_machine_uid}"
+if binding_clean "${lost_binding_name}"; then fail "unknown operation fabricated verified teardown"; fi
+retained_session=$(kubectl --request-timeout=10s --kubeconfig "${MGMT_KUBECONFIG}" -n default get machinemanagementsession "${lost_session_name}" -o json)
+jq -e '.metadata.deletionTimestamp != null and (.metadata.finalizers | length > 0)' <<<"${retained_session}" >/dev/null || fail "unknown session lost its finalizer"
+retained_machine=$(kubectl --request-timeout=10s --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-01 -o json)
+jq -e '.metadata.finalizers | index("fleet.datumapis.com/machine-protection") != null' <<<"${retained_machine}" >/dev/null || fail "unknown effect released Machine protection"
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f - <<EOF
+apiVersion: metal.datumapis.com/v1alpha1
+kind: Machine
+metadata: {name: db-04, namespace: default}
+spec:
+  machineClassRef: {name: synthetic-libvirt}
+  machineProfileRef: {name: synthetic-libvirt}
+  locationRef: {name: location-e2e}
+  powerState: "Off"
+EOF
+if allocate_fixture db-04 db02-capacity >"${E2E_DIR}/blocked-reuse.json" 2>"${E2E_DIR}/blocked-reuse.log"; then
+  fail "unknown effect allowed occupied capacity reuse"
+fi
+grep -q 'no eligible clean machine is available' "${E2E_DIR}/blocked-reuse.log" || fail "reuse failed for an unexpected reason"
+asset_state "${new_machine_uid}" Releasing || fail "failed reuse changed occupied asset custody"
+checkpoint "lost response deduplicates; unknown effects block mutation, release, and reuse"
 echo "machine-management end-to-end scenarios: PASS"

@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 source "${ROOT_DIR}/hack/e2e/common.sh"
+source "${ROOT_DIR}/hack/e2e/lifecycle.sh"
 
 wait_for "immediate success" true
 if (FLEET_E2E_WAIT_SECONDS=1 wait_for "bounded failure" false) 2>/dev/null; then
@@ -38,4 +39,17 @@ for summary in '' '  - Pass: 0, Warn: 0, Fail: 0, Skip: 0' '  - Pass: 0, Warn: 1
 done
 printf '%s\n' '  - Pass: 12, Warn: 0, Fail: 0, Skip: 35' >"${report}"
 validator_coverage "${report}"
+MGMT_KUBECONFIG=ignored
+kubectl() { return 1; }
+if binding_clean binding; then fail "API failure counted as verified teardown"; fi
+kubectl() { printf '%s\n' '{"metadata":{"generation":2},"status":{"conditions":[{"type":"CleanupConfirmed","status":"True","observedGeneration":1}]}}'; }
+if binding_clean binding; then fail "old generation counted as verified teardown"; fi
+kubectl() { printf '%s\n' '{"metadata":{"generation":2},"status":{"conditions":[{"type":"CleanupConfirmed","status":"Unknown","observedGeneration":2}]}}'; }
+if binding_clean binding; then fail "unknown counted as verified teardown"; fi
+kubectl() { printf '%s\n' '{"metadata":{"generation":2},"status":{"conditions":[{"type":"CleanupConfirmed","status":"True","observedGeneration":2}]}}'; }
+binding_clean binding
+kubectl() { printf '%s\n' '{"items":[]}'; }
+if asset_state uid Releasing; then fail "missing custody counted as occupied"; fi
+kubectl() { return 1; }
+if asset_state uid Releasing; then fail "API failure counted as occupied custody"; fi
 echo 'E2E harness helpers: PASS'

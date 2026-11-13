@@ -7,6 +7,8 @@ TEST_DIR="${ROOT_DIR}/test/e2e/machine-management"
 MGMT_KUBECONFIG="${E2E_DIR}/management.kubeconfig"
 LOCATION_KUBECONFIG="${E2E_DIR}/location.kubeconfig"
 export FLEET_E2E_STATE="${E2E_DIR}/virtual-bmc"
+source "${ROOT_DIR}/hack/e2e/common.sh"
+source "${ROOT_DIR}/hack/e2e/lifecycle.sh"
 
 for tool in docker kind kubectl helm curl go jq openssl; do
   command -v "${tool}" >/dev/null || { echo "missing required tool: ${tool}" >&2; exit 1; }
@@ -18,6 +20,20 @@ if [[ $(uname -s) != Linux ]]; then
   export FLEET_FORCE_QEMU=${FLEET_FORCE_QEMU:-1}
 fi
 mkdir -p "${E2E_DIR}/bin" "${FLEET_E2E_STATE}/evidence" "${FLEET_E2E_STATE}/images"
+go build -o "${E2E_DIR}/bin/fleet-session-fixture" "${ROOT_DIR}/cmd/fleet-session-fixture"
+if kind get clusters | grep -qx fleet-management-e2e; then
+  kind get kubeconfig --name fleet-management-e2e >"${MGMT_KUBECONFIG}"
+  chmod 0600 "${MGMT_KUBECONFIG}"
+  machine_crd=$(kubectl --request-timeout=10s --kubeconfig "${MGMT_KUBECONFIG}" get crd machines.metal.datumapis.com --ignore-not-found -o name)
+  if [[ -n "${machine_crd}" ]]; then
+    retained=$(kubectl --request-timeout=10s --kubeconfig "${MGMT_KUBECONFIG}" -n default get machines -o json)
+    while IFS=$'\t' read -r machine uid; do
+      [[ -n "${machine}" ]] || continue
+      release_fixture "${machine}" "${uid}"
+    done < <(jq -r '.items[] | select(.metadata.name == "db-01" or .metadata.name == "db-02" or .metadata.name == "db-03" or .metadata.name == "db-04") |
+      [.metadata.name,.metadata.uid] | @tsv' <<<"${retained}")
+  fi
+fi
 bash "${ROOT_DIR}/hack/e2e/prepare-schemas.sh"
 find "${FLEET_E2E_STATE}/evidence" -maxdepth 1 -type f -delete
 
@@ -200,18 +216,13 @@ kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system rollout s
 # Reset only resources owned by this dedicated E2E environment so repeated up
 # and test invocations begin from the same authority state.
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machinemanagementsessions --all --timeout=40s --ignore-not-found
-kubectl --kubeconfig "${LOCATION_KUBECONFIG}" -n machine-access-system delete projectedmachinemanagementsessions --all --ignore-not-found
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system delete machinemanagementsessionbindings --all --ignore-not-found
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machines db-01 db-02 db-03 --ignore-not-found
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system delete machineallocations --all --ignore-not-found
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-provider delete machinecapacities --all --ignore-not-found 2>/dev/null || true
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default delete machines db-01 db-02 db-03 db-04 --ignore-not-found
+kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-provider delete machinecapacities --all --ignore-not-found
 
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" create namespace fleet-provider --dry-run=client -o yaml | kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f -
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/machine.yaml"
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/allocation.yaml"
-machine_uid=$(kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n default get machine db-01 -o jsonpath='{.metadata.uid}')
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system annotate machineallocation db-01-allocation fleet.datumapis.com/machine-uid="${machine_uid}" --overwrite
-kubectl --kubeconfig "${MGMT_KUBECONFIG}" -n fleet-system patch machineallocation db-01-allocation --subresource=status --type=merge -p '{"status":{"phase":"Active"}}'
+allocate_fixture db-01 allocated-capacity
 kubectl --kubeconfig "${LOCATION_KUBECONFIG}" apply -f "${TEST_DIR}/seed/location-management.yaml"
 
 kubectl --kubeconfig "${MGMT_KUBECONFIG}" apply -f "${TEST_DIR}/seed/test-identities.yaml"
