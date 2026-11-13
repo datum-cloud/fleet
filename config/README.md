@@ -188,3 +188,54 @@ must use `metal.datumapis.com/v1alpha1`, location availability must reference
 on inventory and service availability as well as the Milo configuration. Confirm
 old allocations are released immediately before rollout; absence of public
 Machines alone does not prove private cleanup is complete.
+
+### Hand off bootstrap field ownership before removing the sidecar
+
+A staging Deployment initially applied by `fleet-staging-bootstrap` may retain
+that server-side apply owner's fields alongside `kustomize-controller`. Removing
+the sidecar from the Flux manifest can then fail with
+`spec.template.spec.containers[1].image: Required value`: Flux removes the image
+it owns, while bootstrap ownership retains the rest of the obsolete container.
+The new provider Deployment does not cause this validation error.
+
+After stopping the manager, waiting for its Pods to terminate, and verifying
+all private custody/asset records are Released, inspect the Deployment with
+`kubectl get deployment fleet-manager -n fleet-system --show-managed-fields -o json`.
+Use the explicit staging context for every command. Confirm that the obsolete
+sidecar is co-owned by `fleet-staging-bootstrap` and `kustomize-controller`.
+Do not remove managedFields directly or delete/recreate the Deployment.
+
+The old bootstrap apply owner can relinquish its fields by applying only the
+Deployment's identity under its original field-manager name:
+
+```sh
+kubectl --context "$staging_context" -n fleet-system apply \
+  --server-side --field-manager=fleet-staging-bootstrap \
+  --dry-run=server --show-managed-fields -o json -f - <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-manager
+  namespace: fleet-system
+YAML
+```
+
+Compare the returned `spec` with a fresh live read. They must be identical,
+including `replicas: 0`, and the sidecar's remaining apply owner must be
+`kustomize-controller`. If these checks fail, stop and investigate exclusive
+bootstrap-owned fields rather than forcing the change. This relinquishes the
+bootstrap **Apply** ownership; any historical **Update** entries are distinct
+and must not be erased indiscriminately.
+
+Once reviewed, repeat the same command without `--dry-run=server`. Re-read the
+Deployment to confirm the same invariants, then request reconciliation of
+`fleet-system/fleet-host`. Flux can now remove the entire obsolete container and
+install the separate provider. This handoff changes ownership only; it must not
+restart the old manager, modify private records, rotate credentials, or remove
+provider state. Continue with the allocation, restart recovery, and release
+checks described above.
+
+On November 12, 2026, the staging server accepted this ownership-only dry run:
+the complete Deployment spec remained identical at zero replicas, and only
+`kustomize-controller` retained sidecar ownership. Execution and successful
+post-handoff reconciliation must be verified separately.
