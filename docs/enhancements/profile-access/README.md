@@ -110,15 +110,18 @@ kind: MachineOfferingAssignment
 metadata:
   name: standard-default
 spec:
-  serviceRef: {name: bare-metal}
-  machineClassRef: {name: standard}
+  serviceRef:
+    name: bare-metal
+  machineClassRef:
+    name: standard
   profiles:
     mode: Selected
     allowedProfiles:
-      - {name: general-8c-v1}
-      - {name: general-16c-v1}
+      - name: general-8c-v1
+      - name: general-16c-v1
   audience:
-    entitledProjects: {}
+    entitledProjects:
+      enabled: true
   state: Active
 ---
 apiVersion: metal.datumapis.com/v1alpha1
@@ -126,14 +129,17 @@ kind: MachineOfferingAssignment
 metadata:
   name: consumer-a-standard-extra
 spec:
-  serviceRef: {name: bare-metal}
-  machineClassRef: {name: standard}
+  serviceRef:
+    name: bare-metal
+  machineClassRef:
+    name: standard
   profiles:
     mode: Selected
     allowedProfiles:
-      - {name: general-32c-v1}
+      - name: general-32c-v1
   audience:
-    projectRef: {name: consumer-a}
+    projectRef:
+      name: consumer-a
   state: Active
 ```
 
@@ -141,7 +147,8 @@ spec:
 belong to the provider and contain the referenced offering; the platform types
 for those relationships remain undecided. Exactly one audience field is required:
 
-- `entitledProjects` selects active, unsuspended projects for that service.
+- `entitledProjects` requires `enabled: true` and selects active, unsuspended
+  projects for that service.
 - `projectRef` selects one project, which still needs active service entitlement.
   An assignment created before service enablement remains ineligible.
 
