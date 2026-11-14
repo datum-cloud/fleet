@@ -176,12 +176,13 @@ settlement/cleanup is available, not an invented replacement plan.
 
 The proposed `custody-subjects-v1` contract extends L1–L5 and S1 in place. The
 tagged subject is exactly one of `Allocation(allocationUID)`,
-`Preparation(custodyUID)` or `AdoptedCustody(custodyUID)`. All use #60's same
+`Preparation(custodyUID)`, `AdoptedCustody(custodyUID)` or
+`PhysicalMaintenance(custodyUID)`. All use #60's same
 Occupancy, persistent asset execution slot, ProviderGuard, gate validation and
 total lock order, including physical-resource rows before slot/operation/release
 children. Do not allocate one slot per tag. Allocation/Installation-specific
 text below applies only to that branch; common journal, effect and restoration
-rules apply to all three. No backwards-compatible null allocation encoding.
+rules apply to all four. No backwards-compatible null allocation encoding.
 
 This explicit service path specializes older source shorthand that every PXE
 boot requires an Installation: customer provisioning still always does, including
@@ -259,6 +260,82 @@ cannot authorize cleanup from a serial/IP match. Retain Unknown domain custody,
 fence old paths, establish the independent new lineage and reauthorize only an
 exact reconciled checkpoint. Lost identity or input keys blocks effects and
 reuse. Old subject tombstones survive an eventual consumer allocation.
+
+### Physical maintenance and the field-work boundary
+
+The proposed `physical-maintenance-v1` tag uses #60's exact admission contract:
+trusted canonical Device/enrollment, optional supply, no conflicting target
+custody, current scoped custodian/service/technician authority, dependency-owner
+barriers and atomic inventory closure/reservations/occupancy/slot/operation/outbox.
+This is a typed finite field procedure, **not** Preparation's commissioning boot
+plan. A passive panel has no BMC, Machine, quota, Installation or boot prerequisite.
+The selected cell remains the sole local journal/result path. An authorized
+technician is the operation's physical actuator, not a second admission service
+or an independent executor with its own asset lock.
+
+Seal the transition/custody UID, exact old/candidate plans and resource interests,
+component and port map, impact graph and owner-fence receipts, permitted actions,
+qualified procedure digest, assigned technician identities and independent witness,
+finite ordered steps, deadlines and stop/recovery procedure before L1. Field-work
+authority cannot include implicit boot, wipe, power or network-configuration steps.
+Necessary dependent active-device actions use their owners' separately admitted
+operations and custody, with effective barriers already retained before L1.
+An idle server's own field repair does not borrow commissioning disk authority.
+
+The finite sequence is: revalidate exact identity and owner barriers; issue and
+consume the bounded field permit; perform only its enumerated move/repair/removal;
+close work and reconcile all starts; obtain independent placement/component,
+vacancy/termination/load and worker-cessation evidence; commit L5. Only #65 R2
+clears custody. No local-disk boot is needed to manufacture passive-work success.
+
+For this actuator, S1 is the cell broker's durable **permit delivery marker**,
+before releasing the one-use permit to the named technician. The permit binds
+operation/step, full fence, transition/custody, old/new plans, exact resources,
+technician, deadline and budget. Lost delivery after S1 is Unknown; never issue
+a replacement permit identity or treat no start receipt as no work. Same-key
+queries recover the original marker/permit status, not another right to start.
+Before touching equipment, the technician authenticates to the same journaled
+boundary and obtains its durable, once-only start acceptance. This L3/S1 step
+substate checks the current finite envelope, field-access qualification, barriers
+and closed bit. No offline start or self-renewal is supported. A lost start reply
+is reconciled by that same identity before any action, never consumed twice.
+The technician records completion with exact action/evidence and timestamps;
+an independent authorized witness verifies identity, physical result and cessation.
+The cell publishes attributable LOCAL evidence via Karmada; only management
+accepts it. A technician cannot write successful management status.
+
+Central cancellation closes delivery/start admission but does not recall a printed
+permit, stop hands already working or prove physical rollback. The broker's stop
+inventory includes every delivered/unacknowledged permit and accepted start.
+Qualified site access control and the field supervisor must independently stop
+and exclude the old crew, secure the work area, and reconcile permits, tools and
+actual equipment state before a successor crew is enabled. Receipt binds site,
+old crew/permit identities, cutoff and observation time. A message asking someone
+to stop, credential revocation, deadline or a new executor generation is not this
+barrier. If that physical enforcement cannot be established, retain Unknown and
+both reservation sets indefinitely. Already-started work may reach only the
+preapproved safe stop boundary; emergency work needs separate exact recovery
+authority, not an expanded maintenance budget.
+
+L5 requires the complete permit/start/completion/stop inventory, no possible late
+field work, independent physical postconditions and exact dependent owner receipts
+or positive scoped non-applicability. Failed/cancelled work may settle into a
+recovery hold only after cessation; it does not establish original placement.
+Returning a panel to its old rack or reconnecting a changed cable is a separately
+authorized successor plan after old work settles, not an automatic rollback.
+R1 prevents further ordinary field steps; #65 owns clearance/accounting, #63 owns
+physical reservation disposition and subsequent evaluation. Dependent owners
+alone authorize resumption under fresh mappings and current active-custody rights.
+
+Renewal checks this operation's exact inventory closure mutation/epoch, remaining
+Open maintenance safety/issuer gates and held owner barriers under #60's total
+order. No general Closed-gate exception is introduced. A changed plan, new
+dependency, revocation or lost owner fence blocks progression; reconcile and
+settle before a freshly admitted successor. Retain permit histories and physical
+site barriers in restore/retirement custody, even without Machine/boot records.
+Pre-L1 snapshots or lost field journals require independent union reconciliation,
+old-crew exclusion and the new recovery lineage; never automatically redeliver a
+permit. Missing exact work inputs or unknown physical state blocks clearance.
 
 ## Operation state machine
 
@@ -396,6 +473,7 @@ recovery permission to complete an unrequested new installation.
 | Observation/session health | Current read authorization; no slot, no readiness inference; methods with side effects are not classified as reads. |
 | Initial/reinstall Installation | Acquire shared asset slot under allocation occupancy and consume exact predecessor at L1. `None` only for verified blank, never-installed allocation. |
 | Preparation or adopted cleanup | Exact custody subject and service authority; same persistent asset slot, no Installation predecessor or consumer session; #60/#65 occupancy remains held through settlement. |
+| Unallocated physical maintenance | PhysicalMaintenance subject, exact field procedure and owner prerequisites; same asset slot and journaled permit boundary; no commissioning/boot prerequisites or authority over dependent active custody. |
 | Provisioning-session mutation | Attach to admitted CustomerRedfish Installation; same step key across sessions, no independent boot reservation. |
 | Runtime power intent or reset | Acquire same slot; reject `OperationConflict` during Installation, stopping or unknown custody. Intent controller retries admission only after settlement, never sends around the slot. |
 | Second install, rescue, media or raw BMC write | Conflict or unsupported; no boot-change escape hatch. Virtual media and persistent override excluded initially. |
@@ -791,6 +869,9 @@ delayed and reordered federation delivery.
 | Preparation L1 races allocation, adoption, maintenance or release. | One asset exclusion/slot under #60 total order; no independent commissioning lock or synthetic Installation. Unknown retains custody. |
 | Adopted cleanup approved but resolution, original disk coverage or prior-writer fence is missing. | No destructive L1; retain original domain/custody. A later verified exact resolution can proceed only with #65 policy/authority and all predecessor settlement. |
 | Restore before preparation L1 or adopted R1 while cell sent a wipe; lose retained key. | Union reconciliation retains Unknown even without Machine/Allocation; block replay and reuse, fence old writers, no substitute key/content or fabricated predecessor. |
+| Passive move: lose permit/start reply, cancel, then reconnect an old technician client. | One PhysicalMaintenance L1/slot and S1 marker; no second start, no timeout clearance. Reconcile and independently exclude the old crew before replacement; no BMC or bootstrap prerequisite. |
+| Restore before field-work L1; old crew has a permit and destination inspection is missing. | Hold both plans/resources and Unknown custody; independently secure the site, reconcile journals and revalidate lineage. L5/R2 cannot infer no work from the restored empty journal. |
+| Dependent active connection gains a new user or its fence is revoked. | Shared dependency gate blocks progression; no use of panel maintenance authority to disconnect/reset the dependent. Owner must separately authorize and fence its own effects. |
 
 ## Qualification, rollout, and operations
 

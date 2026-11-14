@@ -49,9 +49,9 @@
 <!-- verifying -->
 <g id="node4" class="node">
 <title>verifying</title>
-<path fill="#eef4fb" stroke="#456281" d="M253.98,-157.56C253.98,-157.56 55.5,-157.56 55.5,-157.56 49.5,-157.56 43.5,-151.56 43.5,-145.56 43.5,-145.56 43.5,-126.78 43.5,-126.78 43.5,-120.78 49.5,-114.78 55.5,-114.78 55.5,-114.78 253.98,-114.78 253.98,-114.78 259.98,-114.78 265.98,-120.78 265.98,-126.78 265.98,-126.78 265.98,-145.56 265.98,-145.56 265.98,-151.56 259.98,-157.56 253.98,-157.56"/>
+<path fill="#eef4fb" stroke="#456281" d="M277.23,-157.56C277.23,-157.56 32.25,-157.56 32.25,-157.56 26.25,-157.56 20.25,-151.56 20.25,-145.56 20.25,-145.56 20.25,-126.78 20.25,-126.78 20.25,-120.78 26.25,-114.78 32.25,-114.78 32.25,-114.78 277.23,-114.78 277.23,-114.78 283.23,-114.78 289.23,-120.78 289.23,-126.78 289.23,-126.78 289.23,-145.56 289.23,-145.56 289.23,-151.56 283.23,-157.56 277.23,-157.56"/>
 <text xml:space="preserve" text-anchor="middle" x="154.74" y="-137.52" font-family="Helvetica,sans-Serif" font-size="12.00">Verifying</text>
-<text xml:space="preserve" text-anchor="middle" x="154.74" y="-124.77" font-family="Helvetica,sans-Serif" font-size="12.00">Close provisioning; collect settlement</text>
+<text xml:space="preserve" text-anchor="middle" x="154.74" y="-124.77" font-family="Helvetica,sans-Serif" font-size="12.00">Close effect/field admission; collect settlement</text>
 </g>
 <!-- executing&#45;&gt;verifying -->
 <g id="edge3" class="edge">

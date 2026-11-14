@@ -5,7 +5,9 @@ implemented components. Graphviz DOT files are the editable source; SVG files ar
 checked-in renderings. No shared documentation index is modified.
 
 - [Execution path](execution-path.svg), from [DOT](execution-path.dot): authority,
-  local effects and the only permitted result return path.
+  local effects and the only permitted result return path. PhysicalMaintenance
+  uses the same broker/journal for technician permits, not a second executor;
+  passive field work has no BMC/boot prerequisite.
 - [Operation state](operation-state.svg), from [DOT](operation-state.dot): unknown
   and stopping retain custody; only evidence-bearing settlement can become terminal.
 
