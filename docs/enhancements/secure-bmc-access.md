@@ -582,14 +582,17 @@ session. It is a consumer-project resource and does not expose a raw BMC handle.
 
 Each resource represents one short-lived connection to one immutable allocation
 binding. The spec is immutable; changing the Machine, Installation, key, profile
-or TTL requires a new resource. Project scope is supplied by authenticated API
-context, not an illustrative namespace.
+or TTL requires a new resource. The session is namespaced and shares its Machine
+and Installation namespace. Project scope comes from authenticated API context;
+a namespace is not a project identity. Admission retains the Namespace lifetime
+alongside the resolved object identities.
 
 ```yaml
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineManagementSession
 metadata:
   generateName: db-01-
+  namespace: default
 spec:
   machineRef:
     name: db-01
@@ -616,7 +619,7 @@ status:
       lastTransitionTime: "2026-11-11T19:00:01Z"
 ```
 
-`machineRef.name` is a consumer lookup handle in the authenticated project;
+`machineRef.name` resolves in the session namespace of the authenticated project;
 the consumer does not supply or manage allocation identities. During session
 admission, Fleet resolves the name and retains the exact Machine and
 MachineAllocation identities, binding identifier and epoch before the
@@ -628,7 +631,7 @@ admission fails or restarts resolution rather than following stale state. A late
 Machine that reuses the same name cannot receive an already admitted session.
 
 `installationRef` is mandatory for the Provisioning profile and resolves to an
-already admitted Installation on this allocation with the selected customer-driven
+already admitted Installation in the same namespace on this allocation with the selected customer-driven
 Redfish driver. Its exact incarnation and operation identity enter the protected
 binding. Observation and ordinary runtime power profiles omit it; omission cannot
 authorize PXE or override conflicts. These are proposed fields, not supported CRDs.
