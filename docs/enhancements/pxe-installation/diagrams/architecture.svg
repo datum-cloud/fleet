@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="820" viewBox="0 0 1240 820" role="img" aria-labelledby="title desc">
+  <title id="title">Fleet PXE installation control-plane architecture</title>
+  <desc id="desc">Provider and consumer project APIs feed Fleet management. Fleet writes admitted work to a Karmada hub, which targets one location cell. The cell controls networking, boot, power, managed installation, or delegation to a customer PXE endpoint, and returns evidence.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font: 700 24px system-ui, sans-serif; fill: #0f172a; }
+      .lane { font: 700 15px system-ui, sans-serif; fill: #334155; letter-spacing: .3px; }
+      .head { font: 700 16px system-ui, sans-serif; fill: #0f172a; }
+      .body { font: 13px system-ui, sans-serif; fill: #334155; }
+      .small { font: 12px system-ui, sans-serif; fill: #475569; }
+      .box { stroke-width: 1.5; rx: 10; }
+      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 7 6; }
+    </style>
+  </defs>
+
+  <rect width="1240" height="820" fill="#ffffff"/>
+  <text x="40" y="42" class="title">PXE installation follows Fleet's existing authority boundaries</text>
+
+  <rect x="30" y="70" width="280" height="700" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="50" y="100" class="lane">PROJECT CONTROL PLANES</text>
+
+  <rect x="50" y="125" width="240" height="185" class="box" fill="#e0f2fe" stroke="#0284c7"/>
+  <text x="70" y="155" class="head">Provider project API</text>
+  <text x="70" y="182" class="body">MachineClass policy</text>
+  <text x="70" y="204" class="body">MachineCapacity</text>
+  <text x="70" y="226" class="body">Fleet physical inventory</text>
+  <text x="70" y="257" class="small">Provider and allocator-owned state</text>
+  <text x="70" y="278" class="small">remains canonical here.</text>
+
+  <rect x="50" y="350" width="240" height="180" class="box" fill="#ecfdf5" stroke="#059669"/>
+  <text x="70" y="380" class="head">Consumer project API</text>
+  <text x="70" y="407" class="body">Machine</text>
+  <text x="70" y="429" class="body">Immutable Installation</text>
+  <text x="70" y="451" class="body">ManagedImage or DelegatedPXE</text>
+  <text x="70" y="482" class="small">Customers write requests;</text>
+  <text x="70" y="503" class="small">Fleet projects verified status.</text>
+
+  <rect x="50" y="570" width="240" height="150" class="box" fill="#fff7ed" stroke="#ea580c"/>
+  <text x="70" y="600" class="head">Fleet private storage</text>
+  <text x="70" y="627" class="body">Allocation custody</text>
+  <text x="70" y="649" class="body">Exact admitted inputs</text>
+  <text x="70" y="671" class="body">Journal, credentials, cleanup</text>
+  <text x="70" y="700" class="small">Not reconstructed from status.</text>
+
+  <rect x="340" y="70" width="270" height="700" rx="14" fill="#faf5ff" stroke="#d8b4fe"/>
+  <text x="360" y="100" class="lane">MANAGEMENT AND DELIVERY</text>
+
+  <rect x="365" y="160" width="220" height="220" class="box" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="385" y="192" class="head">Fleet management</text>
+  <text x="385" y="220" class="body">Authenticate and authorize</text>
+  <text x="385" y="242" class="body">Allocate and hold quota</text>
+  <text x="385" y="264" class="body">Resolve and pin inputs</text>
+  <text x="385" y="286" class="body">Admit one exact operation</text>
+  <text x="385" y="308" class="body">Validate returned evidence</text>
+  <text x="385" y="340" class="small">Its deployment cluster is not</text>
+  <text x="385" y="361" class="small">the canonical project store.</text>
+
+  <rect x="365" y="475" width="220" height="160" class="box" fill="#ede9fe" stroke="#7c3aed"/>
+  <text x="385" y="507" class="head">Karmada federation hub</text>
+  <text x="385" y="535" class="body">MachineAllocationHandoff</text>
+  <text x="385" y="557" class="body">Exact target and operation</text>
+  <text x="385" y="579" class="body">Selected-cell delivery</text>
+  <text x="385" y="607" class="small">Management writes intent;</text>
+  <text x="385" y="626" class="small">the cell writes execution status.</text>
+
+  <rect x="640" y="70" width="570" height="700" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="660" y="100" class="lane">SELECTED LOCATION / CELL</text>
+
+  <rect x="670" y="125" width="230" height="155" class="box" fill="#fef3c7" stroke="#d97706"/>
+  <text x="690" y="157" class="head">Cell execution</text>
+  <text x="690" y="185" class="body">Local handoff adapter</text>
+  <text x="690" y="207" class="body">Jobs and optional KRO</text>
+  <text x="690" y="229" class="body">Provider operation recovery</text>
+  <text x="690" y="257" class="small">Cannot change the admitted target.</text>
+
+  <rect x="950" y="125" width="230" height="155" class="box" fill="#ecfeff" stroke="#0891b2"/>
+  <text x="970" y="157" class="head">Networking owner</text>
+  <text x="970" y="185" class="body">Provisioning attachment</text>
+  <text x="970" y="207" class="body">Address and switch state</text>
+  <text x="970" y="229" class="body">Cleanup or fencing evidence</text>
+  <text x="970" y="257" class="small">Fleet is not another IPAM writer.</text>
+
+  <rect x="670" y="340" width="230" height="175" class="box" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="690" y="372" class="head">Platform boot service</text>
+  <text x="690" y="400" class="body">First iPXE decision</text>
+  <text x="690" y="422" class="body">One-machine boot session</text>
+  <text x="690" y="444" class="body">Installer or endpoint proxy</text>
+  <text x="690" y="466" class="body">Callback and evidence</text>
+  <text x="690" y="494" class="small">No session means local boot.</text>
+
+  <rect x="950" y="340" width="230" height="175" class="box" fill="#fee2e2" stroke="#dc2626"/>
+  <text x="970" y="372" class="head">Provider executor</text>
+  <text x="970" y="400" class="body">Redfish power and boot</text>
+  <text x="970" y="422" class="body">Operation ID and fencing</text>
+  <text x="970" y="444" class="body">Local boot transition</text>
+  <text x="970" y="466" class="body">Release and cleaning</text>
+  <text x="970" y="494" class="small">Credentials remain private.</text>
+
+  <rect x="670" y="585" width="230" height="125" class="box" fill="#ecfdf5" stroke="#059669"/>
+  <text x="690" y="617" class="head">Bare-metal machine</text>
+  <text x="690" y="645" class="body">Fleet installer or customer installer</text>
+  <text x="690" y="667" class="body">Then local-disk boot</text>
+  <text x="690" y="694" class="small">Never becomes allocation authority.</text>
+
+  <rect x="950" y="585" width="230" height="125" class="box" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="970" y="617" class="head">Customer PXE endpoint</text>
+  <text x="970" y="645" class="body">Customer-owned script and workflow</text>
+  <text x="970" y="667" class="body">Operation-scoped callback</text>
+  <text x="970" y="694" class="small">Used only for DelegatedPXE.</text>
+
+  <path d="M290 220 H365" class="arrow"/>
+  <path d="M290 430 H335 V300 H365" class="arrow"/>
+  <path d="M365 330 H320 V645 H290" class="arrow"/>
+  <path d="M475 380 V475" class="arrow"/>
+  <path d="M585 555 H625 V205 H670" class="arrow"/>
+  <path d="M900 205 H950" class="arrow"/>
+  <path d="M785 280 V340" class="arrow"/>
+  <path d="M900 425 H950" class="arrow"/>
+  <path d="M785 515 V585" class="arrow"/>
+  <path d="M900 455 H925 V625 H950" class="arrow dash"/>
+  <path d="M1065 585 V535 H900 V465" class="arrow dash"/>
+  <path d="M670 175 H630 V535 H585" class="arrow dash"/>
+  <path d="M365 585 H330 V470 H290" class="arrow dash"/>
+
+  <text x="615" y="542" class="small" transform="rotate(-90 615 542)">targeted delivery</text>
+  <text x="928" y="582" class="small">admitted request</text>
+  <text x="915" y="548" class="small">result</text>
+  <text x="310" y="493" class="small" transform="rotate(-90 310 493)">verified status</text>
+</svg>
