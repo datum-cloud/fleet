@@ -149,7 +149,7 @@ can delete an unsettled record.
 | ProviderGuard | provider Project UID, Open/Closing/Retired, outstanding obligations and custody manifest | Retirement coordinator through ledger transactions. |
 | AdmissionAttempt | server ID, exact Machine key, request digest, original caller/delegation evidence, dependency vector, resolved source identities and digests, attempt sequence, state | Metal admission coordinator. |
 | QuotaCustody | globally unique hold key, consumer Project UID, provider guard, one machine-count unit, quota anchor/claim incarnation, grant receipt, disposition and acknowledgment | Quota adapter; allocation transaction alone changes local ownership to Bound. |
-| Enrollment and Occupancy | canonical asset key, exact supply/Device keys, eligibility revision, occupied allocation or adopted/unknown custody, reservation epoch | Inventory adapter writes enrollment evidence; allocator alone acquires occupancy; release coordinator clears it only with settlement proof. |
+| Enrollment and Occupancy | canonical asset key, exact supply/Device keys, eligibility revision, tagged Allocation/Preparation/AdoptedCustody or unknown domain custody, reservation epoch | Inventory adapter writes enrollment evidence; shared allocation/custody coordinator alone acquires occupancy; release coordinator clears it only with settlement proof. |
 | MachineAllocation | immutable allocation ID, exact Machine/supply/asset, selected cell incarnation, accepted offering/profile content, acquisition evidence, hold, release authority, lifecycle state | Admission coordinator creates; lifecycle coordinator performs guarded transitions. |
 | MachineBinding | unique exact Machine key, allocation ID, terminal tombstone | Allocator inserts once; never retargets. |
 | RecoveryOutbox | unique kind/record/revision, immutable payload digest and target, delivery state, retry metadata | Transaction creating work inserts; publisher only updates transport acknowledgment. |
@@ -164,7 +164,8 @@ it cannot maintain a second independent asset lock.
 
 Use unique constraints on the canonical asset's enrollment, occupied supply,
 occupied asset, exact MachineBinding, allocation ID, hold key, and outbox identity.
-Occupied includes Bound, Releasing, Quarantined, and unknown execution. Keep the
+Occupied includes Bound, Preparation, AdoptedOccupied, Releasing, Quarantined,
+and unknown execution/domain custody. Keep the
 MachineBinding tombstone after release: the same Machine incarnation cannot obtain
 a replacement allocation. A new Machine incarnation requires a new request and
 allocation. Physical reuse retains history but can acquire new occupancy only
