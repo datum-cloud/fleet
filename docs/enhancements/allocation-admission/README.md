@@ -336,6 +336,12 @@ authority vector, selected cell and independent prior-work settlement proof.
 Exact procedure/evidence bytes and any secret versions use #62 protected custody.
 No image or credential is required when the procedure has neither.
 
+The prior-work proof is the last settled custody/operation receipt, or a qualified
+first-use quiescence manifest reconciling custodian/site access and manual-worker
+authority, issued permits and independent physical inspection. An empty slot or
+missing consumer record is not that manifest; unknown prior field authority blocks
+L1 until its owner proves cessation and excludes later use.
+
 Before admission, #63 resolves the complete impact graph and #61 plus each active
 custody owner supplies either attributable no-dependency evidence or exact scoped
 consent and effective prerequisite fences. A panel's maintenance authority grants
