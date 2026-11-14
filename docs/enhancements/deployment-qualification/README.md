@@ -168,9 +168,9 @@ but never consumer admission or a bypass of evidence/epoch checks.
 | Authority | Transaction or decision boundary | Evidence consumed; prohibited inference |
 | --- | --- | --- |
 | Metal allocation | #60 serializable ledger binds occupancy, Machine, escrow reference, decision and outbox | Current registered gate vector and quota receipt; no Kubernetes/federation transaction substitutes for it. |
-| Management execution | #62 slot/predecessor/operation/outbox in that same ledger and lock order | Sealed inputs and current gates; deployment cannot allocate a second slot. |
+| Management execution | #62 shared asset slot/tagged subject/prior-state/operation/outbox in that same ledger and #60 total lock order | Sealed inputs and current gates; Preparation/AdoptedCustody need no consumer allocation or Installation; deployment cannot allocate a second slot. |
 | Cell execution | #62 selected-cell journal persists acceptance and S1 before physical send | Exact operation/fence and broker lineage; S1 without response is possible effect, not permission to resend. |
-| Release coordinator | #65 R1, terminal-effects decision and R2 use existing ledger boundaries | Owner-validated closure/sanitization and quota acknowledgment; Released alone is not reusable. |
+| Release coordinator | #65 R1, terminal-effects decision and R2 use existing ledger boundaries | Owner-validated closure/sanitization and real accounting settlement or proven non-applicability; Allocation still requires original quota acknowledgment. Terminal custody alone is not reusable. |
 | Quota and fulfillment | Their own durable hold/decision/tombstone domains, #60/#64 keyed exchanges | Query exact identities after reply loss; no distributed transaction or expiry-based unlock is implied. |
 | Inventory | #63 enrollment, component/placement evidence and physical reservation contracts | Independent observations and current trust; import does not grant effects or free capacity. |
 | Networking | #61 owner writer and effective data-plane fence/disposition | Exact revisions, alternate paths and existing flows; desired configuration is not isolation. |
@@ -206,6 +206,9 @@ rewriting. Retain at least the following, with sole writers unchanged:
 
 - #60 gates and mutation history, guards, attempts/decisions, quota receipts,
   canonical enrollment/occupancy, immutable Machine bindings and outboxes.
+- Non-consumer custody UID/kind/epoch, original adopted-domain holds and exact
+  resolution history, prior-custodian/provider approvals, policy provenance,
+  Preparation clearance, shared asset-slot sequence and authority tombstones.
 - #62 management/selected-cell journals, steps and send markers, target/session
   bindings, driver/recipe/translations, executor generations and recovery holds.
 - #63 plans, component mappings, evidence/challenges, physical/power reservations,
@@ -215,7 +218,8 @@ rewriting. Retain at least the following, with sole writers unchanged:
 - #64 provider registration/capability pins, reserve/commit/abort and finalization
   receipts, remote task inventory and signed exact request payloads.
 - #65 release cases, cleanup obligations, closure inventories, certificates,
-  finalization obligations and quarantine/disposal decisions.
+  finalization obligations, accounting applicability/coverage/owner receipts and
+  quarantine/disposal decisions, even when no Machine/Allocation/hold ever existed.
 - Exact artifact/configuration bytes, credential/key versions, trust chains,
   verification evidence and recovery/profile approvals needed by those records.
 
@@ -400,7 +404,8 @@ not instruct operators to edit tables, delete finalizers or force Ready/Free.
    tombstone high-water marks; retain both sides of a conflict. Validate exact
    bytes/keys, predecessor and component continuity. Unexplained effects stay held.
 6. **Validate disposition:** management alone accepts operation/release results.
-   #65 R2 requires its certificate, quota acknowledgment and gate checks; #64
+   #65 R2 requires its certificate, exact accounting disposition and gate checks
+   (original quota acknowledgment for Allocation); #64
    external R3 acknowledgment and fresh inventory/network/reuse gates remain
    separate. Disaster recovery is not an alternative release path.
 7. **Reopen narrowly:** follow the restore table and record per-owner revisions
@@ -432,7 +437,9 @@ Each profile names exclusions (initially autonomous external storage and unprove
 firmware queue behavior), accountable owners, evidence digest/location, validity
 and revocation conditions. Approval binds that exact profile. Independent reviewers
 must challenge isolation and restore assumptions; author self-review is not their
-sign-off. No independent review has been performed for this draft.
+sign-off. The historical complete-set review found two blocking custody joins;
+the revised contracts require a fresh adversarial complete-set review. Neither
+that review nor this author alignment grants sign-off.
 
 | Profile | Required qualification | Permitted claim after successful evidence review |
 | --- | --- | --- |
@@ -506,6 +513,19 @@ writer. A missing observation is an inconclusive/failed gate, never a pass.
 | D27 | Exhaust archive/retention headroom and request GC of an unsettled secret or replay tombstone | Admission backpressures; referenced recovery material survives; terminal compaction cannot enable stale snapshot/message resurrection. |
 | D28 | Attempt reactivation while one old broker, network writer or provider is unreachable and target list is incomplete | No silent scope reduction; enclosing domain remains denied/unknown. Separately proven disjoint scope may reopen with recorded containment evidence. |
 | D29 | Withdraw catalog/offering-assignment access while an existing allocation requests an otherwise authorized runtime action; then independently close its runtime suspension gate | Withdrawal rejects new acquisition but preserves retained runtime capabilities subject to current actor/input permissions and separate safety gates. The independent suspension rejects the runtime action. Neither event alone creates a ReleaseCase or authorizes destructive cleanup. |
+| D30 | Witness-enroll a fresh owned server; allocation Disabled and boot qualification Pending, with no Machine/Allocation/hold/Installation | #60 Preparation L1 retains exact custody/enrollment, current service authority and inputs in the shared slot. #61 commissioning receipt precedes #62 boot/S1. Stop/queue settlement, path disposition and #65 clearance precede #63 fresh eligibility and the first real consumer allocation. |
+| D31 | Race Preparation L1/clearance with allocation, observational adoption, physical maintenance and provider retirement; pause between validation and commit | #60 total order includes physical reservations, custody, asset slot, operations and release children. Exactly one conflicting admission; no separate preparation lock or Closed-safety-gate bypass. Retirement retains all winning obligations. |
+| D32 | Import occupied owned hardware with neither allocation/hold nor trusted Device; later obtain witnessed resolution and explicit prior-custodian/provider cleanup approvals | Import/resolution cause zero effects. Original custody/domain history persists. #65 adopted R1 captures authorized policy, active-use/media and old-writer obligations; #62/#61 cleanup stops old and cleaner effects. Proven accounting NotApplicable plus certificate allows adopted R2; separate fresh Preparation and eligibility gate reuse. |
+| D33 | Repeat adopted cleanup with real prior holds, possible delayed Acquire, external accounting obligations, overlapping allocation or only empty quota listings | Reconcile every real obligation and original cancellation/release receipt; other allocation settles through its own case. No dummy hold, fictitious quota acknowledgment or absence-based NotApplicable. Unknown scope/coverage retains occupied quarantine. |
+| D34 | Restore M before Preparation L1 or adopted resolution/R1 while a cell/boot/network owner retains a later send; lose a recipe key or prior approval | Conservative union includes non-consumer/domain custody, no automatic replay. Old paths fenced and fresh lineage established; missing exact identity, approval, keys or accounting coverage blocks destructive recovery, clearance and reuse. |
+| D35 | Revoke adopted policy/accounting evidence after EffectsClosed but before R2, or deliver old commissioning/cleanup after first consumer allocation | Before R2 retain actual accounting facts and occupied quarantine. After R2 permanent subject/fence/binding tombstones reject old effects; any new safety action uses current ownership, never old wipe authority. |
+
+D30–D35 qualify the proposed `custody-subjects-v1` alignment. Q0 instruments
+all new subject/lock/closure races; Q1 exercises both complete owned-hardware
+paths with qualified physical evidence. QE additionally verifies #64 rejects
+unsupported non-consumer external envelopes rather than fabricating M1/R2/R3.
+For D32, record identity-resolution, active-use, approval, cleanup policy and
+accounting provenance as distinct evidence, not one aggregate success flag.
 
 For Q0, instrument synthetic boundaries and all race schedules. Q1/QD/QE must
 repeat relevant rows on real qualified hardware/provider paths with independent
@@ -545,11 +565,15 @@ and treating a signature, backup completion or operator approval as physical pro
 This directory contains only Markdown and no diagrams, generated manifests,
 credentials or runtime tests. Validate repository-relative links, GitHub-style
 local anchors, exact pinned source paths and whitespace before publication.
-Acceptance D01–D28 is future work. No runtime, hardware or provider qualification
+Acceptance D01–D35 is future work. No runtime, hardware or provider qualification
 is claimed by documentation validation.
 
 - 2026-11-14: Draft authored on isolated main-based branch; #65 discovered and
   pinned. Independent review and all owner/production approvals remain pending.
+- 2026-11-14: After complete-set review identified missing pre-allocation
+  commissioning and adopted settlement joins, align qualification to the revised
+  shared-subject contracts and add D30–D35. Original D01–D29 author checks are
+  submission history, not current independent approval or executed qualification.
 
 [bmc]: https://github.com/datum-cloud/fleet/blob/f04e63ddd9d10cbf306daf3a0232961debd85e7f/docs/enhancements/secure-bmc-access.md
 [management]: https://github.com/datum-cloud/fleet/blob/fa07c2236801a33a58efc914b555586c8e146cc6/docs/enhancements/fleet-management/README.md
