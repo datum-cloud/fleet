@@ -41,13 +41,13 @@ is merged or copied. References are pinned, not references to moving PR heads.
 | [#51 management][management] | `fa07c2236801a33a58efc914b555586c8e146cc6` | Physical identities, management/hub/cell ownership and validated status. |
 | [#58 offerings][offerings] | `a922ff1eb3275e26af6ae750a7515ddde245a754` | External providers, accepted capabilities, one-hop consumer catalog. |
 | [#59 PXE][pxe] and [lifecycle][lifecycle] | `d7ff793b03711203dbfc9fac87d43922cc649b6f` | Exact Installation inputs, immutable driver and source, retained cleanup. |
-| [#60 allocation admission][admission] | `2563b2a2f177a72d20c1d62265c89ff15688ba25` | Global ledger, quota escrow, authority gates, commit/abort and retirement. |
-| [#61 network handoff][network] | `ed6edec5b056fd53343e11d58d979af495f1bd7c` | Network-owner realization, isolation and disconnect evidence. |
-| [#62 execution recovery][execution] | `7fa823050a443c1f5b85c56e85ed04ebaa5bd2cb` | Exact operation journal, gate-ordered runtime admission/renewal, effect fencing, unknown outcomes and restore epochs. |
+| [#60 allocation admission][admission] | `d072f3b5ded5d212e59ecc511c9282037d48c9f1` | Global ledger, quota escrow, authority gates, commit/abort and retirement. |
+| [#61 network handoff][network] | `04adf7013de42c40086502918dbfe05302ec00e8` | Network-owner realization, isolation and disconnect evidence. |
+| [#62 execution recovery][execution] | `6a886b415edb5ba9c1295e4d88db9cd86bd51f0e` | Exact operation journal, gate-ordered runtime admission/renewal, effect fencing, unknown outcomes and restore epochs. |
 
-#60 and #61 are the architecturally signed-off inputs supplied for this task;
-that does not confer sign-off on this draft. #62 is its fetched current head,
-not an approved implementation. Read also the [architecture context](../../architecture/design.md),
+The original submission described its then-supplied #60/#61 inputs as signed
+off. That historical description does not apply to this revised set. All pins
+below/above identify proposed contracts, not approved implementations. Read also the [architecture context](../../architecture/design.md),
 [original provisioning proposal](../../proposals/fleet-management/bare-metal-provisioning.md),
 and [source provenance](../../proposals/fleet-management/MIGRATION.md).
 Earlier embedded references do not supersede the pins above.
@@ -813,10 +813,39 @@ off. Owner prerequisites remain unresolved as listed above.
 [offerings]: https://github.com/datum-cloud/fleet/blob/a922ff1eb3275e26af6ae750a7515ddde245a754/docs/enhancements/profile-access/README.md
 [pxe]: https://github.com/datum-cloud/fleet/blob/d7ff793b03711203dbfc9fac87d43922cc649b6f/docs/enhancements/pxe-installation/README.md
 [lifecycle]: https://github.com/datum-cloud/fleet/blob/d7ff793b03711203dbfc9fac87d43922cc649b6f/docs/enhancements/machine-lifecycle/README.md
-[admission]: https://github.com/datum-cloud/fleet/blob/2563b2a2f177a72d20c1d62265c89ff15688ba25/docs/enhancements/allocation-admission/README.md
-[network]: https://github.com/datum-cloud/fleet/blob/ed6edec5b056fd53343e11d58d979af495f1bd7c/docs/enhancements/network-handoff/README.md
-[execution]: https://github.com/datum-cloud/fleet/blob/7fa823050a443c1f5b85c56e85ed04ebaa5bd2cb/docs/enhancements/execution-recovery/README.md
+[admission]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
+[network]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
+[execution]: https://github.com/datum-cloud/fleet/blob/6a886b415edb5ba9c1295e4d88db9cd86bd51f0e/docs/enhancements/execution-recovery/README.md
 [tls]: https://www.rfc-editor.org/rfc/rfc8446
 [jcs]: https://www.rfc-editor.org/rfc/rfc8785
 [jws]: https://www.rfc-editor.org/rfc/rfc7515
 [eddsa]: https://www.rfc-editor.org/rfc/rfc8037
+
+## Alignment revision provenance
+
+On 2026-11-14 the [complete-set integration review][custody-review] identified
+missing commissioning and adopted-settlement joins. This `custody-subjects-v1`
+alignment is proposed documentation, not runtime qualification or sign-off.
+This proposal's contract-bearing revision is `8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5`.
+The companion revisions below are immutable **contract-bearing snapshots**, not
+claims about final PR heads or merge dependencies. Subsequent commits only refresh
+pins and provenance. Read this aligned set together: older embedded companion
+pins inside those snapshots describe their drafting baseline, not permission to
+substitute an older contract for a join defined here. #66 records the final-head
+complete-set review manifest. No circular exact-final-head dependency is required.
+Any later normative change requires a new manifest and fresh complete-set review.
+
+| Companion | Exact dependency revision |
+| --- | --- |
+| [#60 allocation-admission][custody-60] | `d072f3b5ded5d212e59ecc511c9282037d48c9f1` |
+| [#61 network-handoff][custody-61] | `04adf7013de42c40086502918dbfe05302ec00e8` |
+| [#62 execution-recovery][custody-62] | `6a886b415edb5ba9c1295e4d88db9cd86bd51f0e` |
+| [#63 inventory-trust][custody-63] | `d79495be33d7c0ab126b497dac6a5874924eee81` |
+| [#65 release-reuse][custody-65] | `96ca49da7d0753be47ea164b7008e90d3a81d2aa` |
+
+[custody-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883007682
+[custody-60]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
+[custody-61]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
+[custody-62]: https://github.com/datum-cloud/fleet/blob/6a886b415edb5ba9c1295e4d88db9cd86bd51f0e/docs/enhancements/execution-recovery/README.md
+[custody-63]: https://github.com/datum-cloud/fleet/blob/d79495be33d7c0ab126b497dac6a5874924eee81/docs/enhancements/inventory-trust/README.md
+[custody-65]: https://github.com/datum-cloud/fleet/blob/96ca49da7d0753be47ea164b7008e90d3a81d2aa/docs/enhancements/release-reuse/README.md
