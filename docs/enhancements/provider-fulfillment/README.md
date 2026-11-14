@@ -196,6 +196,29 @@ occupied/unknown; registration and adoption confer no provisioning authority.
 
 ## Reservation, admission and expiry
 
+### Boundary with non-consumer custody
+
+The proposed `custody-subjects-v1` alignment in #60–#63/#65 adds Fleet-owned
+Preparation and AdoptedCustody subjects in the same global asset conflict domain.
+They are not consumer reservation attempts: no synthetic Machine, quota hold,
+provider Reserve/Commit receipt or Installation is created for them. All global
+selection/enrollment checks include their exact and unresolved-domain exclusions.
+Use #60's total lock order including ProviderReservation children immediately
+after attempts, physical-resource rows before custody/asset-slot rows, and
+operation/release children afterward; no adapter-specific suffix order.
+
+This external wire protocol remains Allocation-bound: its operation envelope and
+R3 require the **real** M1/R2 reservation binding. Fleet-owned service custody uses
+the Fleet selected-cell path, not `reservations:reserve` with fake consumer fields.
+External stock must already be qualified before Reserve; read-only reservation
+preparation never authorizes commissioning. Dispatch of non-consumer custody
+effects to a non-Fleet supplier is unsupported by this version, not inferred from
+an advertised cleanup capability. It would require explicitly qualified exact
+custody/all-channel exclusion and finalization bindings, not omitting allocation
+fields or synthesizing a quota acknowledgment. Imported external occupied stock
+therefore stays held until its owner can supply the qualified applicable protocol;
+this alignment does not silently grant new external maintenance/wipe APIs.
+
 ### Bounded preparation
 
 Extend #60's Held attempt with a protected `ProviderReservation` subrecord and
@@ -339,7 +362,7 @@ require current action and exact input-use permissions and applicable explicit
 safety restrictions; do not recheck offering assignments as runtime entitlement.
 Retained capability is a contract, not a perpetual bearer credential.
 
-Use #62's sole allocation/asset conflict slot and operation admission transaction.
+Use #62's sole asset conflict slot under the exact Allocation subject and operation admission transaction.
 The external adapter transports its committed envelope; it cannot independently
 consume a predecessor, pick a driver or allocate another execution slot. One
 Installation has one immutable ProviderAutomatic or CustomerRedfish driver.
@@ -715,6 +738,10 @@ trust-policy revisions; a mock transport or happy-path vendor demo is insufficie
     skew, replay, oversized evidence, cross-tenant query and SSRF rejection.
 16. Complete planned retirement with all terminal receipts, then replay the full
     old message log. No asset, quota, credential or network identity resurrects.
+17. Race external selection/global enrollment with Fleet Preparation or an
+    intersecting adopted-domain hold. Global binding must reject overlap. Submit
+    a non-consumer subject without real external M1/R2: reject before effects,
+    never manufacture a provider reservation, charge or R3 receipt.
 
 ## Operations and prerequisites
 
