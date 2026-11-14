@@ -583,7 +583,9 @@ not prove that restored stale writers could not write afterward.
 The release predicate is the conjunction of exact identity, reconciled effect
 inventory, predecessor and cleaner settlement, every required assurance predicate,
 effective session/boot/credential revocation, network disposition, durable replay
-barriers, valid evidence and no unresolved physical obligation. Persist its
+barriers, valid evidence and no unresolved physical clearance obligation required
+by this release. Active accepted placement reservations are not clearance failures
+and are not freed by R2; removal/movement interests remain inventory-owned. Persist its
 ReleaseCertificate and terminal-effects decision before quota release. The
 certificate does not itself clear occupancy.
 
