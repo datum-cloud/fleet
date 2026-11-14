@@ -47,5 +47,8 @@ today. Then choose a topic:
 The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
 `datumctl metal` discovery, machine management, and safe recovery workflows.
 
+The [PXE installation enhancement](docs/enhancements/pxe-installation/README.md)
+proposes managed images and bounded delegation to customer PXE.
+
 Contributors should also read the [repository guidance](AGENTS.md) and
 [implementation roadmap](docs/development/roadmap.md).
