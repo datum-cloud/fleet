@@ -155,10 +155,12 @@ can delete an unsettled record.
 | RecoveryOutbox | unique kind/record/revision, immutable payload digest and target, delivery state, retry metadata | Transaction creating work inserts; publisher only updates transport acknowledgment. |
 | AdmissionDecision | commit/abort identity, attempt, relevant gate epochs, hold disposition, ledger recovery epoch, transaction sequence | Ledger transaction; append-only. |
 
-An operation owner additionally needs a ledger-local atomic hook to insert its
-retained operation and dispatch outbox against a live allocation. It owns the
-operation schema, predecessor compare-and-swap, effect conflicts, validity, and
-executor fences. It cannot maintain a second independent allocation lock.
+An operation owner uses the ledger-local atomic hook against exactly one tagged
+subject: `Allocation`, `Preparation`, or `AdoptedCustody`. Allocation retains its
+existing binding and Installation predecessor rules; the other subjects use the
+asset-custody contract below, not a synthetic Machine, quota hold or Installation.
+The operation owner owns operation schema, effect conflicts and executor fences;
+it cannot maintain a second independent asset lock.
 
 Use unique constraints on the canonical asset's enrollment, occupied supply,
 occupied asset, exact MachineBinding, allocation ID, hold key, and outbox identity.
@@ -176,9 +178,27 @@ commit with qualified no-acknowledged-write-loss failover. Only the service can
 write these tables; constraints remain active for every writer and recovery tool.
 This is a proposed backend requirement, not a claim about current deployment.
 
-Every admission transaction locks its complete authority-gate set in sorted key
-order, then provider guard, attempt, quota custody, Machine binding key, enrollment,
-and occupancy. All competing writers use the same ordering. Missing gate or
+Every transaction uses this total class order, sorting exact keys within each
+class and skipping only inapplicable classes:
+
+1. Complete authority gates (including coarse inventory/identity-domain gates).
+2. ProviderGuard rows.
+3. AdmissionAttempt, then its ProviderReservation children, if applicable.
+4. QuotaCustody, then MachineBinding keys, if applicable.
+5. Enrollment, then Occupancy keys, including unresolved adopted-domain holds.
+6. Inventory-domain locks, canonical identity/alias keys, immutable plan keys,
+   then physical-resource/reservation keys (rack, termination and power).
+7. AssetCustody records, then the persistent asset execution slot.
+8. Operation rows, ReleaseCase rows, then obligation/closure/accounting children
+   in that class order and sorted ID order within each class.
+9. Append-only decisions, input pins and outbox inserts.
+
+Discover the complete key/dependency set before locking; a changed or incomplete
+set aborts and restarts from fresh resolution, never acquires an earlier lock
+after a later one. Absent-key uniqueness and SERIALIZABLE predicate checks cover
+concurrent inserts. All allocation, adoption, physical-plan, maintenance, release,
+settlement and recovery writers use this order. No owner may append a conflicting
+private suffix order or acquire a second mutex to evade it. Missing gate or
 unregistered dependency means denial. A concurrent gate insertion or occupancy
 race must yield a uniqueness/serialization failure, never a best-effort result.
 Retry the entire transaction with fresh resolution where revisions changed.
@@ -190,6 +210,104 @@ AdmissionDecision, and recovery outbox entries. All are present or none are.
 Database response loss is handled by querying the attempt/decision on the current
 writer, not by allocating another ID. Reads from asynchronous replicas are never
 used to prove absence, commit, quota release, or retirement completion.
+
+### Non-consumer asset custody and effect admission
+
+This proposed `custody-subjects-v1` alignment closes the commissioning and adopted
+settlement joins identified by the complete-set review. It extends this ledger,
+not the consumer allocation algorithm or a second reservation service.
+
+`AssetCustody` retains custody UID, kind, provider Project UID, authority domain,
+origin decision, exact enrollment UID/epoch and canonical asset when resolved,
+Device/supply incarnations, alias/domain exclusion set, occupancy revision,
+custody epoch, policy/authority/input digests, guard obligations and disposition.
+It survives public inventory/project deletion. The custody coordinator creates
+the record and acquires its Occupancy through the same ledger hook; inventory
+alone resolves identity and writes trust evidence; execution alone writes the
+slot/operations; release alone authorizes occupancy clearance. Custody records
+are not editable physical identities or alternative consumer bindings.
+
+| Subject | Admission and exclusion | Settlement destination |
+| --- | --- | --- |
+| `Preparation(custodyUID)` | Exact trusted enrollment/Device/supply, allocation explicitly Disabled, no allocation/adopted/unknown occupancy, maintenance transition, release hold or unresolved alias/domain conflict. Atomically install Preparation occupancy, guard obligation, slot sequence, operation/input pins and outbox. | Execution L5 settles all effects; release validates custody-clearance obligations; inventory separately publishes fresh eligibility. |
+| `AdoptedCustody(custodyUID)` | Durable AdoptedOccupied/Unknown record may initially identify only a conservative physical domain. Observation grants no effects. Trusted exact resolution and a separately approved ownership/cleanup transition are required before any mutation. | Release R1/R2 use this custody identity and real accounting evidence or proved non-applicability; never manufacture an allocation. |
+| `Allocation(allocationUID)` | Existing immutable consumer binding, charged escrow, current action/input authority and Installation rules remain unchanged. | Existing allocation release, quota acknowledgment and permanent MachineBinding. |
+
+There is one persistent execution slot per canonical asset in its enrollment
+lineage, not one competing slot per subject. It retains a monotonically increasing
+operation sequence across subject changes; subject UID/kind, custody/occupancy
+epoch and restore lineage are checked with the slot. Subject records reference
+that slot. An unresolved adopted-domain hold blocks every intersecting enrollment,
+plan and allocation; exact resolution installs the canonical exclusion before
+removing any broader hold. It cannot overwrite an existing allocation or erase
+an overlapping case. Retain the union and quarantine until all owners reconcile.
+
+Preparation uses current service-principal action/input authorization, explicit
+provider approval of commissioning (including exact destructive disk steps), and
+an immutable qualified recipe, component/NIC/BMC mapping, permitted endpoints,
+secret versions, selected cell and finite budget/deadline. Required gates cover
+provider lifetime, custody ownership, service IAM, input use, enrollment identity,
+physical safety, commissioning qualification, networking and recovery lineage.
+**Allocation Disabled and boot qualification Pending are expected states**, not
+Closed safety gates to bypass. A distinct commissioning capability validates
+pre-boot identity/path/safety; it does not require the boot result it will produce.
+If that initial trust is unavailable, commissioning cannot run. All required
+service gates must be Open; retirement rejects new commissioning. Admission and
+renewal validate exact revisions/deadlines under the total order above.
+
+The operation key is `(providerProjectUID, subjectKind, subjectUID, requestKey)`;
+same key/digest recovers the original operation, differing input conflicts. The
+execution fence binds restore epoch, canonical asset, enrollment epoch, custody
+epoch, subject kind/UID, operation sequence and executor generation. #62 applies
+its unchanged L1–L5, S1, input-retention, outbox/inbox, broker and no-late-effect
+rules to all subjects. Preparation has a prior settled custody receipt (or a
+verified first-use quiescence manifest), **not** an Installation predecessor;
+initial host/queue/port state still needs proof. A signed preparation request is
+not permission for customer networking, a management session or a consumer OS.
+
+#61 binds commissioning paths to that exact Preparation subject, operation/fence,
+enrollment, mappings and service Network inputs. Network materialization is an
+admitted step, not an L1 prerequisite requiring already-effectful setup. Its
+receipt must precede boot. After inspection/disk preparation, stop verifier/RAM
+code and queued BMC/storage work, revoke boot/proxy/credential grants, disconnect
+and dispose exact commissioning bindings, and settle the preparation's own sends.
+Missing evidence retains Preparation occupancy/Unknown, even with a successful
+callback. Execution L5 alone does not clear occupancy or publish eligibility.
+
+The release coordinator accepts a preparation clearance certificate over its
+complete operation/network/data/physical obligation manifest, current identity,
+no-late-effect barriers and accounting disposition. New enrolled, never-consumer
+commissioning has no machine-count charge: retain quota-owner policy revision
+and ledger origin/decision-range proof of non-applicability, not an invented hold
+or Released acknowledgment. Any discovered real charge/conflict requires owner
+reconciliation. Release atomically records Settled, tombstones old authority and
+clears only that custody's Occupancy; enrollment stays Disabled. Inventory then
+validates the settled receipt plus fresh independent boot, placement, network,
+power and trust evidence before publishing eligibility at a new revision. Actual
+allocation rechecks all gates and absence of every conflicting hold. Cancellation
+or partial failure never implies prepared supply; safe settlement may end in
+Disabled/quarantine instead. Physical placement reservations are not freed by
+this occupancy transition.
+
+Adopted settlement uses #65's explicit authorization, policy and obligation
+capture rather than an allocation-retained contract. Its accounting union includes
+any real retained holds and external obligations. Proven non-applicability must
+identify the accounting authority, policy revision, scope, searched decision
+range and provenance; an empty local query is insufficient. Unknown accounting
+retains custody. R2 can close an adopted record without a MachineBinding or quota
+outbox only with that proof and the release certificate. It clears no overlapping
+allocation/domain hold and leaves eligibility Disabled pending fresh preparation.
+
+Backup/restore and retirement enumerate these subjects even when no Machine ever
+existed. Preserve origin/approval, resolution history, gates, slot sequence,
+authority tombstones, exact inputs, network receipts and accounting provenance.
+Reconcile the union with cell/boot/network/physical and accounting histories;
+a snapshot lacking a preparation or adopted case cannot prove free supply.
+Fence old writers before explicit per-record recovery in the new lineage. Missing
+mapping/authority/keys keeps effects disabled; missing target enumeration blocks
+the enclosing physical domain. Closing ProviderGuard permits only previously
+retained, narrowly reauthorized settlement obligations, never new commissioning
+or a new adoption-derived wipe permission. No custody path bypasses retirement.
 
 ### Authority fencing and revocation ordering
 
@@ -447,14 +565,14 @@ contract and becomes disaster recovery, never a successful release.
 
 | Owner | Required input/result; boundary |
 | --- | --- |
-| Operation execution | Ledger-local admission hook for exact allocation, current action/input decisions, predecessor and operation plus outbox; queryable results and fences. Owns effect ordering, retries and completion policy. |
+| Operation execution | Ledger-local hook for exact tagged subject, current action/input decisions, subject-specific predecessor/settlement precondition and operation plus outbox; one asset slot and queryable fences. Owns effect ordering, retries and completion policy. |
 | Network handoff | Versioned feasibility evidence before allocation; exact retained network prerequisites before effect admission; queryable release evidence. Owns attachments, IPAM, routing and network safety. |
 | Inventory trust | Canonical asset/enrollment identity, eligibility revision, freshness deadline, gate participation and occupied adoption evidence. Owns verification, deduplication evidence and trust policy. |
 | External fulfillment | Exclusive exact supply reservation, queryable idempotency and retained custody equivalent to this ledger's guarantees. Its transport/procurement policy is not defined here; enablement remains blocked. |
-| Release/reuse | An authenticated allocation-scoped settlement certificate covering all required obligations, effects fenced, and replay boundary. Ledger closes allocation, settles quota, then clears occupancy atomically with Released. Owns cleaning and reuse policy. |
+| Release/reuse | Authenticated subject-scoped certificate, all obligations, effect/replay barriers and real accounting settlement or proved non-applicability. Release owner alone clears exact occupancy under the ledger protocol. Owns cleaning and reuse policy. |
 | Deployment | No-loss ledger failover, protected storage, independent restore authority and compatible dependency qualification. Owns topology, packaging and operations deployment. |
 
-For release, the settlement certificate first moves custody to a terminal-effects
+For allocation release, the settlement certificate first moves custody to a terminal-effects
 state while occupancy remains held. Its transaction emits the quota release work.
 That state is recorded as a substate of Releasing and rejects all ordinary
 operation admissions, including those competing with the settlement transaction.
@@ -549,6 +667,15 @@ with acknowledged gate closures and allocation decisions.
 10. Import occupied inventory without trusted ownership transition: no provisioning,
     no free capacity publication. Exercise unavailable identity and time authorities,
     indefinite Closed gates, and quota custody loss: fail closed and alert.
+11. Enroll fresh owned supply Disabled; admit Preparation without Machine, hold or
+    Installation. Race allocation, duplicate enrollment/adoption and maintenance
+    at L1 and clearance: one asset slot/occupancy, no boot until network receipt,
+    no eligibility until all preparation effects and owner clearance settle.
+12. Import unresolved adopted custody, resolve its identity observationally, then
+    authorize #65 cleanup. Race R1/R2 with preparation and provider retirement;
+    real accounting or provenance-backed non-applicability is mandatory. Restore
+    before either subject existed while the cell retains a send: recover Unknown
+    custody, never free stock, synthetic quota acknowledgment or automatic replay.
 
 These specialize shared A1 (exclusive acquisition), A2 (retained contract), A3
 (current authority), A5 (federation), A6 (custody), and A7 (observational adoption)
