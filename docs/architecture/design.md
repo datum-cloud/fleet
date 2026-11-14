@@ -5,6 +5,11 @@
 Reviewed on 2026-10-27. This is a synthesis for implementation planning, not a
 replacement for the source proposals or a claim that their APIs exist.
 
+Design alignment on 2026-11-14: the current enhancements refine the historical
+source vocabulary below without rewriting its provenance. New contracts remain
+proposed; no backwards-compatibility bridge or migration from illustrative APIs
+is required.
+
 ## Source proposals
 
 | Source | Reviewed revision | Contribution |
@@ -32,7 +37,7 @@ and coordinated changes above that shared service.
 
 ## Subsystem boundaries
 
-The [Fleet management enhancement](enhancements/fleet-management/README.md) scopes
+The [Fleet management enhancement](../enhancements/fleet-management/README.md) scopes
 the operator service and proposes how provider projects, consumer projects, the
 Fleet control plane, and the Federation Control Plane share responsibilities.
 Its inventory placement and delivery milestones remain proposed.
@@ -42,7 +47,7 @@ All names below describe proposed resources, not implemented schemas.
 | Subsystem | Responsibilities and principal resources |
 | --- | --- |
 | Inventory | `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`: approved installation plans, actual assets, physical reservations, and verification evidence. |
-| Capacity publication | Provider `MachineClass` definitions and consumer-local references; discovery and safe summaries through service enablement and IAM. Publication does not reserve capacity or grant source-use permission. |
+| Capacity publication | Provider `MachineOffering` product policy (including installation modes and management capabilities), `MachineOfferingAssignment` acquisition audience/profile restrictions, and one-hop consumer `MachineClass` published views. `MachineProfile` is immutable hardware requirements. Publication does not reserve capacity or independently grant acquisition permission. |
 | Machine allocation | Provider `MachineCapacity`, customer `Machine`, and private `MachineAllocation`: exclusive reservation, admission of consumer operations, activation, and release across provider and consumer projects. |
 | Bare-metal provisioning | Typed provider resources and adapters: execute admitted preparation, installation, power, console, and cleanup operations against exact assets. Backend workflows remain private. |
 | OS configuration | `MachineImage`, `InterfaceClass`, `Installation`, and `OSConfigPolicy`: approved artifacts, immutable installation requests, configuration composition, and one selected executor per incarnation. |
@@ -50,6 +55,10 @@ All names below describe proposed resources, not implemented schemas.
 | Node services | `NodeService`: per-region service intent, stable slots on managed NodeClaims, placement, rolling updates, and readiness reporting. |
 
 The Bare Metal service uses `metal.datumapis.com` for allocation and installation.
+Provider product/access policy uses `provider.metal.datumapis.com`. Metal is the
+public service; Fleet is optional fulfillment. Supply selectors and provider
+execution configuration are private, not part of a published offering. Public
+BMC `MachineManagementSession` resources remain in the Metal group.
 Physical inventory uses `fleet.datumapis.com`; the intended internal location
 handoff uses `coordination.fleet.datumapis.com`. The [API architecture](README.md)
 records implemented resources, proposed contracts, control-plane placement, and
@@ -77,15 +86,22 @@ their owning services. Fleet consumes these contracts and their evidence.
 3. **Use one allocator.** Standalone consumers and managed clusters compete through
    the same durable reservation protocol. Create one immutable, terminal
    MachineAllocation between the customer Machine and provider MachineCapacity;
-   retain current authorization, quota holds, class revisions, and local source
-   object identity as private admission evidence. Names, not cross-control-plane
+   retain acquisition authorization, quota holds, exact offering/assignment and
+   profile identities/revisions, accepted offering contract content/digest and
+   installation/management capabilities as private admission evidence. Names,
+   not cross-control-plane
    Kubernetes UIDs, are authored references. Overlapping classes must not
    duplicate supply.
 4. **Separate discovery from authorization.** Consumer MachineClasses reference a
-   provider definition in one hop. Check current source-use permission,
+   provider MachineOffering in one hop. Check current acquisition permission,
    entitlement, quota, and placement feasibility at allocation commit. A copied
    reference, cached status, namespace, or privileged controller identity is not
    proof of consumer access.
+   Offering or assignment withdrawal blocks new allocations. Existing bindings
+   use retained capabilities plus current action/input permissions, not a new
+   acquisition check. Offering edits cannot silently mutate their contract.
+   Explicit suspension/emergency restrictions are separate and attributable;
+   they never discard custody or prevent authorized cleanup.
 5. **Persist exact inputs before effects.** Retain admitted plans, artifacts,
    digests, target identities, predecessor preconditions, execution authority,
    and operation correlation. Timeouts mean unknown outcomes; recover the existing
@@ -101,6 +117,28 @@ their owning services. Fleet consumes these contracts and their evidence.
 8. **Adopt without disruption.** Import observations and current reservations,
    compare generated outputs, then transfer one output's ownership at a time.
    Adoption cannot briefly expose an active machine as free or reprovision it.
+
+## Federation and shared acceptance
+
+Management writes admitted intent and exact targeting policy on the hub. The
+selected cell writes execution status only on its LOCAL copy; Karmada reflects
+that status onto the hub copy. Management validates operation revision, retained
+asset/allocation/Installation and cell incarnations, fencing epoch, freshness,
+and evidence before projecting public status. Locations hold no direct hub or
+project API credentials. Missing or hostile-member evidence remains unknown.
+
+The [Fleet scope/writer table](../enhancements/fleet-management/README.md#project-and-control-plane-responsibilities)
+defines intentional differences between inventory, consumer, protected hub and
+cell namespaces. Namespace equality is not project identity or authority. Its
+[authority records](../enhancements/fleet-management/README.md#retained-authority-records)
+separate allocation acceptance, operation admission, execution attempts and
+cleanup custody. The [shared A1–A7 scenarios](../enhancements/fleet-management/README.md#shared-design-acceptance-scenarios)
+cover acquisition races, withdrawal versus runtime permission, installation
+modes, federated status, cleanup and non-Fleet fulfillment. They align with
+[offerings/access #58](https://github.com/datum-cloud/fleet/pull/58),
+[BMC #41](https://github.com/datum-cloud/fleet/pull/41) and
+[PXE #59](https://github.com/datum-cloud/fleet/pull/59); their runtime verification
+is future work, not a result of this documentation change.
 
 ## Node services and consumer pools
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="850" viewBox="0 0 1080 850" role="img" aria-labelledby="title description">
   <title id="title">Durable admission before federated execution</title>
-  <desc id="description">Fleet validates a consumer request, retains exclusive allocation and exact operation authority in the provider project, then publishes a handoff to federation. The selected cell executes only admitted work and reports evidence to the hub. Fleet verifies that evidence before projecting readiness. Unknown outcomes retain custody; release requires verified location and provider cleanup before reuse.</desc>
+  <desc id="description">Fleet validates a consumer request, retains exclusive allocation, accepted offering contract and exact operation authority in the provider project, then publishes a handoff to federation. The selected cell executes only admitted work and writes LOCAL evidence. Karmada reflects local status to the hub; the arrow is not a cell API write to the hub. Fleet verifies that evidence before projecting readiness. Unknown outcomes retain custody; release requires verified location and provider cleanup before reuse.</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
   <style>
     text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; }
@@ -26,7 +26,7 @@
   <path d="M 105 135 H 320" class="line"/>
   <rect x="250" y="159" width="735" height="46" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
   <text x="617" y="188" class="detail" text-anchor="middle">Validate caller, source use, entitlement, quota, and current prerequisites</text>
-  <text x="450" y="237" class="detail" text-anchor="middle">Retain allocation + exact operation</text>
+  <text x="450" y="237" class="detail" text-anchor="middle">Retain allocation, offering + exact operation</text>
   <path d="M 320 252 H 535" class="line"/>
   <text x="427" y="287" class="detail" text-anchor="middle">Durable authority</text>
   <path d="M 535 302 H 320" class="line evidence"/>
@@ -36,8 +36,8 @@
   <path d="M 750 408 H 970" class="line"/>
   <rect x="630" y="432" width="420" height="63" rx="8" fill="#fff7ed" stroke="#d9ad77"/>
   <text x="840" y="458" class="detail" text-anchor="middle">Journal before effects; execute only admitted work.</text>
-  <text x="840" y="482" class="detail" text-anchor="middle">Fence prior executors before takeover.</text>
-  <text x="860" y="528" class="detail" text-anchor="middle">Report exact-work evidence</text>
+  <text x="840" y="482" class="detail" text-anchor="middle">Fence takeover; write LOCAL execution status.</text>
+  <text x="860" y="528" class="detail" text-anchor="middle">Karmada reflects status</text>
   <path d="M 970 543 H 750" class="line evidence"/>
   <text x="535" y="580" class="detail" text-anchor="middle">Read results; verify target, revision, freshness, and required gates</text>
   <path d="M 750 595 H 320" class="line evidence"/>

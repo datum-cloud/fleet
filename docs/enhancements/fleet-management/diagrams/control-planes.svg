@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="840" viewBox="0 0 960 840" role="img" aria-labelledby="title description">
   <title id="title">Project ownership and Fleet control-plane boundaries</title>
-  <desc id="description">Provider and consumer projects retain canonical resources. Fleet reads intent, retains provider-side authority, and projects status. Fleet submits admitted handoffs to the federation hub, which delivers only to the selected location. The cell reports evidence directly to the hub. Project APIs are not execution cells, and federation grants no allocation authority.</desc>
+  <desc id="description">Provider and consumer projects retain canonical resources. Fleet reads intent, retains provider-side authority, and projects validated status. Fleet submits admitted handoffs to the federation hub, which delivers only to the selected location. The cell writes LOCAL execution status; Karmada reflects it to the hub. Locations have no direct hub or project credentials. Project APIs are not execution cells, and federation grants no allocation authority.</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
   <style>
     text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; }
@@ -41,13 +41,13 @@
   <path d="M 240 415 L 240 510" class="line"/>
   <text x="255" y="468" class="detail">Admitted intent</text>
   <path d="M 720 510 L 720 415" class="line evidence"/>
-  <text x="705" y="468" class="detail" text-anchor="end">Execution results</text>
+  <text x="705" y="468" class="detail" text-anchor="end">Validate reflected results</text>
   <rect x="30" y="700" width="900" height="100" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
   <text x="480" y="737" class="heading" text-anchor="middle">Selected location / cell control plane</text>
-  <text x="480" y="771" class="detail" text-anchor="middle">Networking-owner integration · qualified executors · private credentials</text>
+  <text x="480" y="771" class="detail" text-anchor="middle">Writes LOCAL status only · no direct hub or project credentials</text>
   <path d="M 240 610 L 240 700" class="line"/>
   <text x="255" y="660" class="detail">Targeted delivery</text>
   <path d="M 720 700 L 720 610" class="line evidence"/>
-  <text x="705" y="660" class="detail" text-anchor="end">Direct execution status</text>
+  <text x="705" y="660" class="detail" text-anchor="end">Karmada reflects local status</text>
   <text x="480" y="826" class="detail" text-anchor="middle">Proposed topology · dashed arrows carry results, never new effect authority</text>
 </svg>

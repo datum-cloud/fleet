@@ -11,6 +11,12 @@ They describe proposed contracts, not implemented topology.
 - [Admitted work](admitted-work.svg): durable authority before dispatch and
   evidence before readiness.
 
+Cells write execution status only on their local copies. Karmada owns reflection
+to hub status; management validates that evidence before public projection. A
+cell-to-hub dashed arrow denotes reflection, never direct cell credentials or a
+cell write to the hub/project API. The diagrams show Fleet fulfillment, not a
+requirement that every Metal provider implement Fleet.
+
 Edit SVGs directly and retain their accessible titles and descriptions. Keep the
 images and the surrounding enhancement text consistent. Solid arrows describe
 references or labeled actions; dashed arrows describe returned results, not new

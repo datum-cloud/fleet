@@ -187,6 +187,24 @@ Metal. Inventory readiness is a prerequisite, not allocation or execution author
 MachineClass publication exposes approved offerings and sanitized summaries to
 eligible Consumer Projects, not raw physical inventory.
 
+Metal is the public machine service; Fleet is an optional fulfillment
+implementation, not a prerequisite for every provider. The
+[provider offerings/access proposal](https://github.com/datum-cloud/fleet/pull/58)
+defines `MachineOffering` in `provider.metal.datumapis.com` as canonical product
+policy, including installation modes and management capabilities.
+`MachineOfferingAssignment` restricts acquisition audiences and permitted
+profiles. A consumer `MachineClass` is a one-hop published view of that offering,
+not another provider definition. `MachineProfile` is immutable hardware
+requirements, not installation or management policy. Supply selectors and
+provider execution configuration remain private to fulfillment.
+
+Allocation retains the accepted offering contract and exact identities and
+capabilities. Offering edits never silently change active allocations. Offering
+or assignment withdrawal blocks new allocations, not runtime actions on existing
+bindings: those use retained capabilities and current action/input permissions.
+Explicit suspension and emergency restrictions are separate, attributable policy
+decisions; they cannot discard custody or prevent authorized cleanup.
+
 The shared allocator handles both standalone customers and internal managed
 platforms. Provider adapters execute admitted preparation, installation, power,
 console, and cleanup operations. Backend-specific capabilities stay behind those
@@ -224,6 +242,8 @@ or independently authorize hardware effects.
 | --- | --- | --- |
 | `fleet.datumapis.com/v1alpha1` | Facility, Rack, DeviceClaim, Device, Cable, PowerFeed | Authorized infrastructure operators and Fleet components |
 | `metal.datumapis.com/v1alpha1` | MachineClass, MachineProfile, MachineCapacity, Machine, MachineAllocation, Installation | Providers and consumers, with resource-specific access restrictions |
+| `provider.metal.datumapis.com/v1alpha1` | MachineOffering, MachineOfferingAssignment | Provider product policy and acquisition access; no private execution configuration |
+| `metal.datumapis.com/v1alpha1` | MachineManagementSession | Public allocation-scoped BMC session; credentials and internal coordination stay private |
 | `coordination.fleet.datumapis.com/v1alpha1` | Candidate MachineAllocationHandoff for admitted location work | Fleet management, federation, and selected location executors only |
 
 One inventory group does not imply one controller, permission set, or process.
@@ -429,7 +449,7 @@ alternative reservation authorities. An external duplicate asset record must not
 create additional supply; enforce enrolled asset uniqueness across provider
 projects before enabling multi-provider allocation.
 
-Facility, Device, MachineCapacity, MachineAllocation, Installation, and managed
+Facility, Device, MachineCapacity, Machine, MachineAllocation, Installation, and managed
 NodeClaim identities remain distinct. A relationship does not imply cascading
 garbage collection or ownership transfer. Recreating a same-named object cannot
 inherit the predecessor's reservations, evidence, or execution authority.
@@ -462,6 +482,31 @@ unless a separately authorized contract explicitly exposes a safe subset.
 | Federation Control Plane | Canonical admitted handoff objects and explicit targeting policy for delivery to selected location/cell control planes | Allocate capacity, grant consumer authority, broadcast privileged work, or change admitted inputs |
 | Location/cell control plane | Delivered work and local execution/evidence adapters; integration with networking and qualified provider executors | Select another asset, expand permitted effects, or release global reservations independently |
 
+The following scope/writer contract is intentional. Project scope is a tenancy
+boundary; Kubernetes namespaces are local storage scopes, not portable project
+identities. `infra-ops` in inventory examples need not equal a Metal request's
+namespace, a protected hub namespace, or a cell namespace. Translation retains
+the authenticated project incarnation and exact source/local object identities;
+namespace equality grants no authority. Concrete namespace names remain deployment
+choices, but the writer and tenancy boundaries below do not.
+
+| Surface | Canonical scope | Intent writer | Status/evidence writer |
+| --- | --- | --- | --- |
+| Physical inventory | Provider project, operator namespace (for example `infra-ops`) | Authorized operator for plans; trusted registrar for Device identity | Inventory verifier for attributed observations and conditions |
+| MachineOffering / MachineOfferingAssignment | Provider project, provider API namespace | Authorized provider product/access administrator | Metal validation/publication controller |
+| MachineProfile / MachineClass | Metal project API; immutable profile and consumer-local published view | Authorized profile author; publisher alone owns class source/provenance | Metal profile validation/publication controller |
+| Machine / Installation / MachineManagementSession | Consumer project Metal namespace | Authorized consumer or managed consumer controller | Management status projector after authority/evidence validation |
+| MachineCapacity / MachineAllocation and operation custody | Provider project protected service namespace/storage | Qualified supply controller for capacity; shared allocator/coordinator alone for bindings and admitted operations | Coordinator records verified results; providers cannot rewrite bindings |
+| Coordination handoff spec and exact-target policy | Protected hub namespace | Management handoff controller | Karmada alone reflects selected-cell status on hub copy |
+| Delivered coordination copy | Selected cell's local namespace | Federation propagates admitted spec; cell cannot expand it | Selected executor writes LOCAL execution status only |
+
+The [BMC companion](https://github.com/datum-cloud/fleet/pull/41) and
+[PXE companion](https://github.com/datum-cloud/fleet/pull/59) specialize the same
+admission and status path; neither moves public sessions to the coordination
+group or gives a location direct project/hub credentials. These are proposed
+contracts, not migration or backwards-compatibility requirements for earlier
+illustrative APIs. Imported source provenance remains historical.
+
 A project is a tenancy and authorization boundary, not necessarily a dedicated
 physical cluster. A single organization can operate provider and consumer projects;
 Datum's managed platforms use Consumer Projects like other customers. Service
@@ -479,8 +524,11 @@ Fleet API server.
 The Federation Control Plane is the intended Karmada hub described in the API
 architecture. Coordination CRDs must exist on the hub and participating cells.
 Fleet writes admitted intent to the hub, federation delivers only to the selected
-cell, and that cell reports execution status directly to the hub. Federation must
-not overwrite cell-owned status. No wholesale replication of provider or consumer
+cell, and that cell writes execution status only to its LOCAL copy. Karmada
+reflects selected-cell status to the hub copy; management validates it before
+projecting public status. Federation must not overwrite local executor status
+with a stale hub copy. Location executors receive no direct hub or project API
+credentials. No wholesale replication of provider or consumer
 projects is required, and privileged credentials do not travel in handoff objects.
 
 ### Components and authoritative writers
@@ -511,6 +559,27 @@ These are logical responsibilities, not a requirement for a separate deployment
 per component. Admission, privileged execution, and consumer access nevertheless
 require enforced trust boundaries even when components share infrastructure.
 
+#### Retained authority records
+
+These logical records must be durable before effects; this design does not choose
+a storage backend or require one public CRD per record.
+
+| Record / authoritative writer | Exact retained contents |
+| --- | --- |
+| Allocation acceptance / shared allocator | Authenticated consumer and provider project incarnations; Machine, MachineCapacity and Device identities; MachineAllocation identity; resolved MachineClass provenance; offering identity/revision plus accepted contract content/digest; assignment identity/revision and acquisition decision; immutable profile identities/digests; accepted installation modes and management capabilities; quota/reservation evidence |
+| Operation admission / lifecycle coordinator | Actor and current action/input authorization decision with policy revision/time; allocation and Installation/session identity; exact source mode, artifact digest or delegated endpoint identity, network/input revisions and immutable recipe digest; target asset and selected cell incarnation; operation ID/revision, predecessor preconditions, executor fencing epoch, bounded validity and explicit suspension/emergency decision |
+| Execution attempt / selected executor | Admitted operation ID/revision and digest, allocation/asset/cell identities, fencing epoch, attempt identity, journal-before-effect marker, observation time and attributable result/evidence; uncertain outcomes remain unknown |
+| Cleanup custody / lifecycle coordinator | Original binding and in-flight operations, sessions and capabilities to revoke, network fencing/detachment and provider cleaning obligations, required evidence, custody owner and any explicitly authorized transfer |
+
+Names are authored references, never sufficient retained identity. Recreation of
+a project, offering, cell, Machine, or Installation cannot inherit authority.
+The handoff carries only the bounded admitted projection, not credentials or a
+new grant. Management rejects wrong-cell, wrong-incarnation, stale-revision,
+expired or regressive status, even if federation delivered it. Missing selected
+member evidence is unknown; neither an old Ready nor another member's status can
+fill the gap. Keep the handoff until terminal/cleanup evidence is reflected and
+retained; deleting delivery objects does not prove cleanup.
+
 ### End-to-end lifecycle
 
 1. **Plan and verify:** an operator in a Service Provider Project registers a
@@ -518,8 +587,9 @@ require enforced trust boundaries even when components share infrastructure.
    physical reservations. Trusted registration and evidence establish actual
    equipment and verified prerequisites without powering or provisioning it.
 2. **Prepare and publish:** separately authorized provider work prepares eligible
-   equipment. Provider capacity and class definitions remain in that project;
-   service publication places references in eligible Consumer Projects.
+   equipment. Private supply stays in that project; MachineOffering defines
+   product policy and MachineOfferingAssignment restricts acquisition. Publication
+   places one-hop MachineClass views in eligible Consumer Projects.
 3. **Request and admit:** a consumer creates a Machine and, when needed, an
    Installation. Fleet validates the authenticated caller's source-use authority,
    project state, entitlement, quota, location eligibility, and current provider
@@ -530,7 +600,8 @@ require enforced trust boundaries even when components share infrastructure.
    adapters request networking work from its owner and invoke only the permitted
    provider effects. The retained recipe defines ordering and prerequisites;
    delivery is not permission to run every operation concurrently.
-5. **Verify and report:** the cell reports attributable results to the hub. Fleet
+5. **Verify and report:** the cell writes attributable results locally; Karmada
+   reflects them onto the hub copy. Fleet
    checks target identity, operation revision, freshness, and required evidence
    before projecting readiness into the Consumer Project. Successful replication
    or a running controller is not successful execution.
@@ -596,6 +667,21 @@ deployment design must identify their bootstrap dependencies and failure domains
 Federation is a delivery mechanism, not a substitute for that recovery design.
 
 ### Acceptance tests
+
+#### Shared design acceptance scenarios
+
+These scenario IDs are shared with #58 and are requirements for future tests,
+not claims that runtime behavior has been implemented or verified here.
+
+| Scenario | Required result |
+| --- | --- |
+| A1: two consumers race for overlapping offerings | Exactly one allocation commits for a MachineCapacity/Device; retain accepted product, profile and acquisition evidence before effects; forged/stale classes grant nothing |
+| A2: edit or withdraw offering/assignment after binding | New allocations fail current acquisition checks; existing allocations retain accepted modes/capabilities and can perform currently authorized actions without re-acquisition; edits do not silently upgrade or downgrade them |
+| A3: revoke action/input permission or impose explicit emergency restriction | Reject new affected operation admissions even when the capability was retained; fence/revoke affected in-flight work through its explicit protocol, preserve unknown outcomes and permit service-owned cleanup |
+| A4: golden-image versus delegated PXE request | Select exactly one supported source mode using retained offering policy, immutable hardware profile and current input permissions; retain exact artifacts/endpoint/network inputs; delegated handoff never proves guest OS readiness |
+| A5: duplicate delivery, hostile member, partition or recreated identity | Execute only the exact retained asset/allocation/Installation/cell under fencing; write LOCAL status, reflect through Karmada and validate before projection; stale, absent or wrong-member evidence cannot become readiness |
+| A6: project deletion, session teardown or uncertain cleanup | Preserve custody and reservations/quarantine through public object and offering removal; release only after required network fencing, BMC/session revocation and provider cleanup evidence; no cross-allocation replay |
+| A7: non-Fleet provider and observational adoption | Fulfill the same Metal contracts without exposing Fleet inventory or backend selectors; imported occupied equipment stays unavailable and unchanged until explicit ownership transition |
 
 #### Physical inventory
 
@@ -669,13 +755,13 @@ prerequisite and whether it is known false or unknown. Recovery resumes the reta
 operation or follows its authorized cleanup path; it does not create a new request
 to bypass occupied capacity or missing evidence.
 
-### What must upgrades and restoration preserve?
+### What must restoration preserve?
 
-Upgrades preserve canonical asset identities, physical reservations, active
+Recovery preserves canonical asset identities, physical reservations, active
 bindings, exact admitted inputs, and cleanup obligations. A restored controller
 must reconcile retained authority with executor evidence before allowing new
-effects. Exercise mixed-version readers, stale handoff delivery, and backup
-restoration against active allocations before accepting an upgrade or rollback.
+effects. Exercise stale handoff delivery and backup restoration against active
+allocations. No compatibility bridge or migration from provisional APIs is required.
 
 ### What bounds resource usage?
 
@@ -710,7 +796,7 @@ hide the canonical project contracts. Neither is proposed.
 
 Before implementation, decide:
 
-- Exact project/API namespace scopes, cross-project reference encoding, and IAM
+- Concrete namespace mappings, cross-project reference encoding, and IAM
   permissions for operator intent, registration, evidence, and destructive work.
 - Canonical Facility ownership and deduplication, and the shared reservation
   protocol when multiple providers operate within one premises.
