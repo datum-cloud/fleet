@@ -23,7 +23,13 @@ proposed. No release milestone is assigned.
 
 Let providers give consumers default access to machine offerings and grant extra
 offerings or profiles to selected projects. A single assignment API supports both
-cases, while existing Machine APIs continue to handle allocation and operation.
+cases. Metal is the public machine service; Fleet is an optional fulfillment
+implementation. MachineOffering is canonical provider product policy, including
+installation modes and management capabilities. MachineOfferingAssignment
+restricts acquisition; MachineClass publishes a one-hop consumer view;
+MachineProfile contains immutable hardware requirements. Machine and Installation
+remain the consumer request contracts. All of these are proposed design decisions,
+not backwards-compatibility or migration requirements for provisional APIs.
 
 ## Motivation
 
@@ -82,8 +88,8 @@ previews and diagnostics. Reviewers have not yet been assigned.
 
 | API group | Resources and responsibility |
 | --- | --- |
-| `metal.datumapis.com` | MachineProfile defines hardware requirements; MachineClass is the consumer view of an offering; Machine and Installation carry consumer requests. |
-| `provider.metal.datumapis.com` (proposed) | MachineOffering defines a provider product; MachineOfferingAssignment controls its audience and profile restrictions. |
+| `metal.datumapis.com` | MachineProfile defines immutable hardware requirements; MachineClass is a one-hop consumer view; Machine and Installation carry requests; MachineManagementSession is the public allocation-scoped BMC session. |
+| `provider.metal.datumapis.com` (proposed) | MachineOffering defines canonical product, installation and management policy; MachineOfferingAssignment restricts acquisition audience and profiles. |
 | `fleet.datumapis.com` | Physical inventory for providers using Fleet. |
 | `coordination.fleet.datumapis.com` | Fleet's admitted execution handoffs to locations. |
 
@@ -99,6 +105,13 @@ assignments are project-scoped, without namespaces. Offering and profile names
 resolve in that provider project; consumer project names resolve through Milo.
 Protected records retain exact identities so name reuse cannot inherit access.
 
+MachineClass and MachineProfile are also project-wide, without Kubernetes
+namespaces. This intentionally differs from namespaced Machine, Installation
+and public session requests, Fleet physical inventory (for example `infra-ops`),
+and protected hub/cell coordination. Namespace translation retains exact project
+and object incarnations; a namespace is not an acquisition grant. See the
+[Fleet scope/writer contract](https://github.com/datum-cloud/fleet/pull/51).
+
 ### Provider offering
 
 MachineOffering describes supported Metal profiles, locations, installation
@@ -109,8 +122,44 @@ configuration belong to the provider's implementation.
 A consumer MachineClass becomes a publisher-managed, one-hop reference to a
 MachineOffering in the provider API. Its status contains the permitted summary.
 The consumer still selects a local class and profile when creating a Machine.
-The offering schema and revised MachineClass source-reference schema need a
-separate API review; existing references must not be silently reinterpreted.
+The offering and MachineClass source-reference schemas need API review against
+this contract. MachineClass cannot contain a second writable product definition,
+reference another consumer class, or expose private supply selectors. Published
+summary changes affect discovery, not an already accepted allocation contract.
+
+#### Installation and management policy
+
+MachineOffering alone declares product-supported installation modes, permitted
+image/artifact constraints, delegated-boot constraints, completion assurance and
+management capabilities such as power and console/BMC access. Hardware profiles
+may constrain architecture, disks or interfaces but do not grant these operations.
+Assignments may restrict which profiles a consumer acquires; they neither add
+installation modes nor become runtime management policy. MachineClass exposes a
+sanitized, publisher-owned view, not an independently editable policy layer.
+
+| Policy surface | Contract |
+| --- | --- |
+| Managed golden image | Declare supported qualified image/recipe combinations and completion evidence. Admission resolves and retains exact approved artifact identities, versions/digests and target disks; a mutable image name is insufficient. |
+| Delegated customer PXE | Explicitly opt in with bounded delegation, permitted endpoint/origin and network constraints, revocation/fencing requirements and stated assurance. Admit one allocation-scoped endpoint and exact inputs; no shared DHCP control or BMC credentials. Customer-reported completion is not platform verification of an opaque OS. |
+| Other supported installation sources | Describe their supported contract in offering policy; use the single Installation source union owned by the lifecycle/PXE design, not a second union in profiles, assignments or provider adapters. |
+| Management capabilities | Declare supported power, console/BMC and reinstall actions and limits; actual requests also require current actor and input permissions against the retained allocation. Session creation does not authorize arbitrary BMC methods. |
+
+An Installation selects exactly one supported source mode. The
+[PXE/lifecycle companion](https://github.com/datum-cloud/fleet/pull/59) owns the
+source union and detailed execution/evidence contract. This proposal owns where
+product policy lives, not a duplicate Installation schema. Backend recipes,
+inventory selectors, management endpoints and provider execution configuration
+remain private. Safe policy constraints can be published without publishing
+their privileged fulfillment configuration.
+
+Allocation acceptance retains offering identity/revision, accepted policy content
+and digest, exact permitted profile identities, installation modes and management
+capabilities. Later installation, reinstall and session admissions use that
+retained contract, current action/input authorization and explicit safety
+restrictions. They do not reread a changed offering as their runtime contract.
+Adding a mode does not silently enable it on existing allocations; removing one
+does not silently revoke their accepted capability. A changed runtime contract
+requires an explicit authorized transition, not catalog reconciliation.
 
 ### Provider independence
 
@@ -125,6 +174,24 @@ admission authority; providers report fulfillment results against exact requests
 The transport and any reservation or operation resources remain separate design
 work. Individual MachineCapacity records are not required by this catalog API;
 external supply and reservation must be defined before external fulfillment ships.
+
+The identity boundaries do not depend on implementation: Device is a physical
+asset, MachineCapacity is supply, Machine is consumer intent, MachineAllocation
+is the exclusive binding, Installation is an incarnation, and NodeClaim sits
+above these as managed logical identity. A non-Fleet provider need not publish
+Fleet inventory, but must retain an equivalent exact supply/asset binding,
+deduplication, operation fencing and cleanup evidence under Metal's authority.
+Offering publication cannot itself reserve external capacity or create a second
+allocator. It also cannot select a provisioning engine for the provider.
+
+For Fleet fulfillment, management writes admitted hub intent and selected-cell
+targeting. The selected cell writes LOCAL execution status only. Karmada reflects
+that status to the hub; management validates identity, revision, fencing,
+freshness and evidence before public projection. Locations receive no direct hub
+or project API credentials. Public BMC sessions stay in `metal.datumapis.com`;
+their protected delivery stays in `coordination.fleet.datumapis.com`, as aligned
+with [BMC #41](https://github.com/datum-cloud/fleet/pull/41) and
+[Fleet management #51](https://github.com/datum-cloud/fleet/pull/51).
 
 ### Platform integration
 
@@ -201,15 +268,17 @@ profile into a local custom profile cannot bypass a Selected assignment.
 
 ### Effective access and changes
 
-For each offering, combine all applicable assignments, then intersect the result
-with current offering policy, service entitlement, and caller permissions. Grants
+For new acquisition of each offering, combine all applicable assignments, then
+intersect the result with current offering policy, service entitlement, and caller permissions. Grants
 are additive: removing one leaves access supplied by another. Evaluate offering
 and profile together; access through one offering cannot authorize another.
 
 Changing restrictions stages a candidate revision. Invalid changes leave the
 previous effective revision in place, still subject to current source policy.
-Suspension or deletion overrides staged changes. Removing a profile from offering
-policy blocks it even if an older assignment still lists it.
+Assignment suspension or deletion overrides staged acquisition changes. Removing
+a profile from offering policy blocks new acquisition with it even if an older
+assignment still lists it. `state: Suspended` on an assignment is not suspension
+of an active allocation.
 
 Hardware changes require a new immutable profile and offering approval. Recreating
 an offering or consumer project requires a fresh assignment. Recreated profiles need
@@ -219,8 +288,19 @@ Machines keep their exact inputs and never switch to replacement identities.
 Revocation blocks new allocations. A request that loses authority before
 allocation must be resubmitted after access returns, as required by the
 [machine lifecycle contract](../machine-lifecycle/README.md#authorization-and-publication).
-Existing allocations retain their contracts and current runtime permission
-checks. Catalog withdrawal cannot evict or reinstall a machine or prevent cleanup.
+Existing allocations retain their accepted offering contract and capabilities;
+runtime actions require current action/input permissions, not a fresh assignment
+or offering acquisition check. Catalog withdrawal cannot evict or reinstall a
+machine or prevent cleanup. Ordinary offering edits cannot silently change
+accepted capabilities, including adding or removing installation modes.
+
+Explicit allocation suspension and emergency restrictions are separate authority
+records, not inferred from a missing assignment. Retain the actor, reason,
+affected allocation/actions, policy revision, effective time and expiry/recovery
+conditions. Admission applies them to new affected work; restriction of in-flight
+effects requires explicit revocation/fencing under the retained operation
+protocol. Restrictions never discard custody or prevent authorized service-owned
+revocation, fencing and cleanup. Failed or uncertain cancellation remains unknown.
 
 Deleting an assignment retains a service finalizer until revocation and durable
 catalog-cleanup responsibility are recorded. Remove local objects only when no
@@ -276,7 +356,20 @@ installation, and managed-node identities remain separate.
    before its local copies and protected mappings are valid.
 5. On a Machine request, retain caller identity and exact inputs. Check current
    assignment access, local and source-use IAM, entitlement, quota, location,
-   configuration compatibility, and available capacity before commit.
+   configuration compatibility, and available capacity before commit. Retain
+   the accepted offering contract and capabilities with exact source identities.
+6. On an action against an existing allocation, check its retained capabilities,
+   current action/input permissions and explicit suspension/emergency restrictions.
+   Do not require acquisition access again. Retain the exact operation before
+   dispatch; release continues under service-owned cleanup authority.
+
+For installation and BMC actions, current permissions cover the actual actor,
+Machine/allocation, requested action, Installation/session and each selected
+image, delegated endpoint, network attachment and secret/bootstrap input as
+applicable. Publication and an old permission receipt cannot authorize new input
+use. Authorization failure blocks the operation, not cleanup ownership. A
+previously admitted effect is recovered or explicitly revoked/fenced; rechecking
+IAM cannot establish whether that effect already occurred.
 
 Read, list, and watch paths must filter ungranted profiles and class summaries,
 including after revocation. A privileged controller cannot substitute its own
@@ -295,6 +388,28 @@ the same records. Replay durable dependency events after restarts, reject stale
 revisions, and index offerings to assignments and consumers to limit work.
 Revocation takes effect before asynchronous removal of stale catalog copies.
 
+#### Exact authority records
+
+These are logical durable records, not additional mandatory public resources.
+The allocation and operation records align with #51; catalog records extend them
+without becoming hardware authority.
+
+| Record / sole authoritative writer | Required retained facts |
+| --- | --- |
+| Effective acquisition revision / entitlement authority | Provider/service and consumer project incarnations, offering and contributing assignment identities/revisions, exact permitted profile identities/revisions, effective revision and allocation/revocation ordering decision |
+| Publication provenance / publisher | Exact offering and source-profile identities, consumer project incarnation, actual local class/profile identities, delivery revision and ownership/conflict evidence; no supply selectors or credentials |
+| Allocation acceptance / shared allocator | Authenticated consumer/provider project incarnations; Machine, MachineCapacity, Device and MachineAllocation identities (or equivalent protected external supply binding); MachineClass provenance; offering identity/revision and accepted contract content/digest; contributing assignment revisions and acquisition decision; immutable profile identities/digests; accepted installation modes/management capabilities; quota/reservation evidence |
+| Operation admission / lifecycle coordinator | Actor, current action/input authorization decision and policy revision/time; allocation and Installation/session identity; exact source mode, artifacts/digests or delegated endpoint identity, network/input revisions and recipe digest; asset and selected cell incarnation; operation ID/revision, predecessor preconditions, fencing epoch, bounded validity and explicit restriction decision |
+| Execution attempt / selected executor | Admitted operation ID/revision/digest, allocation/asset/cell identities, fencing epoch, attempt identity and journal-before-effect marker, observation time and attributable results/evidence; unknown is not success |
+| Cleanup custody / lifecycle coordinator | Original binding and in-flight work, sessions/capabilities to revoke, required network fencing/detachment and provider cleaning evidence, custody owner and any explicitly authorized transfer |
+
+Retain identities, not just names or mutable references. Records must survive
+offering/assignment/public request removal and project retirement. Lost responses
+recover the same operation; stale, wrong-cell, wrong-incarnation or regressive
+status cannot replace accepted evidence. A delivered handoff has bounded
+authority only; it cannot authorize another asset, allocation or new operation.
+Public status and audit summaries never expose secret-bearing retained content.
+
 ### Validation
 
 Required tests, not yet implemented for assignments:
@@ -306,11 +421,26 @@ Required tests, not yet implemented for assignments:
 - Forged copies, name collisions, and recreated sources or projects.
 - Provider Metal offerings publishing Metal profiles without Fleet inventory.
 - Protected published profiles and permitted custom profiles using one schema.
-- Migration rejecting ambiguous source mappings and preserving active allocations.
+- Offering edits preserving accepted allocation contracts without implicit capability changes.
 - Revocation racing allocation, lost responses, reordered events, and restart.
 - Read/list/watch revocation without leaking protected catalog details.
 - Invalid updates retaining the previous effective revision; offering withdrawal
   overriding it; existing allocations remaining operable and releasable.
+
+#### Shared design acceptance scenarios
+
+The same A1–A7 identifiers are defined in #51. These requirements also exercise the
+BMC/PXE contracts in #41/#59; no runtime implementation or test result is claimed.
+
+| Scenario | Required result |
+| --- | --- |
+| A1: two consumers race for overlapping offerings | Exactly one allocation commits for a MachineCapacity/Device; retain accepted product, profile and acquisition evidence before effects; forged/stale classes grant nothing |
+| A2: edit or withdraw offering/assignment after binding | New allocations fail current acquisition checks; existing allocations retain accepted modes/capabilities and can perform currently authorized actions without re-acquisition; edits do not silently upgrade or downgrade them |
+| A3: revoke action/input permission or impose explicit emergency restriction | Reject new affected operation admissions even when the capability was retained; fence/revoke affected in-flight work through its explicit protocol, preserve unknown outcomes and permit service-owned cleanup |
+| A4: golden-image versus delegated PXE request | Select exactly one supported source mode using retained offering policy, immutable hardware profile and current input permissions; retain exact artifacts/endpoint/network inputs; delegated handoff never proves guest OS readiness |
+| A5: duplicate delivery, hostile member, partition or recreated identity | Execute only the exact retained asset/allocation/Installation/cell under fencing; write LOCAL status, reflect through Karmada and validate before projection; stale, absent or wrong-member evidence cannot become readiness |
+| A6: project deletion, session teardown or uncertain cleanup | Preserve custody and reservations/quarantine through public object and offering removal; release only after required network fencing, BMC/session revocation and provider cleanup evidence; no cross-allocation replay |
+| A7: non-Fleet provider and observational adoption | Fulfill the same Metal contracts without exposing Fleet inventory or backend selectors; imported occupied equipment stays unavailable and unchanged until explicit ownership transition |
 
 ### Implementation plan and decisions
 
@@ -319,11 +449,12 @@ IAM, and the admission fence. Then implement validation and previews without eff
 extend synthetic publication to multiple consumers, and qualify production
 authorization before enabling allocation for a small cohort.
 
-Migrate provider MachineClass definitions to MachineOffering explicitly, retaining
-source identity and access evidence. Create new consumer references only after
-checking ownership and mapping the old source. Existing allocations keep their
-original contracts and cleanup authority. A group rename cannot perform this
-migration. Fleet-specific supply policy stays in its provider adapter.
+Design directly for MachineOffering and one-hop consumer MachineClass views.
+No compatibility bridge, legacy reference conversion or migration from provisional
+provider MachineClass definitions is required. This does not relax exact identity,
+active-allocation custody or observational adoption: importing records cannot
+authorize provisioning or expose occupied capacity. Fleet-specific supply policy
+stays in its private provider implementation.
 
 Other release decisions are naming rules, resource limits, delivery-view storage,
 and watch revocation. Do not introduce CRDs until the platform ownership decision
@@ -345,6 +476,10 @@ Research used Fleet revision `4c7a10c6e4ee9e007086ef0e62eefb328337e75a`:
   accepts injected source authority; [production integrations remain incomplete](../../development/README.md#explicit-gaps).
 
 This proposal has not re-audited current upstream schemas or live deployments.
+The historical sources establish provenance, not a requirement to preserve their
+provisional API vocabulary. Current design alignment is with #51 (management),
+#41 (BMC) and #59 (PXE/lifecycle); their detailed source and delivery schemas stay
+with those companions.
 
 ## Production Readiness Review Questionnaire
 
@@ -362,15 +497,15 @@ No workload downtime or node reprovisioning should be needed.
 
 #### Does enabling the feature change any default behavior?
 
-The gate alone grants nothing. Providers must create assignments. Existing
-published objects require an explicit migration; matching names do not authorize
-adoption.
+The gate alone grants nothing. Providers must create assignments. Matching names
+do not authorize adoption or reuse another object's identity. No legacy catalog
+conversion is a prerequisite for this proposed API.
 
 #### Can the feature be disabled once it has been enabled (i.e. can we roll back the enablement)?
 
-Disable new admission first. Roll back binaries only if the older version can
-read retained records and enforce their restrictions. Otherwise keep admission
-paused and deploy a fix.
+Disable new acquisition first while preserving authorized runtime operations,
+custody and cleanup. Recovery must honor retained records and restrictions; no
+mixed-version or legacy API compatibility bridge is required by this design.
 
 #### What happens if we reenable the feature if it was previously rolled back?
 
@@ -386,9 +521,11 @@ disabled, and reenablement after source or project replacement.
 
 #### How can a rollout or rollback fail? Can it impact already running workloads?
 
-Mixed versions may interpret restrictions differently or lose publication
-progress. Require compatible authority, admission, and publisher versions before
-activation. Failures may delay operations but must not interrupt running machines.
+Lost publication progress or incorrect admission ordering can delay delivery or
+misapply acquisition restrictions. Stop new acquisition on uncertain authority,
+recover retained work, and keep runtime/cleanup authority independent of catalog
+availability. Failures must not implicitly interrupt running machines. Designing
+a mixed-version compatibility protocol is outside this proposal.
 
 #### What specific metrics should inform a rollback?
 
@@ -398,14 +535,15 @@ latency. Numerical thresholds need measurements before rollout.
 
 #### Were upgrade and rollback tested? Was the upgrade->downgrade->upgrade path tested?
 
-No. Version-skew and upgrade/downgrade/upgrade tests must include retained records,
-lost responses, and restart during revocation.
+No. Required recovery scenarios cover retained records, lost responses, and
+restart during revocation. A legacy upgrade/downgrade compatibility matrix is not
+an acceptance requirement for this design-only change.
 
 #### Is the rollout accompanied by any deprecations and/or removals of features, APIs, fields of API types, flags, etc.?
 
-Provider MachineClass definition mode would be replaced by MachineOffering.
-Consumer references need a versioned migration; see the
-[implementation plan](#implementation-plan-and-decisions). No implemented API is
+The target design uses MachineOffering rather than a provider MachineClass
+definition mode; see the [implementation plan](#implementation-plan-and-decisions).
+No migration or compatibility layer is required, and no implemented API is
 removed by this documentation change.
 
 ### Monitoring Requirements
@@ -424,8 +562,9 @@ and Machine admission status.
 #### What are the reasonable SLOs (Service Level Objectives) for the enhancement?
 
 Publication convergence, authorization availability, and admission latency targets
-remain unset until measured. Correct revocation is a requirement, not a latency
-allowance for using withdrawn permission.
+remain unset until measured. Correct acquisition revocation is a requirement, not
+a latency allowance for a new allocation using withdrawn permission. Runtime
+actions remain governed by their separate retained/current authorization checks.
 
 #### What are the SLIs (Service Level Indicators) an operator can use to determine the health of the service?
 
@@ -521,6 +660,8 @@ records and keep revocation and cleanup running during recovery.
 - 2026-11-13: Reframed access around offerings and adopted the Datum template.
   Separated provider offerings from consumer profiles and made Fleet optional
   for fulfillment. No implementation or release approval is claimed.
+- 2026-11-14: Aligned installation policy, retained runtime authority, federation
+  status and shared acceptance with #51/#41/#59; removed migration requirements.
 
 ## Drawbacks
 
