@@ -572,8 +572,9 @@ is claimed by documentation validation.
   pinned. Independent review and all owner/production approvals remain pending.
 - 2026-11-14: After complete-set review identified missing pre-allocation
   commissioning and adopted settlement joins, align qualification to the revised
-  shared-subject contracts and add D30–D35. Original D01–D29 author checks are
-  submission history, not current independent approval or executed qualification.
+  shared-subject contracts and add D30–D35. Earlier author documentation checks
+  are submission history, not a claim that the initial check covered later-added
+  rows, current independent approval or executed qualification.
 
 [bmc]: https://github.com/datum-cloud/fleet/blob/f04e63ddd9d10cbf306daf3a0232961debd85e7f/docs/enhancements/secure-bmc-access.md
 [management]: https://github.com/datum-cloud/fleet/blob/fa07c2236801a33a58efc914b555586c8e146cc6/docs/enhancements/fleet-management/README.md
