@@ -266,8 +266,9 @@ Reserve may perform read-only inventory checks and a local bookkeeping lock.
 It may not order new hardware, bill an irreversible procurement, power/reset,
 erase, install, change boot, create customer credentials, expose console, attach
 customer networks or activate shared identity. Already-qualified maintenance is
-a separate owner-admitted preparation operation on nonallocatable inventory,
-not an implicit side effect of Reserve. Reserve and Commit signatures have
+a separate owner-admitted service/field operation on nonallocatable inventory,
+not commissioning by definition or an implicit side effect of Reserve. The
+non-consumer wire exclusion above still applies. Reserve and Commit signatures have
 different audiences from effect authority and are rejected by effect brokers.
 
 The finite window bounds **permission to commit**, request fanout and normal
