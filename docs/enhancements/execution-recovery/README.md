@@ -183,6 +183,12 @@ children. Do not allocate one slot per tag. Allocation/Installation-specific
 text below applies only to that branch; common journal, effect and restoration
 rules apply to all three. No backwards-compatible null allocation encoding.
 
+This explicit service path specializes older source shorthand that every PXE
+boot requires an Installation: customer provisioning still always does, including
+CustomerRedfish. Qualified service commissioning/cleanup instead requires the
+typed service plan below, with no customer session or provisioning authority.
+It is not permission to run a customer installer without an Installation.
+
 Preparation binds provider Project UID, custody UID/epoch, exact canonical asset,
 enrollment UID/epoch, Device/supply incarnations, accepted placement/component
 revisions and chosen cell. Admission requires allocation Disabled, no conflicting
