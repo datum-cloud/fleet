@@ -895,10 +895,15 @@ contracts under the acceptance races before this enhancement can be implementabl
 
 ## Alignment revision provenance
 
-On 2026-11-14 the [complete-set integration review][custody-review] identified
-missing commissioning and adopted-settlement joins. This `custody-subjects-v1`
-alignment is proposed documentation, not runtime qualification or sign-off.
-This proposal's contract-bearing revision is `d072f3b5ded5d212e59ecc511c9282037d48c9f1`.
+On 2026-11-14 the [prior integration review][custody-review] identified
+commissioning and adopted-settlement gaps, addressed by `custody-subjects-v1`.
+The [fresh complete-set review][maintenance-review] accepted those joins but
+identified the remaining passive-maintenance execution-subject gap. This
+`physical-maintenance-v1` alignment extends the same custody/slot/journal/clearance
+protocol without changing those joins or catalog-withdrawal/runtime semantics.
+All contracts remain proposed; fresh independent complete-set review and later
+implementation/owner/hardware qualification are required. No self-signoff.
+This proposal's contract-bearing revision is `4bf770db8bd2b065748c3b9384d4c72f9b8ec0e1`.
 The companion revisions below are immutable **contract-bearing snapshots**, not
 claims about final PR heads or merge dependencies. Subsequent commits only refresh
 pins and provenance. Read this aligned set together: older embedded companion
@@ -909,15 +914,17 @@ Any later normative change requires a new manifest and fresh complete-set review
 
 | Companion | Exact dependency revision |
 | --- | --- |
-| [#61 network-handoff][custody-61] | `04adf7013de42c40086502918dbfe05302ec00e8` |
-| [#62 execution-recovery][custody-62] | `6a886b415edb5ba9c1295e4d88db9cd86bd51f0e` |
-| [#63 inventory-trust][custody-63] | `d79495be33d7c0ab126b497dac6a5874924eee81` |
-| [#64 provider-fulfillment][custody-64] | `8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5` |
-| [#65 release-reuse][custody-65] | `96ca49da7d0753be47ea164b7008e90d3a81d2aa` |
+| [#61 network-handoff][custody-61] | `25fef48790b13da95900de64ffd2d1b36e0510eb` |
+| [#62 execution-recovery][custody-62] | `4f9934980b3f441c1d777157fa0ba1dcfce372d7` |
+| [#63 inventory-trust][custody-63] | `2b384517fd08c04cf078923ebda2cddcfa1dc424` |
+| [#64 provider-fulfillment][custody-64] | `58a6596d30b3819d0b3799192730626439ef9885` |
+| [#65 release-reuse][custody-65] | `310a55d97394bb296c579bd3ad01177455c15cc4` |
 
 [custody-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883007682
-[custody-61]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
-[custody-62]: https://github.com/datum-cloud/fleet/blob/6a886b415edb5ba9c1295e4d88db9cd86bd51f0e/docs/enhancements/execution-recovery/README.md
-[custody-63]: https://github.com/datum-cloud/fleet/blob/d79495be33d7c0ab126b497dac6a5874924eee81/docs/enhancements/inventory-trust/README.md
-[custody-64]: https://github.com/datum-cloud/fleet/blob/8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5/docs/enhancements/provider-fulfillment/README.md
-[custody-65]: https://github.com/datum-cloud/fleet/blob/96ca49da7d0753be47ea164b7008e90d3a81d2aa/docs/enhancements/release-reuse/README.md
+[custody-61]: https://github.com/datum-cloud/fleet/blob/25fef48790b13da95900de64ffd2d1b36e0510eb/docs/enhancements/network-handoff/README.md
+[custody-62]: https://github.com/datum-cloud/fleet/blob/4f9934980b3f441c1d777157fa0ba1dcfce372d7/docs/enhancements/execution-recovery/README.md
+[custody-63]: https://github.com/datum-cloud/fleet/blob/2b384517fd08c04cf078923ebda2cddcfa1dc424/docs/enhancements/inventory-trust/README.md
+[custody-64]: https://github.com/datum-cloud/fleet/blob/58a6596d30b3819d0b3799192730626439ef9885/docs/enhancements/provider-fulfillment/README.md
+[custody-65]: https://github.com/datum-cloud/fleet/blob/310a55d97394bb296c579bd3ad01177455c15cc4/docs/enhancements/release-reuse/README.md
+
+[maintenance-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883682145
