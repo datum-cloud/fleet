@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fleet-manager-private-records
+  namespace: fleet-system-private
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-manager-private-records
+subjects:
+  - kind: ServiceAccount
+    name: fleet-manager
+    namespace: fleet-system

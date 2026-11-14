@@ -1,0 +1,46 @@
+@startuml context
+!$NEW_C4_STYLE = 1
+!include <C4/C4_Context>
+
+title Fleet and the platform
+LAYOUT_LEFT_RIGHT()
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam shadowing false
+skinparam nodesep 35
+skinparam ranksep 55
+
+Person(operator, "Infrastructure operator", "Plans installations, verifies equipment, authorizes maintenance, and publishes Fleet offerings.")
+Person(consumer, "Project consumer", "Discovers local offerings; claims shared capacity, OS installation, networking, and permitted runtime access.")
+System_Ext(automation, "Platform automation", "Submits approved infrastructure and managed-cluster intent on behalf of platform teams.")
+
+System(fleet, "Fleet infrastructure management", "Inventory, exclusive allocation, owned-server provisioning, OS configuration, and managed-cluster orchestration.")
+
+System_Ext(identity, "Identity and authorization", "Authenticates principals and establishes project, delegation, and policy context.")
+System_Ext(locations, "Location catalog", "Owns shared geographic identities.")
+System_Ext(networking, "Network management", "Owns logical networks, address allocation, switch behavior, and authorized connectivity.")
+System_Ext(vendors, "Infrastructure vendor services", "Manage rented or dynamically acquired capacity through provider control planes.")
+System_Ext(management, "Owned-server management services", "Embedded management firmware exposes hardware observations and remote control.")
+System_Ext(os_execution, "OS and cluster execution systems", "Selected machine-management and cluster systems apply admitted configuration and report running state.")
+
+Rel(operator, fleet, "Declares installation and maintenance intent")
+Rel(consumer, fleet, "Discovers offerings; claims capacity and runtime access")
+Rel(automation, fleet, "Declares managed infrastructure intent")
+Rel(fleet, identity, "Validates identity and authority")
+Rel(fleet, locations, "Resolves geographic placement")
+Rel(fleet, networking, "Coordinates authorized connectivity")
+Rel(fleet, vendors, "Requests admitted capacity and lifecycle effects")
+Rel(fleet, management, "Requests hardware effects; reads observations")
+Rel(fleet, os_execution, "Applies admitted intent; reads execution results")
+
+' Lay_R produces a vertical ordering after the global left-to-right rotation.
+Lay_R(operator, consumer)
+Lay_R(consumer, automation)
+Lay_R(identity, locations)
+Lay_R(locations, networking)
+Lay_R(networking, vendors)
+Lay_R(vendors, management)
+Lay_R(management, os_execution)
+
+SHOW_LEGEND()
+@enduml

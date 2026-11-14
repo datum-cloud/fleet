@@ -1,0 +1,50 @@
+# PLATFORM-WRITTEN OUTPUT in project acme; not customer apply input.
+# A reference MachineClass contains only spec.source; it cannot override policy.
+# MachineClass is project-scoped (cluster-scoped inside the project API).
+# Publication and source references do not grant entitlement or reserve capacity.
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineClass
+metadata:
+  name: metal-standard
+spec:
+  source:
+    project: datum-metal
+    name: datum-metal-standard
+status:
+  resolvedClass:
+    arch: amd64
+    capabilities: [baremetal]
+    profilePolicy:
+      allowedProfiles:
+        - {name: standard-metal}
+    interfaces:
+      - {name: primary, type: Ethernet}
+    access:
+      consoleModes: [Graphical]
+      powerControl: true
+  conditions:
+    - {type: SourceResolved, status: "True", reason: AuthorizedSource}
+---
+# PLATFORM-WRITTEN immutable hardware requirements published with the offering.
+# This local name carries protected source provenance; copying the fields does not.
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineProfile
+metadata:
+  name: standard-metal
+spec:
+  cpu:
+    architecture: amd64
+    cores: {min: 16}
+  memory:
+    capacity: {min: "64Gi"}
+  disks:
+    - name: boot
+      count: {min: 1}
+      capacity: {min: "480Gi"}
+  interfaces:
+    - name: primary
+      type: Ethernet
+      speed: {min: "10G"}
+status:
+  conditions:
+    - {type: Accepted, status: "True", reason: PublishedProfile}

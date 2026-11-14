@@ -1,0 +1,24 @@
+# OPERATION ENVELOPES, not Kubernetes resource manifests.
+# Custom API operations/subresources are proposed and must be implemented.
+# Authentication comes from the caller, never from these request-body fields.
+
+# OPERATOR: after previewing the retained plan and changing management to Managed.
+# The preview names exact disk identities, inventory, effects, and reuse-policy
+# inputs. No consumer Machine, Installation, or competing operation may exist.
+# The bound physical DeviceClaim remains required throughout preparation.
+method: POST
+path: /apis/metal.datumapis.com/v1alpha1/namespaces/infra-ops/machinecapacities/iad1-r12-srv01/prepare
+body:
+  idempotencyKey: srv01-initial-preparation-01
+  expectedDeviceRef: {name: server-example-001}
+  expectedInventoryDigest: "sha256:<verified inventory digest>"
+  approvedPlanDigest: "sha256:<retained preparation plan digest>"
+---
+# CUSTOMER: request OOB access only after the allocation has become active.
+# The server checks caller entitlement plus the exact live MachineAllocation before issuing
+# a session. It actively terminates the stream on Machine release/revocation.
+method: POST
+path: /apis/metal.datumapis.com/v1alpha1/namespaces/acme/machines/db-01/console
+body:
+  mode: Graphical
+  requestedDuration: 15m

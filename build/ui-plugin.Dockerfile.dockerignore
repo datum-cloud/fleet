@@ -1,0 +1,12 @@
+*
+!ui/
+**/node_modules
+**/dist
+**/.env*
+**/*.pem
+**/*.key
+**/*credentials*
+**/.netrc
+**/.claude
+**/*kubeconfig*
+ui/RENAME-PLAN.md

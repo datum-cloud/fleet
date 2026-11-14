@@ -1,0 +1,18 @@
+apiVersion: services.miloapis.com/v1alpha1
+kind: Service
+metadata:
+  name: metal
+spec:
+  serviceName: metal.datumapis.com
+  # Promotion is forward-only in Milo. Keep Fleet out of the customer catalog
+  # until the production adapters and live acceptance gates are complete.
+  phase: Draft
+  displayName: Bare Metal
+  description: Bare-metal machine allocation and lifecycle management.
+  owner:
+    producerProjectRef:
+      name: datum-cloud
+  # A project's entitlement stays pending until the provider approves its
+  # ServiceConsumer (spec.approval) in the producer project.
+  enablementPolicy:
+    mode: GatedByProvider

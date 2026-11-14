@@ -1,0 +1,71 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../management-plane
+  - provider.yaml
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: fleet-manager
+      namespace: fleet-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-staging
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-provider-url=http://fleet-synthetic-provider.fleet-system.svc:8090
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-provider-token-file=/var/run/fleet/provider/token
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-provider-project-name=$(FLEET_PROVIDER_PROJECT_NAME)
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-published-class-name=$(FLEET_PUBLISHED_CLASS_NAME)
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-published-profile-name=$(FLEET_PUBLISHED_PROFILE_NAME)
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: FLEET_PROVIDER_PROJECT_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: fleet-manager-config
+              key: providerProjectName
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: FLEET_PUBLISHED_CLASS_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: fleet-manager-config
+              key: publishedClassName
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: FLEET_PUBLISHED_PROFILE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: fleet-manager-config
+              key: publishedProfileName
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: synthetic-provider-token
+          mountPath: /var/run/fleet/provider
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: synthetic-provider-token
+          secret:
+            secretName: fleet-synthetic-provider-auth
+            defaultMode: 0440
+            items:
+              - key: token
+                path: token

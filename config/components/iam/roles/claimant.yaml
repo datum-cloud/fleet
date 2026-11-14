@@ -1,0 +1,23 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: metal.datumapis.com-claimant
+  annotations:
+    kubernetes.io/display-name: Fleet Claimant
+    kubernetes.io/description: Claim published Fleet capacity without modifying the published catalog
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: metal.datumapis.com-viewer
+  includedPermissions:
+    - metal.datumapis.com/machineclasses.use
+    - metal.datumapis.com/machineprofiles.use
+    - metal.datumapis.com/machines.create
+    - metal.datumapis.com/machines.update
+    - metal.datumapis.com/machines.patch
+    - metal.datumapis.com/machines.delete
+    - metal.datumapis.com/machines.install
+    - metal.datumapis.com/installations.create
+    - metal.datumapis.com/installations.update
+    - metal.datumapis.com/installations.patch
+    - metal.datumapis.com/installations.delete

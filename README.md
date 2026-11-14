@@ -1,15 +1,21 @@
-# Datum Fleet
+# Datum Metal and Fleet
 
-Fleet is Datum's infrastructure management platform for owned and rented capacity.
-It brings physical inventory, machine allocation, provisioning, operating system
-configuration, managed clusters, and node services into a shared service with
-explicit ownership and lifecycle boundaries.
+Bare Metal is Datum's customer-facing machine service at `metal.datumapis.com`.
+Fleet manages physical infrastructure at `fleet.datumapis.com`; the intended
+internal handoff API uses `coordination.fleet.datumapis.com`.
 
-This repository is the starting point for building that platform. It currently
-contains design context and an implementation roadmap. There are no implemented
-APIs, controllers, deployment manifests, or build/test commands yet.
+Fleet manages owned and rented infrastructure. It tracks equipment, allocates
+machines, installs operating systems, and supports managed clusters and node
+services. Each subsystem owns its resources and controls changes to them.
 
-## Scope
+Fleet is under development. This repository contains the service design, alpha
+APIs, lifecycle libraries, and synthetic validation environments. Production
+integration and real provider support are not complete; the production manager
+rejects work that requires those integrations and makes no provider changes. See the
+[implementation status](docs/development/README.md) for the implemented subset and
+remaining gaps.
+
+## What Fleet is for
 
 - Plan, register, and verify physical infrastructure and its connections.
 - Publish machine classes into eligible projects and allocate provider-owned
@@ -25,24 +31,25 @@ The first bare-metal release must exercise a standalone customer workload on a
 qualified OS other than Talos, without requiring a managed cluster or an ongoing
 guest agent. Provisioning engines and provider integrations remain pluggable.
 
-## Start here
+## Learn more
 
-- [Design context](docs/design.md): subsystem boundaries, lifecycle contracts,
-  source proposals, and unresolved design questions.
-- [Implementation roadmap](docs/roadmap.md): proposed milestones and evidence
-  required before enabling infrastructure effects.
-- [Secure customer BMC access](docs/enhancements/secure-bmc-access.md): proposed
-  product experience, allocation-scoped Redfish session architecture, security,
-  routing, and provisional API design.
-- [Contributor guidance](AGENTS.md): repository conventions and key invariants.
+Start with the [product overview and documentation guide](docs/README.md) to
+understand who Fleet serves, how its lifecycle fits together, and what exists
+today. Then choose a topic:
 
-The foundation comes from open `datum-cloud/infra` PRs
-[#5782](https://github.com/datum-cloud/infra/pull/5782) and
-[#7705](https://github.com/datum-cloud/infra/pull/7705). Their API shapes and
-implementation choices remain provisional. This repository's summaries do not
-turn those proposals into accepted schemas or deployed behavior.
+| Topic | What you will find |
+| --- | --- |
+| [Functionality](docs/functionality/README.md) | Capabilities, customer journeys, and API contracts |
+| [Architecture](docs/architecture/README.md) | Subsystems, ownership boundaries, and design rationale |
+| [Operations](docs/operations/README.md) | Local validation, deployment packaging, and acceptance |
+| [Troubleshooting](docs/troubleshooting/README.md) | Expected limitations, diagnostic entry points, and safe recovery boundaries |
 
-Fleet will integrate with Datum's existing identity, service catalog, location,
-networking/IPAM, Galactic, and Compute services. Environment-specific rollout
-configuration remains in `infra`; ownership of individual outputs must transfer
-explicitly as Fleet capabilities are implemented.
+The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
+`datumctl metal` discovery, machine management, and safe recovery workflows.
+
+The [secure customer BMC access enhancement](docs/enhancements/secure-bmc-access.md)
+proposes allocation-scoped Redfish sessions, installation coordination, and safe
+management access without exposing BMC credentials.
+
+Contributors should also read the [repository guidance](AGENTS.md) and
+[implementation roadmap](docs/development/roadmap.md).

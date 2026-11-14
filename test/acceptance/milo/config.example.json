@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "runID": "replace-with-unique-run-id",
+  "gitRevision": "0000000000000000000000000000000000000000",
+  "miloRevision": "1111111111111111111111111111111111111111",
+  "authorityID": "replace-with-authority-id",
+  "projects": {
+    "provider": {
+      "name": "replace-provider",
+      "uid": "10000000-0000-0000-0000-000000000001"
+    },
+    "consumerA": {
+      "name": "replace-consumer-a",
+      "uid": "10000000-0000-0000-0000-000000000002"
+    },
+    "consumerB": {
+      "name": "replace-consumer-b",
+      "uid": "10000000-0000-0000-0000-000000000003"
+    }
+  },
+  "images": {
+    "manager": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "simulator": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "kubeconfigs": {
+    "miloAdmin": "/replace/with/milo-admin.yaml",
+    "infrastructure": "/replace/with/infrastructure.yaml",
+    "provider": "/replace/with/provider.yaml",
+    "consumerA": "/replace/with/consumer-a.yaml",
+    "consumerB": "/replace/with/consumer-b.yaml"
+  }
+}

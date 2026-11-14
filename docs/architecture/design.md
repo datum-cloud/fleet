@@ -1,5 +1,7 @@
 # Fleet design context
 
+[Documentation overview](../README.md) · [Architecture guide](README.md)
+
 Reviewed on 2026-10-27. This is a synthesis for implementation planning, not a
 replacement for the source proposals or a claim that their APIs exist.
 
@@ -12,8 +14,9 @@ replacement for the source proposals or a claim that their APIs exist.
 
 Read the [core proposal at its reviewed revision][proposal] and the
 [extension at its reviewed revision][extension]. The latter includes the core
-proposal plus the extension. The source documents, examples, and diagrams remain
-in `infra`; this repository records their implications without duplicating them.
+proposal plus the extension. The [combined proposal](../proposals/fleet-management/README.md),
+examples, and diagrams now live in this repository. The [migration record](../proposals/fleet-management/MIGRATION.md)
+preserves provenance and outstanding review points; the original discussions remain in `infra`.
 
 ## Problem and intended outcome
 
@@ -35,16 +38,18 @@ All names below describe proposed resources, not implemented schemas.
 | --- | --- |
 | Inventory | `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`: approved installation plans, actual assets, physical reservations, and verification evidence. |
 | Capacity publication | Provider `MachineClass` definitions and consumer-local references; discovery and safe summaries through service enablement and IAM. Publication does not reserve capacity or grant source-use permission. |
-| Machine allocation | `Machine` and `MachineClaim`: exclusive reservation, admission of consumer operations, activation, and release across provider and consumer projects. |
+| Machine allocation | Provider `MachineCapacity`, customer `Machine`, and private `MachineAllocation`: exclusive reservation, admission of consumer operations, activation, and release across provider and consumer projects. |
 | Bare-metal provisioning | Typed provider resources and adapters: execute admitted preparation, installation, power, console, and cleanup operations against exact assets. Backend workflows remain private. |
 | OS configuration | `MachineImage`, `InterfaceClass`, `Installation`, and `OSConfigPolicy`: approved artifacts, immutable installation requests, configuration composition, and one selected executor per incarnation. |
 | Cluster lifecycle | `Site`, `Cluster`, `MachinePool`, `NodeClaim`, and `Rollout`: placement policy, capacity, membership, logical node continuity, and admission of bounded configuration changes. |
 | Node services | `NodeService`: per-region service intent, stable slots on managed NodeClaims, placement, rolling updates, and readiness reporting. |
 
-The proposed groups are `fleet.datumapis.com`,
-`inventory.fleet.datumapis.com`, and `baremetal.fleet.datumapis.com`, with typed
-vendor and OS adapter groups. Exact versions, scopes, and packaging remain design
-decisions. A separate public resource is not required for every internal record.
+The Bare Metal service uses `metal.datumapis.com` for allocation and installation.
+Physical inventory uses `fleet.datumapis.com`; the intended internal location
+handoff uses `coordination.fleet.datumapis.com`. The [API architecture](README.md)
+records implemented resources, proposed contracts, control-plane placement, and
+writer ownership. A separate public resource or catalog service is not required
+for every internal record.
 
 Location owns geography; Facility represents physical premises; Site expresses
 operational placement policy over eligible Facilities. Networking/IPAM owns
@@ -55,18 +60,22 @@ their owning services. Fleet consumes these contracts and their evidence.
 ## Lifecycle and authority contracts
 
 1. **Preserve distinct identities.** DeviceClaim describes an approved physical
-   installation; Device identifies an actual asset; Machine represents capacity;
-   MachineClaim reserves one immutable Machine UID; Installation identifies an OS
-   incarnation; NodeClaim preserves a managed logical node across replacements.
-   Hardware replacement creates a new MachineClaim and Installation.
+   installation; Device identifies an actual asset; MachineCapacity represents
+   provider supply; a customer Machine receives one immutable MachineAllocation;
+   Installation identifies an OS incarnation; NodeClaim preserves a managed
+   logical node across replacements. Hardware replacement creates a new Device,
+   MachineCapacity, customer Machine allocation, and Installation.
 2. **Registration does not authorize hardware effects.** Physical verification,
    provider management mode, preparation, and allocation eligibility are separate
    gates. Discovery or a Ready condition cannot authorize wiping, rebooting, or
    installing a machine.
 3. **Use one allocator.** Standalone consumers and managed clusters compete through
-   the same durable reservation protocol. Retain provider/consumer Project UIDs,
-   claim and machine UIDs, class revisions, current authorization, quota holds,
-   and binding epochs. Overlapping classes must not duplicate supply.
+   the same durable reservation protocol. Create one immutable, terminal
+   MachineAllocation between the customer Machine and provider MachineCapacity;
+   retain current authorization, quota holds, class revisions, and local source
+   object identity as private admission evidence. Names, not cross-control-plane
+   Kubernetes UIDs, are authored references. Overlapping classes must not
+   duplicate supply.
 4. **Separate discovery from authorization.** Consumer MachineClasses reference a
    provider definition in one hop. Check current source-use permission,
    entitlement, quota, and placement feasibility at allocation commit. A copied
@@ -145,10 +154,10 @@ inventory remains finite and reports `InsufficientCapacity` when exhausted.
   extension's expectation that consumer demand can obtain capacity elsewhere.
 - **Node service policy:** Resolve permitted roles, runtime/template privileges,
   region scoping, and the remaining regional DNS writer work.
-- **Repository ownership:** Source text uses `milo-os/fleet` in implementation
-  examples and leaves subsystem ownership open. This local `fleet` repository is
-  the requested starting point; remote organization, module path, license, and
-  any provider repository split still need to be chosen.
+- **Repository ownership:** The service proposal and implementation will live in
+  `datum-cloud/fleet`; environment-specific rollout configuration remains in
+  `datum-cloud/infra`. Imported implementation references are updated accordingly.
+  Module path, license, and any future provider repository split remain open.
 
 The [review of #7705][node-review] requested clarity on readiness, regional rollout,
 fencing, and procurement policy. Its latest text addresses those points with the

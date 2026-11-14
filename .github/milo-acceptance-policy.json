@@ -1,0 +1,22 @@
+{
+  "environment": "milo-acceptance",
+  "trustedRef": "refs/heads/main",
+  "requiredReviewers": [
+    "ecv",
+    "kevwilliams"
+  ],
+  "preventSelfReview": true,
+  "runnerGroup": "fleet-milo-acceptance",
+  "restrictedToWorkflows": true,
+  "selectedWorkflows": [
+    "datum-cloud/fleet/.github/workflows/milo-acceptance.yml@refs/heads/main"
+  ],
+  "runnerLabels": [
+    "self-hosted",
+    "datum-cloud-fleet",
+    "fleet-milo-acceptance"
+  ],
+  "selectedRepositories": [
+    "datum-cloud/fleet"
+  ]
+}

@@ -1,0 +1,54 @@
+name: UI Plugins
+
+# Typechecks, tests and builds the portal plugins under ui/. Each is its own
+# pnpm project with its own lockfile, so this runs per plugin. Both compile
+# ui/shared.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ui/**'
+      - '.github/workflows/ui-plugins.yml'
+  pull_request:
+    paths:
+      - 'ui/**'
+      - '.github/workflows/ui-plugins.yml'
+
+concurrency:
+  group: ui-plugins-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.plugin }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [consumer, provider]
+    defaults:
+      run:
+        working-directory: ui/${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Installs the version the plugin's packageManager pins. There is no
+      # package.json at the repository root, so point at the plugin's.
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/${{ matrix.plugin }}/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ui/${{ matrix.plugin }}/.nvmrc
+          cache: pnpm
+          cache-dependency-path: ui/${{ matrix.plugin }}/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build

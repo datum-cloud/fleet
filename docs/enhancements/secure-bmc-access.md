@@ -8,9 +8,18 @@ latest-milestone: "unplanned"
 
 This enhancement proposes allocation-scoped customer access to a narrow Redfish
 API without exposing a BMC, its management network, or its credentials directly.
-It extends the provisional [Fleet design context](../design.md) and the pinned
-[bare-metal provisioning proposal][fleet-provisioning]. No API or behavior in
-this document is implemented or verified in Fleet today.
+It extends the provisional [Fleet design context](../architecture/design.md) and
+the pinned [bare-metal provisioning proposal][fleet-provisioning]. The secure BMC
+session, authorization, and execution contracts below are proposed, not implemented
+or verified. Existing lifecycle APIs and synthetic validation do not establish
+support for this enhancement; see [implementation status](../development/README.md).
+
+This revision aligns with the shared decisions for [Fleet management][fleet-management],
+[provider offerings][provider-offerings], and [PXE installation][pxe-installation].
+Those links pin the companion heads reviewed on 2026-11-14. Their older wording
+about provider MachineClass policy or direct cell-to-hub status writes is superseded
+here by the agreed offering ownership and local-result reflection contract. No
+migration, compatibility aliases, or runtime changes are proposed by this update.
 
 The architecture borrows the session and data-path separation used by Datum
 Compute's provisional [instance shell sessions][compute-shell]: the platform
@@ -22,11 +31,11 @@ components.
 
 ## Summary
 
-Customers with an active `MachineClaim` can request a short-lived management
-session for the machine allocated to that claim. Datum authenticates the caller
+Customers with an allocated `Machine` can request a short-lived management
+session for that consumer resource. Datum authenticates the caller
 with the normal platform identity, authorizes the requested capability against
 the current allocation, and binds the session to the consumer project, principal,
-Claim UID, Machine UID, binding identifier and binding epoch.
+Machine identity, private MachineAllocation identity and binding epoch.
 
 After admission, Redfish traffic travels through an encrypted relay path to a
 location-local Redfish gateway. The gateway exposes a small, provider-neutral
@@ -56,7 +65,7 @@ service to maintain routes into every management network.
 
 Fleet instead needs an access contract that:
 
-- reuses the existing MachineClaim allocation authority;
+- reuses the shared allocator's private MachineAllocation authority;
 - preserves a standard Redfish API for customer provisioning software;
 - keeps BMC endpoints, credentials and management networks private;
 - routes once when a session is admitted instead of globally routing every
@@ -67,7 +76,7 @@ Fleet instead needs an access contract that:
 ## Goals
 
 - Let an authorized human or service identity operate the machine currently
-  allocated to its `MachineClaim` through a documented Redfish interoperability
+  allocated to its `Machine` through a documented Redfish interoperability
   profile.
 - Support customer-controlled PXE provisioning through one-time boot selection
   and bounded power actions before full Fleet installation automation exists.
@@ -98,25 +107,53 @@ Fleet instead needs an access contract that:
 
 ## Consumer experience
 
+### Resource and capability ownership
+
+`Device` identifies physical equipment; `MachineCapacity` represents provider
+supply; `Machine` is the consumer request; `MachineAllocation` is the private,
+immutable binding; `Installation` identifies an immutable operation and OS
+incarnation. A managed `NodeClaim` sits above allocation and uses the same
+contracts as a standalone consumer. A management session replaces none of them.
+
+`MachineOffering` in `provider.metal.datumapis.com` owns provider capabilities,
+including supported installation modes and management operations.
+`MachineOfferingAssignment` controls access to new allocations. The consumer
+`MachineClass` is a publisher-owned, one-hop view of the offering, not another
+capability authority. `MachineProfile` contains immutable hardware requirements,
+not boot, power, or session policy.
+
+Allocation retains the accepted offering identity, revision, capabilities, and
+profile requirements. Offering or assignment withdrawal blocks new allocations;
+it does not retroactively remove accepted capabilities, evict an allocated
+Machine, or authorize reinstall. Each session and each subsequent action still
+checks current action permissions and exact input-use permissions. Explicit
+safety restrictions or suspension are enforced separately from catalog access.
+Neither withdrawal nor suspension may prevent service-authorized revocation,
+fencing, settlement, or cleanup. Cleanup does not inherit a customer's expired
+grant and must not authorize new customer work.
+
 ### Prerequisites
 
 The consumer has:
 
-- an active `MachineClaim` bound through Fleet's allocator;
-- an IAM grant that permits creation of management sessions for that claim;
-- a machine offering that advertises the requested Redfish access profile; and
+- an allocated `Machine` with a retained `MachineAllocation`;
+- current IAM permission for the session and its actions on that Machine;
+- accepted allocation capabilities supporting the requested Redfish profile; and
 - a supported client connector, supplied as a CLI command, sidecar or SDK
   component.
 
-The caller never supplies a Machine, BMC address, location route or provider
-credential. Those are resolved from the claim's private retained binding.
+The caller supplies only its consumer `machineRef`, and an `installationRef` for
+provisioning. It never supplies a physical target, BMC address, location route or
+provider credential. Fleet resolves those from the private retained allocation.
+Provisioning requires an admitted Installation; observation and ordinary runtime
+power do not, but cannot bypass conflicts with installation or release.
 
 ### Manual access
 
 The exact command is illustrative:
 
 ```console
-$ datumctl fleet machine-management proxy db-01
+$ datumctl metal machine-management proxy db-01
 Session db-01-k7m2p is ready until 2026-11-11T19:15:00Z
 Redfish endpoint: https://127.0.0.1:9443/redfish/v1
 ```
@@ -136,8 +173,10 @@ the transport private key or a reusable BMC credential to disk by default.
 
 ### Customer provisioning automation
 
-An automated provisioner uses a Datum service identity to create a session for a
-MachineClaim in its project. A connector sidecar owns the ephemeral transport
+An automated provisioner first submits an immutable Installation for its Machine,
+selecting an authorized source and the customer-driven Redfish operation driver.
+After admission, it creates a provisioning session naming that Installation. A
+connector sidecar owns the ephemeral transport
 key and presents the provisioner with the same Redfish base URL for the session's
 lifetime. The provisioner can then:
 
@@ -145,12 +184,14 @@ lifetime. The provisioner can then:
 2. set a one-time PXE boot override;
 3. request a supported reset or power transition;
 4. follow a returned Redfish task when the operation is asynchronous; and
-5. return boot selection to local disk if its workflow requires it.
+5. report completion and cooperate with mandatory local-disk boot and settlement.
 
-The customer continues to own its PXE, DHCP, image and installation workflow.
-This enhancement supplies only the admitted hardware-management operations.
-Networking and IPAM remain responsible for customer and provisioning network
-attachments.
+The customer owns its installer and, in delegated mode, its PXE endpoint. The
+platform remains the first DHCP/iPXE decision point; this is not permission to
+answer DHCP on shared networks. Networking and IPAM own attachments, routing and
+isolation. The Installation pins endpoint, trust, credentials, artifacts and
+completion requirements before effects. A session cannot supply a different
+endpoint or initiate an untracked install. See [shared operation ownership](#shared-operation-ownership-and-conflicts).
 
 ### Compatibility boundary
 
@@ -228,8 +269,9 @@ server.
 
 - **Fleet project API:** authenticates the user or service identity, authorizes
   the requested session, validates immutable input and exposes lifecycle status.
-- **Management-session admission:** resolves the private active allocation,
-  checks current capability and conflicts, retains the exact binding and chooses
+- **Management-session admission:** resolves the retained allocation,
+  checks accepted capabilities, current permissions and conflicts, retains the
+  exact binding and chooses
   the authoritative location from trusted allocation state.
 - **Karmada federation:** propagates a protected edge-session copy to exactly
   one retained member cluster and reflects that cluster's status. It is not the
@@ -255,9 +297,9 @@ unrestricted HTTP CONNECT service to the management network.
 
 Session admission uses Datum's existing human and service identity flows. IAM
 defines a management-session create permission separately from ordinary
-MachineClaim read or update. Admission evaluates that permission against the
-consumer project and target MachineClaim and then resolves the private binding;
-possession of a claim name or UID is not authorization.
+Machine read or update. Admission evaluates that permission against the
+consumer project and target Machine and then resolves the private binding;
+possession of a Machine name or identity is not authorization.
 
 The client generates an ephemeral Ed25519 key pair. Only the public key enters
 the proposed session resource. On connection, the gateway verifies a signature
@@ -265,8 +307,11 @@ covering at least the session UID, protocol version, connection timestamp and
 gateway audience. The first accepted connection consumes the connection window.
 Replay, a changed route or a second concurrent connector is rejected.
 
-The admitted access profile is selected from provider-published capabilities and
-the caller's grant. The caller cannot supply an arbitrary path allowlist or ask
+The admitted access profile is selected from the allocation's accepted offering
+capabilities and current caller permissions, subject to explicit safety policy.
+Each request rechecks current action and input-use authorization through bounded,
+fresh projections; missing or stale authorization fails closed. The caller cannot
+supply an arbitrary path allowlist or ask
 the gateway to forward unknown Redfish resources. A narrower request can be
 accepted; it cannot expand the offering.
 
@@ -280,21 +325,27 @@ create a customer session.
 Routing is a one-time admission decision, not a lookup on each Redfish request.
 The protected session binding retains:
 
-- consumer and provider Project UIDs;
+- authoritative consumer and provider Project identities;
 - requesting principal identity;
-- MachineClaim name and UID;
-- Machine name and UID;
+- consumer Machine name and authoritative identity;
+- private MachineAllocation identity and accepted offering revision;
+- MachineCapacity and Device identities, and Installation identity when required;
 - allocation binding identifier and epoch;
-- selected location UID and location-service revision;
-- selected BareMetalMachine and adapter identity;
+- selected location identity and location-service revision;
+- selected provider target and adapter identity;
 - admitted access-profile revision;
 - client public key, creation time, connect deadline and expiry; and
 - session and operation correlation identifiers.
 
-The consumer-visible object does not reveal the provider project, Machine,
-BareMetalMachine, BMC endpoint or adapter route. The location gateway resolves
+The consumer-visible object names the consumer Machine, but does not reveal the
+provider project, private capacity or Device, BMC endpoint or adapter route. The
+location gateway resolves
 the retained target through its private provider records and verifies that every
 request still matches the projected binding epoch.
+
+Project, hub and cell Kubernetes UIDs are local evidence, not portable authored
+references. Protected correlation records preserve the authoritative identities
+and each projected object's local identity without confusing those lifetimes.
 
 If an allocation moves, is released or is replaced, a new session is required.
 The old endpoint cannot be rebound to the successor. A location-revision change
@@ -309,8 +360,9 @@ allocation authority separate from Karmada placement:
 1. The consumer creates a `MachineManagementSession` in its project control
    plane. The Fleet controller resolves the current allocation and commits the
    protected session binding before federation.
-2. The controller renders an internal edge-session resource in a service-owned
-   federation-hub namespace. This copy contains the exact retained binding and
+2. The controller renders an internal edge-session resource in
+   `coordination.fleet.datumapis.com`, in a service-owned federation-hub namespace.
+   This copy contains the exact retained binding and
    adapter route needed by the selected edge, but no BMC credential. It also
    carries a control-plane-issued `validUntil` authority deadline that the edge
    cannot extend. It is not a consumer API object.
@@ -327,7 +379,8 @@ allocation authority separate from Karmada placement:
    by Fleet on the hub copy, ignores claims from every other cluster, and never
    replaces an established endpoint with a different endpoint identity.
 6. The Fleet controller watches the hub copy, verifies the member cluster and
-   binding correlation, and copies the permitted connection and lifecycle fields
+   binding, operation revision, fencing token and evidence freshness, then projects
+   the permitted connection and lifecycle fields
    to the public project session.
 
 The aggregation rule is monotonic. A default or empty member copy cannot erase a
@@ -344,8 +397,11 @@ its local copy. Karmada reflects that confirmation, after which Fleet may delete
 the hub copy and release the public finalizer. Deleting the hub copy first is
 unsafe because Karmada would remove the edge copy before its final status could
 be observed. If confirmation does not arrive by the cleanup deadline, Fleet
-records `CleanupUnconfirmed`, removes the hub copy, and leaves teardown unknown
-rather than reporting success.
+records `CleanupUnconfirmed` and retains recoverable session, operation and cleanup
+custody outside the consumer deletion domain. It must not discard the last
+recoverable projection or journal merely to meet a deletion deadline. Hub-copy
+deletion requires confirmed teardown or durable transfer of unresolved obligations
+to a recovery record with a fenced recovery path; it never proves settlement.
 
 Fleet also checks that the selected member continues reporting in the
 `ResourceBinding` aggregated status. A deregistered edge, removed propagated
@@ -353,9 +409,11 @@ copy, or route that no longer reports ends the session as location/agent lost;
 the last status retained on the hub is not proof that the edge is still serving.
 The edge rejects new requests after `validUntil` unless a newer hub-authorized
 projection renews it, which bounds authority during a Karmada or control-plane
-partition. Claim release still fences new central admission immediately and is
-not complete until edge teardown is confirmed or the bounded authority expires
-and the remaining outcome is represented as unknown.
+partition. Machine release still fences new central admission immediately and is
+not complete until session teardown, installer settlement and required cleanup
+are verified. Expired authority blocks new effects but cannot stop a running
+installer or prove that a previously accepted BMC effect ended. Unknown outcomes
+retain custody and block reuse.
 
 ### Session lifecycle
 
@@ -370,11 +428,11 @@ that any requested hardware state was reached. `Connected` means the ephemeral
 client key was accepted. Session expiry and command outcome remain separate.
 
 Deleting or closing a session immediately denies new central admission and
-propagates revocation to the location. Release of the MachineClaim has higher
+propagates revocation to the location. Release of the Machine has higher
 priority: it fences new operations, revokes all sessions for that binding and
 waits for active gateways to confirm teardown or records the result as unknown.
-The allocator must not make the Machine available to a later consumer until the
-release contract has accounted for those sessions.
+The allocator must not return MachineCapacity to supply until the release
+contract verifies session teardown, operation settlement and required cleanup.
 
 The gateway fails closed when its allocation/session projection exceeds its
 freshness limit. A partition does not turn cached authorization into an
@@ -405,6 +463,83 @@ is safe. The gateway must not translate an uncertain failure into a successful
 Redfish response or blindly submit the same reset again. A Redfish task can
 remain incomplete or finish with an explicit exception while recovery continues.
 
+### Shared operation ownership and conflicts
+
+An Installation is mandatory whenever Fleet enables provisioning PXE, including
+customer-driven Redfish boot overrides. Session admission resolves
+`installationRef` to the exact admitted operation for the same Machine and
+allocation. Session creation does not admit an Installation, consume another
+predecessor, or create another operation. Ordinary observation and runtime power
+may omit that reference, but every effect uses the same asset-level journal,
+conflict admission and effect-boundary fencing.
+
+The immutable Installation admission selects exactly one operation driver:
+Fleet automatic execution or customer-driven Redfish. Source mode (`ManagedImage`
+or `DelegatedPXE`) describes the installer, not an independent power/boot writer;
+only qualified source/driver combinations may be offered. In automatic mode the
+Fleet executor owns step progression and a customer session is observational.
+In customer-driven mode the gateway admits bounded customer steps into the same
+Installation journal; an automatic controller must not concurrently set boot or
+power state. Persistent Machine power intent also waits behind the operation.
+Driver takeover requires explicit recovery authority, retained inputs, and proof
+that the previous writer is fenced at the BMC, boot, network and installer effect
+boundaries. A lease, session expiry or changed fencing number alone is not proof.
+
+| Requested action | Shared admission rule |
+| --- | --- |
+| Observation | May coexist when currently authorized; cannot mutate boot or infer readiness from session health. |
+| PXE override or provisioning power | Requires the associated admitted Installation, selected driver, exact allowed step and input permissions; another Installation or session cannot race it. |
+| Ordinary runtime power/reset | No Installation required when no conflicting operation holds the asset; reject conflicts rather than interrupt installation or settlement. |
+| Another install, rescue, or boot change | Conflicts with active or uncertain installer custody, even after its connection closes. A boot override cannot be used as an installation escape hatch. |
+| Release, safety stop or recovery | Fence new consumer steps first; retain an ordered revocation/settlement/cleanup operation, never race a second effect writer. |
+
+#### Initial installation and predecessor
+
+Use the [shared predecessor contract](machine-lifecycle/README.md#installation):
+`expectedPredecessor: {type: None}` is valid only for a verified blank allocation
+that has never admitted an install. Otherwise name the exact current Installation;
+Fleet resolves and pins its incarnation. Admission atomically consumes the
+precondition and retains authority before effects. Competing requests lose with
+`InstallationPredecessorConflict`; reconnects and duplicate requests recover the
+same retained operation, not a fresh predecessor.
+
+Where a Machine requires initial installation, only that retained initial request
+may execute until the initial gate succeeds. An allocation-only Machine has no
+initial gate, but a later PXE operation still requires an Installation. Session
+readiness, power observations, deletion or recreation cannot complete or reset the
+initial gate. Active or unknown work withholds a usable successor. Failure or
+cancellation allows a successor only after fencing and verified no-effect/prior-
+state-intact evidence; partial or uncertain effects require recovery or release.
+
+#### Completion, connection closure and release
+
+The connection lifetime is not the boot or installer authority lifetime. Closing,
+expiring or revoking a session denies new customer steps; it does not mark its
+Installation complete, free its conflict reservation, or prove the installer
+stopped. The retained operation and cleanup authority survive until verified
+settlement, including after consumer project deletion.
+
+Completion follows the PXE contract: validate the exact operation and callback,
+revoke boot/delegation and temporary credentials, fence provisioning access
+through the networking owner, settle the installer and outstanding BMC effects,
+and verify required local-disk boot and handoff evidence. Managed-image success
+requires the retained image/recipe evidence. Delegated success reports the
+customer's result and verified delegation/boot settlement, not platform validation
+of an opaque OS. A customer callback, successful Redfish task, disk override or
+disconnected stream alone proves none of this.
+
+The location writes evidence only to its local coordination object. Karmada
+reflects selected-cell results; management validates target, revision, fencing,
+freshness and all completion requirements before projecting Installation readiness
+and durable current-incarnation/initial-gate state. There are no direct location
+writes to the hub or project APIs.
+
+Release fences all new consumer effects, revokes management/PXE/console sessions,
+settles in-flight installation and power work, verifies network fencing and
+provider sanitization/restoration, and only then returns capacity to supply.
+Failed, missing or unknown settlement retains allocation and cleanup custody or
+quarantines capacity. Neither session TTL nor recording `Unknown` authorizes reuse.
+
 ### Availability and scaling
 
 Central load is proportional to session creation, status transitions, revocation
@@ -421,7 +556,7 @@ and mutations rather than falling back to raw BMC access.
 ### Audit and observability
 
 The project activity log records session creation with the requesting human or
-service identity. Lifecycle events record the session UID, project, claim UID,
+service identity. Lifecycle events record the session UID, project, Machine identity,
 access profile, bound location, start and end times, and terminal reason. It must
 not record private keys, session-local bearer values, BMC credentials, raw
 provider endpoints or secret-bearing response bodies.
@@ -445,22 +580,24 @@ session. It is a consumer-project resource and does not expose a raw BMC handle.
 
 ### MachineManagementSession
 
-Each resource represents one short-lived connection to one immutable claim
-binding. The spec is immutable; changing the claim, key, profile or TTL requires
-a new resource.
+Each resource represents one short-lived connection to one immutable allocation
+binding. The spec is immutable; changing the Machine, Installation, key, profile
+or TTL requires a new resource. Project scope is supplied by authenticated API
+context, not an illustrative namespace.
 
 ```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
+apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineManagementSession
 metadata:
   generateName: db-01-
-  namespace: acme
 spec:
-  machineClaimRef:
+  machineRef:
     name: db-01
+  installationRef:
+    name: db-01-os-1
   protocol: Redfish
   accessProfile: Provisioning
-  clientPublicKey: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  clientPublicKey: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123
   ttl: 15m
 status:
   connection:
@@ -479,14 +616,22 @@ status:
       lastTransitionTime: "2026-11-11T19:00:01Z"
 ```
 
-`machineClaimRef.name` is a consumer lookup handle in the authenticated project;
+`machineRef.name` is a consumer lookup handle in the authenticated project;
 the consumer does not supply or manage allocation identities. During session
-admission, Fleet resolves the name and retains the current Claim UID, Machine UID,
-binding identifier and binding epoch in the protected session binding before the
-session can become Ready or authorize an effect. Admission requires the resolved
-claim to be bound and active. If the claim or binding changes before that commit,
+admission, Fleet resolves the name and retains the exact Machine and
+MachineAllocation identities, binding identifier and epoch before the
+session can become Ready or authorize an effect. Admission requires an allocated
+Machine in a lifecycle state that permits the requested action, including the
+retained initial Installation while activation is gated. If the Machine or binding
+changes before that commit,
 admission fails or restarts resolution rather than following stale state. A later
-claim that reuses the same name cannot receive an already admitted session.
+Machine that reuses the same name cannot receive an already admitted session.
+
+`installationRef` is mandatory for the Provisioning profile and resolves to an
+already admitted Installation on this allocation with the selected customer-driven
+Redfish driver. Its exact incarnation and operation identity enter the protected
+binding. Observation and ordinary runtime power profiles omit it; omission cannot
+authorize PXE or override conflicts. These are proposed fields, not supported CRDs.
 
 `protocol` is initially only `Redfish`. `accessProfile` refers to a versioned
 platform-defined profile; arbitrary methods or paths are not accepted in the
@@ -499,8 +644,8 @@ status contains neither the private allocation binding nor credentials.
 
 Deleting the resource requests revocation. Finalization or equivalent retained
 service state keeps the private session binding until the location confirms
-teardown or the platform records that confirmation as unknown. Deletion alone
-is not teardown evidence.
+teardown. If confirmation is unknown, durable recovery custody retains the binding
+and unresolved obligations. Deletion alone is not teardown evidence.
 
 ### Protected session binding
 
@@ -510,10 +655,10 @@ project's deletion domain. It contains the routing and fencing fields listed in
 can create it; the location gateway can observe only the sessions routed to its
 location and can update only their location-local status.
 
-This record is intentionally separate from `MachineClaim.status`. A public
+This record is intentionally separate from `Machine.status`. A public
 session may be short-lived or deleted while its audit, revocation and release
-obligations remain. The claim remains the allocation authority; creating a
-session cannot alter the binding or machine lifecycle.
+obligations remain. The allocator-owned MachineAllocation remains the binding
+authority; creating a session cannot alter allocation or installation lifecycle.
 
 ### Permission model
 
@@ -526,8 +671,8 @@ The initial permission model should distinguish at least:
 - operator override or recovery actions.
 
 Default viewer access does not imply session creation. Service identities receive
-an explicit grant. The admission service rechecks current source capability,
-claim authority and allocation state at creation; an old IAM decision or copied
+an explicit grant. The admission service rechecks accepted allocation capabilities,
+Machine authority and allocation state at creation; an old IAM decision or copied
 session object is not sufficient.
 
 ### API and Redfish errors
@@ -541,12 +686,12 @@ BMC and unknown execution outcome without disclosing the physical route.
 ## Security considerations
 
 - **Compromised customer credential:** IAM limits session creation to authorized
-  claims; quotas, short connection windows and activity alerts bound abuse.
+  Machines; quotas, short connection windows and activity alerts bound abuse.
 - **Stolen ephemeral private key:** keys live only in connector memory, have a
   short lifetime and are bound to one session, gateway audience and allocation.
 - **Compromised relay:** end-to-end encryption prevents the relay from reading or
   modifying Redfish traffic; the relay holds no allocation or BMC credential.
-- **Replay or stale allocation:** session UID, Claim UID, Machine UID, binding
+- **Replay or stale allocation:** session UID, Machine identity, MachineAllocation identity, binding
   epoch, key proof, timestamps and gateway audience are checked together. Release
   propagates revocation and blocks reuse until sessions are accounted for.
 - **Confused deputy:** the gateway resolves targets only from retained bindings,
@@ -576,7 +721,7 @@ BMC and unknown execution outcome without disclosing the physical route.
    hardware over the management OpenVPN path. Verify correct-host identity,
    one-time PXE boot, supported power actions, task recovery, credential rotation,
    rate limits and network isolation.
-4. **Allocation integration:** authorize sessions against real MachineClaims and
+4. **Allocation integration:** authorize sessions against real Machines and
    retain the private binding epoch. Exercise concurrent allocation/release,
    project deletion, location loss, stale session replay and uncertain BMC
    responses.
@@ -596,11 +741,22 @@ BMC and unknown execution outcome without disclosing the physical route.
 - The customer cannot discover or reach the BMC address, management VPN, another
   machine, an OEM endpoint or an unlisted Redfish field/action through the gateway.
 - Human and service identities use normal Datum authentication; an explicit IAM
-  grant and current MachineClaim binding are required for session creation.
-- Two claims, projects or overlapping classes cannot cause a session to bind the
-  wrong Machine. A reused claim name or stale binding epoch is rejected.
+  grant and current Machine binding are required for session creation.
+- Two Machines, projects or overlapping classes cannot cause a session to bind the
+  wrong allocation. A reused Machine name or stale binding epoch is rejected.
 - Release and project deletion deny new operations, actively close sessions and
-  prevent capacity reuse until teardown is confirmed or represented as unknown.
+  prevent capacity reuse until teardown, installer settlement and cleanup are
+  verified. Unknown outcomes retain custody, never readiness or free supply.
+- Offering withdrawal blocks new allocation but leaves accepted capabilities
+  intact. Current action/input permission revocation and explicit suspension block
+  affected new effects without blocking cleanup.
+- Provisioning without an admitted Installation, a mismatched operation, or a
+  competing automatic/customer driver causes no effects. Concurrent boot, power,
+  initial install, reinstall and release exercise one conflict contract.
+- Disconnect, expired sessions, lost callbacks, stale predecessor, and failed or
+  unknown installation cannot clear the initial gate or admit a successor.
+- Customer completion without verified boot revocation, installer settlement and
+  required local-disk evidence cannot become Installation readiness.
 - A mutating request is retained before the BMC effect. Lost responses and gateway
   restarts recover the existing operation without blindly repeating it.
 - Gateway, relay and BMC credential failure produce actionable but non-secret
@@ -651,3 +807,6 @@ BMC and unknown execution outcome without disclosing the physical route.
 [fleet-provisioning]: https://github.com/datum-cloud/infra/blob/51781e2456367be82281e1443ca56d0686311133/docs/enhancements/fleet-management/bare-metal-provisioning.md
 [redfish-resources]: https://redfish.dmtf.org/essentials
 [redfish-spec]: https://www.dmtf.org/sites/default/files/standards/documents/DSP0266_1.22.1.pdf
+[fleet-management]: https://github.com/datum-cloud/fleet/blob/16e7cb2a268cf20bc58d490493b5a3fef9237027/docs/enhancements/fleet-management/README.md
+[provider-offerings]: https://github.com/datum-cloud/fleet/blob/031477d011090ea6ec378d526e975bbfae07a060/docs/enhancements/profile-access/README.md
+[pxe-installation]: https://github.com/datum-cloud/fleet/blob/f1ccc24ac66d5d930e3264c7ee856a7e1cd67254/docs/enhancements/pxe-installation/README.md

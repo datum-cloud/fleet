@@ -1,0 +1,21 @@
+# Retain the immutable legacy registration until old grants and claims settle.
+# Never change its resourceType to the Metal resource type.
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceRegistration
+metadata:
+  name: fleet-machines
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  consumerType:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Project
+  type: Entity
+  resourceType: fleet.datumapis.com/machines
+  description: Concurrent bare-metal machine allocations held by a project.
+  baseUnit: machine
+  displayUnit: machines
+  unitConversionFactor: 1
+  claimingResources:
+    - apiGroup: fleet.datumapis.com
+      kind: Machine
