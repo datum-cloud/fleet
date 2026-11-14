@@ -207,7 +207,20 @@ is no direct transition from callback, Job success, or session closure to Ready.
    artifact rights and network prerequisites still apply. An authorization
    outage is unknown, never allow. Retain the decision revision, time and bounded
    validity; do not substitute the service principal for the original caller.
-2. Seal exact inputs. In one management transaction compare binding/incarnation,
+   Consume the [allocation admission protocol][admission] authority contract:
+   retain the authenticated caller/action/input digest, complete dependency gate
+   vector, exact Open epochs and committed revisions, validity deadline, and
+   ledger recovery lineage. Missing dependencies or unregistered gate writers
+   block admission; watches and an unexpired permission receipt are insufficient.
+2. Seal exact inputs. L1 participates in the same SERIALIZABLE ledger transaction
+   and lock order as [allocation admission][admission]: sorted authority gates,
+   ProviderGuard, then applicable attempt/quota/binding/enrollment/occupancy rows,
+   followed by the operation slot. Gate closure, retirement and runtime admission
+   use this shared order. Under those locks revalidate every gate is Open at the
+   retained epoch/revision, decision digest/caller and current recovery lineage
+   match, and the deadline has not expired under trusted ledger time. Revalidate
+   ProviderGuard permits new operation admission. No remote calls run under locks.
+   In that same management transaction compare binding/incarnation,
    admission-closed state, usable predecessor and free slot; allocate operation
    sequence; consume predecessor; insert Operation, input pins and dispatch
    outbox. **L1: this commit admits the operation.** Losing concurrent requests
@@ -264,8 +277,14 @@ caller binding against the locally delivered unexpired decision. Qualification
 sets the maximum decision age and clock-skew bound per location; no default
 unbounded cache. If that freshness cannot be established, no new step starts.
 This is bounded authorization, not instantaneous revocation across a partition.
-Management renewal rechecks current action/input rights and safety restrictions
-for the same exact inputs; cells cannot renew themselves. Already-valid authority
+Management renewal obtains a fresh complete decision for current action/input
+rights and safety restrictions on the same exact inputs. Its new validity/revision
+and delivery outbox commit together under the same L1 authority-gate validation,
+ProviderGuard ordering, operation version and recovery-lineage checks. A closure
+that wins prevents renewal from committing; stale decisions cannot reopen authority.
+Reevaluation never reacquires withdrawn offering/assignment grants. Cells cannot
+renew themselves. Service-authorized cleanup uses the dedicated recovery lane
+and retained obligations, not consumer gate bypass for new customer effects. Already-valid authority
 may reach its admitted boundary before a newer restriction arrives. A product
 requiring immediate revocation must require synchronous authority at that boundary
 or disable disconnected effects; it cannot claim immediate revocation from TTL.
@@ -647,6 +666,8 @@ delayed and reordered federation delivery.
 
 | Injection / adversarial action | Required observable result |
 | --- | --- |
+| Permission evaluation succeeds, worker pauses, image/action authority gate closes, then L1 or renewal resumes. | Gate epoch/Open-state validation rejects the stale decision inside the commit transaction; no new operation or renewed outbox authority. Reopening requires fresh evaluation. |
+| ProviderGuard closes or recovery lineage changes after evaluation but before L1/renewal. | Shared lock order/lineage checks reject admission; existing obligations remain recoverable under the service cleanup lane. |
 | Two replicas admit different successors against the same predecessor. | Exactly one L1/slot/outbox; loser has no local inbox or effect. |
 | L1 succeeds, response and publisher die; caller retries same key with same/different bytes. | Same operation for identical input; changed input conflicts; one predecessor consumption. |
 | Cancel races an unacknowledged outbox send; stop arrives before original intent. | Retained tombstone rejects older delivery; no no-effect certificate without publisher exclusion or cell settlement. |
@@ -757,3 +778,5 @@ See [diagram maintenance](diagrams/README.md) for editable sources and validatio
 [postgres-isolation]: https://www.postgresql.org/docs/current/transaction-iso.html
 [redfish]: https://redfish.dmtf.org/essentials
 [redfish-spec]: https://www.dmtf.org/sites/default/files/standards/documents/DSP0266_1.22.1.pdf
+
+[admission]: https://github.com/datum-cloud/fleet/blob/2563b2a2f177a72d20c1d62265c89ff15688ba25/docs/enhancements/allocation-admission/README.md
