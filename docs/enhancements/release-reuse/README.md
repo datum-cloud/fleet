@@ -22,8 +22,9 @@ for new allocation.
 Scope is standalone Metal, including Fleet-owned and qualified rented supply.
 There is no managed node/cluster behavior, compatibility layer, runtime change,
 supplier cancellation automation, or general-purpose custody-transfer mechanism.
-The user-supplied signed-off #60 contract is an architectural dependency; that
-does not sign off this proposal or prove any external integration exists.
+The original submission called its supplied #60 baseline signed off; that is
+historical provenance only. Revised dependencies and this complete set require
+fresh review and do not prove any external integration exists.
 
 ## Motivation and intended guarantees
 
@@ -62,11 +63,11 @@ source](../../proposals/fleet-management/bare-metal-provisioning.md#release-and-
 | [#51 management][management] | `fa07c2236801a33a58efc914b555586c8e146cc6` | Separate physical, allocation and installation identity; management/cell writers. |
 | [#58 offerings][offerings] | `a922ff1eb3275e26af6ae750a7515ddde245a754` | Retained accepted capabilities; catalog withdrawal is not eviction. |
 | [#59 lifecycle][lifecycle] and [PXE][pxe] | `d7ff793b03711203dbfc9fac87d43922cc649b6f` | Release, quota and retirement obligations; exact boot and installation inputs. |
-| [#60 allocation][allocation] | `2563b2a2f177a72d20c1d62265c89ff15688ba25` | Shared ledger, ProviderGuard, AuthorityGates, charged escrow and permanent MachineBinding. |
-| [#61 networking][network] | `ed6edec5b056fd53343e11d58d979af495f1bd7c` | DisconnectAcknowledgment, DisposeClaims and no-reuse barriers. |
-| [#62 execution][execution] | `7fa823050a443c1f5b85c56e85ed04ebaa5bd2cb` | Journal-before-effect, shared slot, no-late-effect settlement and restoration epochs. |
-| [#63 inventory trust][inventory] | `8fe054101ac3bea822e5d16e40cb375a884e7e56` | Discovered companion draft: exact enrollment/component continuity, invalidation and physical reservations. |
-| [#64 provider fulfillment][fulfillment] | `50e678ee20645ad0a4e340005b18432fe4633bec` | Discovered companion draft: LockedClean, finalization R3, independent Metal custody on supplier loss. |
+| [#60 allocation][allocation] | `d072f3b5ded5d212e59ecc511c9282037d48c9f1` | Shared ledger, ProviderGuard, AuthorityGates, charged escrow and permanent MachineBinding. |
+| [#61 networking][network] | `04adf7013de42c40086502918dbfe05302ec00e8` | DisconnectAcknowledgment, DisposeClaims and no-reuse barriers. |
+| [#62 execution][execution] | `6a886b415edb5ba9c1295e4d88db9cd86bd51f0e` | Journal-before-effect, shared slot, no-late-effect settlement and restoration epochs. |
+| [#63 inventory trust][inventory] | `d79495be33d7c0ab126b497dac6a5874924eee81` | Discovered companion draft: exact enrollment/component continuity, invalidation and physical reservations. |
+| [#64 provider fulfillment][fulfillment] | `8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5` | Discovered companion draft: LockedClean, finalization R3, independent Metal custody on supplier loss. |
 
 #63 and #64 are draft interfaces, not owner approval. Their future revisions
 require explicit compatibility review. This proposal narrows the earlier generic
@@ -851,8 +852,37 @@ and author self-review do not satisfy the qualification tests above.
 [offerings]: https://github.com/datum-cloud/fleet/blob/a922ff1eb3275e26af6ae750a7515ddde245a754/docs/enhancements/profile-access/README.md
 [lifecycle]: https://github.com/datum-cloud/fleet/blob/d7ff793b03711203dbfc9fac87d43922cc649b6f/docs/enhancements/machine-lifecycle/README.md
 [pxe]: https://github.com/datum-cloud/fleet/blob/d7ff793b03711203dbfc9fac87d43922cc649b6f/docs/enhancements/pxe-installation/README.md
-[allocation]: https://github.com/datum-cloud/fleet/blob/2563b2a2f177a72d20c1d62265c89ff15688ba25/docs/enhancements/allocation-admission/README.md
-[network]: https://github.com/datum-cloud/fleet/blob/ed6edec5b056fd53343e11d58d979af495f1bd7c/docs/enhancements/network-handoff/README.md
-[execution]: https://github.com/datum-cloud/fleet/blob/7fa823050a443c1f5b85c56e85ed04ebaa5bd2cb/docs/enhancements/execution-recovery/README.md
-[inventory]: https://github.com/datum-cloud/fleet/blob/8fe054101ac3bea822e5d16e40cb375a884e7e56/docs/enhancements/inventory-trust/README.md
-[fulfillment]: https://github.com/datum-cloud/fleet/blob/50e678ee20645ad0a4e340005b18432fe4633bec/docs/enhancements/provider-fulfillment/README.md
+[allocation]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
+[network]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
+[execution]: https://github.com/datum-cloud/fleet/blob/6a886b415edb5ba9c1295e4d88db9cd86bd51f0e/docs/enhancements/execution-recovery/README.md
+[inventory]: https://github.com/datum-cloud/fleet/blob/d79495be33d7c0ab126b497dac6a5874924eee81/docs/enhancements/inventory-trust/README.md
+[fulfillment]: https://github.com/datum-cloud/fleet/blob/8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5/docs/enhancements/provider-fulfillment/README.md
+
+## Alignment revision provenance
+
+On 2026-11-14 the [complete-set integration review][custody-review] identified
+missing commissioning and adopted-settlement joins. This `custody-subjects-v1`
+alignment is proposed documentation, not runtime qualification or sign-off.
+This proposal's contract-bearing revision is `96ca49da7d0753be47ea164b7008e90d3a81d2aa`.
+The companion revisions below are immutable **contract-bearing snapshots**, not
+claims about final PR heads or merge dependencies. Subsequent commits only refresh
+pins and provenance. Read this aligned set together: older embedded companion
+pins inside those snapshots describe their drafting baseline, not permission to
+substitute an older contract for a join defined here. #66 records the final-head
+complete-set review manifest. No circular exact-final-head dependency is required.
+Any later normative change requires a new manifest and fresh complete-set review.
+
+| Companion | Exact dependency revision |
+| --- | --- |
+| [#60 allocation-admission][custody-60] | `d072f3b5ded5d212e59ecc511c9282037d48c9f1` |
+| [#61 network-handoff][custody-61] | `04adf7013de42c40086502918dbfe05302ec00e8` |
+| [#62 execution-recovery][custody-62] | `6a886b415edb5ba9c1295e4d88db9cd86bd51f0e` |
+| [#63 inventory-trust][custody-63] | `d79495be33d7c0ab126b497dac6a5874924eee81` |
+| [#64 provider-fulfillment][custody-64] | `8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5` |
+
+[custody-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883007682
+[custody-60]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
+[custody-61]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
+[custody-62]: https://github.com/datum-cloud/fleet/blob/6a886b415edb5ba9c1295e4d88db9cd86bd51f0e/docs/enhancements/execution-recovery/README.md
+[custody-63]: https://github.com/datum-cloud/fleet/blob/d79495be33d7c0ab126b497dac6a5874924eee81/docs/enhancements/inventory-trust/README.md
+[custody-64]: https://github.com/datum-cloud/fleet/blob/8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5/docs/enhancements/provider-fulfillment/README.md
