@@ -505,7 +505,6 @@ writer. A missing observation is an inconclusive/failed gate, never a pass.
 | D26 | Tamper firmware/profile/adapter digest during canary; let evidence expire | Close affected qualification dependency before new effects; unaffected scope continues only with proven disjointness; cleanup remains explicitly gated. |
 | D27 | Exhaust archive/retention headroom and request GC of an unsettled secret or replay tombstone | Admission backpressures; referenced recovery material survives; terminal compaction cannot enable stale snapshot/message resurrection. |
 | D28 | Attempt reactivation while one old broker, network writer or provider is unreachable and target list is incomplete | No silent scope reduction; enclosing domain remains denied/unknown. Separately proven disjoint scope may reopen with recorded containment evidence. |
-
 | D29 | Withdraw catalog/offering-assignment access while an existing allocation requests an otherwise authorized runtime action; then independently close its runtime suspension gate | Withdrawal rejects new acquisition but preserves retained runtime capabilities subject to current actor/input permissions and separate safety gates. The independent suspension rejects the runtime action. Neither event alone creates a ReleaseCase or authorizes destructive cleanup. |
 
 For Q0, instrument synthetic boundaries and all race schedules. Q1/QD/QE must
