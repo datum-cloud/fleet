@@ -878,6 +878,12 @@ delayed and reordered federation delivery.
 No production effects until all external prerequisites have named owners and
 passing evidence for a specific hardware/firmware/adapter/location combination:
 
+The following BMC/boot/disk items apply to procedures using those boundaries.
+PhysicalMaintenance instead qualifies its exact field procedure, online permit
+and start enforcement, independent crew/site exclusion and physical witnesses
+under #66 QP, plus the common ledger, inputs, gates, restore and owner barriers.
+It must not require a passive target to acquire a BMC or boot an OS to qualify.
+
 1. Transaction-extension agreement with allocation owner and synchronous storage
    failover/restore tests; durable blob/key retention and independent epoch service.
 2. Exclusive broker egress and upstream credential custody, demonstrable stale
