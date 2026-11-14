@@ -182,11 +182,14 @@ canonical asset, unique bound claim, unique Device incarnation, and at most one
 active placement per asset. Components have stable slot IDs plus replacement
 incarnations; reusing a slot never reuses its evidence.
 
-Every transaction follows #60's lock order: sorted complete authority gates,
-ProviderGuard, attempt, quota custody, Machine binding, enrollment, occupancy,
-skipping inapplicable classes. Append one inventory-domain lock, then sorted
-canonical identity, plan and physical-resource keys. No code locks an inventory
-row and then an earlier #60 row. The initial domain lock serializes physical
+Every transaction follows #60's complete total lock order, skipping inapplicable
+classes: sorted gates, guards, attempts/provider-reservation children, quota,
+Machine binding, enrollment, occupancy (including unresolved domain holds),
+inventory-domain, canonical identity/alias, plan, physical-resource/reservation,
+custody, asset execution slot, operation, release and obligation children, then
+decision/input-pin/outbox inserts. Sort exact keys within each class. Discover
+the complete set first; restart if it changes, never lock an earlier class late.
+The initial domain lock serializes physical
 acceptance and graph mutations; allocation commits still only need their complete
 gate/enrollment/occupancy checks. Never make remote calls while holding SQL locks.
 Unique indexes arbitrate absent keys; retry serialization failures from fresh inputs.
@@ -418,8 +421,21 @@ stronger profile; they are not prerequisites presumed present or implemented.
 Binding authenticates the physical relationship, not a complete installation.
 Before a server can supply boot-dependent capability, the operation owner admits
 explicit commissioning/preparation against disabled, non-conflicting supply using
-#60 occupancy and ProviderGuard. Boot inspection is an effect and cannot run on
+#60's `Preparation(custodyUID)` occupancy, ProviderGuard and #62 shared asset slot.
+The exact enrollment UID/epoch, Device/supply and custody epoch bind its authority;
+there is no consumer Machine, quota hold or Installation predecessor. Boot inspection is an effect and cannot run on
 occupied adopted equipment merely to finish enrollment.
+
+For this proposed `custody-subjects-v1` path, a new enrollment remains allocation
+Disabled with boot qualification Pending. Inventory publishes a separate
+commissioning-capable evaluation covering trusted pre-boot identity, physical
+placement, authenticated BMC path, complete NIC mapping, safe power/outlets and
+qualified inspection recipe. Current service/trust/safety gates must be Open;
+allocation Disabled is not a Closed-gate bypass. Provider approval explicitly
+covers any exact disk preparation. #60/#62 atomically acquire Preparation custody,
+slot, guard obligation and outbox before #61 materializes its isolated path.
+Neither consumer eligibility nor the future boot transcript is an admission
+prerequisite. Without witnessed pre-boot trust, the path remains blocked.
 
 Networking must first prove an isolated commissioning path with exact port/NIC
 mapping under #61. Establish that initial mapping from qualified physical port
@@ -438,6 +454,17 @@ boot identity is Unknown and boot-dependent offerings stay disabled. No ongoing
 guest agent is required. This proves the qualified physical/path association, not
 hardware-rooted measured boot; offerings requiring that stronger property cannot
 use this profile.
+
+The transcript is only candidate verification evidence. #62 must stop the
+verifier and settle all queued BMC/storage work, revoke/drain temporary boot and
+credential authority, and obtain #61 disconnect/disposition for every commissioning
+binding. #65 then validates the complete Preparation clearance manifest and
+accounting non-applicability provenance before clearing that custody occupancy.
+Inventory remains the sole eligibility writer: it evaluates fresh transcript,
+component/placement/power/network evidence and the exact settled receipt, then
+publishes a new eligibility revision. L5, a successful callback or empty slot
+cannot do so. Partial/cancelled preparation stays Disabled unless fresh evidence
+independently satisfies every predicate; Unknown retains the occupied hold.
 
 ### Evidence and accepted versus observed placement
 
@@ -523,7 +550,7 @@ conflict for owner reconciliation; never overwrite it. Import unknown rack/port
 occupancy and upstream load before allowing any competing plan; if geometry/load
 is unknown, quarantine the containing rack/feed domain instead of assuming zero.
 
-The #60 allocator/custody owner records `AdoptedOccupied` or `Unknown` occupancy
+The #60 allocator/custody owner records an `AssetCustody` UID and `AdoptedOccupied` or `Unknown` occupancy
 from that case before the inventory adapter can enable publication eligibility.
 Inventory never writes or clears allocation occupancy. This durable adoption
 hold may exist before a trusted Device binding, so a duplicate later enrollment
@@ -531,12 +558,51 @@ cannot route around it. Registration then follows explicit witnessed observation
 no reboot, credential replacement, cleaning, network change or host agent install
 is implied. Existing tenant/provider authority is recorded, not usurped.
 
-An explicit ownership transition requires authorized prior custodian and provider
-approval, retained active-use obligations, compatible management authority and
-release-owner settlement of adopted occupancy before reuse. If those proofs are
-unavailable, keep Unknown indefinitely. Boot qualification waits for separately
-authorized preparation on non-conflicting supply. Importing records never briefly
-publishes occupied equipment as free, even if physical verification succeeds.
+### Resolving and settling adopted custody
+
+The original custody UID remains stable even when its initial subject is an
+unresolved rack/feed/alias domain rather than a trusted Device. Retain observer
+identity, origin records, all possible physical locations/load/ports, known prior
+custodians, active-use claims and independent archive references. Coarse domain
+holds intersect every competing allocation, physical plan and enrollment check;
+creating a different Device name cannot bypass them.
+
+Resolve identity by the witnessed, read-only enrollment protocol, without boot,
+reset, credential change or probing that mutates the target. Under #60's total
+lock order, retain a versioned resolution linking original custody/domain/aliases
+to canonical asset, exact enrollment and component/placement identities. Install
+canonical Occupancy and its history before narrowing any old domain reservation.
+The custody owner changes exclusion, inventory supplies identity evidence; neither
+can drop overlapping allocation/adoption/physical interests. A verified survey
+must establish that every excluded possibility is either the resolved target or
+separately retained custody before a broader hold narrows. Ambiguity retains the
+union and blocks effects on the intersecting domain. Resolution itself grants
+neither management ownership nor free supply.
+
+Only the explicit #65 adopted-custody transition may grant later cleanup: current
+authenticated prior-custodian and provider approvals for the exact resolved scope,
+active-use/tenant consent or authorized termination evidence, destructive limits,
+management access and a pinned qualified CleanupProfile with provenance. Missing
+authority remains Unknown indefinitely; observation, import, provider retirement
+and physical possession alone never authorize wiping. This is onboarding the
+same held asset within its existing Fleet authority domain, not a general transfer
+between live provider projects or allocation domains.
+
+#65 creates an `AdoptedCustody(custodyUID)` release subject, not a Machine or quota
+hold. #62 executes only its exact approved service plan after old senders/tasks
+and prior-authority paths settle; #61 supplies isolated cleanup and dispositions.
+The release owner verifies complete media/credential/firmware/network/physical
+obligations and real accounting reconciliation or provenance-backed
+non-applicability. Its R2 alone clears that custody's occupancy and writes replay
+tombstones. Inventory never substitutes its Ready evaluation for that decision.
+Unresolved physical vacancy/removal or other cases' interests remain held even
+after technical custody settlement; no whole-domain unlock follows one asset.
+
+R2 leaves consumer eligibility Disabled. A reuse candidate then needs fresh
+identity/placement/trust evidence and a separately admitted Preparation on now
+non-conflicting supply, followed by owner clearance and eligibility publication.
+There is no momentary free-capacity publication during adoption, resolution or
+cleanup. No previous Installation or consumer authority is inherited.
 
 ### Movement and maintenance
 
@@ -632,8 +698,9 @@ allocations, sessions, preparations, network bindings, outboxes and transitions.
 An active allocation blocks asset retirement unless its owner explicitly enters
 the release protocol. Inventory cannot force eviction or mint a cleaning result.
 
-After execution/release owners prove fencing and terminal settlement, #60 alone
-settles quota and clears occupancy. #61 alone proves disconnect and per-claim
+After execution/release owners prove fencing and terminal settlement, #60's ledger
+applies the release owner's exact-subject clearance and real accounting disposition
+(or proved non-applicability for non-consumer custody). #61 alone proves disconnect and per-claim
 disposition. Physical removal is separately admitted; verify rack vacancy, cable
 termination clearance and upstream load removal before releasing physical holds.
 Logical network deletion is not proof that a port is unplugged. Physical removal
@@ -686,6 +753,15 @@ cannot inherit. Reopen only after current roots, new evidence, old-writer fencin
 and all custody decisions agree. Irretrievably missing history is quarantine, not
 an operator's declaration of an empty database.
 
+This custody set includes Preparation and adopted cases with no consumer records,
+original unresolved domains, resolution revisions, prior-custodian approvals,
+cleanup policies and accounting applicability evidence. A restore predating exact
+resolution reestablishes the conservative domain hold until its history reconciles;
+it cannot rediscover a MAC/serial and resume a wipe. Missing approval, media history,
+mapping, evidence bytes or keys blocks recovery effects/reuse. ProviderGuard counts
+all these obligations during retirement, including a settled operation whose
+release clearance or physical-resource disposition is still pending.
+
 ## Acceptance tests
 
 These are proposed executable qualification scenarios, **not tests implemented or
@@ -727,6 +803,10 @@ Inject crashes immediately before/after every durable commit and acknowledgment.
 | I29 | Cable interest shared by two claims; one is cancelled/removed | Physical endpoint remains reserved until all interests and actual clearance settle. |
 | I30 | Lower upstream limit below existing commitments; worker lease expires | Report violation, close admissions and retain full reservations; no auto-power-off or timeout-driven capacity release. |
 | I31 | Race planned maintenance admission with trust revocation; gate already Closed on retry | Either the exact operation commits with closure before revocation, or ordinary admission fails. A mutation token never authorizes effects; unexpected drift needs qualified recovery authority. |
+| I32 | New witnessed server, allocation Disabled, boot qualification Pending | Admit exact Preparation through #60/#62 with no Machine/hold/Installation; independently corroborated #61 path precedes boot; settle verifier and owner clearance before publishing fresh eligibility. |
+| I33 | Commissioning races adoption, allocation, maintenance or provider retirement | One ordered asset/physical conflict domain; loser performs no effects. Closed retirement rejects new preparation while retained settlement survives. |
+| I34 | Adopt occupied server without trusted Device or quota; later resolve and authorize cleanup | Original UID/domain history retained; resolution is read-only; #65 approves exact authority/policy/accounting, R2 clears only that custody, fresh Preparation gates reuse. |
+| I35 | Restore before adopted resolution or preparation admission; later remote send exists | Conservative union/domain quarantine survives; no boot-as-discovery or stale clearance. Missing identity, approval or protected inputs blocks replay/reuse. |
 
 ## Production readiness review questionnaire
 
