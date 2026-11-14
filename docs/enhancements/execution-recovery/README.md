@@ -876,4 +876,33 @@ See [diagram maintenance](diagrams/README.md) for editable sources and validatio
 [redfish]: https://redfish.dmtf.org/essentials
 [redfish-spec]: https://www.dmtf.org/sites/default/files/standards/documents/DSP0266_1.22.1.pdf
 
-[admission]: https://github.com/datum-cloud/fleet/blob/2563b2a2f177a72d20c1d62265c89ff15688ba25/docs/enhancements/allocation-admission/README.md
+[admission]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
+
+## Alignment revision provenance
+
+On 2026-11-14 the [complete-set integration review][custody-review] identified
+missing commissioning and adopted-settlement joins. This `custody-subjects-v1`
+alignment is proposed documentation, not runtime qualification or sign-off.
+This proposal's contract-bearing revision is `6a886b415edb5ba9c1295e4d88db9cd86bd51f0e`.
+The companion revisions below are immutable **contract-bearing snapshots**, not
+claims about final PR heads or merge dependencies. Subsequent commits only refresh
+pins and provenance. Read this aligned set together: older embedded companion
+pins inside those snapshots describe their drafting baseline, not permission to
+substitute an older contract for a join defined here. #66 records the final-head
+complete-set review manifest. No circular exact-final-head dependency is required.
+Any later normative change requires a new manifest and fresh complete-set review.
+
+| Companion | Exact dependency revision |
+| --- | --- |
+| [#60 allocation-admission][custody-60] | `d072f3b5ded5d212e59ecc511c9282037d48c9f1` |
+| [#61 network-handoff][custody-61] | `04adf7013de42c40086502918dbfe05302ec00e8` |
+| [#63 inventory-trust][custody-63] | `d79495be33d7c0ab126b497dac6a5874924eee81` |
+| [#64 provider-fulfillment][custody-64] | `8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5` |
+| [#65 release-reuse][custody-65] | `96ca49da7d0753be47ea164b7008e90d3a81d2aa` |
+
+[custody-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883007682
+[custody-60]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
+[custody-61]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
+[custody-63]: https://github.com/datum-cloud/fleet/blob/d79495be33d7c0ab126b497dac6a5874924eee81/docs/enhancements/inventory-trust/README.md
+[custody-64]: https://github.com/datum-cloud/fleet/blob/8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5/docs/enhancements/provider-fulfillment/README.md
+[custody-65]: https://github.com/datum-cloud/fleet/blob/96ca49da7d0753be47ea164b7008e90d3a81d2aa/docs/enhancements/release-reuse/README.md
