@@ -823,6 +823,9 @@ front U[10,11), ports p1–p24. PassiveWitnessed-v1 establishes fresh identity a
 placement. It has no supply, consumer or boot objects. A qualified physical survey
 and networking-owner connection inventory at graph revision 9 prove no active
 dependencies; power, media and boot predicates are explicitly NotApplicable.
+The custodian/site authority's first-use manifest reconciles prior manual-worker
+access and issued permits with independent inspection: no prior work or usable
+field authority remains. Absence of compute records is not this proof.
 
 1. Request `move-17` pins `plan-7` and candidate `plan-8` (Rack A, U[12,13)),
    exact port/Cable interests, current custodian/service/technician approvals,
