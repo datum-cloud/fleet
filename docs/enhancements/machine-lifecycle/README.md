@@ -38,9 +38,9 @@ stage: alpha
 
 ## Summary
 
-Fleet will let consumers allocate and install machines in their project.
-Five public resources define the contract: `MachineClass`, `MachineProfile`,
-`MachineCapacity`, `Machine`, and `Installation`. Fleet keeps immutable
+Metal defines the common public contract; Fleet is an optional provider
+implementation. Consumers use `MachineClass`, `MachineProfile`, `Machine`, and
+`Installation`; providers expose supply through `MachineCapacity`. Fleet keeps immutable
 allocation and operation records in the provider project. These internal records retain
 ownership, execution authority, exact inputs, and cleanup obligations.
 
@@ -126,7 +126,9 @@ machine. Deleting a completed Installation leaves the OS and allocation in place
 
 ### Resource relationships across projects
 
-Classes describe provider offerings; profiles describe hardware requirements.
+MachineOffering owns provider policy; MachineClass publishes its consumer view.
+MachineOfferingAssignment controls acquisition access; profiles contain immutable
+hardware requirements, not installation or management policy.
 An offering can support several profiles, and a profile can serve several
 offerings. Consumers can define custom profiles where the offering permits them.
 
@@ -192,53 +194,49 @@ not copy an opaque revision, UID, or epoch between requests.
 
 #### MachineClass
 
-Provider operators own definitions; the publication service owns consumer
-references. The example uses provider types from the
-[bare-metal proposal][allocation].
+Provider operators own `MachineOffering` in `provider.metal.datumapis.com`;
+MachineClass is a publisher-owned one-hop consumer view, never a provider policy
+definition. MachineOfferingAssignment controls acquisition access. These proposed
+contracts replace earlier draft shapes without migration or compatibility rules;
+they do not describe the current alpha CRD implementation.
 
 ```yaml
-apiVersion: metal.datumapis.com/v1alpha1
-kind: MachineClass
-# Classes span the provider project so namespaces can share an offering.
+apiVersion: provider.metal.datumapis.com/v1alpha1
+kind: MachineOffering
 metadata:
   name: standard-metal
-# The definition owns offering policy; profiles own hardware requirements.
-# Its mode cannot change after creation.
 spec:
-  # Named profiles select provider-local contracts by name.
-  # Fleet retains their resolved identities internally.
-  # Custom profiles default to disabled and require provider validation.
   profilePolicy:
     allowedProfiles:
       - name: accelerated-16c-64g
     customProfiles:
       enabled: false
-
-  # Access describes supported operations, not permission to perform them.
-  # The first implementation supports power control but no console sessions.
-  access:
-    consoleModes: []
-    powerControl: true
-
-  # Capacity limits selection to existing supply in one provider namespace.
-  # Labels identify candidates; they confer no eligibility or purchase authority.
-  capacity:
-    machineCapacities:
-      namespace: infra-ops
-      selector:
-        matchLabels:
-          fleet.datumapis.com/capacity-pool: general-metal
-
-    # Provider backend qualification and BMC enrollment are private cell state.
-    # Public classes select admitted capacity, not an implementation-specific CRD.
-
-# The projector reports the definition that the class evaluator accepted.
-# Acceptance validates the offering; it does not reserve or promise capacity.
+  capabilities:
+    installation:
+      sourceModes: [ManagedImage, DelegatedPXE]
+      executionDrivers: [ProviderAutomatic, CustomerRedfish]
+      completionContracts:
+        - {mode: VerifiedImage, assurance: QualifiedImage}
+        - {mode: CustomerCallback, assurance: DelegatedContract}
+    management:
+      profiles: [ReadOnly, Provisioning]
+      provisioningSteps: [OneTimePXE, Reset, LocalDisk]
+      powerControl: true
 status:
-  evaluatedRevision: class-revision-example
+  evaluatedRevision: offering-revision-example
   conditions:
-    - {type: Accepted, status: "True"}
+    - type: Accepted
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-11-14T12:00:00Z"
+      reason: OfferingValid
+      message: "Profile and capability contracts accepted; no capacity reserved."
 ```
+
+The offering is a portable service promise. Fleet inventory selectors, executor
+configuration, and BMC enrollment belong to private provider implementation state,
+not MachineOffering. The permitted source/driver/completion combinations and
+management steps follow the [PXE contract](../pxe-installation/README.md).
 
 An offering must allow named profiles, custom profiles, or both. Enabling custom
 profiles still requires provider validation of the complete configuration at the
@@ -246,7 +244,7 @@ requested location.
 
 Approval applies to a profile's lifetime. A missing or recreated profile blocks
 its entry. The provider must select a new name or remove and re-add the entry in
-separate accepted class revisions to approve a replacement.
+separate accepted offering revisions to approve a replacement.
 
 Publication, quota, image, and network policy remain separate from the definition.
 The publication service creates the consumer reference:
@@ -262,6 +260,8 @@ metadata:
 # cannot become a definition or override its policy.
 spec:
   source:
+    apiGroup: provider.metal.datumapis.com
+    kind: MachineOffering
     project: provider
     name: standard-metal
 
@@ -270,8 +270,8 @@ spec:
 status:
   # The revision identifies the evaluated offering independently of this
   # reference object's generation. It does not grant source-use permission.
-  evaluatedRevision: class-revision-example
-  resolvedClass:
+  evaluatedRevision: offering-revision-example
+  resolvedOffering:
     # Publication maps allowed provider profiles to protected local copies.
     # These local names do not expose provider inventory or grant use.
     profilePolicy:
@@ -279,15 +279,19 @@ status:
         - name: accelerated-16c-64g
       customProfiles:
         enabled: false
-    access:
-      consoleModes: []
-      powerControl: true
+    capabilities:
+      installation:
+        sourceModes: [ManagedImage, DelegatedPXE]
+        executionDrivers: [ProviderAutomatic, CustomerRedfish]
+      management:
+        profiles: [ReadOnly, Provisioning]
+        powerControl: true
   conditions:
     - {type: SourceResolved, status: "True"}
 ```
 
-Resolution follows one hop to a definition and rejects cycles, chains, and mixed
-modes. Fleet checks current offering policy and authorization at Machine admission;
+Resolution follows one hop to MachineOffering and rejects cycles, chains, and
+consumer-authored policy overrides. Fleet checks current offering policy and authorization at Machine admission;
 accepted Machines retain the source identities, revision, and requirements through
 later edits. [Publication and access rules](#authorization-and-publication)
 control who receives and may use an offering.
@@ -564,11 +568,15 @@ dispatch new work.
 A named profile must be the provider-approved profile or its protected published
 copy. Matching names or requirements do not establish that relationship. Other
 profiles take the custom path, including profiles from another provider. The
-class must permit custom profiles, the adapter must accept the complete
+offering must permit custom profiles, the adapter must accept the complete
 configuration, and published sources still require use permission.
 
-A MachineAllocation retains its accepted requirements and hardware snapshot through source
-changes or deletion. Later observations can change readiness, but a bound Machine
+A MachineAllocation retains the accepted offering identity and contract, immutable
+profile requirements, installation/management capabilities, and hardware snapshot
+through source changes or deletion. Offering/assignment withdrawal blocks new
+allocations, not retained runtime rights; reinstall still checks current action,
+image, secret and endpoint permissions and explicit safety/suspension controls.
+Cleanup remains authorized by retained obligations, even after withdrawal. Later observations can change readiness, but a bound Machine
 never moves to another Machine. Owner references cannot replace Fleet's release
 protocol.
 
@@ -606,29 +614,55 @@ metadata:
   name: example-os-1
   namespace: default
 # The entire spec is immutable so recovery uses the same authorized inputs.
-# Machine and approved image are required. Fleet checks install and image-use
-# permissions and internally pins the Machine lifetime, image artifacts, and digests.
 spec:
   machineRef: {name: example}
   # This required precondition prevents competing installs from replacing
   # an unexpected OS. None identifies a blank allocation with no admitted install.
   expectedPredecessor:
     type: None
-  imageRef: {name: qualified-linux}
-
-  # Optional bootstrap data comes from a Secret in this namespace under
-  # explicit caller authority. Protected copies of its identity, digest, and bytes
-  # preserve the accepted input through Secret changes or deletion.
-  bootstrapConfigRef: {name: example-bootstrap}
+  source:
+    managedImage:
+      imageRef: {name: qualified-linux}
+      bootstrapConfigRef: {name: example-bootstrap}
+  execution:
+    driver: ProviderAutomatic
+  completion:
+    mode: VerifiedImage
+    requiredAssurance: QualifiedImage
+    postCompletionBoot: LocalDisk
 
 # The projector reports the retained installation outcome, not guest health.
 status:
+  sourceMode: ManagedImage
+  completionMode: VerifiedImage
+  assurance: QualifiedImage
   completedAt: "2026-10-27T12:00:00Z"
   conditions:
     - {type: Accepted, status: "True"}
     - {type: Executing, status: "False"}
     - {type: Ready, status: "True"}
 ```
+
+Exactly one non-null `source.managedImage` or `source.delegatedPXE` is required;
+both, neither, and mixed member fields are invalid. The entire spec, including
+predecessor, driver, and explicit completion mode/required assurance, is immutable.
+The [delegated example](api-examples.md#delegated-pxe-installation) uses the same
+allocation and predecessor rules. ManagedImage requires VerifiedImage /
+QualifiedImage; delegated PXE initially supports CustomerCallback /
+DelegatedContract only, with LocalDisk completion for both. Pending or unknown
+work has no achieved assurance. Ready describes completion of this explicit
+contract, not guest health. Managed consumers must require QualifiedImage at
+admission and activation/join (including initial-installation gates); delegated
+Ready cannot satisfy them.
+
+A provisioning-profile management session must bind an already admitted
+Installation and its exact operation. ProviderAutomatic and CustomerRedfish are
+mutually exclusive drivers, not independent boot authorities. CustomerRedfish is
+initially permitted only for delegated PXE. Sessions, automatic PXE, runtime power,
+and release share per-allocation serialization and provider fencing. Session
+closure and callbacks do not prove a running installer stopped. Independent
+executor fencing, PXE/network revocation, and local boot evidence are mandatory;
+unknown work holds the allocation. See the [shared BMC execution contract](../pxe-installation/README.md#shared-bmc-and-installation-execution).
 
 A reinstall names the Machine's current `status.currentInstallationRef` in
 `spec.expectedPredecessor`:
@@ -646,7 +680,7 @@ with one nonempty name. `None` is valid only for a verified blank allocation tha
 has never admitted an installation. Fleet resolves the named predecessor in the
 same project and namespace and privately pins its exact incarnation and allocation;
 name reuse cannot replace it. A predecessor reference does not replace install or
-image-use permission.
+the current permissions required by the selected installation source.
 
 Admission atomically consumes the precondition and retains the operation before
 effects. Only one request can win. A retry of that request recovers its retained
@@ -708,9 +742,10 @@ Each resource defines its conditions:
 
 - **MachineProfile:** `Accepted` validates structure without promising class
   compatibility, authorization, or supply.
-- **MachineClass:** `Accepted` requires a resolved profile policy and provider
-  contract. `SourceResolved` requires an authorized, resolved definition. Neither
-  condition promises capacity or grants every reader source-use permission.
+- **MachineOffering:** `Accepted` validates provider profile and capability policy;
+  it neither reserves capacity nor grants acquisition access.
+- **MachineClass:** `SourceResolved` requires an authorized, resolved one-hop
+  offering. It promises neither capacity nor source-use permission to every reader.
 - **Machine:** `Prepared` requires preparation evidence; `Healthy` requires health
   evidence. `Available` also requires eligible policy and no live allocation or
   cleanup obligation.
@@ -721,7 +756,9 @@ Each resource defines its conditions:
   remains true until cleanup and quota release finish.
 - **Installation:** `Accepted` requires an admitted operation with exact inputs.
   `Executing=False` alone cannot establish success. `Ready=True` and `completedAt`
-  require verified installation and platform handoff, not guest health. Verified
+  require the explicit completion contract, achieved assurance, executor fencing,
+  and platform handoff, not guest health. Managed consumers require QualifiedImage
+  even when a delegated Installation is Ready. Verified
   failure or cancellation yields `Ready=False`; an uncertain outcome yields
   `Unknown`.
 
@@ -810,7 +847,8 @@ The initial deployment accepts enrollment only from operator-controlled provider
 #### Request authority
 
 Machine admission checks the initiating principal's local create permission,
-provider-project `machineclasses.use`, and local `machineprofiles.use`. Published
+provider-project `machineofferings.use` and effective acquisition access through
+MachineOfferingAssignment, and local `machineprofiles.use`. Published
 profiles also require `machineprofiles.use` on their canonical provider source;
 custom profiles require no provider-profile grant. Cross-project checks preserve
 the caller and change only the target scope, as the [IPClass checker][ipam-class-use]
@@ -830,8 +868,10 @@ use current Machine permissions and the retained contract; the creator's departu
 does not reclaim the machine.
 
 Each action needs separate admission. Installations require Machine `install`,
-image-use permission, and access to bootstrap input. Power changes retain their
-own caller and generation. Network resolution checks the caller's network-use
+image-use permission for managed images, and current secret/endpoint permissions
+for their selected source. They use retained capabilities rather than reacquiring
+a withdrawn offering or assignment; explicit safety/suspension still applies.
+Power changes retain their own caller and generation. Network resolution checks the caller's network-use
 permission in each selected namespace and the required address authority. These
 checks are Fleet integration requirements, not permissions granted by references.
 
@@ -847,7 +887,7 @@ The following are protected service records, not fields a customer authors:
 
 ```text
 (consumer project, local class name + private incarnation evidence)
-  -> (provider project, definition name + private incarnation evidence, contract digest)
+  -> (provider project, MachineOffering name + private incarnation evidence, contract digest)
 (consumer project, local profile name + private incarnation evidence)
   -> (provider project, source profile name + private incarnation evidence, requirements)
 ```
@@ -878,8 +918,9 @@ Retain the following information:
 - **Identity:** immutable `metadata.name`, state, consumer and provider project
   context, customer Machine and provider MachineCapacity names, their private
   object-incarnation evidence, request digest, and canonical asset identity.
-- **Accepted contract:** class and local/source profile names with private
-  incarnation evidence and contract digests, exact
+- **Accepted contract:** offering identity, accepted contract revision and
+  installation/management capabilities, class publication provenance, and
+  local/source profile names with private incarnation evidence and digests, exact
   requirements, dependency identities/content, provider configuration/catalog
   revision, hardware snapshot, and logical-to-physical device mapping.
 - **Authority:** authenticated principal, authorization decision,
@@ -1063,8 +1104,10 @@ sessions. Lifecycle integration must handle these triggers:
 - **Project or entitlement suspension:** Deny new allocations, installations, and
   consumer power actions. Bring committed work to a safe boundary and allow
   authorized release without automatically wiping active machines.
-- **Class/profile withdrawal or Machine disablement:** Block future allocations,
-  preserve active contracts, and admit reclaim separately.
+- **Offering/assignment/profile withdrawal or capacity disablement:** Block future
+  allocations, preserve active contracts and retained runtime capabilities, and
+  admit reclaim separately. Runtime safety/suspension is an explicit control, not
+  an inference from catalog withdrawal; cleanup remains authorized.
 
 Milo's [project controller][milo-cleanup] waits for cleanup before reclaiming the
 control plane, while [suspension admission][milo-suspension] permits deletes and

@@ -26,7 +26,8 @@
 
   <rect x="270" y="80" width="190" height="82" class="box" fill="#f3e8ff" stroke="#9333ea"/>
   <text x="290" y="111" class="head">2. Admit exact inputs</text>
-  <text x="290" y="135" class="body">Authority, predecessor, quota</text>
+  <text x="290" y="133" class="body">Offering and predecessor;</text>
+  <text x="290" y="149" class="body">one execution driver</text>
 
   <rect x="510" y="80" width="190" height="82" class="box" fill="#ede9fe" stroke="#7c3aed"/>
   <text x="530" y="111" class="head">3. Deliver handoff</text>
@@ -39,7 +40,8 @@
 
   <rect x="990" y="80" width="190" height="82" class="box" fill="#fef3c7" stroke="#d97706"/>
   <text x="1010" y="111" class="head">5. Arm one PXE boot</text>
-  <text x="1010" y="135" class="body">Retained operation and fence</text>
+  <text x="1010" y="133" class="body">PXE / power / release</text>
+  <text x="1010" y="149" class="body">share one fence</text>
 
   <path d="M220 121 H270" class="arrow"/>
   <path d="M460 121 H510" class="arrow"/>
@@ -71,7 +73,7 @@
   <rect x="1005" y="245" width="210" height="92" class="box" fill="#f0fdf4" stroke="#16a34a"/>
   <text x="1025" y="277" class="head">Customer installs OS</text>
   <text x="1025" y="301" class="body">Customer-owned workflow</text>
-  <text x="1025" y="320" class="body">Operation-scoped callback</text>
+  <text x="1025" y="320" class="body">Callback is not shutdown proof</text>
 
   <path d="M945 291 H1005" class="arrow"/>
 
@@ -88,12 +90,12 @@
   <text x="210" y="631" class="body">Provider executor controls BMC</text>
 
   <rect x="515" y="575" width="210" height="82" class="box" fill="#ecfdf5" stroke="#059669"/>
-  <text x="535" y="607" class="head">8. Validate evidence</text>
-  <text x="535" y="631" class="body">Mode-specific assurance</text>
+  <text x="535" y="607" class="head">8. Reflect / validate</text>
+  <text x="535" y="631" class="body">Local result → Karmada → Fleet</text>
 
   <rect x="840" y="575" width="210" height="82" class="box" fill="#f3e8ff" stroke="#9333ea"/>
   <text x="860" y="607" class="head">9. Project status</text>
-  <text x="860" y="631" class="body">Ready only after required proof</text>
+  <text x="860" y="631" class="body">Required assurance + fencing</text>
 
   <path d="M620 505 V540 H295 V575" class="arrow"/>
   <path d="M400 616 H515" class="arrow"/>
@@ -103,5 +105,6 @@
   <text x="1035" y="460" class="head">Unknown outcome</text>
   <text x="1035" y="483" class="body">Retain allocation; recover</text>
   <path d="M770 460 H1015" class="arrow unknown"/>
-  <text x="835" y="449" class="body">timeout, lost response, stale worker</text>
+  <text x="800" y="437" class="body">Timeout or stale evidence</text>
+  <text x="40" y="699" class="body">One admitted driver: ProviderAutomatic or bound CustomerRedfish steps. Managed consumers require QualifiedImage, not delegated Ready.</text>
 </svg>
