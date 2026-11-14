@@ -52,7 +52,7 @@ the proposed checks are not support for legacy protocol compatibility.
 | [#62 execution][execution] | `7fa823050a443c1f5b85c56e85ed04ebaa5bd2cb` | Management and cell journals, S1 send ambiguity, physical stop, restore interlock. |
 | [#63 inventory][inventory] | `8fe054101ac3bea822e5d16e40cb375a884e7e56` | Canonical identity, independent witnesses, physical holds, component continuity. |
 | [#64 fulfillment][fulfillment] | `50e678ee20645ad0a4e340005b18432fe4633bec` | Exact external reservation, all-channel exclusion, provider journal and R3 finalization. |
-| [#65 release/reuse][release] | `64c3ed0ec355eadfb68b40b06c25a4717763e2b8` | Discovered companion: R1 closure, evidence-based R2 settlement, separate reuse gates. |
+| [#65 release/reuse][release] | `fae0cd3bf2a3a7e208c92c3e46c9b5670d877906` | Discovered companion: R1 closure, evidence-based R2 settlement, separate reuse gates. |
 
 The release interface is available as a draft at this pin, not pending discovery.
 Its owner acceptance, implementation, sanitization procedures and qualification
@@ -506,6 +506,8 @@ writer. A missing observation is an inconclusive/failed gate, never a pass.
 | D27 | Exhaust archive/retention headroom and request GC of an unsettled secret or replay tombstone | Admission backpressures; referenced recovery material survives; terminal compaction cannot enable stale snapshot/message resurrection. |
 | D28 | Attempt reactivation while one old broker, network writer or provider is unreachable and target list is incomplete | No silent scope reduction; enclosing domain remains denied/unknown. Separately proven disjoint scope may reopen with recorded containment evidence. |
 
+| D29 | Withdraw catalog/offering-assignment access while an existing allocation requests an otherwise authorized runtime action; then independently close its runtime suspension gate | Withdrawal rejects new acquisition but preserves retained runtime capabilities subject to current actor/input permissions and separate safety gates. The independent suspension rejects the runtime action. Neither event alone creates a ReleaseCase or authorizes destructive cleanup. |
+
 For Q0, instrument synthetic boundaries and all race schedules. Q1/QD/QE must
 repeat relevant rows on real qualified hardware/provider paths with independent
 observers; all rows require an applicability decision signed by the relevant
@@ -560,4 +562,4 @@ is claimed by documentation validation.
 [execution]: https://github.com/datum-cloud/fleet/blob/7fa823050a443c1f5b85c56e85ed04ebaa5bd2cb/docs/enhancements/execution-recovery/README.md
 [inventory]: https://github.com/datum-cloud/fleet/blob/8fe054101ac3bea822e5d16e40cb375a884e7e56/docs/enhancements/inventory-trust/README.md
 [fulfillment]: https://github.com/datum-cloud/fleet/blob/50e678ee20645ad0a4e340005b18432fe4633bec/docs/enhancements/provider-fulfillment/README.md
-[release]: https://github.com/datum-cloud/fleet/blob/64c3ed0ec355eadfb68b40b06c25a4717763e2b8/docs/enhancements/release-reuse/README.md
+[release]: https://github.com/datum-cloud/fleet/blob/fae0cd3bf2a3a7e208c92c3e46c9b5670d877906/docs/enhancements/release-reuse/README.md
