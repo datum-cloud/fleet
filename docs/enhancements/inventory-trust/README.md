@@ -694,7 +694,8 @@ subject workflows retain their own admission/settlement semantics.
    slot establishes placement or compute eligibility. Dependent owners separately
    revalidate and authorize their own resumption. Destination reservations stay held.
 
-A same-cell/location move preserves Device, MachineCapacity and MachineAllocation.
+A same-cell/location move preserves Device and, when present, MachineCapacity
+and MachineAllocation; it creates none for passive equipment.
 It does not mutate an Installation's retained inputs; any subsequent operation
 must be freshly admitted against valid placement. A move requiring another
 allocation target cell/location is blocked in this initial protocol because #60
