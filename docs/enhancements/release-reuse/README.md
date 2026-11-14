@@ -107,8 +107,12 @@ the retained lifecycle contract. Persist the exact deletion authorization and
 incarnation before effects; a missing object alone grants no wipe authority.
 An explicit customer release needs current authorization. A service lifecycle
 trigger needs its authenticated termination decision and the release authority
-retained at allocation. Suspension, catalog withdrawal, or provider retirement
-closes ordinary admission but does **not** by itself authorize erasure. A safety
+retained at allocation. An explicit runtime suspension or provider retirement
+closes the applicable ordinary admission gates but does **not** by itself authorize
+erasure. Catalog or offering-assignment withdrawal blocks new acquisition only;
+existing allocations retain their accepted runtime capabilities, subject to current
+actor/input permissions and separate safety or suspension gates. Withdrawal alone
+closes no existing allocation runtime gate and creates no ReleaseCase. A safety
 isolation obligation is not destructive-release authority.
 
 R1 is one SERIALIZABLE #60 transaction, using its global order: complete sorted
@@ -541,7 +545,8 @@ custody indefinitely; alerts and business write-offs do not change that invarian
 | R2 committed but response lost | Inspect durable decision; never clear another allocation or repeat with new identity. |
 | External R3 lost; successor requests same supply | Reuse gate and provider local lock block until terminal receipt recovered; late old cleanup rejected. |
 | Project/namespace purged, provider unreachable | Independent protected custody survives; block retirement/reuse, recover exact prior identities. |
-| Suspension or offering withdrawal alone | Close applicable ordinary admission; no implicit destructive-release authorization. |
+| Catalog or offering-assignment withdrawal alone | Block new acquisition; preserve existing allocations’ retained runtime capabilities subject to current actor/input rights and separate safety gates; no runtime closure or ReleaseCase. |
+| Explicit runtime suspension or provider retirement alone | Close applicable ordinary admission gates; no implicit destructive-release authorization. |
 | Restore one journal before a newer wipe/reallocation | Independent epoch interlock, union reconciliation and old-writer fencing; no replay into successor. |
 | Provider unilaterally reclaims despite contract | Qualification violation; close domain gates, incident and unknown custody, not a fabricated Released receipt. |
 | Freshness deadline, clock uncertainty or disk mapping changes at R2 | Recheck under ledger locks; refresh evidence or quarantine. |
@@ -552,6 +557,12 @@ custody indefinitely; alerts and business write-offs do not change that invarian
 The following are **required future tests**, not passing implementation tests.
 Synthetic tests can establish transaction/serialization behavior, not physical
 erase, BMC trust, dataplane isolation or supplier truthfulness.
+
+Exercise catalog and offering-assignment withdrawal with an existing allocation:
+new acquisition must fail, while a runtime action within retained capabilities
+with current actor/input permission must still admit. Then independently close a
+runtime suspension gate and assert that action is rejected. Neither withdrawal nor
+suspension alone may create a ReleaseCase or authorize destructive cleanup.
 
 1. Model-check/transaction-test R1, operation hook, gate invalidation, retirement,
    quota acknowledgment and R2/new admission races; inject lost commit replies.
