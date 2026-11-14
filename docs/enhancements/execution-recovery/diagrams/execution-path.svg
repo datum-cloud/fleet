@@ -13,10 +13,10 @@
 <!-- management -->
 <g id="node1" class="node">
 <title>management</title>
-<path fill="#eef4fb" stroke="#456281" d="M407.11,-453.9C407.11,-453.9 177.88,-453.9 177.88,-453.9 171.88,-453.9 165.88,-447.9 165.88,-441.9 165.88,-441.9 165.88,-410.37 165.88,-410.37 165.88,-404.37 171.88,-398.37 177.88,-398.37 177.88,-398.37 407.11,-398.37 407.11,-398.37 413.11,-398.37 419.11,-404.37 419.11,-410.37 419.11,-410.37 419.11,-441.9 419.11,-441.9 419.11,-447.9 413.11,-453.9 407.11,-453.9"/>
+<path fill="#eef4fb" stroke="#456281" d="M437.11,-453.9C437.11,-453.9 147.88,-453.9 147.88,-453.9 141.88,-453.9 135.88,-447.9 135.88,-441.9 135.88,-441.9 135.88,-410.37 135.88,-410.37 135.88,-404.37 141.88,-398.37 147.88,-398.37 147.88,-398.37 437.11,-398.37 437.11,-398.37 443.11,-398.37 449.11,-404.37 449.11,-410.37 449.11,-410.37 449.11,-441.9 449.11,-441.9 449.11,-447.9 443.11,-453.9 437.11,-453.9"/>
 <text xml:space="preserve" text-anchor="middle" x="292.49" y="-433.86" font-family="Helvetica,sans-Serif" font-size="12.00">Management coordinator</text>
-<text xml:space="preserve" text-anchor="middle" x="292.49" y="-421.11" font-family="Helvetica,sans-Serif" font-size="12.00">L1: slot + predecessor + operation + outbox</text>
-<text xml:space="preserve" text-anchor="middle" x="292.49" y="-408.36" font-family="Helvetica,sans-Serif" font-size="12.00">Protected inputs and provider custody</text>
+<text xml:space="preserve" text-anchor="middle" x="292.49" y="-421.11" font-family="Helvetica,sans-Serif" font-size="12.00">L1: asset slot + subject prior&#45;state + operation + outbox</text>
+<text xml:space="preserve" text-anchor="middle" x="292.49" y="-408.36" font-family="Helvetica,sans-Serif" font-size="12.00">Allocation / Preparation / AdoptedCustody</text>
 </g>
 <!-- hub -->
 <g id="node2" class="node">

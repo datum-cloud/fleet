@@ -115,8 +115,8 @@ resolve to immutable incarnations; namespace equality proves nothing.
 
 | Logical record | Sole writer and required contents |
 | --- | --- |
-| Allocation execution slot | Shared lifecycle coordinator, in the binding transaction: allocation and asset incarnations, active operation, monotonic operation sequence, closed-admission marker, consumed predecessor, terminal receipt and unresolved obligations. Allocator alone still owns occupancy and quota. |
-| Operation | Lifecycle coordinator: caller and policy decisions, accepted offering capabilities, immutable driver/source, Installation or runtime power generation, selected cell incarnation, asset mapping, plan/input digest, validity and finite step budget, lifecycle phase, recovery/cancellation decisions. |
+| Asset execution slot | Shared lifecycle coordinator, in #60's ledger transaction: exact asset/enrollment lineage, tagged current subject and custody epoch, active operation, monotonic operation sequence across subjects, closed-admission marker, subject-specific predecessor, terminal receipt and unresolved obligations. Occupancy and quota stay with their owners. |
+| Operation | Lifecycle coordinator: tagged subject, caller and policy decisions, accepted allocation capabilities or explicit service-custody authority, immutable executor/plan, Installation or runtime power generation only when applicable, selected cell incarnation, asset mapping, plan/input digest, validity and finite step budget, lifecycle phase, recovery/cancellation decisions. |
 | Input manifest | Admission resolver seals immutable versions; coordinator pins their references: exact artifact/configuration bytes, digests, target disks/interfaces, endpoint and trust policy, secret version handles, recipe and adapter binary/schema digests. No mutable-name-only references. |
 | Outbox/hub intent | Coordinator commits outbox with Operation; handoff publisher writes hub spec and exact-target policy from it. Same operation/revision/digest on every retry. |
 | Cell inbox and step journal | Cell execution service: admitted envelope, highest accepted revisions, stable step keys, normalized request and translation bytes/digests, attempt ownership, write-ahead marker, remote task identifiers, evidence and stop barriers. Broker alone advances physical-send state. |
@@ -125,17 +125,17 @@ resolve to immutable incarnations; namespace equality proves nothing.
 | Recovery custody | Lifecycle coordinator: unresolved sends/tasks/installers, all old route identities, revoked capabilities, retained inputs, operator decisions, obligations and custody transfer. Survives project/API removal. |
 | Restore epoch | Independent recovery authority: durable monotonically increasing domain epoch, active journal lineage and enabled boundary identities. Not restored from the journal snapshot it protects. |
 
-Use serializable transactions with row locking on the exact allocation slot,
+Use serializable transactions with row locking on the exact shared asset slot,
 unique operation idempotency keys, and unique step keys. Retry serialization
 aborts only before an external effect; transaction retries never wrap a network
 send. An asset guard prevents two allocation incarnations from targeting the
-same physical machine; it consumes the allocator's authoritative unique binding,
+same physical machine; it consumes #60's authoritative unique subject occupancy,
 not discovery lists. Keep tombstones for retired allocation/operation identities
 for the lifetime of the asset enrollment and its restore horizon.
 
 ### Identities and immutable inputs
 
-An operation key is `(providerProjectUID, allocationUID, callerRequestKey)`.
+An operation key is `(providerProjectUID, subjectKind, subjectUID, callerRequestKey)`.
 Admission returns the existing operation for an identical canonical request
 digest, or a conflict for different contents. Project/Installation recreation
 cannot reuse authority. Power intent uses the retained Machine UID and desired
@@ -144,7 +144,8 @@ generation; a reset uses a fresh explicit request key, never a reconcile count.
 A step key is `(operationUID, planDigest, stepOrdinal)`. Its definition includes
 exact target, action, normalized input, prerequisites and completion predicate.
 An attempt UID identifies a particular worker delivery, not a new step. Fence
-identity is `(restoreEpoch, allocationUID, operationSequence, executorGeneration)`.
+identity is `(restoreEpoch, canonicalAssetKey, enrollmentEpoch, custodyEpoch,
+subjectKind, subjectUID, operationSequence, executorGeneration)`.
 It is an anti-staleness value at participating services, **not** a token magically
 understood by commodity BMCs, disks or already-running code.
 
@@ -152,7 +153,8 @@ Retain both the public normalized action and its exact upstream translation
 before sending, including adapter version and physical route. Reject ambiguous
 JSON keys, unsupported fields, alternate resource links and unlisted OEM actions.
 Do not retranslate an old send through a newly deployed adapter. A changed recipe,
-driver, disk mapping or source requires settlement and a new Installation; an
+driver, disk mapping or source requires settlement and a new Installation for
+Installation work, or an explicitly admitted successor service plan otherwise; an
 executor generation may change only the authorized worker, not these inputs.
 
 Artifacts and rendered secret-bearing configuration live in encrypted,
@@ -170,19 +172,101 @@ QualifiedImage assurance. Recovery never refetches changed bytes to replay an
 uncertain boot. If the admitted source cannot reproduce a required input, only
 settlement/cleanup is available, not an invented replacement plan.
 
+### Asset-custody subjects and initial service execution
+
+The proposed `custody-subjects-v1` contract extends L1–L5 and S1 in place. The
+tagged subject is exactly one of `Allocation(allocationUID)`,
+`Preparation(custodyUID)` or `AdoptedCustody(custodyUID)`. All use #60's same
+Occupancy, persistent asset execution slot, ProviderGuard, gate validation and
+total lock order, including physical-resource rows before slot/operation/release
+children. Do not allocate one slot per tag. Allocation/Installation-specific
+text below applies only to that branch; common journal, effect and restoration
+rules apply to all three. No backwards-compatible null allocation encoding.
+
+Preparation binds provider Project UID, custody UID/epoch, exact canonical asset,
+enrollment UID/epoch, Device/supply incarnations, accepted placement/component
+revisions and chosen cell. Admission requires allocation Disabled, no conflicting
+allocation/adopted-domain/maintenance/release hold, trusted pre-boot identity and
+physical safety, and current service-principal action/input rights. A qualified
+commissioning capability is separate from not-yet-established boot qualification
+and consumer eligibility. Resolve these states explicitly; do not close/bypass
+identity or safety gates merely because consumer allocation is Disabled.
+
+Retain the provider-approved commissioning purpose and any exact destructive disk
+permissions, policy/recipe/image/adapter digests, disk/NIC/BMC/outlet targets,
+network/origin inputs, secret versions, finite steps and validity before L1.
+At L1, #60 atomically acquires Preparation occupancy and guard obligation while
+this owner advances the slot sequence and inserts operation, input pins and
+outbox. Validate current service, ownership, trust, commissioning qualification,
+network/input-use, safety and restore gates. No Machine, consumer project, quota
+hold, Installation, offering acquisition or synthetic predecessor is needed.
+The prior-state CAS is a settled custody receipt, or a verified first-use
+quiescence manifest; absence of an Installation alone proves neither blank media
+nor absence of prior effects. Preparation uses one pinned service executor, not
+CustomerRedfish or an implicitly created customer provisioning session.
+
+Its finite plan is: establish exact quiescent target and queue baseline; request
+#61 Commissioning materialization; wait for the exact isolated path receipt;
+serve one bounded bootstrap; run pinned inspection/authorized preparation; close
+new steps; stop verifier/RAM code and all accepted BMC/storage work; revoke/drain
+boot, proxy and credentials; disconnect/dispose commissioning bindings; collect
+independent evidence. Network preparation happens after L1 and before boot, so
+requiring its receipt creates no pre-admission bootstrap dependency. Service work
+does not require a customer local-disk OS boot to manufacture success. Each effect
+uses the same L2/L3/S1 and broker boundary. A lost boot/disk response stays Unknown;
+no auto-retry, callback-only settlement or expiry-based occupancy clearance.
+
+AdoptedCustody can be stored while identity is unresolved, but **no effectful L1**
+is permitted until #63 resolves trusted enrollment/mapping and #65 records explicit
+prior-custodian/provider approvals, destructive scope, policy provenance and
+active-use obligations. R1 closure is not proof of old execution settlement.
+Read-only observation may precede resolution; a boot, reset, credential rotation
+or network mutation may not be smuggled in as discovery. The operation envelope
+binds the original custody UID, resolution revision, release case, approved
+transition, exact obligation and component coverage. #65 service cleanup on this
+subject uses the same slot, first stopping/fencing prior authority (including
+non-Fleet senders), then a new service-only cleanup path and pinned plan. Unknown
+original targets or prior senders block cleaning, not just final release.
+
+Normal service admission/renewal uses current Open service/safety gates. Closing
+ProviderGuard or customer gates permits only the explicitly retained settlement
+lane: validate expected closure revisions and surviving cleanup authority plus
+current issuer/identity/target/qualification/recovery gates. This lane cannot
+create a new ownership approval, expand a recipe, or turn observation into wipe
+authority. Missing inputs may permit separately authorized independent isolation,
+never replacement installer bytes or a guessed target.
+
+L5 binds tagged subject, custody/resolution/enrollment epochs, full fence, exact
+plan and all send/stop/network evidence. Success means that service plan's measured
+postconditions and no-late-effect proof; it is not consumer Installation assurance.
+The slot clears only with atomic transfer of residual obligations/recovery hold.
+Preparation custody stays occupied until #65's clearance decision; adopted
+custody stays occupied until #65 R2. Neither L5 nor an empty slot publishes
+eligibility. Inventory later evaluates new evidence, and allocation separately
+checks the cleared conflict domain. Physical reservations remain with inventory.
+
+Restore reconciles these subjects even without any consumer record: custody and
+resolution history, slot sequence, old/new broker routes, outboxes, cell sends,
+boot/network grants, retained bytes/keys and release barriers. A backup preceding
+L1 cannot erase a remote preparation send; a backup preceding adopted resolution
+cannot authorize cleanup from a serial/IP match. Retain Unknown domain custody,
+fence old paths, establish the independent new lineage and reauthorize only an
+exact reconciled checkpoint. Lost identity or input keys blocks effects and
+reuse. Old subject tombstones survive an eventual consumer allocation.
+
 ## Operation state machine
 
 ![Operation lifecycle and retained custody](diagrams/operation-state.svg)
 
 | State | Meaning and allowed transition |
 | --- | --- |
-| `Admitted` | Slot, predecessor consumption, exact inputs and outbox committed. Dispatch or cancel before delivery; no physical effect yet established. |
+| `Admitted` | Slot, subject-specific predecessor/first-use check, exact inputs and outbox committed. Dispatch or cancel before delivery; no physical effect yet established. |
 | `Dispatched` | Hub handoff published; cell may have accepted it even if acknowledgement is missing. Recover delivery under the same identity. |
 | `Executing` | Matching cell acceptance/evidence retained. Progress only inside the finite admitted plan. |
 | `Verifying` | Required work reports completion; new provisioning steps are closed and settlement/evidence checks are pending. Not readiness. |
 | `Stopping` | Cancel, release, expiry or safety restriction has requested closure. Retain reservation while fences and in-flight effects settle. |
 | `OutcomeUnknown` | Missing or conflicting evidence about any possible effect. Nonterminal; reservation and recovery custody remain. May resume the same plan only after explicit recovery checks, or enter Stopping/Verifying. |
-| `Succeeded` | Required outcome and settlement certificate validated; management atomically records the resulting incarnation and clears the execution slot. Does not release the allocation. |
+| `Succeeded` | Required outcome and settlement certificate validated; management atomically records subject outcome and slot disposition. Does not clear subject occupancy or publish eligibility. |
 | `Failed` / `Cancelled` | All possible effects settled, obligations transferred/retained, and disposition recorded. No implication of rollback or usable predecessor. |
 
 An operation can be terminal with `PartialStateRequiresRecovery` only after all
@@ -201,8 +285,9 @@ is no direct transition from callback, Job success, or session closure to Ready.
 
 ![Authority delivery and effect boundaries](diagrams/execution-path.svg)
 
-1. Resolve current actor/action/input rights against the allocation's retained
-   capabilities. Offering/assignment withdrawal is not a new runtime acquisition
+1. Resolve current actor/action/input rights against the subject's retained
+   capabilities or explicit service-custody authority above. For allocations,
+   offering/assignment withdrawal is not a new runtime acquisition
    check. Explicit allocation suspension, provider retirement, target safety,
    artifact rights and network prerequisites still apply. An authorization
    outage is unknown, never allow. Retain the decision revision, time and bounded
@@ -213,16 +298,17 @@ is no direct transition from callback, Job success, or session closure to Ready.
    ledger recovery lineage. Missing dependencies or unregistered gate writers
    block admission; watches and an unexpired permission receipt are insufficient.
 2. Seal exact inputs. L1 participates in the same SERIALIZABLE ledger transaction
-   and lock order as [allocation admission][admission]: sorted authority gates,
-   ProviderGuard, then applicable attempt/quota/binding/enrollment/occupancy rows,
-   followed by the operation slot. Gate closure, retirement and runtime admission
+   and complete total lock order as [allocation admission][admission], including
+   physical-resource/reservation and custody rows before the asset slot,
+   operation and release children. Gate closure, retirement and runtime admission
    use this shared order. Under those locks revalidate every gate is Open at the
    retained epoch/revision, decision digest/caller and current recovery lineage
    match, and the deadline has not expired under trusted ledger time. Revalidate
    ProviderGuard permits new operation admission. No remote calls run under locks.
-   In that same management transaction compare binding/incarnation,
-   admission-closed state, usable predecessor and free slot; allocate operation
-   sequence; consume predecessor; insert Operation, input pins and dispatch
+   In that same management transaction compare exact subject occupancy/incarnation,
+   admission-closed state, usable subject-specific prior-state proof and free slot;
+   allocate operation sequence; consume Installation predecessor only when
+   applicable; insert Operation, input pins and dispatch
    outbox. **L1: this commit admits the operation.** Losing concurrent requests
    have no dispatch authority. There is no multi-resource Kubernetes write
    sequence pretending to provide this atomicity.
@@ -302,7 +388,8 @@ recovery permission to complete an unrequested new installation.
 | Request | Serialization decision |
 | --- | --- |
 | Observation/session health | Current read authorization; no slot, no readiness inference; methods with side effects are not classified as reads. |
-| Initial/reinstall Installation | Acquire allocation slot and consume exact predecessor at L1. `None` only for verified blank, never-installed allocation. |
+| Initial/reinstall Installation | Acquire shared asset slot under allocation occupancy and consume exact predecessor at L1. `None` only for verified blank, never-installed allocation. |
+| Preparation or adopted cleanup | Exact custody subject and service authority; same persistent asset slot, no Installation predecessor or consumer session; #60/#65 occupancy remains held through settlement. |
 | Provisioning-session mutation | Attach to admitted CustomerRedfish Installation; same step key across sessions, no independent boot reservation. |
 | Runtime power intent or reset | Acquire same slot; reject `OperationConflict` during Installation, stopping or unknown custody. Intent controller retries admission only after settlement, never sends around the slot. |
 | Second install, rescue, media or raw BMC write | Conflict or unsupported; no boot-change escape hatch. Virtual media and persistent override excluded initially. |
@@ -550,7 +637,7 @@ writers have been accounted for.
 
 ## Completion evidence and operator recovery
 
-A settlement certificate binds operation/plan/asset/allocation/cell/restore epoch,
+A settlement certificate binds operation/plan/asset/tagged subject/cell/restore epoch,
 step outcomes and their journal sequence, evidence-producing identities, observed
 times, clock uncertainty, fence receipts and remaining obligations. It includes:
 
@@ -649,7 +736,7 @@ These are required semantic exchanges, not invented endpoints or new owners.
 
 | Owner | Input to this protocol | Output from this protocol / limit |
 | --- | --- | --- |
-| Allocation/quota | Immutable accepted binding/capabilities, authoritative transaction extension for slot/predecessor/closure, retirement guard. | Durable operation receipt/hold; no independent quota acquisition, allocation selection or occupancy release. |
+| Allocation/custody | Immutable tagged binding/capabilities or approved service authority, authoritative transaction extension for asset slot/prior-state/closure, total lock order and retirement guard. | Durable operation receipt/hold; no independent quota acquisition, allocation selection or occupancy release. |
 | Networking | Exact prepared revision, owner-executed keyed change and effective fence evidence. | Ordered effect/revoke request; no direct switch writer or IPAM/routing policy. |
 | Inventory/trust | Verified physical identity/mapping and trust evidence, approved fencing paths and current safety eligibility. | Attributed observations and incidents; never self-enroll or declare trusted hardware. |
 | External fulfillment | Exact provider route and contract capability, if separately qualified. | Operation identity, inputs, evidence and settlement requirements; no procurement or provider-specific fallback in this proposal. |
@@ -694,6 +781,10 @@ delayed and reordered federation delivery.
 | Terminal partial failure clears slot, then another driver requests install. | Recovery hold prevents successor; release/recovery only until lifecycle establishes a usable predecessor. |
 | Ledger unavailable/full during gateway mutation or result persistence. | No new S1 without durability; possible already-sent effect stays Unknown, never successful client response from memory alone. |
 | Cell journal is lost while emergency isolation is required. | Explicit retained recovery-custody transfer to durable isolation executor; no ad hoc unjournaled PDU command or automatic power restoration. |
+| New enrolled server needs first commissioning; no consumer objects exist. | Preparation L1/L2/L3/S1 executes only after trusted pre-boot mapping and exact network receipt; L5 stop/disconnect evidence feeds release clearance, not immediate eligibility. |
+| Preparation L1 races allocation, adoption, maintenance or release. | One asset exclusion/slot under #60 total order; no independent commissioning lock or synthetic Installation. Unknown retains custody. |
+| Adopted cleanup approved but resolution, original disk coverage or prior-writer fence is missing. | No destructive L1; retain original domain/custody. A later verified exact resolution can proceed only with #65 policy/authority and all predecessor settlement. |
+| Restore before preparation L1 or adopted R1 while cell sent a wipe; lose retained key. | Union reconciliation retains Unknown even without Machine/Allocation; block replay and reuse, fence old writers, no substitute key/content or fabricated predecessor. |
 
 ## Qualification, rollout, and operations
 
