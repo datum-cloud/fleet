@@ -168,7 +168,7 @@ but never consumer admission or a bypass of evidence/epoch checks.
 | Authority | Transaction or decision boundary | Evidence consumed; prohibited inference |
 | --- | --- | --- |
 | Metal allocation | #60 serializable ledger binds occupancy, Machine, escrow reference, decision and outbox | Current registered gate vector and quota receipt; no Kubernetes/federation transaction substitutes for it. |
-| Management execution | #62 shared asset slot/tagged subject/prior-state/operation/outbox in that same ledger and #60 total lock order | Sealed inputs and current gates; Preparation/AdoptedCustody need no consumer allocation or Installation; deployment cannot allocate a second slot. |
+| Management execution | #62 shared asset slot/tagged subject/prior-state/operation/outbox in that same ledger and #60 total lock order | Sealed inputs and current gates; Preparation/AdoptedCustody/PhysicalMaintenance need no consumer allocation or Installation; passive maintenance needs no supply or boot. Deployment cannot allocate a second slot. |
 | Cell execution | #62 selected-cell journal persists acceptance and S1 before physical send | Exact operation/fence and broker lineage; S1 without response is possible effect, not permission to resend. |
 | Release coordinator | #65 R1, terminal-effects decision and R2 use existing ledger boundaries | Owner-validated closure/sanitization and real accounting settlement or proven non-applicability; Allocation still requires original quota acknowledgment. Terminal custody alone is not reusable. |
 | Quota and fulfillment | Their own durable hold/decision/tombstone domains, #60/#64 keyed exchanges | Query exact identities after reply loss; no distributed transaction or expiry-based unlock is implied. |
@@ -209,6 +209,10 @@ rewriting. Retain at least the following, with sole writers unchanged:
 - Non-consumer custody UID/kind/epoch, original adopted-domain holds and exact
   resolution history, prior-custodian/provider approvals, policy provenance,
   Preparation clearance, shared asset-slot sequence and authority tombstones.
+- PhysicalMaintenance approvals, exact Device/resource and old/new plans, impact
+  graph and active-owner barriers, field procedure bytes, permit delivery/start/
+  completion inventories, assigned crews, independent site/cessation receipts,
+  physical disposition and maintenance clearance/accounting proofs.
 - #62 management/selected-cell journals, steps and send markers, target/session
   bindings, driver/recipe/translations, executor generations and recovery holds.
 - #63 plans, component mappings, evidence/challenges, physical/power reservations,
@@ -316,6 +320,10 @@ Independent controls must establish separate facts:
    power feeds and verify de-energization, queues and persistent device behavior.
 5. Networking proves its own effective fences and old-writer exclusion. Network
    isolation alone does not stop local disk writes or prove sanitization.
+6. For field work, independently stop/exclude the old technician crew and secure
+   the work area; reconcile every permit/start and physical result with the site
+   supervisor and witnesses. Expired credentials cannot stop hands already at
+   equipment. Missing field evidence retains both old/new locations and custody.
 
 If a remote path cannot be reached or fenced, its scope stays disabled. Discovering
 more targets widens quarantine. If target enumeration is incomplete, fence the
@@ -448,9 +456,19 @@ that review nor this author alignment grants sign-off.
 | Q2 bounded production Fleet | Q1 plus production identity/tenancy, operator drills, owner approvals, monitoring, capacity limits and independent adversarial review | Explicit allowlisted assets/cells/offering capabilities; gradual expansion requires evidence. |
 | QD delegated PXE | Q1/Q2 infrastructure plus exact delegation/proxy policy, hostile installer and physical-stop tests | DelegatedContract only; not guest image correctness, security or persistent firmware trust. |
 | QE external fulfillment | Applicable Q0/Q2 controls plus #64 provider journal, exclusion, decision races, independent evidence and #65 R3 recovery | Only registered provider capability/firmware/profile scope; no assumed Fleet cell topology. |
+| QP passive field maintenance | Applicable Q0 and independent M/C/R/F/A controls; PassiveWitnessed identity, exact field procedure, durable online permit/start boundary, independent site/crew exclusion and witness evidence; D36–D40 | Only scoped physical maintenance, not compute, boot, cleaning or network-configuration capability. No MachineCapacity/BMC/OS/Installation prerequisites for the passive target. |
 
 Q0 cannot substitute for Q1. QD/QE are additional scopes, not shortcuts to Q2.
 No profile currently has a passing evidence bundle under this proposal.
+
+QP is a capability-specific qualification, not an alternate allocator/executor.
+It uses the same ledger, selected cell and recovery infrastructure. Its production
+activation requires G0–G5, owner/security approval, production-topology field/restore
+drills and independent review at Q2 rigor, not an unrelated non-Talos boot exercise
+on a passive panel. Every non-applicable boot/media/quota predicate needs a scoped
+owner decision and provenance; accounting proof is not waived. QP cannot enable
+server commissioning or supplier execution. An idle compute repair also requires
+the applicable server qualification and separate revalidation before allocation.
 
 ### Activation sequence
 
@@ -458,7 +476,7 @@ No profile currently has a passing evidence bundle under this proposal.
 | --- | --- | --- |
 | G0 independent bootstrap | Named domains, offline access, no circular dependencies, tested R/F controls | Observation only. |
 | G1 durable custody | Acknowledged-write preservation, old-primary fencing, exact blob/key restore and owner checkpoint coverage | No effect-authorizing admission. |
-| G2 owner protocols | #60 close-before-change and quota; #61 network effects; #62 stop; #63 identity; #64 if external; #65 cleanup | Affected capability remains unpublished/disabled. |
+| G2 owner protocols | #60 close-before-change and applicable accounting; #61 network effects/dependency fences; #62 execution or field stop; #63 identity; #64 if external; #65 subject-specific clearance | Affected capability remains unpublished/disabled; scoped non-applicability requires owner proof, never fabricated prerequisites. |
 | G3 qualification evidence | Exact profile, required scenarios, failed-run history, owner acceptance and independent adversarial review | No production enablement; missing evidence is unknown. |
 | G4 scoped activation | R/current boundary receipts and owner Open revisions; explicit asset/cell/provider allowlist and bounded rollout | Never global enable by default. |
 | G5 continuing validity | Current identity/firmware/configuration and trust, evidence freshness, no unresolved overlapping custody | Close affected gates before effective revocation; retain cleanup. |
@@ -519,6 +537,11 @@ writer. A missing observation is an inconclusive/failed gate, never a pass.
 | D33 | Repeat adopted cleanup with real prior holds, possible delayed Acquire, external accounting obligations, overlapping allocation or only empty quota listings | Reconcile every real obligation and original cancellation/release receipt; other allocation settles through its own case. No dummy hold, fictitious quota acknowledgment or absence-based NotApplicable. Unknown scope/coverage retains occupied quarantine. |
 | D34 | Restore M before Preparation L1 or adopted resolution/R1 while a cell/boot/network owner retains a later send; lose a recipe key or prior approval | Conservative union includes non-consumer/domain custody, no automatic replay. Old paths fenced and fresh lineage established; missing exact identity, approval, keys or accounting coverage blocks destructive recovery, clearance and reuse. |
 | D35 | Revoke adopted policy/accounting evidence after EffectsClosed but before R2, or deliver old commissioning/cleanup after first consumer allocation | Before R2 retain actual accounting facts and occupied quarantine. After R2 permanent subject/fence/binding tombstones reject old effects; any new safety action uses current ownership, never old wipe authority. |
+| D36 | Follow #63's panel-17 passive move trace: witnessed Device and accepted plan, no supply/Machine/quota/Installation/boot, positive no-active-dependency proof | PhysicalMaintenance L1 atomically retains exact authority, old/new resources, inventory closure, custody, shared slot and outbox. One online-start field permit; independent result/cessation, inventory disposition and #65 accounting/certificate precede R2. Destination reservations persist; fresh physical evaluation never creates compute eligibility. |
+| D37 | Race maintenance L1 against another transition, destination hold, adoption, release and retirement; on idle-server variant race allocation/Preparation | Total ordered ledger/predicate checks select one conflicting winner. Exact own-transition closure is accepted only for its admitted operation; no generic Closed-gate bypass. Observational overlaps retain union custody, not overwrite a winner. No loser dispatch or partial destination/custody commit. |
+| D38 | Lose permit delivery/start/completion replies; cancel or expire authority; let old crew resume after a replacement requests access | S1 retains possible field work; same-key reconciliation never creates a second start. Independent old-crew/site exclusion and physical inspection precede replacement/L5/R2. Unknown retains both positions; return movement needs a new authorized plan, not database rollback. |
+| D39 | Restore M or cell before maintenance L1 with a later delivered permit; lose procedure bytes/approval/owner receipt or discover an unenumerated dependent | Union reconciliation includes field/site and owner histories, old/new physical reservations and non-consumer custody. No permit replay, free stock or clearance from absence; missing scope quarantines enclosing domain. New epoch alone does not fence technicians. |
+| D40 | Connect an active tenant through the panel, add a dependency concurrently, revoke its fence, or request reset/disconnect using panel permission | L1 requires current dependent-owner consent and effective fences established under original active custody. Graph/use interlocks block additions and stale starts. Maintenance cannot authorize tenant effects; dependent owners alone revalidate/resume. Target R2 does not clear their occupancy, claims or barriers. |
 
 D30–D35 qualify the proposed `custody-subjects-v1` alignment. Q0 instruments
 all new subject/lock/closure races; Q1 exercises both complete owned-hardware
@@ -526,6 +549,13 @@ paths with qualified physical evidence. QE additionally verifies #64 rejects
 unsupported non-consumer external envelopes rather than fabricating M1/R2/R3.
 For D32, record identity-resolution, active-use, approval, cleanup policy and
 accounting provenance as distinct evidence, not one aggregate success flag.
+
+D36–D40 qualify `physical-maintenance-v1`: Q0 exercises each transaction/closure
+race; QP exercises passive field work and old-crew/site exclusion with independent
+observers; Q1 covers the idle-server variant without treating maintenance as boot
+qualification. QE verifies non-consumer supplier envelopes remain rejected.
+Preserve D29's catalog-withdrawal/runtime distinction and D30–D35's commissioning
+and adopted-settlement semantics. These new rows are specifications, not passes.
 
 For Q0, instrument synthetic boundaries and all race schedules. Q1/QD/QE must
 repeat relevant rows on real qualified hardware/provider paths with independent
@@ -565,7 +595,7 @@ and treating a signature, backup completion or operator approval as physical pro
 This directory contains only Markdown and no diagrams, generated manifests,
 credentials or runtime tests. Validate repository-relative links, GitHub-style
 local anchors, exact pinned source paths and whitespace before publication.
-Acceptance D01–D35 is future work. No runtime, hardware or provider qualification
+Acceptance D01–D40 is future work. No runtime, hardware or provider qualification
 is claimed by documentation validation.
 
 - 2026-11-14: Draft authored on isolated main-based branch; #65 discovered and
