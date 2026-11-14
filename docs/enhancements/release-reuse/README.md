@@ -113,6 +113,11 @@ effects, networking owns configuration, accounting owners attest their obligatio
 The allocation-only references below remain requirements for Allocation, not
 implicit requirements to invent those objects on a non-consumer path.
 
+The `physical-maintenance-v1` extension also admits
+`PhysicalMaintenance(custodyUID)` to this same ReleaseCase union. Its clearance
+is defined below; it does not inherit commissioning, installation or consumer
+sanitization prerequisites merely by using the common release coordinator.
+
 ### Adopted authorization and policy provenance
 
 An observational adopted record can begin with only a custody UID and conservative
@@ -243,9 +248,76 @@ and publishes eligibility. #60 then independently admits a new consumer allocati
 with real quota and current permissions. No automatic install from adoption, no
 synthetic initial Installation and no readiness from a release certificate.
 
+### Physical maintenance clearance
+
+At #60/#62 maintenance L1, retain a scoped clearance policy and obligation manifest
+for the exact custody, inventory transition, field procedure and old/new physical
+plans. Bind canonical Device/enrollment and component identities, optional supply,
+permit/step and crew inventory, dependency-owner barriers and accounting provenance.
+This is explicit current custodian/service/technician authority to perform those
+physical actions and settle them, not implied authority from creating inventory.
+For passive equipment policy positively marks BMC, boot, media/data treatment,
+firmware restoration and compute quota NotApplicable with qualified scope/reason.
+It must still require identity, physical safety, no-late-work, authority revocation,
+dependent-owner disposition and physical reservation-interest accounting. A
+missing field or absent Machine is never a non-applicability decision.
+
+Maintenance R1 uses the full existing lock order and closes this subject's further
+ordinary field steps, records stop requests on the same slot and reconciles every
+outbox/permit/start, including unacknowledged deliveries. It does not cancel a
+dependent active Allocation or acquire its cleanup authority. #62 supplies actual
+worker cessation, independent old-crew/site exclusion and journal reconciliation;
+permit expiry or a returned form alone is not cessation. Missing start records
+after possible delivery remain Unknown. If work cannot be stopped/proven, retain
+occupancy, the recovery hold and both possible physical locations.
+
+Use Closing -> Settling -> Verifying -> EffectsClosed -> AccountingSettling -> R2.
+Cleaning is omitted only by the retained qualified field policy; a new remedy
+requires fresh explicit scope and predecessor settlement, not a fabricated erase
+or boot. Verifying consumes #63's exact placement/removed-component disposition,
+old-resource clearance and retained destination-interest receipts, plus #61 and
+other dependent owners' scoped barriers/dispositions or positive no-dependency
+evidence. Fresh observations must follow the final physical work. Returning to
+the old rack/reconnecting altered wiring requires a separately admitted successor
+field plan after cessation, never an automatic inverse operation.
+
+The certificate binds transition/custody UID/epoch, canonical Device/enrollment,
+full execution fence, accepted outcome (completed, verified no-work cancellation,
+or safely stopped but unverified), all permit and owner barriers, physical receipts,
+policy digests and current lineage. Real prior obligations use their original
+accounting owners and receipts; NotApplicable requires the same positive policy,
+origin, closed acquisition paths and decision-range proof defined above. No dummy
+quota hold, ReleaseHold call or synthetic acknowledgment is allowed. Unknown
+accounting or conflicting custody prevents R2.
+
+R2 rechecks that complete predicate and expected intentional inventory closure
+under #60's ordered locks, then atomically marks only this AssetCustody Settled,
+clears its occupancy, and retains subject/permit/fence tombstones and guard
+obligations still owed to other owners. It neither releases another subject nor
+frees active destination reservations. Outstanding unsafe location/removal/late-work
+obligations prevent R2; safely stopped but unverified equipment can clear only
+with inventory retaining conservative physical/domain exclusion and eligibility
+Disabled. No transient allocatable window is permitted.
+
+#63 alone then revalidates applicable placement/trust/path predicates. Passive
+equipment gains no compute eligibility. Idle compute stays Disabled until all
+current qualification is satisfied, with new Preparation/clearance if required;
+maintenance is not proof of disk cleaning or boot qualification. Dependent owners
+alone resume their active devices/connections under fresh mappings and current
+rights. Their barriers may remain held beyond target R2 with explicit retained
+owner obligations; target clearance is not a reconnect instruction.
+
+Retirement and restore include all physical-maintenance subjects even with no
+MachineCapacity or consumer objects. Restore reconciles field journals, site
+access and permit history, old/new reservations and owner barriers before any
+replay. A pre-L1 backup cannot discard a later field permit. Missing work inputs,
+approval, keys, target enumeration or independent cessation evidence leaves
+Unknown/domain quarantine. A newly issued epoch or two-person approval alone
+cannot revoke an old crew's physical ability to act.
+
 ### Retirement and partial restoration
 
-ProviderGuard includes both non-consumer subjects, approvals, resolution history,
+ProviderGuard includes all non-consumer subjects, approvals, resolution history,
 physical-domain holds, cleanup operations, network paths, accounting provenance,
 clearance certificates and unsettled outboxes even when Machine lists are empty.
 Retirement cannot purge their credentials, inputs or evidence. Closing admits only
@@ -383,7 +455,7 @@ Closing -> Settling -> Cleaning -> Verifying -> EffectsClosed -> Accounting
 ```
 
 Accounting is QuotaSettling for Allocation and AccountingSettling otherwise.
-Preparation clearance may omit Cleaning only when its retained qualified policy
+Preparation and physical-maintenance clearance may omit Cleaning only when their retained qualified policy
 and verified postconditions require no additional cleanup effects, never because
 an operation happened to return success.
 
@@ -792,6 +864,17 @@ suspension alone may create a ReleaseCase or authorize destructive cleanup.
     verify no-late-effect/network disposal and release-owned clearance before
     eligibility. Replay the original service envelope after new allocation:
     subject/fence/tombstone checks must reject every old effect.
+16. Move a witnessed passive panel through PhysicalMaintenance with no compute,
+    boot or media objects. Require field cessation, exact physical disposition,
+    dependency-owner evidence and positive accounting non-applicability before
+    R2; destination reservations remain and inventory revalidation is separate.
+17. Lose permit/start/completion acknowledgment; restore before maintenance L1;
+    race R1/R2 with retirement, another transition and idle-server allocation.
+    Retain Unknown and both positions until reconciled; no late crew action or
+    old permit can reach a successor. Safely stopped failure stays ineligible.
+18. Revoke a dependent connection fence or find an unapproved active custodian.
+    Block field progression/clearance as appropriate. Target maintenance R2
+    neither clears dependent occupancy nor authorizes reconnect, reset or wipe.
 
 Roll out observation-only obligation inventories first, with zero provisioning
 effects from adoption. Then qualify one owned-metal profile on isolated lab
