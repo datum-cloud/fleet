@@ -2,6 +2,13 @@
 
 Required validation for the [machine lifecycle contract](README.md).
 
+The proposed PXE/Redfish extension additionally requires the concrete
+[cross-system acceptance scenarios](../pxe-installation/README.md#acceptance-tests):
+competing boot/power/release operations, session closure with a live installer,
+offering withdrawal followed by reinstall, hub/cell partitions and stale reflected
+results, and managed-consumer assurance enforcement. These scenarios are not
+implemented or executed by this documentation change.
+
 Implement the following tests through Milo tenancy, IAM, entitlement, and quota.
 No implementation tests exist yet.
 
@@ -25,7 +32,7 @@ component, lose responses, and delay old workers to verify recovery.
 - **Consumer copies a named profile or reuses its name:** Require the custom
   path or protected publication provenance; reject lifetime substitution.
 - **Provider recreates an allowed profile under the same name:** Block use until
-  the provider removes and re-adds the entry in separate accepted class revisions,
+  the provider removes and re-adds the entry in separate accepted offering revisions,
   or selects a new name. An unrelated class edit cannot renew approval.
 - **Custom profiles are disabled, unsupported, or temporarily unverifiable:**
   Report the specific admission result without reserving capacity or purchasing.

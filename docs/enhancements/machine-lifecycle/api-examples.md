@@ -5,67 +5,52 @@ They show different lifecycle points, not one simultaneous observation. Names,
 identifiers, and timestamps are synthetic. They define no implemented APIs or
 production timing requirements. The enhancement owns field semantics and lifecycle rules.
 
-- [Provider MachineClass](#provider-machineclass)
+- [Provider MachineOffering](#provider-machineoffering)
 - [Consumer MachineClass](#consumer-machineclass)
 - [MachineProfile](#machineprofile)
 - [MachineCapacity](#machinecapacity)
 - [Machine](#machine)
 - [Installation](#installation)
+- [Delegated PXE Installation](#delegated-pxe-installation)
 - [Reinstallation predecessor](#reinstallation-predecessor)
 
 The exact MachineProfile CPU and memory shape, `Machine.status.requestedHardware`,
 and the `RequestResolved` condition are implemented; the rest of these responses
 remain proposed.
 
-## Provider MachineClass
+## Provider MachineOffering
 
 ```yaml
-apiVersion: metal.datumapis.com/v1alpha1
-kind: MachineClass
-# Classes span the provider project so namespaces can share an offering.
+apiVersion: provider.metal.datumapis.com/v1alpha1
+kind: MachineOffering
 metadata:
-  generation: 1
   name: standard-metal
-# The definition owns offering policy; profiles own hardware requirements.
-# Its mode cannot change after creation.
 spec:
-  # Named profiles select provider-local contracts by name.
-  # Fleet retains their resolved identities internally.
-  # Custom profiles default to disabled and require provider validation.
   profilePolicy:
     allowedProfiles:
       - name: accelerated-16c-64g
     customProfiles:
       enabled: false
-
-  # Access describes supported operations, not permission to perform them.
-  # The first implementation supports power control but no console sessions.
-  access:
-    consoleModes: []
-    powerControl: true
-
-  # Capacity limits selection to existing supply in one provider namespace.
-  # Labels identify candidates; they confer no eligibility or purchase authority.
-  capacity:
-    machineCapacities:
-      namespace: infra-ops
-      selector:
-        matchLabels:
-          fleet.datumapis.com/capacity-pool: general-metal
-
-    # Provider backend qualification and BMC enrollment are private cell state.
-
-# The projector reports the definition that the class evaluator accepted.
-# Acceptance validates the offering; it does not reserve or promise capacity.
+  capabilities:
+    installation:
+      sourceModes: [ManagedImage, DelegatedPXE]
+      executionDrivers: [ProviderAutomatic, CustomerRedfish]
+      completionContracts:
+        - {mode: VerifiedImage, assurance: QualifiedImage}
+        - {mode: CustomerCallback, assurance: DelegatedContract}
+    management:
+      profiles: [ReadOnly, Provisioning]
+      provisioningSteps: [OneTimePXE, Reset, LocalDisk]
+      powerControl: true
 status:
-  evaluatedRevision: class-revision-example
+  evaluatedRevision: offering-revision-example
   conditions:
     - type: Accepted
       status: "True"
       observedGeneration: 1
-      lastTransitionTime: "2026-10-27T12:00:00Z"
-      reason: DefinitionValid
-      message: "Profile policy and provider contract resolved."
+      lastTransitionTime: "2026-11-14T12:00:00Z"
+      reason: OfferingValid
+      message: "Profile and capability contracts accepted; no capacity reserved."
 ```
 
 ## Consumer MachineClass
@@ -82,6 +67,8 @@ metadata:
 # cannot become a definition or override its policy.
 spec:
   source:
+    apiGroup: provider.metal.datumapis.com
+    kind: MachineOffering
     project: provider
     name: standard-metal
 
@@ -90,8 +77,8 @@ spec:
 status:
   # The revision identifies the evaluated offering independently of this
   # reference object's generation. It does not grant source-use permission.
-  evaluatedRevision: class-revision-example
-  resolvedClass:
+  evaluatedRevision: offering-revision-example
+  resolvedOffering:
     # Publication maps allowed provider profiles to protected local copies.
     # These local names do not expose provider inventory or grant use.
     profilePolicy:
@@ -99,9 +86,13 @@ status:
         - name: accelerated-16c-64g
       customProfiles:
         enabled: false
-    access:
-      consoleModes: []
-      powerControl: true
+    capabilities:
+      installation:
+        sourceModes: [ManagedImage, DelegatedPXE]
+        executionDrivers: [ProviderAutomatic, CustomerRedfish]
+      management:
+        profiles: [ReadOnly, Provisioning]
+        powerControl: true
   conditions:
     - type: SourceResolved
       status: "True"
@@ -463,8 +454,6 @@ metadata:
   name: example-os-1
   namespace: default
 # The entire spec is immutable so recovery uses the same authorized inputs.
-# Machine and approved image are required. Fleet checks install and image-use
-# permissions and internally pins the Machine lifetime, image artifacts, and digests.
 spec:
   machineRef:
     name: example
@@ -472,17 +461,22 @@ spec:
   # an unexpected OS. None identifies a blank allocation with no admitted install.
   expectedPredecessor:
     type: None
-  imageRef:
-    name: qualified-linux
-
-  # Optional bootstrap data comes from a Secret in this namespace under
-  # explicit caller authority. Protected copies of its identity, digest, and bytes
-  # preserve the accepted input through Secret changes or deletion.
-  bootstrapConfigRef:
-    name: example-bootstrap
+  source:
+    managedImage:
+      imageRef: {name: qualified-linux}
+      bootstrapConfigRef: {name: example-bootstrap}
+  execution:
+    driver: ProviderAutomatic
+  completion:
+    mode: VerifiedImage
+    requiredAssurance: QualifiedImage
+    postCompletionBoot: LocalDisk
 
 # The projector reports the retained installation outcome, not guest health.
 status:
+  sourceMode: ManagedImage
+  completionMode: VerifiedImage
+  assurance: QualifiedImage
   completedAt: "2026-10-27T12:00:00Z"
   conditions:
     - type: Accepted
@@ -523,3 +517,42 @@ expectedPredecessor:
   type: Installation
   name: example-os-1
 ```
+
+## Delegated PXE Installation
+
+This alternative successor uses the same retained allocation and consumes its
+predecessor atomically. It cannot run concurrently with another installation.
+The source union, execution driver, and completion contract are immutable. A
+provisioning session may attach only after this request is admitted; it cannot
+change its endpoint or create another boot operation. Required assurance is not
+achieved assurance: pending/unknown status must not claim DelegatedContract.
+
+```yaml
+apiVersion: metal.datumapis.com/v1alpha1
+kind: Installation
+metadata:
+  name: example-os-2
+  namespace: default
+spec:
+  machineRef: {name: example}
+  expectedPredecessor: {type: Installation, name: example-os-1}
+  source:
+    delegatedPXE:
+      endpoint:
+        url: https://pxe.customer.example/boot.ipxe
+        trustBundleRef: {name: customer-pxe-ca}
+        authorizationRef: {name: customer-pxe-credentials}
+  execution:
+    driver: CustomerRedfish
+  completion:
+    mode: CustomerCallback
+    requiredAssurance: DelegatedContract
+    postCompletionBoot: LocalDisk
+```
+
+After independently verified executor shutdown, PXE/network revocation, local
+boot, and management validation of the reflected result, status may report
+`sourceMode: DelegatedPXE`, `completionMode: CustomerCallback`,
+`assurance: DelegatedContract`, and `Ready=True`. Neither the callback nor session
+closure proves shutdown. Managed consumers requiring QualifiedImage reject this
+contract and cannot use its Ready condition to open their activation/join gate.
