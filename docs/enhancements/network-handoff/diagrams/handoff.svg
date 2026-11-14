@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="720" viewBox="0 0 1120 720" role="img" aria-labelledby="title description">
   <title id="title">Proposed standalone Metal network handoff</title>
-  <desc id="description">Management admits exact intent on the hub. One selected cell writes local results reflected by Karmada. Networking owns paths and addresses; Fleet boot owns the admitted response. Disconnect and settlement precede claim disposition and capacity release.</desc>
+  <desc id="description">Management admits exact subject intent on the hub. One selected cell writes local results reflected by Karmada. Networking owns paths and addresses; Fleet boot owns admitted boot responses when applicable. Physical maintenance consumes active owners' prerequisite fences, not new network materialization or boot authority.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
     <style>
@@ -20,8 +20,8 @@
   <text x="32" y="66" class="note">PROPOSED CONTRACT • no implemented integration or hardware qualification implied</text>
   <rect x="32" y="102" width="310" height="130" class="box"/>
   <text x="50" y="132" class="heading">Fleet management</text>
-  <text x="50" y="159" class="body">Immutable allocation + admitted operation</text>
-  <text x="50" y="183" class="body">Installation, driver, inputs, fence, custody</text>
+  <text x="50" y="159" class="body">Exact subject + admitted operation</text>
+  <text x="50" y="183" class="body">Typed plan, inputs, fence, custody</text>
   <text x="50" y="207" class="body">Verifies evidence before public status</text>
   <rect x="402" y="102" width="280" height="130" class="box"/>
   <text x="420" y="132" class="heading">Federation hub</text>
@@ -45,9 +45,9 @@
   <text x="50" y="460" class="note">Provider-assigned facts are observations, not Datum intent</text>
   <rect x="578" y="326" width="510" height="150" class="owner"/>
   <text x="596" y="357" class="heading">Fleet boot + scoped proxy: admitted response</text>
-  <text x="596" y="385" class="body">Installation-bound script, digest, endpoint and step budget</text>
+  <text x="596" y="385" class="body">Installation or service boot plan, digest and step budget</text>
   <text x="596" y="411" class="body">Every connection/redirect/artifact origin policy checked</text>
-  <text x="596" y="437" class="body">Execution owner separately proves stop + local-disk boot</text>
+  <text x="596" y="437" class="body">Execution proves stop; local boot only when applicable</text>
   <text x="596" y="460" class="note">No customer DHCP authority or direct-fetch escape</text>
   <path d="M915 232 V305 H287 V326" class="edge"/>
   <path d="M915 305 V326" class="edge"/>
@@ -55,8 +55,8 @@
   <text x="50" y="561" class="heading">Release barrier: unknown never becomes free capacity</text>
   <text x="50" y="590" class="body">Close admission → fence old effects → disconnect acknowledgment → coordinator settlement → claim disposition</text>
   <text x="50" y="618" class="body">Networking holds exact assignments; stale detach cannot touch a new binding even if the IP is reused.</text>
-  <text x="50" y="646" class="body">Release owner also requires boot/session revocation, installer settlement and provider cleaning evidence.</text>
+  <text x="50" y="646" class="body">Release requires each subject's applicable proofs; passive maintenance has no boot or installer requirement.</text>
   <path d="M287 476 V530" class="edge"/>
   <path d="M833 476 V530" class="edge"/>
-  <text x="32" y="701" class="note">Commissioning → isolation • Provisioning → stop/revoke/isolate → Customer • Every transition consumes exact owner evidence</text>
+  <text x="32" y="701" class="note">PhysicalMaintenance: owner prerequisite fences before field work; no borrowed active-custody rights or automatic reconnect.</text>
 </svg>

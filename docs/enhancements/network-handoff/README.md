@@ -227,6 +227,51 @@ Its restored receipts/tombstones must reconcile custody UID, resolution history,
 binding generations and current lineage before replay or new materialization.
 Losing the response retains unknown custody, not permission to recreate a binding.
 
+### Physical maintenance dependency barriers
+
+The proposed `physical-maintenance-v1` path does not add a network materialization
+mode. A `PhysicalMaintenance(custodyUID)` field procedure uses the same #60/#62
+ledger and cell journal, but may not call Materialize as if it were Commissioning
+or ServiceCleanup. A passive panel needs no NetworkBinding, image or bootstrap.
+The materialization subject union above remains intentionally narrower than the
+execution subject union. Do not invent an empty Allocation to cross this boundary.
+
+Before maintenance L1, networking supplies an attributable, revisioned impact
+inventory for the exact old/new physical graph, ports/Cables and connection
+incarnations. It either positively attests no affected active connections or
+identifies every existing binding, authority owner and required barrier. An empty
+Fleet claim list cannot prove no external/active connection exists. Networking
+and inventory interlock dependency additions/use against this graph revision
+through registered #60 gates; an untracked writer makes the workflow unqualified.
+
+Each necessary disconnect/isolation is separately authorized and admitted under
+the affected binding's existing Allocation/AdoptedCustody or qualified owner
+authority. Retain current active-use/disruption consent or an independently
+authorized termination decision. Neither panel ownership nor its field permit
+grants rights over connected servers, switches, ports or tenants. Networking
+alone performs configuration, returns effective data-plane/old-writer fences
+including existing flows, and protects exact address/claim dispositions. Existing
+opaque external ownership without a qualified fence contract blocks the move.
+
+Before L1 retain an owner-signed prerequisite receipt bound to transition request,
+target/dependency identities, graph/mapping revision, exact binding/claim IDs,
+owner authorization and operation fences, effective cutoff, no-reuse/disposition
+obligations, gate epochs, validity and restore lineage. Required owner barriers
+must be effective and held against new use; their expected closed ordinary-effect
+gates are predicates, not a bypass of current maintenance safety gates. #60 L1
+checks this frozen set atomically with its inventory closure and target custody.
+Any dependency change closes the relevant gate before becoming effective and
+blocks further field starts/renewals; already-started work still needs #62 cessation.
+
+After field cessation and new physical verification, networking revalidates the
+exact mapping and current active-custody permissions before separately admitting
+resumption or replacement bindings. Maintenance L5/R2 never reopens a connection
+or transfers its authority. Retained connections/addresses are not deleted merely
+because the panel moved. The barrier/receipt inventory and permanent stale-request
+rejection survive retirement and restore; missing receipts retain Unknown and
+reconcile with the owner's journal before reuse. #65 consumes these scoped
+dispositions, not a fictional passive-device network disconnect acknowledgment.
+
 ### Fleet to networking API
 
 These are semantic operations, not a claim that RPC routes exist. Requests and
@@ -574,6 +619,8 @@ qualify real switch/firmware behavior.
 | N19 | First enrolled Preparation with no Machine/Allocation/Installation; delay Materialize acknowledgment | Same custody/operation/binding recovered; boot waits for prepared receipt; no customer path; complete stop/disconnect/disposal precedes release-owner clearance |
 | N20 | Resolve adopted custody and authorize service cleanup; replay pre-resolution request or old tenant detach | Only exact resolved subject/current fence accepted; prior-owner paths need real evidence; no mutation by IP/name or inherited consumer authority |
 | N21 | Restore before commissioning/cleanup binding existed; race new allocation with delayed service request | Reconcile owner histories/tombstones; unknown path holds custody; late request cannot touch successor binding and no missing Installation is synthesized |
+| N22 | Passive panel move, first with no active connections, then with a tenant connection | Positive graph-bound no-dependency proof permits field-only admission; connected case requires the existing owner's current consent and effective prerequisite fences, never a maintenance-created consumer binding |
+| N23 | Add a dependent connection, revoke a barrier, or restore before its receipt while a field permit exists | Gate-ordered dependency changes block starts/renewals; reconcile held owner and physical custody. Target R2 cannot reconnect or dispose another owner's retained claims |
 
 Qualification covers every advertised hardware/firmware/NIC/networking backend,
 IPv4/IPv6 combination and endpoint mode. Record finite freshness/clock/lease
@@ -644,7 +691,7 @@ networking implementation, not a substitute for attribution and cleanup evidence
 4. Inventory-trust evidence, provider-fact adapters and external withdrawal proofs
    supplied by their future owners; release-owner coordination consuming the exact
    acknowledgments above; deployment-owner failure-domain and recovery design.
-5. Contract fixtures and hardware qualification for N1–N21, then separate security
+5. Contract fixtures and hardware qualification for N1–N23, then separate security
    and networking-owner reviews. No implementation, rollout or sign-off is implied.
 
 ### Decisions still requiring owner agreement
