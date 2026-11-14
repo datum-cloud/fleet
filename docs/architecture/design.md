@@ -37,7 +37,7 @@ All names below describe proposed resources, not implemented schemas.
 | Subsystem | Responsibilities and principal resources |
 | --- | --- |
 | Inventory | `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`: approved installation plans, actual assets, physical reservations, and verification evidence. |
-| Capacity publication | Provider `MachineClass` definitions and consumer-local references; discovery and safe summaries through service enablement and IAM. Publication does not reserve capacity or grant source-use permission. |
+| Capacity publication | Provider `MachineOffering` owns capability policy; `MachineOfferingAssignment` grants acquisition access; consumer `MachineClass` is a one-hop published view. `MachineProfile` contains immutable requirements. Publication does not reserve capacity or grant runtime authority. |
 | Machine allocation | Provider `MachineCapacity`, customer `Machine`, and private `MachineAllocation`: exclusive reservation, admission of consumer operations, activation, and release across provider and consumer projects. |
 | Bare-metal provisioning | Typed provider resources and adapters: execute admitted preparation, installation, power, console, and cleanup operations against exact assets. Backend workflows remain private. |
 | OS configuration | `MachineImage`, `InterfaceClass`, `Installation`, and `OSConfigPolicy`: approved artifacts, immutable installation requests, configuration composition, and one selected executor per incarnation. |
@@ -57,6 +57,21 @@ logical attachments, address allocation, and switch configuration. Galactic owns
 fabric and routing intent. DNS, certificates, and service addresses stay with
 their owning services. Fleet consumes these contracts and their evidence.
 
+The [PXE enhancement](../enhancements/pxe-installation/README.md) defines the target
+Metal installation contract, with Fleet as an optional provider implementation.
+It supersedes older image-only examples for current design work without rewriting
+the pinned source history. Installation has exactly one managedImage/delegatedPXE
+source, consumes its predecessor atomically, and retains explicit completion mode,
+assurance and one execution driver. Provisioning Redfish sessions attach to that
+admitted operation, never independent boot authority. Installation, runtime power,
+and release share serialization/fencing; session closure or callbacks do not prove
+executor shutdown. Managed consumers require QualifiedImage assurance.
+
+For Fleet execution, management writes hub intent, the selected cell writes only
+local results, Karmada reflects them, management validates exact identity, fence
+and freshness, and the projector publishes public status. Cells have no hub
+credentials. Partitions or uncertain results never imply readiness or settlement.
+
 ## Lifecycle and authority contracts
 
 1. **Preserve distinct identities.** DeviceClaim describes an approved physical
@@ -72,15 +87,20 @@ their owning services. Fleet consumes these contracts and their evidence.
 3. **Use one allocator.** Standalone consumers and managed clusters compete through
    the same durable reservation protocol. Create one immutable, terminal
    MachineAllocation between the customer Machine and provider MachineCapacity;
-   retain current authorization, quota holds, class revisions, and local source
+   retain current authorization, quota holds, accepted offering identity and
+   contract/profile, installation/management capabilities, and local source
    object identity as private admission evidence. Names, not cross-control-plane
    Kubernetes UIDs, are authored references. Overlapping classes must not
    duplicate supply.
 4. **Separate discovery from authorization.** Consumer MachineClasses reference a
-   provider definition in one hop. Check current source-use permission,
+   provider MachineOffering in one hop. Check effective acquisition assignment,
+   current source-use permission,
    entitlement, quota, and placement feasibility at allocation commit. A copied
    reference, cached status, namespace, or privileged controller identity is not
    proof of consumer access.
+   Withdrawal blocks new allocations, not retained runtime rights. Reinstall uses
+   retained capabilities plus current install/image/secret/endpoint permissions
+   and explicit safety/suspension checks. Cleanup retains authority independently.
 5. **Persist exact inputs before effects.** Retain admitted plans, artifacts,
    digests, target identities, predecessor preconditions, execution authority,
    and operation correlation. Timeouts mean unknown outcomes; recover the existing

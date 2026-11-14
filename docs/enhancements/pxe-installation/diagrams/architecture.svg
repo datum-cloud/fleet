@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1240" height="820" viewBox="0 0 1240 820" role="img" aria-labelledby="title desc">
   <title id="title">Fleet PXE installation control-plane architecture</title>
-  <desc id="desc">Provider and consumer project APIs feed Fleet management. Fleet writes admitted work to a Karmada hub, which targets one location cell. The cell controls networking, boot, power, managed installation, or delegation to a customer PXE endpoint, and returns evidence.</desc>
+  <desc id="desc">Provider and consumer project APIs feed Fleet management. Fleet writes admitted work to a Karmada hub, which targets one location cell. The cell controls networking, boot, power, managed installation, or delegation to a customer PXE endpoint, and writes local evidence. Karmada reflects selected-cell results; management validates before public projection. Cells have no hub credentials. Fleet is an optional Metal provider implementation.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
@@ -18,22 +18,22 @@
   </defs>
 
   <rect width="1240" height="820" fill="#ffffff"/>
-  <text x="40" y="42" class="title">PXE installation follows Fleet's existing authority boundaries</text>
+  <text x="40" y="42" class="title">Metal contract / optional Fleet execution: one retained authority</text>
 
   <rect x="30" y="70" width="280" height="700" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
   <text x="50" y="100" class="lane">PROJECT CONTROL PLANES</text>
 
   <rect x="50" y="125" width="240" height="185" class="box" fill="#e0f2fe" stroke="#0284c7"/>
   <text x="70" y="155" class="head">Provider project API</text>
-  <text x="70" y="182" class="body">MachineClass policy</text>
+  <text x="70" y="182" class="body">MachineOffering policy</text>
   <text x="70" y="204" class="body">MachineCapacity</text>
-  <text x="70" y="226" class="body">Fleet physical inventory</text>
+  <text x="70" y="226" class="body">Assignments: acquisition access</text>
   <text x="70" y="257" class="small">Provider and allocator-owned state</text>
   <text x="70" y="278" class="small">remains canonical here.</text>
 
   <rect x="50" y="350" width="240" height="180" class="box" fill="#ecfdf5" stroke="#059669"/>
   <text x="70" y="380" class="head">Consumer project API</text>
-  <text x="70" y="407" class="body">Machine</text>
+  <text x="70" y="407" class="body">Machine + published MachineClass</text>
   <text x="70" y="429" class="body">Immutable Installation</text>
   <text x="70" y="451" class="body">ManagedImage or DelegatedPXE</text>
   <text x="70" y="482" class="small">Customers write requests;</text>
@@ -65,17 +65,17 @@
   <text x="385" y="557" class="body">Exact target and operation</text>
   <text x="385" y="579" class="body">Selected-cell delivery</text>
   <text x="385" y="607" class="small">Management writes intent;</text>
-  <text x="385" y="626" class="small">the cell writes execution status.</text>
+  <text x="385" y="626" class="small">Karmada reflects local results.</text>
 
   <rect x="640" y="70" width="570" height="700" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
   <text x="660" y="100" class="lane">SELECTED LOCATION / CELL</text>
 
   <rect x="670" y="125" width="230" height="155" class="box" fill="#fef3c7" stroke="#d97706"/>
   <text x="690" y="157" class="head">Cell execution</text>
-  <text x="690" y="185" class="body">Local handoff adapter</text>
+  <text x="690" y="185" class="body">Delivered intent / local results</text>
   <text x="690" y="207" class="body">Jobs and optional KRO</text>
   <text x="690" y="229" class="body">Provider operation recovery</text>
-  <text x="690" y="257" class="small">Cannot change the admitted target.</text>
+  <text x="690" y="257" class="small">No hub or project credentials.</text>
 
   <rect x="950" y="125" width="230" height="155" class="box" fill="#ecfeff" stroke="#0891b2"/>
   <text x="970" y="157" class="head">Networking owner</text>
@@ -94,8 +94,8 @@
 
   <rect x="950" y="340" width="230" height="175" class="box" fill="#fee2e2" stroke="#dc2626"/>
   <text x="970" y="372" class="head">Provider executor</text>
-  <text x="970" y="400" class="body">Redfish power and boot</text>
-  <text x="970" y="422" class="body">Operation ID and fencing</text>
+  <text x="970" y="400" class="body">One admitted execution driver</text>
+  <text x="970" y="422" class="body">PXE / power / release fence</text>
   <text x="970" y="444" class="body">Local boot transition</text>
   <text x="970" y="466" class="body">Release and cleaning</text>
   <text x="970" y="494" class="small">Credentials remain private.</text>
@@ -124,8 +124,11 @@
   <path d="M900 455 H925 V625 H950" class="arrow dash"/>
   <path d="M1065 585 V535 H900 V465" class="arrow dash"/>
   <path d="M670 175 H630 V535 H585" class="arrow dash"/>
-  <path d="M365 585 H330 V470 H290" class="arrow dash"/>
+  <path d="M455 475 V380" class="arrow dash"/>
 
+  <path d="M365 300 H315 V470 H290" class="arrow dash"/>
+  <text x="380" y="430" class="small">Reflected results to validation</text>
+  <text x="650" y="310" class="small">Dashed return: Karmada reflection, not a cell hub write</text>
   <text x="615" y="542" class="small" transform="rotate(-90 615 542)">targeted delivery</text>
   <text x="928" y="582" class="small">admitted request</text>
   <text x="915" y="548" class="small">result</text>
