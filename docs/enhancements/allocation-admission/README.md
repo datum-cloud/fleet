@@ -149,14 +149,14 @@ can delete an unsettled record.
 | ProviderGuard | provider Project UID, Open/Closing/Retired, outstanding obligations and custody manifest | Retirement coordinator through ledger transactions. |
 | AdmissionAttempt | server ID, exact Machine key, request digest, original caller/delegation evidence, dependency vector, resolved source identities and digests, attempt sequence, state | Metal admission coordinator. |
 | QuotaCustody | globally unique hold key, consumer Project UID, provider guard, one machine-count unit, quota anchor/claim incarnation, grant receipt, disposition and acknowledgment | Quota adapter; allocation transaction alone changes local ownership to Bound. |
-| Enrollment and Occupancy | canonical asset key, exact supply/Device keys, eligibility revision, tagged Allocation/Preparation/AdoptedCustody or unknown domain custody, reservation epoch | Inventory adapter writes enrollment evidence; shared allocation/custody coordinator alone acquires occupancy; release coordinator clears it only with settlement proof. |
+| Enrollment and Occupancy | canonical asset key, exact Device and optional supply keys, eligibility revision when supply exists, tagged Allocation/Preparation/AdoptedCustody/PhysicalMaintenance or unknown domain custody, reservation epoch | Inventory adapter writes enrollment evidence; shared allocation/custody coordinator alone acquires occupancy; release coordinator clears it only with settlement proof. |
 | MachineAllocation | immutable allocation ID, exact Machine/supply/asset, selected cell incarnation, accepted offering/profile content, acquisition evidence, hold, release authority, lifecycle state | Admission coordinator creates; lifecycle coordinator performs guarded transitions. |
 | MachineBinding | unique exact Machine key, allocation ID, terminal tombstone | Allocator inserts once; never retargets. |
 | RecoveryOutbox | unique kind/record/revision, immutable payload digest and target, delivery state, retry metadata | Transaction creating work inserts; publisher only updates transport acknowledgment. |
 | AdmissionDecision | commit/abort identity, attempt, relevant gate epochs, hold disposition, ledger recovery epoch, transaction sequence | Ledger transaction; append-only. |
 
 An operation owner uses the ledger-local atomic hook against exactly one tagged
-subject: `Allocation`, `Preparation`, or `AdoptedCustody`. Allocation retains its
+subject: `Allocation`, `Preparation`, `AdoptedCustody`, or `PhysicalMaintenance`. Allocation retains its
 existing binding and Installation predecessor rules; the other subjects use the
 asset-custody contract below, not a synthetic Machine, quota hold or Installation.
 The operation owner owns operation schema, effect conflicts and executor fences;
@@ -164,7 +164,7 @@ it cannot maintain a second independent asset lock.
 
 Use unique constraints on the canonical asset's enrollment, occupied supply,
 occupied asset, exact MachineBinding, allocation ID, hold key, and outbox identity.
-Occupied includes Bound, Preparation, AdoptedOccupied, Releasing, Quarantined,
+Occupied includes Bound, Preparation, AdoptedOccupied, PhysicalMaintenance, Releasing, Quarantined,
 and unknown execution/domain custody. Keep the
 MachineBinding tombstone after release: the same Machine incarnation cannot obtain
 a replacement allocation. A new Machine incarnation requires a new request and
@@ -233,6 +233,7 @@ are not editable physical identities or alternative consumer bindings.
 | `Preparation(custodyUID)` | Exact trusted enrollment/Device/supply, allocation explicitly Disabled, no allocation/adopted/unknown occupancy, maintenance transition, release hold or unresolved alias/domain conflict. Atomically install Preparation occupancy, guard obligation, slot sequence, operation/input pins and outbox. | Execution L5 settles all effects; release validates custody-clearance obligations; inventory separately publishes fresh eligibility. |
 | `AdoptedCustody(custodyUID)` | Durable AdoptedOccupied/Unknown record may initially identify only a conservative physical domain. Observation grants no effects. Trusted exact resolution and a separately approved ownership/cleanup transition are required before any mutation. | Release R1/R2 use this custody identity and real accounting evidence or proved non-applicability; never manufacture an allocation. |
 | `Allocation(allocationUID)` | Existing immutable consumer binding, charged escrow, current action/input authority and Installation rules remain unchanged. | Existing allocation release, quota acknowledgment and permanent MachineBinding. |
+| `PhysicalMaintenance(custodyUID)` | Trusted registered Device, exact physical transition and current maintenance authority; no conflicting target custody, transition or domain hold. Acquire occupancy and operation atomically with inventory closure as specified below. Supply is optional. | #62 settles field-work authority/effects; #65 clears only this custody after exact physical disposition and accounting proof; #63 independently revalidates inventory. |
 
 There is one persistent execution slot per canonical asset in its enrollment
 lineage, not one competing slot per subject. It retains a monotonically increasing
@@ -309,6 +310,98 @@ mapping/authority/keys keeps effects disabled; missing target enumeration blocks
 the enclosing physical domain. Closing ProviderGuard permits only previously
 retained, narrowly reauthorized settlement obligations, never new commissioning
 or a new adoption-derived wipe permission. No custody path bypasses retirement.
+
+### Physical maintenance without consumer custody
+
+`physical-maintenance-v1` adds one tag to the existing AssetCustody and operation
+union, not a second allocator, executor or public API. It covers an explicitly
+requested move, bounded component repair or removal of a trusted registered
+Device with no current target custody. A passive panel needs neither
+MachineCapacity nor Machine, quota hold, Installation, BMC, bootstrap image or
+boot qualification. Enrollment for this path retains the canonical Device/trust
+lineage with supply explicitly NotApplicable; it does not create compute supply.
+Rack, Cable, termination and PowerFeed resources are exact plan dependencies and
+reservation interests, not synthetic Machines. Unresolved discovery uses
+AdoptedCustody instead; registration never schedules maintenance.
+
+Retain current provider/custodian approval and authenticated requester,
+service-principal and assigned technician action/input decisions, separated
+approver/witness roles, exact permitted physical actions and forbidden actions,
+disruption window, qualified field procedure, finite step budget and deadlines.
+Ownership/maintenance permission is distinct from inventory-plan edit permission.
+Retain canonical asset, Device and enrollment incarnations, custody UID/epoch,
+transition UID, predecessor and candidate plan digests, component/port identities,
+old/destination physical-resource keys and interests, dependency graph revision,
+authority vector, selected cell and independent prior-work settlement proof.
+Exact procedure/evidence bytes and any secret versions use #62 protected custody.
+No image or credential is required when the procedure has neither.
+
+Before admission, #63 resolves the complete impact graph and #61 plus each active
+custody owner supplies either attributable no-dependency evidence or exact scoped
+consent and effective prerequisite fences. A panel's maintenance authority grants
+no right to reset, disconnect, drain, rewire live connections to, or erase its
+dependent servers/switches. Required dependent actions are separately admitted
+under those devices' existing Allocation/AdoptedCustody or other qualified owner
+authority, never borrowed from this new subject. Their owner-controlled barriers
+must already be effective before maintenance L1 and remain held until explicit
+owner revalidation. Unknown/unowned dependencies block L1. Initial scope excludes
+cross-provider physical graphs and dependent owners without this interlock.
+
+L1 uses the complete total order above, including all impacted gates, custody
+and physical keys. With no remote calls it:
+
+1. Revalidates current Open maintenance/action/input/trust/qualification/recovery
+   gates and Open ProviderGuard; separately requires dependent ordinary-effect
+   gates to match their owner-issued closed barrier revisions. Those barriers
+   are preconditions, not permission to bypass a closed maintenance safety gate.
+2. Checks exact target identity, unchanged complete dependency graph, prior-work
+   settlement and no target allocation, Preparation, adopted/unknown occupancy,
+   release/recovery hold or other nonterminal InventoryTransition. An allocated
+   target must use its existing Allocation authority; an adopted target must use
+   its explicit adoption transition. Neither may be relabeled maintenance.
+3. Atomically creates this custody and occupancy, accepts/reserves the exact
+   destination graph while retaining old interests, records this transition and
+   ProviderGuard obligations, invalidates dependent evaluations and closes the
+   inventory mutation gate, advances the persistent asset slot, and commits the
+   operation/input pins/decision/outbox. This is one transaction, not an interval
+   in which a free asset is visible between closure and custody acquisition.
+
+The matching transition UID, custody UID, mutation ID and expected post-closure
+epoch identify **this** admitted transition; they cannot waive a different
+maintenance transition. Predicate/absent-key checks cover a concurrently inserted
+hold, alias, dependency or plan. Same request/digest recovers the same decision;
+different input conflicts. An inventory mutation token alone has no effect
+authority. Renewal under this operation validates its exact intentional closure,
+current remaining authority and owner barriers; another closure/revocation denies
+renewal. Unexpected drift before L1 permits only separately qualified safety
+recovery, not this ordinary maintenance path.
+
+The occupied target and retained old/new physical interests exclude allocation,
+commissioning, conflicting plans and maintenance. Observational adoption may
+record a newly discovered overlap, but must preserve this occupancy, close safety
+gates and retain the union; it cannot replace the winning subject. Release and
+retirement close or settle retained work, never steal the slot. A physical plan
+winning destination reservation first makes L1 fail without any partial custody
+or dispatch. Unchanged reservation interests transfer without double charging.
+
+#62's field-work steps use the same L2/L3/S1 journal and one-use permit boundary.
+Cancel, expiry, missing completion or an offline technician never frees custody.
+#65 R1/L5/R2 clearance requires no-late-work and inventory-owned physical
+disposition plus real accounting settlement or positive policy/provenance-backed
+non-applicability. It creates no quota acknowledgment. Active destination
+reservations remain after R2; failed work may settle only into Disabled/quarantine,
+not verified placement. Inventory alone revalidates new identity/placement/path
+evidence; an idle server additionally needs all current compute qualification,
+including separately admitted Preparation if invalidated. A passive panel never
+acquires compute eligibility. Dependent owners decide their own resumption.
+
+Restore and retirement retain maintenance authority, dependency barriers,
+old/destination plans, permit delivery/start/stop inventory, slot and accounting
+history even without consumer records. A pre-L1 backup cannot erase a later
+technician permit. Reconcile the conservative union with independent field/owner
+journals, fence old writers and field access, then establish the new lineage.
+Missing scope, bytes, identity or physical cessation evidence blocks replay and
+clearance; incomplete target enumeration quarantines the enclosing domain.
 
 ### Authority fencing and revocation ordering
 
@@ -677,6 +770,15 @@ with acknowledged gate closures and allocation decisions.
     real accounting or provenance-backed non-applicability is mandatory. Restore
     before either subject existed while the cell retains a send: recover Unknown
     custody, never free stock, synthetic quota acknowledgment or automatic replay.
+
+13. Admit a witnessed passive panel move under PhysicalMaintenance without any
+    compute or boot objects. Race destination reservations, another transition,
+    adoption, commissioning/allocation of idle supply, R1/R2 and retirement.
+    Assert atomic closure/custody/slot/outbox, exact transition self-match, no
+    effects by losers and no clearance from timeout or missing consumer records.
+14. Restore before maintenance L1 with a delivered field permit; retain both
+    locations and reject replay. Dependent active-owner fence loss/addition must
+    block work; a panel approval cannot authorize that owner's disruptive action.
 
 These specialize shared A1 (exclusive acquisition), A2 (retained contract), A3
 (current authority), A5 (federation), A6 (custody), and A7 (observational adoption)
