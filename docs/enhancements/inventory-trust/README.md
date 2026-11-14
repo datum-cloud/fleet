@@ -97,8 +97,8 @@ no inherited PXE changes.
 | [BMC access #41][bmc] | `f04e63ddd9d10cbf306daf3a0232961debd85e7f` | Private management endpoints and allocation-scoped effect authority. |
 | [Offerings #58][offerings] | `a922ff1eb3275e26af6ae750a7515ddde245a754` | MachineOffering product policy; one-hop consumer publication. |
 | [PXE #59][pxe] | `d7ff793b03711203dbfc9fac87d43922cc649b6f` | Exact Installation inputs, qualified boot mapping, admitted preparation and operations. |
-| [Allocation admission #60][allocation] | `d072f3b5ded5d212e59ecc511c9282037d48c9f1` | Revised proposed architectural contract: ledger, gates, enrollment, occupancy, custody and restore epochs. |
-| [Network handoff #61][network] | `04adf7013de42c40086502918dbfe05302ec00e8` | Current reviewed head: physical mapping, owner corroboration, disconnect and disposal evidence. |
+| [Allocation admission #60][allocation] | `4bf770db8bd2b065748c3b9384d4c72f9b8ec0e1` | Revised proposed architectural contract: ledger, gates, enrollment, occupancy, custody and restore epochs. |
+| [Network handoff #61][network] | `25fef48790b13da95900de64ffd2d1b36e0510eb` | Current reviewed head: physical mapping, owner corroboration, disconnect and disposal evidence. |
 
 The [repository design](../../architecture/design.md), [inventory background](../../proposals/fleet-management/inventory.md)
 and [provenance](../../proposals/fleet-management/MIGRATION.md) provide context.
@@ -1003,15 +1003,20 @@ which protocol to implement. Missing support means fail closed.
 [bmc]: https://github.com/datum-cloud/fleet/blob/f04e63ddd9d10cbf306daf3a0232961debd85e7f/docs/enhancements/secure-bmc-access.md
 [offerings]: https://github.com/datum-cloud/fleet/blob/a922ff1eb3275e26af6ae750a7515ddde245a754/docs/enhancements/profile-access/README.md
 [pxe]: https://github.com/datum-cloud/fleet/blob/d7ff793b03711203dbfc9fac87d43922cc649b6f/docs/enhancements/pxe-installation/README.md
-[allocation]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
-[network]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
+[allocation]: https://github.com/datum-cloud/fleet/blob/4bf770db8bd2b065748c3b9384d4c72f9b8ec0e1/docs/enhancements/allocation-admission/README.md
+[network]: https://github.com/datum-cloud/fleet/blob/25fef48790b13da95900de64ffd2d1b36e0510eb/docs/enhancements/network-handoff/README.md
 
 ## Alignment revision provenance
 
-On 2026-11-14 the [complete-set integration review][custody-review] identified
-missing commissioning and adopted-settlement joins. This `custody-subjects-v1`
-alignment is proposed documentation, not runtime qualification or sign-off.
-This proposal's contract-bearing revision is `d79495be33d7c0ab126b497dac6a5874924eee81`.
+On 2026-11-14 the [prior integration review][custody-review] identified
+commissioning and adopted-settlement gaps, addressed by `custody-subjects-v1`.
+The [fresh complete-set review][maintenance-review] accepted those joins but
+identified the remaining passive-maintenance execution-subject gap. This
+`physical-maintenance-v1` alignment extends the same custody/slot/journal/clearance
+protocol without changing those joins or catalog-withdrawal/runtime semantics.
+All contracts remain proposed; fresh independent complete-set review and later
+implementation/owner/hardware qualification are required. No self-signoff.
+This proposal's contract-bearing revision is `2b384517fd08c04cf078923ebda2cddcfa1dc424`.
 The companion revisions below are immutable **contract-bearing snapshots**, not
 claims about final PR heads or merge dependencies. Subsequent commits only refresh
 pins and provenance. Read this aligned set together: older embedded companion
@@ -1022,15 +1027,17 @@ Any later normative change requires a new manifest and fresh complete-set review
 
 | Companion | Exact dependency revision |
 | --- | --- |
-| [#60 allocation-admission][custody-60] | `d072f3b5ded5d212e59ecc511c9282037d48c9f1` |
-| [#61 network-handoff][custody-61] | `04adf7013de42c40086502918dbfe05302ec00e8` |
-| [#62 execution-recovery][custody-62] | `6a886b415edb5ba9c1295e4d88db9cd86bd51f0e` |
-| [#64 provider-fulfillment][custody-64] | `8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5` |
-| [#65 release-reuse][custody-65] | `96ca49da7d0753be47ea164b7008e90d3a81d2aa` |
+| [#60 allocation-admission][custody-60] | `4bf770db8bd2b065748c3b9384d4c72f9b8ec0e1` |
+| [#61 network-handoff][custody-61] | `25fef48790b13da95900de64ffd2d1b36e0510eb` |
+| [#62 execution-recovery][custody-62] | `4f9934980b3f441c1d777157fa0ba1dcfce372d7` |
+| [#64 provider-fulfillment][custody-64] | `58a6596d30b3819d0b3799192730626439ef9885` |
+| [#65 release-reuse][custody-65] | `310a55d97394bb296c579bd3ad01177455c15cc4` |
 
 [custody-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883007682
-[custody-60]: https://github.com/datum-cloud/fleet/blob/d072f3b5ded5d212e59ecc511c9282037d48c9f1/docs/enhancements/allocation-admission/README.md
-[custody-61]: https://github.com/datum-cloud/fleet/blob/04adf7013de42c40086502918dbfe05302ec00e8/docs/enhancements/network-handoff/README.md
-[custody-62]: https://github.com/datum-cloud/fleet/blob/6a886b415edb5ba9c1295e4d88db9cd86bd51f0e/docs/enhancements/execution-recovery/README.md
-[custody-64]: https://github.com/datum-cloud/fleet/blob/8e21b043bc853d9d81f5aa54b0dc3c52465fc4a5/docs/enhancements/provider-fulfillment/README.md
-[custody-65]: https://github.com/datum-cloud/fleet/blob/96ca49da7d0753be47ea164b7008e90d3a81d2aa/docs/enhancements/release-reuse/README.md
+[custody-60]: https://github.com/datum-cloud/fleet/blob/4bf770db8bd2b065748c3b9384d4c72f9b8ec0e1/docs/enhancements/allocation-admission/README.md
+[custody-61]: https://github.com/datum-cloud/fleet/blob/25fef48790b13da95900de64ffd2d1b36e0510eb/docs/enhancements/network-handoff/README.md
+[custody-62]: https://github.com/datum-cloud/fleet/blob/4f9934980b3f441c1d777157fa0ba1dcfce372d7/docs/enhancements/execution-recovery/README.md
+[custody-64]: https://github.com/datum-cloud/fleet/blob/58a6596d30b3819d0b3799192730626439ef9885/docs/enhancements/provider-fulfillment/README.md
+[custody-65]: https://github.com/datum-cloud/fleet/blob/310a55d97394bb296c579bd3ad01177455c15cc4/docs/enhancements/release-reuse/README.md
+
+[maintenance-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883682145
