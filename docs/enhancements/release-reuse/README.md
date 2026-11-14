@@ -9,13 +9,14 @@ latest-milestone: null
 ## Summary
 
 **Proposed protocol, not implemented or qualified behavior.** Release is an
-irreversible closure of an allocation's customer authority followed by durable,
+irreversible closure of a subject's admitted authority followed by durable,
 evidence-driven settlement. It is not deletion, a power command, or a backend
 cleaning flag. Extend the shared admission ledger in [allocation #60][allocation];
 do not add an allocator, independent occupancy lock, or second hardware writer.
 Use [execution #62][execution] for every effect and [networking #61][network] for
-every network barrier. Only a validated release decision followed by acknowledged
-quota settlement can clear occupancy. Free occupancy is necessary, not sufficient,
+every network barrier. Only a validated release decision with acknowledged real
+accounting settlement or proved non-applicability can clear occupancy. Allocation
+release always requires its original quota acknowledgment. Free occupancy is necessary, not sufficient,
 for new allocation.
 
 Scope is standalone Metal, including Fleet-owned and qualified rented supply.
@@ -80,13 +81,14 @@ owner reference can cascade-delete these records. Public objects are projections
 
 | Record | Required retained contents | Sole writer |
 | --- | --- | --- |
-| ReleaseCase | Release ID; immutable Allocation/Machine/Project UIDs; exact supply, enrollment and component manifest; reason and destructive authorization; pinned policy/recipe; closure sequence; phase/version; provider guard; dependency vector; remaining obligations | Management release coordinator, guarded ledger transitions |
+| ReleaseCase | Release ID; immutable tagged subject and Project UIDs, Allocation/Machine only for Allocation; original custody/resolution history otherwise; exact supply, enrollment and component manifest; reason and destructive authorization; pinned policy/recipe; closure sequence; phase/version; provider guard; dependency vector; remaining obligations | Management release coordinator, guarded ledger transitions |
 | CleanupObligation | Stable obligation ID; release ID; kind and exact target; required predicate; predecessor dependencies; operation/step IDs; input digests and protected references; owner; status and evidence references | Release coordinator defines/accepts; owner reports evidence, not acceptance |
 | ClosureManifest | Ledger high-water sequence; complete admitted operation, session, credential, boot grant, network binding and preparation set; outbox IDs; selected-cell/provider incarnations; closure receipts and unresolved sends | Release coordinator snapshots central inventory; execution owner appends authenticated boundary reconciliation |
 | CleanupAuthority | Service principal/audience; exact obligation and permitted verbs/targets; release and execution fences; input digest; finite dispatch validity; independently renewable authority revision; revocation high-water mark | Management authority issuer under shared ledger admission |
 | EvidenceEnvelope | Issuer identity and qualification; exact record/component IDs; causal operation/step; dependency revisions; fences; observations and uncertainty; lineage/restore epochs; digest and protected payload reference | Respective evidence producer appends; management validates |
 | ReleaseCertificate | Accepted obligation/evidence closure, final effect fences, assurance vector, network dispositions, terminal-effects sequence, policy digest, restore lineage; no secret material | Management release coordinator |
 | FinalizationObligation | Quota key and decision, provider reservation/generation, finalization request/receipt, terminal outboxes and replay barriers | Quota/provider adapters report; coordinator accepts under ledger transaction |
+| AccountingDisposition | Exact subject, required accounting authority/policy revisions, coverage and decision cutoffs, real obligation IDs/terminal receipts or positive NotApplicable proof, unresolved gaps, signature and restore lineage | Accounting owners report; release coordinator validates, never fabricates quota acknowledgments |
 | CustodyIncident | Unknown/mismatch reason, affected scope, responsible service, retained original identities, recovery contacts, approvals and next evidence required | Service incident/recovery authority; cannot mark supply free |
 
 Reuse #60's Enrollment, Occupancy, MachineAllocation, MachineBinding, QuotaCustody,
@@ -97,6 +99,167 @@ binding tombstones. A cell writes local results, Karmada reflects them, and
 management validates before accepting a certificate or projecting public status.
 For a non-Fleet provider, use #64's authenticated result path with the same
 management validation, not invented direct cell-to-project credentials.
+
+## Non-consumer custody settlement
+
+The proposed `custody-subjects-v1` alignment adds explicit `Preparation(custodyUID)`
+and `AdoptedCustody(custodyUID)` ReleaseCase subjects alongside
+`Allocation(allocationUID)`. Each uses #60 Occupancy/AssetCustody, ProviderGuard
+and #62's **same persistent asset slot**. No Machine, MachineAllocation, quota
+hold or Installation predecessor is synthesized. Release is the sole clearance
+writer; inventory resolves identity and publishes eligibility, execution owns
+effects, networking owns configuration, accounting owners attest their obligations.
+The allocation-only references below remain requirements for Allocation, not
+implicit requirements to invent those objects on a non-consumer path.
+
+### Adopted authorization and policy provenance
+
+An observational adopted record can begin with only a custody UID and conservative
+asset/alias/physical-domain exclusion, without trusted Device or known accounting.
+It grants zero mutation authority. Keep the original UID and origin/observer
+evidence throughout resolution and settlement. #63's witnessed read-only process
+must establish exact canonical asset, enrollment UID/epoch, Device and component
+incarnations, physical placement, authenticated BMC route, all NICs and feeds.
+Its atomic resolution installs canonical exclusion before narrowing broader
+holds and retains overlapping claims. No boot, credential rotation, power or
+network mutation may be used to bootstrap this prerequisite. Unresolved targets
+or conflicts remain occupied; a free-text operator assertion cannot resolve them.
+
+Before R1, seal a proposed `AdoptionSettlementAuthorization` containing:
+
+- Original custody/domain and exact resolution revision; provider Project UID,
+  prior-custodian identities and current independently verified approval evidence.
+- Active-use obligations and every affected tenant/custodian's consent or a
+  separately authenticated, policy-authorized termination decision; absence of a
+  public Machine is not evidence of no active user or legal destruction right.
+- Explicit transfer of management/cleanup authority for this exact asset into
+  the same Fleet custody domain, effective scope, conditions and destructive
+  limits. This does not transfer a live allocation between providers/domains.
+- Versioned provider cleanup and onboarding policy, original prior-owner data
+  treatment commitments, source provenance/signatures and immutable accepted
+  content. Choose a qualified CleanupProfile satisfying their combined obligations;
+  conflicting/unknown commitments block, rather than default to a weaker profile.
+- Complete known and potentially missing media/component history, old credential,
+  network, installer/task and manual/external-writer inventory; responsible owners
+  and exact predicates for proving coverage. Importing an inventory is not proof
+  that it is complete or that any old authority has stopped.
+- Current service-principal action/input rights, exact recipe/image/adapter,
+  trusted targets, secret versions, network/origin policy, finite budgets/deadlines,
+  complete gate vector, restore lineage and required accounting authorities.
+
+Prior-custodian approval, provider approval and service authority are separate
+checks. Authenticate their rights and scope, not just signatures, at commit.
+Observational adoption, later inventory Ready, retirement, physical possession,
+offering withdrawal or an operator incident never grants wipe authority. If proof
+is missing, retain Unknown. Already-authorized obligations retain narrow settlement
+authority after customer deletion; a Closing provider cannot originate a new
+adoption cleanup grant. Revoked service/target-safety authority blocks dispatch.
+
+Adopted R1 locks #60's full total order and compares original occupied custody,
+resolution/approval/input digests, current gates and expected epoch. It records
+one ReleaseCase per subject, permanently closes new non-settlement authority,
+captures all central outboxes and old-authority inventory, registers obligations
+and records a stop request without stealing the shared slot. The origin hold and
+all real accounting remain. For a case with no prior Fleet operation, a verified
+external quiescence/closure manifest takes the place of operation history, **not**
+an Installation predecessor or an invented zero-effect receipt.
+
+Proceed through Closing → Settling → Cleaning → Verifying → EffectsClosed using
+the same evidence predicates and #62 journal/broker. Old-owner paths, BMC queues,
+RAM code and independent/manual execution authorities need effective exclusion
+and accepted no-late-effect proof before cleaning. A ledger closure cannot fence
+an external administrator. Missing prior-owner network bindings require owner
+resolution and disposition, not Fleet IPAM edits. #61 admits a new ServiceCleanup
+binding keyed to AdoptedCustody, exact release obligation and full operation fence;
+no consumer session or customer connectivity is permitted. Cleanup itself must
+stop, drain and dispose its own temporary paths/credentials before EffectsClosed.
+
+Use the full sanitization/restoration assurance vector below. For adopted media,
+the provenance-backed prior-custodian coverage manifest plus independently verified
+current enumeration replaces the unavailable pre-allocation manifest. An unknown
+or missing original disk is still an unresolved data-bearing obligation; current
+enumeration alone cannot prove it never existed. Data history insufficient for
+cryptographic erase cannot be repaired by enabling encryption during adoption.
+Qualified alternative treatment must meet all retained commitments; otherwise
+quarantine. Evidence binds original custody UID, resolution, enrollment/component
+epochs, authorization and policy digests, operation/fence and release lineage.
+
+### Accounting without a fabricated consumer hold
+
+AccountingDisposition is a tagged, owner-attested result, not a boolean waiver:
+
+| Kind | Required proof before adopted R2 |
+| --- | --- |
+| `ObligationsSettled` | Reconcile the union of #60 decisions/hold keys, prior-custodian ledgers, provider records and required accounting authorities. Retain each real obligation's identity, applicable policy and terminal disposition/acknowledgment from its owner. Real Metal holds use #60's original keyed release/tombstone protocol after EffectsClosed. Never transfer another allocation's hold into this case. |
+| `NotApplicable` | Positive accounting-owner decision that this exact custody never incurred an applicable machine-count/other required settlement obligation: issuer/authority incarnation, policy revision and reason, subject/resolution scope, custody origin and searched journal/archive ranges/checkpoints, closed acquisition paths and reconciliation provenance. Empty API listings, missing quota IDs, a restored empty ledger or provider assertion alone are insufficient. No quota ReleaseHold call or fabricated Released acknowledgment. |
+| `Unknown` | Any unresolved owner, scope, history gap, possible late Acquire or contradictory record retains custody/quarantine. A new dummy charge cannot repair missing history. |
+
+For mixed cases retain per-authority results: every required owner must either
+settle its real obligations or positively establish non-applicability. Capture
+these dependency gates at R1, fence future acquisition against the closing subject,
+and query outside SQL. At certificate acceptance and R2 validate current authority,
+exact coverage/cutoffs and gate revisions under locks. A possible delayed Acquire
+requires the actual #60 cancellation tombstone, never NotApplicable. Unknown
+origin or accounting scope blocks proof. Billing/refunds and business write-offs
+remain distinct from technical custody settlement. An overlapping real allocation
+settles through its own release case; this case cannot clear its occupancy.
+
+Use `AccountingSettling` for these subjects rather than a fictitious QuotaSettling
+step. After EffectsClosed and accepted AccountingDisposition, R2 atomically records
+the adopted case/AssetCustody Settled, clears **only** that exact Occupancy revision,
+writes permanent subject/operation/authority tombstones and terminal outboxes, and
+leaves eligibility Disabled. Recheck full release predicate, current resolution,
+policy, accounting and restore lineage. No MachineBinding is written. Lost R2
+reply recovers the same decision; no new release key. A revoked proof between
+accounting completion and R2 retains occupied quarantine and actual accounting
+facts, never synthesizes a replacement charge. After R2, any defect creates a
+new safety incident under current ownership, not revival of old wipe authority.
+
+### Preparation clearance and transition to reuse
+
+At Preparation L1, retain the release-policy obligations for that exact service
+plan and verified first-use/previous-clearance provenance. They cover all possible
+sends, verifier/installer stop, boot/credential revocation, exact network disposal,
+data/firmware baseline postconditions and physical interests. After completion or
+cancellation, preparation R1 closes further dispatch and reconciles that manifest;
+L5 evidence does not itself clear custody. No blanket consumer-data erase is
+implied. Additional repair/cleaning needs separately approved exact scope and a
+settled predecessor under the same subject/slot.
+
+The release owner validates every applicable predicate (with qualified policy
+reasons for non-applicable ones), no-late-effect evidence and AccountingDisposition.
+New enrolled, never-consumer commissioning uses accounting-owner policy and origin
+history to prove NotApplicable; any real discovered obligation must reconcile.
+R2 clears only Preparation occupancy and writes the same replay barriers. It
+leaves enrollment Disabled; failed/cancelled plans do not become prepared by
+virtue of clearance. Physical placement reservations remain held unless their
+inventory owner independently proves clearance of all interests.
+
+Following adopted R2, fresh separately authorized Preparation on non-conflicting
+supply establishes boot/preparation evidence; following successful Preparation R2,
+#63 alone validates fresh required identity/placement/network/power/trust predicates
+and publishes eligibility. #60 then independently admits a new consumer allocation
+with real quota and current permissions. No automatic install from adoption, no
+synthetic initial Installation and no readiness from a release certificate.
+
+### Retirement and partial restoration
+
+ProviderGuard includes both non-consumer subjects, approvals, resolution history,
+physical-domain holds, cleanup operations, network paths, accounting provenance,
+clearance certificates and unsettled outboxes even when Machine lists are empty.
+Retirement cannot purge their credentials, inputs or evidence. Closing admits only
+already-retained scoped settlement, not new ownership/destructive authority.
+
+Restore conservatively unions pre-resolution domains, resolved aliases/components,
+operation/network/physical journals, prior-owner records and real accounting
+histories. Fence old writers and reestablish the independent lineage before
+per-record recovery. Missing resolution, original approval, policy bytes, secret
+keys, media history or accounting coverage keeps the affected scope occupied and
+effects disabled. Old NotApplicable proofs and clearance certificates require
+revalidation; backup absence cannot prove no consumer or no send ever existed.
+If the affected asset set is incomplete, quarantine its enclosing domain. Replay
+of old cleanup after a later consumer allocation must fail subject/fence/tombstone
+checks, never target by reused name, port or address.
 
 ## Admission closure and ordering
 
@@ -115,17 +278,19 @@ actor/input permissions and separate safety or suspension gates. Withdrawal alon
 closes no existing allocation runtime gate and creates no ReleaseCase. A safety
 isolation obligation is not destructive-release authority.
 
-R1 is one SERIALIZABLE #60 transaction, using its global order: complete sorted
-authority-gate set, ProviderGuard, relevant attempt, QuotaCustody, MachineBinding,
-Enrollment and Occupancy; then allocation/execution slot and release child rows
-in deterministic ID order. All competing operation, inventory invalidation,
+R1 is one SERIALIZABLE #60 transaction, using its complete total order: gates,
+ProviderGuard, attempt/provider-reservation children, QuotaCustody, MachineBinding,
+Enrollment, Occupancy including domain holds, inventory-domain/identity/plan and
+physical-resource rows, custody, asset slot, Operation, ReleaseCase, then its
+obligation/closure/accounting children and append-only decisions/outboxes. Skip
+inapplicable classes and sort exact keys within each class. All competing operation, inventory invalidation,
 release, retirement and allocator writers must use that same order. Integrating
 the appended slot/release locks is an owner prerequisite, not another mutex.
 Do no remote calls while locks are held. Retry serialization failures against
 fresh revisions; after an uncertain commit, inspect the original release key
 and decision on the current durable writer.
 
-R1 atomically:
+For Allocation, R1 atomically (non-consumer substitutions are specified above):
 
 1. Validates the destructive trigger, exact binding and retained cleanup contract.
    Inserts one ReleaseCase per Allocation; same key/different inputs conflicts.
@@ -164,7 +329,7 @@ customer install/session admission ----+---- R1 release closure
             same gates/guard/slot -----+       +-- revoke and inventory sends
                                               +-- settle predecessor effects
                                               +-- clean and close cleanup effects
-                                              +-- certificate + quota acknowledgment
+                                              +-- certificate + accounting proof
                                               +-- R2 Released + clear occupancy
                                               +-- provider R3, if applicable
                                               +-- fresh eligibility + new allocation
@@ -187,7 +352,7 @@ it before effects. No release completion reopens a retired provider gate.
 
 ## Concrete release state machine
 
-MachineAllocation remains Releasing (or Quarantined) through the nonterminal
+MachineAllocation, or the exact non-consumer AssetCustody, remains Releasing (or Quarantined) through the nonterminal
 ReleaseCase phases. Phase changes use expected version, dependency vector and
 accepted evidence sequence. The phase is a projection of obligations, not proof.
 
@@ -199,21 +364,27 @@ accepted evidence sequence. The phase is a projection of obligations, not proof.
 | Verifying | Close cleanup dispatch, settle cleanup itself, remove service boot/media/network access and temporary credentials, verify the entire assurance vector. May schedule a new explicitly authorized repair plan through Cleaning only after the previous attempt is settled; never mutate/replay a partial step in place. |
 | EffectsClosed | Accepted ReleaseCertificate and irreversible rejection of old consumer and cleanup effects. No hardware mutation remains authorized. All network dispositions are acknowledged. Only accounting, provider finalization and observation remain. |
 | QuotaSettling | Durable terminal-effects decision and same-key quota release outbox; inspect lost replies. Unknown quota disposition blocks R2. |
-| Released | R2 atomically records Released and clears occupancy with confirmed quota acknowledgment, certificate and dependency checks. MachineBinding and authority tombstones remain. External finalization may still block eligibility/retirement. |
+| AccountingSettling | Non-consumer subjects validate every real obligation or positive non-applicability proof; no invented hold/acknowledgment. Unknown blocks R2. |
+| Released / Settled | R2 atomically records terminal subject disposition and clears only its occupancy with required accounting proof, certificate and dependency checks. Existing MachineBinding and all authority tombstones remain. External finalization may still block eligibility/retirement. |
 | Quarantined | Any missing, contradictory, unqualified or irrecoverable obligation. Record blocked phase, full custody and incident. Only inspect/fence/qualified repair. Return to the blocked phase only after reviewed new proof; never reopen customer admission. |
 
 ```text
-Closing -> Settling -> Cleaning -> Verifying -> EffectsClosed -> QuotaSettling
+Closing -> Settling -> Cleaning -> Verifying -> EffectsClosed -> Accounting
    |           |          |           |              |               |
    +-----------+----------+-----------+--------------+---------------+
                           | any failed/unknown proof                  |
                           v                                          v
-                     Quarantined                               R2 Released
+                     Quarantined                           R2 Released/Settled
                     (occupied hold)                              (tombstone)
                           |                                           |
               evidence-based recovery                      external R3 if needed
               to recorded blocked phase                    + fresh reuse gates
 ```
+
+Accounting is QuotaSettling for Allocation and AccountingSettling otherwise.
+Preparation clearance may omit Cleaning only when its retained qualified policy
+and verified postconditions require no additional cleanup effects, never because
+an operation happened to return success.
 
 Each CleanupObligation progresses Required → Admitted → Running → EvidencePending
 → Satisfied; possible effects with lost evidence become OutcomeUnknown, never
@@ -416,7 +587,7 @@ barriers, valid evidence and no unresolved physical obligation. Persist its
 ReleaseCertificate and terminal-effects decision before quota release. The
 certificate does not itself clear occupancy.
 
-QuotaSettling uses #60's original non-expiring charged hold, same request identity,
+For Allocation, QuotaSettling uses #60's original non-expiring charged hold, same request identity,
 monotonic custody revision and queryable terminal decision. Unknown/lost replies
 retain the local hold and occupancy. A delayed Bind cannot resurrect a released
 hold. Once the authenticated Released acknowledgment is retained, R2 locks the
@@ -474,6 +645,7 @@ obligations block purge indefinitely. Same-project provider/consumer uses the
 same rules. Forced purge is disaster recovery, not a supported force-free path.
 
 Cleanup execution uses a narrowly scoped service authority retained at allocation
+or explicitly established by the adopted/preparation contract above,
 and instantiated per obligation after R1. Permission revocation or suspension of
 the original customer does not revoke the service's duty to settle previously
 authorized effects. It permits only observe, stop/fence, revoke, qualified clean,
@@ -598,6 +770,25 @@ suspension alone may create a ReleaseCase or authorize destructive cleanup.
 11. Test terminal tombstone retention under storage pressure, new Machine name
     reuse, new Allocation/provider generation, delayed old cleanup and destruction
     remedies. Destroyed or unresolved assets must never publish as available.
+12. Start with observational adopted occupancy and no Allocation/hold/trusted
+    Device. Assert zero effects. Resolve identity read-only, obtain exact prior-
+    custodian/provider approvals and current service authority, settle old paths,
+    execute qualified cleanup, close the cleaner, obtain positive accounting
+    NotApplicable provenance and commit R2. Fresh Preparation and inventory
+    evaluation, not R2 alone, enable the first consumer allocation.
+13. Repeat with real discovered holds/external obligations, lost acknowledgments,
+    unknown media history, overlapping allocation, revoked approval, or an empty
+    restored accounting ledger. No dummy hold or invented quota acknowledgment;
+    missing identity/authority/evidence or real accounting blocks destructive
+    admission or R2 as appropriate. Narrowing a domain never clears another case.
+14. Race Preparation/adopted R1/R2 with allocation, maintenance, adoption and
+    retirement under the full lock order, including physical reservations and
+    operation/release children. Restore before resolution or after cleanup send
+    but before receipt; retain union custody, no blind wipe replay or stale proof.
+15. Enroll and commission without consumer objects. Close/cancel at every boundary;
+    verify no-late-effect/network disposal and release-owned clearance before
+    eligibility. Replay the original service envelope after new allocation:
+    subject/fence/tombstone checks must reject every old effect.
 
 Roll out observation-only obligation inventories first, with zero provisioning
 effects from adoption. Then qualify one owned-metal profile on isolated lab
