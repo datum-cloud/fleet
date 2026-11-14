@@ -170,14 +170,15 @@ cell leases and multiple resource-version checks are not commit protocols.
 | PhysicalPlanRevision | Immutable canonical input digest, exact dependency snapshots, complete geometry/endpoints/power vector, expected predecessor and approval; reservation coordinator. |
 | ReservationDecision / PhysicalReservation | Attempt/digest, commit sequence, resource keys, retained/successor interests and state; reservation coordinator. All members commit together. |
 | EnrollmentChallenge / EnrollmentBinding | Nonce digest, target, profile, approvers, expiry, consumed decision and reciprocal DeviceClaim/Device binding; registrar. |
-| Existing Enrollment | Same #60 enrollment row, extended with trust/placement/evaluation revisions. Inventory adapter writes its evidence fields; no parallel enrollment table can authorize supply. |
+| Existing Enrollment | Same #60 enrollment row, extended with trust/placement/evaluation revisions; supply explicitly NotApplicable for a non-compute Device. Inventory adapter writes its evidence fields; no parallel enrollment table can authorize supply. |
 | Evidence / Evaluation | Immutable issuer report and verifier conclusion, complete dependency vector, deadlines and invalidations; evidence ingress appends reports, verifier appends evaluations. |
-| InventoryTransition | Move/repair/removal state, expected revisions, allocation/operation references and obligations; inventory transition coordinator. No independent execution authority. |
+| InventoryTransition | Move/repair/removal state, expected revisions, exact tagged custody/operation and closure references, dependency-owner barriers and obligations; inventory transition coordinator. No independent execution authority. |
 | Existing RecoveryOutbox / AdmissionDecision | Same ledger mechanisms as #60, including retained work and append-only decisions. Transaction owner inserts; publisher changes delivery acknowledgment only. |
 
 Opaque CanonicalIdentity is an identity registry, not a second supply occupancy
 table. EnrollmentBinding records a physical claim relationship; existing Enrollment
-remains the sole allocatable asset-to-supply association. Enforce unique live
+remains the sole asset-to-supply association when supply exists; passive enrollment
+retains only its exact Device/trust lineage. Enforce unique live
 canonical asset, unique bound claim, unique Device incarnation, and at most one
 active placement per asset. Components have stable slot IDs plus replacement
 incarnations; reusing a slot never reuses its evidence.
@@ -606,6 +607,27 @@ cleanup. No previous Installation or consumer authority is inherited.
 
 ### Movement and maintenance
 
+The proposed `physical-maintenance-v1` path closes the non-consumer subject gap.
+For a trusted unallocated Device, including a PassiveWitnessed panel without
+MachineCapacity, #60 creates `PhysicalMaintenance(custodyUID)` and #62 admits its
+finite field procedure. There is no Preparation boot plan, synthetic Machine,
+quota hold, Installation or adopted provenance. InventoryTransition remains
+coordination state, not execution authority. Allocated targets instead retain
+their Allocation authority; adopted/unknown targets cannot use maintenance to
+evade explicit ownership transition, active-use obligations or identity resolution.
+
+An impact manifest includes all component/port/Cable interests, upstream power,
+old/new Rack/Facility plans, dependent active Devices and connection custodians.
+Current provider/custodian maintenance approval covers the exact target and actions;
+plan-edit permission is insufficient. Dependent owners independently authorize
+any disruption under their existing subjects and establish effective quiescence/
+network barriers **before** PhysicalMaintenance L1. Retain scoped proof of no
+dependencies when appropriate; an empty consumer Machine list is not that proof.
+Their ordinary-effect/dependency mutation interlocks prevent use or graph changes
+while barriers are held. #61 owns configuration and connection resumption; the
+panel permit cannot reset a server, change a switch or disconnect an unapproved
+active connection. Unenumerated or unfenceable dependencies block this path.
+
 Only one nonterminal InventoryTransition may change a given asset/placement.
 Shared switch/PDU/rack work enumerates all dependent assets and obligations; the
 coarse inventory gate covers dependency additions racing that enumeration. The
@@ -625,6 +647,14 @@ Requested -> GatesClosed -> DestinationReserved -> EffectsQuiesced
 Any uncertain effect/clearance -> BlockedUnknown (retain both reservation sets)
 ```
 
+For PhysicalMaintenance, the GatesClosed/DestinationReserved custody admission
+is one atomic L1: validate owner pre-fences and current authority, reserve the
+destination while retaining old interests, acquire target occupancy/slot, record
+transition and inventory closure, seal inputs and outbox. EffectsQuiesced rechecks
+those retained barriers before the permit. The separate boxes describe logical
+predicates, not a permission to commit half that transaction. Other existing
+subject workflows retain their own admission/settlement semantics.
+
 1. Retain transition ID, exact asset/allocation set, predecessor placement, scope,
    approved disruption consent/window and immutable candidate destination graph.
    Have the operation owner admit the exact bounded maintenance operation and
@@ -642,7 +672,10 @@ Any uncertain effect/clearance -> BlockedUnknown (retain both reservation sets)
    movement. A device-level inventory permission is not tenant power permission.
 4. Only then issue a one-use field-work permit through the operation owner,
    bound to transition, asset, exact old/new plans and recovery epoch. Technicians
-   record start before touching equipment and attributable completion afterward.
+   obtain #62's durable once-only online start acceptance before touching equipment
+   and record attributable completion afterward. The same cell broker journals
+   S1 before permit delivery; lost delivery/start acknowledgment is Unknown, not
+   permission for another permit. Independent witnesses verify result and cessation.
    A permit's deadline prevents starting new work, but cannot prove work stopped;
    the executor's settlement rules and physical inspection resolve uncertainty.
 5. Verify actual destination, identity, all required cables and power dependencies
@@ -654,7 +687,12 @@ Any uncertain effect/clearance -> BlockedUnknown (retain both reservation sets)
    settle. Transfer Cable references explicitly; they do not follow a Device name.
    The operation owner resumes the same allocation only with new mapping/network
    evidence and settled predecessor effects. Reopen required gates and settle
-   the provider obligation after all transition obligations complete.
+   the provider obligation after all transition obligations complete. For
+   PhysicalMaintenance, #65 R1 closes further field steps and R2 alone clears its
+   custody after L5, inventory physical-disposition receipts and accounting proof.
+   Inventory then publishes fresh applicable evaluations; neither R2 nor an empty
+   slot establishes placement or compute eligibility. Dependent owners separately
+   revalidate and authorize their own resumption. Destination reservations stay held.
 
 A same-cell/location move preserves Device, MachineCapacity and MachineAllocation.
 It does not mutate an Installation's retained inputs; any subsequent operation
@@ -674,6 +712,13 @@ all dependent mapping, hardware-profile and power evidence. The provider must
 revalidate retained MachineProfile requirements before resuming the allocation.
 A disk replacement does not assert the previous Installation/data remains intact;
 the installation/release owners decide permitted recovery, never inventory.
+
+The same exact field procedure can repair an idle Device under PhysicalMaintenance;
+replacement components and removed-component custody remain explicit. No maintenance
+receipt is a cleaning, firmware or boot certificate. An idle compute Device stays
+allocation Disabled until every invalidated predicate is requalified, including a
+separate Preparation if required. A passive Device revalidates only applicable
+physical predicates; qualified power/boot/media non-applicability creates no supply.
 
 A BMC key, motherboard or root identity change closes trust gates and revokes old
 management credentials, boot capabilities and sessions through their owners.
@@ -753,7 +798,7 @@ cannot inherit. Reopen only after current roots, new evidence, old-writer fencin
 and all custody decisions agree. Irretrievably missing history is quarantine, not
 an operator's declaration of an empty database.
 
-This custody set includes Preparation and adopted cases with no consumer records,
+This custody set includes PhysicalMaintenance, Preparation and adopted cases with no consumer records,
 original unresolved domains, resolution revisions, prior-custodian approvals,
 cleanup policies and accounting applicability evidence. A restore predating exact
 resolution reestablishes the conservative domain hold until its history reconciles;
@@ -761,6 +806,58 @@ it cannot rediscover a MAC/serial and resume a wipe. Missing approval, media his
 mapping, evidence bytes or keys blocks recovery effects/reuse. ProviderGuard counts
 all these obligations during retirement, including a settled operation whose
 release clearance or physical-resource disposition is still pending.
+
+For field work retain delivered/unknown permits, start decisions, assigned crews,
+site access/stop receipts and the frozen dependency-owner barrier set. Independently
+exclude the old crew and secure the work area before replacement authority. A
+cancelled permit or expired deadline does not prove hands stopped or the old rack
+remained occupied. Missing either location's evidence retains both interests;
+returning to the original plan is another admitted movement, not database rollback.
+
+### Passive maintenance acceptance trace
+
+Synthetic panel `panel-17` has canonical asset `asset-17`, Device incarnation
+`device-17`, enrollment epoch 3 and accepted DeviceClaim plan `plan-7`: Rack A,
+front U[10,11), ports p1–p24. PassiveWitnessed-v1 establishes fresh identity and
+placement. It has no supply, consumer or boot objects. A qualified physical survey
+and networking-owner connection inventory at graph revision 9 prove no active
+dependencies; power, media and boot predicates are explicitly NotApplicable.
+
+1. Request `move-17` pins `plan-7` and candidate `plan-8` (Rack A, U[12,13)),
+   exact port/Cable interests, current custodian/service/technician approvals,
+   independent witness and a qualified finite move procedure. Protected input
+   custody acknowledges the exact bytes before admission; registration alone
+   caused no work. Required gates and ProviderGuard are Open.
+2. L1 under #60's full lock order creates PhysicalMaintenance custody `maint-17`,
+   occupancy epoch 4, transition `move-17`, slot sequence 6, operation/outbox and
+   the exact inventory closure. It reserves the destination and retains the old
+   position in that same transaction. A destination reservation or competing
+   transition winning first aborts the whole admission. This transition's exact
+   UID/closure is recognized, not rejected as its own conflicting maintenance.
+3. L2/L3 stage that exact procedure in the selected cell. Revalidate graph 9 and
+   barriers; S1 records permit `permit-17` before delivery. Named technician
+   obtains once-only online start acceptance, moves only this panel, and reports
+   completion. No PXE, power, quota or Installation call occurs.
+4. Independent witness proves current identity/destination/ports, old rack vacancy
+   and cessation; reconcile all permits and prevent late starts. Inventory CASes
+   placement to `plan-8` and clears only proven old interests. L5 records the exact
+   field-work outcome; occupancy persists. #65 R1 closes remaining authority and
+   R2 accepts its no-late-work/physical-disposition certificate and accounting-owner
+   policy plus custody-origin/range proof of NotApplicable, then clears `maint-17`
+   only. The destination's accepted physical reservations remain.
+5. Inventory revalidates fresh applicable predicates at the new revision. The panel
+   can be verified physical inventory, never allocatable compute. No dependent
+   connection is automatically enabled. Lost acknowledgment at any step recovers
+   its original decision; missing completion retains Unknown and both positions.
+
+For idle-server variation, race real allocation/Preparation at L1: exactly one
+target custody wins. A maintenance winner invalidates old eligibility; after R2
+fresh inventory and any required commissioning/clearance precede allocation.
+For connected-panel variation, reject `move-17` until each active connection's
+owner has authorized and fenced its dependency under its existing custody.
+For restore before L1 with `permit-17` delivered, hold the union of both plans,
+reconcile field/owner journals and independently stop the old crew. No replay or
+clearance from backup absence, lost inputs or operator approval alone is allowed.
 
 ## Acceptance tests
 
@@ -807,6 +904,10 @@ Inject crashes immediately before/after every durable commit and acknowledgment.
 | I33 | Commissioning races adoption, allocation, maintenance or provider retirement | One ordered asset/physical conflict domain; loser performs no effects. Closed retirement rejects new preparation while retained settlement survives. |
 | I34 | Adopt occupied server without trusted Device or quota; later resolve and authorize cleanup | Original UID/domain history retained; resolution is read-only; #65 approves exact authority/policy/accounting, R2 clears only that custody, fresh Preparation gates reuse. |
 | I35 | Restore before adopted resolution or preparation admission; later remote send exists | Conservative union/domain quarantine survives; no boot-as-discovery or stale clearance. Missing identity, approval or protected inputs blocks replay/reuse. |
+| I36 | Execute the passive maintenance trace without supply, Machine, quota or boot records | Exact PhysicalMaintenance subject admits the move; one shared slot/permit; L5 is not R2, and R2 is not placement/compute eligibility. |
+| I37 | Race target maintenance, destination plan, adoption, idle-server allocation/Preparation, release and retirement | Full ordered ledger domain has one conflicting winner; own transition UID is not a conflict waiver for another transition. Adoption retains any discovered overlap without overwriting custody. |
+| I38 | Deliver permit/start then lose response or restore a pre-L1 backup; old crew unreachable | Unknown custody and old/new physical interests persist; independent crew/site exclusion and union reconciliation precede successor or clearance. |
+| I39 | Add/revoke dependent active connection or ask to power/reset it with panel permit | Owner graph/fence interlock blocks progression; existing active-custody authorization and effective prerequisite fences required, never maintenance privilege escalation. |
 
 ## Production readiness review questionnaire
 
