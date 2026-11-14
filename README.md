@@ -31,6 +31,8 @@ guest agent. Provisioning engines and provider integrations remain pluggable.
   source proposals, and unresolved design questions.
 - [Implementation roadmap](docs/roadmap.md): proposed milestones and evidence
   required before enabling infrastructure effects.
+- [PXE installation enhancement](docs/enhancements/pxe-installation/README.md):
+  managed golden-image installation and bounded delegation to customer PXE.
 - [Contributor guidance](AGENTS.md): repository conventions and key invariants.
 
 The foundation comes from open `datum-cloud/infra` PRs

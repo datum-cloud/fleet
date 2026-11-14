@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="720" viewBox="0 0 1240 720" role="img" aria-labelledby="title desc">
+  <title id="title">Managed image and delegated PXE installation workflows</title>
+  <desc id="desc">A shared admission and network preparation flow branches into a managed golden-image installation or a delegated customer PXE installation. Both paths converge on PXE revocation, local boot, verification, and status projection.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font: 700 24px system-ui, sans-serif; fill: #0f172a; }
+      .head { font: 700 15px system-ui, sans-serif; fill: #0f172a; }
+      .body { font: 11.5px system-ui, sans-serif; fill: #475569; }
+      .label { font: 700 13px system-ui, sans-serif; fill: #334155; letter-spacing: .3px; }
+      .box { stroke-width: 1.5; rx: 10; }
+      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .unknown { stroke: #dc2626; stroke-dasharray: 6 5; }
+    </style>
+  </defs>
+
+  <rect width="1240" height="720" fill="#ffffff"/>
+  <text x="40" y="42" class="title">Both modes share admission, fencing, and release</text>
+
+  <rect x="40" y="80" width="180" height="82" class="box" fill="#ecfdf5" stroke="#059669"/>
+  <text x="60" y="111" class="head">1. Installation request</text>
+  <text x="60" y="133" class="body">ManagedImage or</text>
+  <text x="60" y="149" class="body">DelegatedPXE</text>
+
+  <rect x="270" y="80" width="190" height="82" class="box" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="290" y="111" class="head">2. Admit exact inputs</text>
+  <text x="290" y="135" class="body">Authority, predecessor, quota</text>
+
+  <rect x="510" y="80" width="190" height="82" class="box" fill="#ede9fe" stroke="#7c3aed"/>
+  <text x="530" y="111" class="head">3. Deliver handoff</text>
+  <text x="530" y="135" class="body">One selected location</text>
+
+  <rect x="750" y="80" width="190" height="82" class="box" fill="#ecfeff" stroke="#0891b2"/>
+  <text x="770" y="111" class="head">4. Prepare network</text>
+  <text x="770" y="133" class="body">Owner returns network</text>
+  <text x="770" y="149" class="body">readiness evidence</text>
+
+  <rect x="990" y="80" width="190" height="82" class="box" fill="#fef3c7" stroke="#d97706"/>
+  <text x="1010" y="111" class="head">5. Arm one PXE boot</text>
+  <text x="1010" y="135" class="body">Retained operation and fence</text>
+
+  <path d="M220 121 H270" class="arrow"/>
+  <path d="M460 121 H510" class="arrow"/>
+  <path d="M700 121 H750" class="arrow"/>
+  <path d="M940 121 H990" class="arrow"/>
+
+  <path d="M1085 162 V205 H315 V245" class="arrow"/>
+  <path d="M1085 162 V205 H925 V245" class="arrow"/>
+
+  <text x="205" y="225" class="label">MANAGED GOLDEN IMAGE</text>
+  <rect x="120" y="245" width="210" height="92" class="box" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="140" y="277" class="head">Serve Fleet installer</text>
+  <text x="140" y="301" class="body">Pinned installer and recipe</text>
+  <text x="140" y="320" class="body">Machine and disk identity check</text>
+
+  <rect x="390" y="245" width="210" height="92" class="box" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="410" y="277" class="head">Write golden image</text>
+  <text x="410" y="301" class="body">Verify artifact digest</text>
+  <text x="410" y="320" class="body">Return target-disk evidence</text>
+
+  <path d="M330 291 H390" class="arrow"/>
+
+  <text x="835" y="225" class="label">DELEGATED CUSTOMER PXE</text>
+  <rect x="735" y="245" width="210" height="92" class="box" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="755" y="277" class="head">Proxy admitted endpoint</text>
+  <text x="755" y="301" class="body">Pinned origin, trust, credentials</text>
+  <text x="755" y="320" class="body">Record served boot response</text>
+
+  <rect x="1005" y="245" width="210" height="92" class="box" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="1025" y="277" class="head">Customer installs OS</text>
+  <text x="1025" y="301" class="body">Customer-owned workflow</text>
+  <text x="1025" y="320" class="body">Operation-scoped callback</text>
+
+  <path d="M945 291 H1005" class="arrow"/>
+
+  <rect x="470" y="415" width="300" height="90" class="box" fill="#fee2e2" stroke="#dc2626"/>
+  <text x="490" y="447" class="head">6. Revoke PXE and fence executor</text>
+  <text x="490" y="471" class="body">Disable delegation, close network capability,</text>
+  <text x="490" y="490" class="body">and prove the previous worker cannot continue</text>
+
+  <path d="M495 337 V375 H570 V415" class="arrow"/>
+  <path d="M1110 337 V375 H670 V415" class="arrow"/>
+
+  <rect x="190" y="575" width="210" height="82" class="box" fill="#fef3c7" stroke="#d97706"/>
+  <text x="210" y="607" class="head">7. Boot local disk</text>
+  <text x="210" y="631" class="body">Provider executor controls BMC</text>
+
+  <rect x="515" y="575" width="210" height="82" class="box" fill="#ecfdf5" stroke="#059669"/>
+  <text x="535" y="607" class="head">8. Validate evidence</text>
+  <text x="535" y="631" class="body">Mode-specific assurance</text>
+
+  <rect x="840" y="575" width="210" height="82" class="box" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="860" y="607" class="head">9. Project status</text>
+  <text x="860" y="631" class="body">Ready only after required proof</text>
+
+  <path d="M620 505 V540 H295 V575" class="arrow"/>
+  <path d="M400 616 H515" class="arrow"/>
+  <path d="M725 616 H840" class="arrow"/>
+
+  <rect x="1015" y="430" width="180" height="75" class="box" fill="#fff1f2" stroke="#dc2626"/>
+  <text x="1035" y="460" class="head">Unknown outcome</text>
+  <text x="1035" y="483" class="body">Retain allocation; recover</text>
+  <path d="M770 460 H1015" class="arrow unknown"/>
+  <text x="835" y="449" class="body">timeout, lost response, stale worker</text>
+</svg>

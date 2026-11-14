@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="760" viewBox="0 0 1240 760" role="img" aria-labelledby="title desc">
+  <title id="title">Managed image and delegated PXE user journeys</title>
+  <desc id="desc">Two swimlanes show a customer requesting a managed golden image or supplying a PXE endpoint. Fleet admits each request, the selected location performs bounded boot work, and the machine returns to local boot before Fleet reports completion.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font: 700 24px system-ui, sans-serif; fill: #0f172a; }
+      .column { font: 700 14px system-ui, sans-serif; fill: #334155; letter-spacing: .3px; }
+      .journey { font: 700 16px system-ui, sans-serif; fill: #0f172a; }
+      .head { font: 700 13px system-ui, sans-serif; fill: #0f172a; }
+      .body { font: 12px system-ui, sans-serif; fill: #475569; }
+      .step { stroke-width: 1.4; rx: 9; }
+      .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1240" height="760" fill="#ffffff"/>
+  <text x="40" y="42" class="title">Two customer journeys, one Fleet lifecycle</text>
+
+  <rect x="30" y="70" width="1180" height="650" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <line x1="230" y1="70" x2="230" y2="720" stroke="#cbd5e1"/>
+  <line x1="460" y1="70" x2="460" y2="720" stroke="#cbd5e1"/>
+  <line x1="730" y1="70" x2="730" y2="720" stroke="#cbd5e1"/>
+  <line x1="960" y1="70" x2="960" y2="720" stroke="#cbd5e1"/>
+  <line x1="30" y1="115" x2="1210" y2="115" stroke="#cbd5e1"/>
+  <line x1="30" y1="410" x2="1210" y2="410" stroke="#94a3b8" stroke-width="2"/>
+
+  <text x="110" y="98" text-anchor="middle" class="column">CUSTOMER</text>
+  <text x="345" y="98" text-anchor="middle" class="column">FLEET MANAGEMENT</text>
+  <text x="595" y="98" text-anchor="middle" class="column">SELECTED CELL</text>
+  <text x="845" y="98" text-anchor="middle" class="column">INSTALLER OWNER</text>
+  <text x="1085" y="98" text-anchor="middle" class="column">MACHINE</text>
+
+  <text x="50" y="145" class="journey">Managed golden image</text>
+
+  <rect x="55" y="175" width="150" height="80" class="step" fill="#ecfdf5" stroke="#059669"/>
+  <text x="70" y="205" class="head">Select image</text>
+  <text x="70" y="227" class="body">Create immutable</text>
+  <text x="70" y="244" class="body">Installation</text>
+
+  <rect x="270" y="175" width="150" height="80" class="step" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="285" y="205" class="head">Admit request</text>
+  <text x="285" y="227" class="body">Pin image and authority;</text>
+  <text x="285" y="244" class="body">target and prior state</text>
+
+  <rect x="500" y="175" width="190" height="80" class="step" fill="#fef3c7" stroke="#d97706"/>
+  <text x="515" y="205" class="head">Prepare and boot</text>
+  <text x="515" y="227" class="body">Network ready; one-time PXE;</text>
+  <text x="515" y="244" class="body">provider power operation</text>
+
+  <rect x="770" y="175" width="150" height="80" class="step" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="785" y="205" class="head">Fleet installer</text>
+  <text x="785" y="227" class="body">Write and verify</text>
+  <text x="785" y="244" class="body">golden image</text>
+
+  <rect x="1000" y="175" width="170" height="80" class="step" fill="#ecfdf5" stroke="#059669"/>
+  <text x="1015" y="205" class="head">Boot local disk</text>
+  <text x="1015" y="227" class="body">Return required</text>
+  <text x="1015" y="244" class="body">first-boot evidence</text>
+
+  <path d="M205 215 H270" class="arrow"/>
+  <path d="M420 215 H500" class="arrow"/>
+  <path d="M690 215 H770" class="arrow"/>
+  <path d="M920 215 H1000" class="arrow"/>
+
+  <rect x="270" y="300" width="150" height="70" class="step" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="285" y="328" class="head">Validate evidence</text>
+  <text x="285" y="349" class="body">Project Ready status</text>
+  <path d="M1085 255 V335 H420" class="arrow"/>
+  <path d="M270 335 H205" class="arrow"/>
+  <text x="70" y="330" class="head">Receive result</text>
+  <text x="70" y="351" class="body">Qualified image installed</text>
+
+  <text x="50" y="440" class="journey">Delegated customer PXE</text>
+
+  <rect x="55" y="470" width="150" height="92" class="step" fill="#ecfdf5" stroke="#059669"/>
+  <text x="70" y="500" class="head">Supply endpoint</text>
+  <text x="70" y="522" class="body">URL, trust, credentials,</text>
+  <text x="70" y="539" class="body">workflow correlation</text>
+
+  <rect x="270" y="470" width="150" height="92" class="step" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="285" y="500" class="head">Admit delegation</text>
+  <text x="285" y="522" class="body">Check class policy;</text>
+  <text x="285" y="539" class="body">pin endpoint and target</text>
+
+  <rect x="500" y="470" width="190" height="92" class="step" fill="#fef3c7" stroke="#d97706"/>
+  <text x="515" y="500" class="head">Prepare and chain</text>
+  <text x="515" y="522" class="body">One-machine PXE session;</text>
+  <text x="515" y="539" class="body">proxy admitted endpoint</text>
+
+  <rect x="770" y="470" width="150" height="92" class="step" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="785" y="500" class="head">Customer installer</text>
+  <text x="785" y="522" class="body">Install chosen OS;</text>
+  <text x="785" y="539" class="body">send scoped callback</text>
+
+  <rect x="1000" y="470" width="170" height="92" class="step" fill="#ecfdf5" stroke="#059669"/>
+  <text x="1015" y="500" class="head">Boot local disk</text>
+  <text x="1015" y="522" class="body">PXE delegation revoked;</text>
+  <text x="1015" y="539" class="body">local boot observed</text>
+
+  <path d="M205 516 H270" class="arrow"/>
+  <path d="M420 516 H500" class="arrow"/>
+  <path d="M690 516 H770" class="arrow"/>
+  <path d="M920 516 H1000" class="arrow"/>
+
+  <rect x="270" y="620" width="150" height="70" class="step" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="285" y="648" class="head">Validate evidence</text>
+  <text x="285" y="669" class="body">Report delegated assurance</text>
+  <path d="M1085 562 V655 H420" class="arrow"/>
+  <path d="M270 655 H205" class="arrow"/>
+  <text x="70" y="650" class="head">Receive result</text>
+  <text x="70" y="671" class="body">Contract complete; OS opaque</text>
+</svg>
