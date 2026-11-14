@@ -493,8 +493,8 @@ choices, but the writer and tenancy boundaries below do not.
 | Surface | Canonical scope | Intent writer | Status/evidence writer |
 | --- | --- | --- | --- |
 | Physical inventory | Provider project, operator namespace (for example `infra-ops`) | Authorized operator for plans; trusted registrar for Device identity | Inventory verifier for attributed observations and conditions |
-| MachineOffering / MachineOfferingAssignment | Provider project, provider API namespace | Authorized provider product/access administrator | Metal validation/publication controller |
-| MachineProfile / MachineClass | Metal project API; immutable profile and consumer-local published view | Authorized profile author; publisher alone owns class source/provenance | Metal profile validation/publication controller |
+| MachineOffering / MachineOfferingAssignment | Provider project-wide, without Kubernetes namespaces | Authorized provider product/access administrator | Metal validation/publication controller |
+| MachineProfile / MachineClass | Metal project-wide, without Kubernetes namespaces; immutable profile and consumer-local published view | Authorized profile author; publisher alone owns class source/provenance | Metal profile validation/publication controller |
 | Machine / Installation / MachineManagementSession | Consumer project Metal namespace | Authorized consumer or managed consumer controller | Management status projector after authority/evidence validation |
 | MachineCapacity / MachineAllocation and operation custody | Provider project protected service namespace/storage | Qualified supply controller for capacity; shared allocator/coordinator alone for bindings and admitted operations | Coordinator records verified results; providers cannot rewrite bindings |
 | Coordination handoff spec and exact-target policy | Protected hub namespace | Management handoff controller | Karmada alone reflects selected-cell status on hub copy |
