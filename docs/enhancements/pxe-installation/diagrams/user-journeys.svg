@@ -48,7 +48,7 @@
   <rect x="500" y="175" width="190" height="80" class="step" fill="#fef3c7" stroke="#d97706"/>
   <text x="515" y="205" class="head">Prepare and boot</text>
   <text x="515" y="227" class="body">Network ready; one-time PXE;</text>
-  <text x="515" y="244" class="body">provider power operation</text>
+  <text x="515" y="244" class="body">one admitted driver</text>
 
   <rect x="770" y="175" width="150" height="80" class="step" fill="#dbeafe" stroke="#2563eb"/>
   <text x="785" y="205" class="head">Fleet installer</text>
@@ -71,7 +71,7 @@
   <path d="M1085 255 V335 H420" class="arrow"/>
   <path d="M270 335 H205" class="arrow"/>
   <text x="70" y="330" class="head">Receive result</text>
-  <text x="70" y="351" class="body">Qualified image installed</text>
+  <text x="70" y="351" class="body">QualifiedImage required</text>
 
   <text x="50" y="440" class="journey">Delegated customer PXE</text>
 
@@ -82,12 +82,12 @@
 
   <rect x="270" y="470" width="150" height="92" class="step" fill="#f3e8ff" stroke="#9333ea"/>
   <text x="285" y="500" class="head">Admit delegation</text>
-  <text x="285" y="522" class="body">Check class policy;</text>
+  <text x="285" y="522" class="body">Use retained offering;</text>
   <text x="285" y="539" class="body">pin endpoint and target</text>
 
   <rect x="500" y="470" width="190" height="92" class="step" fill="#fef3c7" stroke="#d97706"/>
   <text x="515" y="500" class="head">Prepare and chain</text>
-  <text x="515" y="522" class="body">One-machine PXE session;</text>
+  <text x="515" y="522" class="body">Automatic or bound Redfish;</text>
   <text x="515" y="539" class="body">proxy admitted endpoint</text>
 
   <rect x="770" y="470" width="150" height="92" class="step" fill="#f0fdf4" stroke="#16a34a"/>
@@ -97,7 +97,7 @@
 
   <rect x="1000" y="470" width="170" height="92" class="step" fill="#ecfdf5" stroke="#059669"/>
   <text x="1015" y="500" class="head">Boot local disk</text>
-  <text x="1015" y="522" class="body">PXE delegation revoked;</text>
+  <text x="1015" y="522" class="body">Fenced; PXE revoked;</text>
   <text x="1015" y="539" class="body">local boot observed</text>
 
   <path d="M205 516 H270" class="arrow"/>
@@ -107,9 +107,11 @@
 
   <rect x="270" y="620" width="150" height="70" class="step" fill="#f3e8ff" stroke="#9333ea"/>
   <text x="285" y="648" class="head">Validate evidence</text>
-  <text x="285" y="669" class="body">Report delegated assurance</text>
+  <text x="285" y="669" class="body">DelegatedContract</text>
   <path d="M1085 562 V655 H420" class="arrow"/>
   <path d="M270 655 H205" class="arrow"/>
   <text x="70" y="650" class="head">Receive result</text>
   <text x="70" y="671" class="body">Contract complete; OS opaque</text>
+  <text x="470" y="292" class="body">Return: cell-local results → Karmada reflection → management validation</text>
+  <text x="470" y="603" class="body">Callback / session closure ≠ installer stopped; independent fencing required</text>
 </svg>
