@@ -200,6 +200,11 @@ occupied/unknown; registration and adoption confer no provisioning authority.
 
 The proposed `custody-subjects-v1` alignment in #60–#63/#65 adds Fleet-owned
 Preparation and AdoptedCustody subjects in the same global asset conflict domain.
+The `physical-maintenance-v1` extension adds PhysicalMaintenance for an exactly
+authorized unallocated registered Device (including passive equipment without
+compute supply), using that same ledger, slot and Fleet field-work journal.
+Its target and physical/dependency exclusions participate in global selection;
+it cannot override a real provider reservation, allocation or active owner.
 They are not consumer reservation attempts: no synthetic Machine, quota hold,
 provider Reserve/Commit receipt or Installation is created for them. All global
 selection/enrollment checks include their exact and unresolved-domain exclusions.
@@ -218,6 +223,14 @@ custody/all-channel exclusion and finalization bindings, not omitting allocation
 fields or synthesizing a quota acknowledgment. Imported external occupied stock
 therefore stays held until its owner can supply the qualified applicable protocol;
 this alignment does not silently grant new external maintenance/wipe APIs.
+
+PhysicalMaintenance likewise cannot use Reserve/Commit, M1, R2 or R3 with fabricated
+consumer/supplier fields. Its Fleet custody clearance is #65's subject-specific
+R2, not this wire protocol's supplier finalization. Dependent supplier-controlled
+connections/devices need their own current authority and qualified effective
+fences before field work; possession of a panel permit supplies neither. Test
+rejection of such non-consumer wire envelopes and races with real reservations;
+keep external stock unavailable rather than silently introducing another executor.
 
 ### Bounded preparation
 
