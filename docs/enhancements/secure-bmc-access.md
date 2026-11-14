@@ -16,10 +16,9 @@ support for this enhancement; see [implementation status](../development/README.
 
 This revision aligns with the shared decisions for [Fleet management][fleet-management],
 [provider offerings][provider-offerings], and [PXE installation][pxe-installation].
-Those links pin the companion heads reviewed on 2026-11-14. Their older wording
-about provider MachineClass policy or direct cell-to-hub status writes is superseded
-here by the agreed offering ownership and local-result reflection contract. No
-migration, compatibility aliases, or runtime changes are proposed by this update.
+The companion PRs define the common offering ownership, Installation contract,
+and local-result reflection path. All of these contracts remain proposed; this
+design does not require compatibility aliases or a migration from earlier drafts.
 
 The architecture borrows the session and data-path separation used by Datum
 Compute's provisional [instance shell sessions][compute-shell]: the platform
@@ -174,7 +173,7 @@ the transport private key or a reusable BMC credential to disk by default.
 ### Customer provisioning automation
 
 An automated provisioner first submits an immutable Installation for its Machine,
-selecting an authorized source and the customer-driven Redfish operation driver.
+selecting DelegatedPXE and the CustomerRedfish execution driver.
 After admission, it creates a provisioning session naming that Installation. A
 connector sidecar owns the ephemeral transport
 key and presents the provisioner with the same Redfish base URL for the session's
@@ -474,16 +473,20 @@ may omit that reference, but every effect uses the same asset-level journal,
 conflict admission and effect-boundary fencing.
 
 The immutable Installation admission selects exactly one operation driver:
-Fleet automatic execution or customer-driven Redfish. Source mode (`ManagedImage`
-or `DelegatedPXE`) describes the installer, not an independent power/boot writer;
-only qualified source/driver combinations may be offered. In automatic mode the
+`ProviderAutomatic` or `CustomerRedfish`. Source mode (`ManagedImage`
+or `DelegatedPXE`) describes the installer, not an independent power/boot writer.
+Initially CustomerRedfish is permitted only with DelegatedPXE; ProviderAutomatic
+supports either qualified source. Fleet implements ProviderAutomatic when it
+fulfills the offering. In automatic mode the
 Fleet executor owns step progression and a customer session is observational.
 In customer-driven mode the gateway admits bounded customer steps into the same
 Installation journal; an automatic controller must not concurrently set boot or
 power state. Persistent Machine power intent also waits behind the operation.
-Driver takeover requires explicit recovery authority, retained inputs, and proof
-that the previous writer is fenced at the BMC, boot, network and installer effect
-boundaries. A lease, session expiry or changed fencing number alone is not proof.
+Executor takeover within the selected driver requires explicit recovery authority,
+retained inputs, and proof that the previous writer is fenced at the BMC, boot,
+network and installer effect boundaries. Changing the driver requires settlement
+and a new admitted successor Installation; recovery cannot rewrite the driver.
+A lease, session expiry or changed fencing number alone is not proof.
 
 | Requested action | Shared admission rule |
 | --- | --- |
@@ -810,6 +813,6 @@ BMC and unknown execution outcome without disclosing the physical route.
 [fleet-provisioning]: https://github.com/datum-cloud/infra/blob/51781e2456367be82281e1443ca56d0686311133/docs/enhancements/fleet-management/bare-metal-provisioning.md
 [redfish-resources]: https://redfish.dmtf.org/essentials
 [redfish-spec]: https://www.dmtf.org/sites/default/files/standards/documents/DSP0266_1.22.1.pdf
-[fleet-management]: https://github.com/datum-cloud/fleet/blob/16e7cb2a268cf20bc58d490493b5a3fef9237027/docs/enhancements/fleet-management/README.md
-[provider-offerings]: https://github.com/datum-cloud/fleet/blob/031477d011090ea6ec378d526e975bbfae07a060/docs/enhancements/profile-access/README.md
-[pxe-installation]: https://github.com/datum-cloud/fleet/blob/f1ccc24ac66d5d930e3264c7ee856a7e1cd67254/docs/enhancements/pxe-installation/README.md
+[fleet-management]: https://github.com/datum-cloud/fleet/pull/51
+[provider-offerings]: https://github.com/datum-cloud/fleet/pull/58
+[pxe-installation]: https://github.com/datum-cloud/fleet/pull/59
