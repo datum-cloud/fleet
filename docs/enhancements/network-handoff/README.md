@@ -136,7 +136,7 @@ Namespace names or Kubernetes UIDs alone are not cross-control-plane identities.
 | `NetworkHandoffIntent` in protected hub namespace | Fleet management handoff controller | Admission reference, exact target and immutable request digest, selected cell, permitted steps, validity; retained through custody settlement |
 | `NetworkRequestReceipt` in networking durable storage | Networking owner | Idempotency binding, accepted preconditions, claim/attachment identities, current step, highest accepted fence and terminal evidence references |
 | `PhysicalNetworkObservation` in protected provider/network evidence storage | Qualified observation adapter; networking validates use | Exact asset/NIC/link and provider facts, observer provenance, revision and validity; no desired network policy |
-| `NetworkBinding` in networking custody storage | Networking owner | Allocation/asset/slot-to-claim/interface binding, exact network/routing domain, address identities, physical realization revisions and release disposition |
+| `NetworkBinding` in networking custody storage | Networking owner | Tagged subject/asset/slot-to-claim/interface binding, exact network/routing domain, address identities, physical realization revisions and release disposition |
 | `NetworkTransitionResult` in selected cell | Selected-cell adapter, carrying attributable networking-owner evidence | Request/step result and evidence bundle, not authority to allocate or edit hub status |
 | Reflected handoff status in hub | Karmada only | Selected-cell result copied without promoting its trust |
 | Operation journal, cleanup obligation and public projection | Fleet lifecycle coordinator / its status projector | Accepted evidence, original binding and cleanup scope; project deletion cannot garbage-collect these obligations |
@@ -165,13 +165,15 @@ Fleet **before** dispatch and by networking **before** effects:
 | --- | --- |
 | `requestID`, `requestDigest`, `stepID`, `idempotencyKey` | Exact canonical request and admitted step; same key with different digest returns `IdempotencyConflict` |
 | `authorityRef`, `authorityDigest`, `validFrom`, `validUntil`, `stepBudget` | Verifiable retained coordinator admission, allowed operation/steps and time bound; possession of names is not authority |
-| `subject` | Tagged `Allocation` or `Preparation`; not an optional allocation field with ambiguous meaning |
+| `subject` | Tagged `Allocation`, `Preparation` or `AdoptedCustody` from #60/#62; not an optional allocation field with ambiguous meaning |
 | Allocation subject | Provider/consumer project incarnations, Machine, MachineAllocation, MachineCapacity and Device (or retained provider supply identity), accepted offering contract digest |
-| Preparation subject | Explicit admitted preparation operation and exact capacity/asset; coordinator proves allocation disabled and no conflicting allocation; never a route to customer connectivity |
-| `installationBinding` | Required for provisioning: exact Installation, source mode, immutable driver, operation identity, retained predecessor consumption and optional bound management-session identity |
+| Preparation subject | Exact custody UID/epoch, enrollment UID/epoch, Device/supply and canonical asset; admitted operation, commissioning policy and shared asset slot. Allocation Disabled and no conflicting allocation/adoption/maintenance/release/domain hold; no consumer identity or connectivity |
+| AdoptedCustody subject | Exact original custody UID, trusted resolution revision and enrollment/asset, release case and approved ownership/cleanup transition; unresolved identity cannot authorize network mutations |
+| `installationBinding` | Required for customer Installation provisioning: exact Installation, source mode, immutable driver, operation identity, retained predecessor consumption and optional bound management-session identity. Forbidden for non-consumer subjects |
+| `serviceBinding` | Required for Commissioning or ServiceCleanup: immutable service plan, explicit action/input authority, custody/release obligation, exact Network inputs, finite steps and selected executor; no fabricated Installation predecessor |
 | `target` | Selected cell incarnation/location, physical mapping revision and slot map; cell cannot choose another asset or network |
 | `networkInputs` | Exact Network/namespace/project incarnations, families in priority order, extra address classes, authorized path/origin policy and their revisions |
-| `fence`, `expectedBindingRevision`, `expectedPreviousStep` | Shared allocation-operation fencing domain; compare-and-set preconditions, never a cell-local counter |
+| `fence`, `expectedBindingRevision`, `expectedPreviousStep` | Shared asset-operation domain: restore, asset/enrollment/custody epochs, tagged subject, operation sequence and executor generation; compare-and-set preconditions, never a cell-local counter |
 | `cleanupObligationRef`, `disposition` | Durable owner and obligations; per-claim `Delete` or `Retain`, captured before effects |
 
 The management coordinator is the issuer of runtime authority. Networking checks
@@ -188,6 +190,43 @@ Installation and its fence/step budget. It cannot change driver, endpoint or NIC
 mint network authority, extend a lease or start a second provisioning workflow.
 ProviderAutomatic and CustomerRedfish use the same network request contract.
 
+### Non-consumer service paths
+
+The proposed `custody-subjects-v1` join consumes #60's atomic custody/asset-slot
+admission and #62's operation envelope, not a networking-created preparation ID.
+New enrolled commissioning requires pre-boot witnessed mapping and read-only
+trust evidence, current service/input gates and a qualified commissioning plan.
+It does not require the boot-verification result it is intended to produce.
+L1 commits the service operation before `Materialize`; networking's prepared
+receipt is a prerequisite for the later boot step, not for L1 itself.
+
+An authorized adopted cleanup keeps its original occupied custody identity.
+#63 first resolves exact hardware and all intersecting holds without effects;
+#65 then supplies the separately authorized transition and closure inventory.
+Networking records old bindings/claims from prior-owner histories, including
+bindings not created by Fleet. A missing local receipt is not an empty path set.
+Prior-owner authority and effective revocation/disposition receipts are required;
+unreachable or unidentifiable paths block settlement. Networking does not take
+ownership of another authority's configuration merely by importing its facts.
+
+Both paths use service-owned isolated Networks and scoped endpoints, never a
+customer route or a consumer management session. ServiceCleanup may also use an
+Allocation subject after its release closure. Exact service image/recipe, origins,
+credentials, allowed targets and cleanup obligation are retained before effects.
+Only the networking owner creates a **new binding incarnation** after predecessor
+paths are fenced; no old customer binding is relabeled Commissioning. Every owner
+receipt, boot capability and proxy step binds the tagged subject and full fence.
+The boot service validates the service plan instead of requiring a nonexistent
+Installation, while preserving one-use steps and the same origin/egress controls.
+
+On completion or cancellation, stop the verifier/cleaner through #62, revoke and
+drain boot/proxy sessions, fence every service path and acknowledge per-claim
+Delete/Retain disposition. #65 accepts these receipts for preparation clearance
+or adopted settlement; networking cannot clear occupancy or publish eligibility.
+Its restored receipts/tombstones must reconcile custody UID, resolution history,
+binding generations and current lineage before replay or new materialization.
+Losing the response retains unknown custody, not permission to recreate a binding.
+
 ### Fleet to networking API
 
 These are semantic operations, not a claim that RPC routes exist. Requests and
@@ -197,8 +236,8 @@ All effectful operations use the envelope above and exact binding identities.
 | Operation | Inputs beyond envelope | Required response/effects |
 | --- | --- | --- |
 | `EvaluateFeasibility` | Caller-authorized Network identities, candidate location/cell and profile slots, families, address classes, boot mode, endpoint/private path needs, policy revisions | `Feasible`, `Infeasible(reason)` or `Unknown`; decision digest and expiry; no claim, address reservation, switch write or endpoint fetch |
-| `Materialize` | Fresh feasibility reference, exact physical mapping, requested customer/provisioning path inventory | Durable receipt; claim/interface/address identities and staged binding revision. Reject invalid admission before any effect. Preparation may materialize only commissioning paths |
-| `SetPhase` | Desired `Commissioning`, `Provisioning`, `Customer` or `Isolated`; expected current revision; exact permitted path set | Transition receipt and independently reported conditions; a phase label alone proves nothing |
+| `Materialize` | Fresh feasibility reference, exact physical mapping, requested path inventory and serviceBinding when applicable | Durable receipt; claim/interface/address identities and staged binding revision. Reject invalid admission before any effect. Preparation permits only Commissioning; AdoptedCustody only authorized ServiceCleanup |
+| `SetPhase` | Desired `Commissioning`, `ServiceCleanup`, `Provisioning`, `Customer` or `Isolated`; expected current revision; exact permitted path set | Transition receipt and independently reported conditions; a phase label alone proves nothing |
 | `ProbePaths` | Exact existing binding, source vantage, destination/origin policy and expected realization revision | Scoped reachability/deny-test evidence; cannot create routes or expand allowed destinations |
 | `FenceAndDisconnect` | Target binding/claim incarnations, old fence, successor fence admitted by coordinator, all path classes to revoke | Durable deny barrier then attributable disconnect acknowledgment; no address release implied |
 | `DisposeClaims` | Verified disconnect acknowledgment and coordinator settlement authorization, exact claims and disposition | `DeletedAndReturned` or `RetainedDetached` per claim with networking/IPAM acknowledgment; never delete the shared Network/VPC |
@@ -284,6 +323,7 @@ Fleet never claims that deleting a Datum claim released a provider address.
 | --- | --- | --- |
 | `Isolated` | Only separately authorized provider management; all workload paths denied | Default safe state; a controller restart alone does not prove isolation |
 | `Commissioning` | Approved verifier/installer bootstrap endpoints, no customer network | Explicit preparation authority, no active allocation; exit requires verifier stopped, bootstrap revoked and isolation acknowledged |
+| `ServiceCleanup` | Approved service cleaner/verification endpoints only, no customer network | Exact release obligation and serviceBinding on Allocation or resolved AdoptedCustody, predecessor paths fenced; exit requires cleaner settlement and its own disconnect/dispositions |
 | `Provisioning` | Fleet first-boot endpoint and scoped installer/artifact proxy/callback destinations | Admitted Installation, current NIC mapping, boot/path evidence and driver binding; customer runtime path staged but inactive |
 | `Customer` | Exactly the accepted customer Networks, families and exposure policy | Provisioning revoked, installer stopped/fenced by execution owner, and coordinator-authorized transition; no continuing PXE authority |
 
@@ -316,7 +356,7 @@ Networking owns DHCP/relay/RA policy, boot-network isolation and path realizatio
 Only approved provider DHCP/RA sources may reach firmware. Customer DHCP servers,
 relay destinations or DHCP options cannot be injected onto shared networks.
 Networking binds ingress port/attachment and machine boot identity; Fleet boot
-service validates the admitted Installation, fence, expiry, request digest and
+service validates the admitted Installation or exact serviceBinding, fence, expiry, request digest and
 one-time step before serving a response. A guessed/spoofed MAC is not enough.
 Without valid admitted authority it returns only a qualified local-boot response
 or denies boot; no customer fallback or persistent network-boot loop is allowed.
@@ -437,7 +477,7 @@ independent execution authority. The coordinator advances its shared fence only
 under its takeover protocol; networking must reject all old effect paths before
 acknowledging the barrier. If any path cannot be fenced, custody remains occupied.
 
-`DisconnectAcknowledgment` must identify the exact allocation, original request,
+`DisconnectAcknowledgment` must identify the exact tagged subject, original request,
 binding and claim incarnations, old and successor fences, all physical ports,
 network/routing-domain identities, addressed assignments and realization revision.
 It contains separately attributable results for:
@@ -477,7 +517,7 @@ detach for a reused IP fails identity/fence preconditions; it must never target
 the current owner by address alone. Missing tombstones after backup restore block
 reuse pending reconciliation; stale success cannot serve as a new acknowledgment.
 
-If any obligation is unknown, the allocation remains in custody/quarantine. The
+If any obligation is unknown, the subject remains in custody/quarantine. The
 release owner decides capacity availability only after all obligations settle.
 The networking owner exposes per-claim progress so completed work need not be
 repeated. Consumer deletion, Network deletion, offering withdrawal or loss of
@@ -531,6 +571,9 @@ qualify real switch/firmware behavior.
 | N16 | Delete versus Retain, external provider assignment changes | Exact IPAM return or detached retention; provider discrepancy blocks settlement |
 | N17 | No Installation; no customer interfaces; unrelated BMC isolation fails | Customer NotRequested cannot suppress required safety/cleanup predicates |
 | N18 | Managed non-Talos image and delegated local-disk boot on real hardware | Packet captures/readback prove phase isolation, installer stop, boot revocation and independent customer handoff |
+| N19 | First enrolled Preparation with no Machine/Allocation/Installation; delay Materialize acknowledgment | Same custody/operation/binding recovered; boot waits for prepared receipt; no customer path; complete stop/disconnect/disposal precedes release-owner clearance |
+| N20 | Resolve adopted custody and authorize service cleanup; replay pre-resolution request or old tenant detach | Only exact resolved subject/current fence accepted; prior-owner paths need real evidence; no mutation by IP/name or inherited consumer authority |
+| N21 | Restore before commissioning/cleanup binding existed; race new allocation with delayed service request | Reconcile owner histories/tombstones; unknown path holds custody; late request cannot touch successor binding and no missing Installation is synthesized |
 
 Qualification covers every advertised hardware/firmware/NIC/networking backend,
 IPv4/IPv6 combination and endpoint mode. Record finite freshness/clock/lease
@@ -601,7 +644,7 @@ networking implementation, not a substitute for attribution and cleanup evidence
 4. Inventory-trust evidence, provider-fact adapters and external withdrawal proofs
    supplied by their future owners; release-owner coordination consuming the exact
    acknowledgments above; deployment-owner failure-domain and recovery design.
-5. Contract fixtures and hardware qualification for N1–N18, then separate security
+5. Contract fixtures and hardware qualification for N1–N21, then separate security
    and networking-owner reviews. No implementation, rollout or sign-off is implied.
 
 ### Decisions still requiring owner agreement
