@@ -47,12 +47,12 @@ the proposed checks are not support for legacy protocol compatibility.
 | [#51 management][management] | `fa07c2236801a33a58efc914b555586c8e146cc6` | Independent management, project tenancy, hub delivery and cell-local evidence writers. |
 | [#58 offerings][offerings] | `a922ff1eb3275e26af6ae750a7515ddde245a754` | Current admission rights, retained accepted capabilities, no withdrawal-driven eviction. |
 | [#59 PXE][pxe] and [lifecycle][lifecycle] | `d7ff793b03711203dbfc9fac87d43922cc649b6f` | Exact Installation source/driver and predecessor, managed versus delegated assurance. |
-| [#60 allocation][allocation] | `0bd0005a0759e6c9631f30bb7b56b02cecd1434f` | One serializable management ledger, authority gates, quota escrow, recovery epoch. |
-| [#61 networking][network] | `7a5b4c1eac97e94afc1173cddc43f0adf3a5b3a3` | Owner-operated paths, effective isolation, disconnect and address disposition evidence. |
-| [#62 execution][execution] | `3b6133bb062b280804921699d21792e295f1d3f2` | Management and cell journals, S1 send ambiguity, physical stop, restore interlock. |
-| [#63 inventory][inventory] | `dbf2c620b376993ce01333a0d9d9aa67a3fc3f4c` | Canonical identity, independent witnesses, physical holds, component continuity. |
-| [#64 fulfillment][fulfillment] | `16120ead3759d2ab13464e7b8b3ce8b0c955c476` | Exact external reservation, all-channel exclusion, provider journal and R3 finalization. |
-| [#65 release/reuse][release] | `f4cc4bfc919a18d048434e21ae5e11c7b0efd9cc` | Discovered companion: R1 closure, evidence-based R2 settlement, separate reuse gates. |
+| [#60 allocation][allocation] | `80c72446a574202c9dac5f6d3c26ce4a0af875ba` | One serializable management ledger, authority gates, quota escrow, recovery epoch. |
+| [#61 networking][network] | `8101f645cc8167f71a07147e6ea1a9cdf69a57cf` | Owner-operated paths, effective isolation, disconnect and address disposition evidence. |
+| [#62 execution][execution] | `496ec4530aa3bacdb4858d0b22192be1a92b0c48` | Management and cell journals, S1 send ambiguity, physical stop, restore interlock. |
+| [#63 inventory][inventory] | `ce4a30a36ee476073281b40b8353ac5eb2c99e0c` | Canonical identity, independent witnesses, physical holds, component continuity. |
+| [#64 fulfillment][fulfillment] | `4495e20f4c3ee7697dfd97a5a95823ca5fa7b448` | Exact external reservation, all-channel exclusion, provider journal and R3 finalization. |
+| [#65 release/reuse][release] | `94824bf7ef614fcdecf3ce813c289e259367e90c` | Discovered companion: R1 closure, evidence-based R2 settlement, separate reuse gates. |
 
 The release interface is available as a draft at this pin, not pending discovery.
 Its owner acceptance, implementation, sanitization procedures and qualification
@@ -445,8 +445,8 @@ Each profile names exclusions (initially autonomous external storage and unprove
 firmware queue behavior), accountable owners, evidence digest/location, validity
 and revocation conditions. Approval binds that exact profile. Independent reviewers
 must challenge isolation and restore assumptions; author self-review is not their
-sign-off. The historical complete-set review found two blocking custody joins;
-the revised contracts require a fresh adversarial complete-set review. Neither
+sign-off. The earlier review found two custody joins; the next review found the remaining
+physical-maintenance subject gap. The revised contracts require fresh complete-set review. Neither
 that review nor this author alignment grants sign-off.
 
 | Profile | Required qualification | Permitted claim after successful evidence review |
@@ -611,19 +611,24 @@ is claimed by documentation validation.
 [offerings]: https://github.com/datum-cloud/fleet/blob/a922ff1eb3275e26af6ae750a7515ddde245a754/docs/enhancements/profile-access/README.md
 [pxe]: https://github.com/datum-cloud/fleet/blob/d7ff793b03711203dbfc9fac87d43922cc649b6f/docs/enhancements/pxe-installation/README.md
 [lifecycle]: https://github.com/datum-cloud/fleet/blob/d7ff793b03711203dbfc9fac87d43922cc649b6f/docs/enhancements/machine-lifecycle/README.md
-[allocation]: https://github.com/datum-cloud/fleet/blob/0bd0005a0759e6c9631f30bb7b56b02cecd1434f/docs/enhancements/allocation-admission/README.md
-[network]: https://github.com/datum-cloud/fleet/blob/7a5b4c1eac97e94afc1173cddc43f0adf3a5b3a3/docs/enhancements/network-handoff/README.md
-[execution]: https://github.com/datum-cloud/fleet/blob/3b6133bb062b280804921699d21792e295f1d3f2/docs/enhancements/execution-recovery/README.md
-[inventory]: https://github.com/datum-cloud/fleet/blob/dbf2c620b376993ce01333a0d9d9aa67a3fc3f4c/docs/enhancements/inventory-trust/README.md
-[fulfillment]: https://github.com/datum-cloud/fleet/blob/16120ead3759d2ab13464e7b8b3ce8b0c955c476/docs/enhancements/provider-fulfillment/README.md
-[release]: https://github.com/datum-cloud/fleet/blob/f4cc4bfc919a18d048434e21ae5e11c7b0efd9cc/docs/enhancements/release-reuse/README.md
+[allocation]: https://github.com/datum-cloud/fleet/blob/80c72446a574202c9dac5f6d3c26ce4a0af875ba/docs/enhancements/allocation-admission/README.md
+[network]: https://github.com/datum-cloud/fleet/blob/8101f645cc8167f71a07147e6ea1a9cdf69a57cf/docs/enhancements/network-handoff/README.md
+[execution]: https://github.com/datum-cloud/fleet/blob/496ec4530aa3bacdb4858d0b22192be1a92b0c48/docs/enhancements/execution-recovery/README.md
+[inventory]: https://github.com/datum-cloud/fleet/blob/ce4a30a36ee476073281b40b8353ac5eb2c99e0c/docs/enhancements/inventory-trust/README.md
+[fulfillment]: https://github.com/datum-cloud/fleet/blob/4495e20f4c3ee7697dfd97a5a95823ca5fa7b448/docs/enhancements/provider-fulfillment/README.md
+[release]: https://github.com/datum-cloud/fleet/blob/94824bf7ef614fcdecf3ce813c289e259367e90c/docs/enhancements/release-reuse/README.md
 
 ## Alignment revision provenance
 
-On 2026-11-14 the [complete-set integration review][custody-review] identified
-missing commissioning and adopted-settlement joins. This `custody-subjects-v1`
-alignment is proposed documentation, not runtime qualification or sign-off.
-This proposal's contract-bearing revision is `1cccc4fbdcc8d3c0a1424427d7cb84756a684c97`.
+On 2026-11-14 the [prior integration review][custody-review] identified
+commissioning and adopted-settlement gaps, addressed by `custody-subjects-v1`.
+The [fresh complete-set review][maintenance-review] accepted those joins but
+identified the remaining passive-maintenance execution-subject gap. This
+`physical-maintenance-v1` alignment extends the same custody/slot/journal/clearance
+protocol without changing those joins or catalog-withdrawal/runtime semantics.
+All contracts remain proposed; fresh independent complete-set review and later
+implementation/owner/hardware qualification are required. No self-signoff.
+This proposal's contract-bearing revision is `26601c7121542d7c89ddac84c1f8592f08cb8372`.
 The manifest below pins the final source heads of #60–#65 for a fresh complete-set
 review. Their own provenance sections pin immutable contract-bearing snapshots;
 their later pin-only commits do not change those normative contracts. This avoids
@@ -632,17 +637,19 @@ a requirement for mutually circular exact-final-head references. Core #41/#51/
 
 | Companion | Exact dependency revision |
 | --- | --- |
-| [#60 allocation-admission][custody-60] | `0bd0005a0759e6c9631f30bb7b56b02cecd1434f` |
-| [#61 network-handoff][custody-61] | `7a5b4c1eac97e94afc1173cddc43f0adf3a5b3a3` |
-| [#62 execution-recovery][custody-62] | `3b6133bb062b280804921699d21792e295f1d3f2` |
-| [#63 inventory-trust][custody-63] | `dbf2c620b376993ce01333a0d9d9aa67a3fc3f4c` |
-| [#64 provider-fulfillment][custody-64] | `16120ead3759d2ab13464e7b8b3ce8b0c955c476` |
-| [#65 release-reuse][custody-65] | `f4cc4bfc919a18d048434e21ae5e11c7b0efd9cc` |
+| [#60 allocation-admission][custody-60] | `80c72446a574202c9dac5f6d3c26ce4a0af875ba` |
+| [#61 network-handoff][custody-61] | `8101f645cc8167f71a07147e6ea1a9cdf69a57cf` |
+| [#62 execution-recovery][custody-62] | `496ec4530aa3bacdb4858d0b22192be1a92b0c48` |
+| [#63 inventory-trust][custody-63] | `ce4a30a36ee476073281b40b8353ac5eb2c99e0c` |
+| [#64 provider-fulfillment][custody-64] | `4495e20f4c3ee7697dfd97a5a95823ca5fa7b448` |
+| [#65 release-reuse][custody-65] | `94824bf7ef614fcdecf3ce813c289e259367e90c` |
 
 [custody-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883007682
-[custody-60]: https://github.com/datum-cloud/fleet/blob/0bd0005a0759e6c9631f30bb7b56b02cecd1434f/docs/enhancements/allocation-admission/README.md
-[custody-61]: https://github.com/datum-cloud/fleet/blob/7a5b4c1eac97e94afc1173cddc43f0adf3a5b3a3/docs/enhancements/network-handoff/README.md
-[custody-62]: https://github.com/datum-cloud/fleet/blob/3b6133bb062b280804921699d21792e295f1d3f2/docs/enhancements/execution-recovery/README.md
-[custody-63]: https://github.com/datum-cloud/fleet/blob/dbf2c620b376993ce01333a0d9d9aa67a3fc3f4c/docs/enhancements/inventory-trust/README.md
-[custody-64]: https://github.com/datum-cloud/fleet/blob/16120ead3759d2ab13464e7b8b3ce8b0c955c476/docs/enhancements/provider-fulfillment/README.md
-[custody-65]: https://github.com/datum-cloud/fleet/blob/f4cc4bfc919a18d048434e21ae5e11c7b0efd9cc/docs/enhancements/release-reuse/README.md
+[custody-60]: https://github.com/datum-cloud/fleet/blob/80c72446a574202c9dac5f6d3c26ce4a0af875ba/docs/enhancements/allocation-admission/README.md
+[custody-61]: https://github.com/datum-cloud/fleet/blob/8101f645cc8167f71a07147e6ea1a9cdf69a57cf/docs/enhancements/network-handoff/README.md
+[custody-62]: https://github.com/datum-cloud/fleet/blob/496ec4530aa3bacdb4858d0b22192be1a92b0c48/docs/enhancements/execution-recovery/README.md
+[custody-63]: https://github.com/datum-cloud/fleet/blob/ce4a30a36ee476073281b40b8353ac5eb2c99e0c/docs/enhancements/inventory-trust/README.md
+[custody-64]: https://github.com/datum-cloud/fleet/blob/4495e20f4c3ee7697dfd97a5a95823ca5fa7b448/docs/enhancements/provider-fulfillment/README.md
+[custody-65]: https://github.com/datum-cloud/fleet/blob/94824bf7ef614fcdecf3ce813c289e259367e90c/docs/enhancements/release-reuse/README.md
+
+[maintenance-review]: https://github.com/datum-cloud/fleet/pull/66#issuecomment-6883682145
