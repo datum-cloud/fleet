@@ -1,0 +1,25 @@
+digraph execution_path {
+  graph [rankdir=TB, bgcolor="white", pad="0.25", nodesep="0.35", ranksep="0.48", fontname="Helvetica", label="PROPOSED: durable authority, local effects, validated evidence", labelloc=t, fontsize=18];
+  node [shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#456281", fontname="Helvetica", fontsize=12, margin="0.17,0.12"];
+  edge [color="#456281", fontname="Helvetica", fontsize=10];
+  management [label="Management coordinator\nL1: slot + predecessor + operation + outbox\nProtected inputs and provider custody"];
+  hub [label="Federation hub\nManagement writes exact-target intent\nKarmada reflects selected-cell results"];
+  cell [label="Selected cell\nL2: inbox / L3: step journal\nLocal result writer; no hub/project credentials"];
+  broker [label="Single active effect broker\nS1: durable send marker before transmission\nUnknown send is NOT automatically retried", fillcolor="#fff1d7"];
+  hardware [label="BMC / boot / RAM installer / local disks\nNo assumed hardware epoch enforcement", fillcolor="#fce9e7"];
+  network [label="Networking owner\nOrdered changes + effective fence receipts"];
+  recovery [label="Independent recovery boundaries\nOld egress fence + physical isolation if needed\nRestore epoch interlock", fillcolor="#e9f3e6"];
+  validate [label="Management validation\nL4: evidence / L5: settlement\nUnknown retains custody", fillcolor="#e9f3e6"];
+  management -> hub [label="signed bounded intent"];
+  hub -> cell [label="Karmada delivery"];
+  cell -> broker [label="exact admitted step"];
+  broker -> hardware [label="qualified serialized effect"];
+  cell -> network [label="keyed owner request"];
+  network -> cell [label="owner evidence", style=dashed];
+  hardware -> broker [label="receipt or ambiguity", style=dashed];
+  broker -> cell [label="durable local evidence", style=dashed];
+  cell -> hub [label="Karmada reflection ONLY", style=dashed];
+  hub -> validate [label="attributed results"];
+  recovery -> broker [label="exclude old path", color="#527649"];
+  recovery -> hardware [label="stop != token expiry", color="#527649"];
+}

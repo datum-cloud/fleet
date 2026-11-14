@@ -1,0 +1,28 @@
+digraph operation_state {
+  graph [rankdir=TB, bgcolor="white", pad="0.25", nodesep="0.55", ranksep="0.65", fontname="Helvetica", label="PROPOSED: operation states and custody\nAny nonterminal state may enter Stopping or OutcomeUnknown", labelloc=t, fontsize=18];
+  node [shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#456281", fontname="Helvetica", fontsize=12, margin="0.17,0.12"];
+  edge [color="#456281", fontname="Helvetica", fontsize=10];
+  admitted [label="Admitted\nL1 retains slot and exact inputs"];
+  dispatched [label="Dispatched\nDelivery may already have succeeded"];
+  executing [label="Executing\nFinite admitted step budget"];
+  verifying [label="Verifying\nClose provisioning; collect settlement"];
+  unknown [label="OutcomeUnknown\nNONTERMINAL; retains custody", fillcolor="#fce9e7"];
+  stopping [label="Stopping\nClose new steps; fence and account for effects", fillcolor="#fff1d7"];
+  success [label="Succeeded\nL5 records incarnation, not allocation release", fillcolor="#e9f3e6"];
+  stopped [label="Failed / Cancelled\nVerified settled boundary\nPartial state retains recovery hold", fillcolor="#e9f3e6"];
+  admitted -> dispatched [label="publish exact intent"];
+  dispatched -> executing [label="validated cell evidence"];
+  executing -> verifying [label="work reports completion"];
+  verifying -> success [label="all evidence validated"];
+  executing -> unknown [label="effect/evidence ambiguity"];
+  executing -> stopping [label="cancel / release / restriction"];
+  unknown -> stopping [label="recovery closure"];
+  unknown -> executing [label="same-plan safe recovery", style=dashed, constraint=false];
+  unknown -> verifying [label="recovered completion evidence", style=dashed, constraint=false];
+  stopping -> unknown [label="unconfirmed fence"];
+  stopping -> stopped [label="all effects settled + disposition retained"];
+  verifying -> stopped [label="verified failure + disposition retained"];
+  { rank=same; executing; unknown; }
+  { rank=same; verifying; stopping; }
+  { rank=same; success; stopped; }
+}
