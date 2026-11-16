@@ -1,0 +1,27 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-federation-projector
+rules:
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [projectedmachinemanagementsessions]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [projectedmachinemanagementsessions/status]
+    verbs: [get]
+  - apiGroups: [policy.karmada.io]
+    resources: [propagationpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-federation-projector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fleet-federation-projector
+subjects:
+  - kind: ServiceAccount
+    name: fleet-controller
+    namespace: fleet-system

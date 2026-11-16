@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fleet-openvpn-client
+  namespace: machine-access-system
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: fleet-openvpn-client}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: fleet-openvpn-client}}
+    spec:
+      hostNetwork: true
+      automountServiceAccountToken: false
+      containers:
+        - name: openvpn
+          image: fleet-openvpn-client:e2e
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - {name: key, mountPath: /var/run/openvpn, readOnly: true}
+            - {name: tun, mountPath: /dev/net/tun}
+      volumes:
+        - name: key
+          secret: {secretName: fleet-openvpn-key, defaultMode: 0400}
+        - name: tun
+          hostPath: {path: /dev/net/tun, type: CharDevice}

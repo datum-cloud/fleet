@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: machine-access-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: relay
+  namespace: machine-access-system
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: fleet-relay}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{protocol: TCP, port: 8443}]
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+  namespace: machine-access-system
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: fleet-gateway}}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: fleet-relay}}}]
+      ports: [{protocol: TCP, port: 8443}]
+    - to: [{ipBlock: {cidr: 172.30.0.10/32}}]
+      ports: [{protocol: TCP, port: 8000}]
+    - to: [{ipBlock: {cidr: 10.88.0.1/32}}]
+      ports: [{protocol: TCP, port: 8000}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to: [{ipBlock: {cidr: 10.96.0.1/32}}]
+      ports: [{protocol: TCP, port: 443}]

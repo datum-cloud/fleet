@@ -1,0 +1,5 @@
+FROM debian:12.12-slim
+ARG BINARY
+COPY ${BINARY} /usr/local/bin/app
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/app"]

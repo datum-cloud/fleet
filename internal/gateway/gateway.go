@@ -1,0 +1,554 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package gateway
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	coordinationv1 "go.datum.net/fleet/internal/api/coordination/v1alpha1"
+	fleetv1alpha1 "go.datum.net/fleet/internal/api/session/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/journal"
+	fleetmetrics "go.datum.net/fleet/internal/metrics"
+	"go.datum.net/fleet/internal/protocol"
+	"go.datum.net/fleet/internal/redfish"
+	"go.datum.net/fleet/internal/relay"
+)
+
+const (
+	HeaderTimestamp            = "X-Datum-Fleet-Timestamp"
+	HeaderNonce                = "X-Datum-Fleet-Nonce"
+	HeaderSignature            = "X-Datum-Fleet-Signature"
+	HeaderSession              = "X-Datum-Fleet-Session"
+	HeaderAudience             = "X-Datum-Fleet-Audience"
+	EnrollmentDeviceLabel      = "fleet.datumapis.com/device-name"
+	DefaultEnrollmentNamespace = "machine-access-system"
+)
+
+type Config struct {
+	RelayAddress          string
+	RelayPublicURL        string
+	RelayGatewayToken     string
+	Audience              string
+	SupportedAdapter      string
+	EnrollmentNamespace   string
+	JournalDir            string
+	StateDir              string
+	DropResetResponseOnce bool
+}
+
+type Reconciler struct {
+	client.Client
+	Config Config
+	mu     sync.Mutex
+	active map[client.ObjectKey]*activeSession
+}
+
+type activeSession struct {
+	cancel  context.CancelFunc
+	mu      sync.RWMutex
+	effects sync.RWMutex
+	stopped bool
+	done    chan struct{}
+	spec    coordinationv1.ProjectedMachineManagementSessionSpec
+	target  resolvedTarget
+}
+
+type resolvedTarget struct {
+	MachineCapacityName string
+	DeviceName          string
+	Adapter             string
+	BaseURL             string
+	SystemID            string
+	Username            string
+	Password            string
+}
+
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	var p coordinationv1.ProjectedMachineManagementSession
+	if err := r.Get(ctx, req.NamespacedName, &p); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.stop(req.NamespacedName)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+	now := time.Now()
+	if p.Spec.DesiredState == fleetv1alpha1.ProjectionRevoked {
+		r.stop(req.NamespacedName)
+		if cleanup := apimeta.FindStatusCondition(p.Status.Conditions, "CleanupConfirmed"); cleanup != nil && cleanup.Status == metav1.ConditionTrue && cleanup.ObservedGeneration == p.Generation && p.Status.TeardownSpecDigest == coordinationv1.TeardownDigest(&p) {
+			return ctrl.Result{}, nil
+		}
+		if err := r.verifyTeardown(req.NamespacedName, p.Spec.MachineCapacityRef.Name); err != nil {
+			apimeta.SetStatusCondition(&p.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionUnknown, Reason: "EffectsUnconfirmed", Message: "Session shutdown or durable effect settlement is unconfirmed.", ObservedGeneration: p.Generation, LastTransitionTime: metav1.Now()})
+			return ctrl.Result{RequeueAfter: time.Second}, r.Status().Update(ctx, &p)
+		}
+		setCondition(&p, metav1.ConditionFalse, "Revoked", "The central allocation authority revoked this session.")
+		p.Status.TeardownSpecDigest = coordinationv1.TeardownDigest(&p)
+		apimeta.SetStatusCondition(&p.Status.Conditions, metav1.Condition{Type: "CleanupConfirmed", Status: metav1.ConditionTrue, Reason: "GatewayStopped", Message: "The location gateway closed the relay stream and discarded session authority.", ObservedGeneration: p.Generation, LastTransitionTime: metav1.Now()})
+		return ctrl.Result{}, r.Status().Update(ctx, &p)
+	}
+	if !p.DeletionTimestamp.IsZero() || now.After(p.Spec.ExpiresAt.Time) {
+		r.stop(req.NamespacedName)
+		return ctrl.Result{}, nil
+	}
+	if p.Status.ConnectedAt == nil && now.After(p.Spec.ConnectBefore.Time) {
+		r.stop(req.NamespacedName)
+		setCondition(&p, metav1.ConditionFalse, "ConnectWindowExpired", "No client connected before the admitted connection deadline.")
+		return ctrl.Result{}, r.Status().Update(ctx, &p)
+	}
+	r.mu.Lock()
+	if r.active == nil {
+		r.active = map[client.ObjectKey]*activeSession{}
+	}
+	a := r.active[req.NamespacedName]
+	if a == nil {
+		target, err := r.resolveTarget(ctx, p.Spec)
+		if err != nil {
+			r.mu.Unlock()
+			setCondition(&p, metav1.ConditionFalse, "ManagementUnavailable", "The allocated capacity does not have a verified local management enrollment.")
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.Status().Update(ctx, &p)
+		}
+		runCtx, cancel := context.WithCancel(context.Background())
+		a = &activeSession{cancel: cancel, spec: p.Spec, target: target, done: make(chan struct{})}
+		r.active[req.NamespacedName] = a
+		go r.run(runCtx, req.NamespacedName, a)
+	} else {
+		a.mu.Lock()
+		if !sameBinding(a.spec, p.Spec) {
+			a.mu.Unlock()
+			r.mu.Unlock()
+			r.stop(req.NamespacedName)
+			setCondition(&p, metav1.ConditionFalse, "SessionInputsChanged", "Projected binding inputs changed after the gateway accepted them.")
+			return ctrl.Result{}, r.Status().Update(ctx, &p)
+		}
+		a.spec.AuthorityFreshUntil = p.Spec.AuthorityFreshUntil
+		a.mu.Unlock()
+	}
+	r.mu.Unlock()
+	wake := time.Until(p.Spec.ExpiresAt.Time)
+	if p.Status.ConnectedAt == nil && time.Until(p.Spec.ConnectBefore.Time) < wake {
+		wake = time.Until(p.Spec.ConnectBefore.Time)
+	}
+	return ctrl.Result{RequeueAfter: wake}, nil
+}
+
+func (r *Reconciler) run(ctx context.Context, key client.ObjectKey, a *activeSession) {
+	defer close(a.done)
+	fleetmetrics.ActiveSessions.Inc()
+	defer fleetmetrics.ActiveSessions.Dec()
+	cert, der, fingerprint, err := loadOrCreateCertificate(r.Config.StateDir, key.Name)
+	if err != nil {
+		r.failStatus(key, "GatewayCertificateError", "The location gateway could not create its session certificate.")
+		return
+	}
+	sessionStore, err := journal.Open(filepath.Join(r.Config.JournalDir, "sessions"))
+	if err != nil {
+		return
+	}
+	if _, err := sessionStore.Get(journal.Identity(key.Name, "REVOKED", "", nil)); !errors.Is(err, os.ErrNotExist) {
+		r.failStatus(key, "SessionRevoked", "The durable journal does not permit this session to start.")
+		return
+	}
+	marker := journal.Identity(key.Name, "SESSION", "", nil)
+	var store *journal.Store
+	if _, markerErr := sessionStore.Get(marker); markerErr == nil {
+		store, err = r.existingOperations()
+	} else if errors.Is(markerErr, os.ErrNotExist) {
+		store, err = journal.Open(filepath.Join(r.Config.JournalDir, "operations"))
+	} else {
+		err = markerErr
+	}
+	if err != nil {
+		r.failStatus(key, "JournalUnavailable", "The durable operation journal is unavailable.")
+		return
+	}
+	a.mu.RLock()
+	sessionSpec, sessionTarget := a.spec, a.target
+	a.mu.RUnlock()
+	if err := retainSession(sessionStore, key.Name, sessionSpec, sessionTarget); err != nil {
+		return
+	}
+	routeID := randomHex(24)
+	conn, err := r.dialRelay(ctx, routeID)
+	if err != nil {
+		r.failStatus(key, "RelayUnavailable", "The location gateway could not establish its outbound relay route.")
+		return
+	}
+	defer conn.Close()
+	go func() {
+		<-ctx.Done()
+		_ = conn.Close()
+	}()
+	if err := r.readyStatus(key, routeID, fingerprint); err != nil {
+		return
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || line != "OK\n" {
+		r.failStatus(key, "RelayDisconnected", "The outbound relay route ended before a client connected.")
+		return
+	}
+	r.connectedStatus(key)
+	a.mu.RLock()
+	target := a.target
+	a.mu.RUnlock()
+	adapter := &redfish.SushyAdapter{BaseURL: target.BaseURL, SystemID: target.SystemID, Username: target.Username, Password: target.Password, DropResetResponseOnce: r.Config.DropResetResponseOnce}
+	h := &redfish.Handler{Adapter: adapter, Journal: store, CurrentAuthority: func() redfish.Authority {
+		a.mu.RLock()
+		defer a.mu.RUnlock()
+		s := a.spec
+		return redfish.Authority{SessionName: key.Name, MachineCapacityName: target.MachineCapacityName, DeviceName: target.DeviceName, OperationEpoch: 1, ExpiresAt: s.ExpiresAt.Time, FreshUntil: s.AuthorityFreshUntil.Time}
+	}}
+	protected := r.proofMiddleware(a, routeID, h)
+	tlsConn := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"datum-fleet-redfish/1"}})
+	// The relay admits one connector for the session, so an HTTP idle timeout
+	// would permanently strand a valid session during a long PXE boot. Expiry,
+	// revocation, and projection teardown bound the stream lifetime instead.
+	server := &http.Server{Handler: protected, ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
+	defer server.Close()
+	_ = server.Serve(newOneConnListener(tlsConn))
+	_ = der // DER is retained only to make certificate pin derivation explicit.
+	r.endedStatus(key, "Disconnected", "The client connection ended.")
+}
+
+func (r *Reconciler) dialRelay(ctx context.Context, routeID string) (net.Conn, error) {
+	d := net.Dialer{Timeout: 10 * time.Second}
+	c, err := d.DialContext(ctx, "tcp", r.Config.RelayAddress)
+	if err != nil {
+		return nil, err
+	}
+	if err := relay.Register(c, routeID, r.Config.RelayGatewayToken); err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+func (r *Reconciler) proofMiddleware(a *activeSession, routeID string, next http.Handler) http.Handler {
+	used := map[string]bool{}
+	var mu sync.Mutex
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		a.effects.RLock()
+		defer a.effects.RUnlock()
+		if a.stopped {
+			http.Error(w, "session revoked", http.StatusForbidden)
+			return
+		}
+		a.mu.RLock()
+		spec := a.spec
+		a.mu.RUnlock()
+		if req.Header.Get(HeaderSession) != routeID || req.Header.Get(HeaderAudience) != r.Config.Audience {
+			http.Error(w, "session proof target mismatch", http.StatusUnauthorized)
+			return
+		}
+		proof := protocol.Proof{Timestamp: req.Header.Get(HeaderTimestamp), Nonce: req.Header.Get(HeaderNonce), Signature: req.Header.Get(HeaderSignature)}
+		err := protocol.Verify(spec.ClientPublicKey, routeID, r.Config.Audience, proof, time.Now(), func(n string) bool {
+			mu.Lock()
+			defer mu.Unlock()
+			if used[n] {
+				return true
+			}
+			used[n] = true
+			return false
+		})
+		if err != nil {
+			http.Error(w, "invalid session key proof", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+func (r *Reconciler) readyStatus(key client.ObjectKey, route, fingerprint string) error {
+	return r.updateStatus(key, func(p *coordinationv1.ProjectedMachineManagementSession) {
+		p.Status.Connection = &fleetv1alpha1.SessionConnection{RelayURL: r.Config.RelayPublicURL, RouteID: route, GatewayAudience: r.Config.Audience, GatewayCertSHA256: fingerprint, ProtocolVersion: protocol.Version}
+		setCondition(p, metav1.ConditionTrue, "SessionReady", "The outbound location route is ready for one connector.")
+	})
+}
+func (r *Reconciler) connectedStatus(key client.ObjectKey) {
+	_ = r.updateStatus(key, func(p *coordinationv1.ProjectedMachineManagementSession) {
+		now := metav1.Now()
+		p.Status.ConnectedAt = &now
+		setCondition(p, metav1.ConditionTrue, "Connected", "The client proved possession of the admitted session key.")
+	})
+}
+func (r *Reconciler) endedStatus(key client.ObjectKey, reason, message string) {
+	_ = r.updateStatus(key, func(p *coordinationv1.ProjectedMachineManagementSession) {
+		now := metav1.Now()
+		p.Status.EndedAt = &now
+		setCondition(p, metav1.ConditionFalse, reason, message)
+	})
+}
+func (r *Reconciler) failStatus(key client.ObjectKey, reason, message string) {
+	_ = r.updateStatus(key, func(p *coordinationv1.ProjectedMachineManagementSession) {
+		setCondition(p, metav1.ConditionFalse, reason, message)
+	})
+}
+func (r *Reconciler) updateStatus(key client.ObjectKey, mutate func(*coordinationv1.ProjectedMachineManagementSession)) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var p coordinationv1.ProjectedMachineManagementSession
+	if err := r.Get(ctx, key, &p); err != nil {
+		return err
+	}
+	mutate(&p)
+	return r.Status().Update(ctx, &p)
+}
+func (r *Reconciler) stop(key client.ObjectKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if a := r.active[key]; a != nil {
+		a.cancel()
+		a.effects.Lock()
+		a.stopped = true
+		a.effects.Unlock()
+	}
+}
+
+func (r *Reconciler) verifyTeardown(key client.ObjectKey, capacity string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if active := r.active[key]; active != nil {
+		select {
+		case <-active.done:
+		default:
+			return fmt.Errorf("gateway stream has not stopped")
+		}
+	}
+	store, err := r.existingOperations()
+	if err != nil {
+		return err
+	}
+	markerID := journal.Identity(key.Name, "SESSION", "", nil)
+	sessionStore, err := journal.Open(filepath.Join(r.Config.JournalDir, "sessions"))
+	if err != nil {
+		return err
+	}
+	marker, err := sessionStore.Get(markerID)
+	if err != nil || marker.SessionName != key.Name || marker.MachineCapacityName != capacity || marker.Outcome != journal.Succeeded {
+		return fmt.Errorf("session journal custody is unavailable")
+	}
+	operations, err := store.List()
+	if err != nil {
+		return err
+	}
+	for _, operation := range operations {
+		if operation.SessionName == key.Name && (operation.MachineCapacityName != capacity || operation.Outcome != journal.Succeeded) {
+			return fmt.Errorf("session effects are not verified")
+		}
+	}
+	tombstone := journal.Identity(key.Name, "REVOKED", "", nil)
+	if _, _, err := sessionStore.Admit(journal.Operation{ID: tombstone, SessionName: key.Name, MachineCapacityName: capacity, DeviceName: marker.DeviceName}); err != nil {
+		return err
+	}
+	if _, err := sessionStore.Finish(tombstone, journal.Succeeded, 0, "session terminally revoked after request and effect settlement"); err != nil {
+		return err
+	}
+	delete(r.active, key)
+	return nil
+}
+
+func (r *Reconciler) existingOperations() (*journal.Store, error) {
+	directory := filepath.Join(r.Config.JournalDir, "operations")
+	if info, err := os.Stat(directory); err != nil {
+		return nil, err
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("operation journal directory is unavailable")
+	}
+	return journal.Open(directory)
+}
+
+func retainSession(store *journal.Store, name string, spec coordinationv1.ProjectedMachineManagementSessionSpec, target resolvedTarget) error {
+	spec.AuthorityFreshUntil = metav1.Time{}
+	inputs, err := json.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	marker := journal.Identity(name, "SESSION", "", nil)
+	physical := target.Adapter + ":" + target.SystemID
+	retained, _, err := store.Admit(journal.Operation{ID: marker, SessionName: name, MachineCapacityName: target.MachineCapacityName, DeviceName: target.DeviceName, PhysicalTarget: physical, AcceptedBody: inputs})
+	if err != nil {
+		return err
+	}
+	var retainedInputs bytes.Buffer
+	if err := json.Compact(&retainedInputs, retained.AcceptedBody); err != nil {
+		return err
+	}
+	if retained.SessionName != name || retained.MachineCapacityName != target.MachineCapacityName || retained.DeviceName != target.DeviceName || retained.PhysicalTarget != physical || !bytes.Equal(retainedInputs.Bytes(), inputs) {
+		return fmt.Errorf("retained session inputs differ")
+	}
+	_, err = store.Finish(marker, journal.Succeeded, 0, "session journal retained before route registration")
+	return err
+}
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Client = mgr.GetClient()
+	return ctrl.NewControllerManagedBy(mgr).For(&coordinationv1.ProjectedMachineManagementSession{}).Complete(r)
+}
+
+func (r *Reconciler) resolveTarget(ctx context.Context, spec coordinationv1.ProjectedMachineManagementSessionSpec) (resolvedTarget, error) {
+	namespace := r.Config.EnrollmentNamespace
+	if namespace == "" {
+		namespace = DefaultEnrollmentNamespace
+	}
+	var capacity fleetv1.MachineCapacity
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: spec.MachineCapacityRef.Name}, &capacity); err != nil {
+		return resolvedTarget{}, err
+	}
+	if capacity.Spec.DeviceRef.Name == "" {
+		return resolvedTarget{}, fmt.Errorf("MachineCapacity has no deviceRef")
+	}
+	var secrets corev1.SecretList
+	if err := r.List(ctx, &secrets, client.InNamespace(namespace), client.MatchingLabels{EnrollmentDeviceLabel: capacity.Spec.DeviceRef.Name}); err != nil {
+		return resolvedTarget{}, err
+	}
+	if len(secrets.Items) != 1 {
+		return resolvedTarget{}, fmt.Errorf("expected one management enrollment")
+	}
+	data := secrets.Items[0].Data
+	target := resolvedTarget{
+		MachineCapacityName: capacity.Name,
+		DeviceName:          capacity.Spec.DeviceRef.Name,
+		Adapter:             strings.TrimSpace(string(data["adapter"])),
+		BaseURL:             strings.TrimSpace(string(data["endpoint"])),
+		SystemID:            strings.TrimSpace(string(data["system-id"])),
+		Username:            strings.TrimSpace(string(data["username"])),
+		Password:            strings.TrimSpace(string(data["password"])),
+	}
+	if target.Adapter == "" || target.Adapter != r.Config.SupportedAdapter || target.BaseURL == "" || target.SystemID == "" || target.Username == "" || target.Password == "" {
+		return resolvedTarget{}, fmt.Errorf("management enrollment is incomplete or unsupported")
+	}
+	return target, nil
+}
+
+func sameBinding(a, b coordinationv1.ProjectedMachineManagementSessionSpec) bool {
+	a.AuthorityFreshUntil = metav1.Time{}
+	b.AuthorityFreshUntil = metav1.Time{}
+	a.DesiredState = ""
+	b.DesiredState = ""
+	return reflect.DeepEqual(a, b)
+}
+func setCondition(p *coordinationv1.ProjectedMachineManagementSession, status metav1.ConditionStatus, reason, message string) {
+	apimeta.SetStatusCondition(&p.Status.Conditions, metav1.Condition{Type: fleetv1alpha1.ConditionReady, Status: status, Reason: reason, Message: message, ObservedGeneration: p.Generation, LastTransitionTime: metav1.Now()})
+}
+
+func loadOrCreateCertificate(dir, name string) (tls.Certificate, []byte, string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return tls.Certificate{}, nil, "", err
+	}
+	certPath, keyPath := filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key")
+	if certPEM, err := os.ReadFile(certPath); err == nil {
+		keyPEM, e := os.ReadFile(keyPath)
+		if e == nil {
+			cert, e := tls.X509KeyPair(certPEM, keyPEM)
+			if e == nil && len(cert.Certificate) > 0 {
+				sum := sha256.Sum256(cert.Certificate[0])
+				return cert, cert.Certificate[0], hex.EncodeToString(sum[:]), nil
+			}
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, nil, "", err
+	}
+	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	now := time.Now()
+	tmpl := x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "fleet-gateway"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour), DNSNames: []string{"fleet-gateway"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, pub, priv)
+	if err != nil {
+		return tls.Certificate{}, nil, "", err
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return tls.Certificate{}, nil, "", err
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		return tls.Certificate{}, nil, "", err
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return tls.Certificate{}, nil, "", err
+	}
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	sum := sha256.Sum256(der)
+	return cert, der, hex.EncodeToString(sum[:]), err
+}
+func randomHex(n int) string { b := make([]byte, n); _, _ = rand.Read(b); return hex.EncodeToString(b) }
+
+type oneConnListener struct {
+	mu       sync.Mutex
+	conn     net.Conn
+	accepted bool
+	done     chan struct{}
+	once     sync.Once
+}
+
+func newOneConnListener(conn net.Conn) *oneConnListener {
+	l := &oneConnListener{done: make(chan struct{})}
+	l.conn = &notifyConn{Conn: conn, closed: func() { l.once.Do(func() { close(l.done) }) }}
+	return l
+}
+
+func (l *oneConnListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	if !l.accepted {
+		l.accepted = true
+		conn := l.conn
+		l.mu.Unlock()
+		return conn, nil
+	}
+	l.mu.Unlock()
+	<-l.done
+	return nil, errors.New("single connection consumed")
+}
+func (l *oneConnListener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return l.conn.Close()
+}
+func (l *oneConnListener) Addr() net.Addr { return dummyAddr("relay") }
+
+type dummyAddr string
+
+func (d dummyAddr) Network() string { return "relay" }
+func (d dummyAddr) String() string  { return string(d) }
+
+type notifyConn struct {
+	net.Conn
+	once   sync.Once
+	closed func()
+}
+
+func (c *notifyConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.closed)
+	return err
+}

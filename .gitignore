@@ -17,10 +17,18 @@
 /servers.com.txt
 
 # Local outputs and scratch work
+/bin/
+/.e2e/
+/.task/
 /tmp/
 /dist/
 /coverage/
 /worktrees/
+coverage.out
+*.kubeconfig
+credentials.json
+ready.json
+ca.pem
 /milo-acceptance-evidence/
 **/milo-acceptance-config.json
 

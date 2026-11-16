@@ -15,6 +15,17 @@ rejects work that requires those integrations and makes no provider changes. See
 [implementation status](docs/development/README.md) for the implemented subset and
 remaining gaps.
 
+The repository also contains a deliberately narrow prototype for
+allocation-scoped customer Redfish access. Its lifecycle integration consumes
+service-owned Secret custody and serializes sessions against installation and
+release, rather than trusting pre-bound allocation CRDs. Production access
+authorization, trusted observation resolution, and executor fencing remain
+unwired; the session controller defaults to unready and denies new sessions.
+An explicit [synthetic fixture mode](docs/implementation/synthetic-bmc-fixture.md)
+wires the runnable prototype to real Coordinator custody without enabling a
+production fallback.
+See the [implemented lifecycle contract](docs/implementation/secure-bmc-lifecycle.md).
+
 ## What Fleet is for
 
 - Plan, register, and verify physical infrastructure and its connections.
@@ -49,3 +60,8 @@ The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
 
 Contributors should also read the [repository guidance](AGENTS.md) and
 [implementation roadmap](docs/development/roadmap.md).
+
+## Secure BMC prototype
+
+See the [prototype guide](docs/implementation/machine-management-prototype.md) for
+build commands, the Linux E2E harness, and exact validation limits.

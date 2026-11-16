@@ -5,6 +5,12 @@
 Reviewed on 2026-10-27. This is a synthesis for implementation planning, not a
 replacement for the source proposals or a claim that their APIs exist.
 
+The [secure machine-management prototype](implementation/machine-management-prototype.md)
+is a separate implementation alongside the [lifecycle library](implementation.md).
+It intentionally uses synthetic,
+pre-bound allocation input and does not turn the proposal's illustrative APIs
+into accepted product contracts.
+
 ## Source proposals
 
 | Source | Reviewed revision | Contribution |
@@ -32,7 +38,8 @@ and coordinated changes above that shared service.
 
 ## Subsystem boundaries
 
-All names below describe proposed resources, not implemented schemas.
+The table summarizes subsystem contracts; the [API architecture](architecture.md)
+distinguishes implemented lifecycle/session schemas from proposed resources.
 
 | Subsystem | Responsibilities and principal resources |
 | --- | --- |
@@ -157,7 +164,9 @@ inventory remains finite and reports `InsufficientCapacity` when exhausted.
 - **Repository ownership:** The service proposal and implementation will live in
   `datum-cloud/fleet`; environment-specific rollout configuration remains in
   `datum-cloud/infra`. Imported implementation references are updated accordingly.
-  Module path, license, and any future provider repository split remain open.
+  The prototype selects `go.datum.net/fleet` to match Datum Go conventions without
+  asserting stable API imports. License policy and any future provider repository
+  split remain open.
 
 The [review of #7705][node-review] requested clarity on readiness, regional rollout,
 fencing, and procurement policy. Its latest text addresses those points with the

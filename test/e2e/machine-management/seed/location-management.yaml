@@ -1,0 +1,51 @@
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineCapacity
+metadata:
+  name: allocated-capacity
+  namespace: machine-access-system
+spec:
+  deviceRef: {name: device-allocated}
+  allocationPolicy: Enabled
+  cleaningPolicyRef: {name: synthetic-e2e}
+  reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: enrollment-device-allocated
+  namespace: machine-access-system
+  labels:
+    fleet.datumapis.com/device-name: device-allocated
+type: Opaque
+stringData:
+  adapter: sushy-libvirt-v1
+  endpoint: http://172.30.0.10:8000
+  system-id: allocated
+  username: fleet-gateway
+  password: synthetic-e2e-only
+---
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineCapacity
+metadata:
+  name: db02-capacity
+  namespace: machine-access-system
+spec:
+  deviceRef: {name: device-unallocated}
+  allocationPolicy: Enabled
+  cleaningPolicyRef: {name: synthetic-e2e}
+  reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: enrollment-device-unallocated
+  namespace: machine-access-system
+  labels:
+    fleet.datumapis.com/device-name: device-unallocated
+type: Opaque
+stringData:
+  adapter: sushy-libvirt-v1
+  endpoint: http://172.30.0.10:8000
+  system-id: unallocated
+  username: fleet-gateway
+  password: synthetic-e2e-only
