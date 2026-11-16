@@ -185,12 +185,16 @@ acceptance gates pass.
 
 ## Metal quota registration migration
 
-The Metal allocation quota uses a new ResourceRegistration named `metal-machines`.
-Milo makes `spec.resourceType` immutable, so the existing `fleet-machines`
-registration cannot be retargeted. The bundle retains that legacy registration
-with `fleet.datumapis.com/machines` and disables Flux pruning for it. This is a
-quota compatibility record, not a second Service registration. Do not remove it
-until old grants, claims, and accounting obligations have settled.
+The Metal allocation quota uses ResourceRegistration `metal-machines`. The bundle
+no longer installs the obsolete `fleet-machines` registration. Previously applied
+registrations retain their `kustomize.toolkit.fluxcd.io/prune: disabled` annotation;
+removing the manifest does not authorize deletion or settle old obligations.
+
+Before explicitly deleting an existing legacy registration, verify there are no
+legacy grants, claims, allowance buckets, or creation policies, and all legacy
+allocations have verified release. Never retarget its immutable `spec.resourceType`
+or delete retained private allocation records. Environments that have not completed
+this audit must retain their existing registration.
 
 Coordinate environment changes before publishing the corrected bundle: publication
 patches must target the `metal` Service and ServiceConfiguration, provider inventory
