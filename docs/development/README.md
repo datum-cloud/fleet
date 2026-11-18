@@ -163,7 +163,9 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   `ProviderRunnable`, so the consumer provider is not started twice.
 - **Readiness.** `/readyz` requires discovery to have synced, every consuming
   project to be engaged, every engaged project cache to have synced, and the
-  private-record cache to have synced. The former integration gate, which
+  private-record cache to have synced. It fails with `ErrDiscoveryMisconfigured`
+  while the metal Service is missing or its producer project differs from
+  `consumerScopedProjection.providerProject`. The former integration gate, which
   failed unless synthetic staging was on, is removed. Removing it enables no
   effect: without a provider every lifecycle handler stays blocked.
 - **Module versions.** Fleet uses the versions Compute uses:

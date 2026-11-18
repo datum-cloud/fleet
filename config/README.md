@@ -250,7 +250,12 @@ suspension).
 provider readiness. It passes when the provider project's ServiceConsumer cache
 has synced, every project with an Active `metal` ServiceConsumer is engaged on
 that replica, every engaged project cache has synced, and the private-record
-cache has synced. It never depends on a provider integration. One unreachable
+cache has synced. It never depends on a provider integration. It also keeps
+failing, with an explicit `project discovery is misconfigured` error, while no
+Service is registered for `metal.datumapis.com`, or while
+`consumerScopedProjection.providerProject` differs from that Service's
+`spec.owner.producerProjectRef`: either would engage nothing yet look healthy.
+One unreachable
 consuming project, or one that does not serve every watched API (Fleet, NSO
 networks, quota, entitlements, locations), keeps every replica unready. That
 blocks rollouts but not work in other projects.

@@ -62,38 +62,14 @@ func SetupPublisher(mgr mcmanager.Manager, projects *manager.Projects, provider 
 	if mgr == nil || projects == nil || provider == nil || !options.valid() {
 		return fmt.Errorf("synthetic publisher requires exact provider and consumer projects")
 	}
-	consumer := multicluster.ClusterName(options.ConsumerProject.RouteName)
-	request := func(object client.Object) []mcreconcile.Request {
-		if object == nil {
-			return nil
-		}
-		switch object.(type) {
-		case *corev1.Namespace:
-			// Engagement replays the consumer's Namespaces, which wakes the
-			// publisher even when provider events arrived before the consumer
-			// was engaged and nothing has been published there yet.
-		case *fleetv1.MachineClass:
-			if object.GetName() != options.ClassName {
-				return nil
-			}
-		case *fleetv1.MachineProfile:
-			if object.GetName() != options.ProfileName {
-				return nil
-			}
-		default:
-			return nil
-		}
-		return []mcreconcile.Request{{ClusterName: consumer, Request: reconcile.Request{NamespacedName: types.NamespacedName{Name: options.ClassName}}}}
-	}
 	consumerEvents := func(name multicluster.ClusterName, _ ctrlcluster.Cluster) handler.TypedEventHandler[client.Object, mcreconcile.Request] {
 		return handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []mcreconcile.Request {
-			if name != consumer {
-				return nil
-			}
-			return request(object)
+			return consumerPublicationRequests(options, name, object)
 		})
 	}
-	providerEvents := handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []mcreconcile.Request { return request(object) })
+	providerEvents := handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []mcreconcile.Request {
+		return publicationRequests(options, object)
+	})
 	engage := []mcbuilder.WatchesOption{mcbuilder.WithEngageWithLocalCluster(false), mcbuilder.WithEngageWithProviderClusters(true)}
 	controller := mcbuilder.TypedControllerManagedBy[mcreconcile.Request](mgr).
 		Named("fleet-synthetic-publication").
@@ -105,9 +81,50 @@ func SetupPublisher(mgr mcmanager.Manager, projects *manager.Projects, provider 
 	return controller.Complete(EngagedPublisher{Projects: projects, Provider: provider.GetClient(), Options: options})
 }
 
+// consumerPublicationRequests maps an event from an engaged project. Only the
+// publication consumer's events wake the publisher; any other project's
+// objects, including same-named classes and profiles, are ignored.
+func consumerPublicationRequests(options PublisherOptions, cluster multicluster.ClusterName, object client.Object) []mcreconcile.Request {
+	if cluster != multicluster.ClusterName(options.ConsumerProject.RouteName) {
+		return nil
+	}
+	return publicationRequests(options, object)
+}
+
+// publicationRequests maps the published class and profile, by exact name,
+// and the consumer's Namespaces to the one publication request.
+func publicationRequests(options PublisherOptions, object client.Object) []mcreconcile.Request {
+	if object == nil {
+		return nil
+	}
+	switch object.(type) {
+	case *corev1.Namespace:
+		// Engagement replays the consumer's Namespaces, which wakes the
+		// publisher even when provider events arrived before the consumer was
+		// engaged and nothing has been published there yet.
+	case *fleetv1.MachineClass:
+		if object.GetName() != options.ClassName {
+			return nil
+		}
+	case *fleetv1.MachineProfile:
+		if object.GetName() != options.ProfileName {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return []mcreconcile.Request{{ClusterName: multicluster.ClusterName(options.ConsumerProject.RouteName), Request: reconcile.Request{NamespacedName: types.NamespacedName{Name: options.ClassName}}}}
+}
+
+// ProjectLookup finds an engaged project's runtime; manager.Projects
+// implements it.
+type ProjectLookup interface {
+	Get(multicluster.ClusterName) *manager.ProjectRuntime
+}
+
 // EngagedPublisher runs Publisher against the engaged publication consumer.
 type EngagedPublisher struct {
-	Projects *manager.Projects
+	Projects ProjectLookup
 	Provider client.Client
 	Options  PublisherOptions
 }

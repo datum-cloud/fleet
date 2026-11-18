@@ -52,8 +52,12 @@ type ConsumerDiscovery struct {
 	// to the multicluster manager.
 	ProviderManager manager.Manager
 
-	rootClient   client.Reader
-	serviceNames map[string]struct{}
+	rootClient client.Reader
+	// consumers reads ServiceConsumers in the provider project (the provider
+	// manager's cache).
+	consumers       client.Reader
+	providerProject string
+	serviceNames    map[string]struct{}
 
 	mu          sync.Mutex
 	objectNames map[string]struct{}
@@ -118,7 +122,7 @@ func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp Consu
 	for _, name := range csp.ServiceNames {
 		names[name] = struct{}{}
 	}
-	return &ConsumerDiscovery{Provider: provider, ProviderManager: providerMgr, rootClient: rootReader, serviceNames: names}, nil
+	return &ConsumerDiscovery{Provider: provider, ProviderManager: providerMgr, rootClient: rootReader, consumers: providerMgr.GetClient(), providerProject: csp.ProviderProject, serviceNames: names}, nil
 }
 
 // Synced reports whether the provider project's ServiceConsumer cache has
@@ -138,7 +142,7 @@ func (d *ConsumerDiscovery) Expected(ctx context.Context) ([]multicluster.Cluste
 		return nil, err
 	}
 	var consumers servicesv1alpha1.ServiceConsumerList
-	if err := d.ProviderManager.GetClient().List(ctx, &consumers); err != nil {
+	if err := d.consumers.List(ctx, &consumers); err != nil {
 		return nil, fmt.Errorf("list ServiceConsumers: %w", err)
 	}
 	return ActiveConsumerProjects(objectNames, consumers.Items), nil
@@ -167,9 +171,17 @@ func ActiveConsumerProjects(serviceObjectNames map[string]struct{}, consumers []
 	return names
 }
 
+// ErrDiscoveryMisconfigured reports configuration that would make discovery
+// engage nothing: no Service for the configured name, or a provider project
+// that is not the Service's producer. Readiness keeps failing with it.
+var ErrDiscoveryMisconfigured = errors.New("project discovery is misconfigured")
+
 // serviceObjectNames resolves canonical service names to Service object
-// names (ServiceConsumer.spec.serviceRef names the object). The mapping is
-// cached after the first successful root read.
+// names (ServiceConsumer.spec.serviceRef names the object). Each matching
+// Service must be produced by the configured provider project: ServiceConsumers
+// live in the producer project, so any other provider project would engage
+// nothing while appearing healthy. The mapping is cached only once it is
+// valid; until then every readiness probe re-reads and fails.
 func (d *ConsumerDiscovery) serviceObjectNames(ctx context.Context) (map[string]struct{}, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -182,12 +194,17 @@ func (d *ConsumerDiscovery) serviceObjectNames(ctx context.Context) (map[string]
 	}
 	names := map[string]struct{}{}
 	for index := range services.Items {
-		if _, ok := d.serviceNames[services.Items[index].Spec.ServiceName]; ok {
-			names[services.Items[index].Name] = struct{}{}
+		service := &services.Items[index]
+		if _, ok := d.serviceNames[service.Spec.ServiceName]; !ok {
+			continue
 		}
+		if producer := service.Spec.Owner.ProducerProjectRef.Name; producer != d.providerProject {
+			return nil, fmt.Errorf("%w: Service %q (%s) is produced by project %q, but consumerScopedProjection.providerProject is %q", ErrDiscoveryMisconfigured, service.Name, service.Spec.ServiceName, producer, d.providerProject)
+		}
+		names[service.Name] = struct{}{}
 	}
 	if len(names) == 0 {
-		return nil, errors.New("no Service is registered for the configured service names")
+		return nil, fmt.Errorf("%w: no Service is registered for the configured service names", ErrDiscoveryMisconfigured)
 	}
 	d.objectNames = names
 	return names, nil
