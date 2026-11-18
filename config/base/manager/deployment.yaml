@@ -96,5 +96,5 @@ spec:
             secretName: fleet-manager-project-kubeconfig
             defaultMode: 0440
             items:
-              - key: kubeconfig
+              - key: value
                 path: kubeconfig

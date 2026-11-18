@@ -179,8 +179,9 @@ The environment must provide two Secrets in `fleet-system`:
 - `milo-configuration-kubeconfig`, key `value`: the root Milo kubeconfig (the
   existing Secret, now the discovery credential). It lists Services and gets
   Projects.
-- `fleet-manager-project-kubeconfig`, key `kubeconfig`: the Milo kubeconfig
-  template. Its host is re-addressed to
+- `fleet-manager-project-kubeconfig`, key `value`: the Milo kubeconfig
+  template, in the same shape the core-control-plane kubeconfig generator
+  writes. Its host is re-addressed to
   `/apis/resourcemanager.miloapis.com/v1alpha1/projects/<project>/control-plane`
   for the provider project (ServiceConsumer watch) and each engaged project.
   It may hold the same credential as the discovery Secret.
