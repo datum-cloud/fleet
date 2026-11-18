@@ -37,9 +37,10 @@ image_tag_removed=true
 pushed=()
 if [[ -f $state/gitops-environment.json ]]; then
  port=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["registryPort"])' "$state/gitops-environment.json")
- pushed=("127.0.0.1:$port/fleet-site:$prefix")
+ # Redfish mode also built and pushed the lab BMC image.
+ pushed=("127.0.0.1:$port/fleet-site:$prefix" "127.0.0.1:$port/fleet-bmc:$prefix")
 fi
-for image in "$prefix-site-image" "$prefix-provider-image" ${pushed[@]+"${pushed[@]}"}; do
+for image in "$prefix-site-image" "$prefix-provider-image" "$prefix-bmc-image" ${pushed[@]+"${pushed[@]}"}; do
  docker image rm "$image" >/dev/null 2>&1 || true
  if docker image inspect "$image" >/dev/null 2>&1; then image_tag_removed=false; fi
 done
@@ -48,7 +49,7 @@ remaining=$(docker ps -a --filter "name=^$prefix-" --format '{{.Names}}')
 rm -f "$state/kind-delete.kubeconfig"
 if [[ $mode == passed ]]; then
  # Credentials and raw journals are no longer needed once the run has passed.
- rm -rf "$state/provider" "$state/consumer-a" "$state/consumer-b" "$state/provider-private"
+ rm -rf "$state/provider" "$state/consumer-a" "$state/consumer-b" "$state/provider-private" "$state/redfish"
  rm -f "$state"/*.yaml "$state"/*-hub.json "$state"/private.json "$state"/cell-worker*.json "$state"/federation-cell.json "$state"/*.token "$state"/*-kubeconfig.json \
   "$state"/status-fault.json "$state"/acceptance.json "$state"/fleet-multiplane "$state"/fleet-multiplane-host
  rm -rf "$state/site-bin" "$state/kro-chart" "$state/flux-tools/flux" "$state"/flux-tools/*.tar.gz

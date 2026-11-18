@@ -14,6 +14,13 @@ tasks:
     cmds:
       - ./hack/multiplane/run.sh {{.CLI_ARGS}}
 
+  multiplane:redfish-acceptance:
+    desc: "The multi-plane acceptance in Redfish mode: workers drive two persistent lab VMs only through the DMTF Redfish Interface Emulator and its lab adapter (same exit codes)."
+    env:
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh --redfish {{.CLI_ARGS}}
+
   multiplane:preflight:
     desc: Check local prerequisites and implementation readiness without creating resources.
     env:

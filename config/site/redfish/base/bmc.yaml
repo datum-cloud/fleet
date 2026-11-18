@@ -1,0 +1,7 @@
+# Lab BMC identity (config/site/redfish/services). It holds no API token. Its
+# synthetic credential Secret, fleet-site-bmc-credentials, is enrolled by the
+# harness and is never part of a source revision.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-site-bmc, namespace: fleet-site}
+automountServiceAccountToken: false

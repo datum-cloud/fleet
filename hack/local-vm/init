@@ -9,8 +9,31 @@ set -exo pipefail
 modprobe virtio_pci
 modprobe virtio_blk
 modprobe ext4
-for arg in $(cat /proc/cmdline); do case "$arg" in fleet.receipt=*) receipt=${arg#fleet.receipt=};; esac; done
+mode=install
+for arg in $(cat /proc/cmdline); do case "$arg" in fleet.receipt=*) receipt=${arg#fleet.receipt=};; fleet.mode=*) mode=${arg#fleet.mode=};; esac; done
 [ ${#receipt} = 64 ] || /bin/busybox poweroff -f
+if [ "$mode" = wipe ]; then
+ # Redfish-mode cleanup environment: zero the whole disk, then verify by
+ # reading it back. The receipt is printed only after the readback compared
+ # equal. This is a logical overwrite of a virtual disk, not media sanitization.
+ trap '/bin/busybox poweroff -f' EXIT
+ size=$(($(cat /sys/block/vda/size) * 512))
+ dd if=/dev/zero of=/dev/vda bs=4M count=$((size / 4194304)) conv=fsync
+ sync
+ echo 3 > /proc/sys/vm/drop_caches
+ # This static BusyBox shell runs its own applets first. BusyBox cmp limits -n
+ # to INT_MAX and takes skips positionally: compare 1 GiB chunks at offsets.
+ off=0
+ while [ "$off" -lt "$size" ]; do
+  n=$((size - off)); [ "$n" -le 1073741824 ] || n=1073741824
+  /bin/busybox cmp -n "$n" /dev/vda /dev/zero "$off" 0 || exit 1
+  off=$((off + n))
+ done
+ printf 'FLEET-WIPED:%s:%s\n' "$receipt" "$size"
+ sync
+ exit 0
+fi
+[ "$mode" = install ] || /bin/busybox poweroff -f
 printf 'label: dos\n, , L, *\n' | sfdisk /dev/vda
 mkfs.ext4 -F /dev/vda1
 mkdir -p /target

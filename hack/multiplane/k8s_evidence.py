@@ -8,12 +8,14 @@ specs, journal records, fences, boot capabilities or tokens.
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
 
 NS, SITE = 'fleet-coordination', 'fleet-site'
 LIBVIRT = 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'
+REDFISH = os.environ.get('FLEET_SITE_PROVIDER') == 'redfish'
 
 
 def now():
@@ -150,7 +152,8 @@ def record_resume(state, name):
 
 
 def qemu_starts(state, operation):
-    domain = 'fleet-local-' + hashlib.sha256(operation.encode()).hexdigest()[:24]
+    # Redfish mode: the persistent lab target A carries every operation.
+    domain = 'fleet-lab-target-a' if REDFISH else 'fleet-local-' + hashlib.sha256(operation.encode()).hexdigest()[:24]
     r = kubectl(state, '-n', SITE, 'exec', 'deploy/fleet-site-runtime', '-c', 'libvirt', '--', 'cat', '/var/log/libvirt/qemu/' + domain + '.log', check=False)
     return r.stdout.count(': starting up ') if r.returncode == 0 else None
 
@@ -165,7 +168,7 @@ def lifecycle_snapshot(state, name):
     site_pods = {d: [p['metadata']['uid'] for p in get(state, '-n', SITE, 'get', 'pods', '-l', 'app.kubernetes.io/name=' + d)['items']]
                  for d in ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observer')}
     print(json.dumps({'observedAt': now(), 'journalSHA256': hashlib.sha256(runtime(state, 'cat', '/var/lib/fleet-local/journal.json').encode()).hexdigest(),
-                      'qemuStarts': qemu_starts(state, op), 'domains': runtime(state, 'virsh', '--connect', LIBVIRT, 'list', '--name', '--all').split(),
+                      'qemuStarts': qemu_starts(state, op), 'domains': runtime(state, 'virsh', '--connect', LIBVIRT, 'list', '--name', *([] if REDFISH else ['--all'])).split(),
                       'pvcUID': pvc['metadata']['uid'], 'pvUID': pv['metadata']['uid'], 'pvReclaimPolicy': pv['spec']['persistentVolumeReclaimPolicy'],
                       'machineA': {'phase': machine.get('status', {}).get('phase'), 'bound': conds.get('Bound'), 'ready': conds.get('Ready')},
                       'sitePods': site_pods, 'job': job(state, name)}, sort_keys=True))

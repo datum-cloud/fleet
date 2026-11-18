@@ -1,0 +1,24 @@
+{
+  "POPULATE": {
+    "Chassis": [
+      {
+        "Name": "Fleet lab chassis",
+        "Id": "Chassis-{0}",
+        "Count": 1,
+        "Links": {
+          "ComputerSystems": [
+            {
+              "Name": "Fleet lab target",
+              "Id": "System-{0}",
+              "Count": 2,
+              "Processors": [{"Id": "CPU{0}", "TotalCores": 2, "MaxSpeedMHz": 2000, "Count": 1}],
+              "Memory": [{"Id": "DRAM{0}", "CapacityMiB": 2048, "MemoryType": "DRAM", "Count": 1}],
+              "SimpleStorage": [{"Id": "VirtIO-{0}", "Count": 1, "Devices": {"CapacityBytes": 2147483648, "Count": 1}}],
+              "EthernetInterfaces": [{"Id": "NIC-{0}", "SpeedMbps": 1000, "Count": 1}]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
