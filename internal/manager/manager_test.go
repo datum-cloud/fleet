@@ -573,7 +573,7 @@ func privateMiloAuthoritySecret(t *testing.T, project controller.ProjectIdentity
 		Request milo.SourceUseRequest `json:"request"`
 		Receipt milo.SourceUseReceipt `json:"receipt"`
 	}{request, receipt}
-	record := milo.AuthorityRecord{SchemaVersion: 1, RecordID: "authority-record", State: milo.StatePrepared, ClaimNamespace: namespace, ClaimName: name, ClaimUID: claimUID, SourceRequest: request, SourceReceipt: receipt, ContractDigest: testDigest(t, contract), AcceptedRequirements: accepted}
+	record := milo.AuthorityRecord{SchemaVersion: 1, RecordID: "authority-record", State: milo.StatePrepared, ClaimNamespace: namespace, ClaimName: name, ClaimUID: claimUID, SourceRequest: request, SourceReceipt: receipt, ContractDigest: testDigest(t, contract), AcceptedRequirements: controller.ExactRequirements(accepted)}
 	data, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)

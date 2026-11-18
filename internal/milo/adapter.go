@@ -125,7 +125,7 @@ func (a *Adapter) PrepareClaim(ctx context.Context, request PrepareRequest) (Pre
 	if err != nil {
 		return PreparedClaim{}, err
 	}
-	record := AuthorityRecord{SchemaVersion: authoritySchemaVersion, RecordID: shortDigest(contractDigest + "/" + string(request.Claim.UID)), State: StatePrepared, ClaimNamespace: request.Claim.Namespace, ClaimName: request.Claim.Name, ClaimUID: request.Claim.UID, SourceRequest: source, SourceReceipt: receipt, ContractDigest: contractDigest, AcceptedRequirements: request.LocalProfile.Spec}
+	record := AuthorityRecord{SchemaVersion: authoritySchemaVersion, RecordID: shortDigest(contractDigest + "/" + string(request.Claim.UID)), State: StatePrepared, ClaimNamespace: request.Claim.Namespace, ClaimName: request.Claim.Name, ClaimUID: request.Claim.UID, SourceRequest: source, SourceReceipt: receipt, ContractDigest: contractDigest, AcceptedRequirements: controller.ExactRequirements(request.LocalProfile.Spec)}
 	ref, err := a.Records.Create(ctx, record)
 	if err != nil {
 		return PreparedClaim{}, err
@@ -205,6 +205,11 @@ func (a *Adapter) PrepareOrRecoverClaim(ctx context.Context, request PrepareRequ
 func validateRecoveredPrepare(record *AuthorityRecord, request PrepareRequest, consumer, provider controller.ProjectIdentity) error {
 	if record == nil || request.Claim == nil || request.LocalClass == nil || request.SourceClass == nil || request.LocalProfile == nil || request.NamespaceUID == "" || request.PublicationRevision == "" || !request.Location.Valid() {
 		return ErrAuthorityInvalid
+	}
+	// Authority accepted under the pre-exact CPU and memory contract is never
+	// recovered for continued use; release does not pass through here.
+	if record.AcceptedRequirements.Legacy() {
+		return controller.ErrLegacyRecord
 	}
 	if record.ClaimNamespace != request.Claim.Namespace || record.ClaimName != request.Claim.Name || record.ClaimUID != request.Claim.UID || request.LocalClass.Name != request.Claim.Spec.MachineClassRef.Name || request.LocalProfile.Name != request.Claim.Spec.MachineProfileRef.Name {
 		return ErrAuthorityInvalid
@@ -539,6 +544,9 @@ func (a *Adapter) finishAbortedSettlement(ctx context.Context, authority control
 }
 
 func validatePreparedAllocation(record *AuthorityRecord, prepared PreparedClaim, request controller.AllocationRequest) error {
+	if record != nil && record.AcceptedRequirements.Legacy() {
+		return controller.ErrLegacyRecord
+	}
 	if record == nil || request.Claim == nil || request.Class == nil || request.Profile == nil || prepared.Authority.ContractDigest != record.ContractDigest || record.SourceRequest.ConsumerProject != prepared.ConsumerProject || record.SourceRequest.ProviderProject != prepared.ProviderProject || record.SourceRequest.NamespaceUID != prepared.NamespaceUID || record.SourceReceipt.PrincipalUID != prepared.PrincipalUID || record.SourceReceipt.DecisionID != prepared.DecisionID || request.Claim.Namespace != record.ClaimNamespace || request.Claim.Name != record.ClaimName || request.Claim.UID != record.ClaimUID || prepared.LocalClassUID != record.SourceRequest.LocalClassUID || prepared.SourceClassUID != record.SourceRequest.SourceClassUID || prepared.LocalProfileUID != record.SourceRequest.LocalProfileUID || prepared.SourceProfileUID != record.SourceRequest.SourceProfileUID || !sameLocationLifetime(prepared.Location, record.SourceRequest.Location) || !sameLocationLifetime(request.Location, record.SourceRequest.Location) || request.Claim.Spec.LocationRef.Name != record.SourceRequest.Location.Name || request.Class.UID != record.SourceRequest.SourceClassUID || request.Class.Status.EvaluatedRevision == "" {
 		return ErrAuthorityInvalid
 	}

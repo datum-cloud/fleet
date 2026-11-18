@@ -171,6 +171,11 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	if errors.Is(err, controller.ErrInsufficientCapacity) {
 		return h.pending(ctx, &claim, "InsufficientCapacity", "No matching synthetic machine is currently available.", nil)
 	}
+	if errors.Is(err, controller.ErrLegacyRecord) {
+		// Retrying cannot make a pre-exact allocation valid. Report it as
+		// explicitly not bound and not ready; deletion releases it.
+		return h.pending(ctx, &claim, controller.ReasonLegacyCustodyRecord, legacyCustodyMessage, nil)
+	}
 	if err != nil {
 		return manager.Outcome{RetryError: err}
 	}
@@ -337,6 +342,8 @@ func syntheticCrossProjectAuthority(claimUID types.UID, namespace string, consum
 	hold := controller.ExternalHoldRef{Provider: "synthetic-staging", Namespace: namespace, Name: "machine-" + digest[:24], UID: types.UID("synthetic-" + string(claimUID))}
 	return authority, hold
 }
+
+const legacyCustodyMessage = "Private custody for this Machine was accepted before MachineProfile CPU and memory became exact and cannot be resumed. Delete the Machine to release the allocation through verified cleanup."
 
 func admissionReason(crossProject bool) string {
 	if crossProject {
