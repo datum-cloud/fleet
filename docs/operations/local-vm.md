@@ -16,7 +16,9 @@ For a local runtime without reliable x86 KVM, explicitly select software executi
 DOCKER_CONTEXT=colima-fleet-acceptance-tcg FLEET_LOCAL_VM_ACCEL=tcg bash hack/local-vm/run.sh
 ```
 
-`task local-vm:acceptance` runs the same TCG command.
+`task local-vm:acceptance` runs the same TCG command. For the multi-plane composition
+of this provider with Milo and Karmada, use the one-command
+[multi-plane acceptance](multiplane.md) harness instead.
 
 The named Docker context must already identify your dedicated disposable runtime.
 TCG builds a native amd64 or arm64 Debian libvirt/QEMU runner and boots the same

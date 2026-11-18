@@ -28,5 +28,13 @@
 .claude/settings.local.json
 .claude/worktrees/
 
+# Python tooling caches
+__pycache__/
+*.py[cod]
+
+# Flux install manifest downloaded and verified by hack/multiplane/flux.py; never committed.
+config/multiplane/flux/gotk-components.yaml
+
 # Locally built binaries
+/fleet-multiplane
 /fleet-local-vm

@@ -1,0 +1,81 @@
+# Scoped Flux identities for the site layers, created with the site namespace.
+# kustomize-controller impersonates these ServiceAccounts, so each layer can
+# write only its own kinds:
+#   fleet-site-services  Deployments, the boot Service and the worker-policy
+#                        ConfigMap in fleet-site
+#   fleet-site-graph     ResourceGraphDefinitions
+#   fleet-site-dispatch  HandoffDispatchers in fleet-site
+# None of them can write Jobs, volumes, RBAC, admission policy or handoffs.
+# Source authors remain trusted: the services layer chooses the privileged
+# runtime image, the graph chooses the worker template within the admission
+# policy, and the same source owns this admin-applied base. kro remains the
+# sole writer of the per-operation objects the graph generates.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-site-services-reconciler, namespace: flux-system}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-site-services-reconciler, namespace: fleet-site}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [services, configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Read-only, for kstatus health checks of the Deployments.
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-site-services-reconciler, namespace: fleet-site}
+subjects:
+  - {kind: ServiceAccount, name: fleet-site-services-reconciler, namespace: flux-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-site-services-reconciler}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-site-graph-reconciler, namespace: flux-system}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: fleet-site-graph-reconciler}
+rules:
+  - apiGroups: [kro.run]
+    resources: [resourcegraphdefinitions]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: fleet-site-graph-reconciler}
+subjects:
+  - {kind: ServiceAccount, name: fleet-site-graph-reconciler, namespace: flux-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: fleet-site-graph-reconciler}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-site-dispatch-reconciler, namespace: flux-system}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-site-dispatch-reconciler, namespace: fleet-site}
+rules:
+  - apiGroups: [site.fleet.datumapis.com]
+    resources: [handoffdispatchers]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-site-dispatch-reconciler, namespace: fleet-site}
+subjects:
+  - {kind: ServiceAccount, name: fleet-site-dispatch-reconciler, namespace: flux-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-site-dispatch-reconciler}

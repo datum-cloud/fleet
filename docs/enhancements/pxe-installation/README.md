@@ -361,11 +361,23 @@ Location implementation may use:
 - a Deployment or facility-edge DaemonSet for boot scripts and callbacks;
 - a private execution CRD for the delivered handoff;
 - Jobs for bounded Redfish, power, verification, and fencing actions; and
-- KRO to create and order those local resources.
+- KRO to create and order the per-operation resources: one bounded Job and its
+  scoped identity and RBAC for each delivered handoff.
 
-Jobs must recover a retained provider operation before retrying. Job completion
-does not by itself prove a remote effect. A KRO instance is derived state and
-cannot replace the hub handoff, operation journal, or provider fence.
+Long-lived location services, their policies and RBAC, and durable provider state
+have one configuration owner: the environment's GitOps writer (Flux), not an
+operation graph. An operation graph references them and cannot create, change or
+delete them, so its lifecycle cannot remove a shared service or a provider
+journal. Jobs must recover a retained provider operation before retrying. Job
+completion does not by itself prove a remote effect. A KRO instance is derived
+state and cannot replace the hub handoff, operation journal, or provider fence.
+
+The local multi-plane acceptance implements this pattern for a disposable
+libvirt cell with kro v0.9.4. Flux owns the VM runtime Deployment, the boot
+Deployment and Service, the journal-only status observer and the retained
+journal volume. kro creates only per-handoff RBAC and bounded Jobs. See
+[Kubernetes-native site execution](../../operations/site-execution.md). That is
+local evidence for the contract above, not hardware qualification.
 
 ![Shared installation workflow and mode-specific execution](diagrams/installation-workflows.svg)
 

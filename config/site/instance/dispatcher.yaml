@@ -1,0 +1,19 @@
+# The one HandoffDispatcher instance for the selected cell. Variables come from
+# the environment's fleet-environment ConfigMap through Flux postBuild
+# substitution; dispatch is enabled only by a new source revision. The
+# instance controls only per-operation worker objects; the shared site
+# services it depends on are Flux-owned (config/site/services).
+apiVersion: site.fleet.datumapis.com/v1alpha1
+kind: HandoffDispatcher
+metadata:
+  name: dispatcher
+  namespace: fleet-site
+  annotations:
+    # Deleting the instance prunes worker Jobs and their RBAC, which is not
+    # cancellation. Shared services and the journal are unaffected.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    fleet.datumapis.com/source-marker: "${FLEET_SOURCE_MARKER}"
+spec:
+  cell: "${FLEET_CELL}"
+  scopedAsset: "${FLEET_SCOPED_ASSET}"
+  dispatch: ${FLEET_SITE_DISPATCH}
