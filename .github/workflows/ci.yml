@@ -31,6 +31,7 @@ jobs:
     - run: ./hack/test-standalone-build-context.sh
     - run: ./hack/test-run-standalone-smoke.sh
     - run: ./hack/validate-doc-links.sh
+    - run: shellcheck -S warning hack/local-vm/run.sh hack/local-vm/start-libvirt
   standalone-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 35

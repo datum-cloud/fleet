@@ -1,0 +1,18 @@
+FROM --platform=linux/amd64 debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS guest
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends linux-image-amd64 initramfs-tools busybox-static grub-pc-bin grub2-common fdisk e2fsprogs cpio && rm -rf /var/lib/apt/lists/*
+COPY init /init
+COPY boot /fleet-boot
+RUN chmod 755 /init /fleet-boot && mkdir -p /out && cp /boot/vmlinuz-* /out/kernel && find . \( -path ./out -o -path ./proc -o -path ./sys -o -path ./dev \) -prune -o -print | cpio -o -H newc | gzip -1 > /out/installer.gz && cd /out && sha256sum kernel installer.gz > SHA256SUMS
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS tcg
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils libvirt-daemon-system libvirt-clients tini dnsmasq-base ipxe-qemu iptables && rm -rf /var/lib/apt/lists/* && printf '%s\n' 'user = "root"' 'group = "root"' 'security_driver = "none"' 'dynamic_ownership = 0' 'cgroup_controllers = []' >> /etc/libvirt/qemu.conf && rm -f /etc/libvirt/qemu/networks/autostart/default.xml
+COPY start-libvirt /usr/local/bin/fleet-start-libvirt
+RUN chmod 755 /usr/local/bin/fleet-start-libvirt
+COPY --from=guest /out /opt/fleet-local/artifacts
+ENV FLEET_LOCAL_VM=disposable-container LIBVIRT_DEFAULT_URI=qemu:///system
+
+FROM fleet-vm-local AS kvm
+USER root
+COPY start-libvirt /usr/local/bin/fleet-start-libvirt
+RUN chmod 755 /usr/local/bin/fleet-start-libvirt
+COPY --from=guest /out /opt/fleet-local/artifacts
+ENV FLEET_LOCAL_VM=disposable-container
