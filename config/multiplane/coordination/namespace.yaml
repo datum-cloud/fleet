@@ -1,0 +1,8 @@
+# Retained handoff intent lives here on the Karmada API and on each cell.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-coordination
+  annotations:
+    # Never garbage-collect: deleting the namespace deletes every handoff.
+    kustomize.toolkit.fluxcd.io/prune: disabled

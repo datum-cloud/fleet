@@ -1,0 +1,55 @@
+# Flux v2.9.6 controller selection and pins, the same for every local cluster.
+# The harness stages this file, unchanged, as environment/flux-components/
+# kustomization.yaml beside the release install.yaml (gotk-components.yaml),
+# which it downloads and verifies against the SHA-256 pinned in
+# hack/multiplane/flux.py; the upstream manifest is not committed, so this file
+# is deliberately not named kustomization.yaml. The bootstrap applies this exact
+# build once; afterwards each cluster's Flux reconciles (and owns) its own
+# controllers from the source.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - gotk-components.yaml
+images:
+  - name: ghcr.io/fluxcd/source-controller
+    digest: sha256:6a6693172589f8ff26123a231d5fa6ceb194a6efb4dc647cdf057c959f76a2e3
+  - name: ghcr.io/fluxcd/kustomize-controller
+    digest: sha256:2ebeaa341da77d52b6abbbba5efcee0450d47f8b42f0e6f33b08f9020262d606
+  - name: ghcr.io/fluxcd/helm-controller
+    digest: sha256:0d52fff5c4d476277b8fcb6beb9041e269adb5db943fe69f5a806ea0c92b1511
+  - name: ghcr.io/fluxcd/notification-controller
+    digest: sha256:840f318265ee26f0d2c48a158bf7896b22aa4e998e320a18646309f0e40b15da
+# Image automation and source-watcher are not used.
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: image-automation-controller, namespace: flux-system}
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: image-reflector-controller, namespace: flux-system}
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: source-watcher, namespace: flux-system}
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata: {name: source-watcher, namespace: flux-system}
+  # Local tuning: re-check unready dependencies every 10s instead of 30s, so a
+  # revision ripples through the four-level site chain in under a minute.
+  - target: {kind: Deployment, name: kustomize-controller}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --requeue-dependency=10s
+  - target: {kind: Deployment, name: helm-controller}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --requeue-dependency=10s

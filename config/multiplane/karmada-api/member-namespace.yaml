@@ -1,0 +1,8 @@
+# Holds each member's push-mode credential Secret. The Secret itself is
+# credential enrollment, written by bootstrap and never stored in the source.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: karmada-cluster
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

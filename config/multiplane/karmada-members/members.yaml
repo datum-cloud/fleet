@@ -1,0 +1,34 @@
+# Push-mode member registration and placement for the selected cell. Values
+# come from the per-environment fleet-environment ConfigMap (postBuild).
+# The member's token Secret is enrolled by bootstrap, never stored in Git.
+apiVersion: cluster.karmada.io/v1alpha1
+kind: Cluster
+metadata:
+  name: "${FLEET_CELL}"
+  annotations:
+    # Unjoining a member deletes what Karmada propagated to it, including
+    # retained handoffs. Removing a member is an ordered manual procedure.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  syncMode: Push
+  apiEndpoint: "${FLEET_CELL_ENDPOINT}"
+  secretRef:
+    name: "${FLEET_CELL}"
+    namespace: karmada-cluster
+---
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: fleet-selected-cell
+  namespace: fleet-coordination
+spec:
+  resourceSelectors:
+    - apiVersion: coordination.fleet.datumapis.com/v1alpha1
+      kind: MachineAllocationHandoff
+      labelSelector:
+        matchLabels:
+          coordination.fleet.datumapis.com/cell: "${FLEET_CELL}"
+  placement:
+    clusterAffinity:
+      clusterNames:
+        - "${FLEET_CELL}"
