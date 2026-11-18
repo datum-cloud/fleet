@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
+	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -88,6 +90,16 @@ func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp Consu
 	if err != nil {
 		return nil, fmt.Errorf("build provider project config: %w", err)
 	}
+	root, err := client.New(discoveryConfig, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, fmt.Errorf("build root Milo client: %w", err)
+	}
+	rootReader := readOnlyClient{Client: root}
+	names := make(map[string]struct{}, len(csp.ServiceNames))
+	for _, name := range csp.ServiceNames {
+		names[name] = struct{}{}
+	}
+	d := &ConsumerDiscovery{rootClient: rootReader, providerProject: csp.ProviderProject, serviceNames: names}
 	options := manager.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: "0"},
@@ -95,7 +107,21 @@ func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp Consu
 		LeaderElection:         false,
 		Cache:                  cache.Options{DefaultTransform: cache.TransformStripManagedFields()},
 		NewClient:              readOnlyNewClient,
-		Controller:             config.Controller{SkipNameValidation: skipControllerNameValidation},
+		// The consumer provider watches every ServiceConsumer in the producer
+		// project, for every service it produces, and filters by service only
+		// inside its reconcile, which recomputes everything and ignores the
+		// key. Each unrelated ServiceConsumer is then its own queue key and,
+		// when an engagement fails, its own retry chain. ServiceConsumers carry
+		// no service label and the API declares no selectable fields, so the
+		// events are filtered here instead.
+		NewCache: func(config *rest.Config, opts cache.Options) (cache.Cache, error) {
+			c, err := cache.New(config, opts)
+			if err != nil {
+				return nil, err
+			}
+			return &consumerEventCache{Cache: c, relevant: d.relevantConsumer}, nil
+		},
+		Controller: config.Controller{SkipNameValidation: skipControllerNameValidation},
 	}
 	for _, apply := range tune {
 		apply(&options)
@@ -104,11 +130,6 @@ func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp Consu
 	if err != nil {
 		return nil, fmt.Errorf("build provider project manager: %w", err)
 	}
-	root, err := client.New(discoveryConfig, client.Options{Scheme: scheme})
-	if err != nil {
-		return nil, fmt.Errorf("build root Milo client: %w", err)
-	}
-	rootReader := readOnlyClient{Client: root}
 	provider, err := consumerprovider.New(providerMgr, consumerprovider.Options{
 		RootClient:     rootReader,
 		Scheme:         scheme,
@@ -118,11 +139,8 @@ func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp Consu
 	if err != nil {
 		return nil, fmt.Errorf("build consumer provider: %w", err)
 	}
-	names := make(map[string]struct{}, len(csp.ServiceNames))
-	for _, name := range csp.ServiceNames {
-		names[name] = struct{}{}
-	}
-	return &ConsumerDiscovery{Provider: provider, ProviderManager: providerMgr, rootClient: rootReader, consumers: providerMgr.GetClient(), providerProject: csp.ProviderProject, serviceNames: names}, nil
+	d.Provider, d.ProviderManager, d.consumers = provider, providerMgr, providerMgr.GetClient()
+	return d, nil
 }
 
 // Synced reports whether the provider project's ServiceConsumer cache has
@@ -278,4 +296,79 @@ func (s readOnlySubResource) Patch(ctx context.Context, obj client.Object, _ cli
 }
 func (readOnlySubResource) Apply(context.Context, runtime.ApplyConfiguration, ...client.SubResourceApplyOption) error {
 	return ErrReadOnly
+}
+
+// relevantConsumer reports whether a ServiceConsumer event can change the
+// engaged set: only consumers of the configured Service do. When the Service
+// cannot be resolved yet the event is kept; the consumer provider still
+// filters authoritatively, so this only ever removes redundant work.
+func (d *ConsumerDiscovery) relevantConsumer(object any) bool {
+	if tombstone, ok := object.(toolscache.DeletedFinalStateUnknown); ok {
+		object = tombstone.Obj
+	}
+	consumer, ok := object.(*servicesv1alpha1.ServiceConsumer)
+	if !ok {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readinessProbeBudget)
+	defer cancel()
+	names, err := d.serviceObjectNames(ctx)
+	if err != nil {
+		return true
+	}
+	_, relevant := names[consumer.Spec.ServiceRef.Name]
+	return relevant
+}
+
+// consumerEventCache delivers ServiceConsumer events only when relevant
+// reports true. Reads, lists, and indexes are unchanged.
+type consumerEventCache struct {
+	cache.Cache
+	relevant func(any) bool
+}
+
+func (c *consumerEventCache) GetInformer(ctx context.Context, object client.Object, opts ...cache.InformerGetOption) (cache.Informer, error) {
+	informer, err := c.Cache.GetInformer(ctx, object, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := object.(*servicesv1alpha1.ServiceConsumer); !ok {
+		return informer, nil
+	}
+	return filteredInformer{Informer: informer, relevant: c.relevant}, nil
+}
+
+func (c *consumerEventCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind, opts ...cache.InformerGetOption) (cache.Informer, error) {
+	informer, err := c.Cache.GetInformerForKind(ctx, gvk, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if gvk != servicesv1alpha1.GroupVersion.WithKind("ServiceConsumer") {
+		return informer, nil
+	}
+	return filteredInformer{Informer: informer, relevant: c.relevant}, nil
+}
+
+// filteredInformer wraps every registered handler so irrelevant objects are
+// never delivered. A relevant object that becomes irrelevant (or the reverse)
+// is delivered as a delete (or add), so the engaged set is still recomputed.
+type filteredInformer struct {
+	cache.Informer
+	relevant func(any) bool
+}
+
+func (i filteredInformer) wrap(handler toolscache.ResourceEventHandler) toolscache.ResourceEventHandler {
+	return toolscache.FilteringResourceEventHandler{FilterFunc: i.relevant, Handler: handler}
+}
+
+func (i filteredInformer) AddEventHandler(handler toolscache.ResourceEventHandler) (toolscache.ResourceEventHandlerRegistration, error) {
+	return i.Informer.AddEventHandler(i.wrap(handler))
+}
+
+func (i filteredInformer) AddEventHandlerWithResyncPeriod(handler toolscache.ResourceEventHandler, period time.Duration) (toolscache.ResourceEventHandlerRegistration, error) {
+	return i.Informer.AddEventHandlerWithResyncPeriod(i.wrap(handler), period)
+}
+
+func (i filteredInformer) AddEventHandlerWithOptions(handler toolscache.ResourceEventHandler, options toolscache.HandlerOptions) (toolscache.ResourceEventHandlerRegistration, error) {
+	return i.Informer.AddEventHandlerWithOptions(i.wrap(handler), options)
 }
