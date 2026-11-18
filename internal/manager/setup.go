@@ -2,7 +2,6 @@ package manager
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
@@ -110,7 +109,9 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 		return err
 	}
 	if options.ProviderCluster != nil {
-		if !options.ProviderProject.Valid() || options.ProviderVerifier == nil || options.ProviderConsumer == "" {
+		// The synthetic consumer must never be the provider; the provider may
+		// still be engaged as an ordinary consumer.
+		if !options.ProviderProject.Valid() || options.ProviderVerifier == nil || options.ProviderConsumer == "" || string(options.ProviderConsumer) == options.ProviderProject.RouteName {
 			return ErrEventWiringUnavailable
 		}
 		if err := local.Add(options.ProviderCluster); err != nil {
@@ -146,9 +147,14 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 		if reader == nil || verifier == nil || binding.Client == nil {
 			return nil, ErrEventWiringUnavailable
 		}
-		if options.ProviderCluster != nil && binding.Project.SameLifetime(options.ProviderProject) {
-			return nil, fmt.Errorf("%w: the synthetic provider project cannot also be a consumer", ErrEventWiringUnavailable)
-		}
+		// A project may be both the synthetic provider and a metal consumer.
+		// It engages like any other consumer: HandlersFor gives it blocked
+		// lifecycle handlers and the projector, because only the configured
+		// synthetic consumer (never the provider) gets the staging handler.
+		// Its engaged runtime only maps its own Machines and private records
+		// whose consumer is this project, so provider MachineCapacity events
+		// on its runtime cannot reach the synthetic consumer's claims, and its
+		// blocked handlers never write MachineCapacity status.
 		handlers, err := options.HandlersFor(binding)
 		if err != nil {
 			return nil, err

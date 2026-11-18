@@ -226,6 +226,17 @@ namespace `fleet-system-private`; their names and indexes already key on the
 consumer project's authority and UID, and a private-record event reaches only
 the runtime engaged for exactly that project lifetime.
 
+The synthetic provider project may itself be an Active `metal` consumer. It
+then engages like any other consumer, with blocked lifecycle handlers and the
+requested-hardware projector; only the configured synthetic consumer, which
+must differ from the provider, gets the synthetic handler and publication.
+
+The consumer provider watches every ServiceConsumer in the producer project,
+for every service that project produces, and filters by service only inside
+its reconcile. The manager drops ServiceConsumer events for other Services
+before they are queued, so they cause no reconciles, and a failing engagement
+is retried with per-key exponential backoff by `metal` consumers only.
+
 The manager holds one host-cluster lease (`fleet-manager.fleet.datumapis.com`);
 only the holder reconciles. Project engagement runs on every replica, so a
 standby is warm.

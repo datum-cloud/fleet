@@ -145,6 +145,21 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   `--synthetic-consumer-project-name`, and only when that name is engaged as
   the exact consumer lifetime resolved at startup. The publisher writes only
   into that project. Provider MachineCapacity events wake only that project.
+- **Provider as consumer.** The synthetic provider project may also be an
+  Active metal consumer. It engages with `DefaultHandlers`; its runtime maps
+  only its own Machines and private records whose consumer is that project, so
+  provider MachineCapacity events cannot reach the synthetic consumer's claims
+  through it, and its blocked handlers never write MachineCapacity status. The
+  synthetic consumer itself must still differ from the provider.
+- **ServiceConsumer filtering.** The consumer provider enqueues every
+  ServiceConsumer in the producer project under its own key, filters by
+  service only inside its reconcile, and returns an error on the first failed
+  engagement. One failing project was therefore retried by every key.
+  ServiceConsumers carry no service label and declare no selectable fields, so
+  the provider-project cache wraps ServiceConsumer informers and drops events
+  for other Services (failing open while the Service is unresolved). An
+  engagement failure is retried by the metal consumers' keys with
+  controller-runtime's per-key exponential backoff.
 - **Departure.** The manager stops reconciling a project that leaves the
   consumer set. It does not release custody, call a provider, delete records,
   or rewrite status, including for a project with active custody. Its

@@ -3,6 +3,7 @@ package staging
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -103,7 +105,30 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	claim := func() *fleetv1.Machine {
 		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "m", UID: "shared-claim-uid", Generation: 1}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: className}, MachineProfileRef: fleetv1.LocalReference{Name: profileName}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
 	}
-	provider := stagingProject(t, "datum-cloud", sourceClass, sourceProfile, capacity)
+	// The provider project is also an Active metal consumer with its own
+	// Machine of the same name; it must engage with requested hardware only.
+	var capacityStatusWrites atomic.Int64
+	countCapacity := func(object client.Object) {
+		if _, ok := object.(*fleetv1.MachineCapacity); ok {
+			capacityStatusWrites.Add(1)
+		}
+	}
+	provider := multiclustertest.NewProject(t, "datum-cloud", multiclustertest.ProjectOptions{
+		Scheme:             stagingScheme(t),
+		Objects:            []client.Object{&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "provider-ns"}}, sourceClass, sourceProfile, capacity, claim()},
+		StatusSubresources: []client.Object{&fleetv1.Machine{}, &fleetv1.Installation{}, &fleetv1.MachineClass{}, &fleetv1.MachineProfile{}, &fleetv1.MachineCapacity{}},
+		Indexes:            indexes(t, manager.RegisterProjectIndexes),
+		Funcs: interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+				countCapacity(o)
+				return c.SubResource(sub).Update(ctx, o, opts...)
+			},
+			SubResourcePatch: func(ctx context.Context, c client.Client, sub string, o client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
+				countCapacity(o)
+				return c.SubResource(sub).Patch(ctx, o, p, opts...)
+			},
+		},
+	})
 	consumer := stagingProject(t, "consumer", &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "consumer-ns"}}, claim())
 	// The other project names the same class and profile; its own profile
 	// resolves, but nothing publishes the class there and staging is not
@@ -174,6 +199,7 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	})
 	discovery.Engage(t, ctx, other)
 	discovery.Engage(t, ctx, consumer)
+	discovery.Engage(t, ctx, provider)
 
 	get := func(p *multiclustertest.Project) *fleetv1.Machine {
 		var m fleetv1.Machine
@@ -204,6 +230,21 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 			return false
 		}
 		return m.Status.Phase == "" && len(m.Finalizers) == 0 && len(m.Status.Conditions) == 1 && len(classes.Items) == 0 && other.Writes() == 1
+	})
+	multiclustertest.Eventually(t, "the provider project resolves requested hardware", func() bool {
+		hw := get(provider).Status.RequestedHardware
+		return hw != nil && hw.CPU.Cores == 24
+	})
+	writes := capacityStatusWrites.Load()
+	multiclustertest.Consistently(t, "the provider project gets nothing but requested hardware and its capacity stays allocated once", func() bool {
+		m := get(provider)
+		var current fleetv1.MachineCapacity
+		if err := provider.Client.Get(ctx, client.ObjectKeyFromObject(capacity), &current); err != nil {
+			return false
+		}
+		c := apiMeta.FindStatusCondition(current.Status.Conditions, "Available")
+		return m.Status.Phase == "" && len(m.Finalizers) == 0 && len(m.Status.Conditions) == 1 &&
+			c != nil && c.Status == metav1.ConditionFalse && capacityStatusWrites.Load() == writes && get(consumer).Status.Phase == "Ready"
 	})
 	// Every private record belongs to the consumer project.
 	var secrets corev1.SecretList
