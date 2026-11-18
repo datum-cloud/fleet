@@ -1,4 +1,4 @@
-package requestresolver
+package projectdiscovery
 
 import (
 	"os"

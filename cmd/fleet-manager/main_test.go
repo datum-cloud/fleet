@@ -1,30 +1,68 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"testing"
 )
 
-func TestRequestedHardwareProjectorFlagDefaultsToEnabled(t *testing.T) {
+func parse(t *testing.T, args ...string) error {
+	t.Helper()
 	flags := flag.NewFlagSet("fleet-manager", flag.ContinueOnError)
-	enabled := registerRequestedHardwareProjectorFlag(flags)
-	if err := flags.Parse(nil); err != nil {
+	flags.SetOutput(io.Discard)
+	f := bindFlags(flags)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	return f.validate()
+}
+
+var required = []string{"--config=/etc/fleet/manager/config.yaml", "--private-namespace=fleet-system-private", "--leader-election-namespace=fleet-system"}
+
+func TestDefaultConfigurationHasNoSyntheticIntegration(t *testing.T) {
+	if err := parse(t, required...); err != nil {
 		t.Fatal(err)
 	}
-	if !*enabled {
-		t.Fatal("projector must stay enabled by default so existing deployments keep their single writer")
+	for _, missing := range required {
+		var args []string
+		for _, arg := range required {
+			if arg != missing {
+				args = append(args, arg)
+			}
+		}
+		if err := parse(t, args...); !errors.Is(err, errFlags) {
+			t.Fatalf("without %s: err = %v", missing, err)
+		}
 	}
 }
 
-func TestRequestedHardwareProjectorFlagDisables(t *testing.T) {
-	flags := flag.NewFlagSet("fleet-manager", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	enabled := registerRequestedHardwareProjectorFlag(flags)
-	if err := flags.Parse([]string{"--enable-requested-hardware-projector=false"}); err != nil {
+func TestRemovedSingleProjectFlagsAreRejected(t *testing.T) {
+	for _, removed := range []string{"--project-name=consumer", "--authority-id=milo", "--project-kubeconfig=/k", "--enable-requested-hardware-projector=false"} {
+		if err := parse(t, append(required, removed)...); err == nil {
+			t.Fatalf("%s was accepted", removed)
+		}
+	}
+}
+
+func TestSyntheticFlagsRequireAndScopeStaging(t *testing.T) {
+	if err := parse(t, append(required, "--synthetic-consumer-project-name=consumer")...); !errors.Is(err, errFlags) {
+		t.Fatalf("synthetic flag without --synthetic-staging: %v", err)
+	}
+	if err := parse(t, append(required, "--synthetic-staging", "--synthetic-provider-token-file=/t")...); !errors.Is(err, errFlags) {
+		t.Fatalf("staging without a consumer project: %v", err)
+	}
+	staging := append(required, "--synthetic-staging", "--synthetic-provider-token-file=/t", "--synthetic-consumer-project-name=consumer")
+	if err := parse(t, staging...); err != nil {
 		t.Fatal(err)
 	}
-	if *enabled {
-		t.Fatal("--enable-requested-hardware-projector=false did not disable the projector")
+	if err := parse(t, append(staging, "--synthetic-provider-project-name=datum-cloud")...); !errors.Is(err, errFlags) {
+		t.Fatalf("provider project without publication names: %v", err)
+	}
+	if err := parse(t, append(staging, "--synthetic-provider-project-name=consumer", "--synthetic-published-class-name=c", "--synthetic-published-profile-name=p")...); !errors.Is(err, errFlags) {
+		t.Fatalf("provider equal to consumer: %v", err)
+	}
+	if err := parse(t, append(staging, "--synthetic-provider-project-name=datum-cloud", "--synthetic-published-class-name=c", "--synthetic-published-profile-name=p")...); err != nil {
+		t.Fatal(err)
 	}
 }

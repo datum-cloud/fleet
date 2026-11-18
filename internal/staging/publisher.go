@@ -9,20 +9,24 @@ import (
 	"fmt"
 	"reflect"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
+	"go.datum.net/fleet/internal/manager"
 )
 
 const (
@@ -50,16 +54,24 @@ func (o PublisherOptions) valid() bool {
 }
 
 // SetupPublisher wires provider and consumer watches without a polling resync.
-// Informer initial Add events publish existing sources after every restart.
-func SetupPublisher(mgr ctrlmanager.Manager, provider ctrlcluster.Cluster, options PublisherOptions) error {
-	if mgr == nil || provider == nil || !options.valid() {
+// It publishes into exactly one engaged consumer project, the configured
+// publication consumer, and only while the cluster engaged under that name
+// holds the exact consumer project lifetime. Other engaged projects are never
+// written.
+func SetupPublisher(mgr mcmanager.Manager, projects *manager.Projects, provider ctrlcluster.Cluster, options PublisherOptions) error {
+	if mgr == nil || projects == nil || provider == nil || !options.valid() {
 		return fmt.Errorf("synthetic publisher requires exact provider and consumer projects")
 	}
-	mapObject := handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []reconcile.Request {
+	consumer := multicluster.ClusterName(options.ConsumerProject.RouteName)
+	request := func(object client.Object) []mcreconcile.Request {
 		if object == nil {
 			return nil
 		}
 		switch object.(type) {
+		case *corev1.Namespace:
+			// Engagement replays the consumer's Namespaces, which wakes the
+			// publisher even when provider events arrived before the consumer
+			// was engaged and nothing has been published there yet.
 		case *fleetv1.MachineClass:
 			if object.GetName() != options.ClassName {
 				return nil
@@ -71,15 +83,48 @@ func SetupPublisher(mgr ctrlmanager.Manager, provider ctrlcluster.Cluster, optio
 		default:
 			return nil
 		}
-		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: options.ClassName}}}
-	})
-	controller := builder.TypedControllerManagedBy[reconcile.Request](mgr).
+		return []mcreconcile.Request{{ClusterName: consumer, Request: reconcile.Request{NamespacedName: types.NamespacedName{Name: options.ClassName}}}}
+	}
+	consumerEvents := func(name multicluster.ClusterName, _ ctrlcluster.Cluster) handler.TypedEventHandler[client.Object, mcreconcile.Request] {
+		return handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []mcreconcile.Request {
+			if name != consumer {
+				return nil
+			}
+			return request(object)
+		})
+	}
+	providerEvents := handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []mcreconcile.Request { return request(object) })
+	engage := []mcbuilder.WatchesOption{mcbuilder.WithEngageWithLocalCluster(false), mcbuilder.WithEngageWithProviderClusters(true)}
+	controller := mcbuilder.TypedControllerManagedBy[mcreconcile.Request](mgr).
 		Named("fleet-synthetic-publication").
-		Watches(&fleetv1.MachineClass{}, mapObject).
-		Watches(&fleetv1.MachineProfile{}, mapObject).
-		WatchesRawSource(source.TypedKind(provider.GetCache(), client.Object(&fleetv1.MachineClass{}), mapObject)).
-		WatchesRawSource(source.TypedKind(provider.GetCache(), client.Object(&fleetv1.MachineProfile{}), mapObject))
-	return controller.Complete(&Publisher{Consumer: mgr.GetClient(), Provider: provider.GetClient(), Options: options})
+		Watches(&fleetv1.MachineClass{}, consumerEvents, engage...).
+		Watches(&fleetv1.MachineProfile{}, consumerEvents, engage...).
+		Watches(&corev1.Namespace{}, consumerEvents, engage...).
+		WatchesRawSource(source.TypedKind(provider.GetCache(), client.Object(&fleetv1.MachineClass{}), providerEvents)).
+		WatchesRawSource(source.TypedKind(provider.GetCache(), client.Object(&fleetv1.MachineProfile{}), providerEvents))
+	return controller.Complete(EngagedPublisher{Projects: projects, Provider: provider.GetClient(), Options: options})
+}
+
+// EngagedPublisher runs Publisher against the engaged publication consumer.
+type EngagedPublisher struct {
+	Projects *manager.Projects
+	Provider client.Client
+	Options  PublisherOptions
+}
+
+func (p EngagedPublisher) Reconcile(ctx context.Context, request mcreconcile.Request) (reconcile.Result, error) {
+	if p.Projects == nil || request.ClusterName != multicluster.ClusterName(p.Options.ConsumerProject.RouteName) {
+		return reconcile.Result{}, nil
+	}
+	runtime := p.Projects.Get(request.ClusterName)
+	if runtime == nil {
+		// Not engaged: its engagement replays the consumer objects.
+		return reconcile.Result{}, nil
+	}
+	if !runtime.Binding.Project.SameLifetime(p.Options.ConsumerProject) {
+		return reconcile.Result{}, fmt.Errorf("%w: publication consumer %q is engaged as a different project lifetime", manager.ErrProjectIdentityUnavailable, request.ClusterName)
+	}
+	return (&Publisher{Consumer: runtime.Binding.Client, Provider: p.Provider, Options: p.Options}).Reconcile(ctx, request.Request)
 }
 
 type Publisher struct {

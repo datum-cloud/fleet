@@ -1,0 +1,19 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: metal.datumapis.com-controller-discovery
+  annotations:
+    kubernetes.io/display-name: Fleet Controller Discovery
+    kubernetes.io/description: Discover which projects consume Bare Metal and read their identities
+spec:
+  launchStage: Alpha
+  # The service catalog consumer provider lists Services at the root to
+  # resolve the canonical service name, and lists and watches
+  # ServiceConsumers in the provider project. It never writes them: the
+  # manager declares no teardown, so no finalizer is added. Project get
+  # resolves each engaged project's immutable identity before any reconcile.
+  includedPermissions:
+    - services.miloapis.com/services.list
+    - services.miloapis.com/serviceconsumers.list
+    - services.miloapis.com/serviceconsumers.watch
+    - resourcemanager.miloapis.com/projects.get

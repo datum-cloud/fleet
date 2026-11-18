@@ -9,17 +9,13 @@ import (
 	"go.datum.net/fleet/internal/requestedhardware"
 )
 
-// RequestedHardwareProjector is the fleet-manager's in-process writer of
-// Machine status.requestedHardware and the RequestResolved condition for its
-// one configured project. It needs only the routed project API: it reads the
-// Machine and its MachineProfile and performs no allocation, provider, quota,
-// or private-record effect, so it runs in the default inert manager mode as
-// well as synthetic staging.
-//
-// The projection itself is requestedhardware.Project, shared with the
-// multi-project fleet-request-resolver. Exactly one of them may serve a
-// project: a manager that shares its project with the resolver must run with
-// the projector disabled (see NewMachineProjector).
+// RequestedHardwareProjector is the only writer of Machine
+// status.requestedHardware and the RequestResolved condition. The manager
+// builds one per engaged project, bound to that project's identity and
+// client. It reads the Machine and its MachineProfile and performs no
+// allocation, provider, quota, or private-record effect, so it runs in every
+// configuration, including the default one whose lifecycle handlers are
+// blocked.
 type RequestedHardwareProjector struct {
 	Client  client.Client
 	Project controller.ProjectIdentity
@@ -33,25 +29,4 @@ func (p RequestedHardwareProjector) ReconcileEvent(ctx context.Context, request 
 		return Outcome{RetryError: err}
 	}
 	return Outcome{}
-}
-
-// DisabledMachineProjector is the Machine projector used when another
-// component owns requested-hardware projection for the project. It never reads
-// or writes the Machine, so requestedHardware and RequestResolved keep exactly
-// one writer.
-type DisabledMachineProjector struct{}
-
-func (DisabledMachineProjector) ReconcileEvent(context.Context, ProjectRequest) Outcome {
-	return Outcome{}
-}
-
-// NewMachineProjector returns the manager's Machine projector. enabled keeps
-// today's behaviour: the manager pins requested hardware for its project.
-// Disabling it hands that projection to the fleet-request-resolver; the
-// resolver and an enabled projector must never serve the same project.
-func NewMachineProjector(enabled bool, c client.Client, project controller.ProjectIdentity) Handler {
-	if !enabled {
-		return DisabledMachineProjector{}
-	}
-	return RequestedHardwareProjector{Client: c, Project: project}
 }

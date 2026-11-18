@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
@@ -25,6 +26,9 @@ type Mappers struct {
 	PrivateReader    client.Reader
 	Project          controller.ProjectIdentity
 	PrivateNamespace string
+	// ClusterName is the engaged project cluster stamped on every request
+	// these mappers produce.
+	ClusterName multicluster.ClusterName
 }
 
 func (m Mappers) privateReader() client.Reader {
@@ -38,7 +42,7 @@ func (m Mappers) RequestFor(_ context.Context, object client.Object) []ProjectRe
 	if object == nil || !m.Project.Valid() || object.GetNamespace() == "" || object.GetName() == "" || object.GetUID() == "" {
 		return nil
 	}
-	return []ProjectRequest{{AuthorityID: m.Project.AuthorityID, ProjectUID: m.Project.UID, Namespace: object.GetNamespace(), Name: object.GetName(), UID: object.GetUID()}}
+	return []ProjectRequest{{ClusterName: m.ClusterName, AuthorityID: m.Project.AuthorityID, ProjectUID: m.Project.UID, Namespace: object.GetNamespace(), Name: object.GetName(), UID: object.GetUID()}}
 }
 
 func (m Mappers) installationsForClaimE(ctx context.Context, object client.Object) ([]ProjectRequest, error) {
@@ -100,7 +104,7 @@ func (m Mappers) RequestForPrivate(_ context.Context, object client.Object) []Pr
 	if !ok || !m.Project.SameLifetime(controller.ProjectIdentity{AuthorityID: route.ConsumerProject.AuthorityID, UID: route.ConsumerProject.UID}) || route.ClaimNamespace == "" || route.ClaimName == "" {
 		return nil
 	}
-	return []ProjectRequest{{AuthorityID: route.ConsumerProject.AuthorityID, ProjectUID: route.ConsumerProject.UID, Namespace: route.ClaimNamespace, Name: route.ClaimName, UID: route.ClaimUID}}
+	return []ProjectRequest{{ClusterName: m.ClusterName, AuthorityID: route.ConsumerProject.AuthorityID, ProjectUID: route.ConsumerProject.UID, Namespace: route.ClaimNamespace, Name: route.ClaimName, UID: route.ClaimUID}}
 }
 
 // RequestForPrivateInstallation routes retained installation work without
@@ -115,7 +119,7 @@ func (m Mappers) RequestForPrivateInstallation(_ context.Context, object client.
 	if !ok || !m.Project.SameLifetime(controller.ProjectIdentity{AuthorityID: route.ConsumerProject.AuthorityID, UID: route.ConsumerProject.UID}) || route.InstallationNamespace == "" || route.InstallationName == "" || route.InstallationUID == "" {
 		return nil
 	}
-	return []ProjectRequest{{AuthorityID: route.ConsumerProject.AuthorityID, ProjectUID: route.ConsumerProject.UID, Namespace: route.InstallationNamespace, Name: route.InstallationName, UID: route.InstallationUID}}
+	return []ProjectRequest{{ClusterName: m.ClusterName, AuthorityID: route.ConsumerProject.AuthorityID, ProjectUID: route.ConsumerProject.UID, Namespace: route.InstallationNamespace, Name: route.InstallationName, UID: route.InstallationUID}}
 }
 
 func (m Mappers) claimsForPrivateFieldE(ctx context.Context, field, value string) ([]ProjectRequest, error) {

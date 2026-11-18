@@ -2,25 +2,27 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"net/http"
 	"os"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/executor"
 	eventmanager "go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/projectdiscovery"
 	"go.datum.net/fleet/internal/staging"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
 	locationsv1alpha1 "go.miloapis.com/locations/api/v1alpha1"
@@ -29,33 +31,70 @@ import (
 	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
 )
 
+// leaseName is the fleet-manager's host-cluster leader lease.
+const leaseName = "fleet-manager.fleet.datumapis.com"
+
+type managerFlags struct {
+	configPath, privateNamespace, leaderElectionNamespace string
+
+	syntheticStaging                                            bool
+	syntheticProviderURL, syntheticTokenFile, syntheticLocation string
+	syntheticConsumerProjectName                                string
+	syntheticProviderProjectName, syntheticPublishedClassName   string
+	syntheticPublishedProfileName                               string
+}
+
+func bindFlags(flags *flag.FlagSet) *managerFlags {
+	f := &managerFlags{}
+	flags.StringVar(&f.configPath, "config", "", "path to the FleetManager configuration file (authority and project discovery)")
+	flags.StringVar(&f.privateNamespace, "private-namespace", "", "service-controlled private record namespace")
+	flags.StringVar(&f.leaderElectionNamespace, "leader-election-namespace", "", "management-cluster namespace for the leader lease")
+	flags.BoolVar(&f.syntheticStaging, "synthetic-staging", false, "enable the explicit non-production synthetic allocation integration for one consumer project")
+	flags.StringVar(&f.syntheticProviderURL, "synthetic-provider-url", "http://127.0.0.1:8080", "synthetic provider runtime URL")
+	flags.StringVar(&f.syntheticTokenFile, "synthetic-provider-token-file", "", "file containing the synthetic provider bearer token")
+	flags.StringVar(&f.syntheticLocation, "synthetic-location", "us-central-1", "only location accepted by synthetic staging")
+	flags.StringVar(&f.syntheticConsumerProjectName, "synthetic-consumer-project-name", "", "the one engaged consumer project synthetic staging allocates for and publishes into")
+	flags.StringVar(&f.syntheticProviderProjectName, "synthetic-provider-project-name", "", "provider project used by synthetic cross-project staging")
+	flags.StringVar(&f.syntheticPublishedClassName, "synthetic-published-class-name", "", "provider MachineClass published into the synthetic consumer project")
+	flags.StringVar(&f.syntheticPublishedProfileName, "synthetic-published-profile-name", "", "provider MachineProfile published into the synthetic consumer project")
+	return f
+}
+
+var errFlags = errors.New("invalid fleet-manager flags")
+
+// validate checks flag combinations before any cluster is contacted.
+func (f *managerFlags) validate() error {
+	if f.configPath == "" || f.privateNamespace == "" || f.leaderElectionNamespace == "" {
+		return errors.Join(errFlags, errors.New("--config, --private-namespace, and --leader-election-namespace are required"))
+	}
+	if !f.syntheticStaging {
+		if f.syntheticConsumerProjectName != "" || f.syntheticProviderProjectName != "" || f.syntheticPublishedClassName != "" || f.syntheticPublishedProfileName != "" || f.syntheticTokenFile != "" {
+			return errors.Join(errFlags, errors.New("synthetic flags require --synthetic-staging"))
+		}
+		return nil
+	}
+	if f.syntheticTokenFile == "" || f.syntheticConsumerProjectName == "" {
+		return errors.Join(errFlags, errors.New("--synthetic-staging requires --synthetic-provider-token-file and --synthetic-consumer-project-name"))
+	}
+	if f.syntheticProviderProjectName != "" && (f.syntheticPublishedClassName == "" || f.syntheticPublishedProfileName == "") {
+		return errors.Join(errFlags, errors.New("--synthetic-provider-project-name requires the published class and profile names"))
+	}
+	if f.syntheticProviderProjectName != "" && f.syntheticProviderProjectName == f.syntheticConsumerProjectName {
+		return errors.Join(errFlags, errors.New("the synthetic provider and consumer projects must differ"))
+	}
+	return nil
+}
+
 func main() {
-	var authorityID, projectName, privateNamespace, projectKubeconfig, leaderElectionNamespace string
-	var syntheticStaging bool
-	var syntheticProviderURL, syntheticTokenFile, syntheticLocation string
-	var syntheticProviderProjectName, syntheticPublishedClassName, syntheticPublishedProfileName string
-	flag.StringVar(&authorityID, "authority-id", "", "configured Milo authority identifier")
-	flag.StringVar(&projectName, "project-name", "", "Milo Project name served by this cache")
-	flag.StringVar(&privateNamespace, "private-namespace", "", "service-controlled private record namespace")
-	flag.StringVar(&projectKubeconfig, "project-kubeconfig", "", "root Milo kubeconfig used to reach the configured project route")
-	flag.StringVar(&leaderElectionNamespace, "leader-election-namespace", "", "management-cluster namespace for the leader lease")
-	flag.BoolVar(&syntheticStaging, "synthetic-staging", false, "enable the explicit non-production synthetic allocation integration")
-	flag.StringVar(&syntheticProviderURL, "synthetic-provider-url", "http://127.0.0.1:8080", "synthetic provider runtime URL")
-	flag.StringVar(&syntheticTokenFile, "synthetic-provider-token-file", "", "file containing the synthetic provider bearer token")
-	flag.StringVar(&syntheticLocation, "synthetic-location", "us-central-1", "only location accepted by synthetic staging")
-	flag.StringVar(&syntheticProviderProjectName, "synthetic-provider-project-name", "", "provider project used by synthetic cross-project staging")
-	flag.StringVar(&syntheticPublishedClassName, "synthetic-published-class-name", "", "provider MachineClass published into the synthetic consumer project")
-	flag.StringVar(&syntheticPublishedProfileName, "synthetic-published-profile-name", "", "provider MachineProfile published into the synthetic consumer project")
-	requestedHardwareProjector := registerRequestedHardwareProjectorFlag(flag.CommandLine)
+	flags := bindFlags(flag.CommandLine)
 	zapOptions := zap.Options{Development: false}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
+	must(flags.validate())
+	cfg, err := projectdiscovery.LoadConfig(flags.configPath)
+	must(err)
 
-	if authorityID == "" || projectName == "" || privateNamespace == "" || projectKubeconfig == "" || leaderElectionNamespace == "" {
-		ctrl.Log.Error(eventmanager.ErrEventWiringUnavailable, "project name and private namespace are required")
-		os.Exit(1)
-	}
 	scheme := runtime.NewScheme()
 	must(clientgoscheme.AddToScheme(scheme))
 	must(fleetv1.AddToScheme(scheme))
@@ -66,98 +105,93 @@ func main() {
 	must(servicesv1alpha1.AddToScheme(scheme))
 	hostConfig, err := rest.InClusterConfig()
 	must(err)
-	rootMiloConfig, err := clientcmd.BuildConfigFromFlags("", projectKubeconfig)
+	selection, err := projectdiscovery.Select(cfg, scheme)
 	must(err)
-	rootMiloClient, err := ctrlclient.New(rootMiloConfig, ctrlclient.Options{Scheme: scheme})
+	rootMiloClient, err := ctrlclient.New(selection.RootConfig, ctrlclient.Options{Scheme: scheme})
 	must(err)
 	ctx := ctrl.SetupSignalHandler()
-	project, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, authorityID, projectName)
-	must(err)
-	projectConfig, err := eventmanager.ProjectRESTConfig(rootMiloConfig, project.RouteName)
-	must(err)
-	mgr, err := ctrl.NewManager(projectConfig, ctrl.Options{Scheme: scheme, Cache: eventmanager.ProjectCacheOptions(), LeaderElection: true, LeaderElectionID: "fleet-manager.fleet.datumapis.com", LeaderElectionNamespace: leaderElectionNamespace, LeaderElectionConfig: hostConfig, HealthProbeBindAddress: ":8081"})
-	must(err)
-	privateCluster, err := ctrlcluster.New(hostConfig, func(options *ctrlcluster.Options) {
-		options.Scheme = scheme
-		options.Cache = eventmanager.PrivateCacheOptions(privateNamespace)
-	})
-	must(err)
-	// Private lifecycle records are retained authority, not eventually
-	// consistent projections. Reconciliation may create or advance multiple
-	// records in one pass, so all coordinator reads must observe API-server
-	// state directly. The private cluster cache remains responsible only for
-	// event delivery.
-	privateRecordClient, err := ctrlclient.New(hostConfig, ctrlclient.Options{Scheme: scheme})
-	must(err)
-	blocked := eventmanager.HandlerFunc(func(context.Context, eventmanager.ProjectRequest) eventmanager.Outcome { return eventmanager.Outcome{} })
-	verifierFor := func(name string) eventmanager.ProjectVerifier {
-		return eventmanager.ProjectVerifierFunc(func(ctx context.Context, expected controller.ProjectIdentity) error {
-			current, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, authorityID, name)
-			if err != nil || current != expected {
+
+	// Every engaged project's identity is read from Milo when it engages and
+	// re-verified before every reconcile; it is never configuration.
+	resolve := func(ctx context.Context, name multicluster.ClusterName) (controller.ProjectIdentity, error) {
+		return eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, cfg.AuthorityID, string(name))
+	}
+	verifierFor := func(expected controller.ProjectIdentity) eventmanager.ProjectVerifier {
+		return eventmanager.ProjectVerifierFunc(func(ctx context.Context, project controller.ProjectIdentity) error {
+			current, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, cfg.AuthorityID, expected.RouteName)
+			if err != nil || current != expected || project != expected {
 				return eventmanager.ErrProjectIdentityUnavailable
 			}
 			return nil
 		})
 	}
-	verifier := verifierFor(projectName)
-	// Requested-hardware resolution reads only the Machine and its
-	// MachineProfile through the routed project API and has no lifecycle or
-	// provider effect, so by default it runs in every mode, including the
-	// default inert mode whose lifecycle handlers stay blocked and readiness
-	// stays failed. Disabling it hands the project to fleet-request-resolver;
-	// both must never serve the same project.
-	if !*requestedHardwareProjector {
-		ctrl.Log.Info("requested-hardware projector disabled; fleet-request-resolver must own this project's requestedHardware", "project", projectName)
+	projects := eventmanager.NewProjects(resolve, verifierFor)
+	mgr, tracker, err := projectdiscovery.NewManager(hostConfig, selection.Provider, ctrl.Options{Scheme: scheme, Cache: eventmanager.ProjectCacheOptions(), LeaderElection: true, LeaderElectionID: leaseName, LeaderElectionNamespace: flags.leaderElectionNamespace, HealthProbeBindAddress: ":8081"}, projects.Aware)
+	must(err)
+	for _, runnable := range selection.LocalRunnables {
+		must(mgr.GetLocalManager().Add(runnable))
 	}
-	requested := eventmanager.NewMachineProjector(*requestedHardwareProjector, mgr.GetClient(), project)
-	handlers := eventmanager.Handlers{Machine: blocked, Installation: blocked, MachineProjector: requested, InstallationProjector: blocked}
-	setupOptions := eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier}
-	ready := eventmanager.ErrEventWiringUnavailable
-	if syntheticStaging {
-		if syntheticTokenFile == "" {
-			must(eventmanager.ErrEventWiringUnavailable)
-		}
-		provider, err := executor.NewHTTPClientFromTokenFile(syntheticProviderURL, syntheticTokenFile, &http.Client{Timeout: 30 * time.Second})
+	privateCluster, err := ctrlcluster.New(hostConfig, func(options *ctrlcluster.Options) {
+		options.Scheme = scheme
+		options.Cache = eventmanager.PrivateCacheOptions(flags.privateNamespace)
+	})
+	must(err)
+	setupOptions := eventmanager.SetupOptions{PrivateNamespace: flags.privateNamespace, PrivateCluster: privateCluster, HandlersFor: eventmanager.DefaultHandlers}
+
+	// Without --synthetic-staging every project gets blocked lifecycle
+	// handlers: no allocation, installation, provider call, or custody write.
+	// Only the requested-hardware projector writes.
+	if flags.syntheticStaging {
+		// Private lifecycle records are retained authority, not eventually
+		// consistent projections. Coordinator reads observe API-server state
+		// directly; the private cluster cache only delivers events.
+		privateRecordClient, err := ctrlclient.New(hostConfig, ctrlclient.Options{Scheme: scheme})
 		must(err)
-		coordinator, err := controller.NewCoordinator(privateRecordClient, privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
+		provider, err := executor.NewHTTPClientFromTokenFile(flags.syntheticProviderURL, flags.syntheticTokenFile, &http.Client{Timeout: 30 * time.Second})
 		must(err)
-		handler := staging.Handler{Public: mgr.GetClient(), Coordinator: coordinator, Project: project, Location: syntheticLocation}
-		if syntheticProviderProjectName != "" {
-			if syntheticPublishedClassName == "" || syntheticPublishedProfileName == "" {
-				must(eventmanager.ErrEventWiringUnavailable)
-			}
-			providerProject, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, authorityID, syntheticProviderProjectName)
+		coordinator, err := controller.NewCoordinator(privateRecordClient, flags.privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
+		must(err)
+		consumerProject, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, cfg.AuthorityID, flags.syntheticConsumerProjectName)
+		must(err)
+		template := staging.Handler{Coordinator: coordinator, Location: flags.syntheticLocation}
+		if flags.syntheticProviderProjectName != "" {
+			providerProject, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, cfg.AuthorityID, flags.syntheticProviderProjectName)
 			must(err)
-			if providerProject.SameLifetime(project) {
+			if providerProject.SameLifetime(consumerProject) {
 				must(eventmanager.ErrEventWiringUnavailable)
 			}
-			providerConfig, err := eventmanager.ProjectRESTConfig(rootMiloConfig, providerProject.RouteName)
+			providerConfig, err := projectdiscovery.ProjectRESTConfig(selection.ProjectConfig, providerProject.RouteName)
 			must(err)
 			providerCluster, err := ctrlcluster.New(providerConfig, func(options *ctrlcluster.Options) {
 				options.Scheme = scheme
 				options.Cache = eventmanager.ProjectCacheOptions()
 			})
 			must(err)
-			providerVerifier := verifierFor(syntheticProviderProjectName)
-			handler.Provider, handler.ProviderProject = providerCluster.GetClient(), providerProject
-			setupOptions.ProviderProject, setupOptions.ProviderCluster, setupOptions.ProviderVerifier = providerProject, providerCluster, providerVerifier
-			must(staging.SetupPublisher(mgr, providerCluster, staging.PublisherOptions{ConsumerProject: project, ProviderProject: providerProject, ClassName: syntheticPublishedClassName, ProfileName: syntheticPublishedProfileName}))
+			template.Provider, template.ProviderProject = providerCluster.GetClient(), providerProject
+			setupOptions.ProviderProject, setupOptions.ProviderCluster, setupOptions.ProviderVerifier = providerProject, providerCluster, verifierFor(providerProject)
+			setupOptions.ProviderConsumer = multicluster.ClusterName(consumerProject.RouteName)
+			must(staging.SetupPublisher(mgr, projects, providerCluster, staging.PublisherOptions{ConsumerProject: consumerProject, ProviderProject: providerProject, ClassName: flags.syntheticPublishedClassName, ProfileName: flags.syntheticPublishedProfileName}))
 		}
-		handlers.Machine = handler
-		ready = nil
+		setupOptions.HandlersFor = staging.ConsumerHandlers(eventmanager.DefaultHandlers, consumerProject, template)
 	}
-	setupOptions.Handlers = handlers
-	must(eventmanager.Setup(ctx, mgr, setupOptions))
-	must(mgr.AddHealthzCheck("healthz", healthz.Ping))
-	must(mgr.AddReadyzCheck("integration", func(*http.Request) error { return ready }))
-	must(mgr.Start(ctx))
+	must(eventmanager.Setup(ctx, mgr, projects, setupOptions))
+	// Readiness reflects discovery and cache health only. It never depends on
+	// a provider integration, and passing it enables no lifecycle effect.
+	must(projectdiscovery.AddHealthChecks(mgr, selection.Discovery, tracker, projectdiscovery.NamedCache{Name: "private-records", Cache: privateCluster.GetCache()}))
+
+	group, ctx := errgroup.WithContext(ctx)
+	for _, runnable := range selection.SideRunnables {
+		group.Go(func() error { return ignoreCanceled(runnable.Start(ctx)) })
+	}
+	group.Go(func() error { return ignoreCanceled(mgr.Start(ctx)) })
+	must(group.Wait())
 }
 
-// registerRequestedHardwareProjectorFlag binds the single-writer switch for
-// Machine status.requestedHardware. The default keeps the in-manager projector
-// so existing deployments, including synthetic staging, are unchanged.
-func registerRequestedHardwareProjectorFlag(flags *flag.FlagSet) *bool {
-	return flags.Bool("enable-requested-hardware-projector", true, "pin Machine status.requestedHardware for the configured project; set false only when fleet-request-resolver serves that project")
+func ignoreCanceled(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 func must(err error) {

@@ -82,22 +82,13 @@ preservation. See the
 [upgrade notes](../enhancements/machine-lifecycle/README.md#machineprofile).
 
 `requestedhardware.Project` is the one projection that writes
-`status.requestedHardware` and `RequestResolved`. Two components call it, and
-exactly one may serve a given project:
+`status.requestedHardware` and `RequestResolved`, and
+`manager.RequestedHardwareProjector` is its only caller. `cmd/fleet-manager`
+builds one projector per engaged project, bound to that project's identity and
+client, in every configuration, including the default one whose lifecycle
+handlers are blocked. There is no second writer and no switch to disable it.
 
-- `manager.RequestedHardwareProjector` is the Machine projector in every
-  `cmd/fleet-manager` mode, including the default inert mode, for the manager's
-  one configured project. `--enable-requested-hardware-projector=false`
-  replaces it with a projector that never reads or writes Machines; the default
-  (`true`) keeps existing deployments, including synthetic staging, unchanged.
-- `cmd/fleet-request-resolver` runs the same projection for every project that
-  consumes the metal service, through the service catalog's
-  multicluster-runtime consumer provider. It registers one controller (Machines,
-  plus MachineProfiles mapped to the unpinned Machines that reference them) and
-  never starts lifecycle controllers. See
-  [the request resolver](#request-resolver).
-
-Both read the Machine and its profile from the project cache. The first exact resolution writes
+The projector reads the Machine and its profile from the project cache. The first exact resolution writes
 `status.requestedHardware` with Machine generation, profile generation, and
 spec-digest provenance, and sets `RequestResolved=True`. After that the snapshot
 is never re-resolved, and a CRD transition rule rejects status writes that
@@ -107,71 +98,103 @@ or `ProfileInvalid`). Unknown read results are retried.
 
 The synthetic staging handler and the standalone runner carry the snapshot
 forward. Staging rejects a conflicting recreated profile with
-`RequestedHardwareConflict`. The behaviour needs only a running manager for the
-project; allocation, providers, and quota are not required. Tests cover CRD
+`RequestedHardwareConflict`. The behaviour needs only an engaged project; allocation,
+providers, and quota are not required. Tests cover CRD
 validation and CEL pinning with the API server's validators, resolver
 provenance, missing and invalid profiles, post-acceptance profile changes,
 inert-mode wiring, and staging and standalone carry-forward. See
 [requested hardware](../enhancements/machine-lifecycle/README.md#requested-hardware).
 
-## Request resolver
+## Multi-project discovery
 
-`cmd/fleet-request-resolver` is the production-safe writer of requested
-hardware. It is a separate binary and image (`build/request-resolver.Dockerfile`,
-`ghcr.io/datum-cloud/fleet-request-resolver`) and does not link
-`internal/manager`, `internal/staging`, `internal/milo`, quota, location, or
-network packages; a test enforces this with `go list -deps`.
+`cmd/fleet-manager` runs one set of controllers over every project that
+consumes the metal service, through `sigs.k8s.io/multicluster-runtime` and the
+service catalog's consumer provider (`internal/projectdiscovery`). There is no
+`--project-name`; `--config` names a `FleetManager` file.
 
-- **Discovery.** `discovery.mode: milo` requires
-  `consumerScopedProjection` with exactly `serviceNames: [metal.datumapis.com]`;
-  watching every project is rejected. The consumer provider watches
-  ServiceConsumers in the provider project and engages a consumer project while
-  it has an Active, not-deleting consumer. `discovery.mode: single` serves the
-  process kubeconfig's cluster for local and standalone tests. Unknown
+- **Discovery.** `discovery.mode: milo` requires `consumerScopedProjection`
+  with exactly `serviceNames: [metal.datumapis.com]`; watching every project is
+  rejected. A project is engaged while it has an Active, not-deleting
+  ServiceConsumer. `discovery.mode: single` with `discovery.project` serves one
+  named project through the same wiring, for standalone use and tests. Unknown
   configuration fields are rejected.
+- **Per-project runtime.** `manager.Projects` is the Aware that discovery
+  engages through. On engagement it resolves the project's identity from Milo
+  (`ResolveProjectIdentity`), refuses a second cluster name for the same
+  project lifetime, builds the project's runtime (client, cache reader,
+  verifier, mappers, lifecycle owners, handlers), registers it, and only then
+  engages the controllers. When the engagement context ends it unregisters the
+  runtime.
+- **Requests.** `ProjectRequest`, `RouteRequest`, and `ProviderEventRequest`
+  carry the cluster name. `ClusterProjectReconciler` and
+  `ClusterRouteReconciler` look up the runtime for that name, require
+  `SameProject` against its identity, run its verifier, and delegate to the
+  existing `ProjectReconciler` and `RouteReconciler`. A request for a project
+  that is not engaged is dropped with no effect.
+- **Private records.** All projects share the host namespace
+  `fleet-system-private`. Custody, operation, and authority record names hash
+  `(authorityID, projectUID, claimUID)`; asset records are keyed by provider
+  asset and are deliberately global, which is what makes allocation exclusive
+  across consumers. The private-record watch routes a record by its recorded
+  consumer project to the runtime engaged for exactly that lifetime. The
+  unscoped `Coordinator.Release(claimUID)` requires exactly one match, so equal
+  claim UIDs in two projects fail closed instead of colliding.
+- **Handlers.** `manager.DefaultHandlers` gives each project blocked lifecycle
+  handlers and the requested-hardware projector. `--synthetic-staging` uses
+  `staging.ConsumerHandlers`, which installs the staging handler only for
+  `--synthetic-consumer-project-name`, and only when that name is engaged as
+  the exact consumer lifetime resolved at startup. The publisher writes only
+  into that project. Provider MachineCapacity events wake only that project.
+- **Departure.** The manager stops reconciling a project that leaves the
+  consumer set. It does not release custody, call a provider, delete records,
+  or rewrite status, including for a project with active custody. Its
+  deadlines and queued events are dropped, and re-engagement resumes from the
+  retained private records.
 - **Observational discovery.** The provider declares no managed resources,
-  teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer and
-  deletes nothing when a project leaves. Its discovery clients refuse every
-  write. The library would otherwise patch `Paused=True` on a suspended
-  ServiceConsumer even with no hooks; the resolver drops that patch, because it
-  pauses nothing and must not confirm a suspension. A suspended project keeps
-  resolving.
-- **Departure.** When a project leaves the consumer set, its engagement context
-  is cancelled and queued requests for it are dropped without any write.
-- **Identity.** The resolver keeps no custody or authority records. It reads
-  and writes only through the engaged project's client and projects whichever
-  Machine currently has the requested name; it does not read Project UIDs.
-- **Leader election and engagement.** The resolver holds a lease in the host
-  cluster (`fleet-request-resolver.fleet.datumapis.com`); only the holder runs
-  the controller. Project engagement runs on every replica: as in Compute,
-  the provider's `Start` is hidden from `mcmanager` (which would leader-gate
-  it) and re-added once to the always-running group. Unlike Compute, this is
-  done for every `ProviderRunnable`, so the consumer provider is not started
-  twice.
-- **Readiness.** `/readyz` requires the provider project's ServiceConsumer
-  cache to have synced, every project with an Active metal consumer to be
-  engaged, and every engaged project cache to have synced. It never depends on
-  lifecycle integrations. One unreachable consumer project keeps every replica
-  unready, which blocks rollouts but not resolution in other projects.
-- **Module versions.** The resolver uses the versions Compute uses:
+  teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer. Its
+  discovery clients refuse every write. The library would otherwise patch
+  `Paused=True` on a suspended ServiceConsumer even with no hooks; the manager
+  drops that patch, because Fleet implements no suspension.
+- **Leader election and engagement.** One host-cluster lease
+  (`fleet-manager.fleet.datumapis.com`); only the holder reconciles. Project
+  engagement runs on every replica. As in Compute, the provider's `Start` is
+  hidden from `mcmanager` (which would leader-gate it) and re-added once to the
+  always-running group. Unlike Compute, this is done for every
+  `ProviderRunnable`, so the consumer provider is not started twice.
+- **Readiness.** `/readyz` requires discovery to have synced, every consuming
+  project to be engaged, every engaged project cache to have synced, and the
+  private-record cache to have synced. The former integration gate, which
+  failed unless synthetic staging was on, is removed. Removing it enables no
+  effect: without a provider every lifecycle handler stays blocked.
+- **Module versions.** Fleet uses the versions Compute uses:
   `sigs.k8s.io/multicluster-runtime` v0.25.2, `go.miloapis.com/milo` v0.36.9,
   `go.miloapis.com/service-catalog` v0.14.6-0.20261023171130-8c647a6f552b,
   `sigs.k8s.io/controller-runtime` v0.25.2, and Kubernetes libraries v0.37.1.
   This raised Fleet's controller-runtime (v0.24.1), Kubernetes (v0.36.1), Milo
-  (v0.32.5), and service-catalog (v0.13.1) versions; Milo v0.36.9 itself
-  requires controller-runtime v0.25.2 and Kubernetes v0.37.1, and the existing
-  test suites pass unchanged.
+  (v0.32.5), and service-catalog (v0.13.1) versions. Milo v0.36.9 itself
+  requires controller-runtime v0.25.2 and Kubernetes v0.37.1.
 
-Tests in `internal/requestresolver` run the production manager wiring over a
-fake provider and fake project caches. They cover independent projects with
-equal names, a missing, invalid, or unreadable profile in one project, departure
-without writes, resolution of existing Machines on engagement, pinned values
-across a restart with a replaced profile, profile fan-out limited to
-referencing Machines, the single controller and its two watched kinds, single
-provider start, readiness, read-only discovery clients, and configuration. An
-end-to-end test runs the real consumer provider against separate API servers
-behind a Milo-shaped project router, with a real host lease and the Machine
-CRD's pinning rule; it needs envtest binaries and is skipped without them.
+Tests run the production wiring (`projectdiscovery.NewManager`,
+`manager.NewProjects`, `manager.Setup`) over a fake provider and fake project
+API servers (`internal/multiclustertest`) whose writes produce watch events.
+They cover:
+
+- no provider: two projects with identical Machine names and UIDs each pin from
+  their own profile, with no private record, finalizer, lifecycle condition,
+  or Installation change;
+- custody isolation: a custody record wakes only its own project, and scoped
+  reads and an unscoped release cannot cross projects;
+- departure with active custody, re-engagement, restart with a replaced
+  profile, and identity failures (unknown project, two clusters for one
+  lifetime, project recreated while engaged);
+- synthetic staging end to end: allocation only in the publication consumer,
+  with another engaged project untouched.
+
+Coordinator tests already cover custody, allocation, and installation scoping
+across project APIs with equal claim UIDs. An envtest test runs the real
+consumer provider against separate API servers that serve every watched kind,
+behind a Milo-shaped project router, with a real host lease and private cache.
+It needs envtest binaries and is skipped without them.
 
 ## Location authority
 
@@ -194,9 +217,9 @@ The event-only manager indexes Machines by requested location and watches
 both Location and ServiceAvailability objects. Semantic updates and deletes
 therefore route every affected claim through its existing durable work key;
 there is no periodic location resync. This implements resolution and event
-routing, not the production claim handler that invokes it. The manager binary
-continues to fail readiness until the required production handlers and
-authorities are wired.
+routing, not the production claim handler that invokes it. Without those
+production handlers and authorities, the manager's lifecycle handlers stay
+blocked; readiness reports only discovery and cache health.
 
 The Milo bundle declares a Draft Fleet `ServiceConfiguration` supporting the
 platform `datum-managed` location class. Draft is intentional: an environment
@@ -313,7 +336,7 @@ This handler is an orchestration seam, not a live integration. Watched objects
 do not contain the create-time caller identity, protected publication
 provenance, or trusted Machine observation time and location required by the
 lifecycle contract. The manager binary therefore does not instantiate the
-handler and continues to fail readiness. An environment must provide those
+handler; lifecycle handlers stay blocked. An environment must provide those
 inputs plus the Milo admission fence and quota custodian before enabling effects;
 controller credentials, annotations, public status, and synthetic timestamps
 are not accepted substitutes.
@@ -358,10 +381,11 @@ acknowledges its receipt. This increment implements and tests those runner and
 drain contracts; the production durable inbox, consumer, and live stream adapters
 remain integration-owner responsibilities.
 
-`cmd/fleet-manager` validates an exact project lifetime, derives the routed Milo
-REST host from an environment-owned root kubeconfig, keeps host-private records
-and leader election on the management cluster, starts the event graph, and
-reports the integration readiness check as failed in its default mode. Its
+`cmd/fleet-manager` discovers every consuming project, resolves each project's
+exact lifetime from Milo, derives each routed Milo REST host from an
+environment-owned project kubeconfig template, keeps host-private records and
+leader election on the management cluster, and starts the event graph. Its
+readiness reports discovery and cache health only. Its
 production handlers deliberately perform no lifecycle or provider effects until trusted create-time
 caller/finalizer admission and live, replayable Milo adapters are supplied. A
 watch controller cannot recover the original `user.Info` or atomically capture
@@ -647,15 +671,15 @@ go test -race ./...
 go vet ./...
 ```
 
-The request resolver's end-to-end test needs envtest binaries. CI installs
+The manager's multi-project envtest test needs envtest binaries. CI installs
 them; locally, run:
 
 ```sh
 export KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)"
-go test -race ./internal/requestresolver/...
+go test -race ./...
 ```
 
-`task resolver:test` runs the same command.
+`task test:envtest` runs the same command.
 
 For an isolated local run, create a synthetic credential file and keep the
 default loopback listener:

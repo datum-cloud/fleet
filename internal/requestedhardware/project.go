@@ -1,9 +1,8 @@
 // Package requestedhardware owns the only status projection that writes
 // Machine status.requestedHardware and the RequestResolved condition.
 //
-// Both writers use it: the fleet-manager's in-process projector for its one
-// configured project, and the multi-project fleet-request-resolver. They must
-// never serve the same project; see docs/enhancements/machine-lifecycle.
+// The fleet-manager's RequestedHardwareProjector, one per engaged project, is
+// its only caller; the standalone runner applies the same rules to fixtures.
 //
 // The projection reads the Machine and its MachineProfile and performs no
 // allocation, provider, quota, or private-record effect.

@@ -1,4 +1,4 @@
-package requestresolver
+package projectdiscovery
 
 import (
 	"encoding/json"
@@ -18,7 +18,8 @@ import (
 )
 
 const productionShape = `apiVersion: config.fleet.datumapis.com/v1alpha1
-kind: RequestResolver
+kind: FleetManager
+authorityID: milo-synthetic
 discovery:
   mode: milo
   discoveryKubeconfigPath: /etc/fleet/discovery/kubeconfig
@@ -50,24 +51,34 @@ func TestParseConfigDefaultsProjectKubeconfigToDiscovery(t *testing.T) {
 	}
 }
 
+const singleShape = "apiVersion: config.fleet.datumapis.com/v1alpha1\nkind: FleetManager\nauthorityID: milo-synthetic\ndiscovery:\n  mode: single\n  discoveryKubeconfigPath: /k\n  project: consumer\n"
+
 func TestParseConfigAcceptsSingleMode(t *testing.T) {
-	if _, err := ParseConfig([]byte("apiVersion: config.fleet.datumapis.com/v1alpha1\nkind: RequestResolver\ndiscovery:\n  mode: single\n")); err != nil {
+	config, err := ParseConfig([]byte(singleShape))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if config.Discovery.Project != "consumer" || config.Discovery.ProjectKubeconfigPath != "/k" {
+		t.Fatalf("config = %#v", config)
 	}
 }
 
 func TestParseConfigFailsClosed(t *testing.T) {
 	cases := map[string]string{
-		"unknown field":           strings.Replace(productionShape, "  mode: milo\n", "  mode: milo\n  internalServiceDiscovery: true\n", 1),
-		"wrong kind":              strings.Replace(productionShape, "kind: RequestResolver", "kind: WorkloadOperator", 1),
-		"missing mode":            strings.Replace(productionShape, "  mode: milo\n", "", 1),
-		"unsupported mode":        strings.Replace(productionShape, "mode: milo", "mode: kind", 1),
-		"all projects":            strings.SplitAfter(productionShape, "projectKubeconfigPath: /etc/fleet/projects/kubeconfig\n")[0],
-		"missing discovery":       strings.Replace(productionShape, "  discoveryKubeconfigPath: /etc/fleet/discovery/kubeconfig\n", "", 1),
-		"missing provider":        strings.Replace(productionShape, "    providerProject: datum-cloud\n", "", 1),
-		"other service":           strings.Replace(productionShape, "metal.datumapis.com", "compute.datumapis.com", 1),
-		"extra service":           productionShape + "      - compute.datumapis.com\n",
-		"single with kubeconfigs": "apiVersion: config.fleet.datumapis.com/v1alpha1\nkind: RequestResolver\ndiscovery:\n  mode: single\n  discoveryKubeconfigPath: /x\n",
+		"unknown field":       strings.Replace(productionShape, "  mode: milo\n", "  mode: milo\n  internalServiceDiscovery: true\n", 1),
+		"wrong kind":          strings.Replace(productionShape, "kind: FleetManager", "kind: WorkloadOperator", 1),
+		"missing authority":   strings.Replace(productionShape, "authorityID: milo-synthetic\n", "", 1),
+		"missing mode":        strings.Replace(productionShape, "  mode: milo\n", "", 1),
+		"unsupported mode":    strings.Replace(productionShape, "mode: milo", "mode: kind", 1),
+		"all projects":        strings.SplitAfter(productionShape, "projectKubeconfigPath: /etc/fleet/projects/kubeconfig\n")[0],
+		"missing discovery":   strings.Replace(productionShape, "  discoveryKubeconfigPath: /etc/fleet/discovery/kubeconfig\n", "", 1),
+		"missing provider":    strings.Replace(productionShape, "    providerProject: datum-cloud\n", "", 1),
+		"other service":       strings.Replace(productionShape, "metal.datumapis.com", "compute.datumapis.com", 1),
+		"extra service":       productionShape + "      - compute.datumapis.com\n",
+		"milo with project":   strings.Replace(productionShape, "  mode: milo\n", "  mode: milo\n  project: consumer\n", 1),
+		"single no project":   strings.Replace(singleShape, "  project: consumer\n", "", 1),
+		"single with scoping": singleShape + "  consumerScopedProjection:\n    providerProject: datum-cloud\n    serviceNames: [metal.datumapis.com]\n",
+		"single no discovery": strings.Replace(singleShape, "  discoveryKubeconfigPath: /k\n", "", 1),
 	}
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {

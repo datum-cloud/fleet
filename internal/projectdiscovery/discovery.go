@@ -1,4 +1,4 @@
-package requestresolver
+package projectdiscovery
 
 import (
 	"context"
@@ -23,10 +23,10 @@ import (
 	consumerprovider "go.miloapis.com/service-catalog/pkg/multicluster-runtime/consumer"
 )
 
-// ErrReadOnly is returned for any write the resolver's discovery clients
-// attempt. Discovery is observational: the resolver never changes Services,
-// ServiceConsumers, or anything else outside Machine status.
-var ErrReadOnly = errors.New("request resolver discovery clients are read-only")
+// ErrReadOnly is returned for any write the discovery clients attempt.
+// Discovery is observational: the manager never changes Services or
+// ServiceConsumers.
+var ErrReadOnly = errors.New("fleet-manager discovery clients are read-only")
 
 // ProjectCacheOptions is applied to every engaged project cache. Like the
 // fleet-manager's routed project cache it is event-only: a nil SyncPeriod
@@ -64,11 +64,16 @@ type ConsumerDiscovery struct {
 // template re-addressed to the provider project and, by the provider, to each
 // engaged consumer project.
 //
-// The provider declares no ManagedResources, Teardowns, Suspends, or Resumes:
-// the resolver creates nothing in consumer projects, so it never stamps a
-// teardown finalizer, never deletes anything when a project leaves, and never
-// gates a ServiceConsumer's deletion.
-func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp ConsumerScopedProjectionConfig, scheme *runtime.Scheme) (*ConsumerDiscovery, error) {
+// The provider declares no ManagedResources, Teardowns, Suspends, or Resumes.
+// When a project leaves the consumer set the manager stops reconciling it and
+// nothing else happens: no Fleet record is deleted, no custody is released,
+// no status is rewritten, and no ServiceConsumer finalizer gates deletion.
+// Retained custody for a departed project stays in the private namespace and
+// resumes if the project is engaged again.
+//
+// tune, if given, adjusts the provider-project manager's options (tests use
+// it to relax controller-name validation).
+func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp ConsumerScopedProjectionConfig, scheme *runtime.Scheme, tune ...func(*manager.Options)) (*ConsumerDiscovery, error) {
 	if discoveryConfig == nil || projectConfig == nil || scheme == nil {
 		return nil, errors.New("consumer discovery requires discovery and project configs and a scheme")
 	}
@@ -79,7 +84,7 @@ func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp Consu
 	if err != nil {
 		return nil, fmt.Errorf("build provider project config: %w", err)
 	}
-	providerMgr, err := manager.New(providerConfig, manager.Options{
+	options := manager.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: "0",
@@ -87,7 +92,11 @@ func NewConsumerDiscovery(discoveryConfig, projectConfig *rest.Config, csp Consu
 		Cache:                  cache.Options{DefaultTransform: cache.TransformStripManagedFields()},
 		NewClient:              readOnlyNewClient,
 		Controller:             config.Controller{SkipNameValidation: skipControllerNameValidation},
-	})
+	}
+	for _, apply := range tune {
+		apply(&options)
+	}
+	providerMgr, err := manager.New(providerConfig, options)
 	if err != nil {
 		return nil, fmt.Errorf("build provider project manager: %w", err)
 	}
@@ -196,12 +205,11 @@ func readOnlyNewClient(config *rest.Config, options client.Options) (client.Clie
 // provider's ServiceConsumer Paused-condition bookkeeping: with no Suspend or
 // Resume hooks the library would still patch Paused=True ("this provider's
 // resources for the consumer are paused") when the platform suspends a
-// project. The resolver pauses nothing, and Fleet's lifecycle does not honour
-// suspension through this process, so writing that confirmation would be a
-// false claim. The patch is dropped instead: the condition stays unconfirmed
-// (unknown) rather than converted into a pause. Returning an error would
-// instead abort the provider's reconcile before it disengages departed
-// projects.
+// project. Fleet's lifecycle does not implement suspension, so writing that
+// confirmation would be a false claim. The patch is dropped instead: the
+// condition stays unconfirmed (unknown) rather than converted into a pause.
+// Returning an error would instead abort the provider's reconcile before it
+// disengages departed projects.
 type readOnlyClient struct{ client.Client }
 
 func (readOnlyClient) Create(context.Context, client.Object, ...client.CreateOption) error {
@@ -246,7 +254,7 @@ func (readOnlySubResource) Update(context.Context, client.Object, ...client.SubR
 }
 func (s readOnlySubResource) Patch(ctx context.Context, obj client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
 	if consumer, ok := obj.(*servicesv1alpha1.ServiceConsumer); ok && s.name == "status" {
-		log.FromContext(ctx).Info("not confirming ServiceConsumer suspension: the request resolver pauses nothing", "serviceConsumer", consumer.Name)
+		log.FromContext(ctx).Info("not confirming ServiceConsumer suspension: Fleet does not implement suspension", "serviceConsumer", consumer.Name)
 		return nil
 	}
 	return ErrReadOnly

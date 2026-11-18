@@ -1,4 +1,9 @@
-package requestresolver
+// Package projectdiscovery selects the Milo project control planes the
+// fleet-manager serves and owns the readiness of that selection. In milo
+// mode it engages every project with an Active ServiceConsumer for the Bare
+// Metal service, through the service catalog's multicluster-runtime consumer
+// provider; in single mode it serves one named project.
+package projectdiscovery
 
 import (
 	"errors"
@@ -11,57 +16,62 @@ import (
 )
 
 const (
-	// ConfigAPIVersion and ConfigKind identify the resolver's configuration
+	// ConfigAPIVersion and ConfigKind identify the manager's configuration
 	// file. It is a file format read at startup, not a served API.
 	ConfigAPIVersion = "config.fleet.datumapis.com/v1alpha1"
-	ConfigKind       = "RequestResolver"
+	ConfigKind       = "FleetManager"
 
 	// MetalServiceName is the canonical Service.spec.serviceName of the Bare
-	// Metal service registered by config/components/service-catalog. Machines
-	// and MachineProfiles are served only in projects that consume it.
+	// Metal service registered by config/components/service-catalog. Fleet's
+	// APIs are served only in projects that consume it.
 	MetalServiceName = "metal.datumapis.com"
 )
 
-// Config is the fleet-request-resolver configuration file. Its discovery block
-// mirrors the shape Compute uses for consumer-scoped projection so environment
-// owners wire both services the same way.
+// Config is the fleet-manager configuration file. Its discovery block mirrors
+// the shape Compute uses for consumer-scoped projection so environment owners
+// wire both services the same way.
 type Config struct {
-	APIVersion string          `json:"apiVersion"`
-	Kind       string          `json:"kind"`
-	Discovery  DiscoveryConfig `json:"discovery"`
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	// AuthorityID names the configured Milo authority recorded in every
+	// project identity and private custody record.
+	AuthorityID string          `json:"authorityID"`
+	Discovery   DiscoveryConfig `json:"discovery"`
 }
 
 type DiscoveryConfig struct {
-	// Mode is "milo" (production: every project consuming the metal service)
-	// or "single" (one cluster from the process kubeconfig, for local and
-	// standalone tests).
+	// Mode is "milo" (every project consuming the metal service) or "single"
+	// (one named project, for standalone use and tests).
 	Mode multiclusterproviders.Provider `json:"mode"`
 
-	// DiscoveryKubeconfigPath is a root Milo kubeconfig. It lists Services at
-	// the root to resolve canonical service names. Required in milo mode.
-	DiscoveryKubeconfigPath string `json:"discoveryKubeconfigPath,omitempty"`
+	// DiscoveryKubeconfigPath is a root Milo kubeconfig. It lists Services to
+	// resolve canonical service names and reads Projects to resolve each
+	// engaged project's immutable identity. Required.
+	DiscoveryKubeconfigPath string `json:"discoveryKubeconfigPath"`
 
 	// ProjectKubeconfigPath is the Milo kubeconfig template whose host is
-	// re-addressed to each project's control plane: the provider project for
-	// ServiceConsumer discovery and each engaged consumer project for Machines.
-	// Defaults to DiscoveryKubeconfigPath.
+	// re-addressed to each project's control plane. Defaults to
+	// DiscoveryKubeconfigPath.
 	ProjectKubeconfigPath string `json:"projectKubeconfigPath,omitempty"`
 
-	// ConsumerScopedProjection selects the engaged projects. Required in milo
-	// mode: the resolver never watches every project.
+	// ConsumerScopedProjection selects the engaged projects in milo mode. It
+	// is required there: the manager never watches every project.
 	ConsumerScopedProjection *ConsumerScopedProjectionConfig `json:"consumerScopedProjection,omitempty"`
+
+	// Project is the one served project in single mode.
+	Project string `json:"project,omitempty"`
 }
 
 type ConsumerScopedProjectionConfig struct {
 	// ProviderProject hosts the metal ServiceConsumers (the Service's producer
 	// project).
 	ProviderProject string `json:"providerProject"`
-	// ServiceNames are canonical service names. The resolver accepts exactly
-	// MetalServiceName.
+	// ServiceNames are canonical service names. Exactly MetalServiceName is
+	// accepted.
 	ServiceNames []string `json:"serviceNames"`
 }
 
-var ErrInvalidConfig = errors.New("invalid fleet-request-resolver configuration")
+var ErrInvalidConfig = errors.New("invalid fleet-manager configuration")
 
 // LoadConfig reads and strictly validates the configuration file. Unknown
 // fields are rejected so a misspelled key cannot silently widen discovery.
@@ -91,16 +101,22 @@ func (c Config) Validate() error {
 	if c.APIVersion != ConfigAPIVersion || c.Kind != ConfigKind {
 		return fmt.Errorf("%w: apiVersion/kind must be %s/%s", ErrInvalidConfig, ConfigAPIVersion, ConfigKind)
 	}
+	if strings.TrimSpace(c.AuthorityID) == "" {
+		return fmt.Errorf("%w: authorityID is required", ErrInvalidConfig)
+	}
 	d := c.Discovery
+	if strings.TrimSpace(d.DiscoveryKubeconfigPath) == "" {
+		return fmt.Errorf("%w: discovery.discoveryKubeconfigPath is required; the host cluster is never used as Milo", ErrInvalidConfig)
+	}
 	switch d.Mode {
 	case multiclusterproviders.ProviderSingle:
-		if d.DiscoveryKubeconfigPath != "" || d.ProjectKubeconfigPath != "" || d.ConsumerScopedProjection != nil {
-			return fmt.Errorf("%w: single mode serves the process kubeconfig's cluster and accepts no discovery kubeconfigs or consumerScopedProjection", ErrInvalidConfig)
+		if strings.TrimSpace(d.Project) == "" || d.ConsumerScopedProjection != nil {
+			return fmt.Errorf("%w: single mode requires discovery.project and accepts no consumerScopedProjection", ErrInvalidConfig)
 		}
 		return nil
 	case multiclusterproviders.ProviderMilo:
-		if strings.TrimSpace(d.DiscoveryKubeconfigPath) == "" {
-			return fmt.Errorf("%w: milo mode requires discovery.discoveryKubeconfigPath; the host cluster is never used as Milo", ErrInvalidConfig)
+		if d.Project != "" {
+			return fmt.Errorf("%w: milo mode discovers projects and accepts no discovery.project", ErrInvalidConfig)
 		}
 		if d.ConsumerScopedProjection == nil {
 			return fmt.Errorf("%w: milo mode requires discovery.consumerScopedProjection; watching every project is not supported", ErrInvalidConfig)

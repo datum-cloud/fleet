@@ -1,4 +1,4 @@
-package requestresolver
+package projectdiscovery
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 // hang the kubelet probe.
 const readinessProbeBudget = 2 * time.Second
 
-// NewManager builds the resolver's multicluster manager on the host cluster
+// NewManager builds the fleet-manager's multicluster manager on the host cluster
 // (where its leader-election lease lives) over provider.
 //
 // mcmanager.Start auto-adds a ProviderRunnable's Start as a plain
@@ -36,11 +36,15 @@ const readinessProbeBudget = 2 * time.Second
 // always-running group, and routes engagement through the returned tracker
 // so readiness can require real engagement.
 //
-// The resolver's controller stays leader-gated: only the lease holder writes
-// Machine status.
-func NewManager(hostConfig *rest.Config, provider multicluster.Provider, options manager.Options) (mcmanager.Manager, *EngageTracker, error) {
+// Controllers stay leader-gated: only the lease holder reconciles.
+//
+// engage, when set, receives the manager and returns the Aware that project
+// engagement goes through (for example the manager's project registry, which
+// must bind a project's identity before its controllers engage). The tracker
+// wraps it, so a project counts as engaged only after that Aware accepted it.
+func NewManager(hostConfig *rest.Config, provider multicluster.Provider, options manager.Options, engage func(mcmanager.Manager) multicluster.Aware) (mcmanager.Manager, *EngageTracker, error) {
 	if hostConfig == nil || provider == nil {
-		return nil, nil, errors.New("request resolver requires a host config and a multicluster provider")
+		return nil, nil, errors.New("fleet-manager requires a host config and a multicluster provider")
 	}
 	exposed := provider
 	runnable, isRunnable := provider.(multicluster.ProviderRunnable)
@@ -51,7 +55,11 @@ func NewManager(hostConfig *rest.Config, provider multicluster.Provider, options
 	if err != nil {
 		return nil, nil, err
 	}
-	tracker := NewEngageTracker(mgr)
+	var aware multicluster.Aware = mgr
+	if engage != nil {
+		aware = engage(mgr)
+	}
+	tracker := NewEngageTracker(aware)
 	if isRunnable {
 		if err := mgr.GetLocalManager().Add(nonLeaderElectionRunnable{Runnable: manager.RunnableFunc(func(ctx context.Context) error {
 			return runnable.Start(ctx, tracker)
@@ -134,16 +142,16 @@ func (t *EngageTracker) snapshot() map[multicluster.ClusterName]cluster.Cluster 
 	return out
 }
 
-// Discovery describes the project set the resolver should have engaged.
+// Discovery describes the project set the manager should have engaged.
 // Synced reports whether the discovery source itself has completed its
 // initial sync; Expected lists the projects that must be engaged before the
-// resolver is ready. Neither depends on any lifecycle integration.
+// manager is ready. Neither depends on any lifecycle or provider integration.
 type Discovery interface {
 	Synced(context.Context) error
 	Expected(context.Context) ([]multicluster.ClusterName, error)
 }
 
-// StaticDiscovery expects a fixed set of clusters (single mode).
+// StaticDiscovery expects a fixed set of clusters (single mode and tests).
 type StaticDiscovery []multicluster.ClusterName
 
 func (StaticDiscovery) Synced(context.Context) error { return nil }
@@ -152,12 +160,20 @@ func (d StaticDiscovery) Expected(context.Context) ([]multicluster.ClusterName, 
 	return append([]multicluster.ClusterName(nil), d...), nil
 }
 
-// AddHealthChecks registers liveness and the resolver's readiness boundary:
-// discovery has synced, every expected project is engaged, and every engaged
-// project cache has synced.
-func AddHealthChecks(mgr mcmanager.Manager, discovery Discovery, tracker *EngageTracker) error {
+// NamedCache is an additional cache whose initial sync gates readiness, such
+// as the manager's private-record cache.
+type NamedCache struct {
+	Name  string
+	Cache interface{ WaitForCacheSync(context.Context) bool }
+}
+
+// AddHealthChecks registers liveness and the readiness boundary: discovery
+// has synced, every expected project is engaged, every engaged project cache
+// has synced, and every named cache has synced. Readiness never depends on a
+// provider integration.
+func AddHealthChecks(mgr mcmanager.Manager, discovery Discovery, tracker *EngageTracker, caches ...NamedCache) error {
 	if mgr == nil || discovery == nil || tracker == nil {
-		return errors.New("request resolver health checks require a manager, discovery, and engagement tracker")
+		return errors.New("health checks require a manager, discovery, and engagement tracker")
 	}
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		return err
@@ -168,7 +184,30 @@ func AddHealthChecks(mgr mcmanager.Manager, discovery Discovery, tracker *Engage
 	if err := mgr.AddReadyzCheck("projects-engaged", ProjectsEngagedCheck(discovery, tracker)); err != nil {
 		return err
 	}
-	return mgr.AddReadyzCheck("project-caches-synced", EngagedCachesSyncedCheck(tracker))
+	if err := mgr.AddReadyzCheck("project-caches-synced", EngagedCachesSyncedCheck(tracker)); err != nil {
+		return err
+	}
+	for _, c := range caches {
+		if c.Name == "" || c.Cache == nil {
+			return errors.New("named readiness cache requires a name and a cache")
+		}
+		if err := mgr.AddReadyzCheck(c.Name+"-synced", CacheSyncedCheck(c)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CacheSyncedCheck fails until c has completed its initial sync.
+func CacheSyncedCheck(c NamedCache) healthz.Checker {
+	return func(req *http.Request) error {
+		ctx, cancel := context.WithTimeout(req.Context(), readinessProbeBudget)
+		defer cancel()
+		if !c.Cache.WaitForCacheSync(ctx) {
+			return fmt.Errorf("%s cache has not synced", c.Name)
+		}
+		return nil
+	}
 }
 
 func DiscoverySyncedCheck(discovery Discovery) healthz.Checker {

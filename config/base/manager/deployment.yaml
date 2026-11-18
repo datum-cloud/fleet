@@ -31,23 +31,14 @@ spec:
         - name: manager
           image: ghcr.io/datum-cloud/fleet:latest
           imagePullPolicy: IfNotPresent
+          # Projects come from discovery (every project with an Active metal
+          # ServiceConsumer); see config/README.md. No provider or synthetic
+          # integration is configured here, so lifecycle handlers stay
+          # blocked and only requested hardware is resolved.
           args:
-            - --authority-id=$(FLEET_AUTHORITY_ID)
-            - --project-name=$(FLEET_PROJECT_NAME)
+            - --config=/etc/fleet/manager/config.yaml
             - --private-namespace=fleet-system-private
-            - --project-kubeconfig=/var/run/fleet/milo/kubeconfig
             - --leader-election-namespace=fleet-system
-          env:
-            - name: FLEET_AUTHORITY_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: fleet-manager-config
-                  key: authorityID
-            - name: FLEET_PROJECT_NAME
-              valueFrom:
-                configMapKeyRef:
-                  name: fleet-manager-config
-                  key: projectName
           ports:
             - name: health
               containerPort: 8081
@@ -76,14 +67,34 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
+            - name: config
+              mountPath: /etc/fleet/manager
+              readOnly: true
             - name: milo-kubeconfig
               mountPath: /var/run/fleet/milo
               readOnly: true
+            - name: project-kubeconfig
+              mountPath: /var/run/fleet/projects
+              readOnly: true
+      # All three inputs are environment-owned and absent from this bundle.
       volumes:
+        - name: config
+          configMap:
+            name: fleet-manager-config
+            items:
+              - key: config.yaml
+                path: config.yaml
         - name: milo-kubeconfig
           secret:
             secretName: milo-configuration-kubeconfig
             defaultMode: 0440
             items:
               - key: value
+                path: kubeconfig
+        - name: project-kubeconfig
+          secret:
+            secretName: fleet-manager-project-kubeconfig
+            defaultMode: 0440
+            items:
+              - key: kubeconfig
                 path: kubeconfig

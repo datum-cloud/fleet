@@ -1,25 +1,29 @@
-package requestresolver
+package projectdiscovery
 
 import (
 	"context"
 	"errors"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	"sigs.k8s.io/yaml"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/multiclustertest"
 	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
 )
 
@@ -37,37 +41,90 @@ func (d discoveryFunc) Expected(context.Context) ([]multicluster.ClusterName, er
 	return d.expected, nil
 }
 
+func testScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return scheme
+}
+
+// startManager runs NewManager and the health checks over provider, with no
+// controllers. The host config is never contacted.
+func startManager(t *testing.T, provider multicluster.Provider, discovery Discovery, caches ...NamedCache) (mcmanager.Manager, *EngageTracker) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	mgr, tracker, err := NewManager(&rest.Config{Host: "https://host.example.test"}, provider, manager.Options{
+		Scheme:                 testScheme(t),
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	}, nil)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if err := AddHealthChecks(mgr, discovery, tracker, caches...); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- mgr.Start(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return mgr, tracker
+}
+
+type syncedCache struct{ synced bool }
+
+func (c *syncedCache) WaitForCacheSync(context.Context) bool { return c.synced }
+
 func TestReadinessRequiresDiscoveryEngagementAndSyncedCaches(t *testing.T) {
-	p := newProject(t, "ready", []client.Object{machine("m", "general"), profile("general", 1, 8, "32Gi")})
-	provider := newTestProvider()
+	p := multiclustertest.NewProject(t, "ready", multiclustertest.ProjectOptions{Scheme: testScheme(t)})
+	provider := multiclustertest.NewProvider()
 	discovery := discoveryFunc{expected: []multicluster.ClusterName{"ready"}}
-	r := startResolver(t, provider, discovery)
+	private := &syncedCache{}
+	mgr, tracker := startManager(t, provider, discovery, NamedCache{Name: "private-records", Cache: private})
 
 	if err := probe(DiscoverySyncedCheck(discoveryFunc{synced: errors.New("not synced")})); err == nil {
 		t.Fatal("unsynced discovery reported ready")
 	}
-	if err := probe(ProjectsEngagedCheck(discovery, r.tracker)); err == nil {
+	if err := probe(ProjectsEngagedCheck(discovery, tracker)); err == nil {
 		t.Fatal("ready before the expected project engaged")
 	}
-	cl := provider.engage(t, context.Background(), p)
-	eventually(t, "engaged", func() bool { return probe(ProjectsEngagedCheck(discovery, r.tracker)) == nil })
-	if err := probe(EngagedCachesSyncedCheck(r.tracker)); err != nil {
+	cl := provider.Engage(t, context.Background(), p)
+	multiclustertest.Eventually(t, "engaged", func() bool { return probe(ProjectsEngagedCheck(discovery, tracker)) == nil })
+	if err := probe(EngagedCachesSyncedCheck(tracker)); err != nil {
 		t.Fatalf("synced caches reported unready: %v", err)
 	}
+	if err := probe(CacheSyncedCheck(NamedCache{Name: "private-records", Cache: private})); err == nil {
+		t.Fatal("an unsynced private cache reported ready")
+	}
+	private.synced = true
+	if err := probe(CacheSyncedCheck(NamedCache{Name: "private-records", Cache: private})); err != nil {
+		t.Fatal(err)
+	}
 
-	cl.cache.Synced = ptr.To(false)
-	if err := probe(EngagedCachesSyncedCheck(r.tracker)); err == nil {
+	cl.FakeCache.Synced = ptr.To(false)
+	if err := probe(EngagedCachesSyncedCheck(tracker)); err == nil {
 		t.Fatal("an unsynced engaged project cache reported ready")
 	}
-	cl.cache.Synced = nil
+	cl.FakeCache.Synced = nil
 
-	provider.disengage("ready")
-	eventually(t, "unready after an expected project disengages", func() bool {
-		return probe(ProjectsEngagedCheck(discovery, r.tracker)) != nil
+	provider.Disengage("ready")
+	multiclustertest.Eventually(t, "unready after an expected project disengages", func() bool {
+		return probe(ProjectsEngagedCheck(discovery, tracker)) != nil
 	})
-	// A project that left the consumer set is no longer expected.
-	if err := probe(ProjectsEngagedCheck(discoveryFunc{}, r.tracker)); err != nil {
+	if err := probe(ProjectsEngagedCheck(discoveryFunc{}, tracker)); err != nil {
 		t.Fatalf("departed project still gates readiness: %v", err)
+	}
+	if provider.Starts() != 1 {
+		t.Fatalf("provider Start called %d times, want exactly once", provider.Starts())
+	}
+	if _, ok := mgr.GetProvider().(multicluster.ProviderRunnable); ok {
+		t.Fatal("mcmanager can see the provider's Start and would leader-gate engagement")
 	}
 }
 
@@ -153,40 +210,5 @@ func TestMetalServiceNameMatchesBundledService(t *testing.T) {
 	}
 	if service.Spec.ServiceName != MetalServiceName {
 		t.Fatalf("bundled Service serviceName = %q, resolver scopes to %q", service.Spec.ServiceName, MetalServiceName)
-	}
-}
-
-// TestResolverBinaryDoesNotLinkLifecycleWiring proves the resolver binary
-// cannot start Fleet's lifecycle controllers: the packages that register
-// them, and the integrations they need, are not part of its build at all.
-func TestResolverBinaryDoesNotLinkLifecycleWiring(t *testing.T) {
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go toolchain not on PATH")
-	}
-	out, err := exec.Command("go", "list", "-deps", "go.datum.net/fleet/cmd/fleet-request-resolver").CombinedOutput()
-	if err != nil {
-		t.Fatalf("go list: %v\n%s", err, out)
-	}
-	deps := map[string]bool{}
-	for _, line := range strings.Fields(string(out)) {
-		deps[line] = true
-	}
-	if !deps["go.datum.net/fleet/internal/requestresolver"] {
-		t.Fatalf("unexpected dependency listing:\n%s", out)
-	}
-	for _, forbidden := range []string{
-		"go.datum.net/fleet/internal/manager",    // lifecycle Setup and controllers
-		"go.datum.net/fleet/internal/staging",    // synthetic allocation handler
-		"go.datum.net/fleet/internal/milo",       // quota and entitlement adapters
-		"go.datum.net/fleet/internal/location",   // location routing
-		"go.datum.net/fleet/internal/standalone", // standalone runner
-		"go.datum.net/fleet/internal/network/nso",
-		"go.datum.net/network-services-operator/api/v1alpha",
-		"go.miloapis.com/milo/pkg/apis/quota/v1alpha1",
-		"go.miloapis.com/locations/api/v1alpha1",
-	} {
-		if deps[forbidden] {
-			t.Errorf("fleet-request-resolver links %s", forbidden)
-		}
 	}
 }
