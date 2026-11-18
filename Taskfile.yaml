@@ -6,6 +6,33 @@ tasks:
     cmds:
       - ./hack/run-standalone-smoke.sh
 
+  multiplane:acceptance:
+    desc: Fresh local Milo/Karmada/kro/PXE acceptance, every service installed by per-cluster Flux from the checkout, in the task-owned Colima profile (exit 0 pass, 1 fail, 2 preflight, 3 blocked, 4 timeout).
+    env:
+      # Explicit opt-in for the documented reversible inotify adjustment inside the task VM only.
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh {{.CLI_ARGS}}
+
+  multiplane:preflight:
+    desc: Check local prerequisites and implementation readiness without creating resources.
+    env:
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh --preflight-only {{.CLI_ARGS}}
+
+  multiplane:stop:
+    desc: Stop (never delete) one retained run's exact containers; custody stays Unknown.
+    requires:
+      vars: [STATE]
+    cmds:
+      - ./hack/multiplane/stop.sh "{{.STATE}}"
+
+  multiplane:test-harness:
+    desc: Offline tests for the multi-plane harness with fake runtime tools.
+    cmds:
+      - ./hack/multiplane/test-harness.sh
+
   local-vm:acceptance:
     desc: Single-plane local VM PXE acceptance with explicit TCG in the task-owned Colima profile.
     env:

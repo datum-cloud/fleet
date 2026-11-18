@@ -21,6 +21,13 @@ API servers and must be reconciled independently.
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
 
+`config/multiplane` and `config/site` are the Flux source for the local
+multi-plane acceptance only: Flux definitions per local cluster, Milo test
+workloads, Karmada and kro releases, the coordination API and the kro site
+graph. The harness stages them into an OCI artifact; see
+[Flux-reconciled local environment](../docs/operations/gitops.md). They are not
+production roots, and neither production root may reference them.
+
 `config/overlays/synthetic-staging` is the temporary Milo-routed acceptance
 environment. It uses the real private custody, exclusivity, cleanup, and reuse
 implementation, but substitutes synthetic admission and provider evidence. It

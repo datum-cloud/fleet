@@ -23,6 +23,14 @@ An opt-in [local KVM installation harness](../operations/local-vm.md) implements
 a bounded libvirt executor and guest installer using the same lifecycle library.
 It uses a disposable Kubernetes API and explicit local authority fixtures; it is
 not wired into the production manager.
+The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
+that executor with native Milo project APIs and actual Karmada delivery. On the
+selected cell it runs as [Flux-owned site Deployments and kro-created per-operation worker Jobs](../operations/site-execution.md).
+Each local cluster's [Flux](../operations/gitops.md) installs Milo, Karmada, kro and the shared site services from
+an OCI artifact staged from the checkout. Run it
+with `task multiplane:acceptance`. Its exit codes, bounded phases and sanitized
+`evidence/` directory are documented there; `task multiplane:test-harness` runs its
+offline tests, which CI also runs.
 
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.

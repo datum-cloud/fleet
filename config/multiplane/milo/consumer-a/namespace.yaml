@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: milo-consumer-a
+  annotations:
+    # Holds this project's etcd volume. Never garbage-collect it.
+    kustomize.toolkit.fluxcd.io/prune: disabled

@@ -1629,6 +1629,20 @@ func (c *Coordinator) HasClaimCustody(ctx context.Context, consumer ProjectIdent
 	return true, nil
 }
 
+// ClaimReleased reads terminal custody for the exact project and claim lifetime.
+// Callers use this to avoid restoring protection after verified release; public
+// status is not authority for this decision. Missing or corrupt custody fails.
+func (c *Coordinator) ClaimReleased(ctx context.Context, consumer ProjectIdentity, claimUID types.UID) (bool, error) {
+	if !consumer.Valid() || claimUID == "" {
+		return false, ErrRecordInvalid
+	}
+	record, _, err := c.getCustodyScoped(ctx, ProjectClaimScope(consumer), claimUID)
+	if err != nil {
+		return false, err
+	}
+	return record.State == CustodyReleased, nil
+}
+
 func (c *Coordinator) getCustodyForAsset(ctx context.Context, asset *AssetRecord) (*ClaimCustodyRecord, *corev1.Secret, error) {
 	return c.getCustodyScoped(ctx, asset.ClaimScope, asset.ClaimUID)
 }

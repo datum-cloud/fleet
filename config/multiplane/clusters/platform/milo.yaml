@@ -1,0 +1,37 @@
+# Platform cluster: three independent Milo project APIs, each with its own
+# Kustomization, process, etcd and volume, so each can fail independently.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: milo-provider, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/milo/provider
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: milo-consumer-a, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/milo/consumer-a
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: milo-consumer-b, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/milo/consumer-b

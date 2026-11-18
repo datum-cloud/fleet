@@ -1,0 +1,72 @@
+# kro v0.9.4 on the selected cell from its official OCI chart, pinned by
+# manifest digest (chart layer SHA-256 ceeb6307...; image by digest below).
+apiVersion: v1
+kind: Namespace
+metadata: {name: kro-system}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: kro-chart
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://registry.k8s.io/kro/charts/kro
+  ref:
+    digest: sha256:4e8de4d34b7e2c3cede958e140e26cd6d34a377062e63caf355a636d2bf4a67c
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kro
+  namespace: flux-system
+spec:
+  interval: 30m
+  timeout: 5m
+  releaseName: kro
+  targetNamespace: kro-system
+  storageNamespace: kro-system
+  chartRef: {kind: OCIRepository, name: kro-chart}
+  install:
+    crds: Create
+    remediation: {retries: 3}
+  upgrade:
+    # Never replace kro CRDs implicitly; a CRD change is a reviewed upgrade.
+    crds: Skip
+    remediation: {retries: 3, strategy: rollback}
+  # kro holds no durable state: helm-controller corrects drift in its objects.
+  driftDetection: {mode: enabled}
+  # The chart's static controller role grants cluster-wide ConfigMap
+  # read/write, which kro v0.9.4 never uses (leader election uses Leases).
+  # Remove it. The test op makes a changed chart fail the release instead of
+  # silently removing another rule.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target: {kind: ClusterRole, name: "kro:controller:static"}
+            patch: |-
+              - op: test
+                path: /rules/7
+                value: {apiGroups: [""], resources: [configmaps], verbs: [get, list, watch, create, update, patch, delete]}
+              - op: remove
+                path: /rules/7
+  values:
+    image:
+      tag: v0.9.4@sha256:eaf9fbaddd9d7f6cf400a8d47ab066b14cbef22b92a79be7bbdc7b3673376fb9
+    rbac:
+      # Minimal controller role plus the aggregated fleet-site-kro ClusterRole.
+      mode: aggregation
+    deployment:
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {memory: 256Mi}
+    config:
+      enableLeaderElection: true
+      logLevel: info
+      rgd:
+        # Default per-dimension limit is 10; the acceptance delivers up to
+        # about 8 handoffs, including injected delivery faults.
+        maxCollectionDimensionSize: 64
