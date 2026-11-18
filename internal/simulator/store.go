@@ -52,6 +52,7 @@ type Operation struct {
 
 type OperationResult struct {
 	ID          string     `json:"id"`
+	InputDigest string     `json:"inputDigest,omitempty"`
 	Kind        string     `json:"kind"`
 	Phase       string     `json:"phase"`
 	Result      string     `json:"result,omitempty"`
@@ -61,7 +62,7 @@ type OperationResult struct {
 
 func (o Operation) ResultView() OperationResult {
 	return OperationResult{
-		ID: o.ID, Kind: o.Kind, Phase: o.Phase,
+		ID: o.ID, InputDigest: o.InputDigest, Kind: o.Kind, Phase: o.Phase,
 		Result: o.Result, CreatedAt: o.CreatedAt, CompletedAt: cloneTime(o.CompletedAt),
 	}
 }
@@ -559,13 +560,20 @@ func cloneTime(in *time.Time) *time.Time {
 	return &out
 }
 
+func RequestDigest(request Request) (string, error) {
+	request.ID = ""
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func digest(r Request) string {
-	copy := r
-	copy.ID = ""
-	b, err := json.Marshal(copy)
+	value, err := RequestDigest(r)
 	if err != nil {
 		panic("marshal validated simulator request")
 	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	return value
 }
