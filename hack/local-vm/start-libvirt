@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+case "${FLEET_LOCAL_VM_ACCEL:-kvm}" in
+ kvm)
+  [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ] || {
+   echo 'KVM device unavailable; no automatic software fallback' >&2
+   exit 1
+  }
+  ;;
+ tcg) ;;
+ *) echo 'Unsupported local VM accelerator' >&2; exit 1 ;;
+esac
+mkdir -p /run/libvirt /var/lib/libvirt/images /var/log/libvirt
+virtlogd --daemon
+virtlockd --daemon
+exec /usr/bin/tini -- libvirtd
