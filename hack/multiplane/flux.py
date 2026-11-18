@@ -87,11 +87,19 @@ SHARED = {('deployments', SITE, 'fleet-site-runtime'): 'fleet-site-services', ('
           ('validatingadmissionpolicies', None, 'fleet-site-kro-worker-identity'): 'fleet-site-base',
           ('validatingadmissionpolicybindings', None, 'fleet-site-kro-worker-identity'): 'fleet-site-base'}
 # Exact inventories of the layers that must hold nothing else.
-SITE_DEPLOYMENTS = ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observer')
+# Site provider: libvirt (default) or redfish, from run.sh --provider. Redfish
+# mode selects the config/site/redfish overlays and adds the Flux-owned lab BMC.
+PROVIDER = os.environ.get('FLEET_SITE_PROVIDER', 'libvirt')
+BMC_SERVICE_IP = '10.96.0.81'
+SITE_DEPLOYMENTS = ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observer') + (('fleet-site-bmc',) if PROVIDER == 'redfish' else ())
+if PROVIDER == 'redfish':
+    SHARED.update({('deployments', SITE, 'fleet-site-bmc'): 'fleet-site-services', ('services', SITE, 'fleet-site-bmc'): 'fleet-site-services',
+                   ('serviceaccounts', SITE, 'fleet-site-bmc'): 'fleet-site-base'})
 LAYER_INVENTORY = {
     'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap',
                                                'fleet-site_fleet-site-runtime_apps_Deployment', 'fleet-site_fleet-site-boot_apps_Deployment',
-                                               'fleet-site_fleet-site-observer_apps_Deployment']),
+                                               'fleet-site_fleet-site-observer_apps_Deployment'] + (
+                                                   ['fleet-site_fleet-site-bmc__Service', 'fleet-site_fleet-site-bmc_apps_Deployment'] if PROVIDER == 'redfish' else [])),
     'flux-system/fleet-site-graph': ['_fleet-handoff-dispatcher_kro.run_ResourceGraphDefinition'],
     'flux-system/fleet-site-dispatch': ['fleet-site_dispatcher_site.fleet.datumapis.com_HandoffDispatcher'],
 }
@@ -257,6 +265,13 @@ def stage(args):
             # Karmada-API Kustomizations live beside their kubeconfig Secret.
             maps.append(config_map('fleet-environment', 'karmada-system', data))
         if cluster == 'cell':
+            if PROVIDER == 'redfish':
+                # Environment selection, as a commit would make it: the cell's
+                # site layers reconcile the Redfish overlays of the same source.
+                for layer in ('fleet-site-base', 'fleet-site-graph') + (('fleet-site-services',) if args.site != 'absent' else ()):
+                    patches.append(child_path(layer, './config/site/redfish/' + layer.rsplit('-', 1)[1]))
+                if args.site != 'absent':
+                    data.update(FLEET_BMC_IMAGE=env['bmcImage'], FLEET_BMC_SERVICE_IP=BMC_SERVICE_IP)
             if args.site != 'absent':
                 resources.insert(2, '../../config/multiplane/clusters/cell-site')
                 data.update(FLEET_SCOPED_ASSET=env['scopedAsset'], FLEET_SITE_IMAGE=env['siteImage'], FLEET_BOOT_SERVICE_IP=BOOT_SERVICE_IP,
@@ -290,6 +305,11 @@ def stage(args):
         k for k, v in (('site', args.site != 'absent'), ('dispatch', args.site == 'dispatch'), ('bad-kro-chart', args.bad_kro_chart),
                        ('site-volume-removed', args.drop_site_volume)) if v) or 'platform only'))
     return 0
+
+
+def child_path(name, path):
+    """Point a child Kustomization at another path of the same source revision."""
+    return '  - target: {kind: Kustomization, name: %s}\n    patch: |-\n      - op: replace\n        path: /spec/path\n        value: %s\n' % (name, path)
 
 
 def child_patch(name, patches):

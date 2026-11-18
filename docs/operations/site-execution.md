@@ -359,7 +359,8 @@ container and is unchanged.
 | Pod/Job lifecycle not changing journal, guest or allocation | Implemented and exercised |
 | Facility-edge DaemonSet, multi-node volumes, HA runtime, live hardware fencing | Proposed only |
 | Removing the fence token from cell-readable handoff fields (credential broker) | Proposed only ([open questions](../enhancements/pxe-installation/README.md#open-design-questions)) |
-| Redfish/BMC execution Jobs | Not implemented |
+| Redfish execution Jobs with no libvirt path, against the DMTF Redfish Interface Emulator and lab VMs | Implemented as a separate mode; see [Redfish-mode acceptance](redfish-lab.md) for its run record |
+| Physical Redfish/BMC execution Jobs | Not qualified (lab emulator only; see the [hardware readiness checklist](redfish-lab.md#limitations-and-physical-hardware-readiness)) |
 
 ## Independent review of the recorded run
 

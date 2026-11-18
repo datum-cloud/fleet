@@ -1,0 +1,40 @@
+# Redfish-mode site base: the shared base plus the lab BMC identity, with the
+# kro worker admission policy narrowed for Redfish workers. Selected by the
+# environment's fleet-site-base path (hack/multiplane/flux.py --provider redfish).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - bmc.yaml
+patches:
+  - target: {kind: ValidatingAdmissionPolicy, name: fleet-site-kro-worker-jobs}
+    patch: |-
+      # Guard: fail the build if the shared policy's volume rule moved.
+      - op: test
+        path: /spec/validations/5/message
+        value: a worker Job may mount only the site journal claim and emptyDir
+      - op: replace
+        path: /spec/validations/5
+        value:
+          expression: >-
+            !has(variables.pod.volumes) || variables.pod.volumes.all(v,
+            (has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == 'fleet-site-state') || has(v.emptyDir) ||
+            (has(v.secret) && v.secret.secretName == 'fleet-site-bmc-credentials'))
+          message: a Redfish worker Job may mount only the site journal claim, emptyDir and the BMC credential
+      # Redfish workers reach the lab hardware only through Redfish: no
+      # libvirt socket mount and no libvirt URI, and the Redfish provider.
+      - op: add
+        path: /spec/validations/-
+        value:
+          expression: >-
+            variables.pod.containers.all(c, !has(c.volumeMounts) || c.volumeMounts.all(m,
+            !(has(m.subPath) && m.subPath.startsWith('libvirt')) && !m.mountPath.startsWith('/run/fleet-libvirt') && !m.mountPath.startsWith('/var/lib/fleet-lab/disks')))
+          message: a Redfish worker Job must not mount the libvirt socket or lab disks
+      - op: add
+        path: /spec/validations/-
+        value:
+          expression: >-
+            variables.pod.containers.all(c, has(c.env) &&
+            c.env.exists(e, e.name == 'FLEET_SITE_PROVIDER' && has(e.value) && e.value == 'redfish') &&
+            !c.env.exists(e, e.name == 'FLEET_LIBVIRT_URI'))
+          message: a Redfish worker Job must select the Redfish provider and carry no libvirt URI

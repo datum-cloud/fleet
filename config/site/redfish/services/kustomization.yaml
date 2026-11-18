@@ -1,0 +1,50 @@
+# Redfish-mode shared site services: the shared services plus the lab BMC
+# (DMTF Redfish Interface Emulator with the lab-only libvirt adapter). Only
+# the runtime and the BMC hold the libvirt socket; workers hold neither.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../services
+  - bmc.yaml
+patches:
+  - target: {kind: Deployment, name: fleet-site-runtime}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: fleet-site-runtime, namespace: fleet-site}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: libvirt
+                env:
+                  - {name: FLEET_SITE_PROVIDER, value: redfish}
+                volumeMounts:
+                  - {name: state, mountPath: /var/lib/fleet-lab/disks, subPath: lab-disks}
+                  - {name: state, mountPath: /var/lib/fleet-lab-console, subPath: lab-console}
+  - target: {kind: Deployment, name: fleet-site-boot}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: fleet-site-boot, namespace: fleet-site}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: boot
+                env:
+                  - {name: FLEET_SITE_PROVIDER, value: redfish}
+  - target: {kind: Deployment, name: fleet-site-observer}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: fleet-site-observer, namespace: fleet-site}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: observer
+                env:
+                  - {name: FLEET_SITE_PROVIDER, value: redfish}
+                  - {name: FLEET_BOOT_ORIGIN, value: "http://${FLEET_BOOT_SERVICE_IP}:8080"}
+                  - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}

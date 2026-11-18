@@ -84,6 +84,10 @@ QEMU running, an old receipt, or missing evidence never yields installed success
 There is no ongoing guest agent. The minimal guest deliberately powers off after
 verification; this does not qualify a production distribution or workload.
 
+The installer also accepts `fleet.mode=wipe`, which zeroes and verifies the disk.
+Only the [Redfish mode](redfish-lab.md) boots it; this harness never selects it,
+and its install path is unchanged.
+
 Reinstall creates a new blank disk and a new receipt under the same allocation.
 Prior incarnation disks remain private until cleanup; they are never booted or
 exposed to another consumer. Cleanup deletes only retained disks for that exact

@@ -1,0 +1,17 @@
+# Lab BMC: the unmodified DMTF Redfish Interface Emulator 1.2.2 plus the
+# lab-only libvirt adapter. The upstream tree comes from the named build
+# context "upstream", which the harness fills from the release archive only
+# after verifying its SHA-256 (hack/redfish-lab/upstream.sh). Python
+# dependencies are hash-pinned; apt resolution of libvirt-clients is not
+# reproducible (the same caveat as the site image).
+FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libvirt-clients && rm -rf /var/lib/apt/lists/*
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --no-deps --require-hashes -r /tmp/requirements.lock && rm /tmp/requirements.lock
+COPY --from=upstream . /opt/redfish-emulator
+COPY emulator-config.json populate-config.json targets.json /etc/fleet-bmc/
+COPY fleet_lab_adapter.py test_adapter.py fake_virsh.py /opt/fleet-lab/
+RUN chmod 755 /opt/fleet-lab/*.py
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ENTRYPOINT ["python3", "/opt/fleet-lab/fleet_lab_adapter.py"]
+CMD ["serve"]
