@@ -3,6 +3,7 @@ module go.datum.net/fleet
 go 1.26.4
 
 require (
+	github.com/stmcginnis/gofish v0.27.0
 	go.datum.net/network-services-operator v0.28.5-0.20260925153938-d7fdc43f8524
 	go.miloapis.com/milo v0.32.5
 	go.yaml.in/yaml/v3 v3.0.4

@@ -1210,8 +1210,9 @@ func installationClaimScope(request InstallationRequest) (ClaimScope, error) {
 }
 
 type InstallationResult struct {
-	Revision string
-	Record   InstallationRecord
+	Revision      string
+	Record        InstallationRecord
+	RequestDigest string
 }
 
 func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) (InstallationResult, error) {
@@ -1277,11 +1278,16 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	if operation.InstallationNamespace != request.Installation.Namespace || operation.InstallationName != request.Installation.Name || operation.InstallationUID != request.Installation.UID || operation.NamespaceUID != request.NamespaceUID || operation.ClaimNamespace != request.Claim.Namespace || operation.ClaimName != request.Claim.Name || operation.ClaimUID != request.Claim.UID || operation.ClaimScope != scope || operation.ConsumerProject != request.ConsumerProject || operation.AssetID != asset.AssetID || operation.BindingID != asset.BindingID || operation.Epoch != asset.Epoch || operation.Predecessor != predecessor || operation.ImageName != request.Installation.Spec.ImageRef.Name || operation.Admission != request.Admission {
 		return InstallationResult{}, ErrPredecessorConflict
 	}
+	execRequest := simulator.Request{ID: operation.OperationID, Kind: "install", AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, FenceToken: asset.FenceToken, Inputs: installationInputs(operation)}
+	requestDigest, err := simulator.RequestDigest(execRequest)
+	if err != nil {
+		return InstallationResult{}, err
+	}
 	if operation.State == OperationSucceeded {
 		if err := c.publishInstalledName(ctx, asset.AssetID, asset.ClaimUID, operation); err != nil {
 			return InstallationResult{}, err
 		}
-		return InstallationResult{Revision: operation.ResultRevision, Record: *operation}, nil
+		return InstallationResult{Revision: operation.ResultRevision, Record: *operation, RequestDigest: requestDigest}, nil
 	}
 	if asset.CurrentInstallationName != predecessor || (asset.ActiveOperationID != "" && asset.ActiveOperationID != operation.OperationID) {
 		return InstallationResult{}, ErrPredecessorConflict
@@ -1289,7 +1295,6 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	if err := c.activateOperation(ctx, asset.AssetID, asset.ClaimUID, predecessor, operation.OperationID); err != nil {
 		return InstallationResult{}, err
 	}
-	execRequest := simulator.Request{ID: operation.OperationID, Kind: "install", AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, FenceToken: asset.FenceToken, Inputs: installationInputs(operation)}
 	if _, err := c.executeAndRecover(ctx, execRequest); err != nil {
 		return InstallationResult{}, err
 	}
@@ -1300,7 +1305,7 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	if err := c.publishInstalledName(ctx, asset.AssetID, asset.ClaimUID, operation); err != nil {
 		return InstallationResult{}, err
 	}
-	return InstallationResult{Revision: operation.ResultRevision, Record: *operation}, nil
+	return InstallationResult{Revision: operation.ResultRevision, Record: *operation, RequestDigest: requestDigest}, nil
 }
 
 func predecessorValue(value fleetv1.InstallationPredecessor) (string, error) {
@@ -1524,6 +1529,10 @@ func (c *Coordinator) executeAndRecover(ctx context.Context, request simulator.R
 }
 
 func validateTerminalResult(request simulator.Request, result simulator.OperationResult) error {
+	digest, err := simulator.RequestDigest(request)
+	if err != nil || result.InputDigest != digest {
+		return fmt.Errorf("%w: executor evidence does not bind the exact request", executor.ErrOutcomeUnknown)
+	}
 	if result.ID != request.ID || result.Kind != request.Kind || result.Phase != "Succeeded" || result.CompletedAt == nil {
 		return fmt.Errorf("%w: executor result is not the correlated terminal operation", executor.ErrOutcomeUnknown)
 	}
@@ -1601,6 +1610,20 @@ func (c *Coordinator) HasClaimCustody(ctx context.Context, consumer ProjectIdent
 		return false, err
 	}
 	return true, nil
+}
+
+// ClaimReleased reads terminal custody for the exact project and claim lifetime.
+// Callers use this to avoid restoring protection after verified release; public
+// status is not authority for this decision. Missing or corrupt custody fails.
+func (c *Coordinator) ClaimReleased(ctx context.Context, consumer ProjectIdentity, claimUID types.UID) (bool, error) {
+	if !consumer.Valid() || claimUID == "" {
+		return false, ErrRecordInvalid
+	}
+	record, _, err := c.getCustodyScoped(ctx, ProjectClaimScope(consumer), claimUID)
+	if err != nil {
+		return false, err
+	}
+	return record.State == CustodyReleased, nil
 }
 
 func (c *Coordinator) getCustodyForAsset(ctx context.Context, asset *AssetRecord) (*ClaimCustodyRecord, *corev1.Secret, error) {

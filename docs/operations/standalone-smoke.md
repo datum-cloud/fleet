@@ -18,8 +18,20 @@ The scenario has one `us-central-1` Machine with 24 physical CPU cores and
 128Gi of memory. Both consumers request it. Project A binds first while project
 B remains pending. Project A installs a digest-pinned synthetic Debian image.
 The script restarts the simulator and reruns the install phase to recover the
-same retained operation. It then releases project A, verifies cleanup, and lets
-project B bind at a later executor epoch.
+same retained operation. A separate `debian-12-reinstall` Installation then names
+`debian-12` as its expected predecessor and replaces it on the same allocation.
+Another simulator restart and retry recover that exact successor operation.
+Every install/reinstall run performs an authenticated simulator lookup and checks
+the operation identity, terminal result, and digest of the exact retained request
+(including allocation, epoch, fencing authority, and image inputs). Kubernetes
+completion records alone cannot pass the restart persistence check.
+Project B remains pending throughout. The scenario then releases project A,
+verifies cleanup, and lets project B bind at a later executor epoch.
+
+Reinstall retries preserve the allocation binding and executor epoch. An unknown
+executor result leaves the Machine's readiness unknown and retains custody;
+neither retry nor release can expose that capacity before recovery and cleanup.
+Tests exercise lost responses, concurrent retry, and stale predecessor rejection.
 
 No network interface is requested. The `NETWORK` and `ADDRESS` columns are
 therefore intentionally blank; this environment does not deploy or impersonate
@@ -27,6 +39,30 @@ NSO, IPAM, or Galactic programming.
 
 ## Run with kind and Colima
 
+For a complete disposable run, install Docker with a Linux container engine,
+kind, kubectl, kustomize, Git, and Python 3, then run from the repository:
+
+```sh
+./hack/run-standalone-smoke.sh
+# Or: task standalone:test
+```
+
+The wrapper creates a uniquely named kind cluster and a private temporary
+kubeconfig, runs the scenario, and deletes only its own cluster. It does not
+change your current Kubernetes context. Failure, timeout, and interrupt paths
+also attempt cleanup; unverified cleanup is reported as failure with the exact
+cluster name. Command output is withheld by the wrapper to avoid leaking local
+credentials. The final phase label identifies where a failure occurred.
+`FLEET_SMOKE_TIMEOUT_SECONDS` defaults to 1200 for the whole run and
+`FLEET_SMOKE_CLEANUP_TIMEOUT_SECONDS` defaults to 120 for cleanup.
+
+The `ci` workflow runs this same wrapper on `ubuntu-latest` for pull requests and
+main pushes, using Docker and kind rather than self-hosted or nested-KVM runners.
+That job exercises the synthetic control-plane lifecycle, not a real guest OS,
+Milo production admission, or provider hardware qualification. Passing local
+checks is not evidence that a particular GitHub Actions run passed.
+
+To retain a cluster for local inspection, use the lower-level script instead.
 Create or select a dedicated kind cluster named `fleet-core`, then run:
 
 ```sh
@@ -50,7 +86,8 @@ metadata, credentials, documentation, and manifests are never sent to the
 builder. The script builds and loads both images and verifies each running pod
 uses the exact source-specific tag with image pulling disabled. Distinct clean
 commits therefore cannot silently reuse one local workload tag.
-It then applies the CRDs and fixture and uses `kubectl wait`/rollout watches for
+It applies the CRDs first and waits for establishment before applying fixtures,
+then uses `kubectl wait`/rollout watches for
 phase completion. It never patches status, removes finalizers, or writes
 lifecycle records itself. The
 phase Job is the designated synthetic fixture and status writer; the lifecycle

@@ -65,6 +65,9 @@ done
 docker build -f build/simulator.Dockerfile -t "$simulator_image" .
 docker build -f build/standalone-smoke.Dockerfile -t "$smoke_image" .
 kind load docker-image --name "$cluster" "$simulator_image" "$smoke_image"
+kustomize build config/base/crd >"$rendered"
+kubectl --context "$context" apply -f "$rendered"
+kubectl --context "$context" wait --for=condition=Established --timeout=60s -f "$rendered"
 kustomize build config/standalone |
   sed -e "s#fleet-simulator:standalone-local#$simulator_image#g" -e "s#fleet-standalone-smoke:standalone-local#$smoke_image#g" >"$rendered"
 if grep -q 'standalone-local' "$rendered"; then
@@ -104,6 +107,14 @@ run_phase install fleet-smoke-install-recovery-run
 kubectl --context "$context" -n fleet-project-a get installations,machines
 test "$(kubectl --context "$context" -n fleet-project-a get installation debian-12 -o jsonpath='{.status.phase}')" = "Ready"
 test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.currentInstallationRef.name}')" = "debian-12"
+
+run_phase reinstall fleet-smoke-reinstall-run
+kubectl --context "$context" -n fleet-system rollout restart statefulset/fleet-simulator
+kubectl --context "$context" -n fleet-system rollout status statefulset/fleet-simulator --timeout=120s
+run_phase reinstall fleet-smoke-reinstall-recovery-run
+test "$(kubectl --context "$context" -n fleet-project-a get installation debian-12-reinstall -o jsonpath='{.status.phase}')" = "Ready"
+test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.currentInstallationRef.name}')" = "debian-12-reinstall"
+test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Pending"
 
 for project in fleet-project-a fleet-project-b; do
   subject="system:serviceaccount:$project:default"

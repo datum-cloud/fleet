@@ -1,0 +1,53 @@
+# Site layers present in the environment only once the scoped asset is known.
+#
+# Shared site services: runtime, boot Deployment and Service, observer and the
+# worker admission parameter. Flux owns them directly, applied as a scoped
+# identity that can write only Deployments, Services and ConfigMaps in
+# fleet-site. wait covers every Deployment becoming Available.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-site-services, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/site/services
+  dependsOn:
+    - {name: fleet-site-base, namespace: flux-system}
+  serviceAccountName: fleet-site-services-reconciler
+  postBuild:
+    substituteFrom:
+      - {kind: ConfigMap, name: fleet-environment}
+---
+# The one HandoffDispatcher instance, applied as a scoped identity that can
+# manage only HandoffDispatchers in fleet-site: never Jobs, Deployments,
+# volumes or handoffs. It is applied only after the graph is Active and the
+# shared services are healthy, and is itself healthy only when kro reports
+# the graph ACTIVE against those Flux-owned references.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-site-dispatch, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/site/instance
+  dependsOn:
+    - {name: fleet-site-graph, namespace: flux-system}
+    - {name: fleet-site-services, namespace: flux-system}
+    - {name: fleet-federation, namespace: flux-system}
+  serviceAccountName: fleet-site-dispatch-reconciler
+  postBuild:
+    substituteFrom:
+      - {kind: ConfigMap, name: fleet-environment}
+  healthCheckExprs:
+    - apiVersion: site.fleet.datumapis.com/v1alpha1
+      kind: HandoffDispatcher
+      current: status.state == 'ACTIVE'
+      inProgress: status.state != 'ACTIVE'

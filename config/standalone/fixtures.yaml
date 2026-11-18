@@ -55,3 +55,11 @@ spec:
   machineRef: {name: allocation}
   expectedPredecessor: {type: None}
   imageRef: {name: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"}
+---
+apiVersion: metal.datumapis.com/v1alpha1
+kind: Installation
+metadata: {name: debian-12-reinstall, namespace: fleet-project-a}
+spec:
+  machineRef: {name: allocation}
+  expectedPredecessor: {type: Installation, name: debian-12}
+  imageRef: {name: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"}

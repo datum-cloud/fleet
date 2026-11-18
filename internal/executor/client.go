@@ -31,7 +31,11 @@ var (
 
 // Client is the exact provider-executor contract used by the standalone
 // lifecycle library. Implementations must preserve the operation ID and return
-// only a verified terminal result.
+// only a verified terminal result. Execute must accept exact-request replay under
+// the same operation ID without duplicating effects. Lookup returning false and
+// ErrOutcomeUnknown means a retained unfinished operation may be resumed by
+// replaying its exact request. Transport failures must use a different error;
+// true with any error never authorizes recovery or establishes success.
 type Client interface {
 	Execute(context.Context, simulator.Request) (simulator.OperationResult, error)
 	Lookup(context.Context, string) (simulator.OperationResult, bool, error)
@@ -138,8 +142,8 @@ func (c *HTTPClient) Execute(ctx context.Context, request simulator.Request) (si
 }
 
 func (c *HTTPClient) Lookup(ctx context.Context, operationID string) (simulator.OperationResult, bool, error) {
-	if operationID == "" || strings.Contains(operationID, "/") {
-		return simulator.OperationResult{}, false, errors.New("operation ID is empty or contains a path separator")
+	if operationID == "" || operationID == "." || operationID == ".." || strings.Contains(operationID, "/") {
+		return simulator.OperationResult{}, false, errors.New("operation ID is empty, a dot segment, or contains a path separator")
 	}
 	response, err := c.do(ctx, http.MethodGet, path.Join("v1/operations", url.PathEscape(operationID)), nil)
 	if err != nil {

@@ -1,0 +1,8 @@
+# Karmada API configuration: management's intent-only role and the status
+# interpreter. Applied by Flux on the host through the chart's karmada-kubeconfig.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - hub-rbac.yaml
+  - interpreter.yaml
+  - member-namespace.yaml

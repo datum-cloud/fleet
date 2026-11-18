@@ -18,7 +18,26 @@ scenario exercises local-scope contention, install recovery, cleanup, and
 capacity reuse. An explicit Milo-routed synthetic staging overlay exercises
 event-driven Machine allocation, contention, cleanup, and reuse through the
 public project API. Production caller-preserving
-admission, replayable Milo event adapters, and real providers are not implemented.
+admission, replayable Milo event adapters, and production provider integration are not implemented.
+An opt-in [local KVM installation harness](../operations/local-vm.md) implements
+a bounded libvirt executor and guest installer using the same lifecycle library.
+It uses a disposable Kubernetes API and explicit local authority fixtures; it is
+not wired into the production manager.
+The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
+that executor with native Milo project APIs and actual Karmada delivery. On the
+selected cell it runs as [Flux-owned site Deployments and kro-created per-operation worker Jobs](../operations/site-execution.md).
+Each local cluster's [Flux](../operations/gitops.md) installs Milo, Karmada, kro and the shared site services from
+an OCI artifact staged from the checkout. Run it
+with `task multiplane:acceptance`. Its exit codes, bounded phases and sanitized
+`evidence/` directory are documented there; `task multiplane:test-harness` runs its
+offline tests, which CI also runs.
+`internal/redfish` implements a Redfish executor behind the same contracts: discovery,
+one-time boot overrides, power, observation-based recovery and a booted wipe
+cleanup. [Redfish-mode acceptance](../operations/redfish-lab.md)
+(`task multiplane:redfish-acceptance`) exercises it against the unmodified DMTF Redfish
+Interface Emulator and a lab-only libvirt adapter. It is not qualified against a
+physical BMC or server, and the production manager does not use it.
+
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
@@ -94,7 +113,11 @@ namespaces as project stand-ins and one synthetic `us-central-1` machine with 24
 cores and 128Gi of memory. The allocate phase retains custody before adding the
 Fleet finalizer, binds one claim, and leaves the competing claim pending. The
 install phase admits one exact digest-pinned operation through the persistent
-simulator and is idempotent across worker and simulator restart. The release
+simulator and is idempotent across worker and simulator restart. A bounded
+reinstall phase uses a distinct Installation naming the initial Installation as
+its predecessor, retains the same allocation, and recovers the same successor
+operation across retries and restart. Unknown completion closes readiness and
+keeps the capacity occupied. The release
 phase verifies cleanup before finalizer removal and advances the retained asset
 epoch before the waiting claim binds.
 
