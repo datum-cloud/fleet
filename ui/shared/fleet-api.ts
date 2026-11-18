@@ -98,6 +98,18 @@ export interface MachineClass {
 
 // ---- MachineProfile (cluster-scoped) ----
 
+/** Exact CPU request: physical cores across sockets. No ranges. */
+export interface CPURequirement {
+  architecture: string;
+  cores: number;
+}
+
+/** Exact installed RAM as a positive integer byte quantity, such as "32Gi". */
+export interface MemoryRequirement {
+  capacity: string;
+}
+
+/** Ranges remain for GPU, disk and interface requirements only. */
 export interface Constraint {
   min?: number;
   max?: number;
@@ -114,8 +126,8 @@ export interface QuantityConstraint {
 export interface MachineProfile {
   metadata: ObjectMeta;
   spec: {
-    cpu: { architecture: string; cores?: Constraint };
-    memory: { capacity: QuantityConstraint };
+    cpu: CPURequirement;
+    memory: MemoryRequirement;
     gpus?: { count: Constraint; vendor?: string; models?: string[]; memoryPerDevice?: QuantityConstraint };
     disks?: { name: string; count: Constraint; capacity: QuantityConstraint; media?: string; interface?: string }[];
     interfaces?: { name: string; type?: string; speed?: QuantityConstraint }[];
@@ -168,6 +180,23 @@ export interface NetworkInterfaceStatus {
   conditions?: Condition[];
 }
 
+/**
+ * Controller-maintained snapshot of the exact CPU and memory resolved from the
+ * Machine's MachineProfile. Absent until resolved (see the RequestResolved
+ * condition) and pinned afterwards: profile changes never rewrite it.
+ */
+export interface RequestedHardware {
+  cpu: CPURequirement;
+  memory: MemoryRequirement;
+  source: {
+    machineGeneration: number;
+    profileRef: LocalReference;
+    profileGeneration: number;
+    /** "sha256:<hex>" over the complete resolved profile spec. */
+    profileDigest: string;
+  };
+}
+
 export interface Machine {
   metadata: ObjectMeta;
   spec: {
@@ -184,11 +213,14 @@ export interface Machine {
     phase?: string;
     placement?: { locationRef: LocalReference };
     acceptedProfileRef?: LocalReference;
+    /** What was asked for; independent of allocation. */
+    requestedHardware?: RequestedHardware;
+    /** What was actually assigned; absent until bound. */
     allocatedHardware?: { observedAt?: string; hardware: Hardware };
     currentInstallationRef?: LocalReference;
     network?: { revision?: string; interfaces?: NetworkInterfaceStatus[] };
     power?: { state: PowerState | 'Unknown' };
-    /** Accepted, Bound, NetworkReady and Ready. */
+    /** RequestResolved, Accepted, Bound, NetworkReady and Ready. */
     conditions?: Condition[];
   };
 }

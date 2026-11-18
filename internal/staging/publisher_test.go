@@ -21,7 +21,7 @@ func TestPublisherCreatesProtectedReferenceAndExactProfileCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	cores := int64(24)
-	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &cores}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
+	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: cores}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
 	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "central-metal", UID: "source-class-uid", Generation: 3}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: profile.Name}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default"}}}}
 	provider := fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, profile).Build()
 	consumer := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineClass{}, &fleetv1.MachineProfile{}).Build()
@@ -45,7 +45,7 @@ func TestPublisherCreatesProtectedReferenceAndExactProfileCopy(t *testing.T) {
 	if err := consumer.Get(ctx, client.ObjectKey{Name: profile.Name}, &publishedProfile); err != nil {
 		t.Fatal(err)
 	}
-	if publishedProfile.Annotations[publicationSourceUIDAnnotation] != string(profile.UID) || publishedProfile.Annotations[publicationManagedByAnnotation] != publicationManager || publishedProfile.Spec.CPU.Cores.Min == nil || *publishedProfile.Spec.CPU.Cores.Min != cores {
+	if publishedProfile.Annotations[publicationSourceUIDAnnotation] != string(profile.UID) || publishedProfile.Annotations[publicationManagedByAnnotation] != publicationManager || publishedProfile.Spec.CPU.Cores != cores {
 		t.Fatalf("published profile = %#v", publishedProfile)
 	}
 	if _, err := publisher.Reconcile(ctx, reconcile.Request{}); err != nil {

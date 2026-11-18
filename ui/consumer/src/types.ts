@@ -26,7 +26,9 @@ export interface Machine {
   powerIntent: 'On' | 'Off';
   /** Observed power state (status); absent until reported. */
   powerObserved?: 'On' | 'Off' | 'Unknown';
+  /** Requested CPU pinned in status.requestedHardware; absent until resolved. */
   cpu?: string;
+  /** Requested memory pinned in status.requestedHardware; absent until resolved. */
   memory?: string;
   createdAt?: string;
   /** Accepted but no capacity bound yet: the common Pending case. */
@@ -74,7 +76,9 @@ export function machinePhase(
 export function toMachine(raw: RawMachine): Machine {
   const conditions = raw.status?.conditions ?? [];
   const { phase, reason } = machinePhase(conditions, !!raw.metadata.deletionTimestamp);
-  const hw = raw.status?.allocatedHardware?.hardware;
+  // Listings show what was requested, never a guess: an unresolved request
+  // stays blank rather than falling back to the profile or allocation.
+  const requested = raw.status?.requestedHardware;
   return {
     name: raw.metadata.name,
     phase,
@@ -84,8 +88,8 @@ export function toMachine(raw: RawMachine): Machine {
     location: raw.spec.locationRef.name,
     powerIntent: raw.spec.powerState ?? 'Off',
     powerObserved: raw.status?.power?.state,
-    cpu: hw?.cpu?.cores !== undefined ? `${hw.cpu.cores} cores${hw.cpu.architecture ? ` · ${hw.cpu.architecture}` : ''}` : undefined,
-    memory: hw?.memory?.capacity,
+    cpu: requested ? `${requested.cpu.cores} cores · ${requested.cpu.architecture}` : undefined,
+    memory: requested?.memory.capacity,
     createdAt: raw.metadata.creationTimestamp,
     waitingForCapacity: phase === 'Pending' && isConditionTrue(conditions, 'Accepted'),
   };

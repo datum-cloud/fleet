@@ -99,7 +99,12 @@ func main() {
 		})
 	}
 	verifier := verifierFor(projectName)
-	handlers := eventmanager.Handlers{Machine: blocked, Installation: blocked, MachineProjector: blocked, InstallationProjector: blocked}
+	// Requested-hardware resolution reads only the Machine and its
+	// MachineProfile through the routed project API and has no lifecycle or
+	// provider effect, so it runs in every mode, including the default inert
+	// mode whose lifecycle handlers stay blocked and readiness stays failed.
+	requested := eventmanager.RequestedHardwareProjector{Client: mgr.GetClient(), Project: project}
+	handlers := eventmanager.Handlers{Machine: blocked, Installation: blocked, MachineProjector: requested, InstallationProjector: blocked}
 	setupOptions := eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier}
 	ready := eventmanager.ErrEventWiringUnavailable
 	if syntheticStaging {

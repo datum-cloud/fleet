@@ -149,7 +149,7 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) request(claimUID types.UID) AllocationRequest {
 	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "project", Name: "claim-" + string(claimUID), UID: claimUID, Finalizers: []string{MachineFinalizer}}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "class"}, MachineProfileRef: fleetv1.LocalReference{Name: "profile"}}}
 	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class", UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "provider"}}}}
-	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "profile", UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64"}, Memory: fleetv1.MemoryRequirement{}}}
+	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "profile", UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 24}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
 	conditions := []metav1.Condition{}
 	for _, typ := range []string{"Prepared", "Healthy", "Available"} {
 		conditions = append(conditions, metav1.Condition{Type: typ, Status: metav1.ConditionTrue, ObservedGeneration: 2, LastTransitionTime: metav1.Now()})
@@ -647,8 +647,10 @@ func TestFailClosedInputsAndDiskCount(t *testing.T) {
 			}
 		})
 	}
-	profile := fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64"}, Disks: []fleetv1.DiskRequirement{{Count: fleetv1.Constraint{Exact: int64ptr(1)}, Media: "ssd"}}}
-	hardware := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64"}, Disks: []fleetv1.HardwareDisk{{Media: "ssd"}, {Media: "ssd"}}}
+	exactCPU, exactMemory := fleetv1.CPURequirement{Architecture: "amd64", Cores: 8}, fleetv1.MemoryRequirement{Capacity: "32Gi"}
+	observedCPU, observedMemory := fleetv1.HardwareCPU{Architecture: "amd64", Cores: 8}, fleetv1.HardwareMemory{Capacity: "32Gi"}
+	profile := fleetv1.MachineProfileSpec{CPU: exactCPU, Memory: exactMemory, Disks: []fleetv1.DiskRequirement{{Count: fleetv1.Constraint{Exact: int64ptr(1)}, Media: "ssd"}}}
+	hardware := fleetv1.Hardware{CPU: observedCPU, Memory: observedMemory, Disks: []fleetv1.HardwareDisk{{Media: "ssd"}, {Media: "ssd"}}}
 	if matches(profile, hardware) {
 		t.Fatal("exactly one matching disk accepted two")
 	}
@@ -657,8 +659,8 @@ func TestFailClosedInputsAndDiskCount(t *testing.T) {
 		"empty":    {},
 	} {
 		t.Run("missing-disk-"+name, func(t *testing.T) {
-			profile := fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64"}, Disks: []fleetv1.DiskRequirement{{Count: count, Media: "ssd"}}}
-			hardware := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64"}}
+			profile := fleetv1.MachineProfileSpec{CPU: exactCPU, Memory: exactMemory, Disks: []fleetv1.DiskRequirement{{Count: count, Media: "ssd"}}}
+			hardware := fleetv1.Hardware{CPU: observedCPU, Memory: observedMemory}
 			if matches(profile, hardware) {
 				t.Fatal("disk group with no matching device was accepted")
 			}

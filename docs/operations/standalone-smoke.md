@@ -59,10 +59,15 @@ library remains the only writer of custody, asset, and operation records.
 After the allocation phase, expected output has one ready and one pending claim:
 
 ```text
-NAMESPACE         NAME         PHASE     LOCATION       CPU   MEMORY   NETWORK   ADDRESS   REVISION
-fleet-project-a   allocation   Ready     us-central-1   24    128Gi
-fleet-project-b   allocation   Pending   us-central-1
+NAMESPACE         NAME         PHASE     LOCATION       REQUESTED CPU   REQUESTED MEMORY   NETWORK   ADDRESS
+fleet-project-a   allocation   Ready     us-central-1   24              128Gi
+fleet-project-b   allocation   Pending   us-central-1   24              128Gi
 ```
+
+Requested CPU and memory come from `status.requestedHardware`, which the runner
+pins from the exact fixture profile for both claims, including the one still
+waiting. `kubectl get machines -A -o wide` adds the profile and the allocated
+CPU and memory, which stay blank for the pending claim.
 
 After release, only project B remains and reports the same hardware. The private
 records remain in `fleet-system-private`; release does not erase recovery or

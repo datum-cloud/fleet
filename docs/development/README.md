@@ -56,6 +56,33 @@ to fence its legacy single-file backend. Those values are absent from the public
 and proposed resource contracts and must be replaced by immutable allocation
 name plus executor fencing token before a production backend is connected.
 
+## Requested hardware
+
+MachineProfile `cpu.cores` and `memory.capacity` are exact values: a positive
+integer and a positive integer byte quantity. The former min/max shapes were
+removed as a breaking `v1alpha1` change with no conversion or migration. Stored
+profiles with the old shape must be recreated before upgrading. The allocator
+matches capacity only when the observed cores and memory equal the request.
+
+`manager.RequestedHardwareProjector` is wired as the Machine projector in every
+`cmd/fleet-manager` mode, including the default inert mode. It reads the Machine
+and its profile from the routed project cache. The first exact resolution writes
+`status.requestedHardware` with Machine generation, profile generation, and
+spec-digest provenance, and sets `RequestResolved=True`. After that the snapshot
+is never re-resolved, and a CRD transition rule rejects status writes that
+change or remove it. A missing, deleting, or inexact profile leaves the snapshot
+absent and sets `RequestResolved=False` (`ProfileNotFound`, `ProfileDeleting`,
+or `ProfileInvalid`). Unknown read results are retried.
+
+The synthetic staging handler and the standalone runner carry the snapshot
+forward. Staging rejects a conflicting recreated profile with
+`RequestedHardwareConflict`. The behaviour needs only a running manager for the
+project; allocation, providers, and quota are not required. Tests cover CRD
+validation and CEL pinning with the API server's validators, resolver
+provenance, missing and invalid profiles, post-acceptance profile changes,
+inert-mode wiring, and staging and standalone carry-forward. See
+[requested hardware](../enhancements/machine-lifecycle/README.md#requested-hardware).
+
 ## Location authority
 
 `internal/location` uses the existing Milo location contract shared by Compute,

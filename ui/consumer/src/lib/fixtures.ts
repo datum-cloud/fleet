@@ -18,10 +18,25 @@ const SPEC = {
 
 const PLACEMENT = { locationRef: { name: 'us-central-1' } };
 
+// What the requested-hardware projector pins from the exact profile; the
+// same on every machine here because they share one profile.
+const REQUESTED: NonNullable<RawMachine['status']>['requestedHardware'] = {
+  cpu: { architecture: 'amd64', cores: 24 },
+  memory: { capacity: '128Gi' },
+  source: {
+    machineGeneration: 1,
+    profileRef: { name: 'general-purpose-24c-128g' },
+    profileGeneration: 1,
+    profileDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+  },
+};
+const REQUEST_RESOLVED = { type: 'RequestResolved', status: 'True', reason: 'Resolved' } as const;
+
 const BOUND_STATUS: RawMachine['status'] = {
   phase: 'Ready',
   placement: PLACEMENT,
   acceptedProfileRef: { name: 'general-purpose-24c-128g' },
+  requestedHardware: REQUESTED,
   allocatedHardware: {
     observedAt: '2026-11-05T12:00:00Z',
     hardware: {
@@ -35,6 +50,7 @@ const BOUND_STATUS: RawMachine['status'] = {
     { type: 'Bound', status: 'True', reason: 'ExclusiveBinding' },
     { type: 'NetworkReady', status: 'True', reason: 'NoAttachmentsRequired' },
     { type: 'Ready', status: 'True', reason: 'PoweredOffHandoff' },
+    REQUEST_RESOLVED,
   ],
 };
 
@@ -50,6 +66,7 @@ export const FIXTURE_MACHINES: RawMachine[] = [
     status: {
       phase: 'Pending',
       placement: PLACEMENT,
+      requestedHardware: REQUESTED,
       conditions: [
         { type: 'Accepted', status: 'True', reason: 'SyntheticFixtureAccepted' },
         {
@@ -59,6 +76,7 @@ export const FIXTURE_MACHINES: RawMachine[] = [
           message: 'The only synthetic machine is allocated to another consumer.',
         },
         { type: 'Ready', status: 'False', reason: 'InsufficientCapacity' },
+        REQUEST_RESOLVED,
       ],
     },
   },
@@ -134,13 +152,13 @@ export const FIXTURE_CLASSES: RawMachineClass[] = [
 export const FIXTURE_PROFILES: RawMachineProfile[] = [
   {
     metadata: { name: 'general-purpose-24c-128g' },
-    spec: { cpu: { architecture: 'amd64', cores: { min: 24 } }, memory: { capacity: { min: '128Gi' } } },
+    spec: { cpu: { architecture: 'amd64', cores: 24 }, memory: { capacity: '128Gi' } },
   },
   {
     metadata: { name: 'accelerated-32c-256g' },
     spec: {
-      cpu: { architecture: 'amd64', cores: { min: 32 } },
-      memory: { capacity: { min: '256Gi' } },
+      cpu: { architecture: 'amd64', cores: 32 },
+      memory: { capacity: '256Gi' },
       gpus: { count: { exact: 4 }, vendor: 'nvidia' },
     },
   },

@@ -133,8 +133,11 @@ datumctl metal profiles get general-purpose --project example-project
 
 Class details show eligible locations, allowed profiles, whether custom profiles
 are permitted, and advertised power/console capabilities. Profile details show
-CPU architecture and cores, memory, disk requirements, and interface slots.
-Requested minimums are not displayed as allocated hardware.
+CPU architecture, exact cores and memory, disk requirements, and interface slots.
+Machine listings show the requested CPU and memory pinned in
+`status.requestedHardware` (implemented printer columns). Allocated hardware
+appears only in wide output and details, so a request is never presented as
+assigned hardware.
 
 Discovery is not a capacity reservation, price quote, or grant to use a source
 offering. Only expose authorized availability summaries, with observation times

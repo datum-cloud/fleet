@@ -106,6 +106,12 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	} else if class.Spec.Source != nil {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "Synthetic same-project staging requires a local capacity definition.")
 	}
+	// The pinned request is authoritative for what this Machine asked for. A
+	// recreated profile with different CPU or memory must not be allocated
+	// silently under the old snapshot.
+	if pinned := claim.Status.RequestedHardware; pinned != nil && !controller.SameRequestedHardware(pinned, sourceProfile.Spec) {
+		return h.rejected(ctx, &claim, "RequestedHardwareConflict", "The current MachineProfile no longer requests the pinned CPU and memory.")
+	}
 	if sourceClass.Spec.Capacity == nil || sourceClass.Spec.Capacity.MachineCapacities.Namespace == "" {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "The resolved MachineClass has no explicit provider namespace.")
 	}
@@ -191,6 +197,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 			condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "The synthetic powered-off handoff is ready."),
 		},
 	}
+	status = preserveRequest(claim.Status, status)
 	if sameStatus(claim.Status, status) {
 		return manager.Outcome{}
 	}
@@ -215,6 +222,7 @@ func (h Handler) pending(ctx context.Context, claim *fleetv1.Machine, reason, me
 		condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message),
 		condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message),
 	}}
+	status = preserveRequest(claim.Status, status)
 	if !sameStatus(claim.Status, status) {
 		claim.Status = status
 		if err := h.Public.Status().Update(ctx, claim); err != nil {
@@ -230,6 +238,7 @@ func (h Handler) rejected(ctx context.Context, claim *fleetv1.Machine, reason, m
 		condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message),
 		condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message),
 	}}
+	status = preserveRequest(claim.Status, status)
 	if !sameStatus(claim.Status, status) {
 		claim.Status = status
 		if err := h.Public.Status().Update(ctx, claim); err != nil {
@@ -383,6 +392,17 @@ func contains(values []string, wanted string) bool {
 
 func condition(kind string, status metav1.ConditionStatus, generation int64, reason, message string) metav1.Condition {
 	return metav1.Condition{Type: kind, Status: status, ObservedGeneration: generation, LastTransitionTime: metav1.Now(), Reason: reason, Message: message}
+}
+
+// preserveRequest carries forward the fields owned by the requested-hardware
+// projector. This handler replaces Machine status wholesale and must never
+// drop or rewrite the pinned snapshot or its RequestResolved condition.
+func preserveRequest(current, next fleetv1.MachineStatus) fleetv1.MachineStatus {
+	next.RequestedHardware = current.RequestedHardware
+	if resolved := apiMeta.FindStatusCondition(current.Conditions, controller.ConditionRequestResolved); resolved != nil {
+		next.Conditions = append(next.Conditions, *resolved)
+	}
+	return next
 }
 
 // Ignore transition timestamps when deciding whether another status write is

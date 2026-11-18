@@ -102,6 +102,12 @@ func TestPhasesKeepExclusiveCustodyAndRecoverInstallation(t *testing.T) {
 	if first.Status.Placement == nil || first.Status.Placement.LocationRef.Name != options.LocationName || first.Status.AllocatedHardware == nil || first.Status.AllocatedHardware.ObservedAt == nil || !first.Status.AllocatedHardware.ObservedAt.Time.Equal(now) {
 		t.Fatalf("claim did not project exact retained location/evidence: %#v", first.Status)
 	}
+	for _, claim := range []fleetv1.Machine{first, second} {
+		if requested := claim.Status.RequestedHardware; requested == nil || requested.CPU.Cores != 24 || requested.Memory.Capacity != "128Gi" || requested.Source.ProfileRef.Name != options.ProfileName {
+			t.Fatalf("%s did not pin the exact requested hardware: %#v", claim.Namespace, requested)
+		}
+	}
+	waitingRequest := *second.Status.RequestedHardware
 	var evidenceSecret corev1.Secret
 	if err := kube.Get(context.Background(), client.ObjectKey{Namespace: options.PrivateNamespace, Name: evidenceName("machine-uid")}, &evidenceSecret); err != nil {
 		t.Fatal(err)
@@ -159,6 +165,9 @@ func TestPhasesKeepExclusiveCustodyAndRecoverInstallation(t *testing.T) {
 	}
 	if second.Status.Phase != "Ready" || second.Status.AllocatedHardware == nil || second.Status.AllocatedHardware.Hardware.CPU.Cores != 24 {
 		t.Fatalf("waiting claim did not acquire released hardware: %#v", second.Status)
+	}
+	if second.Status.RequestedHardware == nil || *second.Status.RequestedHardware != waitingRequest {
+		t.Fatalf("allocation rewrote the pinned request: %#v", second.Status.RequestedHardware)
 	}
 	if kube.options == nil || kube.options.Preconditions == nil || kube.options.Preconditions.UID == nil || *kube.options.Preconditions.UID != "claim-a-uid" || kube.options.Preconditions.ResourceVersion == nil {
 		t.Fatalf("claim delete lacked exact UID/resourceVersion preconditions: %#v", kube.options)
@@ -258,8 +267,8 @@ func TestExactDeletionRejectsNameRecreation(t *testing.T) {
 
 func fixtureObjects(o Options) []client.Object {
 	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: o.ClassName, UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: o.ProviderNamespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/pool": "central"}}}}}}
-	minCPU := int64(24)
-	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: o.ProfileName, UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &minCPU}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
+	cores := int64(24)
+	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: o.ProfileName, UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: cores}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
 	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: o.ProviderNamespace, Name: o.MachineName, UID: "machine-uid", Generation: 1, Labels: map[string]string{"fleet.datumapis.com/pool": "central"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "asset-central-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-clean"}, ReclaimPolicy: "Retain"}}
 	claim := func(ns, uid string) *fleetv1.Machine {
 		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: o.ClaimName, UID: types.UID(uid), Generation: 1}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: o.ClassName}, MachineProfileRef: fleetv1.LocalReference{Name: o.ProfileName}, LocationRef: fleetv1.LocalReference{Name: o.LocationName}, PowerState: "Off"}}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,7 +47,7 @@ func TestOneMachineAllocatesExclusivelyThenReusesAfterRelease(t *testing.T) {
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "namespace-uid"}}
 	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose", UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
 	cores := int64(24)
-	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &cores}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
+	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: cores}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
 	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "machine-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
 	claim := func(name, uid string) *fleetv1.Machine {
 		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name, UID: types.UID(uid)}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: class.Name}, MachineProfileRef: fleetv1.LocalReference{Name: profile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
@@ -109,7 +110,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	consumerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-zdhcz", UID: "consumer-project-uid"}
 	providerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "provider-project-uid"}
 	cores := int64(24)
-	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: fleetv1.Constraint{Min: &cores}}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "128Gi"}}}}
+	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: cores}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
 	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "central-metal", UID: "source-class-uid", Generation: 1}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: sourceProfile.Name}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
 	machine := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "machine-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
 	revision, err := publicationRevision(sourceClass, providerProject)
@@ -187,5 +188,63 @@ func assertPhase(t *testing.T, ctx context.Context, kube client.Client, key clie
 	}
 	if claim.Status.Phase != phase {
 		t.Fatalf("phase = %q, want %q", claim.Status.Phase, phase)
+	}
+}
+
+func TestStagingPreservesPinnedRequestAndRejectsConflictingProfile(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := fleetv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "namespace-uid"}}
+	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose", UID: "class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default"}}}}
+	profile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "profile-uid", Generation: 1}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 24}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
+	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "capacity-uid"}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
+	machine := func(name, uid string) *fleetv1.Machine {
+		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name, UID: types.UID(uid), Generation: 1}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: class.Name}, MachineProfileRef: fleetv1.LocalReference{Name: profile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
+	}
+	ready := machine("ready", "ready-uid")
+	// This Machine was accepted against an earlier same-name profile that
+	// requested 8 cores; the current profile requests 24.
+	conflicting := machine("conflicting", "conflicting-uid")
+	conflicting.Status.RequestedHardware = &fleetv1.RequestedHardwareStatus{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 8}, Memory: fleetv1.MemoryRequirement{Capacity: "32Gi"}, Source: fleetv1.RequestedHardwareSource{MachineGeneration: 1, ProfileRef: fleetv1.LocalReference{Name: profile.Name}, ProfileGeneration: 1, ProfileDigest: "sha256:earlier"}}
+	public := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineCapacity{}, &fleetv1.Machine{}).WithObjects(namespace, class, profile, capacity, ready, conflicting).Build()
+	coordinator, err := controller.NewCoordinator(fake.NewClientBuilder().WithScheme(scheme).Build(), "fleet-system-private", &executor{results: map[string]simulator.OperationResult{}}, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "project-uid"}
+	owner := manager.NewLifecycleOwner(Handler{Public: public, Coordinator: coordinator, Project: project, Location: "us-central-1", Now: time.Now}, manager.RequestedHardwareProjector{Client: public, Project: project}, nil)
+	reconcile := func(object *fleetv1.Machine) fleetv1.Machine {
+		t.Helper()
+		for i := 0; i < 3; i++ {
+			if out := owner.ReconcileEvent(ctx, manager.ProjectRequest{AuthorityID: project.AuthorityID, ProjectUID: project.UID, Namespace: object.Namespace, Name: object.Name, UID: object.UID}); out.RetryError != nil {
+				t.Fatal(out.RetryError)
+			}
+		}
+		var current fleetv1.Machine
+		if err := public.Get(ctx, client.ObjectKeyFromObject(object), &current); err != nil {
+			t.Fatal(err)
+		}
+		return current
+	}
+
+	got := reconcile(ready)
+	resolved := apiMeta.FindStatusCondition(got.Status.Conditions, controller.ConditionRequestResolved)
+	if got.Status.Phase != "Ready" || got.Status.RequestedHardware == nil || got.Status.RequestedHardware.CPU.Cores != 24 || got.Status.AllocatedHardware == nil || resolved == nil || resolved.Status != metav1.ConditionTrue {
+		t.Fatalf("ready status = %#v", got.Status)
+	}
+
+	got = reconcile(conflicting)
+	accepted := apiMeta.FindStatusCondition(got.Status.Conditions, "Accepted")
+	if accepted == nil || accepted.Status != metav1.ConditionFalse || accepted.Reason != "RequestedHardwareConflict" || got.Status.AllocatedHardware != nil {
+		t.Fatalf("conflicting status = %#v", got.Status)
+	}
+	if got.Status.RequestedHardware == nil || got.Status.RequestedHardware.CPU.Cores != 8 || got.Status.RequestedHardware.Memory.Capacity != "32Gi" {
+		t.Fatalf("pinned snapshot rewritten: %#v", got.Status.RequestedHardware)
 	}
 }

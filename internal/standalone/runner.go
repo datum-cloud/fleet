@@ -122,7 +122,7 @@ func (r Runner) allocate(ctx context.Context, coordinator *controller.Coordinato
 	if err != nil {
 		return fmt.Errorf("allocate first consumer: %w", err)
 	}
-	if err := r.projectBoundMachine(ctx, first, firstRecord, observedAt); err != nil {
+	if err := r.projectBoundMachine(ctx, first, profile, firstRecord, observedAt); err != nil {
 		return err
 	}
 	// Both contenders use the same retained Available=True evidence. Private
@@ -137,7 +137,7 @@ func (r Runner) allocate(ctx context.Context, coordinator *controller.Coordinato
 	if err := r.projectMachineOccupied(ctx, machine); err != nil {
 		return err
 	}
-	return r.projectPendingClaim(ctx, second, "InsufficientCapacity", "The only synthetic machine is allocated to another consumer.")
+	return r.projectPendingClaim(ctx, second, profile, "InsufficientCapacity", "The only synthetic machine is allocated to another consumer.")
 }
 
 func (r Runner) install(ctx context.Context, coordinator *controller.Coordinator) error {
@@ -202,7 +202,7 @@ func (r Runner) release(ctx context.Context, coordinator *controller.Coordinator
 	if record.Epoch < 2 {
 		return fmt.Errorf("reused asset epoch = %d, want at least 2", record.Epoch)
 	}
-	if err := r.projectBoundMachine(ctx, second, record, observedAt); err != nil {
+	if err := r.projectBoundMachine(ctx, second, profile, record, observedAt); err != nil {
 		return err
 	}
 	return r.projectMachineOccupied(ctx, machine)
@@ -273,14 +273,40 @@ func allocationRequest(claim *fleetv1.Machine, ns *corev1.Namespace, admission c
 	return controller.AllocationRequest{Claim: claim, Class: class, Profile: profile, MachineCapacities: []fleetv1.MachineCapacity{*machine}, EvidenceObservedAt: map[types.UID]time.Time{machine.UID: observed}, NamespaceUID: ns.UID, Admission: admission, LocalClassName: class.Name, LocalClassUID: class.UID, LocalProfileName: profile.Name, LocalProfileUID: profile.UID}
 }
 
-func (r Runner) projectBoundMachine(ctx context.Context, claim *fleetv1.Machine, record *controller.AssetRecord, observedAt time.Time) error {
-	observed := metav1.NewTime(observedAt.UTC())
-	claim.Status = fleetv1.MachineStatus{Phase: "Ready", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, AcceptedProfileRef: &fleetv1.LocalReference{Name: r.Options.ProfileName}, AllocatedHardware: &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: record.Hardware}, Power: &fleetv1.PowerStatus{State: "Off"}, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."), condition("Bound", metav1.ConditionTrue, claim.Generation, "MachineAllocationCommitted", "Private custody contains the immutable allocation."), condition("NetworkReady", metav1.ConditionTrue, claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested."), condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "Synthetic powered-off handoff is ready.")}}
-	return r.Client.Status().Update(ctx, claim)
+// withRequestedHardware applies the same resolve-once contract as the
+// manager's requested-hardware projector: a pinned snapshot is carried forward
+// unchanged, and an unresolvable fixture profile fails the phase rather than
+// producing a guessed request.
+func withRequestedHardware(claim *fleetv1.Machine, profile *fleetv1.MachineProfile, status fleetv1.MachineStatus) (fleetv1.MachineStatus, error) {
+	requested := claim.Status.RequestedHardware
+	if requested == nil {
+		var err error
+		if requested, err = controller.ResolveRequestedHardware(claim, profile); err != nil {
+			return status, fmt.Errorf("resolve requested hardware: %w", err)
+		}
+	}
+	status.RequestedHardware = requested
+	status.Conditions = append(status.Conditions, condition(controller.ConditionRequestResolved, metav1.ConditionTrue, claim.Generation, controller.ReasonRequestResolved, "Requested hardware is pinned from the fixture MachineProfile."))
+	return status, nil
 }
 
-func (r Runner) projectPendingClaim(ctx context.Context, claim *fleetv1.Machine, reason, message string) error {
-	claim.Status = fleetv1.MachineStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."), condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message), condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message)}}
+func (r Runner) projectBoundMachine(ctx context.Context, claim *fleetv1.Machine, profile *fleetv1.MachineProfile, record *controller.AssetRecord, observedAt time.Time) error {
+	observed := metav1.NewTime(observedAt.UTC())
+	status := fleetv1.MachineStatus{Phase: "Ready", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, AcceptedProfileRef: &fleetv1.LocalReference{Name: r.Options.ProfileName}, AllocatedHardware: &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: record.Hardware}, Power: &fleetv1.PowerStatus{State: "Off"}, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."), condition("Bound", metav1.ConditionTrue, claim.Generation, "MachineAllocationCommitted", "Private custody contains the immutable allocation."), condition("NetworkReady", metav1.ConditionTrue, claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested."), condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "Synthetic powered-off handoff is ready.")}}
+	return r.writeClaimStatus(ctx, claim, profile, status)
+}
+
+func (r Runner) projectPendingClaim(ctx context.Context, claim *fleetv1.Machine, profile *fleetv1.MachineProfile, reason, message string) error {
+	status := fleetv1.MachineStatus{Phase: "Pending", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: r.Options.LocationName}}, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, claim.Generation, "SyntheticFixtureAccepted", "This standalone fixture does not represent Milo admission."), condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message), condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message)}}
+	return r.writeClaimStatus(ctx, claim, profile, status)
+}
+
+func (r Runner) writeClaimStatus(ctx context.Context, claim *fleetv1.Machine, profile *fleetv1.MachineProfile, status fleetv1.MachineStatus) error {
+	status, err := withRequestedHardware(claim, profile, status)
+	if err != nil {
+		return err
+	}
+	claim.Status = status
 	return r.Client.Status().Update(ctx, claim)
 }
 
