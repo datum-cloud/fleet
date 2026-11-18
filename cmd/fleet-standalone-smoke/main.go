@@ -22,7 +22,7 @@ import (
 func main() {
 	options := standalone.DefaultOptions()
 	var phase, simulatorURL, tokenFile string
-	flag.StringVar(&phase, "phase", "", "required smoke phase: allocate, install, or release")
+	flag.StringVar(&phase, "phase", "", "required synthetic smoke phase: allocate, install, reinstall, or release")
 	flag.StringVar(&simulatorURL, "simulator-url", "http://fleet-simulator:8080", "synthetic simulator runtime URL")
 	flag.StringVar(&tokenFile, "runtime-token-file", "", "file containing the synthetic simulator runtime token")
 	flag.StringVar(&options.PrivateNamespace, "private-namespace", options.PrivateNamespace, "private record namespace")

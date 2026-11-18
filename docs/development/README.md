@@ -251,7 +251,11 @@ namespaces as project stand-ins and one synthetic `us-central-1` machine with 24
 cores and 128Gi of memory. The allocate phase retains custody before adding the
 Fleet finalizer, binds one claim, and leaves the competing claim pending. The
 install phase admits one exact digest-pinned operation through the persistent
-simulator and is idempotent across worker and simulator restart. The release
+simulator and is idempotent across worker and simulator restart. A bounded
+reinstall phase uses a distinct Installation naming the initial Installation as
+its predecessor, retains the same allocation, and recovers the same successor
+operation across retries and restart. Unknown completion closes readiness and
+keeps the capacity occupied. The release
 phase verifies cleanup before finalizer removal and advances the retained asset
 epoch before the waiting claim binds.
 
