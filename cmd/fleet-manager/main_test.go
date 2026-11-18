@@ -56,13 +56,13 @@ func TestSyntheticFlagsRequireAndScopeStaging(t *testing.T) {
 	if err := parse(t, staging...); err != nil {
 		t.Fatal(err)
 	}
-	if err := parse(t, append(staging, "--synthetic-provider-project-name=datum-cloud")...); !errors.Is(err, errFlags) {
+	if err := parse(t, append(staging, "--synthetic-provider-project-name=provider-project")...); !errors.Is(err, errFlags) {
 		t.Fatalf("provider project without publication names: %v", err)
 	}
 	if err := parse(t, append(staging, "--synthetic-provider-project-name=consumer", "--synthetic-published-class-name=c", "--synthetic-published-profile-name=p")...); !errors.Is(err, errFlags) {
 		t.Fatalf("provider equal to consumer: %v", err)
 	}
-	if err := parse(t, append(staging, "--synthetic-provider-project-name=datum-cloud", "--synthetic-published-class-name=c", "--synthetic-published-profile-name=p")...); err != nil {
+	if err := parse(t, append(staging, "--synthetic-provider-project-name=provider-project", "--synthetic-published-class-name=c", "--synthetic-published-profile-name=p")...); err != nil {
 		t.Fatal(err)
 	}
 }

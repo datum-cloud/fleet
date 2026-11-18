@@ -132,15 +132,14 @@ data:
       discoveryKubeconfigPath: /var/run/fleet/milo/kubeconfig
       projectKubeconfigPath: /var/run/fleet/projects/kubeconfig
       consumerScopedProjection:
-        providerProject: datum-cloud
+        providerProject: <metal Service producer project>
         serviceNames:
           - metal.datumapis.com
 ```
 
 The former `authorityID` and `projectName` keys are gone: projects are
 discovered, not configured. `providerProject` is the project that hosts the
-`metal` ServiceConsumers, the Service's `producerProjectRef` (`datum-cloud` in
-this bundle). `serviceNames` must be exactly `[metal.datumapis.com]`. The
+`metal` ServiceConsumers: the Service's `producerProjectRef`. `serviceNames` must be exactly `[metal.datumapis.com]`. The
 manager rejects other names, unknown fields, and milo mode without
 `consumerScopedProjection`. `discovery.mode: single` with `discovery.project:
 <name>` serves one named project instead, for standalone use and tests.
@@ -180,8 +179,7 @@ The environment must provide two Secrets in `fleet-system`:
   existing Secret, now the discovery credential). It lists Services and gets
   Projects.
 - `fleet-manager-project-kubeconfig`, key `value`: the Milo kubeconfig
-  template, in the same shape the core-control-plane kubeconfig generator
-  writes. Its host is re-addressed to
+  template, in the same shape as the discovery Secret. Its host is re-addressed to
   `/apis/resourcemanager.miloapis.com/v1alpha1/projects/<project>/control-plane`
   for the provider project (ServiceConsumer watch) and each engaged project.
   It may hold the same credential as the discovery Secret.
