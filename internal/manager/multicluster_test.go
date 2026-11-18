@@ -131,17 +131,34 @@ func TestPrivateCustodyRoutesOnlyToItsOwnProject(t *testing.T) {
 	private := newPrivate(t)
 	recorder := newRecordingHandlers()
 	provider := multiclustertest.NewProvider()
-	startFleet(t, provider, root, private, SetupOptions{HandlersFor: recorder.factory})
+	f := startFleet(t, provider, root, private, SetupOptions{HandlersFor: recorder.factory})
 	provider.Engage(t, context.Background(), east)
 	provider.Engage(t, context.Background(), west)
 	eventually(t, "both projects reconciled their Machine", func() bool { return recorder.count("east") > 0 && recorder.count("west") > 0 })
 	eventually(t, "both pinned", func() bool { return pinnedWith(t, east, "m", 8)() && pinnedWith(t, west, "m", 8)() })
-	westBefore := recorder.count("west")
-	eastBefore := recorder.count("east")
+	// Engagement replays each project's objects through several controllers
+	// (the Machine itself, then dependency routes such as its MachineProfile),
+	// so a project's request count keeps rising briefly after its Machine is
+	// pinned. Take the baseline only once both projects' initial work has
+	// settled; otherwise a late replay reconcile looks like a cross-project
+	// wake-up.
+	eastBefore, westBefore := settledCounts(t, recorder, "east", "west")
 
 	eastIdentity, westIdentity := root.identity(t, "east"), root.identity(t, "west")
 	coordinator := coordinatorFor(t, private)
 	retainCustody(t, coordinator, eastIdentity, root.identity(t, "provider"), getMachine(t, east, "m"), "east-ns")
+
+	// Deterministic routing check, independent of event timing: the actual
+	// custody record, mapped through the live registry exactly as the
+	// private-record watch maps it, reaches east only.
+	var custody corev1.SecretList
+	if err := private.Client.List(context.Background(), &custody, client.InNamespace(testPrivateNamespace)); err != nil || len(custody.Items) != 1 {
+		t.Fatalf("custody records = %d, %v", len(custody.Items), err)
+	}
+	routed := privateHandler(f.projects, testPrivateNamespace, func(m Mappers) func(context.Context, client.Object) []ProjectRequest { return m.RequestForPrivate })(context.Background(), &custody.Items[0])
+	if len(routed) != 1 || routed[0].ClusterName != "east" || !routed[0].SameProject(eastIdentity.AuthorityID, eastIdentity.UID) || routed[0].UID != "shared-uid" {
+		t.Fatalf("east's custody routed to %#v, want only east's Machine", routed)
+	}
 
 	eventually(t, "east woken by its custody record", func() bool { return recorder.count("east") > eastBefore })
 	consistently(t, "west never woken by east's custody", func() bool { return recorder.count("west") == westBefore })
@@ -167,6 +184,34 @@ func TestPrivateCustodyRoutesOnlyToItsOwnProject(t *testing.T) {
 	if _, err := coordinator.Release(context.Background(), "shared-uid"); err == nil {
 		t.Fatal("an unscoped release matched custody across projects")
 	}
+}
+
+// settledCounts waits until every named project's request count has stopped
+// changing for a settling period, then returns the counts in order.
+func settledCounts(t *testing.T, recorder *recordingHandlers, names ...multicluster.ClusterName) (int, int) {
+	t.Helper()
+	snapshot := func() []int {
+		out := make([]int, len(names))
+		for i, name := range names {
+			out[i] = recorder.count(name)
+		}
+		return out
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	last, stableSince := snapshot(), time.Now()
+	for time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		current := snapshot()
+		if !reflect.DeepEqual(current, last) {
+			last, stableSince = current, time.Now()
+			continue
+		}
+		if time.Since(stableSince) >= 500*time.Millisecond {
+			return last[0], last[1]
+		}
+	}
+	t.Fatalf("request counts for %v never settled: %v", names, last)
+	return 0, 0
 }
 
 // When a project leaves the consumer set with active custody, the manager
