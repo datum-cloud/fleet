@@ -1,0 +1,104 @@
+name: multiplane-acceptance
+# The full multi-plane acceptance (docs/operations/multiplane.md#ci-mode) in CI
+# mode on a disposable GitHub-hosted runner: three kind clusters, Milo, Karmada,
+# kro, Flux and a privileged libvirt/QEMU site Pod that PXE-installs a real
+# guest. On demand and nightly only; a pull request runs it only when a
+# maintainer applies the multiplane-acceptance label.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Site provider
+        type: choice
+        options: [libvirt, redfish]
+        default: libvirt
+  schedule:
+    - cron: '23 5 * * *'
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'multiplane-acceptance'
+    name: acceptance (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', inputs.mode)) || fromJSON('["libvirt","redfish"]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      FLEET_MULTIPLANE_RUNTIME: ci
+      FLEET_MULTIPLANE_DOCKER_CONTEXT: default
+      FLEET_MULTIPLANE_ARCH: amd64
+      # The Redfish lab adapter defines TCG domains only.
+      FLEET_MULTIPLANE_ACCEL: ${{ matrix.mode == 'libvirt' && 'kvm' || 'tcg' }}
+      # Reversible, recorded inotify adjustment; the runner is discarded after the job.
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-go@v6
+      with: {go-version-file: go.mod, cache: true}
+    - uses: imranismail/setup-kustomize@v2
+      with: {kustomize-version: 5.8.1}
+    - name: Install pinned kind and kubectl
+      shell: bash
+      run: |
+        set -euo pipefail
+        go install sigs.k8s.io/kind@v0.31.0
+        directory=$(mktemp -d)
+        trap 'rm -rf "$directory"' EXIT
+        cd "$directory"
+        curl --fail --location --retry 3 --max-time 60 -o kubectl https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl
+        curl --fail --location --retry 3 --max-time 60 -o kubectl.sha256 https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl.sha256
+        echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+        chmod +x kubectl
+        mkdir -p "$HOME/.local/bin"
+        mv kubectl "$HOME/.local/bin/kubectl"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+    - name: Free Docker disk and record runner capacity
+      run: |
+        # Preinstalled toolchains this job does not use; the harness needs 12 GiB
+        # free in the Docker data root.
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        nproc
+        free -m
+        df -h / /var/lib/docker
+        ls -l /dev/kvm || true
+    - name: Run multi-plane acceptance (${{ matrix.mode }})
+      timeout-minutes: 120
+      env:
+        FLEET_MULTIPLANE_STATE_ROOT: ${{ runner.temp }}/fleet-multiplane
+        MODE: ${{ matrix.mode }}
+      run: |
+        mkdir -m 0700 "$FLEET_MULTIPLANE_STATE_ROOT"
+        args=()
+        if [ "$MODE" = redfish ]; then args=(--redfish); fi
+        hack/multiplane/run.sh "${args[@]}"
+      shell: bash
+    # A timeout or cancellation can stop run.sh before its own failure scan, so
+    # scan again here. A match is redacted in place; the second scan must then
+    # be clean, or nothing is uploaded.
+    - name: Secret-scan evidence
+      id: scan
+      if: always()
+      env:
+        STATE_ROOT: ${{ runner.temp }}/fleet-multiplane
+      run: |
+        found=false
+        for state in "$STATE_ROOT"/fleet-multiplane.*; do
+          [ -d "$state/evidence" ] || continue
+          python3 hack/multiplane/harness.py scan --state "$state" || python3 hack/multiplane/harness.py scan --state "$state"
+          found=true
+        done
+        echo "found=$found" >> "$GITHUB_OUTPUT"
+    # Only evidence/ is uploaded, never the private state directory.
+    - name: Upload sanitized evidence
+      if: always() && steps.scan.outcome == 'success' && steps.scan.outputs.found == 'true'
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: multiplane-evidence-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/fleet-multiplane/fleet-multiplane.*/evidence/
+        if-no-files-found: warn
+        retention-days: 14

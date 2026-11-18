@@ -286,6 +286,22 @@ func TestExplicitAccelerationAndJournalBinding(t *testing.T) {
 	if mode, err := parseAccelerator(""); err != nil || mode != "kvm" {
 		t.Fatal("default changed")
 	}
+	// Only a local libvirtd needs the device in this process. Site workers
+	// reach the runtime's daemon through its shared socket, so the runtime,
+	// not the unprivileged worker, holds and checks /dev/kvm.
+	for _, c := range []struct {
+		accelerator, uri string
+		local            bool
+	}{
+		{"", "qemu:///system", true},
+		{"kvm", "qemu:///system", true},
+		{"tcg", "qemu:///system", false},
+		{"kvm", "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock", false},
+	} {
+		if (&Provider{accelerator: c.accelerator, uri: c.uri}).localKVM() != c.local {
+			t.Fatalf("localKVM(%q, %q) != %v", c.accelerator, c.uri, c.local)
+		}
+	}
 	f := newVMFixture(t)
 	f.p.accelerator = "tcg"
 	if err := f.p.checkMode(journal{Image: f.p.image}); !errors.Is(err, executor.ErrConflict) {

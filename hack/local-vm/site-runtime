@@ -2,7 +2,11 @@
 # VM runtime for the Kubernetes site: libvirtd only. Workers reach it through
 # the socket directory shared on the site volume; nothing listens on TCP.
 set -eu
-[ "${FLEET_LOCAL_VM_ACCEL:-}" = tcg ] || { echo 'site runtime requires FLEET_LOCAL_VM_ACCEL=tcg' >&2; exit 1; }
+case "${FLEET_LOCAL_VM_ACCEL:-}" in
+ tcg) ;;
+ kvm) [ -c /dev/kvm ] || { echo 'KVM device unavailable; no automatic software fallback' >&2; exit 1; } ;;
+ *) echo 'site runtime requires FLEET_LOCAL_VM_ACCEL=tcg or kvm' >&2; exit 1 ;;
+esac
 boot_ip=${FLEET_BOOT_IP:?boot Service ClusterIP required}
 case "$boot_ip" in *[!0-9.]*|'') echo 'invalid boot Service IP' >&2; exit 1 ;; esac
 sock=/run/fleet-libvirt

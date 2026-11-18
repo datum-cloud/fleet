@@ -26,6 +26,8 @@ spec:
       # Workers are created only after dispatch is enabled. The acceptance uses
       # this to prove delivery and retention before any effect can start.
       dispatch: boolean | default=false
+      # Must match the shared runtime's accelerator; the provider journal binds it.
+      accelerator: string | required=true
     status:
       bootOrigin: ${"http://" + bootService.spec.clusterIP + ":8080"}
       workerImage: ${hypervisor.spec.template.spec.containers[0].image}
@@ -198,7 +200,7 @@ spec:
                   imagePullPolicy: IfNotPresent
                   command: [fleet-multiplane, site-worker, --handoff, "${handoff.metadata.name}", --cell, "${schema.spec.cell}", --scoped-asset, "${schema.spec.scopedAsset}"]
                   env:
-                    - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+                    - {name: FLEET_LOCAL_VM_ACCEL, value: "${schema.spec.accelerator}"}
                     - {name: FLEET_BOOT_ORIGIN, value: "${'http://' + bootService.spec.clusterIP + ':8080'}"}
                     - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
                     - {name: FLEET_LIBVIRT_URI, value: "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock"}

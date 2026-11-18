@@ -30,7 +30,7 @@ reach two persistent lab VMs only through the DMTF Redfish Interface Emulator.
 | Coordination intent | Karmada v1.16.0 API (hub Flux `HelmRelease`), separate from the host Kubernetes API | Management credential creates immutable handoffs; cannot write status |
 | Selected cell | Separate kind Kubernetes API running its own Flux, the Flux-owned shared site services, kro v0.9.4 and the `HandoffDispatcher` graph | Karmada delivers intent; the site observer ServiceAccount is the only local status writer |
 | Reflected results | Karmada interpreter aggregates each member's identity and observation | Karmada; management validates before projection |
-| Physical effects | Privileged, Flux-owned VM runtime Deployment (libvirt/QEMU) on the cell; amd64 guest under native arm64 TCG | One bounded kro-created worker Job per handoff invokes `executor.Client`; provider persists exact requests and boot evidence on a retained, Flux-owned PVC |
+| Physical effects | Privileged, Flux-owned VM runtime Deployment (libvirt/QEMU) on the cell; amd64 guest under native arm64 TCG locally, or under KVM on an amd64 runner in [CI mode](#ci-mode) | One bounded kro-created worker Job per handoff invokes `executor.Client`; provider persists exact requests and boot evidence on a retained, Flux-owned PVC |
 
 The platform integration choices were discovered in these connected sources:
 
@@ -50,8 +50,9 @@ The platform integration choices were discovered in these connected sources:
   names, rather than accepting the first result.
 - kind nodes use **v1.35.0**, digest-pinned to the already exercised local VM
   node image. Karmada's chart pins its own API/controller images to v1.34.1 and
-  its etcd to 3.6.0-0. Milo's local etcd uses 3.5.16-0. The Milo arm64 image is
-  digest-pinned in the launcher. Some upstream Helm hook images still use
+  its etcd to 3.6.0-0. Milo's local etcd uses 3.5.16-0. The Milo image is pinned by its
+  multi-arch index digest, which resolves to the arm64 manifest used by every
+  recorded Colima run and to the amd64 manifest in [CI mode](#ci-mode). Some upstream Helm hook images still use
   floating tags; this is a remaining reproducibility seam.
 - kro **v0.9.4** is installed on the cell by a Flux `HelmRelease` from its
   official OCI Helm chart, pinned by manifest and image digest. The newer v0.10.0 was five days old and is
@@ -104,9 +105,11 @@ values are recorded in `sysctl.json`. Options:
 | `--leave-running` | After a failure, leave containers running for live diagnosis instead of stopping them |
 | `--skip-readiness-tests` | Skip the implementation test gate (diagnosis only) |
 
-Preflight records `evidence/preflight.json`. Prerequisite checks cover tools,
-the exact Docker context socket, reachability, architecture, memory, CPUs, free
-disk, amd64 emulation, inotify, and concurrent Fleet runtimes. Readiness checks
+Preflight records `evidence/preflight.json`, including the runtime parameters
+below. Prerequisite checks cover tools, the runtime mode and accelerator, the
+exact Docker context socket, reachability, architecture, memory, CPUs, free
+disk, amd64 emulation, inotify, the KVM device when KVM is selected, and
+concurrent Fleet runtimes. Readiness checks
 require the CLI subcommands and location-denial error the harness drives, then
 run `go test -race -count=1 ./internal/coordination ./internal/multiplane
 ./internal/localvm ./cmd/fleet-multiplane`. Failing either blocks before any
@@ -138,6 +141,76 @@ caused an installer OOM in an earlier fresh run. Evidence fails on any OOM kill
 in the runtime Pod, any kind node, or the site, kro, Flux, Karmada or Milo containers. Expect 20 to 60 minutes,
 mostly bootstrap, image pulls and builds. Every phase has an explicit bound.
 Do not run another full acceptance topology concurrently on an 8 GiB VM.
+
+### Runtime parameters
+
+`run.sh` exports these to every step. The defaults are the local Colima run
+described above, and with them every command the harness runs is unchanged.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FLEET_MULTIPLANE_RUNTIME` | `colima` | `colima`: the task-owned profile, its socket and VM-side checks. `ci`: see [CI mode](#ci-mode) |
+| `FLEET_MULTIPLANE_DOCKER_CONTEXT` | `colima-fleet-acceptance-tcg` | The Docker context every step uses; preflight requires it to reach exactly the selected runtime's socket |
+| `FLEET_MULTIPLANE_ARCH` | `arm64` | Runtime architecture: the site binary's `GOARCH`; preflight requires the Docker host to match |
+| `FLEET_MULTIPLANE_ACCEL` | `tcg` | Guest accelerator for the site runtime, workers, boot service and observer (`FLEET_LOCAL_VM_ACCEL`, bound into the provider journal). `kvm` requires `amd64`, `/dev/kvm` on the Docker host and the libvirt provider |
+
+`stop.sh` and `teardown.sh` read the same Docker context variable, so run them
+with the run's value. The guest is always amd64; there is no automatic fallback
+from KVM to TCG.
+
+### CI mode
+
+`.github/workflows/multiplane-acceptance.yml` runs the full acceptance on a
+disposable GitHub-hosted `ubuntu-latest` runner. It runs nightly for both
+providers, on `workflow_dispatch` with a `libvirt` or `redfish` mode input, and
+on a pull request only when a maintainer applies the `multiplane-acceptance`
+label. It never runs on every pull request. It uses the pinned Go, kind
+v0.31.0, kubectl v1.35.0 and kustomize 5.8.1 of the `standalone-smoke` job, and
+bounds the run step to 120 minutes and the job to 150.
+
+The job sets `FLEET_MULTIPLANE_RUNTIME=ci`, the runner's `default` context,
+`amd64`, `FLEET_MULTIPLANE_INOTIFY=1024`, and `kvm` for libvirt mode or `tcg`
+for Redfish mode, whose lab adapter defines TCG domains only. CI mode changes
+only how preflight reaches the runtime:
+
+- The context must point at the runner daemon `unix:///var/run/docker.sock`,
+  and `GITHUB_ACTIONS=true` is required, so the mode cannot run against a
+  workstation daemon. The Colima socket, profile and `--bootstrap` are not used.
+- Disk, inotify and `/dev/kvm` are read on the runner itself instead of through
+  `colima ssh`. The inotify adjustment is the same recorded, reversible change,
+  applied to the runner kernel.
+- Every other check is unchanged: tools, Python, architecture, 8 GiB and 4 CPUs,
+  amd64 execution, 12 GiB free disk, no running `fleet-local-*`/`fleet-mp-*`
+  containers, and the readiness tests. The run still uses one fresh
+  `fleet-mp-<random>` prefix, stops or deletes only that prefix's resources,
+  and leaves custody Unknown on failure.
+
+After the run, even after a timeout or cancellation, the job runs the secret
+scan again over `evidence/`. A match is redacted and the second scan must be
+clean, otherwise nothing is uploaded. Then it uploads only `evidence/` as the
+`multiplane-evidence-<mode>-<run>-<attempt>` artifact, kept for 14 days. The
+private state directory stays on the runner and is discarded with it.
+
+**Qualification differs from the recorded runs.** A KVM guest on a
+GitHub-hosted runner is nested virtualization inside a cloud VM: amd64 guest on
+an amd64 host. The recorded runs below are an amd64 guest under TCG on an
+arm64 Colima VM. A CI pass is evidence for the CI target only. It qualifies
+neither TCG nor physical hardware, UEFI or production authority. `summary.json`
+records `kvm`, the accelerator, the runtime and `physicalHardware: false`.
+
+The interruption scenarios were tuned to the roughly one-minute TCG install:
+`interrupt-pod` and `interrupt-job` must land while the installer still runs,
+and `wait-stage` fails the run if the installer finished first. A KVM install
+is shorter, so a CI failure there means the window is too short under KVM. It
+is not a false pass.
+
+Runner size: the run needs 4 CPUs, at least 8 GiB of memory and 12 GiB of free
+Docker disk. A standard `ubuntu-latest` runner has 4 vCPUs, 16 GiB and
+exposes `/dev/kvm`, and the job removes unused preinstalled toolchains to free
+disk. The node caps total about 9.2 GiB, an overcommit on the 8 GiB Colima VM
+but not on 16 GiB. The job logs `nproc`, `free -m`, `df` and `/dev/kvm`. Treat
+fit as unconfirmed until a recorded CI run passes; if memory events or
+timeouts appear there, use a larger runner with 8 vCPUs and 32 GiB.
 
 ### State and evidence layout
 

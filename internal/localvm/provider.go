@@ -68,6 +68,14 @@ func (p *Provider) mode() string {
 	}
 	return p.accelerator
 }
+
+// localKVM reports whether this process starts KVM guests through a local
+// libvirtd and so needs /dev/kvm itself. Through a shared socket the runtime
+// that owns the daemon holds and checks the device; read-only providers never
+// start a guest.
+func (p *Provider) localKVM() bool {
+	return p.mode() == "kvm" && p.uri == "qemu:///system"
+}
 func (p *Provider) checkMode(j journal) error {
 	mode, err := parseAccelerator(j.Accelerator)
 	if err != nil {
@@ -125,6 +133,11 @@ func Open() (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	if p.localKVM() {
+		if _, err := os.Stat("/dev/kvm"); err != nil {
+			return nil, err
+		}
+	}
 	if err := os.MkdirAll(Root, 0700); err != nil {
 		return nil, err
 	}
@@ -175,11 +188,6 @@ func open() (*Provider, error) {
 	accelerator, err := parseAccelerator(os.Getenv("FLEET_LOCAL_VM_ACCEL"))
 	if err != nil {
 		return nil, err
-	}
-	if accelerator == "kvm" {
-		if _, err := os.Stat("/dev/kvm"); err != nil {
-			return nil, err
-		}
 	}
 	origin, err := parseBootOrigin(os.Getenv("FLEET_BOOT_ORIGIN"))
 	if err != nil {

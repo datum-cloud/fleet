@@ -123,7 +123,7 @@ hash.
 | Source | OCI artifact `fleet-gitops:local` in the run registry, `registry:3.0.0@sha256:6c5666b8…457e` | The Flux OCI pattern Datum uses for `*-kustomize` bundles, with no external publication of uncommitted changes |
 | Karmada | chart v1.16.0 from `HelmRepository` `raw.githubusercontent.com/karmada-io/karmada/master/charts`; chart archive SHA-256 `773ab194…34fe` verified in Flux's HelmChart artifact | Same chart as the connected test-infra federation. The repository and release shape follow datum-cloud/infra `infrastructure/karmada`. The chart's floating `cfssl` and `kubectl` hook images are now pinned by index digest. |
 | kro | `OCIRepository` `oci://registry.k8s.io/kro/charts/kro` at manifest digest `sha256:4e8de4d3…a67c` (chart layer `ceeb6307…`), image `v0.9.4@sha256:eaf9fbad…` | Unchanged from [site execution](site-execution.md#versions); `OCIRepository` as a chart source is the Flux-native way to pin an OCI chart by digest |
-| Milo | `ghcr.io/milo-os/milo@sha256:ec90618e…` (v0.32.5, arm64); etcd `registry.k8s.io/etcd:3.5.16-0@sha256:c6a9d11c…` | Same Milo build as before, now as Flux-managed workloads |
+| Milo | `ghcr.io/milo-os/milo@sha256:3b4f2890…` (v0.32.5 multi-arch index; arm64 manifest `ec90618e…`, amd64 `5db875d3…`); etcd `registry.k8s.io/etcd:3.5.16-0@sha256:c6a9d11c…` | Same Milo build as before, now as Flux-managed workloads |
 
 ## Dependency, health and upgrade policy
 
