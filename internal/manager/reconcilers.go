@@ -81,3 +81,42 @@ func (r ProjectReconciler) Reconcile(ctx context.Context, request ProjectRequest
 	outcome := r.Handler.ReconcileEvent(ctx, request)
 	return reconcile.Result{}, outcome.RetryError
 }
+
+// ClusterProjectReconciler reconciles a ProjectRequest only through the
+// runtime engaged under its cluster name, and only when that runtime's
+// identity matches the request. A request for a project that is not engaged,
+// or whose cluster now holds another project lifetime, is dropped with no
+// effect: no handler runs, no private record or status is written.
+type ClusterProjectReconciler struct {
+	Projects *Projects
+	Owner    func(*ProjectRuntime) *LifecycleOwner
+}
+
+func (r ClusterProjectReconciler) Reconcile(ctx context.Context, request ProjectRequest) (reconcile.Result, error) {
+	if r.Projects == nil || r.Owner == nil {
+		return reconcile.Result{}, ErrEventWiringUnavailable
+	}
+	runtime := r.Projects.For(request)
+	if runtime == nil {
+		return reconcile.Result{}, nil
+	}
+	return ProjectReconciler{Project: runtime.Binding.Project, Handler: r.Owner(runtime), Verifier: runtime.Verifier}.Reconcile(ctx, request)
+}
+
+// ClusterRouteReconciler resolves a dependency event through the engaged
+// project's own mappers and reader.
+type ClusterRouteReconciler struct {
+	Projects *Projects
+	Owner    func(*ProjectRuntime) *LifecycleOwner
+}
+
+func (r ClusterRouteReconciler) Reconcile(ctx context.Context, request RouteRequest) (reconcile.Result, error) {
+	if r.Projects == nil || r.Owner == nil {
+		return reconcile.Result{}, ErrEventWiringUnavailable
+	}
+	runtime := r.Projects.Get(request.ClusterName)
+	if runtime == nil {
+		return reconcile.Result{}, nil
+	}
+	return RouteReconciler{Project: runtime.Binding.Project, Verifier: runtime.Verifier, Mappers: runtime.Mappers, Handler: r.Owner(runtime)}.Reconcile(ctx, request)
+}

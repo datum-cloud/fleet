@@ -12,8 +12,8 @@ integration as a bug.
 
 | Symptom | What to check | Detailed reference |
 | --- | --- | --- |
-| Production manager starts but stays unready | This is intentional while production handlers and authority integrations are missing; manifests alone cannot enable effects | [Current readiness boundary](../../config/README.md#current-readiness-boundary) |
-| Manager Pod cannot start or the binary exits during setup | Check the environment-owned ConfigMap, required keys, Milo credential, and named Project; missing or unresolvable inputs fail closed | [Environment-owned inputs](../../config/README.md#environment-owned-inputs) |
+| Production manager stays unready | Readiness requires discovery, every consuming project's cache, and the private cache to sync; a consuming project that is unreachable or lacks a watched API blocks it. Readiness never enables lifecycle effects | [Current readiness boundary](../../config/README.md#current-readiness-boundary) |
+| Manager Pod cannot start or the binary exits during setup | Check the `fleet-manager-config` `config.yaml`, the Milo kubeconfig Secrets, and any synthetic consumer or provider Project; missing or unresolvable inputs fail closed | [Environment-owned inputs](../../config/README.md#environment-owned-inputs) |
 | Standalone smoke script refuses a cluster | Check for existing Fleet APIs, fixture namespaces, controllers, and context/cluster mismatch; use the required fresh dedicated cluster | [Smoke prerequisites](../operations/standalone-smoke.md#run-with-kind-and-colima) |
 | One standalone claim remains pending | The fixture intentionally offers one machine to two consumers; the second binds only after the first releases and cleanup is verified | [Smoke scenario and expected output](../operations/standalone-smoke.md) |
 | Smoke output has blank network and address columns | The fixture requests no network interface and does not exercise NSO/IPAM or routing | [Smoke scope](../operations/standalone-smoke.md) |

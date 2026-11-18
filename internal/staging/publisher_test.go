@@ -25,7 +25,7 @@ func TestPublisherCreatesProtectedReferenceAndExactProfileCopy(t *testing.T) {
 	class := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "central-metal", UID: "source-class-uid", Generation: 3}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: profile.Name}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default"}}}}
 	provider := fake.NewClientBuilder().WithScheme(scheme).WithObjects(class, profile).Build()
 	consumer := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineClass{}, &fleetv1.MachineProfile{}).Build()
-	consumerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-zdhcz", UID: "consumer-uid"}
+	consumerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-consumer", UID: "consumer-uid"}
 	providerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "provider-uid"}
 	publisher := &Publisher{Consumer: consumer, Provider: provider, Options: PublisherOptions{ConsumerProject: consumerProject, ProviderProject: providerProject, ClassName: class.Name, ProfileName: profile.Name}}
 	if _, err := publisher.Reconcile(ctx, reconcile.Request{}); err != nil {
