@@ -60,8 +60,9 @@ const columns: MachineColumn[] = [
   },
   {
     id: 'hardware',
-    header: 'Hardware',
-    // Allocated hardware, once Fleet has bound some.
+    header: 'Requested',
+    // The exact CPU and memory pinned from the profile, as `datumctl get
+    // machines` shows them. Allocated hardware is on the machine's page.
     cell: ({ row }) => {
       const { cpu, memory } = row.original;
       return cpu || memory ? <Mono>{[cpu, memory].filter(Boolean).join(' · ')}</Mono> : <Muted>—</Muted>;

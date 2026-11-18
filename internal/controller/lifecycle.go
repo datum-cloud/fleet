@@ -2078,7 +2078,10 @@ func validSHA256(value string) bool {
 }
 
 func matches(profile fleetv1.MachineProfileSpec, hardware fleetv1.Hardware) bool {
-	if profile.CPU.Architecture != hardware.CPU.Architecture || !matchesCount(profile.CPU.Cores, hardware.CPU.Cores) || !matchesQuantity(profile.Memory.Capacity, hardware.Memory.Capacity) {
+	// CPU and memory are exact requests. An inexact profile fails closed, and
+	// capacity matches only when its observed cores and installed memory equal
+	// the request; larger machines are not silently substituted.
+	if ValidateExactHardware(profile) != nil || profile.CPU.Architecture != hardware.CPU.Architecture || profile.CPU.Cores != hardware.CPU.Cores || !sameMemory(profile.Memory.Capacity, hardware.Memory.Capacity) {
 		return false
 	}
 	var gpuCount int64

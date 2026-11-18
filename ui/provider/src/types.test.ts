@@ -1,4 +1,10 @@
-import { formatConstraint, toMachineCapacity, toMachineProfile, type RawMachineCapacity } from './types';
+import {
+  formatConstraint,
+  toMachineCapacity,
+  toMachineProfile,
+  type RawMachineCapacity,
+  type RawMachineProfile,
+} from './types';
 import { FIXTURE_CAPACITIES, fixtureProfiles } from './lib/fixtures';
 import { describe, expect, it } from 'vitest';
 
@@ -58,8 +64,8 @@ describe('toMachineProfile', () => {
   it('maps the standalone fixture profile', () => {
     expect(toMachineProfile(fixtureProfiles.list()[0])).toEqual({
       name: 'general-purpose-24c-128g',
-      cpu: '≥ 24 cores · amd64',
-      memory: '≥ 128Gi',
+      cpu: '24 cores · amd64',
+      memory: '128Gi',
       gpus: undefined,
       disks: 0,
       interfaces: 0,
@@ -71,12 +77,23 @@ describe('toMachineProfile', () => {
     const profile = toMachineProfile({
       metadata: { name: 'gpu' },
       spec: {
-        cpu: { architecture: 'amd64' },
-        memory: { capacity: { exact: '256Gi' } },
+        cpu: { architecture: 'amd64', cores: 64 },
+        memory: { capacity: '256Gi' },
         gpus: { count: { exact: 4 }, vendor: 'nvidia', models: ['h100'] },
       },
     });
-    expect(profile.cpu).toBe('Any · amd64');
+    expect(profile.cpu).toBe('64 cores · amd64');
+    expect(profile.memory).toBe('256Gi');
     expect(profile.gpus).toBe('4 × nvidia h100');
+  });
+
+  it('reports a stored profile that predates the exact contract as invalid', () => {
+    const legacy = {
+      metadata: { name: 'legacy' },
+      spec: { cpu: { architecture: 'amd64', cores: { min: 16 } }, memory: { capacity: { min: '64Gi' } } },
+    } as unknown as RawMachineProfile;
+    const profile = toMachineProfile(legacy);
+    expect(profile.cpu).toBe('Invalid · amd64');
+    expect(profile.memory).toBe('Invalid');
   });
 });

@@ -91,7 +91,7 @@ function remove<T extends { metadata: { name: string } }>(
 const profiles: RawMachineProfile[] = [
   {
     metadata: { name: 'general-purpose-24c-128g', creationTimestamp: '2026-11-05T12:00:00Z' },
-    spec: { cpu: { architecture: 'amd64', cores: { min: 24 } }, memory: { capacity: { min: '128Gi' } } },
+    spec: { cpu: { architecture: 'amd64', cores: 24 }, memory: { capacity: '128Gi' } },
   },
 ];
 

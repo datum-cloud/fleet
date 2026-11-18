@@ -238,10 +238,10 @@ func newAdapterFixture(t *testing.T) *adapterFixture {
 	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "allocation", UID: "claim-uid", Finalizers: []string{controller.MachineFinalizer}}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: "published-class"}, MachineProfileRef: fleetv1.LocalReference{Name: "published-profile"}, LocationRef: fleetv1.LocalReference{Name: location.Name}}}
 	localClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "published-class", UID: "local-class-uid"}, Spec: fleetv1.MachineClassSpec{Source: &fleetv1.SourceReference{Project: "provider", Name: "provider-class"}}}
 	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "provider-class", UID: "source-class-uid"}, Spec: fleetv1.MachineClassSpec{Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "inventory"}}}, Status: fleetv1.MachineClassStatus{EvaluatedRevision: "class-r1"}}
-	profileSpec := fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64"}, Memory: fleetv1.MemoryRequirement{Capacity: fleetv1.QuantityConstraint{Min: "1Gi"}}}
+	profileSpec := fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 8}, Memory: fleetv1.MemoryRequirement{Capacity: "8Gi"}}
 	localProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "published-profile", UID: "local-profile-uid"}, Spec: profileSpec}
 	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "source-profile", UID: "source-profile-uid"}, Spec: profileSpec}
-	machine := fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "inventory", Name: "machine-1", UID: "machine-uid", Generation: 1}, Spec: fleetv1.MachineCapacitySpec{AllocationPolicy: "Enabled", DeviceRef: fleetv1.LocalReference{Name: "server-1"}}, Status: fleetv1.MachineCapacityStatus{Hardware: fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64"}, Memory: fleetv1.HardwareMemory{Capacity: "8Gi"}}, Conditions: []metav1.Condition{{Type: "Prepared", Status: metav1.ConditionTrue, ObservedGeneration: 1}, {Type: "Healthy", Status: metav1.ConditionTrue, ObservedGeneration: 1}, {Type: "Available", Status: metav1.ConditionTrue, ObservedGeneration: 1}}}}
+	machine := fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "inventory", Name: "machine-1", UID: "machine-uid", Generation: 1}, Spec: fleetv1.MachineCapacitySpec{AllocationPolicy: "Enabled", DeviceRef: fleetv1.LocalReference{Name: "server-1"}}, Status: fleetv1.MachineCapacityStatus{Hardware: fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 8}, Memory: fleetv1.HardwareMemory{Capacity: "8Gi"}}, Conditions: []metav1.Condition{{Type: "Prepared", Status: metav1.ConditionTrue, ObservedGeneration: 1}, {Type: "Healthy", Status: metav1.ConditionTrue, ObservedGeneration: 1}, {Type: "Available", Status: metav1.ConditionTrue, ObservedGeneration: 1}}}}
 	return &adapterFixture{adapter: adapter, prepare: PrepareRequest{ConsumerRoute: "consumer", ProviderRoute: "provider", NamespaceUID: "namespace-uid", Claim: claim, LocalClass: localClass, SourceClass: sourceClass, LocalProfile: localProfile, SourceProfile: sourceProfile, PublicationRevision: "publication-r1", Location: location}, allocation: controller.AllocationRequest{Claim: claim, Class: sourceClass, Profile: sourceProfile, Location: location, MachineCapacities: []fleetv1.MachineCapacity{machine}, EvidenceObservedAt: map[types.UID]time.Time{machine.UID: now}}, executor: executor, quota: quota, fence: fence, custodian: custodian, records: records}
 }
 
@@ -293,7 +293,7 @@ func TestAdapterRecoversPreparedAuthorityWithoutReauthorizing(t *testing.T) {
 
 	changed := f.prepare
 	changed.LocalProfile = changed.LocalProfile.DeepCopyObject().(*fleetv1.MachineProfile)
-	changed.LocalProfile.Spec.Memory.Capacity.Min = "2Gi"
+	changed.LocalProfile.Spec.Memory.Capacity = "16Gi"
 	if _, err := f.adapter.PrepareOrRecoverClaim(ctx, changed); !errors.Is(err, ErrAuthorityInvalid) {
 		t.Fatalf("changed retained inputs error = %v, want ErrAuthorityInvalid", err)
 	}

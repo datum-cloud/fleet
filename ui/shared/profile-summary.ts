@@ -20,8 +20,19 @@ export function formatConstraint<T extends string | number>(
   return 'Any';
 }
 
+// CPU and memory are exact requests. A stored object that predates the exact
+// contract (for example `cores: {min: 16}`) is reported as invalid rather than
+// guessed at.
+export function formatCores(cores: unknown): string {
+  return typeof cores === 'number' && Number.isInteger(cores) && cores > 0 ? `${cores} cores` : 'Invalid';
+}
+
+export function formatMemory(capacity: unknown): string {
+  return typeof capacity === 'string' && capacity !== '' ? capacity : 'Invalid';
+}
+
 export interface ProfileSummary {
-  /** e.g. "≥ 24 cores · amd64" */
+  /** e.g. "24 cores · amd64" */
   cpu: string;
   memory: string;
   /** Absent when the profile asks for no GPUs. */
@@ -34,8 +45,8 @@ export function summarizeProfile(spec: MachineProfile['spec']): ProfileSummary {
   const { cpu, memory, gpus, disks, interfaces } = spec;
   const gpuWhat = gpus ? [gpus.vendor, gpus.models?.join(' / ')].filter(Boolean).join(' ') : '';
   return {
-    cpu: `${formatConstraint(cpu.cores, ' cores')} · ${cpu.architecture}`,
-    memory: formatConstraint(memory.capacity),
+    cpu: `${formatCores(cpu?.cores)} · ${cpu?.architecture}`,
+    memory: formatMemory(memory?.capacity),
     gpus: gpus && (gpuWhat ? `${formatConstraint(gpus.count)} × ${gpuWhat}` : formatConstraint(gpus.count)),
     disks: disks?.length ?? 0,
     interfaces: interfaces?.length ?? 0,
