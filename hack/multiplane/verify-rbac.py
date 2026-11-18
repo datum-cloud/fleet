@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Negative writes and credential revocation against real API servers."""
-import json,pathlib,subprocess,sys,time
+import json,os,pathlib,subprocess,sys,time
 s=pathlib.Path(sys.argv[1]);ns='fleet-coordination'
 def call(config,*args,input=None):return subprocess.run(['kubectl','--kubeconfig',str(config),'--request-timeout=15s',*args],input=input,text=True,capture_output=True)
 def forbidden(config,*args):
@@ -67,8 +67,10 @@ if bad:raise SystemExit('kro RBAC is not the narrowed grant: '+'; '.join(bad))
 retained=[('create','customresourcedefinitions'),('delete','customresourcedefinitions'),('update','leases','-n','kro-system')]
 retained={' '.join(a):can(*a) for a in retained}
 image=json.loads((s/'gitops-environment.json').read_text())['siteImage']
+redfish=os.environ.get('FLEET_SITE_PROVIDER')=='redfish'
 def job(**change):
  c={'name':'worker','image':image,'command':['fleet-multiplane','site-worker'],'securityContext':{'runAsUser':0,'allowPrivilegeEscalation':False,'readOnlyRootFilesystem':True,'capabilities':{'drop':['ALL']}}}
+ if redfish:c['env']=[{'name':'FLEET_SITE_PROVIDER','value':'redfish'}]
  spec={'restartPolicy':'Never','serviceAccountName':'w-op-admission-probe','containers':[c],'volumes':[{'name':'state','persistentVolumeClaim':{'claimName':'fleet-site-state'}},{'name':'tmp','emptyDir':{}}]}
  for k,v in change.items():
   (c if k in ('image','securityContext','env','volumeMounts') else spec)[k]=v
@@ -85,6 +87,16 @@ cases={'admitted':{'worker Job':job(),'worker Role':role(own),'worker ServiceAcc
   'Job from another image':job(image='registry.k8s.io/pause:3.10'),'Job with a hostPath volume':job(volumes=[{'name':'host','hostPath':{'path':'/'}}]),
   'Job on the host network':job(hostNetwork=True),'Role listing every handoff':role([dict(own[0],resourceNames=[],verbs=['get','list'])]),
   'RoleBinding to another Role, for the observer':binding('w-op-admission-probe','fleet-site-observer','fleet-site-kro-worker-rbac'),'ServiceAccount outside the worker set':sa('fleet-site-probe')}}
+if redfish:
+ # Redfish workers have no hypervisor path: the libvirt socket, the lab disks
+ # and a libvirt URI are denied by policy; only the BMC credential is added.
+ creds=[{'name':'state','persistentVolumeClaim':{'claimName':'fleet-site-state'}},{'name':'credentials','secret':{'secretName':'fleet-site-bmc-credentials'}}]
+ cases['admitted']['Redfish worker Job with the BMC credential']=job(volumes=creds)
+ cases['denied'].update({'Redfish worker mounting the libvirt socket':job(volumeMounts=[{'name':'state','mountPath':'/run/fleet-libvirt','subPath':'libvirt-socket'}]),
+  'Redfish worker mounting the lab disks':job(volumeMounts=[{'name':'state','mountPath':'/var/lib/fleet-lab/disks','subPath':'lab-disks'}]),
+  'Redfish worker with a libvirt URI':job(env=[{'name':'FLEET_SITE_PROVIDER','value':'redfish'},{'name':'FLEET_LIBVIRT_URI','value':'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'}]),
+  'worker selecting the libvirt provider':job(env=[{'name':'FLEET_SITE_PROVIDER','value':'libvirt'}]),
+  'Redfish worker mounting another Secret':job(volumes=[{'name':'other','secret':{'secretName':'fleet-site-other'}}])})
 record={'identity':kro,'allowed':[' '.join(a) for a in allowed],'denied':[' '.join(a) for a in denied],'chartGrantsRetained':retained,'admission':{}}
 for outcome,objs in cases.items():
  for name,obj in objs.items():

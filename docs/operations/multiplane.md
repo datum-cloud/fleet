@@ -16,6 +16,10 @@ composition. The shared lifecycle adds only the read-only
 `Coordinator.ClaimReleased` custody query, and the executor interface documents
 exact-request replay and its narrow not-found-plus-Unknown lookup contract.
 
+The [Redfish mode](redfish-lab.md) (`task multiplane:redfish-acceptance`) runs the
+same composition with a Redfish executor. Its workers have no libvirt socket and
+reach two persistent lab VMs only through the DMTF Redfish Interface Emulator.
+
 ## Topology and versions
 
 | Surface | Local implementation | Writer |
