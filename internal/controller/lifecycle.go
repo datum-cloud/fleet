@@ -108,34 +108,37 @@ const (
 
 // AssetRecord is private coordination state. It is deliberately retained after
 // release so the next allocation can advance the executor epoch without
-// reconstructing authority from public status.
+// reconstructing authority from public status. AcceptedRequirements may hold
+// the pre-exact CPU and memory shape for records written before exact
+// requests; such a record decodes only so it can be released (see
+// RetainedRequirements and ErrLegacyRecord).
 type AssetRecord struct {
-	SchemaVersion           int                        `json:"schemaVersion"`
-	State                   AssetState                 `json:"state"`
-	AssetID                 string                     `json:"assetID"`
-	MachineNamespace        string                     `json:"machineNamespace"`
-	MachineName             string                     `json:"machineName"`
-	MachineUID              types.UID                  `json:"machineUID"`
-	ClaimNamespace          string                     `json:"claimNamespace"`
-	ClaimName               string                     `json:"claimName"`
-	ClaimUID                types.UID                  `json:"claimUID"`
-	ClaimScope              ClaimScope                 `json:"claimScope"`
-	ClassUID                types.UID                  `json:"classUID"`
-	ProfileUID              types.UID                  `json:"profileUID"`
-	LocalClassUID           types.UID                  `json:"localClassUID"`
-	LocalProfileUID         types.UID                  `json:"localProfileUID"`
-	ConsumerProject         ProjectIdentity            `json:"consumerProject,omitempty"`
-	ProviderProject         ProjectIdentity            `json:"providerProject,omitempty"`
-	Authority               AuthorityRef               `json:"authority,omitempty"`
-	ExternalHold            ExternalHoldRef            `json:"externalHold,omitempty"`
-	BindingID               string                     `json:"bindingID"`
-	Epoch                   int64                      `json:"epoch"`
-	FenceToken              string                     `json:"fenceToken"`
-	CurrentInstallationName string                     `json:"currentInstallationName"`
-	ActiveOperationID       string                     `json:"activeOperationID,omitempty"`
-	AcceptedRequirements    fleetv1.MachineProfileSpec `json:"acceptedRequirements"`
-	Hardware                fleetv1.Hardware           `json:"hardware"`
-	Network                 *NetworkRecord             `json:"network,omitempty"`
+	SchemaVersion           int                  `json:"schemaVersion"`
+	State                   AssetState           `json:"state"`
+	AssetID                 string               `json:"assetID"`
+	MachineNamespace        string               `json:"machineNamespace"`
+	MachineName             string               `json:"machineName"`
+	MachineUID              types.UID            `json:"machineUID"`
+	ClaimNamespace          string               `json:"claimNamespace"`
+	ClaimName               string               `json:"claimName"`
+	ClaimUID                types.UID            `json:"claimUID"`
+	ClaimScope              ClaimScope           `json:"claimScope"`
+	ClassUID                types.UID            `json:"classUID"`
+	ProfileUID              types.UID            `json:"profileUID"`
+	LocalClassUID           types.UID            `json:"localClassUID"`
+	LocalProfileUID         types.UID            `json:"localProfileUID"`
+	ConsumerProject         ProjectIdentity      `json:"consumerProject,omitempty"`
+	ProviderProject         ProjectIdentity      `json:"providerProject,omitempty"`
+	Authority               AuthorityRef         `json:"authority,omitempty"`
+	ExternalHold            ExternalHoldRef      `json:"externalHold,omitempty"`
+	BindingID               string               `json:"bindingID"`
+	Epoch                   int64                `json:"epoch"`
+	FenceToken              string               `json:"fenceToken"`
+	CurrentInstallationName string               `json:"currentInstallationName"`
+	ActiveOperationID       string               `json:"activeOperationID,omitempty"`
+	AcceptedRequirements    RetainedRequirements `json:"acceptedRequirements"`
+	Hardware                fleetv1.Hardware     `json:"hardware"`
+	Network                 *NetworkRecord       `json:"network,omitempty"`
 }
 
 type ResolvedImage struct {
@@ -436,6 +439,11 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 	if custody.ClaimNamespace != request.Claim.Namespace || custody.ClaimName != request.Claim.Name || custody.NamespaceUID != request.NamespaceUID || custody.Admission != request.Admission || custody.State == CustodyReleased || !allocationAuthorityMatches(custody, request) {
 		return nil, fmt.Errorf("%w: claim custody does not authorize allocation", ErrRecordInvalid)
 	}
+	// A selection or binding accepted under the pre-exact requirements is
+	// never resumed, cleared, or reselected; only release may consume it.
+	if custody.ProposedAsset != nil && custody.ProposedAsset.AcceptedRequirements.Legacy() {
+		return nil, ErrLegacyRecord
+	}
 	existing, err := c.recordsForClaimScoped(ctx, request.Claim.UID, custody.ConsumerProject)
 	if err != nil {
 		return nil, err
@@ -552,6 +560,9 @@ func (c *Coordinator) recordCandidateEligible(record *AssetRecord, request Alloc
 }
 
 func validateAssetForRequest(record *AssetRecord, request AllocationRequest) error {
+	if record.AcceptedRequirements.Legacy() {
+		return ErrLegacyRecord
+	}
 	// Specs contain slices, so compare their canonical JSON rather than
 	// allowing a recovered Preparing record to drift across retries.
 	got, _ := json.Marshal(record.AcceptedRequirements)
@@ -798,7 +809,7 @@ func newAssetRecord(request AllocationRequest, machine *fleetv1.MachineCapacity,
 		ClassUID: request.Class.UID, ProfileUID: request.Profile.UID, LocalClassUID: localClassUID(request), LocalProfileUID: localProfileUID(request),
 		ConsumerProject: request.ConsumerProject, ProviderProject: request.ProviderProject, Authority: request.Authority, ExternalHold: request.ExternalHold,
 		BindingID: bindingID, Epoch: epoch,
-		FenceToken: fenceToken, CurrentInstallationName: "None", AcceptedRequirements: request.Profile.Spec, Hardware: machine.Status.Hardware}
+		FenceToken: fenceToken, CurrentInstallationName: "None", AcceptedRequirements: ExactRequirements(request.Profile.Spec), Hardware: machine.Status.Hardware}
 	if request.networkPlan != nil {
 		record.Network = &NetworkRecord{Plan: *request.networkPlan}
 	}
@@ -860,6 +871,9 @@ func (c *Coordinator) reconcileNetwork(ctx context.Context, consumer ProjectIden
 		return fleetnetwork.Observation{}, ErrRecordInvalid
 	}
 	asset := records[0]
+	if asset.AcceptedRequirements.Legacy() {
+		return fleetnetwork.Observation{}, ErrLegacyRecord
+	}
 	if asset.State != AssetCommitted || asset.Network == nil {
 		return fleetnetwork.Observation{}, ErrRecordInvalid
 	}
@@ -1243,6 +1257,9 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 		return InstallationResult{}, fmt.Errorf("%w: claim does not have one retained asset", ErrRecordInvalid)
 	}
 	asset := assets[0]
+	if asset.AcceptedRequirements.Legacy() {
+		return InstallationResult{}, ErrLegacyRecord
+	}
 	if asset.State != AssetCommitted || asset.ClaimNamespace != request.Claim.Namespace || asset.ClaimName != request.Claim.Name || asset.ClaimUID != request.Claim.UID || asset.ClaimScope != scope || asset.ConsumerProject != request.ConsumerProject {
 		return InstallationResult{}, ErrPredecessorConflict
 	}

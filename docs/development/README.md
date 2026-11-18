@@ -64,6 +64,23 @@ removed as a breaking `v1alpha1` change with no conversion or migration. Stored
 profiles with the old shape must be recreated before upgrading. The allocator
 matches capacity only when the observed cores and memory equal the request.
 
+Private records retained before that change still decode, but only so they can
+be released. `controller.RetainedRequirements` is the `acceptedRequirements`
+encoding in asset records, custody proposals, and Milo authority records. It
+reads exact requirements unchanged. It also reads the complete former
+`{min, max, exact}` shape for `cpu.cores` and `memory.capacity` and re-encodes
+that shape verbatim. Allocation retries, selection, `Install`, network refresh,
+and Milo recovery return `controller.ErrLegacyRecord` for such a record. That
+error wraps `ErrRecordInvalid`. Synthetic staging reports it on a live Machine
+as `Bound=False` and `Ready=False` with reason `LegacyCustodyRecord`, and does
+not requeue. Deletion releases the record through the same verified cleanup
+path as any other record, even when the profile UIDs it names were deleted
+and recreated. Tests cover the legacy fixture decode, refusal without record
+changes or provider effects, release with replaced profiles and with
+unverified cleanup, staging status and finalizer removal, and Milo digest
+preservation. See the
+[upgrade notes](../enhancements/machine-lifecycle/README.md#machineprofile).
+
 `manager.RequestedHardwareProjector` is wired as the Machine projector in every
 `cmd/fleet-manager` mode, including the default inert mode. It reads the Machine
 and its profile from the routed project cache. The first exact resolution writes
