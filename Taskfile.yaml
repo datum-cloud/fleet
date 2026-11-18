@@ -1,6 +1,11 @@
 version: '3'
 
 tasks:
+  standalone:test:
+    desc: Run the synthetic lifecycle in a disposable local kind cluster.
+    cmds:
+      - ./hack/run-standalone-smoke.sh
+
   manifests:validate:
     desc: Render and validate the production Fleet and Milo manifest roots.
     cmds:
