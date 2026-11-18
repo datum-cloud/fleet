@@ -31,6 +31,12 @@ an OCI artifact staged from the checkout. Run it
 with `task multiplane:acceptance`. Its exit codes, bounded phases and sanitized
 `evidence/` directory are documented there; `task multiplane:test-harness` runs its
 offline tests, which CI also runs.
+`internal/redfish` implements a Redfish executor behind the same contracts: discovery,
+one-time boot overrides, power, observation-based recovery and a booted wipe
+cleanup. [Redfish-mode acceptance](../operations/redfish-lab.md)
+(`task multiplane:redfish-acceptance`) exercises it against the unmodified DMTF Redfish
+Interface Emulator and a lab-only libvirt adapter. It is not qualified against a
+physical BMC or server, and the production manager does not use it.
 
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.

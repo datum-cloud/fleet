@@ -18,6 +18,7 @@ s = pathlib.Path(sys.argv[1])
 prefix = (s / 'prefix').read_text().strip()
 ev = s / 'evidence'
 os.environ['DOCKER_CONTEXT'] = 'colima-fleet-acceptance-tcg'
+REDFISH = (s / 'site-provider').exists() and (s / 'site-provider').read_text().strip() == 'redfish'
 
 
 def out(*args):
@@ -81,6 +82,11 @@ markers = ('Verified forbidden observer/project/hub writes', 'allocate: verified
            'flux-restart: every Flux controller', 'flux-fail-closed: absent kro chart digest', 'shared site layers applied it with services untouched',
            'flux-retention: removing the volume claim', 'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in (
                'wrong-cell', 'stale', 'duplicate', 'future', 'wrong-intent', 'wrong-digest', 'wrong-operation', 'incomplete', 'missing'))
+if REDFISH:
+    markers += ('bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified', 'bmc-self-test: upstream emulator and lab adapter self-test passed',
+                'redfish-enroll: synthetic BMC credential Secret created', 'redfish-baseline: both lab target disks present', 'redfish-discovery-faults: real emulator discovery',
+                'redfish-lost-response: On took effect but its response was lost', 'redfish-bmc-interrupt: lab BMC Pod force-deleted mid-install',
+                'install-b: verified', 'redfish-isolation: target B never started')
 for marker in markers:
     if marker not in phases:
         fail('missing acceptance phase: ' + marker)
@@ -155,7 +161,90 @@ def libvirt_provider():
     return ops, installs, cleanups, epochs, interrupt, receipts, starts, denials
 
 
-ops, installs, cleanups, epochs, interrupt, receipts, starts, denials = libvirt_provider()
+def redfish_provider():
+    """Redfish mode: the persistent lab target A carries every operation.
+    Independent of the journal, its serial console proves one exact receipt
+    per boot, libvirt's QEMU log proves the boot order and count, the BMC
+    audit proves one On per boot, and target B never ran."""
+    raw.mkdir(mode=0o700, exist_ok=True)
+    copy_out('/var/lib/fleet-local', raw)
+    copy_out('/var/lib/fleet-boot', raw / 'boot-evidence')
+    copy_out('/var/log/libvirt/qemu', raw / 'libvirt-qemu')
+    copy_out('/var/lib/fleet-lab-console', raw / 'lab-console')
+    j = json.loads((raw / 'journal.json').read_text())
+    ops = sorted(j['operations'].values(), key=lambda o: o['result']['createdAt'])
+    installs = [o for o in ops if o['request']['kind'] == 'install']
+    cleanups = [o for o in ops if o['request']['kind'] == 'cleanup']
+    if j.get('provider') != 'redfish' or len(installs) != 2 or len(cleanups) != 2 or any(o['result']['phase'] != 'Succeeded' or o.get('stage') != 'done' for o in ops):
+        fail('expected the Redfish provider, two installs and two verified cleanups')
+    if [o['request']['kind'] for o in ops] != ['install', 'cleanup', 'install', 'cleanup'] or not j.get('closed'):
+        fail('expected install, cleanup, reinstall, cleanup with the final epoch closed')
+    epochs = sorted({o['request']['epoch'] for o in ops})
+    if epochs != [1, 2]:
+        fail('expected allocation epochs 1 and 2, got %s' % epochs)
+    enrolled = json.loads((raw / 'enrollment.json').read_text())
+    a = next(t for t in enrolled['targets'] if t['systemID'] == 'System-1')
+    for o in ops:
+        if o['target'] != a or o['system']['path'] != '/redfish/v1/Systems/System-1' or o['system']['uuid'] != a['systemUUID'] or not o.get('bootClosed'):
+            fail('an operation did not retain the exact enrolled target A System with closed boot admission')
+    interrupt = json.loads((ev / 'interrupt.json').read_text())
+    if interrupt['operationID'] != installs[0]['request']['id'] or interrupt['stageAtInterrupt'] != 'installer-started' or not interrupt['domainRunningAtInterrupt']:
+        fail('interrupt evidence does not identify the retained install operation mid-installer')
+    console = [l.strip() for l in (raw / 'lab-console' / 'target-a.log').read_text(errors='replace').splitlines()]
+    expected, receipts = [], []
+    for o in ops:
+        want = ['FLEET-INSTALLED:' + o['receipt'], 'FLEET-DISK-BOOT:' + o['receipt']] if o['request']['kind'] == 'install' else ['FLEET-WIPED:%s:%d' % (o['receipt'], a['diskBytes'])]
+        for line in want:
+            if console.count(line) != 1:
+                fail('expected exactly one exact console receipt %s for %s' % (line.split(':')[0], o['request']['kind']))
+            expected.append(console.index(line))
+        receipts.append({'operation': o['request']['id'], 'kind': o['request']['kind'], 'epoch': o['request']['epoch'],
+                         'receipts': [line.split(':')[0] for line in want], 'receiptSHA256': hashlib.sha256(o['receipt'].encode()).hexdigest()})
+        log = raw / 'boot-evidence' / hashlib.sha256(o['request']['id'].encode()).hexdigest() / 'boot-delivery.log'
+        written = log.read_text() if log.exists() else ''
+        for name in ('boot.ipxe', 'kernel', 'installer.gz'):
+            if 'write-complete ' + name + ' bytes=' not in written:
+                fail('missing completed boot delivery of %s for %s' % (name, o['request']['kind']))
+    if expected != sorted(expected) or sum(1 for l in console if l.startswith('FLEET-')) != len(expected):
+        fail('console receipts are out of order or include another operation')
+    if sum(1 for l in console if l.startswith('+ sfdisk /dev/vda')) != 2:
+        fail('the installer partitioned the target disk other than once per install')
+    qemu = (raw / 'libvirt-qemu' / 'fleet-lab-target-a.log').read_text(errors='replace')
+    blocks = re.split(r'^\S+ \S+: starting up ', qemu, flags=re.M)[1:]
+    def network(block):
+        return any(a['mac'] in seg and ('"bootindex":1' in seg or 'bootindex=1' in seg) for seg in re.split(r'\s-device\s', block))
+    order = ['network' if network(b) else 'disk' for b in blocks]
+    starts = {'targetA': order, 'targetB': (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').read_text(errors='replace').count(': starting up ')
+              if (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').exists() else 0}
+    if order != ['network', 'disk', 'network', 'network', 'disk', 'network'] or starts['targetB']:
+        fail('expected target A boots network, disk, network, network, disk, network and no target B start; got %s' % starts)
+    audit = [json.loads(l) for l in (ev / 'redfish-audit.jsonl').read_text().splitlines()]
+    effects = [e for e in audit if e['method'] not in ('GET', 'HEAD')]
+    ons = [e for e in effects if e.get('resetType') == 'On']
+    if len(ons) != 6 or any(not e.get('effect', '').startswith('started') for e in ons) or any('/System-1' not in e['path'] for e in effects):
+        fail('expected exactly six effective On requests, all to System-1, and no other target effect')
+    if sum(1 for e in ons if e.get('fault') == 'drop-response-after-effect') != 1:
+        fail('the lost-response fault did not fire exactly once')
+    if runtime('virsh', '--connect', 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock', 'list', '--name').strip():
+        fail('a lab target is still running')
+    admission = json.loads((ev / 'kro-rbac.json').read_text())['admission']
+    for case in ('Redfish worker mounting the libvirt socket', 'Redfish worker mounting the lab disks', 'Redfish worker with a libvirt URI', 'worker selecting the libvirt provider'):
+        if admission.get(case, {}).get('deniedBy') != 'ValidatingAdmissionPolicy':
+            fail('kro admission did not deny: ' + case)
+    if not admission.get('Redfish worker Job with the BMC credential', {}).get('admitted'):
+        fail('kro admission did not admit the Redfish worker shape')
+    for name in ('redfish-upstream.json', 'redfish-enrollment.json', 'redfish-discovery-faults.json', 'redfish-lost-response.json', 'redfish-bmc-interrupt.json', 'redfish-isolation.json'):
+        if not (ev / name).exists():
+            fail('missing Redfish evidence ' + name)
+    denials = (s / 'boot-denials.txt').read_text().strip() if (s / 'boot-denials.txt').exists() else ''
+    if not denials.startswith('PASS'):
+        fail('missing live closed-boot HTTP denial evidence')
+    starts['redfishEffects'] = [{k: e.get(k) for k in ('method', 'path', 'status', 'resetType', 'boot', 'effect', 'fault')} for e in effects]
+    return ops, installs, cleanups, epochs, interrupt, receipts, starts, denials
+
+
+raw = s / 'provider-private'
+ops, installs, cleanups, epochs, interrupt, receipts, starts, denials = (redfish_provider if REDFISH else libvirt_provider)()
 
 # Kubernetes execution: what actually ran, as names, UIDs, phases and conditions.
 kro = kget('-n', 'kro-system', 'get', 'deployment')['items']
@@ -182,7 +271,17 @@ for job in jobs:
                         'serviceAccount': job['spec']['template']['spec']['serviceAccountName'], 'podReplacementPolicy': job['spec'].get('podReplacementPolicy'),
                         'podFailurePolicy': job['spec'].get('podFailurePolicy'), 'backoffLimit': job['spec'].get('backoffLimit'),
                         'activeDeadlineSeconds': job['spec'].get('activeDeadlineSeconds'), 'createdBy': job['metadata']['labels'].get('kro.run/node-id')})
-if sorted(j['kind'] for j in worker_jobs) != ['cleanup', 'cleanup', 'install'] or any(j['createdBy'] != 'workers' for j in worker_jobs):
+if REDFISH:
+    # Every Redfish worker that ran: Redfish provider, no hypervisor path.
+    for job in jobs:
+        pod = job['spec']['template']['spec']
+        c = pod['containers'][0]
+        env = {e['name']: e.get('value') for e in c.get('env', [])}
+        mounts = [m.get('subPath', '') + ':' + m['mountPath'] for m in c.get('volumeMounts', [])]
+        if env.get('FLEET_SITE_PROVIDER') != 'redfish' or 'FLEET_LIBVIRT_URI' in env or any('libvirt' in m or 'lab-disks' in m for m in mounts) or any('hostPath' in v for v in pod.get('volumes', [])):
+            fail('a Redfish worker Job had a hypervisor path: ' + job['metadata']['name'])
+expected_jobs = ['cleanup', 'cleanup', 'install', 'install'] if REDFISH else ['cleanup', 'cleanup', 'install']
+if sorted(j['kind'] for j in worker_jobs) != expected_jobs or any(j['createdBy'] != 'workers' for j in worker_jobs):
     fail('expected kro-created worker Jobs for exactly one install and two cleanups, got %s' % [(j['kind'], j['createdBy']) for j in worker_jobs])
 pvc = kget('-n', 'fleet-site', 'get', 'pvc', 'fleet-site-state')
 pv = kget('get', 'pv', pvc['spec']['volumeName'])
@@ -212,7 +311,7 @@ execution = {
 }
 if execution['kro']['helmReleaseOwner'] != 'kro':
     fail('kro controller is not owned by the Flux HelmRelease')
-if pv['spec']['persistentVolumeReclaimPolicy'] != 'Retain' or sorted(deployments) != sorted(['fleet-site-boot', 'fleet-site-observer', 'fleet-site-runtime']) or any(
+if pv['spec']['persistentVolumeReclaimPolicy'] != 'Retain' or sorted(deployments) != sorted(['fleet-site-boot', 'fleet-site-observer', 'fleet-site-runtime'] + (['fleet-site-bmc'] if REDFISH else [])) or any(
         d['availableReplicas'] != 1 or d['fluxLayer'] != 'fleet-site-services' or d['kroLabels'] for d in deployments.values()):
     fail('site volume or Flux-owned shared Deployments not as expected')
 (ev / 'kubernetes-execution.json').write_text(json.dumps(execution, indent=2, sort_keys=True) + '\n')
@@ -266,11 +365,27 @@ summary = {
               'reflection faults injected with bootstrap credentials while the Karmada controller is stopped'],
     'privateArtifacts': 'state directory outside evidence/ contains authority; do not publish',
 }
+if REDFISH:
+    summary['qualification'].update(redfishExecutor=True, dmtfRedfishInterfaceEmulator='1.2.2 (unmodified) + lab-only libvirt adapter', bootedCleanupEnvironment=True,
+                                    physicalHardware=False, physicalBMC=False, vendorRedfishQualified=False, bmcTLS=False, mediaSanitization=False)
+    summary['scenarios']['cleanupAndReuse'] = {'epochs': epochs, 'installs': len(installs), 'cleanups': len(cleanups), 'reinstallOnReusedTarget': True,
+                                               'cleanup': 'PXE-booted wipe environment zeroed and read back the whole 2 GiB virtual disk; the harness hashed the disk file as all zeroes. Logical test cleanup, not media sanitization.'}
+    summary['scenarios']['redfish'] = {'evidence': ['redfish-upstream.json', 'redfish-enrollment.json', 'redfish-discovery-faults.json', 'redfish-lost-response.json',
+                                                    'redfish-bmc-interrupt.json', 'redfish-isolation.json', 'redfish-audit.jsonl'],
+                                       'bootOrderTargetA': starts['targetA'], 'targetBStarts': starts['targetB'], 'effects': starts['redfishEffects']}
+    summary['seams'] = [x for x in summary['seams'] if 'root libvirtd' not in x] + [
+        'DMTF Redfish Interface Emulator with a lab-only adapter in place of a physical BMC; libvirt/QEMU TCG VMs in place of servers',
+        'plain-HTTP Basic authentication with a synthetic per-run credential Secret enrolled by the harness (no TLS, rotation or vault)',
+        'static lab provisioning network (libvirt dnsmasq) with MAC-chained iPXE; MAC is routing, not authentication',
+        'installation receipts read from a read-only serial-console capture (stand-in for SOL or an installer callback)',
+        'trusted graph authors: worker Jobs hold the synthetic BMC credential; only the runtime and the lab BMC hold the libvirt socket',
+        'one site journal fences every lab target (one allocatable target)']
 (ev / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
 for name in ('source-SHA256SUMS', 'sysctl.json'):
     if (s / name).exists():
         (ev / name).write_text((s / name).read_text())
 paths = [s / 'site-bin' / 'fleet-multiplane', s / 'fleet-multiplane-host']
 (ev / 'binary-SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in paths))
-(ev / 'image-id').write_text(out('docker', 'image', 'inspect', prefix + '-site-image', '--format', '{{.Id}}').strip() + '\nregistry digest ' + write_env['siteImageDigest'] + '\n')
+(ev / 'image-id').write_text(out('docker', 'image', 'inspect', prefix + '-site-image', '--format', '{{.Id}}').strip() + '\nregistry digest ' + write_env['siteImageDigest'] + '\n' + (
+    'bmc image ' + out('docker', 'image', 'inspect', prefix + '-bmc-image', '--format', '{{.Id}}').strip() + '\nbmc registry digest ' + write_env['bmcImageDigest'] + '\n' if REDFISH else ''))
 print('evidence: sanitized summary ' + str(ev / 'summary.json'))

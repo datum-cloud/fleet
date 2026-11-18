@@ -8,8 +8,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 umask 077
-usage() { echo 'usage: hack/multiplane/run.sh [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
-preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=()
+usage() { echo 'usage: hack/multiplane/run.sh [--redfish] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
+preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt
 for arg in "$@"; do
  case "$arg" in
   --preflight-only) preflight_only=1 ;;
@@ -17,14 +17,18 @@ for arg in "$@"; do
   --keep) keep=1 ;;
   --leave-running) leave=1 ;;
   --skip-readiness-tests) skip_tests=(--skip-tests) ;;
+  # Redfish mode: workers drive lab VMs only through the DMTF Redfish emulator
+  # and its lab adapter (docs/operations/redfish-lab.md).
+  --redfish) provider=redfish ;;
   *) usage ;;
  esac
 done
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker
+export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider
 harness=(python3 hack/multiplane/harness.py)
 state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
 mkdir -m 0700 "$state/evidence"
-printf 'Private run state: %s\nShareable evidence: %s/evidence\n' "$state" "$state"
+printf '%s\n' "$provider" > "$state/site-provider"
+printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\n' "$state" "$state" "$provider"
 
 finish() {
  code=$1
@@ -53,7 +57,7 @@ printf '%s\n' "$prefix" > "$state/prefix"
 python3 - "$state" <<'PY'
 import hashlib,pathlib,sys
 paths=[]
-for name in ('internal','cmd/fleet-multiplane','hack/multiplane','hack/local-vm','config/multiplane','config/site','config/base/crd'):
+for name in ('internal','cmd/fleet-multiplane','hack/multiplane','hack/local-vm','hack/redfish-lab','config/multiplane','config/site','config/base/crd'):
  paths += [p for p in pathlib.Path(name).rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix not in ('.pyc', '.pyo')]
 paths += [pathlib.Path(name) for name in ('go.mod', 'go.sum')]
 (pathlib.Path(sys.argv[1])/'source-SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+str(p)+'\n' for p in sorted(paths)))
@@ -68,6 +72,13 @@ ph site-image-verify 120 sh -c '
  printf "%s  /usr/local/bin/fleet-multiplane\n" "$sum" | docker run --rm -i --entrypoint sha256sum "$1-site-image" -c - >/dev/null
  docker run --rm -e FLEET_LOCAL_VM_ACCEL=tcg --entrypoint fleet-multiplane "$1-site-image" image > "$2/image"
  echo "site image: checksum-verified executable; artifact reference recorded"' sh "$prefix" "$state"
+if [[ $provider == redfish ]]; then
+ # The unmodified upstream emulator, verified before extraction, plus the
+ # lab-only adapter; its self-test runs the real emulator with a fake virsh.
+ ph bmc-upstream 300 sh -c 'bash hack/redfish-lab/upstream.sh "$1/redfish-upstream" > "$1/evidence/redfish-upstream.json" && echo "bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified"' sh "$state"
+ ph bmc-image 1800 docker build --build-context "upstream=$state/redfish-upstream/src/Redfish-Interface-Emulator-1.2.2" -t "$prefix-bmc-image" -f hack/redfish-lab/Containerfile hack/redfish-lab
+ ph bmc-self-test 300 sh -c 'docker run --rm --network none --entrypoint python3 "$1-bmc-image" /opt/fleet-lab/test_adapter.py >/dev/null 2>&1 && echo "bmc-self-test: upstream emulator and lab adapter self-test passed"' sh "$prefix"
+fi
 ph flux-tools 300 "${flux[@]}" tools "$state"
 docker network inspect kind >/dev/null 2>&1 || docker network create kind >/dev/null
 # Disposable infrastructure only: registry and three kind clusters, no services.
@@ -89,16 +100,21 @@ s=pathlib.Path(sys.argv[1]).resolve();c={'State':str(s),'HubKubeconfig':str(s/'m
 PY
 ph seed 600 "$state/fleet-multiplane-host" seed --config "$state/acceptance.json"
 ph scoped-asset 120 sh -c '"$1/fleet-multiplane-host" asset --config "$1/acceptance.json" > "$1/scoped-asset" && echo "scoped asset recorded"' sh "$state"
+[[ $provider != redfish ]] || ph redfish-enroll 120 python3 hack/multiplane/redfish_steps.py enroll "$state"
 # Revision 2: the Flux-owned shared site services and the HandoffDispatcher
 # instance, dispatch disabled.
 ph flux-site 1200 "${flux[@]}" publish "$state" --revision 2 --site off --purpose 'shared site services and dispatcher, dispatch disabled' --cluster cell --cluster hub --cluster platform --timeout 900
 ph site-install 900 bash hack/multiplane/site.sh check "$state"
 ph flux-verify 300 "${flux[@]}" verify "$state"
-bash hack/multiplane/acceptance.sh "$state"
+if [[ $provider == redfish ]]; then
+ bash hack/multiplane/acceptance-redfish.sh "$state"
+else
+ bash hack/multiplane/acceptance.sh "$state"
+fi
 ph secret-scan 120 "${harness[@]}" scan --state "$state"
 if [[ $keep == 1 ]]; then
  ph stop 300 bash hack/multiplane/stop.sh "$state"
 else
  ph teardown 900 bash hack/multiplane/teardown.sh "$state"
 fi
-printf 'Local topology/PXE acceptance passed. Production authority and physical hardware remain unqualified.\n'
+printf 'Local topology/PXE acceptance (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$provider"
