@@ -13,6 +13,7 @@ integrations. Real provider support and live Milo acceptance tests are incomplet
 | --- | --- | --- |
 | Build and test locally or run the simulator | [Implementation commands](../development/README.md#build-test-and-run) | Behavior of the implemented code and synthetic provider |
 | Exercise allocation, install recovery, cleanup, and reuse | [Standalone smoke environment](standalone-smoke.md) | Same-cluster lifecycle behavior with namespaces as project stand-ins |
+| Install a real OS over firmware PXE into a disposable local VM | [Local VM PXE installation](local-vm.md) | Single-plane real install, disk-only boot, recovery, cleanup and reuse under explicit TCG; not KVM or hardware qualification |
 | Render deployment bundles and supply environment inputs | [Deployment manifests](../../config/README.md) | Packaging and security boundaries, not runtime readiness |
 | Run the manager across consuming projects | [Project discovery](../../config/README.md#project-discovery) | Discovery, per-project isolation, departure, role bindings, and readiness |
 | Exercise Milo-routed synthetic staging | [Synthetic staging configuration](../../config/README.md#environment-owned-inputs) | Restricted synthetic publication and lifecycle behavior, not production authority |

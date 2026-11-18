@@ -18,7 +18,12 @@ scenario exercises local-scope contention, install recovery, cleanup, and
 capacity reuse. An explicit Milo-routed synthetic staging overlay exercises
 event-driven Machine allocation, contention, cleanup, and reuse through the
 public project API. Production caller-preserving
-admission, replayable Milo event adapters, and real providers are not implemented.
+admission, replayable Milo event adapters, and production provider integration are not implemented.
+An opt-in [local KVM installation harness](../operations/local-vm.md) implements
+a bounded libvirt executor and guest installer using the same lifecycle library.
+It uses a disposable Kubernetes API and explicit local authority fixtures; it is
+not wired into the production manager.
+
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
