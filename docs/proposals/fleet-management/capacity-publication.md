@@ -73,7 +73,9 @@ onboarding and marketplace behavior are separate enhancements.
 - **MachineProfile:** Immutable hardware requirements published into the consumer
   project alongside an offering, or customer-authored when the class explicitly
   permits custom profiles. A profile describes desired shape; it neither selects
-  provider inventory nor grants allocation authority.
+  provider inventory nor grants allocation authority. CPU cores and memory
+  capacity are exact requests, not ranges. The coordinator pins the resolved
+  request in Machine status so listings need no profile lookup.
 - **Provider adapter configuration:** Reusable acquisition or hardware
   preparation requirements remain private to the selected provider adapter and
   do not decide which projects receive the capacity definition.
@@ -230,7 +232,8 @@ allocation. Its authorization and commit protocol must span the project APIs:
    delivery gives execution only the approved inputs it needs. Provider
    credentials remain in provider scope.
 4. Select MachineCapacity compatible with the resolved profile from the canonical class's authorized provider
-   project and explicit supply namespace. Revalidate physical eligibility,
+   project and explicit supply namespace. CPU cores and memory must equal the
+   pinned request; larger capacity is not substituted. Revalidate physical eligibility,
    preparation, network feasibility, and the admitted public requirements.
 5. Create one immutable, service-owned MachineAllocation and commit its quota hold
    with current source-use, entitlement, and source-policy preconditions. Its

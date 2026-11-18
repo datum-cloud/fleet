@@ -24,9 +24,17 @@ Migration-only edits are limited to:
 - Updating three illustrative `milo-os/fleet` implementation references to
   `datum-cloud/fleet`, the chosen repository home.
 
-The examples, PlantUML sources, and rendered PNGs are otherwise preserved. The
-repository overview and design summary now point to this local proposal.
-Environment-specific deployment and migration configuration remains in infra.
+The examples, PlantUML sources, and rendered PNGs are otherwise preserved,
+except for the amendments listed below. The repository overview and design
+summary now point to this local proposal. Environment-specific deployment and
+migration configuration remains in infra.
+
+## Post-import amendments
+
+- 2026-11-17: MachineProfile CPU cores and memory capacity changed from `min`
+  ranges to exact requests, with the resolved request pinned in Machine status.
+  The `standard-metal` example and the capacity publication text were updated
+  to match the [machine lifecycle enhancement](../../enhancements/machine-lifecycle/README.md).
 
 ## Review points carried forward
 
