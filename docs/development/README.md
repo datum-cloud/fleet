@@ -81,9 +81,23 @@ unverified cleanup, staging status and finalizer removal, and Milo digest
 preservation. See the
 [upgrade notes](../enhancements/machine-lifecycle/README.md#machineprofile).
 
-`manager.RequestedHardwareProjector` is wired as the Machine projector in every
-`cmd/fleet-manager` mode, including the default inert mode. It reads the Machine
-and its profile from the routed project cache. The first exact resolution writes
+`requestedhardware.Project` is the one projection that writes
+`status.requestedHardware` and `RequestResolved`. Two components call it, and
+exactly one may serve a given project:
+
+- `manager.RequestedHardwareProjector` is the Machine projector in every
+  `cmd/fleet-manager` mode, including the default inert mode, for the manager's
+  one configured project. `--enable-requested-hardware-projector=false`
+  replaces it with a projector that never reads or writes Machines; the default
+  (`true`) keeps existing deployments, including synthetic staging, unchanged.
+- `cmd/fleet-request-resolver` runs the same projection for every project that
+  consumes the metal service, through the service catalog's
+  multicluster-runtime consumer provider. It registers one controller (Machines,
+  plus MachineProfiles mapped to the unpinned Machines that reference them) and
+  never starts lifecycle controllers. See
+  [the request resolver](#request-resolver).
+
+Both read the Machine and its profile from the project cache. The first exact resolution writes
 `status.requestedHardware` with Machine generation, profile generation, and
 spec-digest provenance, and sets `RequestResolved=True`. After that the snapshot
 is never re-resolved, and a CRD transition rule rejects status writes that
@@ -99,6 +113,65 @@ validation and CEL pinning with the API server's validators, resolver
 provenance, missing and invalid profiles, post-acceptance profile changes,
 inert-mode wiring, and staging and standalone carry-forward. See
 [requested hardware](../enhancements/machine-lifecycle/README.md#requested-hardware).
+
+## Request resolver
+
+`cmd/fleet-request-resolver` is the production-safe writer of requested
+hardware. It is a separate binary and image (`build/request-resolver.Dockerfile`,
+`ghcr.io/datum-cloud/fleet-request-resolver`) and does not link
+`internal/manager`, `internal/staging`, `internal/milo`, quota, location, or
+network packages; a test enforces this with `go list -deps`.
+
+- **Discovery.** `discovery.mode: milo` requires
+  `consumerScopedProjection` with exactly `serviceNames: [metal.datumapis.com]`;
+  watching every project is rejected. The consumer provider watches
+  ServiceConsumers in the provider project and engages a consumer project while
+  it has an Active, not-deleting consumer. `discovery.mode: single` serves the
+  process kubeconfig's cluster for local and standalone tests. Unknown
+  configuration fields are rejected.
+- **Observational discovery.** The provider declares no managed resources,
+  teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer and
+  deletes nothing when a project leaves. Its discovery clients refuse every
+  write. The library would otherwise patch `Paused=True` on a suspended
+  ServiceConsumer even with no hooks; the resolver drops that patch, because it
+  pauses nothing and must not confirm a suspension. A suspended project keeps
+  resolving.
+- **Departure.** When a project leaves the consumer set, its engagement context
+  is cancelled and queued requests for it are dropped without any write.
+- **Identity.** The resolver keeps no custody or authority records. It reads
+  and writes only through the engaged project's client and projects whichever
+  Machine currently has the requested name; it does not read Project UIDs.
+- **Leader election and engagement.** The resolver holds a lease in the host
+  cluster (`fleet-request-resolver.fleet.datumapis.com`); only the holder runs
+  the controller. Project engagement runs on every replica: as in Compute,
+  the provider's `Start` is hidden from `mcmanager` (which would leader-gate
+  it) and re-added once to the always-running group. Unlike Compute, this is
+  done for every `ProviderRunnable`, so the consumer provider is not started
+  twice.
+- **Readiness.** `/readyz` requires the provider project's ServiceConsumer
+  cache to have synced, every project with an Active metal consumer to be
+  engaged, and every engaged project cache to have synced. It never depends on
+  lifecycle integrations. One unreachable consumer project keeps every replica
+  unready, which blocks rollouts but not resolution in other projects.
+- **Module versions.** The resolver uses the versions Compute uses:
+  `sigs.k8s.io/multicluster-runtime` v0.25.2, `go.miloapis.com/milo` v0.36.9,
+  `go.miloapis.com/service-catalog` v0.14.6-0.20261023171130-8c647a6f552b,
+  `sigs.k8s.io/controller-runtime` v0.25.2, and Kubernetes libraries v0.37.1.
+  This raised Fleet's controller-runtime (v0.24.1), Kubernetes (v0.36.1), Milo
+  (v0.32.5), and service-catalog (v0.13.1) versions; Milo v0.36.9 itself
+  requires controller-runtime v0.25.2 and Kubernetes v0.37.1, and the existing
+  test suites pass unchanged.
+
+Tests in `internal/requestresolver` run the production manager wiring over a
+fake provider and fake project caches. They cover independent projects with
+equal names, a missing, invalid, or unreadable profile in one project, departure
+without writes, resolution of existing Machines on engagement, pinned values
+across a restart with a replaced profile, profile fan-out limited to
+referencing Machines, the single controller and its two watched kinds, single
+provider start, readiness, read-only discovery clients, and configuration. An
+end-to-end test runs the real consumer provider against separate API servers
+behind a Milo-shaped project router, with a real host lease and the Machine
+CRD's pinning rule; it needs envtest binaries and is skipped without them.
 
 ## Location authority
 
@@ -573,6 +646,16 @@ go test ./...
 go test -race ./...
 go vet ./...
 ```
+
+The request resolver's end-to-end test needs envtest binaries. CI installs
+them; locally, run:
+
+```sh
+export KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)"
+go test -race ./internal/requestresolver/...
+```
+
+`task resolver:test` runs the same command.
 
 For an isolated local run, create a synthetic credential file and keep the
 default loopback listener:

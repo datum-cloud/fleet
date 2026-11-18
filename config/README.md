@@ -18,6 +18,11 @@ API servers and must be reconciled independently.
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
+`config/components/request-resolver` is an opt-in Kustomize Component for the
+Fleet management cluster. It deploys `fleet-request-resolver`, the
+production-safe writer of Machine `status.requestedHardware`. No overlay
+includes it by default; see [request resolver](#request-resolver).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
 
@@ -82,6 +87,11 @@ as `ghcr.io/datum-cloud/fleet` and then publishes `config` as
 manager image tag into `config/base/manager`, so an environment consumes one
 matched image and manifest revision.
 
+The workflow also publishes `ghcr.io/datum-cloud/fleet-request-resolver` from
+`build/request-resolver.Dockerfile`. That image contains only the resolver
+binary. The bundle publisher stamps its tag into
+`config/components/request-resolver`.
+
 The same workflow publishes the portal plugins as
 `ghcr.io/datum-cloud/fleet-consumer-ui-plugin` (cloud-portal) and
 `ghcr.io/datum-cloud/fleet-provider-ui-plugin` (staff-portal), and stamps their
@@ -95,6 +105,7 @@ The images can be built locally with:
 
 ```sh
 docker build -f build/manager.Dockerfile .
+docker build -f build/request-resolver.Dockerfile .
 docker build -f build/ui-plugin.Dockerfile --build-arg PLUGIN=consumer .
 docker build -f build/ui-plugin.Dockerfile --build-arg PLUGIN=provider .
 ```
@@ -161,7 +172,123 @@ to that private namespace. Cache scoping is not an authorization boundary. The
 private namespace and `fleet-system` have Flux pruning disabled so uninstalling
 one release cannot implicitly delete retained lifecycle authority.
 
+## Request resolver
+
+`fleet-request-resolver` pins `status.requestedHardware` and the
+`RequestResolved` condition on Machines in every project that has an Active
+ServiceConsumer for the `metal` service (`metal.datumapis.com`). It runs only
+that projection. It has no private namespace, never starts lifecycle
+controllers, and does not watch networks, quota, entitlements, locations, or
+Secrets. It is the only Fleet workload intended to run in production today;
+`fleet-manager` stays at zero replicas.
+
+### Why it is not in the management-plane overlay
+
+The component needs three environment-owned inputs that the bundle cannot
+provide. If the management-plane overlay included it, every environment
+consuming that overlay would get a Pod that cannot start until infra supplies
+them. It is a Component, like the portal plugins, so an environment adds it
+explicitly:
+
+```yaml
+resources:
+  - <fleet bundle>/config/overlays/management-plane
+components:
+  - <fleet bundle>/config/components/request-resolver
+```
+
+### What the environment must supply
+
+All of these live in `infra`, not in this repository.
+
+1. **Configuration.** A ConfigMap `fleet-system/fleet-request-resolver-config`
+   with key `config.yaml`. The mount paths below match the Deployment:
+
+   ```yaml
+   apiVersion: config.fleet.datumapis.com/v1alpha1
+   kind: RequestResolver
+   discovery:
+     mode: milo
+     discoveryKubeconfigPath: /etc/fleet/request-resolver/discovery/kubeconfig
+     projectKubeconfigPath: /etc/fleet/request-resolver/projects/kubeconfig
+     consumerScopedProjection:
+       providerProject: datum-cloud
+       serviceNames:
+         - metal.datumapis.com
+   ```
+
+   `providerProject` is the project that hosts the `metal` ServiceConsumers,
+   the Service's `producerProjectRef` (`datum-cloud` in this bundle).
+   `serviceNames` must be exactly `[metal.datumapis.com]`. The resolver
+   rejects other names, unknown fields, and milo mode without
+   `consumerScopedProjection`.
+2. **Discovery kubeconfig.** A Secret
+   `fleet-system/fleet-request-resolver-discovery-kubeconfig`, key `kubeconfig`:
+   a root Milo kubeconfig. It is used only to list Services.
+3. **Project kubeconfig template.** A Secret
+   `fleet-system/fleet-request-resolver-project-kubeconfig`, key `kubeconfig`:
+   a Milo kubeconfig for the resolver's identity. Its host is re-addressed to
+   `/apis/resourcemanager.miloapis.com/v1alpha1/projects/<project>/control-plane`
+   for the provider project (ServiceConsumer watch) and for each engaged
+   consumer project (Machine and MachineProfile access). This matches
+   Compute's `projectKubeconfigPath`. If the environment uses one credential
+   for both, the two Secrets can hold the same kubeconfig. If
+   `projectKubeconfigPath` is omitted from the configuration, the discovery
+   kubeconfig is used.
+4. **Role bindings.** Bind the resolver's Milo identity to:
+   - `metal.datumapis.com-request-resolver` (Machines get/list/watch/updateStatus,
+     MachineProfiles get/list/watch) so that it applies in every project that
+     consumes `metal`. Bind it at the scope Compute's consumer-scoped
+     controller identity uses for consumer projects. Do not use
+     `metal.datumapis.com-controller` or any broader role.
+   - `metal.datumapis.com-request-resolver-discovery`
+     (`services.list` at the root; `serviceconsumers.list` and `.watch` in the
+     provider project).
+
+   If the two kubeconfigs use different identities, the discovery identity
+   needs only `services.list`; the project identity needs the rest.
+5. **Image.** Replace `ghcr.io/datum-cloud/fleet-request-resolver:latest` with
+   the immutable workflow-produced tag or digest that matches the bundle.
+
+The management-cluster service account `fleet-request-resolver` gets only its
+own leader lease in `fleet-system`. The Deployment runs two replicas; both
+engage every consuming project, and only the lease holder writes.
+
+### Single writer
+
+`requestedHardware` has exactly one writer per project. The resolver and an
+enabled `fleet-manager` projector must never serve the same project. If an
+environment runs both, for example synthetic staging whose consumer project
+also has an Active `metal` ServiceConsumer, start that manager with
+`--enable-requested-hardware-projector=false`. The flag defaults to `true`, so
+existing manager deployments are unchanged.
+
+### Readiness and probes
+
+`/readyz` on port `health` (8081) passes only when the provider project's
+ServiceConsumer cache has synced, every project with an Active `metal`
+ServiceConsumer is engaged on that replica, and every engaged project cache has
+synced. It never depends on lifecycle integrations. `/healthz` is liveness.
+Metrics are served on port `metrics` (8080) through the
+`fleet-request-resolver-metrics` Service, including the consumer provider's
+`consumer_provider_engaged_clusters` gauge. A single unreachable consumer
+project keeps every replica unready. That blocks rollouts, but resolution in
+other projects continues.
+
+### Discovery is observational
+
+The resolver never writes Services or ServiceConsumers. It adds no teardown
+finalizer and deletes nothing when a project leaves the consumer set. It does
+not confirm platform suspension: it drops the consumer library's `Paused`
+status patch, because it pauses nothing. When a project leaves, the resolver
+stops reconciling it without writing any status. Machines that were already
+pinned keep their snapshot.
+
 ## Current readiness boundary
+
+The request resolver above is the production-safe component: its readiness
+reflects only discovery and project-cache state, and it performs no lifecycle
+effect. Everything below concerns `fleet-manager`.
 
 The manifests package the implemented API and security boundaries; they do not
 turn the manager scaffold into a production controller. The current binary

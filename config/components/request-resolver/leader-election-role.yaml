@@ -1,0 +1,16 @@
+# The resolver's only management-cluster permission: its own leader lease.
+# Machine and MachineProfile access goes through the Milo credential. Create
+# cannot be restricted by name; get and update are limited to the one lease.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-request-resolver-leader-election
+  namespace: fleet-system
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [fleet-request-resolver.fleet.datumapis.com]
+    verbs: [get, update, patch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]

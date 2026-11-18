@@ -669,18 +669,32 @@ assigned and stays absent until allocation.
   `RequestResolved=True` uses reason `Resolved`. The condition reports request
   resolution only: it does not imply admission, authorization, capacity, or
   readiness.
-- **Writer.** The manager's requested-hardware projector is the only
-  controller writer of `requestedHardware` and `RequestResolved`. Other Machine
-  status writers carry both forward unchanged. The standalone smoke runner
-  applies the same resolve-once function to its fixture Machines.
+- **Writer.** `requestedHardware` and `RequestResolved` have exactly one
+  controller writer per project. Two components can be that writer; they run
+  the same projection and must never serve the same project:
+
+  | Environment | Writer | How it is selected |
+  | --- | --- | --- |
+  | Production (Milo) | `fleet-request-resolver`, for every project with an Active `metal` ServiceConsumer | Opt-in `config/components/request-resolver`; `fleet-manager` stays at zero replicas |
+  | Synthetic staging | `fleet-manager`'s in-process projector, for its one configured project | Default `--enable-requested-hardware-projector=true` |
+  | Standalone smoke | The smoke runner, for its fixture Machines | The runner applies the projection itself |
+  | Local development | `fleet-request-resolver` in `single` mode against a dedicated cluster | Explicit configuration; never alongside another writer |
+
+  A manager whose project is served by the resolver must run with
+  `--enable-requested-hardware-projector=false`. This matters when both are
+  deployed in one environment, for example a staging consumer project that also
+  has an Active `metal` ServiceConsumer. Other Machine status writers carry both
+  fields forward unchanged.
 - **Enablement.** Resolution needs only read access to Machines and
-  MachineProfiles and `machines.updateStatus` in the routed project; the
-  controller role already grants these. It runs in every manager mode,
-  including the default inert mode where lifecycle handlers are blocked and
-  readiness fails. Production therefore needs the `fleet-manager` Deployment
-  running for the project; it does not need `--synthetic-staging`, a provider,
-  allocation, or quota. A manager serves one configured project, so Machines in
-  other projects stay unresolved until a manager serves them.
+  MachineProfiles and `machines.updateStatus` in the project. The resolver uses
+  the narrow `metal.datumapis.com-request-resolver` role, plus
+  `metal.datumapis.com-request-resolver-discovery` to find consuming projects.
+  It does not need `--synthetic-staging`, a provider, allocation, quota, or a
+  private namespace, and it never starts lifecycle controllers. The resolver
+  binary, role, and manifests are implemented and tested; the production
+  credentials, configuration, and role bindings are environment-owned and not
+  yet wired. Until they are, production Machines stay unresolved: a
+  `fleet-manager` at zero replicas resolves nothing.
 - **Listings.** The Machine printer columns show `Requested CPU` and
   `Requested Memory` from `status.requestedHardware`. `Profile`,
   `Allocated CPU`, and `Allocated Memory` are wide columns (priority 1), shown

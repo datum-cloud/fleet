@@ -46,6 +46,7 @@ func main() {
 	flag.StringVar(&syntheticProviderProjectName, "synthetic-provider-project-name", "", "provider project used by synthetic cross-project staging")
 	flag.StringVar(&syntheticPublishedClassName, "synthetic-published-class-name", "", "provider MachineClass published into the synthetic consumer project")
 	flag.StringVar(&syntheticPublishedProfileName, "synthetic-published-profile-name", "", "provider MachineProfile published into the synthetic consumer project")
+	requestedHardwareProjector := registerRequestedHardwareProjectorFlag(flag.CommandLine)
 	zapOptions := zap.Options{Development: false}
 	zapOptions.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -101,9 +102,14 @@ func main() {
 	verifier := verifierFor(projectName)
 	// Requested-hardware resolution reads only the Machine and its
 	// MachineProfile through the routed project API and has no lifecycle or
-	// provider effect, so it runs in every mode, including the default inert
-	// mode whose lifecycle handlers stay blocked and readiness stays failed.
-	requested := eventmanager.RequestedHardwareProjector{Client: mgr.GetClient(), Project: project}
+	// provider effect, so by default it runs in every mode, including the
+	// default inert mode whose lifecycle handlers stay blocked and readiness
+	// stays failed. Disabling it hands the project to fleet-request-resolver;
+	// both must never serve the same project.
+	if !*requestedHardwareProjector {
+		ctrl.Log.Info("requested-hardware projector disabled; fleet-request-resolver must own this project's requestedHardware", "project", projectName)
+	}
+	requested := eventmanager.NewMachineProjector(*requestedHardwareProjector, mgr.GetClient(), project)
 	handlers := eventmanager.Handlers{Machine: blocked, Installation: blocked, MachineProjector: requested, InstallationProjector: blocked}
 	setupOptions := eventmanager.SetupOptions{Project: project, PrivateNamespace: privateNamespace, PrivateCluster: privateCluster, ProjectVerifier: verifier}
 	ready := eventmanager.ErrEventWiringUnavailable
@@ -145,6 +151,13 @@ func main() {
 	must(mgr.AddHealthzCheck("healthz", healthz.Ping))
 	must(mgr.AddReadyzCheck("integration", func(*http.Request) error { return ready }))
 	must(mgr.Start(ctx))
+}
+
+// registerRequestedHardwareProjectorFlag binds the single-writer switch for
+// Machine status.requestedHardware. The default keeps the in-manager projector
+// so existing deployments, including synthetic staging, are unchanged.
+func registerRequestedHardwareProjectorFlag(flags *flag.FlagSet) *bool {
+	return flags.Bool("enable-requested-hardware-projector", true, "pin Machine status.requestedHardware for the configured project; set false only when fleet-request-resolver serves that project")
 }
 
 func must(err error) {

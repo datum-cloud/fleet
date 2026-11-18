@@ -1,0 +1,14 @@
+# Production requested-hardware resolver. Not included in any overlay by
+# default: an environment opts in by adding this component and supplying the
+# inputs listed in config/README.md#request-resolver. It never runs Fleet's
+# lifecycle controllers and must not share a project with an enabled
+# fleet-manager projector.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - service-account.yaml
+  - leader-election-role.yaml
+  - leader-election-role-binding.yaml
+  - deployment.yaml
+  - service.yaml
