@@ -18,6 +18,11 @@ API servers and must be reconciled independently.
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
+`config/inventory` is an opt-in root for the Fleet management cluster. It holds
+only the CRDs for the operator-written `DeviceClaim` and `Device` subset of the
+physical inventory API. Neither production root references it. See
+[Planning and registering physical devices](../docs/operations/physical-inventory.md).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
 

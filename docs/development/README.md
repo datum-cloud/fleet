@@ -45,7 +45,8 @@ Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
 The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the
 Bare Metal service as `metal`; entitlement and location-availability readers use
-that reference. Physical Device references use `fleet.datumapis.com`. The
+that reference. Physical Device references use `fleet.datumapis.com`; that group
+implements only a minimal, operator-written `DeviceClaim` and `Device` today. The
 [API architecture](../architecture/README.md) documents the proposed coordination group,
 control-plane placement, and rollout constraints. Group renaming does not migrate
 stored allocations or establish live acceptance.
@@ -586,6 +587,19 @@ not a production executor identity protocol.
 The persisted schema and HTTP endpoints are internal alpha interfaces. No
 compatibility promise exists yet. The process fails closed if retained state is
 corrupt or uses an unsupported schema version.
+
+## Physical inventory subset
+
+`internal/api/inventory/v1alpha1` defines `DeviceClaim`, the plan for one rack
+slot, and `Device`, the asset bound to one claim. Operators write both by hand.
+`config/inventory` packages only their CRDs. CEL requires `Manual` provenance on
+both and requires every edit to advance `recordedAt`. It keeps a Device's
+`claimRef` and identity immutable, rejects duplicate or ambiguous MACs, and
+accepts only credential-free `https` BMC endpoints. Status is a reserved
+subresource with no fields and no writer. No production root includes the
+package, and nothing reads it. Unit tests run the API server's schema,
+list-type, defaulting, and CEL validation offline. See
+[Planning and registering physical devices](../operations/physical-inventory.md).
 
 ## Build, test, and run
 
