@@ -22,6 +22,9 @@ patches:
         value: --synthetic-provider-token-file=/var/run/fleet/provider/token
       - op: add
         path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-consumer-project-name=$(FLEET_CONSUMER_PROJECT_NAME)
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
         value: --synthetic-provider-project-name=$(FLEET_PROVIDER_PROJECT_NAME)
       - op: add
         path: /spec/template/spec/containers/0/args/-
@@ -29,6 +32,14 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --synthetic-published-profile-name=$(FLEET_PUBLISHED_PROFILE_NAME)
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+        - name: FLEET_CONSUMER_PROJECT_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: fleet-manager-config
+              key: consumerProjectName
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:

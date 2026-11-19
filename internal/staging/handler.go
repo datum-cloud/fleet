@@ -426,3 +426,25 @@ func sameStatus(left, right fleetv1.MachineStatus) bool {
 	}
 	return reflect.DeepEqual(left, right)
 }
+
+// ConsumerHandlers installs the synthetic staging handler for exactly one
+// engaged project, the configured publication consumer, and base handlers for
+// every other project. template supplies the coordinator, location, and
+// optional provider; its Public client and Project are taken from the
+// consumer's binding. An engagement under the consumer's name that is not the
+// exact consumer lifetime is refused.
+func ConsumerHandlers(base manager.HandlerFactory, consumer controller.ProjectIdentity, template Handler) manager.HandlerFactory {
+	return func(binding manager.ProjectBinding) (manager.Handlers, error) {
+		handlers, err := base(binding)
+		if err != nil || string(binding.ClusterName) != consumer.RouteName {
+			return handlers, err
+		}
+		if !binding.Project.SameLifetime(consumer) {
+			return manager.Handlers{}, fmt.Errorf("%w: synthetic consumer %q is engaged as a different project lifetime", manager.ErrProjectIdentityUnavailable, binding.ClusterName)
+		}
+		handler := template
+		handler.Public, handler.Project = binding.Client, binding.Project
+		handlers.Machine = handler
+		return handlers, nil
+	}
+}

@@ -42,7 +42,7 @@ func TestLegacyCustodyIsReportedThenReleasedOnDeletion(t *testing.T) {
 	machine := func(name, uid string) *fleetv1.Machine {
 		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name, UID: types.UID(uid), Generation: 1}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: class.Name}, MachineProfileRef: fleetv1.LocalReference{Name: profile.Name}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
 	}
-	runner := machine("staging-runner", "staging-runner-uid")
+	runner := machine("legacy-machine", "legacy-machine-uid")
 	public := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&fleetv1.MachineCapacity{}, &fleetv1.Machine{}).WithObjects(namespace, class, profile, capacity, runner).Build()
 	private := fake.NewClientBuilder().WithScheme(scheme).Build()
 	provider := &executor{results: map[string]simulator.OperationResult{}}

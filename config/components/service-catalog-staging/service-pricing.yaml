@@ -1,0 +1,73 @@
+# Bare Metal setup fees on staging's price list, each charged once when a
+# contract starts. The staff portal's contract page lists them for contracts
+# to charge. Each is the price of one: a contract with four GPU racks charges
+# GPU Rack Setup with quantity 4.
+#
+# Pricings can't be changed once created: to change a price, add a new
+# version (-v2) and leave the old one, which published Offers and contracts
+# may still use.
+---
+apiVersion: billing.miloapis.com/v1alpha1
+kind: ServicePricing
+metadata:
+  name: structured-cabling-v1
+  namespace: milo-system
+spec:
+  displayName: "Structured Cabling"
+  chargeType: OneTime
+  trigger: BillingAccountActivation
+  currency: USD
+  amount: "15000.00"
+  serviceRef: metal.datumapis.com
+---
+apiVersion: billing.miloapis.com/v1alpha1
+kind: ServicePricing
+metadata:
+  name: datacenter-power-install-v1
+  namespace: milo-system
+spec:
+  displayName: "Datacenter Power Install"
+  chargeType: OneTime
+  trigger: BillingAccountActivation
+  currency: USD
+  amount: "40000.00"
+  serviceRef: metal.datumapis.com
+---
+apiVersion: billing.miloapis.com/v1alpha1
+kind: ServicePricing
+metadata:
+  name: gpu-rack-setup-v1
+  namespace: milo-system
+spec:
+  displayName: "GPU Rack Setup"
+  chargeType: OneTime
+  trigger: BillingAccountActivation
+  currency: USD
+  amount: "12000.00"
+  serviceRef: metal.datumapis.com
+---
+apiVersion: billing.miloapis.com/v1alpha1
+kind: ServicePricing
+metadata:
+  name: cpu-rack-setup-v1
+  namespace: milo-system
+spec:
+  displayName: "CPU Rack Setup"
+  chargeType: OneTime
+  trigger: BillingAccountActivation
+  currency: USD
+  amount: "8000.00"
+  serviceRef: metal.datumapis.com
+---
+apiVersion: billing.miloapis.com/v1alpha1
+kind: ServicePricing
+metadata:
+  name: network-rack-setup-v1
+  namespace: milo-system
+spec:
+  displayName: "Network Rack Setup"
+  chargeType: OneTime
+  trigger: BillingAccountActivation
+  currency: USD
+  amount: "8000.00"
+  serviceRef: metal.datumapis.com

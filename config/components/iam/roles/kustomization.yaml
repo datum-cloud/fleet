@@ -7,3 +7,4 @@ resources:
   - publisher.yaml
   - provider.yaml
   - controller.yaml
+  - discovery.yaml

@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
@@ -43,6 +45,7 @@ const (
 // failures are returned by RouteReconciler and receive normal workqueue retry;
 // they are never converted into an empty target set.
 type RouteRequest struct {
+	ClusterName multicluster.ClusterName
 	AuthorityID string
 	ProjectUID  types.UID
 	Kind        RouteKind
@@ -58,6 +61,17 @@ type RouteRequest struct {
 	Deleted bool
 }
 
+func (r RouteRequest) Cluster() multicluster.ClusterName { return r.ClusterName }
+
+func (r RouteRequest) WithCluster(name multicluster.ClusterName) RouteRequest {
+	r.ClusterName = name
+	return r
+}
+
+func (r RouteRequest) String() string {
+	return fmt.Sprintf("cluster://%s/%s/%s/%s/%s", r.ClusterName, r.Kind, r.Namespace, r.Name, r.UID)
+}
+
 func (r RouteRequest) Valid() bool {
 	return strings.TrimSpace(r.AuthorityID) != "" && r.ProjectUID != "" && r.Kind != "" && r.Name != "" && r.UID != ""
 }
@@ -67,7 +81,7 @@ func (m Mappers) Route(kind RouteKind, field string) func(context.Context, clien
 		if object == nil || !m.Project.Valid() {
 			return nil
 		}
-		request := RouteRequest{AuthorityID: m.Project.AuthorityID, ProjectUID: m.Project.UID, Kind: kind, Namespace: object.GetNamespace(), Name: object.GetName(), UID: object.GetUID(), Field: field}
+		request := RouteRequest{ClusterName: m.ClusterName, AuthorityID: m.Project.AuthorityID, ProjectUID: m.Project.UID, Kind: kind, Namespace: object.GetNamespace(), Name: object.GetName(), UID: object.GetUID(), Field: field}
 		switch kind {
 		case RouteMachineCapacity:
 			encoded, _ := json.Marshal(object.GetLabels())

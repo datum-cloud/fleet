@@ -55,6 +55,11 @@ tasks:
       - kustomize build config/overlays/management-plane >/dev/null
       - ./hack/validate-overlay-isolation.sh
 
+  test:envtest:
+    desc: Run every test, including the multi-project envtest end-to-end test.
+    cmds:
+      - KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)" go test -race ./...
+
   milo:validate:
     desc: Validate the non-effectful Milo acceptance packaging.
     cmds:

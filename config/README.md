@@ -18,6 +18,15 @@ API servers and must be reconciled independently.
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
+The one `fleet-manager` Deployment serves every Milo project that consumes the
+`metal` service; see [project discovery](#project-discovery).
+
+`config/components/service-catalog-staging` is a Kustomize component with
+staging's Bare Metal prices: one-time setup fees that contracts charge, as
+billing ServicePricings for `metal.datumapis.com`. Staging's infra enables it
+on `config/milo`; production doesn't, so production has no Bare Metal prices.
+A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
+
 `config/inventory-observer` is an opt-in root for the Fleet management cluster.
 It holds the observed-only `InventoryObservation` CRD and a NetBox observer
 CronJob with namespace-scoped status-only RBAC. The environment supplies the
@@ -39,10 +48,13 @@ production roots, and neither production root may reference them.
 environment. It uses the real private custody, exclusivity, cleanup, and reuse
 implementation, but substitutes synthetic admission and provider evidence. It
 accepts only powered-off, networkless claims in `us-central-1`; its status
-conditions identify that boundary. When the three publication keys documented
-below are present, it watches one consumer project and one distinct provider
-project, publishes a locked class reference and exact profile copy, and retains
-both project lifetimes in allocation custody. Provider Machine events wake
+conditions identify that boundary. The manager still engages every consuming
+project, but the synthetic handler and publisher act only for the one
+configured consumer project (`consumerProjectName`); every other engaged
+project gets blocked lifecycle handlers and requested-hardware resolution. With
+the publication keys documented below it uses one distinct provider project,
+publishes a locked class reference and exact profile copy into the consumer,
+and retains both project lifetimes in allocation custody. Provider Machine events wake
 consumer claims directly; no polling resync is enabled.
 
 The simulator runs in a separate `fleet-synthetic-provider` Deployment behind a
@@ -121,7 +133,8 @@ promote the Fleet Service while the production integration remains fail-closed.
 
 The management-plane root intentionally does not contain a
 `fleet-manager-config` ConfigMap. The environment overlay must create that
-ConfigMap in `fleet-system` with these exact keys:
+ConfigMap in `fleet-system` with a `config.yaml` key. The mount paths below
+match the Deployment:
 
 ```yaml
 apiVersion: v1
@@ -130,15 +143,33 @@ metadata:
   name: fleet-manager-config
   namespace: fleet-system
 data:
-  authorityID: <configured Milo authority ID>
-  projectName: <Milo Project name>
+  config.yaml: |
+    apiVersion: config.fleet.datumapis.com/v1alpha1
+    kind: FleetManager
+    authorityID: <configured Milo authority ID>
+    discovery:
+      mode: milo
+      discoveryKubeconfigPath: /var/run/fleet/milo/kubeconfig
+      projectKubeconfigPath: /var/run/fleet/projects/kubeconfig
+      consumerScopedProjection:
+        providerProject: <metal Service producer project>
+        serviceNames:
+          - metal.datumapis.com
 ```
 
-The non-production `synthetic-staging` overlay additionally requires one
-explicit publication contract:
+The former `authorityID` and `projectName` keys are gone: projects are
+discovered, not configured. `providerProject` is the project that hosts the
+`metal` ServiceConsumers: the Service's `producerProjectRef`. `serviceNames` must be exactly `[metal.datumapis.com]`. The
+manager rejects other names, unknown fields, and milo mode without
+`consumerScopedProjection`. `discovery.mode: single` with `discovery.project:
+<name>` serves one named project instead, for standalone use and tests.
+
+The non-production `synthetic-staging` overlay additionally requires these keys
+in the same ConfigMap:
 
 ```yaml
 data:
+  consumerProjectName: <the one consumer Milo Project staging allocates for>
   providerProjectName: <distinct provider Milo Project name>
   publishedClassName: <provider MachineClass definition name>
   publishedProfileName: <allowed provider MachineProfile name>
@@ -146,26 +177,52 @@ data:
 
 The publisher refuses name collisions, reference chains, mutable profile-copy
 drift, a profile not allowed by the source class, or replacement source/project
-lifetimes. It writes only a consumer class containing `spec.source`, an exact
-profile copy, and sanitized `resolvedClass` status. These checks exercise the
-publication and shared-allocation shapes, but the resulting conditions remain
-explicitly synthetic authority rather than production IAM/catalog evidence.
+lifetimes. It writes only into the engaged consumer project, and only a
+consumer class containing `spec.source`, an exact profile copy, and sanitized
+`resolvedClass` status. These checks exercise the publication and
+shared-allocation shapes, but the resulting conditions remain explicitly
+synthetic authority rather than production IAM/catalog evidence.
 
-These values select the Milo authority and project but do not duplicate the
-project's immutable identity. At startup the manager reads the named Project
-through the root Milo credential, rejects missing, deleting, or UID-less
-projects, and retains the UID returned by Milo in its internal authority and
-custody records. A missing ConfigMap prevents the Pod from starting; empty or
-unresolvable values make the binary exit. The
-environment overlay must also replace `ghcr.io/datum-cloud/fleet:latest` with an
-immutable digest or release tag. It must provide a
-`milo-configuration-kubeconfig` Secret in `fleet-system` whose `value` key is a
-root Milo kubeconfig with permission to get the named Project. The manager
-copies that configuration and scopes its host to
-`/apis/resourcemanager.miloapis.com/v1alpha1/projects/<projectName>/control-plane`;
-it never uses the root endpoint as a project cache. Kubeconfigs,
+No project identity is configuration. When a project engages, the manager reads
+its Project through the root Milo credential, rejects missing, deleting, or
+UID-less projects, and binds that UID to the project's runtime. It verifies the
+identity again before every reconcile, so a project deleted and recreated under
+the same name is never served under the old lifetime. A missing ConfigMap
+prevents the Pod from starting; an invalid configuration, or an unresolvable
+synthetic consumer or provider project, makes the binary exit. The environment
+overlay must also replace `ghcr.io/datum-cloud/fleet:latest` with an immutable
+digest or release tag.
+
+The environment must provide two Secrets in `fleet-system`:
+
+- `milo-configuration-kubeconfig`, key `value`: the root Milo kubeconfig (the
+  existing Secret, now the discovery credential). It lists Services and gets
+  Projects.
+- `fleet-manager-project-kubeconfig`, key `value`: the Milo kubeconfig
+  template, in the same shape as the discovery Secret. Its host is re-addressed to
+  `/apis/resourcemanager.miloapis.com/v1alpha1/projects/<project>/control-plane`
+  for the provider project (ServiceConsumer watch) and each engaged project.
+  It may hold the same credential as the discovery Secret.
+
+The manager never uses the root endpoint as a project cache. Kubeconfigs,
 service-account tokens, provider credentials, and rendered Secrets remain owned
 by `infra` and must not be added to this repository.
+
+### Role bindings
+
+Bind the manager's Milo identity to:
+
+- `metal.datumapis.com-controller` so that it applies in every project that
+  consumes `metal`. Bind it at the scope Compute's consumer-scoped controller
+  identity uses for consumer projects, not per project: projects join and leave
+  dynamically.
+- `metal.datumapis.com-controller-discovery` (`services.list` at the root;
+  `serviceconsumers.list` and `.watch` in the provider project;
+  `projects.get` for every consuming project's identity).
+
+If the two kubeconfigs use different identities, the discovery identity needs
+the discovery role and the project identity needs the controller role plus
+`serviceconsumers.list` and `.watch`.
 
 Fleet, NSO, quota, entitlement, Namespace, and Event access goes through the
 routed Milo project credential. The management-cluster service account has no
@@ -175,15 +232,74 @@ to that private namespace. Cache scoping is not an authorization boundary. The
 private namespace and `fleet-system` have Flux pruning disabled so uninstalling
 one release cannot implicitly delete retained lifecycle authority.
 
+## Project discovery
+
+`fleet-manager` serves every project that has an Active, not-deleting
+ServiceConsumer for the `metal` service (`metal.datumapis.com`), through the
+service catalog's multicluster-runtime consumer provider. Each engaged project
+gets its own runtime: the identity read from Milo, a client and cache bound to
+that project's control plane, a verifier run before every reconcile, its own
+mappers, and its own lifecycle owners. Every request carries its project's
+cluster name and is reconciled only through that runtime, and only when the
+runtime's identity matches the request. Private records stay in the one host
+namespace `fleet-system-private`; their names and indexes already key on the
+consumer project's authority and UID, and a private-record event reaches only
+the runtime engaged for exactly that project lifetime.
+
+The synthetic provider project may itself be an Active `metal` consumer. It
+then engages like any other consumer, with blocked lifecycle handlers and the
+requested-hardware projector; only the configured synthetic consumer, which
+must differ from the provider, gets the synthetic handler and publication.
+
+The consumer provider watches every ServiceConsumer in the producer project,
+for every service that project produces, and filters by service only inside
+its reconcile. The manager drops ServiceConsumer events for other Services
+before they are queued, so they cause no reconciles, and a failing engagement
+is retried with per-key exponential backoff by `metal` consumers only.
+
+The manager holds one host-cluster lease (`fleet-manager.fleet.datumapis.com`);
+only the holder reconciles. Project engagement runs on every replica, so a
+standby is warm.
+
+### Departure
+
+When a project leaves the consumer set (its ServiceConsumer is Denied or
+deleted), the manager only stops reconciling it. It does not release custody,
+call a provider, delete Fleet records, or rewrite Machine status, including
+for a project with active custody. Private records for the departed project
+stay in place, and its queued events and deadlines are dropped. If the project
+is engaged again, reconciliation resumes from the retained records. Discovery
+is observational: the manager adds no ServiceConsumer finalizer, so it never
+gates a project's deletion, and it does not confirm platform suspension (it
+drops the consumer library's `Paused` status patch, because Fleet implements no
+suspension).
+
 ## Current readiness boundary
 
-The manifests package the implemented API and security boundaries; they do not
-turn the manager scaffold into a production controller. The current binary
-deliberately reports `/readyz` as unavailable and performs no lifecycle or
-provider effects until caller-preserving admission, a live Project verifier,
-durable Milo event adapters, and production handlers are composed. The
-deployment is therefore suitable for render, policy, and fail-closed rollout
-validation, not for claiming a functional allocation service.
+`/readyz` on port `health` (8081) reports discovery and cache health, not
+provider readiness. It passes when the provider project's ServiceConsumer cache
+has synced, every project with an Active `metal` ServiceConsumer is engaged on
+that replica, every engaged project cache has synced, and the private-record
+cache has synced. It never depends on a provider integration. It also keeps
+failing, with an explicit `project discovery is misconfigured` error, while no
+Service is registered for `metal.datumapis.com`, or while
+`consumerScopedProjection.providerProject` differs from that Service's
+`spec.owner.producerProjectRef`: either would engage nothing yet look healthy.
+One unreachable
+consuming project, or one that does not serve every watched API (Fleet, NSO
+networks, quota, entitlements, locations), keeps every replica unready. That
+blocks rollouts but not work in other projects.
+
+Readiness does not enable lifecycle effects. Without a provider or production
+handlers, which is the production configuration today, every project's
+lifecycle handlers stay blocked: no allocation, installation, provider call, or
+custody write, and Machines get no Bound, Ready, or phase status. Uncertain
+state stays unknown. Only the requested-hardware projector writes, pinning
+`status.requestedHardware` and `RequestResolved` in every engaged project.
+Production lifecycle handlers remain uncomposed until caller-preserving
+admission, durable Milo event adapters, and production providers exist. The
+deployment is therefore a functional requested-hardware service and a
+fail-closed lifecycle scaffold, not an allocation service.
 
 Provider inventory, MachineClasses, MachineProfiles, project-specific role
 bindings, quota grants, service entitlements, and publication selection are

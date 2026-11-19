@@ -111,7 +111,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	if err := fleetv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	consumerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-zdhcz", UID: "consumer-project-uid"}
+	consumerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-consumer", UID: "consumer-project-uid"}
 	providerProject := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "provider-project-uid"}
 	cores := int64(24)
 	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "general-purpose-24c-128g", UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: cores}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}

@@ -523,21 +523,22 @@ func TestNoPollingASTAndManagerCacheConfiguration(t *testing.T) {
 }
 
 func callHasCacheOption(call *ast.CallExpr) bool {
-	if len(call.Args) < 2 {
-		return false
-	}
-	literal, ok := call.Args[1].(*ast.CompositeLit)
-	if !ok {
-		return false
-	}
-	for _, element := range literal.Elts {
-		pair, ok := element.(*ast.KeyValueExpr)
+	// ctrl.NewManager takes options second; projectdiscovery.NewManager takes
+	// them third. Either way the options literal must set Cache explicitly.
+	for _, arg := range call.Args[min(1, len(call.Args)):] {
+		literal, ok := arg.(*ast.CompositeLit)
 		if !ok {
 			continue
 		}
-		key, ok := pair.Key.(*ast.Ident)
-		if ok && key.Name == "Cache" {
-			return true
+		for _, element := range literal.Elts {
+			pair, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := pair.Key.(*ast.Ident)
+			if ok && key.Name == "Cache" {
+				return true
+			}
 		}
 	}
 	return false

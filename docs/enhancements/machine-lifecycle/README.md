@@ -677,18 +677,22 @@ assigned and stays absent until allocation.
   `RequestResolved=True` uses reason `Resolved`. The condition reports request
   resolution only: it does not imply admission, authorization, capacity, or
   readiness.
-- **Writer.** The manager's requested-hardware projector is the only
-  controller writer of `requestedHardware` and `RequestResolved`. Other Machine
-  status writers carry both forward unchanged. The standalone smoke runner
-  applies the same resolve-once function to its fixture Machines.
+- **Writer.** `fleet-manager`'s requested-hardware projector is the only
+  controller writer of `requestedHardware` and `RequestResolved`, in every
+  environment. The manager builds one projector per engaged project (every
+  project with an Active `metal` ServiceConsumer, or the one named project in
+  single mode), bound to that project's identity and client. Other Machine
+  status writers carry both fields forward unchanged. The standalone smoke
+  runner applies the same resolve-once function to its fixture Machines.
 - **Enablement.** Resolution needs only read access to Machines and
-  MachineProfiles and `machines.updateStatus` in the routed project; the
-  controller role already grants these. It runs in every manager mode,
-  including the default inert mode where lifecycle handlers are blocked and
-  readiness fails. Production therefore needs the `fleet-manager` Deployment
-  running for the project; it does not need `--synthetic-staging`, a provider,
-  allocation, or quota. A manager serves one configured project, so Machines in
-  other projects stay unresolved until a manager serves them.
+  MachineProfiles and `machines.updateStatus` in the project; the controller
+  role already grants these, and it must apply in every consuming project. It
+  runs in every configuration, including production, where no provider is
+  configured and every lifecycle handler stays blocked. It needs no
+  `--synthetic-staging`, provider, allocation, or quota. The code, roles, and
+  manifests are implemented and tested; production configuration,
+  credentials, and role bindings are environment-owned and not yet wired.
+  Until they are, production Machines stay unresolved.
 - **Listings.** The Machine printer columns show `Requested CPU` and
   `Requested Memory` from `status.requestedHardware`. `Profile`,
   `Allocated CPU`, and `Allocated Memory` are wide columns (priority 1), shown
