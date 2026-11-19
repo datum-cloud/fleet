@@ -1,0 +1,178 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: deviceclaims.fleet.datumapis.com
+spec:
+  group: fleet.datumapis.com
+  names: {kind: DeviceClaim, listKind: DeviceClaimList, plural: deviceclaims, singular: deviceclaim}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Facility, type: string, jsonPath: .spec.placement.facility}
+    - {name: Rack, type: string, jsonPath: .spec.placement.rack}
+    - {name: Position, type: integer, jsonPath: .spec.placement.position}
+    - {name: Model, type: string, jsonPath: .spec.expectedIdentity.model}
+    - {name: Recorded At, type: date, jsonPath: .spec.provenance.recordedAt}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            required: [provenance, expectedIdentity, placement]
+            x-kubernetes-validations:
+            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
+              message: every change to a claim must advance provenance.recordedAt
+            properties:
+              provenance:
+                type: object
+                required: [method, recordedBy, recordedAt]
+                properties:
+                  method: {type: string, enum: [Manual]}
+                  recordedBy: {type: string, minLength: 1, maxLength: 253}
+                  recordedAt: {type: string, format: date-time}
+                  reference: {type: string, minLength: 1, maxLength: 1024}
+              expectedIdentity:
+                type: object
+                required: [model]
+                properties:
+                  manufacturer: {type: string, maxLength: 253}
+                  model: {type: string, minLength: 1, maxLength: 253}
+                  serial: {type: string, minLength: 1, maxLength: 253}
+              placement:
+                type: object
+                required: [facility, rack, position, face]
+                properties:
+                  facility: {type: string, minLength: 1, maxLength: 253}
+                  rack: {type: string, minLength: 1, maxLength: 253}
+                  position: {type: integer, format: int32, minimum: 1, maximum: 100}
+                  height: {type: integer, format: int32, minimum: 1, maximum: 100, default: 1}
+                  face: {type: string, enum: [front, rear]}
+              ports:
+                type: array
+                maxItems: 128
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: {type: string, minLength: 1, maxLength: 63}
+                    type: {type: string, maxLength: 253}
+                    speedMbps: {type: integer, format: int64, minimum: 1}
+                    expectedPeer:
+                      type: object
+                      required: [device, port]
+                      properties:
+                        device: {type: string, minLength: 1, maxLength: 253}
+                        port: {type: string, minLength: 1, maxLength: 253}
+          status: {type: object}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devices.fleet.datumapis.com
+spec:
+  group: fleet.datumapis.com
+  names: {kind: Device, listKind: DeviceList, plural: devices, singular: device}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Claim, type: string, jsonPath: .spec.claimRef.name}
+    - {name: Model, type: string, jsonPath: .spec.identity.model}
+    - {name: Serial, type: string, jsonPath: .spec.identity.serial}
+    - {name: System UUID, type: string, priority: 1, jsonPath: .spec.identity.systemUUID}
+    - {name: Recorded At, type: date, jsonPath: .spec.provenance.recordedAt}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            required: [claimRef, provenance, identity]
+            x-kubernetes-validations:
+            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
+              message: every change to a device must advance provenance.recordedAt
+            - rule: self.claimRef == oldSelf.claimRef
+              message: claimRef is immutable; bind replacement hardware as a new Device
+            - rule: self.identity == oldSelf.identity
+              message: identity is immutable; a hardware swap is a new Device
+            - rule: >-
+                !has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) ||
+                (self.interfaces.filter(b, has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 &&
+                (!has(self.unmappedMACAddresses) || !(a.macAddress in self.unmappedMACAddresses))))
+              message: a MAC address may be recorded only once
+            properties:
+              claimRef:
+                type: object
+                required: [name]
+                properties:
+                  name: {type: string, minLength: 1, maxLength: 253}
+              provenance:
+                type: object
+                required: [method, recordedBy, recordedAt]
+                properties:
+                  method: {type: string, enum: [Manual]}
+                  recordedBy: {type: string, minLength: 1, maxLength: 253}
+                  recordedAt: {type: string, format: date-time}
+                  reference: {type: string, minLength: 1, maxLength: 1024}
+              identity:
+                type: object
+                required: [model]
+                x-kubernetes-validations:
+                - rule: has(self.serial) || has(self.systemUUID)
+                  message: a device needs a serial or a system UUID
+                properties:
+                  manufacturer: {type: string, maxLength: 253}
+                  model: {type: string, minLength: 1, maxLength: 253}
+                  serial: {type: string, minLength: 1, maxLength: 253}
+                  systemUUID: {type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
+              bmc:
+                type: object
+                required: [endpoint]
+                properties:
+                  endpoint:
+                    type: string
+                    maxLength: 2048
+                    x-kubernetes-validations:
+                    - rule: isURL(self) && url(self).getScheme() == 'https' && !self.contains('@') && url(self).getHostname() != ''
+                      message: bmc.endpoint must be an https URL without credentials
+              interfaces:
+                type: array
+                maxItems: 32
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: {type: string, minLength: 1, maxLength: 63}
+                    macAddress: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
+                    peer:
+                      type: object
+                      required: [device, port]
+                      properties:
+                        device: {type: string, minLength: 1, maxLength: 253}
+                        port: {type: string, minLength: 1, maxLength: 253}
+              unmappedMACAddresses:
+                type: array
+                maxItems: 32
+                x-kubernetes-list-type: set
+                items: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
+          status: {type: object}

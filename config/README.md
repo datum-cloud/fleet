@@ -27,6 +27,11 @@ contracts charge, as billing ServicePricings for `metal.datumapis.com`. Staging'
 on `config/milo`; production doesn't, so production has no Bare Metal prices.
 A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
 
+`config/inventory` is an opt-in root for the Fleet management cluster. It holds
+only the CRDs for the operator-written `DeviceClaim` and `Device` subset of the
+physical inventory API. Neither production root references it. See
+[Planning and registering physical devices](../docs/operations/physical-inventory.md).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
 
