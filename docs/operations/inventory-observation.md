@@ -19,7 +19,7 @@ read, a content digest, and the `ObservedOnly-v1` trust profile.
 | Aspect | State |
 | --- | --- |
 | CRD, Go types, observer command, NetBox client, CronJob and RBAC root | Implemented in `config/inventory-observer` and `cmd/fleet-inventory-observer`. |
-| Tests | Unit tests cover NetBox decoding, auth schemes, pagination, redirects, failure mapping, identity guards, retained facts, write conflicts, write scope, CRD validation, and RBAC scope. |
+| Tests | Unit tests cover NetBox decoding, auth schemes, pagination, redirects, failure mapping, identity guards, retained facts, write conflicts, write scope, CRD validation, and RBAC scope. An envtest test runs the observer as its packaged service account against a real API server. It checks that the packaged Role allows status writes only, that `spec.source` is immutable, that stale writes conflict, and that the trust profile cannot be raised. No test runs against a live NetBox. |
 | Production roots | Not included. `config/milo`, `config/overlays/management-plane`, and `config/overlays/synthetic-staging` do not reference it. An environment opts in by reconciling `config/inventory-observer`. |
 | Hardware qualification | None. Facts are operator-entered records, not observed hardware. |
 
