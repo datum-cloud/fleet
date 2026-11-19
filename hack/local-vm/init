@@ -1,0 +1,37 @@
+#!/bin/busybox sh
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mkdir -p /dev /proc /sys
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+exec >/dev/ttyS0 2>&1
+set -exo pipefail
+modprobe virtio_pci
+modprobe virtio_blk
+modprobe ext4
+for arg in $(cat /proc/cmdline); do case "$arg" in fleet.receipt=*) receipt=${arg#fleet.receipt=};; esac; done
+[ ${#receipt} = 64 ] || /bin/busybox poweroff -f
+printf 'label: dos\n, , L, *\n' | sfdisk /dev/vda
+mkfs.ext4 -F /dev/vda1
+mkdir -p /target
+mount /dev/vda1 /target
+# The payload is this pinned installer filesystem; exclude virtual mounts.
+/bin/tar -cf - --exclude=./target --exclude=./proc --exclude=./sys --exclude=./dev --exclude=./out . | /bin/tar -xf - -C /target
+mkdir -p /target/dev /target/proc /target/sys
+mount --bind /dev /target/dev
+mount --bind /proc /target/proc
+mount --bind /sys /target/sys
+printf '%s\n' "$receipt" > /target/fleet-receipt
+chroot /target grub-install --target=i386-pc /dev/vda
+kernel=$(basename /boot/vmlinuz-*)
+initrd=$(basename /boot/initrd.img-*)
+cat > /target/boot/grub/grub.cfg <<CFG
+set timeout=0
+menuentry Fleet {
+ linux /boot/$kernel root=/dev/vda1 ro console=ttyS0 init=/fleet-boot
+ initrd /boot/$initrd
+}
+CFG
+sync
+printf 'FLEET-INSTALLED:%s\n' "$receipt"
+/bin/busybox poweroff -f

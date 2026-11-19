@@ -27,3 +27,6 @@
 # Local agent settings
 .claude/settings.local.json
 .claude/worktrees/
+
+# Locally built binaries
+/fleet-local-vm
