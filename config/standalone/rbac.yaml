@@ -60,11 +60,11 @@ rules:
     verbs: [get, update]
   - apiGroups: [metal.datumapis.com]
     resources: [installations]
-    resourceNames: [debian-12]
+    resourceNames: [debian-12, debian-12-reinstall]
     verbs: [get]
   - apiGroups: [metal.datumapis.com]
     resources: [installations/status]
-    resourceNames: [debian-12]
+    resourceNames: [debian-12, debian-12-reinstall]
     verbs: [get, update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
