@@ -120,9 +120,12 @@ ownership audit covers the BMC Deployment, Service and ServiceAccount.
 
 The disks, domain UUIDs and MACs exist before any allocation. Each installation
 or cleanup reuses target A's single persistent disk. The site enrollment is an
-explicit asset-to-System mapping in the worker template, with the endpoint,
-System Id, UUID, MAC, disk size and console capture name. The executor writes it
-once into the journal directory and refuses a changed enrollment later.
+explicit asset-to-System mapping in the worker template, with each target's BMC
+endpoint, System Id, UUID, MAC, disk size and console capture name. The lab sets
+`"dhcp": "static"` because its dnsmasq leases are fixed; see
+[Boot network](boot-network.md) for synchronized DHCP. The executor writes the
+enrollment once into the journal directory and refuses a changed enrollment
+later.
 
 ## Redfish executor contract
 
@@ -600,8 +603,11 @@ MVP. They are listed as an explicit qualification checklist:
 4. **Credentials and transport.** TLS with pinned CA or certificate, per-BMC
    accounts, a credential broker so workers never hold a long-lived password,
    and rotation and revocation.
-5. **Provisioning network.** Integrate with the networking/IPAM owner: per-host
-   DHCP or a dedicated provisioning VLAN, and authentication beyond MAC.
+5. **Provisioning network.** Synchronized DHCP reservations with served and
+   withdrawn evidence are implemented and unit tested
+   ([Boot network](boot-network.md)) but not exercised at a site. Still open:
+   attachments allocated by Networking/IPAM, a dedicated provisioning VLAN,
+   and authentication beyond MAC.
 6. **Cleanup assurance.** Use vendor or NIST SP 800-88 sanitization (secure
    erase, crypto-erase, sanitize commands) with verifiable device evidence.
    Distinguish it from this logical overwrite.

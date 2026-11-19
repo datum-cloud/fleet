@@ -22,10 +22,12 @@ patches:
           - {name: FLEET_REDFISH_CREDENTIALS, value: /etc/fleet-redfish}
           - {name: FLEET_REDFISH_CONSOLE, value: /var/lib/fleet-lab-console}
           # Explicit site enrollment: each physical asset ID maps to exactly one
-          # Redfish System (Id and UUID), NIC and console capture. Only target A
-          # is published as capacity; target B is enrolled to prove isolation.
+          # BMC endpoint, Redfish System (Id and UUID), NIC and console capture.
+          # The lab's dnsmasq hands out static leases, so DHCP is "static" and
+          # targets carry no provisioning attachment. Only target A is
+          # published as capacity; target B is enrolled to prove isolation.
           - name: FLEET_REDFISH_ENROLLMENT
-            value: '{"endpoint":"http://10.96.0.81:8000","targets":[{"assetID":"fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-01","systemID":"System-1","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a","mac":"52:54:00:77:01:0a","diskBytes":2147483648,"console":"target-a.log"},{"assetID":"fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-02","systemID":"System-2","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b","mac":"52:54:00:77:01:0b","diskBytes":2147483648,"console":"target-b.log"}]}'
+            value: '{"dhcp":"static","targets":[{"assetID":"fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-01","endpoint":"http://10.96.0.81:8000","systemID":"System-1","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a","mac":"52:54:00:77:01:0a","diskBytes":2147483648,"console":"target-a.log"},{"assetID":"fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-02","endpoint":"http://10.96.0.81:8000","systemID":"System-2","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b","mac":"52:54:00:77:01:0b","diskBytes":2147483648,"console":"target-b.log"}]}'
           - {name: HOME, value: /tmp}
       - op: replace
         path: /spec/resources/9/template/spec/template/spec/containers/0/volumeMounts

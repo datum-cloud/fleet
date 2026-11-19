@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"go.datum.net/fleet/internal/bootnet"
 	"go.datum.net/fleet/internal/executor"
 	"go.datum.net/fleet/internal/simulator"
 	"golang.org/x/sys/unix"
@@ -33,22 +34,42 @@ const (
 	maxPowerOn       = 3
 )
 
-// Target is one enrolled physical asset and its exact Redfish System. Console
-// names the serial-console capture file for the target (a lab seam; see the
-// operations guide). Enrollment is retained before effects and never inferred.
+// Target is one enrolled physical asset: its BMC endpoint, its exact Redfish
+// System, its boot NIC and, when the site's DHCP is synchronized, the
+// provisioning attachment the network owner assigned to it. Console names the
+// serial-console capture file for the target (a lab seam; see the operations
+// guide). Enrollment is retained before effects and never inferred.
 type Target struct {
-	AssetID    string `json:"assetID"`
-	SystemID   string `json:"systemID"`
-	SystemUUID string `json:"systemUUID"`
-	MAC        string `json:"mac"`
-	DiskBytes  int64  `json:"diskBytes"`
-	Console    string `json:"console"`
+	AssetID      string       `json:"assetID"`
+	Endpoint     string       `json:"endpoint"`
+	SystemID     string       `json:"systemID"`
+	SystemUUID   string       `json:"systemUUID"`
+	MAC          string       `json:"mac"`
+	Provisioning Provisioning `json:"provisioning,omitzero"`
+	DiskBytes    int64        `json:"diskBytes"`
+	Console      string       `json:"console"`
 }
+
+// Provisioning is the asset's address on the provisioning network, in prefix
+// form, and that network's gateway. Networking/IPAM allocates it; Fleet only
+// publishes it while the asset's network boot is admitted.
+type Provisioning struct {
+	Address string `json:"address"`
+	Gateway string `json:"gateway"`
+}
+
+// DHCP modes. Static: the site's DHCP is configured independently of Fleet.
+// Synced: Fleet publishes boot reservations and a network boot requires
+// evidence that DHCP applied the reservation and later withdrew it.
+const (
+	DHCPStatic = "static"
+	DHCPSynced = "synced"
+)
 
 // Enrollment is the site's explicit asset to BMC mapping.
 type Enrollment struct {
-	Endpoint string   `json:"endpoint"`
-	Targets  []Target `json:"targets"`
+	DHCP    string   `json:"dhcp"`
+	Targets []Target `json:"targets"`
 }
 
 func (e Enrollment) target(asset string) (Target, bool) {
@@ -61,29 +82,45 @@ func (e Enrollment) target(asset string) (Target, bool) {
 }
 
 func normalizeMAC(v string) (string, bool) {
-	hw, err := net.ParseMAC(strings.ReplaceAll(v, "-", ":"))
-	if err != nil || len(hw) != 6 {
-		return "", false
-	}
-	return hw.String(), true
+	return bootnet.NormalizeMAC(strings.ReplaceAll(v, "-", ":"))
 }
 
 func ParseEnrollment(b []byte) (Enrollment, error) {
 	var e Enrollment
 	d := json.NewDecoder(strings.NewReader(string(b)))
 	d.DisallowUnknownFields()
-	if err := d.Decode(&e); err != nil || len(e.Targets) == 0 {
+	if err := d.Decode(&e); err != nil || len(e.Targets) == 0 || (e.DHCP != DHCPStatic && e.DHCP != DHCPSynced) {
 		return Enrollment{}, errors.New("invalid Redfish enrollment")
 	}
 	seen := map[string]bool{}
 	for i, t := range e.Targets {
 		mac, ok := normalizeMAC(t.MAC)
-		if !ok || t.AssetID == "" || t.SystemID == "" || len(t.SystemUUID) != 36 || t.DiskBytes <= 0 || t.Console == "" || filepath.Base(t.Console) != t.Console ||
-			seen["a"+t.AssetID] || seen["s"+t.SystemID] || seen["u"+strings.ToLower(t.SystemUUID)] || seen["m"+mac] {
+		endpoint, err := ParseEndpoint(t.Endpoint)
+		// A Redfish System ID is unique only within its BMC.
+		system := "s" + endpoint + " " + t.SystemID
+		if !ok || err != nil || t.AssetID == "" || t.SystemID == "" || len(t.SystemUUID) != 36 || t.DiskBytes <= 0 || t.Console == "" || filepath.Base(t.Console) != t.Console ||
+			seen["a"+t.AssetID] || seen[system] || seen["u"+strings.ToLower(t.SystemUUID)] || seen["m"+mac] {
 			return Enrollment{}, errors.New("invalid or duplicate Redfish enrollment target")
 		}
-		seen["a"+t.AssetID], seen["s"+t.SystemID], seen["u"+strings.ToLower(t.SystemUUID)], seen["m"+mac] = true, true, true, true
-		e.Targets[i].MAC = mac
+		seen["a"+t.AssetID], seen[system], seen["u"+strings.ToLower(t.SystemUUID)], seen["m"+mac] = true, true, true, true
+		e.Targets[i].MAC, e.Targets[i].Endpoint = mac, endpoint
+		if e.DHCP == DHCPStatic {
+			if t.Provisioning != (Provisioning{}) {
+				return Enrollment{}, errors.New("a static-DHCP enrollment carries no provisioning attachment")
+			}
+			continue
+		}
+		feed, err := bootnet.NewFeed([]bootnet.Reservation{{MAC: mac, Address: t.Provisioning.Address, Gateway: t.Provisioning.Gateway, Expires: time.Unix(1, 0)}})
+		if err != nil {
+			return Enrollment{}, errors.New("invalid provisioning attachment for enrolled target " + t.AssetID)
+		}
+		r := feed.Reservations[0]
+		address := "p" + strings.SplitN(r.Address, "/", 2)[0]
+		if seen[address] {
+			return Enrollment{}, errors.New("duplicate provisioning address")
+		}
+		seen[address] = true
+		e.Targets[i].Provisioning = Provisioning{Address: r.Address, Gateway: r.Gateway}
 	}
 	return e, nil
 }
@@ -127,7 +164,7 @@ type Provider struct {
 	root, bootRoot, consoleRoot, artifacts string
 	origin, image                          string
 	enrollment                             Enrollment
-	client                                 *Client
+	clients                                map[string]*Client
 	readOnly                               bool
 	now                                    func() time.Time
 	poll, settle, offGrace, outage         time.Duration
@@ -163,15 +200,20 @@ func Open() (*Provider, error) {
 	if credentials == "" || err1 != nil || err2 != nil {
 		return nil, errors.New("redfish credentials are unavailable")
 	}
-	client, err := NewClient(enrollment.Endpoint, strings.TrimSpace(string(user)), strings.TrimSpace(string(password)), 20*time.Second)
-	if err != nil {
-		return nil, err
+	p.clients = map[string]*Client{}
+	for _, t := range enrollment.Targets {
+		if p.clients[t.Endpoint] != nil {
+			continue
+		}
+		if p.clients[t.Endpoint], err = NewClient(t.Endpoint, strings.TrimSpace(string(user)), strings.TrimSpace(string(password)), 20*time.Second); err != nil {
+			return nil, err
+		}
 	}
 	p.consoleRoot = os.Getenv("FLEET_REDFISH_CONSOLE")
 	if !filepath.IsAbs(p.consoleRoot) {
 		return nil, errors.New("FLEET_REDFISH_CONSOLE must be an absolute path")
 	}
-	p.client, p.enrollment = client, enrollment
+	p.enrollment = enrollment
 	return p, p.retainEnrollment()
 }
 
@@ -447,7 +489,7 @@ func (p *Provider) validate(q simulator.Request) (Target, error) {
 // have happened. HTTP success is never success: only observed power state and
 // the exact console receipt complete a phase.
 func (p *Provider) Execute(ctx context.Context, q simulator.Request) (simulator.OperationResult, error) {
-	if p.readOnly || p.client == nil {
+	if p.readOnly || len(p.clients) == 0 {
 		return simulator.OperationResult{}, executor.ErrInvalid
 	}
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Minute)
@@ -554,7 +596,7 @@ func (p *Provider) run(ctx context.Context, j *journal, r *record) error {
 	if r.Stage == "admitted" {
 		// GETs only: a rejected credential, a missing capability or a
 		// mismatched identity leaves the operation admitted with no effect.
-		sys, err := p.client.Discover(ctx, r.Target)
+		sys, err := p.bmc(r).Discover(ctx, r.Target)
 		if err != nil {
 			return fmt.Errorf("discovery: %w", err)
 		}
@@ -571,13 +613,18 @@ func (p *Provider) run(ctx context.Context, j *journal, r *record) error {
 		if r.Stage == before {
 			// Pre-boot: power off and arm the one-time override. Both are
 			// idempotent here because no boot of this phase was requested.
-			if err := p.powerOff(ctx, *r.System); err != nil {
+			if err := p.powerOff(ctx, r); err != nil {
 				return err
 			}
 			if ph.mode != "" && (r.BootClosed || !p.clock().Before(r.BootExpires)) {
 				return errors.New("boot admission expired or closed before network boot")
 			}
-			if err := p.client.SetBootOnce(ctx, *r.System, ph.boot); err != nil {
+			if ph.mode != "" && p.enrollment.DHCP == DHCPSynced {
+				if err := p.awaitReservation(ctx, r); err != nil {
+					return err
+				}
+			}
+			if err := p.bmc(r).SetBootOnce(ctx, *r.System, ph.boot); err != nil {
 				return fmt.Errorf("arm %s boot: %w", ph.boot, err)
 			}
 			r.Stage = ph.name + "-armed"
@@ -623,15 +670,22 @@ func (p *Provider) run(ctx context.Context, j *journal, r *record) error {
 	if r.Stage != before {
 		return errors.New("unexpected operation stage " + r.Stage)
 	}
+	if p.enrollment.DHCP == DHCPSynced {
+		return p.awaitWithdrawal(ctx, r)
+	}
 	return nil
 }
 
-func (p *Provider) powerOff(ctx context.Context, sys System) error {
+// bmc is the client of the target's own enrolled BMC.
+func (p *Provider) bmc(r *record) *Client { return p.clients[r.Target.Endpoint] }
+
+func (p *Provider) powerOff(ctx context.Context, r *record) error {
+	sys := *r.System
 	poll, _, _, _ := p.durations()
 	deadline := p.clock().Add(5 * time.Minute)
 	requested := false
 	for {
-		pw, err := p.client.Observe(ctx, sys)
+		pw, err := p.bmc(r).Observe(ctx, sys)
 		if err != nil {
 			return fmt.Errorf("observe before boot: %w", err)
 		}
@@ -641,7 +695,7 @@ func (p *Provider) powerOff(ctx context.Context, sys System) error {
 		if !requested {
 			// A slow or lost ForceOff response is observed, not trusted:
 			// power-off before this phase's boot is idempotent.
-			if err := p.client.Reset(ctx, sys, "ForceOff"); errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrUnsupported) {
+			if err := p.bmc(r).Reset(ctx, sys, "ForceOff"); errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrUnsupported) {
 				return fmt.Errorf("power off: %w", err)
 			}
 			requested = true
@@ -670,7 +724,7 @@ func (p *Provider) requestPowerOn(ctx context.Context, j *journal, r *record, ph
 	if err := p.save(*j); err != nil {
 		return err
 	}
-	if err := p.client.Reset(ctx, *r.System, "On"); err != nil {
+	if err := p.bmc(r).Reset(ctx, *r.System, "On"); err != nil {
 		return fmt.Errorf("power on (%s) response: %w", ph.name, err)
 	}
 	return nil
@@ -683,7 +737,7 @@ func (p *Provider) requestPowerOn(ctx context.Context, j *journal, r *record, ph
 // On, within a small retained budget.
 func (p *Provider) started(ctx context.Context, j *journal, r *record, ph phase) (bool, error) {
 	_, settle, _, _ := p.durations()
-	pw, err := p.client.Observe(ctx, *r.System)
+	pw, err := p.bmc(r).Observe(ctx, *r.System)
 	if err != nil {
 		if errors.Is(err, ErrIdentity) {
 			return false, err
@@ -710,7 +764,7 @@ func (p *Provider) complete(ctx context.Context, r *record, ph phase) error {
 	poll, _, offGrace, outage := p.durations()
 	var offSince, failingSince time.Time
 	for {
-		pw, err := p.client.Observe(ctx, *r.System)
+		pw, err := p.bmc(r).Observe(ctx, *r.System)
 		switch {
 		case errors.Is(err, ErrIdentity):
 			return err
