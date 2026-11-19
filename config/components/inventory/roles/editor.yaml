@@ -1,0 +1,20 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-inventory-editor
+  annotations:
+    kubernetes.io/display-name: Fleet Inventory Editor
+    kubernetes.io/description: Plan slots and register devices in provider inventory
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-inventory-viewer
+  includedPermissions:
+    - fleet.datumapis.com/deviceclaims.create
+    - fleet.datumapis.com/deviceclaims.update
+    - fleet.datumapis.com/deviceclaims.patch
+    - fleet.datumapis.com/deviceclaims.delete
+    - fleet.datumapis.com/devices.create
+    - fleet.datumapis.com/devices.update
+    - fleet.datumapis.com/devices.patch
+    - fleet.datumapis.com/devices.delete

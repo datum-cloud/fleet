@@ -1,4 +1,5 @@
-import { fixtureClasses, fixtureCapacities, fixtureProfiles } from './fixtures';
+import { fixtureClasses, fixtureCapacities, fixtureDeviceClaims, fixtureDevices, fixtureProfiles } from './fixtures';
+import { toInventory, type Inventory, type RawDeviceClaimList, type RawDeviceList } from '../inventory';
 import {
   toMachineCapacity,
   toMachineClass,
@@ -31,6 +32,7 @@ const USE_FIXTURES = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const REFETCH_INTERVAL_MS = 10_000;
 
 const METAL_API = '/apis/metal.datumapis.com/v1alpha1';
+const INVENTORY_API = '/apis/fleet.datumapis.com/v1alpha1';
 
 export class ApiError extends Error {
   status: number;
@@ -249,5 +251,28 @@ export function useDeleteMachineClass(): UseMutationResult<void, ApiError, strin
     mutationFn: deleteMachineClass,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclasses', PROVIDER_PROJECT] }),
+  });
+}
+
+// DeviceClaims and Devices are namespaced provider inventory, read across every
+// namespace of the provider project. Staff need a role with
+// fleet.datumapis.com/deviceclaims.list and devices.list there, such as
+// fleet.datumapis.com-inventory-viewer. The plugin never writes them.
+
+export async function fetchInventory(): Promise<Inventory> {
+  if (USE_FIXTURES) return toInventory(fixtureDeviceClaims, fixtureDevices);
+  const [claims, devices] = await Promise.all([
+    proxyFetch<RawDeviceClaimList>(PROVIDER_PROJECT, `${INVENTORY_API}/deviceclaims?limit=500`),
+    proxyFetch<RawDeviceList>(PROVIDER_PROJECT, `${INVENTORY_API}/devices?limit=500`),
+  ]);
+  return toInventory(claims.items ?? [], devices.items ?? []);
+}
+
+export function useInventory(): UseQueryResult<Inventory, ApiError> {
+  return useQuery({
+    queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT],
+    queryFn: fetchInventory,
+    refetchInterval: REFETCH_INTERVAL_MS,
+    retry: false,
   });
 }

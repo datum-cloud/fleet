@@ -10,8 +10,8 @@ Operations in the navigation. The page has three tabs:
   provider's MachineCapacities in every namespace and creates new ones. The
   form asks only for a name, a class, and whether to offer the capacity for
   allocation (off by default). It goes in the class's namespace and capacity
-  pool, with a device reference named after the record (Fleet has no Device
-  inventory yet) and the standalone fixtures' cleaning policy. The device
+  pool, with a device reference named after the record (nothing checks that a
+  Device of that name exists) and the standalone fixtures' cleaning policy. The device
   reference can't be changed later. Hardware and conditions stay empty until
   Fleet's discovery reports them.
 - **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
@@ -20,11 +20,23 @@ Operations in the navigation. The page has three tabs:
   profiles a class allows, the namespace and capacity-pool label of the
   MachineCapacities that serve it, and whether consumers get power control. Custom
   profiles and console access stay off.
+- **Inventory** (`inventory`) is read-only. It lists the provider project's
+  DeviceClaims (`fleet.datumapis.com`) in every namespace, with each claim's
+  placement, expected model, bound Device and serial. Devices that name a
+  missing claim are listed separately. `inventory/:namespace/:claim` shows one
+  claim's planned placement, expected ports and peers, and provenance. It also
+  shows every Device bound to it: model, serial, system UUID, BMC endpoint,
+  interfaces, unmapped MACs and provenance, with the most recently recorded
+  Device as the current one. Operators write these records through GitOps; the
+  plugin never writes them.
 
 The portal proxy forwards the staff member's own token, so creating capacity,
 profiles and classes needs a Bare Metal role with `machinecapacities.create`,
 `machineprofiles.create` and `machineclasses.create` in the provider project,
-such as `metal.datumapis.com-provider`. Errors show inside the create dialog,
+such as `metal.datumapis.com-provider`. The Inventory tab needs `deviceclaims.list`
+and `devices.list` in `fleet.datumapis.com`, which
+`fleet.datumapis.com-inventory-viewer` grants; metal roles grant no inventory
+access. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
 
 This started as the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17).

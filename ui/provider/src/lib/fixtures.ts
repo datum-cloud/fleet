@@ -1,4 +1,5 @@
 import { ApiError } from './api';
+import type { RawDevice, RawDeviceClaim } from '../inventory';
 import type { RawMachineCapacity, RawMachineClass, RawMachineProfile } from '../types';
 
 // Synthetic MachineCapacities used while the Fleet API cannot be read
@@ -153,3 +154,47 @@ export const fixtureClasses = {
   delete: (name: string): void =>
     remove(classes, 'machineclasses', name, (c) => c.metadata.name === name),
 };
+
+// Synthetic inventory: two planned slots, one with a registered Device whose
+// NIC MACs are not yet mapped to ports, plus a Device whose claim is missing.
+// Documentation-range addresses and MACs only.
+
+const INVENTORY_NAMESPACE = 'default';
+
+function claim(name: string, position: number): RawDeviceClaim {
+  return {
+    metadata: { name, namespace: INVENTORY_NAMESPACE },
+    spec: {
+      provenance: { method: 'Manual', recordedBy: 'planner@example.com', recordedAt: '2026-01-02T03:04:05Z', reference: 'rack plan 1234' },
+      expectedIdentity: { manufacturer: 'Example Vendor', model: 'Example 1U' },
+      placement: { facility: 'example-facility', rack: 'rack-01', position, height: 1, face: 'front' },
+      ports: [
+        { name: 'eth0', type: '25gbase-x-sfp28', speedMbps: 25000, expectedPeer: { device: 'switch-01', port: `Ethernet1/${position}` } },
+        { name: 'bmc0', type: '1000base-t', speedMbps: 1000, expectedPeer: { device: 'mgmt-switch-01', port: `Ethernet${position}` } },
+      ],
+    },
+  };
+}
+
+export const fixtureDeviceClaims: RawDeviceClaim[] = [claim('rack-01-u12', 12), claim('rack-01-u10', 10)];
+
+export const fixtureDevices: RawDevice[] = [
+  {
+    metadata: { name: 'rack-01-u12-synthetic-0001', namespace: INVENTORY_NAMESPACE },
+    spec: {
+      claimRef: { name: 'rack-01-u12' },
+      provenance: { method: 'Manual', recordedBy: 'registrar@example.com', recordedAt: '2026-01-09T10:00:00Z', reference: 'BMC inventory read during rack turn-up' },
+      identity: { manufacturer: 'Example Vendor', model: 'Example 1U', serial: 'SYNTHETIC-0001', systemUUID: '00000000-0000-4000-8000-000000000001' },
+      bmc: { endpoint: 'https://192.0.2.100:443' },
+      unmappedMACAddresses: ['00:00:5e:00:53:01', '00:00:5e:00:53:02'],
+    },
+  },
+  {
+    metadata: { name: 'orphan-synthetic-0009', namespace: INVENTORY_NAMESPACE },
+    spec: {
+      claimRef: { name: 'rack-02-u01' },
+      provenance: { method: 'Manual', recordedBy: 'registrar@example.com', recordedAt: '2026-01-10T10:00:00Z' },
+      identity: { model: 'Example 2U', systemUUID: '00000000-0000-4000-8000-000000000009' },
+    },
+  },
+];

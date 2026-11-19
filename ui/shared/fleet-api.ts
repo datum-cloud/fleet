@@ -227,3 +227,49 @@ export interface Machine {
 
 /** Held on a Machine until Fleet's release and cleanup complete. */
 export const MACHINE_FINALIZER = 'fleet.datumapis.com/machine-protection';
+
+// Physical inventory: fleet.datumapis.com/v1alpha1 DeviceClaim and Device,
+// transcribed from internal/api/inventory/v1alpha1/types.go and
+// config/components/inventory/crds/fleet.datumapis.com.yaml. Operators write
+// both; status is reserved and has no fields yet.
+
+export const INVENTORY_API_GROUP = 'fleet.datumapis.com';
+export const INVENTORY_API_VERSION = 'v1alpha1';
+
+export interface Provenance {
+  method: 'Manual';
+  recordedBy: string;
+  recordedAt: string;
+  reference?: string;
+}
+
+export interface PortPeer {
+  device: string;
+  port: string;
+}
+
+export interface DeviceClaim {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec: {
+    provenance: Provenance;
+    expectedIdentity: { manufacturer?: string; model: string; serial?: string };
+    placement: { facility: string; rack: string; position: number; height?: number; face: 'front' | 'rear' };
+    ports?: { name: string; type?: string; speedMbps?: number; expectedPeer?: PortPeer }[];
+  };
+}
+
+export interface Device {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec: {
+    claimRef: LocalReference;
+    provenance: Provenance;
+    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string };
+    bmc?: { endpoint: string };
+    interfaces?: { name: string; macAddress?: string; peer?: PortPeer }[];
+    unmappedMACAddresses?: string[];
+  };
+}

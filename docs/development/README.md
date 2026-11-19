@@ -705,14 +705,20 @@ corrupt or uses an unsupported schema version.
 ## Physical inventory subset
 
 `internal/api/inventory/v1alpha1` defines `DeviceClaim`, the plan for one rack
-slot, and `Device`, the asset bound to one claim. Operators write both by hand.
-`config/inventory` packages only their CRDs. CEL requires `Manual` provenance on
-both and requires every edit to advance `recordedAt`. It keeps a Device's
-`claimRef` and identity immutable, rejects duplicate or ambiguous MACs, and
-accepts only credential-free `https` BMC endpoints. Status is a reserved
-subresource with no fields and no writer. No production root includes the
-package, and nothing reads it. Unit tests run the API server's schema,
-list-type, defaulting, and CEL validation offline. See
+slot, and `Device`, the asset bound to one claim. Operators write both by hand
+into the provider project in Milo. `config/components/inventory` holds their
+CRDs, ProtectedResources, and the `fleet.datumapis.com-inventory-viewer` and
+`-editor` roles. Only `config/milo` includes it.
+
+CEL requires `Manual` provenance on both kinds and requires every edit to
+advance `recordedAt`. It keeps a Device's `claimRef` and identity immutable,
+rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
+BMC endpoints. Status is a reserved subresource with no fields and no writer.
+No metal role grants inventory access.
+
+The staff portal plugin's read-only Inventory tab lists claims and shows each
+claim's bound Devices. Unit tests run the API server's validation offline and
+check the IAM shape. See
 [Planning and registering physical devices](../operations/physical-inventory.md).
 
 ## Build, test, and run

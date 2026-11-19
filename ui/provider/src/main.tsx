@@ -1,6 +1,8 @@
 import MachineClassList from './pages/machine-class-list';
 import CapacityList from './pages/capacity-list';
 import MachineProfileList from './pages/machine-profile-list';
+import DeviceInventoryList from './pages/device-inventory-list';
+import DeviceClaimDetail from './pages/device-claim-detail';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -23,6 +25,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/plugins/:slug" element={<CapacityList />} />
             <Route path="/plugins/:slug/profiles" element={<MachineProfileList />} />
             <Route path="/plugins/:slug/classes" element={<MachineClassList />} />
+            <Route path="/plugins/:slug/inventory" element={<DeviceInventoryList />} />
+            <Route path="/plugins/:slug/inventory/:namespace/:claim" element={<DeviceClaimDetail />} />
           </Routes>
         </MemoryRouter>
       </div>

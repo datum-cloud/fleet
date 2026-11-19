@@ -21,9 +21,10 @@ It has two operator-written kinds in `fleet.datumapis.com/v1alpha1`:
 
 | Aspect | State |
 | --- | --- |
-| CRDs and Go types | Implemented in `config/inventory` and `internal/api/inventory/v1alpha1`. |
-| Tests | Unit tests run the API server's schema, list-type, defaulting, and CEL validation offline, for both kinds. |
-| Production roots | Not included. `config/milo`, `config/overlays/management-plane`, and `config/overlays/synthetic-staging` do not reference it. An environment opts in by applying `config/inventory`. |
+| CRDs and Go types | Implemented in `config/components/inventory` and `internal/api/inventory/v1alpha1`. |
+| Home | Milo. `config/milo` registers both CRDs, two ProtectedResources and two IAM roles, like the `metal.datumapis.com` kinds. `config/overlays/management-plane` and `config/overlays/synthetic-staging` install none of them. |
+| Staff portal | Read-only **Inventory** tab in the Bare Metal provider plugin (`ui/provider`): a claim list and a per-claim detail page. |
+| Tests | Unit tests run the API server's schema, list-type, defaulting, and CEL validation offline, for both kinds. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover the list, detail, restricted, and empty states. |
 | Controllers | None. No Fleet code reads or writes these kinds. |
 | Hardware qualification | None. Records hold operator-entered facts, not verified hardware state. |
 
@@ -41,10 +42,40 @@ Detection is manual too. The registrar records what the BMC (for example
 Redfish) and the rack showed them. MachineCapacity is unchanged by this
 package. Its `spec.deviceRef` already names a Device by name, and the
 allocator forms the asset key
-`<capacity namespace>/fleet.datumapis.com/Device/<name>`. Device names are
-Kubernetes object names in the same group and kind, so a later supply step can
-reference a Device without renaming it. That step must place the Device and its
-MachineCapacity in the same namespace.
+`<capacity namespace>/fleet.datumapis.com/Device/<name>`. Devices live in the
+provider project next to its MachineCapacities, so a `deviceRef` in the same
+namespace resolves by name. Nothing checks that reference yet.
+
+## Where the records live
+
+Milo is the single home. DeviceClaims and Devices are namespaced objects in the
+**provider project's** control plane, in the same namespace as the
+MachineCapacities they will back. No copy exists on the Fleet management
+cluster, and no controller syncs them anywhere.
+
+Both CRDs carry `discovery.miloapis.com/parent-contexts: Project`, so every
+project control plane serves the kinds. Access is what keeps consumers out:
+
+| Role | Grants |
+| --- | --- |
+| `fleet.datumapis.com-inventory-viewer` | `get`, `list`, `watch` on `deviceclaims` and `devices` |
+| `fleet.datumapis.com-inventory-editor` | The viewer role plus `create`, `update`, `patch`, `delete` |
+
+No `metal.datumapis.com` role includes or inherits either. The consumer,
+claimant, and viewer roles that reach customer projects therefore grant no
+inventory access, and the provider role does not either. Bind the inventory
+roles explicitly, scoped to the provider project. No role grants status
+writes, because status has no writer yet.
+
+The ProtectedResources use `serviceRef: fleet.datumapis.com`. The authorization
+provider looks resources up by `{apiGroup}/{plural}`, so the service name must
+equal the API group. No `fleet.datumapis.com` Service or ServiceConfiguration
+is registered; the kinds are provider-internal, not a catalog offering.
+
+Staff see the records in the staff portal's Bare Metal plugin, under
+**Inventory**. The plugin reads through the portal's Milo proxy with the staff
+member's own token, so a staff member needs `fleet.datumapis.com-inventory-viewer`
+in the provider project. The plugin never writes.
 
 ## Writers and validation
 
@@ -159,16 +190,33 @@ Deferred to #63, and deliberately absent:
 - Separation of planner, approver, registrar, and verifier roles. One operator
   can write both kinds today.
 
+**Deliberate divergence: Milo-resident provider inventory.** #63 treats
+private inventory, including serials, cable paths, and BMC endpoints, as
+material that never reaches consumer catalogs or status, and keeps the
+authoritative records in a protected management-side ledger. This package
+stores the operator records in the provider project's Milo control plane
+instead. Two things keep them away from consumers: they never enter a consumer
+project or a catalog, and only the inventory roles can read them. This is a
+deliberate change of home, not an oversight. It trades the ledger's isolation
+for one authoritative record that MachineCapacity can name and that staff can
+read. #63's ledger, trust, and enrollment protocol would still sit behind these
+records if adopted.
+
 **Divergence to resolve:** this package's convention is that a whole-server
 replacement binds a new Device to the same DeviceClaim, because the planned slot
 outlives the hardware. #63's current text says whole-server replacement creates a
 new DeviceClaim as well. The schema enforces neither convention. Settle this in
 #63 before either path is automated.
 
-## Applying the root
+## Applying the records
 
-`config/inventory` contains only the two cluster-scoped CRDs. It needs no
-credentials or workload. Apply claims and Devices after the CRDs are
-established, claims before the Devices that name them. Keep records with real
-serials, UUIDs, MACs, endpoints, or cabling in the environment's private
-configuration, not in this repository.
+`config/milo` installs the CRDs, ProtectedResources, and roles into Milo. Apply
+claims and Devices into the provider project after those are established,
+claims before the Devices that name them. Keep records with real serials,
+UUIDs, MACs, endpoints, or cabling in the environment's private configuration,
+not in this repository.
+
+`config/inventory` still renders the two CRDs alone, for an environment that
+applied them to the management cluster before Milo became their home. Once that
+environment has moved its records into Milo and stopped reconciling the root, it
+will be removed. New environments must not use it.

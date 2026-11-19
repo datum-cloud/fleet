@@ -6,7 +6,9 @@
   "exposedModules": {
     "CapacityList": "./src/pages/capacity-list.tsx",
     "MachineProfileList": "./src/pages/machine-profile-list.tsx",
-    "MachineClassList": "./src/pages/machine-class-list.tsx"
+    "MachineClassList": "./src/pages/machine-class-list.tsx",
+    "DeviceInventoryList": "./src/pages/device-inventory-list.tsx",
+    "DeviceClaimDetail": "./src/pages/device-claim-detail.tsx"
   },
   "extensions": [
     {
@@ -37,6 +39,20 @@
       "properties": {
         "path": "classes",
         "component": { "$codeRef": "MachineClassList" }
+      }
+    },
+    {
+      "type": "portal.page/platform",
+      "properties": {
+        "path": "inventory",
+        "component": { "$codeRef": "DeviceInventoryList" }
+      }
+    },
+    {
+      "type": "portal.page/platform",
+      "properties": {
+        "path": "inventory/:namespace/:claim",
+        "component": { "$codeRef": "DeviceClaimDetail" }
       }
     }
   ]

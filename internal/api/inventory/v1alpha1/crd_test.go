@@ -26,11 +26,14 @@ import (
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 )
 
-var inventoryRoot = filepath.Join("..", "..", "..", "..", "config", "inventory")
+var (
+	configRoot    = filepath.Join("..", "..", "..", "..", "config")
+	inventoryRoot = filepath.Join(configRoot, "components", "inventory")
+)
 
 func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(inventoryRoot, "fleet.datumapis.com.yaml"))
+	data, err := os.ReadFile(filepath.Join(inventoryRoot, "crds", "fleet.datumapis.com.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +72,8 @@ func TestInventoryCRDContract(t *testing.T) {
 		if status := version.Schema.OpenAPIV3Schema.Properties["status"]; len(status.Properties) != 0 || status.XPreserveUnknownFields != nil {
 			t.Fatalf("%s status must stay empty until a collector or verifier owns it", kind)
 		}
-		if _, ok := crd.Annotations["discovery.miloapis.com/parent-contexts"]; ok {
-			t.Fatalf("%s must not be exposed through Milo project discovery", kind)
+		if crd.Annotations["discovery.miloapis.com/parent-contexts"] != "Project" {
+			t.Fatalf("%s must be served in Milo project control planes", kind)
 		}
 		defaulted := crd.DeepCopy()
 		extensionsv1.SetObjectDefaults_CustomResourceDefinition(defaulted)
