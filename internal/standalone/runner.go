@@ -150,9 +150,13 @@ func (r Runner) install(ctx context.Context, coordinator *controller.Coordinator
 		return err
 	}
 	imageDecision := "local-test-" + imageDigest(r.Options.ImageName)
-	_, err = coordinator.Install(ctx, controller.InstallationRequest{Claim: claim, Installation: &installation, NamespaceUID: namespace.UID, Admission: controller.InstallationAdmissionAuthority{PrincipalUID: admission.PrincipalUID, DecisionID: "standalone-install-" + string(installation.UID), CatalogAuthority: "local-test-catalog", CatalogRevision: "local-test-v1", ImageDecisionID: imageDecision}})
+	result, err := coordinator.Install(ctx, controller.InstallationRequest{Claim: claim, Installation: &installation, NamespaceUID: namespace.UID, Admission: controller.InstallationAdmissionAuthority{PrincipalUID: admission.PrincipalUID, DecisionID: "standalone-install-" + string(installation.UID), CatalogAuthority: "local-test-catalog", CatalogRevision: "local-test-v1", ImageDecisionID: imageDecision}})
 	if err != nil {
 		return fmt.Errorf("install synthetic image: %w", err)
+	}
+	retained, found, err := r.Executor.Lookup(ctx, result.Record.OperationID)
+	if err != nil || !found || retained.ID != result.Record.OperationID || retained.Kind != "install" || retained.Phase != "Succeeded" || retained.Result != "installed" || retained.CompletedAt == nil || result.RequestDigest == "" || retained.InputDigest != result.RequestDigest {
+		return fmt.Errorf("%w: simulator installation history is missing or does not match retained authority and inputs", executor.ErrOutcomeUnknown)
 	}
 	now := metav1.NewTime(r.Now().UTC())
 	installation.Status = fleetv1.InstallationStatus{Phase: "Ready", CompletedAt: &now, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, installation.Generation, "SyntheticFixtureAccepted", "The standalone fixture admitted this request; this is not Milo authorization."), condition("Executing", metav1.ConditionFalse, installation.Generation, "Completed", "The persistent simulator returned a verified terminal result."), condition("Ready", metav1.ConditionTrue, installation.Generation, "Installed", "The synthetic provider verified installation completion.")}}
