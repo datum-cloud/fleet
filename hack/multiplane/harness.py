@@ -19,7 +19,15 @@ import sys
 import time
 
 PROFILE = os.environ.get('FLEET_MULTIPLANE_PROFILE', 'fleet-acceptance-tcg')
-CONTEXT = 'colima-' + PROFILE
+# Runtime parameters (docs/operations/multiplane.md#ci-mode). The defaults are
+# the local Colima profile: native arm64 runtime, amd64 guest under TCG. CI mode
+# runs on a disposable GitHub-hosted runner's own Docker daemon.
+RUNTIME = os.environ.get('FLEET_MULTIPLANE_RUNTIME', 'colima')
+CONTEXT = os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT', 'colima-' + PROFILE)
+ARCH = os.environ.get('FLEET_MULTIPLANE_ARCH', 'arm64')
+ACCEL = os.environ.get('FLEET_MULTIPLANE_ACCEL', 'tcg')
+DOCKER_ARCHITECTURES = {'arm64': ('aarch64', 'arm64'), 'amd64': ('x86_64', 'amd64')}
+CI_ENDPOINT = 'unix:///var/run/docker.sock'
 EXIT_PASSED, EXIT_FAILED, EXIT_PREFLIGHT, EXIT_BLOCKED, EXIT_TIMEOUT, EXIT_USAGE = 0, 1, 2, 3, 4, 64
 STATUS_BY_EXIT = {EXIT_PASSED: 'passed', EXIT_FAILED: 'failed', EXIT_PREFLIGHT: 'preflight-failed',
                   EXIT_BLOCKED: 'blocked', EXIT_TIMEOUT: 'timeout', EXIT_USAGE: 'usage'}
@@ -84,10 +92,17 @@ def preflight(args):
     for tool in ('go', 'python3', 'openssl', 'docker', 'kind', 'kubectl', 'kustomize', 'curl', 'git'):
         check('tool:' + tool, shutil.which(tool), 'required on PATH')
     check('python>=3.12', sys.version_info >= (3, 12), sys.version.split()[0] + ' (evidence extraction uses the tarfile data filter)')
+    check('runtime-mode', RUNTIME in ('colima', 'ci'), 'FLEET_MULTIPLANE_RUNTIME=%s; colima or ci' % RUNTIME)
+    if RUNTIME == 'ci':
+        # The run may adjust host kernel settings and fill the Docker data root:
+        # only a disposable runner, never a workstation's daemon.
+        check('ci-runner', os.environ.get('GITHUB_ACTIONS') == 'true', 'CI mode runs only on a disposable GitHub Actions runner')
+    accel_ok = ACCEL == 'tcg' or (ACCEL == 'kvm' and ARCH == 'amd64' and PROVIDER == 'libvirt')
+    check('accelerator', accel_ok, 'FLEET_MULTIPLANE_ACCEL=%s; tcg, or kvm with an amd64 runtime and the libvirt provider (Redfish lab targets are TCG only)' % ACCEL)
 
     code, out, _ = capture(['docker', 'context', 'inspect', CONTEXT, '--format', '{{.Endpoints.docker.Host}}'], 20)
-    endpoint_ok = code == 0 and out.strip().endswith('/.colima/%s/docker.sock' % PROFILE)
-    if not endpoint_ok and args.bootstrap and shutil.which('colima'):
+    endpoint_ok = endpoint_matches(code, out)
+    if not endpoint_ok and RUNTIME == 'colima' and args.bootstrap and shutil.which('colima'):
         # Only start an existing task-owned profile with its saved configuration.
         code, out, err = capture(['colima', 'list', '--json'], 30, cwd='/')
         known = any(json.loads(line).get('name') == PROFILE for line in out.splitlines() if line.strip().startswith('{')) if code == 0 else False
@@ -95,8 +110,8 @@ def preflight(args):
             code, _, err = capture(['colima', 'start', '--profile', PROFILE], 600, cwd='/')
             check('bootstrap:colima-start', code == 0, 'started existing profile ' + PROFILE if code == 0 else err.strip()[-300:])
             code, out, _ = capture(['docker', 'context', 'inspect', CONTEXT, '--format', '{{.Endpoints.docker.Host}}'], 20)
-            endpoint_ok = code == 0 and out.strip().endswith('/.colima/%s/docker.sock' % PROFILE)
-    check('docker-context', endpoint_ok, CONTEXT + ' must point at the task-owned Colima profile socket; never fleet-e2e-x86')
+            endpoint_ok = endpoint_matches(code, out)
+    check('docker-context', endpoint_ok, CONTEXT + (' must point at the task-owned Colima profile socket; never fleet-e2e-x86' if RUNTIME != 'ci' else ' must point at the runner daemon ' + CI_ENDPOINT))
 
     info = {}
     if endpoint_ok:
@@ -104,7 +119,7 @@ def preflight(args):
         if check('docker-reachable', code == 0, 'start the profile: colima start --profile %s (or run with --bootstrap)' % PROFILE if code else 'reachable'):
             info = json.loads(out)
     if info:
-        check('runtime-architecture', info.get('Architecture') in ('aarch64', 'arm64'), '%s (the Milo image pin is native arm64)' % info.get('Architecture'))
+        check('runtime-architecture', info.get('Architecture') in DOCKER_ARCHITECTURES.get(ARCH, ()), '%s; FLEET_MULTIPLANE_ARCH=%s' % (info.get('Architecture'), ARCH))
         check('runtime-memory', int(info.get('MemTotal', 0)) >= 7_800_000_000, '%.2f GiB; 8 GiB required' % (int(info.get('MemTotal', 0)) / 2**30))
         check('runtime-cpus', int(info.get('NCPU', 0)) >= 4, '%s CPUs; 4 required' % info.get('NCPU'))
         code, out, _ = capture(['docker', 'ps', '--format', '{{.Names}}'], 30)
@@ -117,6 +132,8 @@ def preflight(args):
         limit = vm_inotify()
         opted = os.environ.get('FLEET_MULTIPLANE_INOTIFY') == '1024'
         check('inotify-instances', limit is not None and (limit >= 1024 or opted), 'current %s; requires >=1024 or FLEET_MULTIPLANE_INOTIFY=1024 (reversible task-VM adjustment)' % limit)
+        if ACCEL == 'kvm':
+            check('kvm-device', vm_exec('test -c /dev/kvm && echo present') == 'present', '/dev/kvm on the Docker host; no automatic software fallback')
 
     root = pathlib.Path(args.root)
     main = (root / 'cmd/fleet-multiplane/main.go')
@@ -133,13 +150,27 @@ def preflight(args):
     pre = [c for c in checks if c['kind'] == 'preflight' and not c['ok']]
     ready = [c for c in checks if c['kind'] == 'readiness' and not c['ok']]
     code = EXIT_PREFLIGHT if pre else EXIT_BLOCKED if ready else EXIT_PASSED
-    write_json(evidence_dir(args.state) / 'preflight.json', {'schemaVersion': 1, 'observedAt': now(), 'profile': PROFILE, 'status': STATUS_BY_EXIT[code], 'checks': checks})
+    write_json(evidence_dir(args.state) / 'preflight.json', {'schemaVersion': 1, 'observedAt': now(), 'profile': PROFILE,
+                                                       'runtime': {'mode': RUNTIME, 'dockerContext': CONTEXT, 'architecture': ARCH, 'accelerator': ACCEL}, 'status': STATUS_BY_EXIT[code], 'checks': checks})
     for c in checks:
         print('%-4s %-34s %s' % ('ok' if c['ok'] else 'FAIL', c['name'], c['detail']))
     return code
 
 
+def endpoint_matches(code, out):
+    """The context must reach exactly the selected runtime's daemon."""
+    if code != 0:
+        return False
+    if RUNTIME == 'ci':
+        return out.strip() == CI_ENDPOINT
+    return RUNTIME == 'colima' and out.strip().endswith('/.colima/%s/docker.sock' % PROFILE)
+
+
 def vm_exec(command, timeout=30):
+    """Run a read-only command on the Docker host: the Colima VM, or the runner itself in CI mode."""
+    if RUNTIME == 'ci':
+        code, out, _ = capture(['sh', '-c', command], timeout, cwd='/')
+        return out.strip() if code == 0 else None
     if not shutil.which('colima'):
         return None
     code, out, _ = capture(['colima', 'ssh', '--profile', PROFILE, '--', 'sh', '-c', command], timeout, cwd='/')

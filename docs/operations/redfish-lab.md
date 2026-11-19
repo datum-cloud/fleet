@@ -26,6 +26,12 @@ Prerequisites, exit codes, the state and evidence layout, `--keep`,
 [multi-plane harness](multiplane.md#run). Redfish mode also needs network access
 to GitHub release archives, Docker Hub and PyPI to build the lab BMC image.
 
+Redfish mode also runs in [CI mode](multiplane.md#ci-mode) (the `redfish` mode
+of the `multiplane-acceptance` workflow). The lab adapter defines the targets
+as TCG domains, so CI runs them under TCG on an amd64 runner; preflight rejects
+`FLEET_MULTIPLANE_ACCEL=kvm` with `--redfish`. It is the same unmodified
+emulator archive, verified before extraction.
+
 ## Upstream emulator and provenance
 
 | Item | Pin |

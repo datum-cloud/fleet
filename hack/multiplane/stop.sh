@@ -4,7 +4,7 @@ set -euo pipefail
 state=${1:?private run state directory required}
 prefix=$(cat "$state/prefix")
 [[ $prefix =~ ^fleet-mp-[a-f0-9]{8}$ ]] || exit 1
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg
+export DOCKER_CONTEXT=${FLEET_MULTIPLANE_DOCKER_CONTEXT:-colima-fleet-acceptance-tcg}
 # The cell node holds the site runtime, journal volume, kro and worker Jobs; the
 # platform node holds the Milo APIs and their etcd volumes; the registry holds
 # the source revisions. Earlier-layout container names are kept for old runs.

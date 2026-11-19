@@ -17,7 +17,9 @@ import tarfile
 s = pathlib.Path(sys.argv[1])
 prefix = (s / 'prefix').read_text().strip()
 ev = s / 'evidence'
-os.environ['DOCKER_CONTEXT'] = 'colima-fleet-acceptance-tcg'
+os.environ['DOCKER_CONTEXT'] = os.environ.get('FLEET_MULTIPLANE_DOCKER_CONTEXT', 'colima-fleet-acceptance-tcg')
+ACCEL = os.environ.get('FLEET_MULTIPLANE_ACCEL', 'tcg')
+RUNTIME = os.environ.get('FLEET_MULTIPLANE_RUNTIME', 'colima')
 REDFISH = (s / 'site-provider').exists() and (s / 'site-provider').read_text().strip() == 'redfish'
 
 
@@ -335,8 +337,8 @@ summary = {
     'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prefix': prefix,
     'qualification': {'nativeMiloProjectAPIs': True, 'actualKarmadaDeliveryAndReflection': True, 'realLocalPXE': True,
                       'kubernetesJobExecution': True, 'actualKroController': True, 'fluxReconciledServices': True,
-                      'kvm': False, 'uefi': False, 'productionAuthority': False, 'productionEquivalence': False},
-    'versions': {'milo': 'v0.32.5', 'karmada': 'v1.16.0', 'kro': 'v0.9.4', 'flux': 'v2.9.6', 'kindNode': 'v1.35.0', 'architecture': arch, 'guestArchitecture': 'amd64', 'accelerator': 'tcg', 'firmware': 'SeaBIOS/iPXE (legacy BIOS)'},
+                      'kvm': ACCEL == 'kvm', 'uefi': False, 'productionAuthority': False, 'productionEquivalence': False},
+    'versions': {'milo': 'v0.32.5', 'karmada': 'v1.16.0', 'kro': 'v0.9.4', 'flux': 'v2.9.6', 'kindNode': 'v1.35.0', 'architecture': arch, 'guestArchitecture': 'amd64', 'accelerator': ACCEL, 'firmware': 'SeaBIOS/iPXE (legacy BIOS)'},
     'scenarios': {
         'exclusiveContention': True,
         'partitionPublicReadyStayedFalse': True,
@@ -365,6 +367,11 @@ summary = {
               'reflection faults injected with bootstrap credentials while the Karmada controller is stopped'],
     'privateArtifacts': 'state directory outside evidence/ contains authority; do not publish',
 }
+if RUNTIME == 'ci':
+    # A KVM guest on a GitHub-hosted runner is nested virtualization in a cloud
+    # VM: a different qualification target from the recorded Colima TCG runs,
+    # and still not physical hardware.
+    summary['qualification'].update(runtime='GitHub-hosted runner (CI mode)', physicalHardware=False)
 if REDFISH:
     summary['qualification'].update(redfishExecutor=True, dmtfRedfishInterfaceEmulator='1.2.2 (unmodified) + lab-only libvirt adapter', bootedCleanupEnvironment=True,
                                     physicalHardware=False, physicalBMC=False, vendorRedfishQualified=False, bmcTLS=False, mediaSanitization=False)
