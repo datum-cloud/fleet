@@ -1,0 +1,13 @@
+# Milo project API "provider": its own process, etcd, PVC and NodePort.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: milo-provider
+resources:
+  - namespace.yaml
+  - ../base
+patches:
+  - target: {kind: Service, name: milo-apiserver}
+    patch: |-
+      - op: replace
+        path: /spec/ports/0/nodePort
+        value: 30441

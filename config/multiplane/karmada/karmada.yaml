@@ -1,0 +1,81 @@
+# Karmada v1.16.0 on the management host, the chart pinned by the connected
+# datum-cloud/test-infra federation checkout. HelmRepository + HelmRelease
+# follows datum-cloud/infra infrastructure/karmada. Keep fsync enabled; single
+# local replicas are not an HA qualification.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: karmada-charts
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://raw.githubusercontent.com/karmada-io/karmada/master/charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: karmada
+  namespace: flux-system
+  annotations:
+    # Uninstalling Karmada deletes retained coordination intent; removing it
+    # from the source must never garbage-collect the release.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  interval: 30m
+  timeout: 15m
+  releaseName: karmada
+  targetNamespace: karmada-system
+  storageNamespace: karmada-system
+  chart:
+    spec:
+      chart: karmada
+      version: v1.16.0
+      sourceRef: {kind: HelmRepository, name: karmada-charts}
+      interval: 1h
+  install:
+    remediation: {retries: 3}
+  upgrade:
+    # Chart hooks regenerate certificates on upgrade; a failed upgrade is
+    # rolled back rather than retried into a different state.
+    remediation: {retries: 1, strategy: rollback}
+    crds: Skip
+  # As in datum-cloud/infra: report drift, do not overwrite. Pre-upgrade cert
+  # hooks make blind correction of this release unsafe.
+  driftDetection: {mode: warn}
+  values:
+    # Floating chart defaults pinned by index digest.
+    cfssl:
+      image: {digest: "sha256:a32a9048078819d3035f5dc46637346a0e7da9df297ab234994c9a80cde10b98"}
+    kubectl:
+      image: {digest: "sha256:8919c149c2e3d6860e0143c117900e64d71395172aaef0e01e604bb98c8e7ce0"}
+    apiServer:
+      serviceType: NodePort
+      nodePort: 32443
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {memory: 768Mi}
+    controllerManager:
+      resources:
+        requests: {cpu: 50m, memory: 128Mi}
+        limits: {memory: 384Mi}
+    scheduler:
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {memory: 192Mi}
+    webhook:
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {memory: 192Mi}
+    aggregatedApiServer:
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {memory: 256Mi}
+    kubeControllerManager:
+      resources:
+        requests: {cpu: 25m, memory: 64Mi}
+        limits: {memory: 256Mi}
+    etcd:
+      internal:
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 384Mi}

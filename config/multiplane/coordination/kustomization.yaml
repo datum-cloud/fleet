@@ -1,0 +1,7 @@
+# Handoff API and namespace for the Karmada API and every participating cell.
+# Reconciled by Flux with prune disabled; see docs/operations/gitops.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - crd.yaml

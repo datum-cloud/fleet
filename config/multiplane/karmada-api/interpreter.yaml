@@ -1,0 +1,31 @@
+apiVersion: config.karmada.io/v1alpha1
+kind: ResourceInterpreterCustomization
+metadata:
+  name: fleet-machine-allocation-handoff
+spec:
+  target:
+    apiVersion: coordination.fleet.datumapis.com/v1alpha1
+    kind: MachineAllocationHandoff
+  customizations:
+    statusReflection:
+      luaScript: |
+        function ReflectStatus(observedObj)
+          if observedObj.status == nil then return {} end
+          return observedObj.status
+        end
+    statusAggregation:
+      luaScript: |
+        function AggregateStatus(desiredObj, statusItems)
+          local reflected = {}
+          for _, item in ipairs(statusItems or {}) do
+            if item.status ~= nil and item.status.observation ~= nil then
+              table.insert(reflected, {
+                clusterName = item.clusterName,
+                observation = item.status.observation
+              })
+            end
+          end
+          -- Clear missing results; do not retain old success on zero replicas.
+          desiredObj.status = {reflected = reflected}
+          return desiredObj
+        end

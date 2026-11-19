@@ -1,0 +1,47 @@
+# Karmada push-mode member identity on the selected cell. It can deliver
+# intent and read local status, but holds no status write or Secret read.
+# Its token is minted by bootstrap enrollment, never stored in the source.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-federation, namespace: fleet-coordination}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-federation, namespace: fleet-coordination}
+rules:
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [machineallocationhandoffs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-federation, namespace: fleet-coordination}
+subjects:
+  - {kind: ServiceAccount, name: fleet-federation, namespace: fleet-coordination}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-federation}
+---
+# The member informer lists handoffs across namespaces and reads discovery.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: fleet-federation-discovery}
+rules:
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [machineallocationhandoffs]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [nodes, pods, namespaces]
+    verbs: [get, list, watch]
+  - nonResourceURLs: [/healthz, /readyz, /version, /api, /api/*, /apis, /apis/*]
+    verbs: [get]
+---
+# Discovery is bound to the same federation identity, not a second one.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: fleet-federation-reader}
+subjects:
+  - {kind: ServiceAccount, name: fleet-federation, namespace: fleet-coordination}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: fleet-federation-discovery}
