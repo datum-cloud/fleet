@@ -1,0 +1,68 @@
+# Lab BMC: the unmodified DMTF Redfish Interface Emulator 1.2.2 with the
+# lab-only adapter (hack/redfish-lab), from a digest-pinned image. It is the
+# only Redfish endpoint and, besides the runtime, the only holder of the
+# libvirt socket. It owns the lab targets' definitions and provisioning
+# network; Fleet workers reach it only over HTTP with the synthetic
+# credential. Plain HTTP on the cluster network is a documented lab seam.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-site-bmc
+  namespace: fleet-site
+spec:
+  type: ClusterIP
+  clusterIP: "${FLEET_BMC_SERVICE_IP}"
+  selector: {app.kubernetes.io/name: fleet-site-bmc}
+  ports:
+    - {name: redfish, port: 8000, targetPort: 8000, protocol: TCP}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-site-bmc
+  namespace: fleet-site
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-site-bmc}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-site-bmc}
+    spec:
+      serviceAccountName: fleet-site-bmc
+      automountServiceAccountToken: false
+      containers:
+        - name: bmc
+          image: "${FLEET_BMC_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          args: [serve]
+          env:
+            - {name: FLEET_BOOT_IP, value: "${FLEET_BOOT_SERVICE_IP}"}
+            - {name: FLEET_LIBVIRT_URI, value: "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock"}
+            - {name: HOME, value: /tmp}
+          ports:
+            - {name: redfish, containerPort: 8000}
+          readinessProbe:
+            httpGet: {path: /redfish/v1/, port: 8000}
+            periodSeconds: 5
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: state, mountPath: /run/fleet-libvirt, subPath: libvirt-socket}
+            - {name: state, mountPath: /var/lib/fleet-bmc, subPath: bmc-state}
+            - {name: credentials, mountPath: /etc/fleet-bmc-credentials, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: state
+          persistentVolumeClaim: {claimName: fleet-site-state}
+        - name: credentials
+          secret: {secretName: fleet-site-bmc-credentials, defaultMode: 0400}
+        - name: tmp
+          emptyDir: {}
