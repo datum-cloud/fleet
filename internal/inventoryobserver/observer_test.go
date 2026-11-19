@@ -368,3 +368,30 @@ func TestFactsNeverCarryFreeFormSourceData(t *testing.T) {
 		t.Fatalf("free-form source data leaked into facts: %s", encoded)
 	}
 }
+
+func TestRejectedCredentialStopsContactForTheRestOfTheRun(t *testing.T) {
+	c := newClient(t, &recorder{}, interceptor.Funcs{}, observation("a", 1234, ""), observation("b", 1234, ""), observation("c", 1234, ""))
+	source := syntheticSource()
+	source.deviceErr = netbox.ErrUnauthorized
+	observer := &Observer{Client: c, Namespace: namespace, NetBox: source}
+	results, err := observer.RefreshAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.calls != 1 {
+		t.Fatalf("source contacted %d times after rejecting the credential, want 1", source.calls)
+	}
+	for _, result := range results {
+		if result.Reason != inventoryv1.ReasonSourceUnauthorized || result.WriteErr != nil {
+			t.Fatalf("result = %+v", result)
+		}
+	}
+	source.deviceErr = nil
+	results, err = observer.RefreshAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.calls != 4 || !results[0].Succeeded() || !results[2].Succeeded() {
+		t.Fatalf("next run did not retry: calls=%d results=%+v", source.calls, results)
+	}
+}
