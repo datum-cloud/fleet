@@ -351,6 +351,15 @@ eligible firmware to that service. With no active admitted boot session, the
 service returns local boot. With a valid session, it serves the Fleet installer or
 chains through an allocation-scoped proxy to the admitted customer endpoint.
 
+Provisioning addresses are physical-side attachments, distinct from consumer
+Machine addresses. Where the location's DHCP is synchronized, the boot service
+publishes a reservation for the asset's boot NIC only while its boot is admitted.
+The network owner's DHCP reports what it applied. A network boot requires a
+report that the reservation is served, and completion requires reports that
+every instance which served it has withdrawn it. The
+[boot network enhancement](../boot-network/README.md) proposes this design; the
+implemented contract is in [Boot network](../../operations/boot-network.md).
+
 The proxy validates the endpoint and TLS policy, prevents unapproved redirects,
 keeps endpoint credentials away from the machine, and records the response digest.
 Customer artifacts referenced by the returned script must use approved HTTPS
