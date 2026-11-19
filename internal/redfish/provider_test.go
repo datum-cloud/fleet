@@ -225,6 +225,13 @@ type fixture struct {
 
 func newFixture(t *testing.T, timeout time.Duration) *fixture {
 	t.Helper()
+	return newDHCPFixture(t, timeout, DHCPStatic)
+}
+
+// newDHCPFixture builds the fixture with the given site DHCP mode. Synced
+// targets carry documentation-range provisioning attachments.
+func newDHCPFixture(t *testing.T, timeout time.Duration, dhcp string) *fixture {
+	t.Helper()
 	dir := t.TempDir()
 	for _, d := range []string{"journal", "boot", "console", "artifacts"} {
 		if err := os.Mkdir(filepath.Join(dir, d), 0700); err != nil {
@@ -248,9 +255,15 @@ func newFixture(t *testing.T, timeout time.Duration) *fixture {
 		"System-2": {id: "System-2", uuid: uuidB, mac: "52:54:00:77:01:0b", console: filepath.Join(dir, "console/target-b.log"), power: "Off", enabled: "Disabled", target: "None"}}}
 	rf := httptest.NewServer(bmc.handler())
 	t.Cleanup(rf.Close)
-	enrollment, err := ParseEnrollment([]byte(fmt.Sprintf(`{"endpoint":%q,"targets":[
-	 {"assetID":%q,"systemID":"System-1","systemUUID":%q,"mac":"52:54:00:77:01:0a","diskBytes":2147483648,"console":"target-a.log"},
-	 {"assetID":%q,"systemID":"System-2","systemUUID":%q,"mac":"52:54:00:77:01:0b","diskBytes":2147483648,"console":"target-b.log"}]}`, rf.URL, assetA, uuidA, assetB, uuidB)))
+	provA, provB := "", ""
+	if dhcp == DHCPSynced {
+		provA = `,"provisioning":{"address":"192.0.2.10/24","gateway":"192.0.2.1"}`
+		provB = `,"provisioning":{"address":"192.0.2.11/24","gateway":"192.0.2.1"}`
+	}
+	enrollment, err := ParseEnrollment([]byte(fmt.Sprintf(`{"dhcp":%q,"targets":[
+	 {"assetID":%q,"endpoint":%q,"systemID":"System-1","systemUUID":%q,"mac":"52:54:00:77:01:0a"%s,"diskBytes":2147483648,"console":"target-a.log"},
+	 {"assetID":%q,"endpoint":%q,"systemID":"System-2","systemUUID":%q,"mac":"52:54:00:77:01:0b"%s,"diskBytes":2147483648,"console":"target-b.log"}]}`,
+		dhcp, assetA, rf.URL, uuidA, provA, assetB, rf.URL, uuidB, provB)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +272,7 @@ func newFixture(t *testing.T, timeout time.Duration) *fixture {
 		t.Fatal(err)
 	}
 	p := &Provider{root: filepath.Join(dir, "journal"), bootRoot: filepath.Join(dir, "boot"), consoleRoot: filepath.Join(dir, "console"), artifacts: filepath.Join(dir, "artifacts"),
-		image: image, enrollment: enrollment, client: client, poll: 5 * time.Millisecond, settle: 150 * time.Millisecond, offGrace: 300 * time.Millisecond, outage: time.Second}
+		image: image, enrollment: enrollment, clients: map[string]*Client{enrollment.Targets[0].Endpoint: client}, poll: 5 * time.Millisecond, settle: 150 * time.Millisecond, offGrace: 300 * time.Millisecond, outage: time.Second}
 	boot := httptest.NewServer(p.BootHandler())
 	t.Cleanup(boot.Close)
 	p.origin, bmc.boot = boot.URL, boot.URL
@@ -510,7 +523,7 @@ func TestEnrollmentIsRetainedOnceWithoutContendingForTheJournalLock(t *testing.T
 		}
 	}
 	changed := *f.p
-	changed.enrollment = Enrollment{Endpoint: f.p.enrollment.Endpoint, Targets: f.p.enrollment.Targets[:1]}
+	changed.enrollment = Enrollment{DHCP: f.p.enrollment.DHCP, Targets: f.p.enrollment.Targets[:1]}
 	if err := changed.retainEnrollment(); err == nil {
 		t.Fatal("a changed enrollment was accepted for the retained journal")
 	}

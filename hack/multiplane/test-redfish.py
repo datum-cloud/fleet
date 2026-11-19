@@ -67,7 +67,8 @@ check('privileged nothing in the Redfish graph', 'privileged' not in json.dumps(
 enrollment = json.loads(env.get('FLEET_REDFISH_ENROLLMENT', '{}'))
 targets = json.loads((root / 'hack/redfish-lab/targets.json').read_text())
 by_system = {t['system']: t for t in targets}
-check('enrollment endpoint is the fixed BMC Service', enrollment.get('endpoint') == 'http://%s:8000' % flux.BMC_SERVICE_IP)
+check('every enrolled BMC endpoint is the fixed BMC Service', enrollment.get('targets') and all(t.get('endpoint') == 'http://%s:8000' % flux.BMC_SERVICE_IP for t in enrollment['targets']))
+check('lab DHCP is static: no provisioning attachment published', enrollment.get('dhcp') == 'static' and not any('provisioning' in t for t in enrollment.get('targets', [])))
 check('enrollment matches the lab targets exactly', len(enrollment.get('targets', [])) == 2 and all(
     t['systemID'] in by_system and by_system[t['systemID']]['uuid'] == t['systemUUID'] and by_system[t['systemID']]['mac'] == t['mac']
     and by_system[t['systemID']]['console'].endswith('/' + t['console']) for t in enrollment.get('targets', [])), json.dumps(enrollment)[:300])

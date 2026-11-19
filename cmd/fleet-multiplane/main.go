@@ -31,7 +31,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane site-worker|site-observer|image|boot-service|boot-denials|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane site-worker|site-observer|image|boot-service|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one reconcile attempt for fault injection")
@@ -47,6 +47,7 @@ func run() error {
 	credentials := fs.String("credentials", "", "directory holding username and password files (redfish-probe)")
 	system := fs.String("system", "", "enrolled Redfish System Id (redfish-probe)")
 	uuid := fs.String("uuid", "", "enrolled Redfish System UUID (redfish-probe)")
+	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -114,13 +115,20 @@ func run() error {
 	}
 	if redfishMode() {
 		switch os.Args[1] {
-		case "boot-service", "boot-denials":
+		case "boot-service", "boot-denials", "dhcp-feed":
 			p, err := redfish.OpenReadOnly()
 			if err != nil {
 				return err
 			}
 			if os.Args[1] == "boot-service" {
 				return p.ServeBoot()
+			}
+			if os.Args[1] == "dhcp-feed" {
+				token, err := os.ReadFile(*syncToken)
+				if err != nil {
+					return fmt.Errorf("DHCP synchronizer token: %w", err)
+				}
+				return p.ServeDHCP(strings.TrimSpace(string(token)))
 			}
 			var extra []string
 			if *extraMAC != "" {

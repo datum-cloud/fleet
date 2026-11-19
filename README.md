@@ -32,7 +32,9 @@ qualified OS other than Talos, without requiring a managed cluster or an ongoing
 guest agent. Provisioning engines and provider integrations remain pluggable.
 
 The [PXE installation enhancement](docs/enhancements/pxe-installation/README.md)
-proposes managed images and bounded delegation to customer PXE.
+proposes managed images and bounded delegation to customer PXE. The
+[boot network enhancement](docs/enhancements/boot-network/README.md) proposes
+DHCP reservations that exist only while a machine's network boot is admitted.
 
 ## Learn more
 
