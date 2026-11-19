@@ -27,8 +27,20 @@ billing ServicePricings for `metal.datumapis.com`. Staging's infra enables it
 on `config/milo`; production doesn't, so production has no Bare Metal prices.
 A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
 
+`config/inventory` is an opt-in root for the Fleet management cluster. It holds
+only the CRDs for the operator-written `DeviceClaim` and `Device` subset of the
+physical inventory API. Neither production root references it. See
+[Planning and registering physical devices](../docs/operations/physical-inventory.md).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
+
+`config/multiplane` and `config/site` are the Flux source for the local
+multi-plane acceptance only: Flux definitions per local cluster, Milo test
+workloads, Karmada and kro releases, the coordination API and the kro site
+graph. The harness stages them into an OCI artifact; see
+[Flux-reconciled local environment](../docs/operations/gitops.md). They are not
+production roots, and neither production root may reference them.
 
 `config/overlays/synthetic-staging` is the temporary Milo-routed acceptance
 environment. It uses the real private custody, exclusivity, cleanup, and reuse

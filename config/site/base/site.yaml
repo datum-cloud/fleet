@@ -1,0 +1,78 @@
+# Experimental Kubernetes site for one selected local cell. Reconciled by the
+# cell's Flux after the MachineAllocationHandoff CRD and fleet-coordination
+# namespace exist. See docs/operations/site-execution.md and gitops.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-site
+  annotations:
+    # Deleting the namespace would delete the journal volume claim.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+# Retain: deleting the claim never deletes the provider journal, disks or boot
+# evidence. A journal reset would let replayed handoffs be admitted as new.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fleet-site-retain
+  annotations:
+    # StorageClass parameters are immutable; create once, never prune.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+---
+# The durable site volume belongs to this layer alone. The shared services
+# mount it and the dispatcher graph only references it, so neither the services
+# layer nor any graph or instance lifecycle can delete it. Flux creates it once
+# and never updates or prunes it: removing it from the source, a controller
+# restart or a reconcile cannot replace the journal.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fleet-site-state
+  namespace: fleet-site
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+spec:
+  storageClassName: fleet-site-retain
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 8Gi}}
+---
+# Identities of the shared site services (config/site/services). The runtime
+# and boot service hold no API token.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-site-runtime, namespace: fleet-site}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-site-boot, namespace: fleet-site}
+automountServiceAccountToken: false
+---
+# The observer is the only writer of handoff status on this cell. It holds no
+# create/delete or spec-write permission and no Secret access.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: fleet-site-observer, namespace: fleet-site}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-site-observer, namespace: fleet-coordination}
+rules:
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [machineallocationhandoffs]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [machineallocationhandoffs/status]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-site-observer, namespace: fleet-coordination}
+subjects:
+  - {kind: ServiceAccount, name: fleet-site-observer, namespace: fleet-site}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-site-observer}

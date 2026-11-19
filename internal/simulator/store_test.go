@@ -241,6 +241,40 @@ func openStore(t *testing.T, path string) *Store {
 	return store
 }
 
+func TestResultDigestCommitsExactRequestWithoutExposingInputs(t *testing.T) {
+	request := operationRequest("digest-operation", "install", 1, `{"image":"debian@sha256:1"}`)
+	store := openStore(t, filepath.Join(t.TempDir(), "state.json"))
+	operation, _, err := store.Submit(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := RequestDigest(request)
+	if err != nil || len(want) != 64 || operation.ResultView().InputDigest != want {
+		t.Fatalf("request commitment mismatch: %v", err)
+	}
+	for _, field := range []string{"asset", "binding", "epoch", "fence", "image", "kind"} {
+		changed := request
+		switch field {
+		case "asset":
+			changed.AssetID += "-other"
+		case "binding":
+			changed.BindingID += "-other"
+		case "epoch":
+			changed.Epoch++
+		case "fence":
+			changed.FenceToken += "-other"
+		case "image":
+			changed.Inputs = json.RawMessage(`{"image":"debian@sha256:2"}`)
+		case "kind":
+			changed.Kind = "cleanup"
+		}
+		got, err := RequestDigest(changed)
+		if err != nil || got == want {
+			t.Fatalf("digest did not bind %s: %v", field, err)
+		}
+	}
+}
+
 func operationRequest(id, kind string, epoch int64, inputs string) Request {
 	return Request{
 		ID: id, Kind: kind, AssetID: "asset-1", BindingID: "binding-a",

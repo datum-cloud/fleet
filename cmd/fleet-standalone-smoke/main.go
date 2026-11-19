@@ -22,7 +22,7 @@ import (
 func main() {
 	options := standalone.DefaultOptions()
 	var phase, simulatorURL, tokenFile string
-	flag.StringVar(&phase, "phase", "", "required smoke phase: allocate, install, or release")
+	flag.StringVar(&phase, "phase", "", "required synthetic smoke phase: allocate, install, reinstall, or release")
 	flag.StringVar(&simulatorURL, "simulator-url", "http://fleet-simulator:8080", "synthetic simulator runtime URL")
 	flag.StringVar(&tokenFile, "runtime-token-file", "", "file containing the synthetic simulator runtime token")
 	flag.StringVar(&options.PrivateNamespace, "private-namespace", options.PrivateNamespace, "private record namespace")
@@ -57,6 +57,9 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	if err := awaitSimulator(simulatorURL, 2*time.Minute); err != nil {
+		fail(err)
+	}
 	if err := (standalone.Runner{Client: kube, Executor: provider, Options: options}).Run(context.Background(), phase); err != nil {
 		fail(err)
 	}
@@ -64,3 +67,25 @@ func main() {
 }
 
 func fail(err error) { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+
+// awaitSimulator waits until the simulator's Service answers readiness. A
+// phase started just after a simulator restart can otherwise reach no pod,
+// and the lifecycle correctly reports that transport failure as an unknown
+// outcome. Readiness has no effect and is never operation evidence.
+func awaitSimulator(base string, limit time.Duration) error {
+	c := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(limit)
+	for {
+		resp, err := c.Get(strings.TrimRight(base, "/") + "/readyz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("simulator did not become reachable and ready within %s", limit)
+		}
+		time.Sleep(time.Second)
+	}
+}
