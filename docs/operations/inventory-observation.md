@@ -116,7 +116,12 @@ run retries.
   interface lists at 2,000 entries.
 - **Credentials.** Tokens prefixed `nbt_` (NetBox 4.5+ v2 tokens) use the
   `Bearer` scheme; others use `Token`. The token file is re-read on every
-  request, so a rotated Secret applies without a restart.
+  request, so a rotated Secret applies without a restart. An empty token is
+  never sent. After the first 401 or 403 in a run, the observer stops
+  contacting the source and marks the remaining observations
+  `SourceUnauthorized`. Sources often ban addresses that repeat failed
+  authentication, and a ban would also block other clients sharing the same
+  egress address.
 
 ## Deploying the observer root
 

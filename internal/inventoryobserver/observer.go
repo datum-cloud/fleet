@@ -36,6 +36,12 @@ type Observer struct {
 	Namespace string
 	NetBox    Source
 	Now       func() time.Time
+
+	// rejected stops contact with the source for the rest of a run after it
+	// rejects the credential. Sources commonly ban clients that repeat failed
+	// authentication, and a ban would also block every other client sharing
+	// the observer's egress address.
+	rejected bool
 }
 
 // Result reports one observation's refresh. Reason is the Observed condition
@@ -61,6 +67,7 @@ func (o *Observer) RefreshAll(ctx context.Context) ([]Result, error) {
 		return nil, fmt.Errorf("list inventory observations: %w", err)
 	}
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].Name < list.Items[j].Name })
+	o.rejected = false
 	results := make([]Result, 0, len(list.Items))
 	for i := range list.Items {
 		results = append(results, o.refresh(ctx, &list.Items[i]))
@@ -106,9 +113,12 @@ func (o *Observer) observe(ctx context.Context, observation *inventoryv1.Invento
 	if source.System != inventoryv1.SourceSystemNetBox || source.Kind != inventoryv1.SourceKindDevice {
 		return inventoryv1.ReasonUnsupportedSource, fmt.Sprintf("source %s/%s is not supported by this observer", source.System, source.Kind)
 	}
+	if o.rejected {
+		return inventoryv1.ReasonSourceUnauthorized, "source not contacted: it rejected the observer credential earlier in this run; previously observed facts are retained"
+	}
 	device, err := o.NetBox.Device(ctx, source.ID)
 	if err != nil {
-		return sourceFailure(err)
+		return o.sourceFailure(err)
 	}
 	if source.ExpectedName != "" && device.Name != source.ExpectedName {
 		return inventoryv1.ReasonIdentityMismatch, fmt.Sprintf("source object %d is named %q, expected %q; facts were not updated", source.ID, device.Name, source.ExpectedName)
@@ -118,7 +128,7 @@ func (o *Observer) observe(ctx context.Context, observation *inventoryv1.Invento
 	}
 	interfaces, err := o.NetBox.Interfaces(ctx, source.ID)
 	if err != nil {
-		return sourceFailure(err)
+		return o.sourceFailure(err)
 	}
 	facts := Normalize(device, interfaces)
 	digest, err := Digest(facts)
@@ -136,7 +146,10 @@ func (o *Observer) observe(ctx context.Context, observation *inventoryv1.Invento
 	return inventoryv1.ReasonObserved, "read the source object; facts are observed, not verified"
 }
 
-func sourceFailure(err error) (string, string) {
+func (o *Observer) sourceFailure(err error) (string, string) {
+	if errors.Is(err, netbox.ErrUnauthorized) {
+		o.rejected = true
+	}
 	switch {
 	case errors.Is(err, netbox.ErrNotFound):
 		return inventoryv1.ReasonSourceObjectMissing, "source object was not found; previously observed facts are retained"
