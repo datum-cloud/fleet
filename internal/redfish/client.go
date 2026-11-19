@@ -55,17 +55,29 @@ type Client struct {
 	api    *gofish.APIClient
 }
 
-// NewClient accepts only an http(s)://IP:port endpoint without path or query.
-// It performs no request until first use.
-func NewClient(endpoint, user, password string, timeout time.Duration) (*Client, error) {
+// ParseEndpoint accepts only an http(s)://IPv4:port BMC endpoint without path
+// or query, and returns its canonical form.
+func ParseEndpoint(endpoint string) (string, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("redfish endpoint must be http(s)://IPv4:port")
+		return "", errors.New("redfish endpoint must be http(s)://IPv4:port")
 	}
 	port, err := strconv.Atoi(u.Port())
-	if ip := net.ParseIP(u.Hostname()); ip == nil || ip.To4() == nil || err != nil || port < 1 || port > 65535 {
-		return nil, errors.New("redfish endpoint must be http(s)://IPv4:port")
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || ip.To4() == nil || err != nil || port < 1 || port > 65535 {
+		return "", errors.New("redfish endpoint must be http(s)://IPv4:port")
 	}
+	return u.Scheme + "://" + ip.To4().String() + ":" + strconv.Itoa(port), nil
+}
+
+// NewClient accepts only an endpoint ParseEndpoint accepts. It performs no
+// request until first use.
+func NewClient(endpoint, user, password string, timeout time.Duration) (*Client, error) {
+	endpoint, err := ParseEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	u, _ := url.Parse(endpoint)
 	if user == "" || password == "" || strings.ContainsAny(user, ":\r\n") || strings.ContainsAny(password, "\r\n") {
 		return nil, errors.New("redfish credential must be a nonempty single-line username and password")
 	}
