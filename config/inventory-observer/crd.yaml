@@ -1,0 +1,57 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: inventoryobservations.fleet.datumapis.com
+spec:
+  group: fleet.datumapis.com
+  names: {kind: InventoryObservation, listKind: InventoryObservationList, plural: inventoryobservations, singular: inventoryobservation, shortNames: [invobs]}
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: System, type: string, jsonPath: .spec.source.system}
+    - {name: ID, type: integer, jsonPath: .spec.source.id}
+    - {name: Name, type: string, jsonPath: .status.facts.name}
+    - {name: Observed, type: string, jsonPath: '.status.conditions[?(@.type=="Observed")].status'}
+    - {name: Reason, type: string, jsonPath: '.status.conditions[?(@.type=="Observed")].reason'}
+    - {name: Observed At, type: date, jsonPath: .status.observedAt}
+    - {name: Trust, type: string, priority: 1, jsonPath: .status.trustProfile}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            required: [source]
+            x-kubernetes-validations:
+            - rule: self.source == oldSelf.source
+              message: the observed source identity is immutable; create a new observation instead
+            properties:
+              source:
+                type: object
+                required: [system, kind, id]
+                properties:
+                  system: {type: string, enum: [NetBox]}
+                  kind: {type: string, enum: [Device]}
+                  id: {type: integer, format: int64, minimum: 1}
+                  expectedName: {type: string, minLength: 1, maxLength: 253}
+          status:
+            type: object
+            properties:
+              observedGeneration: {type: integer, format: int64}
+              trustProfile: {type: string, enum: [ObservedOnly-v1]}
+              lastAttemptTime: {type: string, format: date-time}
+              observedAt: {type: string, format: date-time}
+              sourceUpdatedAt: {type: string, format: date-time}
+              factsDigest: {type: string}
+              facts: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              conditions:
+                type: array
+                items: {type: object, x-kubernetes-preserve-unknown-fields: true}

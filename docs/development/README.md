@@ -45,7 +45,8 @@ Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
 The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the
 Bare Metal service as `metal`; entitlement and location-availability readers use
-that reference. Physical Device references use `fleet.datumapis.com`. The
+that reference. Physical Device references use `fleet.datumapis.com`; that group
+implements only the observed-only `InventoryObservation` kind today. The
 [API architecture](../architecture/README.md) documents the proposed coordination group,
 control-plane placement, and rollout constraints. Group renaming does not migrate
 stored allocations or establish live acceptance.
@@ -586,6 +587,19 @@ not a production executor identity protocol.
 The persisted schema and HTTP endpoints are internal alpha interfaces. No
 compatibility promise exists yet. The process fails closed if retained state is
 corrupt or uses an unsupported schema version.
+
+## Inventory observation
+
+`internal/api/inventory/v1alpha1` defines `InventoryObservation`.
+`internal/netbox` is a read-only NetBox client, and `internal/inventoryobserver`
+refreshes observation status from it. `cmd/fleet-inventory-observer` runs one
+refresh and exits. `config/inventory-observer` packages the CRD, a
+namespace-scoped Role that grants only `get`/`list` on observations and `update`
+on their status, and a CronJob. No production root includes it, and no
+controller reads observations. Unit tests cover NetBox decoding and transport
+limits, identity guards, retained facts on failure, write conflicts, write
+scope, CRD validation, and RBAC scope. No test runs against a live NetBox. See
+[Observational inventory import](../operations/inventory-observation.md).
 
 ## Build, test, and run
 
