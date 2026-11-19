@@ -712,7 +712,9 @@ namespace-scoped Role that grants only `get`/`list` on observations and `update`
 on their status, and a CronJob. No production root includes it, and no
 controller reads observations. Unit tests cover NetBox decoding and transport
 limits, identity guards, retained facts on failure, write conflicts, write
-scope, CRD validation, and RBAC scope. No test runs against a live NetBox. See
+scope, CRD validation, and RBAC scope. With `KUBEBUILDER_ASSETS` set, an
+envtest test runs the observer as its packaged service account against a real
+API server. No test runs against a live NetBox. See
 [Observational inventory import](../operations/inventory-observation.md).
 
 ## Build, test, and run
