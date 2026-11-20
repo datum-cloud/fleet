@@ -27,6 +27,7 @@ export interface ObjectMeta {
   deletionTimestamp?: string;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  managedFields?: { manager?: string; subresource?: string }[];
   finalizers?: string[];
 }
 

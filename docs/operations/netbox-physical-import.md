@@ -4,7 +4,9 @@
 
 Start with [manual entry and operator review](physical-inventory.md#manually-record-a-small-installation).
 Physical inventory needs neither NetBox access nor a bulk importer. Operators
-write and review records individually; Flux remains the sole staging writer.
+write and review records individually. New/imported records may use approved
+direct API creation; existing Flux-owned records retain that writer until an
+explicit reviewed ownership transition.
 
 This guide covers **optional, explicitly invoked review aids**: a GET-only snapshot
 command and offline candidate generation. They help compare an existing source
@@ -191,7 +193,7 @@ source comparison when separately requested and authorized by the operator.
    namespace. Use the project's established authenticated GET/list path; do not
    assume a management-cluster context addresses Milo. The envelope is an operator
    attestation, not cryptographic proof of scope or freshness. Retain capturedAt and
-   read evidence privately; re-read before a GitOps merge.
+   read evidence privately; re-read before any approved creation or source merge.
 5. Run `plan` with private `--snapshot`, `--mapping`, `--existing` and a fresh output
    directory. Add `--previous` with the earlier source snapshot on subsequent runs.
    Review source disappearances: missing rows are **retained**, never deleted,
@@ -200,17 +202,20 @@ source comparison when separately requested and authorized by the operator.
 6. Obtain explicit approval for the mapping, exact target and desired cohort.
    Only then generate a handoff. Do not put private exports or imported asset facts
    in a public Fleet PR. Do not apply the candidate List directly to Milo.
-7. Stage individual **new** records additively in the existing private
-   `provider-inventory` Flux source. Preserve all existing files and object names;
-   never replace the collection with this partial candidate list. Review the Git
-   diff for no deletes, no modifications of existing bindings, no capacities and
-   no readiness/status. Retain source/mapping/report/receipt in the approved private
-   evidence store. The importer does not commit, push, merge or roll out this change.
+7. Use the explicitly approved writer for individual **new** records. A separately
+   authorized one-time API creation must be additive, reject existing names rather
+   than overwrite them, and retain per-record receipts for recovery. Alternatively,
+   if Flux ownership is chosen for those new records, stage them additively in the
+   private source. Preserve existing files, identities and bindings; never replace
+   the collection with this partial candidate list. Review exact inputs for no
+   deletes, modifications of existing bindings, capacities or readiness/status.
+   Retain source/mapping/report/receipts in the approved private evidence store.
+   This offline importer itself does not execute API writes, commit, push or deploy.
 
-Flux remains the only writer for staging provider-inventory records. This avoids
-the conflict that a direct importer would create with reconciliation. Reviewers
-must check for concurrent changes since the Fleet snapshot; the offline handoff
-does not provide an optimistic-concurrency apply transaction. After an interrupted
+Flux remains the writer for records it already owns; direct creation of new records
+does not authorize editing or taking over that cohort. Reviewers must check for
+concurrent changes since the Fleet snapshot; the offline handoff does not provide
+an optimistic-concurrency apply transaction. After an interrupted creation or
 reconciliation, refresh the Fleet snapshot and rerun. Matching records become
 no-ops; conflicts stay quarantined. Do not roll back by deleting occupied objects.
 
