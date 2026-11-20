@@ -41,6 +41,24 @@ type ProjectRuntime struct {
 	Mappers      Mappers
 	Machine      *LifecycleOwner
 	Installation *LifecycleOwner
+
+	reconcileMu sync.RWMutex
+	stopped     bool
+}
+
+func (r *ProjectRuntime) acquire() bool {
+	r.reconcileMu.RLock()
+	if r.stopped {
+		r.reconcileMu.RUnlock()
+		return false
+	}
+	return true
+}
+
+func (r *ProjectRuntime) stop() {
+	r.reconcileMu.Lock()
+	defer r.reconcileMu.Unlock()
+	r.stopped = true
 }
 
 // ProjectResolver resolves an engaged cluster name to its immutable project
@@ -125,6 +143,7 @@ func (p *Projects) Engage(ctx context.Context, name multicluster.ClusterName, cl
 }
 
 func (p *Projects) unbind(name multicluster.ClusterName, runtime *ProjectRuntime) {
+	runtime.stop()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.byCluster[name] != runtime {
