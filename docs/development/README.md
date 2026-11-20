@@ -206,6 +206,36 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   not evidence that its effects have stopped. Deterministic direct/routed replacement,
   cancellation, stale-pointer, registry-revalidation and concurrent engagement
   tests cover these process-local barriers, not distributed executor fencing.
+  A per-cluster-route engagement gate also serializes publication through the
+  entire downstream controller setup call and failure cleanup. Draining alone
+  was insufficient: a paused predecessor's setup could otherwise resume after
+  its successor and replace the successor's controller watches. The gate is
+  acquired after effect-free runtime construction; waiting is context-cancellable
+  and never holds the registry mutex. Cancelling a waiter does not stop the
+  current runtime. Gates are reference-counted and removed after their last
+  holder or waiter leaves; unrelated routes remain independent. Project-lifetime
+  conflicts across routes are still checked under the registry mutex.
+  Each published runtime owns a child engagement context, cancelled when its
+  drain begins. This cancels partial downstream engagements on failure and invalidates
+  the old context even when replacement uses the same cluster implementation.
+  Cancellation starts draining immediately, but cleanup cannot remove lifetime
+  ownership or admit a successor until downstream setup returns and admitted
+  handlers finish. A downstream call that ignores cancellation therefore blocks
+  that route rather than allowing an unfenced successor. A setup that returns
+  nil after cancellation is reported as cancelled, not successful engagement.
+  Cleanup under an already-held gate uses a separate internal path, avoiding
+  recursive locking; stale cleanup can only cancel and remove its own runtime.
+  Downstream setup may read the registries and engage another route. Synchronous
+  recursion back into a held route with the supplied context is rejected with
+  `ErrProjectEngagementReentrant`, including cycles through another route.
+  Nested setup also refuses to wait on any other occupied route in this registry,
+  preventing two concurrent callbacks from deadlocking by requesting each
+  other's routes. Ordinary independent callers still wait cancellably.
+  Callbacks must propagate that context rather than create a detached context
+  and synchronously wait on their own engagement. Deterministic regressions
+  cover blocked setup, direct/dependency handlers, failed/cancelled setup,
+  cancelled waiters, cross-route lifetime transfer, stale cleanup, unrelated
+  progress, reentrant setup and same-implementation context replacement.
 - **Observational discovery.** The provider declares no managed resources,
   teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer. Its
   discovery clients refuse every write. The library would otherwise patch
