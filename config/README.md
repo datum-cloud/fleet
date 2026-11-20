@@ -22,8 +22,8 @@ The one `fleet-manager` Deployment serves every Milo project that consumes the
 `metal` service; see [project discovery](#project-discovery).
 
 `config/components/service-catalog-staging` is a Kustomize component with
-staging's Bare Metal prices: one-time setup fees that contracts charge, as
-billing ServicePricings for `metal.datumapis.com`. Staging's infra enables it
+staging's Bare Metal prices: committed servers and server setup, which
+contracts charge, as billing ServicePricings for `metal.datumapis.com`. Staging's infra enables it
 on `config/milo`; production doesn't, so production has no Bare Metal prices.
 A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
 
