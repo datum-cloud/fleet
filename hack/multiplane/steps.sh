@@ -285,7 +285,12 @@ PY
   # The origin comes from the Flux-owned Service, which drift repair recreated.
   origin="http://$(site get service fleet-site-boot -o jsonpath='{.spec.clusterIP}'):8080"
   [[ $origin == "$(site get handoffdispatcher dispatcher -o jsonpath='{.status.bootOrigin}')" ]] || { echo 'dispatcher boot origin differs from the boot Service' >&2; exit 1; }
-  runtime fleet-multiplane boot-denials --origin "$origin" > "$state/boot-denials.txt"
+  if [[ $(cat "$state/site-provider" 2>/dev/null) == redfish ]]; then
+   # Redfish mode also probes the never-allocated target B's MAC.
+   runtime env FLEET_BOOT_ORIGIN="$origin" FLEET_BOOT_EVIDENCE=/var/lib/fleet-boot fleet-multiplane boot-denials --origin "$origin" --extra-mac 52:54:00:77:01:0b > "$state/boot-denials.txt"
+  else
+   runtime fleet-multiplane boot-denials --origin "$origin" > "$state/boot-denials.txt"
+  fi
   grep -q '^PASS ' "$state/boot-denials.txt" || { echo 'closed-boot probe failed' >&2; exit 1; }
   printf 'boot-denials: %s through the boot Service\n' "$(cat "$state/boot-denials.txt")"
   ;;

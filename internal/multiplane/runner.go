@@ -371,6 +371,10 @@ func (r *Runner) Allocate(ctx context.Context) error {
 }
 func (r *Runner) Install(ctx context.Context) error { return r.InstallIndex(ctx, 0) }
 
+// InstallSecond installs consumer B's Installation after it reused the
+// capacity, through the same lifecycle and federation path.
+func (r *Runner) InstallSecond(ctx context.Context) error { return r.InstallIndex(ctx, 1) }
+
 func (r *Runner) InstallIndex(ctx context.Context, index int) error {
 	request, err := r.request(ctx, index)
 	if err != nil {

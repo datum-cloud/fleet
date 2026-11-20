@@ -13,7 +13,9 @@ prefix=$(cat "$state/prefix")
 [[ $prefix =~ ^fleet-mp-[a-f0-9]{8}$ ]] || { echo "unexpected prefix" >&2; exit 1; }
 export DOCKER_CONTEXT=colima-fleet-acceptance-tcg
 cell="$state/cell-admin.yaml"
+provider=$(cat "$state/site-provider" 2>/dev/null || echo libvirt)
 deployments=(fleet-site-runtime fleet-site-boot fleet-site-observer)
+[[ $provider != redfish ]] || deployments+=(fleet-site-bmc)
 k() { kubectl --kubeconfig "$cell" --request-timeout=30s "$@"; }
 
 case "$step" in
@@ -32,6 +34,21 @@ env['siteImageDigest'] = digest
 (s / 'gitops-environment.json').write_text(json.dumps(env, indent=2) + '\n')
 PY
   printf 'site image: pushed to the run registry as fleet-site@%s; the cell pulls it by digest\n' "$digest"
+  if [[ $provider == redfish ]]; then
+   docker tag "$prefix-bmc-image" "127.0.0.1:$port/fleet-bmc:$prefix" >/dev/null
+   docker push "127.0.0.1:$port/fleet-bmc:$prefix" >/dev/null
+   bmc=$(docker image inspect "127.0.0.1:$port/fleet-bmc:$prefix" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep "^127.0.0.1:$port/fleet-bmc@" | cut -d@ -f2)
+   [[ $bmc =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "no registry digest for the BMC image" >&2; exit 1; }
+   python3 - "$state" "$prefix" "$bmc" <<'PY'
+import json, pathlib, sys
+s, prefix, digest = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+env = json.loads((s / 'gitops-environment.json').read_text())
+env['bmcImage'] = '%s-registry:5000/fleet-bmc@%s' % (prefix, digest)
+env['bmcImageDigest'] = digest
+(s / 'gitops-environment.json').write_text(json.dumps(env, indent=2) + '\n')
+PY
+   printf 'bmc image: pushed the DMTF emulator lab BMC as fleet-bmc@%s\n' "$bmc"
+  fi
   ;;
  check)
   for d in "${deployments[@]}"; do
@@ -44,6 +61,11 @@ PY
   policy=$(k get pv "$pv" -o jsonpath='{.spec.persistentVolumeReclaimPolicy}')
   [[ $policy == Retain ]] || { echo "site volume reclaim policy $policy" >&2; exit 1; }
   want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["siteImage"])' "$state/gitops-environment.json")
+  if [[ $provider == redfish ]]; then
+   bmc=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bmcImage"])' "$state/gitops-environment.json")
+   [[ $(k -n fleet-site get deployment fleet-site-bmc -o jsonpath='{.spec.template.spec.containers[0].image}') == "$bmc" ]] || { echo 'BMC does not run the published digest' >&2; exit 1; }
+   [[ $(k -n fleet-site get deployment fleet-site-bmc -o jsonpath='{.metadata.labels.kustomize\.toolkit\.fluxcd\.io/name}') == fleet-site-services ]] || { echo 'BMC is not owned by the Flux services layer' >&2; exit 1; }
+  fi
   for d in fleet-site-runtime fleet-site-boot fleet-site-observer; do
    image=$(k -n fleet-site get deployment "$d" -o jsonpath='{.spec.template.spec.containers[0].image}')
    [[ $image == "$want" ]] || { echo "$d runs $image, not the published digest" >&2; exit 1; }

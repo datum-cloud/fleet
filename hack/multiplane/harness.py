@@ -28,6 +28,13 @@ DEBIAN = 'debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2
 REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
                                                      'asset', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer')) + ('multiplane.ErrLocationNotServed',)
 READINESS_PACKAGES = ('./internal/coordination', './internal/multiplane', './internal/localvm', './cmd/fleet-multiplane')
+# Redfish mode (run.sh --redfish) adds its executor and probe to the readiness gate.
+PROVIDER = os.environ.get('FLEET_SITE_PROVIDER', 'libvirt')
+if PROVIDER == 'redfish':
+    REQUIRED_SOURCE_MARKERS += ('"redfish-probe"', '"install-b"', 'redfish.Open()')
+    READINESS_PACKAGES += ('./internal/redfish',)
+# Lab targets behind the Redfish emulator: System Id -> persistent libvirt domain.
+LAB_DOMAINS = {'System-1': 'fleet-lab-target-a', 'System-2': 'fleet-lab-target-b'}
 
 
 def now():
@@ -257,7 +264,7 @@ def journal(state):
 
 
 def domains(state):
-    # Running domains only.
+    # Running domains only; Redfish lab targets stay defined while powered off.
     code, out, _ = runtime_exec(state, 'virsh', '--connect', LIBVIRT_URI, 'list', '--name')
     return out.split() if code == 0 else None
 
@@ -272,7 +279,7 @@ def sanitized_operations(j):
     for r in (j or {}).get('operations', {}).values():
         ops.append({'id': r['request']['id'], 'kind': r['request']['kind'], 'epoch': r['request']['epoch'],
                     'stage': r.get('stage'), 'phase': r.get('result', {}).get('phase'), 'bootClosed': r.get('bootClosed', False),
-                    'domain': domain_name(r['request']['id'])})
+                    'domain': LAB_DOMAINS.get(r.get('target', {}).get('systemID'), '?') if (j or {}).get('provider') == 'redfish' else domain_name(r['request']['id'])})
     return ops
 
 
