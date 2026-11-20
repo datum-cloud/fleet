@@ -1,0 +1,161 @@
+# Shared site services for one selected local cell, owned directly by the
+# cell's Flux (Kustomization fleet-site-services, scoped identity). Values come
+# from the environment's fleet-environment ConfigMap through postBuild
+# substitution. These services are long-lived site infrastructure, not
+# operation state: no graph or instance lifecycle creates or deletes them.
+# Every revision of this layer is a reviewed change: a runtime rollout stops any
+# running guest, which leaves its operation Unknown and capacity occupied.
+#
+# The boot Service has a fixed ClusterIP from the cluster's static Service range,
+# so Flux recreating it after deletion yields the same boot origin that the
+# runtime, the boot service and every worker were configured with.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-site-boot
+  namespace: fleet-site
+spec:
+  type: ClusterIP
+  clusterIP: "${FLEET_BOOT_SERVICE_IP}"
+  selector: {app.kubernetes.io/name: fleet-site-boot}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080, protocol: TCP}
+---
+# Admission parameter for kro-created worker Jobs: they must run the same
+# digest-pinned image as these services.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-site-worker-policy
+  namespace: fleet-site
+data:
+  image: "${FLEET_SITE_IMAGE}"
+---
+# Hypervisor and provisioning bridge. Only this Pod is privileged; deleting
+# it stops any guest, which leaves the operation Unknown, never released.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-site-runtime
+  namespace: fleet-site
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-site-runtime}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-site-runtime}
+    spec:
+      serviceAccountName: fleet-site-runtime
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: libvirt
+          image: "${FLEET_SITE_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          command: [/usr/local/bin/fleet-site-runtime]
+          env:
+            - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+            - {name: FLEET_BOOT_IP, value: "${FLEET_BOOT_SERVICE_IP}"}
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          resources:
+            requests: {cpu: 500m, memory: 2560Mi}
+            limits: {memory: 3Gi}
+          readinessProbe:
+            exec:
+              command: [virsh, --connect, "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock", list, --name]
+            periodSeconds: 5
+            timeoutSeconds: 10
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/fleet-local, subPath: journal}
+            - {name: state, mountPath: /run/fleet-libvirt, subPath: libvirt-socket}
+            - {name: state, mountPath: /var/log/libvirt, subPath: libvirt-log}
+            - {name: state, mountPath: /var/lib/fleet-boot, subPath: boot-evidence, readOnly: true}
+      volumes:
+        - name: state
+          persistentVolumeClaim: {claimName: fleet-site-state}
+---
+# Boot service: journal read-only; writes only its own delivery evidence.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-site-boot
+  namespace: fleet-site
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-site-boot}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-site-boot}
+    spec:
+      serviceAccountName: fleet-site-boot
+      automountServiceAccountToken: false
+      containers:
+        - name: boot
+          image: "${FLEET_SITE_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          command: [fleet-multiplane, boot-service]
+          env:
+            - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+            - {name: FLEET_BOOT_ORIGIN, value: "http://${FLEET_BOOT_SERVICE_IP}:8080"}
+            - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            tcpSocket: {port: 8080}
+            periodSeconds: 5
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/fleet-local, subPath: journal, readOnly: true}
+            - {name: state, mountPath: /var/lib/fleet-boot, subPath: boot-evidence}
+      volumes:
+        - name: state
+          persistentVolumeClaim: {claimName: fleet-site-state}
+---
+# Observer: the only handoff status writer, from the journal only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-site-observer
+  namespace: fleet-site
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-site-observer}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-site-observer}
+    spec:
+      serviceAccountName: fleet-site-observer
+      containers:
+        - name: observer
+          image: "${FLEET_SITE_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          command: [fleet-multiplane, site-observer, --cell, "${FLEET_CELL}", --scoped-asset, "${FLEET_SCOPED_ASSET}", --interval, 10s]
+          env:
+            - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/fleet-local, subPath: journal, readOnly: true}
+      volumes:
+        - name: state
+          persistentVolumeClaim: {claimName: fleet-site-state}

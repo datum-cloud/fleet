@@ -1,0 +1,88 @@
+# Selected cell. Handoff CRD and namespace; prune false (see the hub copy).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-coordination, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: false
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/coordination
+---
+# Karmada push-mode member identity; its token is enrolled by bootstrap.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-federation, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/cell-federation
+  dependsOn:
+    - {name: fleet-coordination, namespace: flux-system}
+---
+# kro controller. wait covers the HelmRelease and its OCI chart source, so
+# a bad chart revision makes this not Ready and blocks the site layers.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: kro, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 3m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/kro
+---
+# Site namespace, retained volume, service identities, observer RBAC, kro's
+# narrowed grants and the admission policy for kro's writes. Shared site
+# infrastructure does not depend on kro: a broken kro release blocks only the
+# graph and the dispatcher. The claim binds on first consumer
+# (WaitForFirstConsumer).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-site-base, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/site/base
+  dependsOn:
+    - {name: fleet-coordination, namespace: flux-system}
+  healthCheckExprs:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      current: status.phase == 'Pending' || status.phase == 'Bound'
+      failed: status.phase == 'Lost'
+---
+# The HandoffDispatcher ResourceGraphDefinition, applied as a scoped identity
+# that can manage only ResourceGraphDefinitions.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-site-graph, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/site/graph
+  dependsOn:
+    - {name: kro, namespace: flux-system}
+    - {name: fleet-site-base, namespace: flux-system}
+  serviceAccountName: fleet-site-graph-reconciler
+  healthCheckExprs:
+    - apiVersion: kro.run/v1alpha1
+      kind: ResourceGraphDefinition
+      current: status.state == 'Active'
+      inProgress: status.state != 'Active'
