@@ -195,6 +195,40 @@ class PlanTests(unittest.TestCase):
         report, _ = self.plan()
         self.assertGreaterEqual(len(report["conflicts"]), 2)
 
+    def test_front_port_requires_explicit_valid_rear_position(self):
+        for position in (None, 0, -1, True, False, 1.0, "1", 257, "missing"):
+            with self.subTest(position=position):
+                front = self.source["objects"]["dcim/front-ports"][0]
+                front["rear_port_position"] = position
+                if position == "missing":
+                    del front["rear_port_position"]
+                report, records = self.plan()
+                entry = next(row for row in report["records"] if row["source"] == "dcim/front-ports/1")
+                self.assertEqual("unresolved", entry["classification"])
+                self.assertTrue(report["conflicts"])
+                self.assertFalse(any(component["id"] == "front-ports-1" for record in records for component in record["spec"].get("components", [])))
+
+    def test_front_port_preserves_explicit_multi_position_mapping(self):
+        for position in (1, 2):
+            with self.subTest(position=position):
+                self.source["objects"]["dcim/front-ports"][0]["rear_port_position"] = position
+                report, records = self.plan()
+                self.assertEqual({}, report["conflicts"])
+                mappings = [mapping for record in records for mapping in record["spec"].get("internalMappings", []) if mapping["from"]["componentID"] == "front-ports-1"]
+                self.assertEqual(1, len(mappings))
+                self.assertEqual(position, mappings[0]["to"]["position"])
+
+    def test_partial_handoff_cannot_bypass_unknown_front_port_position(self):
+        del self.source["objects"]["dcim/front-ports"][0]["rear_port_position"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = {"items": [], "target": self.mapping["target"], "collections": ["Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"]}
+            for name, data in (("source", self.source), ("mapping", self.mapping), ("existing", existing)):
+                inventory.write_private(root / (name + ".json"), data)
+            with self.assertRaisesRegex(ValueError, "reconciliation conflicts"):
+                inventory.main(["plan", "--snapshot", str(root / "source.json"), "--mapping", str(root / "mapping.json"), "--existing", str(root / "existing.json"), "--output", str(root / "blocked"), "--handoff", "--allow-partial"])
+            self.assertFalse((root / "blocked/candidates.json").exists())
+
     def test_redaction_uses_allowlisted_fields(self):
         source = {"id": 1, "comments": "SECRET", "custom_fields": {"bmc_password": "SECRET"}, "config_context": {"token": "SECRET"}, "device": {"id": 2, "url": "https://user:SECRET@example.invalid"}}
         self.assertNotIn("SECRET", json.dumps(inventory.sanitize(source)))

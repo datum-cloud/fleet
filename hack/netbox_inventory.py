@@ -352,7 +352,13 @@ class Planner:
                 if self.report.get(parent_key, {}).get("targets") != [target]:
                     self.mark(key, "unresolved", "internal dependency has a missing or different parent device", [target])
                     continue
-                mapping = {"from": {"componentID": collection + "-" + reference_id(record), "position": 1}, "to": {"componentID": parent_collection + "-" + parent_id, "position": record.get("rear_port_position") or 1}}
+                parent_position = 1
+                if collection == "front-ports":
+                    parent_position = record.get("rear_port_position")
+                    if type(parent_position) is not int or not 1 <= parent_position <= 256:
+                        self.mark(key, "unresolved", "front port requires an explicit valid rear-port position; never infer position one", [target])
+                        continue
+                mapping = {"from": {"componentID": collection + "-" + reference_id(record), "position": 1}, "to": {"componentID": parent_collection + "-" + parent_id, "position": parent_position}}
                 self.candidates[target]["spec"].setdefault("internalMappings", []).append(mapping)
 
     def feeds(self):
