@@ -44,6 +44,10 @@ today. Then choose a topic:
 | [Operations](docs/operations/README.md) | Local validation, deployment packaging, and acceptance |
 | [Troubleshooting](docs/troubleshooting/README.md) | Expected limitations, diagnostic entry points, and safe recovery boundaries |
 
+The [Fleet management enhancement](docs/enhancements/fleet-management/README.md)
+proposes physical inventory APIs, project ownership, and management/federation
+control-plane responsibilities.
+
 The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
 `datumctl metal` discovery, machine management, and safe recovery workflows.
 
