@@ -95,7 +95,16 @@ The new blocked-handler reproducer failed on the original manager for both direc
 and dependency-route reconciliation; that manager code was unchanged from the
 stack's base. No safety assertion or timeout was relaxed.
 
-The manual six-kind fixture, private Git-source compatibility checks, 24 optional
+The independent re-engagement reproducer also failed on parent head `449dfcf`
+(which includes the patch-panel-position fix) and passed after replacement was
+made to drain before publishing. Direct and dependency-route replacements,
+cancellation during/after draining, stale pointers, concurrent engagements and
+registry ownership changes have deterministic regressions. These and the existing
+departure/active-custody tests passed 50 race-detector repetitions. This is local
+evidence only: a **new independent adversarial review and fresh CI on the pushed
+head remain required** before staging approval.
+
+The manual six-kind fixture, private Git-source compatibility checks, 27 optional
 review-aid tests, 58 provider UI tests, 44 consumer UI tests, both UI typechecks and
 builds, Milo packaging, all five CI Kustomize renders, overlay isolation, standalone
 render/source/preflight and mocked smoke checks, multi-plane harness, shellcheck,
@@ -110,7 +119,7 @@ export KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-e
 go test ./...
 go test -race ./...
 go vet ./...
-go test -race ./internal/manager -run 'TestProjectDepartureDrainsReconciliation|TestDisengageWithActiveCustody' -count=50
+go test -race ./internal/manager -run 'TestProject(Reengagement|Departure)|TestConcurrentProjectReengagement|TestDisengageWithActiveCustody' -count=50
 go test -race ./internal/manager -run '^(TestManagerEndToEndAgainstSyntheticMilo|TestConsumerDiscoveryIgnoresOtherServicesAndBacksOff)$' -count=1 -v
 python3 -m unittest discover -s hack -p test_netbox_inventory.py
 pnpm --dir ui/provider typecheck
