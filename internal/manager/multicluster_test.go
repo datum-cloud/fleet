@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -186,17 +187,11 @@ func TestPrivateCustodyRoutesOnlyToItsOwnProject(t *testing.T) {
 	}
 }
 
-// settledCounts waits until every named project's request count has stopped
-// changing for a settling period, then returns the counts in order.
-func settledCounts(t *testing.T, recorder *recordingHandlers, names ...multicluster.ClusterName) (int, int) {
+// settledValue returns a snapshot once it has stopped changing for a settling
+// period, so a negative window starts from a settled baseline instead of its
+// first sample. Work that keeps arriving never settles and fails the caller.
+func settledValue[T any](t *testing.T, description string, snapshot func() T) T {
 	t.Helper()
-	snapshot := func() []int {
-		out := make([]int, len(names))
-		for i, name := range names {
-			out[i] = recorder.count(name)
-		}
-		return out
-	}
 	deadline := time.Now().Add(10 * time.Second)
 	last, stableSince := snapshot(), time.Now()
 	for time.Now().Before(deadline) {
@@ -207,11 +202,36 @@ func settledCounts(t *testing.T, recorder *recordingHandlers, names ...multiclus
 			continue
 		}
 		if time.Since(stableSince) >= 500*time.Millisecond {
-			return last[0], last[1]
+			return last
 		}
 	}
-	t.Fatalf("request counts for %v never settled: %v", names, last)
-	return 0, 0
+	t.Fatalf("%s never settled: %v", description, last)
+	var zero T
+	return zero
+}
+
+// settledCounts waits until every named project's request count has stopped
+// changing for a settling period, then returns the counts in order.
+func settledCounts(t *testing.T, recorder *recordingHandlers, names ...multicluster.ClusterName) (int, int) {
+	t.Helper()
+	counts := settledValue(t, fmt.Sprintf("request counts for %v", names), func() []int {
+		out := make([]int, len(names))
+		for i, name := range names {
+			out[i] = recorder.count(name)
+		}
+		return out
+	})
+	return counts[0], counts[1]
+}
+
+// disengagedState is everything the departure test holds still: east's
+// lifecycle request count, the host writes, its private records, and its
+// Machine.
+type disengagedState struct {
+	handled       int
+	privateWrites int64
+	records       map[string]string
+	machine       *fleetv1.Machine
 }
 
 // When a project leaves the consumer set with active custody, the manager
@@ -235,7 +255,10 @@ func TestDisengageWithActiveCustodyStopsReconcilingWithoutReleaseOrRewrite(t *te
 	provider.Disengage("east")
 	eventually(t, "unbound", func() bool { return f.projects.Get("east") == nil && !f.tracker.Engaged("east") })
 	eventually(t, "project sources stopped", func() bool { return machineInformer.HandlerCount() == 0 })
-	handled, privateWrites, records, machine := recorder.count("east"), private.Writes(), privateSecrets(t, private), getMachine(t, east, "m")
+	before := settledValue(t, "east's state after departure", func() disengagedState {
+		return disengagedState{recorder.count("east"), private.Writes(), privateSecrets(t, private), getMachine(t, east, "m")}
+	})
+	handled, privateWrites, records, machine := before.handled, before.privateWrites, before.records, before.machine
 
 	// Private-record events, a stale queued request, and project events all
 	// arrive after departure.
