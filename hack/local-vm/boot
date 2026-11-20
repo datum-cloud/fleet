@@ -1,0 +1,10 @@
+#!/bin/busybox sh
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mount -t proc proc /proc 2>/dev/null || true
+exec >/dev/ttyS0 2>&1
+# Only the disk-root boot emits completion; installer completion is insufficient.
+if grep -Eq '^/dev/vda1 / ext4 ' /proc/mounts && test -s /fleet-receipt; then
+ printf 'FLEET-DISK-BOOT:%s\n' "$(cat /fleet-receipt)"
+fi
+sync
+/bin/busybox poweroff -f
