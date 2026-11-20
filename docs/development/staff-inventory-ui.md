@@ -149,6 +149,9 @@ resets open forms on session/background boundaries;
 submit denial while the view remains active still retains safe unsaved input.
 There is no automatic save or retry when returning to a page.
 
+Completed route navigation starts a new operation scope and query cache, even
+when the principal is unchanged. Pending navigation unmounts the inventory view;
+old operations stay revoked rather than being reactivated for new forms.
 Inventory queries are also isolated per mounted view and refresh manually.
 Known-denied collections are removed
 from the rendered data, including stale supplied results and related names;

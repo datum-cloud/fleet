@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { UNSAFE_DataRouterContext, UNSAFE_DataRouterStateContext, useRevalidator, useRouteLoaderData } from 'react-router';
+import { UNSAFE_DataRouterContext, UNSAFE_DataRouterStateContext, useLocation, useNavigation, useRevalidator, useRouteLoaderData } from 'react-router';
 import { InventoryAccessState } from './inventory-access-state';
 import { LoadingState } from './states';
 import { InventoryOperationContext, InventoryOperationScope } from '../lib/inventory-operation';
@@ -26,6 +26,8 @@ function SessionQueries({ children, principal }: { children: ReactNode; principa
 function HostedInventory({ children }: { children: ReactNode }) {
   const identity = useRouteLoaderData('layouts/milo.layout') as { user?: { metadata?: { uid?: string; name?: string } } } | undefined;
   const principal = identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name;
+  const location = useLocation();
+  const navigation = useNavigation();
   const revalidator = useRevalidator();
   const revalidate = useRef(revalidator.revalidate);
   revalidate.current = revalidator.revalidate;
@@ -69,10 +71,10 @@ function HostedInventory({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
-  if (checking || revalidator.state !== 'idle') return <LoadingState />;
+  if (checking || revalidator.state !== 'idle' || navigation.state !== 'idle') return <LoadingState />;
   if (failed) return <InventoryAccessState status={503} />;
   if (!principal) return <InventoryAccessState status={401} />;
-  return <SessionQueries key={principal} principal={principal}>{children}</SessionQueries>;
+  return <SessionQueries key={JSON.stringify([principal, location.key])} principal={principal}>{children}</SessionQueries>;
 }
 
 export function InventorySessionBoundary({ children }: { children: ReactNode }) {
