@@ -46,6 +46,9 @@ today. Then choose a topic:
 
 The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
 `datumctl metal` discovery, machine management, and safe recovery workflows.
+The [boot network enhancement](docs/enhancements/boot-network/README.md)
+proposes DHCP reservations that exist only while a machine's network boot is
+admitted.
 
 Contributors should also read the [repository guidance](AGENTS.md) and
 [implementation roadmap](docs/development/roadmap.md).
