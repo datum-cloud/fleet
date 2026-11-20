@@ -1,11 +1,19 @@
-# Evaluate NetBox physical inventory safely
+# Optional NetBox review aids for manual inventory
 
 [Physical inventory](physical-inventory.md) · [Inventory proposal](../proposals/fleet-management/inventory.md) · [Detailed proposed contracts](../proposals/fleet-management/inventory-reference.md)
 
-This milestone provides six provider-project inventory kinds, read-only staff
-browsing, a GET-only NetBox snapshot command, and an **offline, create-only GitOps
-handoff**. It does not apply anything to Fleet or NetBox. It is not a verification,
-reservation, adoption, enrollment, or provisioning controller.
+Start with [manual entry and operator review](physical-inventory.md#manually-record-a-small-installation).
+Physical inventory needs neither NetBox access nor a bulk importer. Operators
+write and review records individually; Flux remains the sole staging writer.
+
+This guide covers **optional, explicitly invoked review aids**: a GET-only snapshot
+command and offline candidate generation. They help compare an existing source
+when an operator chooses to use it; they are not an automated migration. There
+are no scheduled imports, discovery or sync controllers, background NetBox updates,
+auto-apply or auto-delete. Neither command applies anything to Fleet or NetBox.
+The retained `--handoff` option writes candidate files for human review only; it
+does not hand execution to Flux, change Git, or transfer ownership. No verification,
+reservation, adoption, enrollment, or provisioning controller is included.
 
 ## What exists and what remains unknown
 
@@ -33,7 +41,7 @@ remain Unknown. Existing editor delete permissions are not a safe retirement API
 - Existing long-lived slot claims keep their names, text placement, ports, and
   historical Device bindings. Existing `Device.spec.identity` and `claimRef`
   remain immutable. MachineCapacity and its `deviceRef` are not modified.
-- New imported claims use `lifecycle: Installation` and typed placement. This
+- New manually entered or optionally generated claims use `lifecycle: Installation` and typed placement. This
   mode cannot be added to a legacy slot; an installation's placement is immutable.
   This is an observational installation record, **not** a reservation or an
   accepted plan. Moving an existing asset remains blocked on the proposal's
@@ -107,7 +115,7 @@ physical-field allowlist and excludes URLs, comments, custom fields and config
 contexts. This intentionally is **not a lossless NetBox backup**. Exports still
 contain private asset identities, serials and topology and must stay outside Git.
 
-## Start with the checked-in synthetic example
+## Optionally compare the checked-in synthetic example
 
 Python 3 uses only the standard library. No provider SDK or cluster access is
 needed. Output directories must not already exist; files are mode 0600 inside
@@ -121,7 +129,9 @@ python3 hack/netbox_inventory.py plan \
   --output /private/tmp/fleet-physical-report-example
 ```
 
-Only `report.json` is emitted by default. Inspect every unresolved/unsupported
+Only `report.json` is emitted by default. The historical `imported` classification
+means an offline candidate was representable, **not that any record was applied**.
+Inspect every unresolved/unsupported
 row; the example intentionally leaves a room mapping unresolved. Staff can open
 the report with the Inventory tab's local file picker; its contents are not
 uploaded. The portal shows restricted/loading/empty states, paginated collections,
@@ -144,7 +154,11 @@ not bypass collection errors or target conflicts. The handoff emits candidate
 objects and a receipt containing the exact target plus source, mapping, Fleet
 snapshot and candidate digests. Nothing invokes kubectl apply or writes Git.
 
-## Prepare a private real-data review
+## Optional private source comparison
+
+Skip this entire section for manual entry. No NetBox credentials or parity audit
+are required to evaluate the manual physical-inventory features. Only perform a
+source comparison when separately requested and authorized by the operator.
 
 1. Use existing read credentials: `NETBOX_TOKEN`, otherwise `NETBOX_TOKEN_FILE`
    (default `~/.config/netbox/token`). Never paste a token into arguments, logs,
@@ -211,8 +225,11 @@ this feature does not modify them or their kubeconfig references.
 On 2026-11-20, read-only GitHub checks found both infra staging OCI sources configured
 for `v0.0.0-feat-manual-inventory-records`; the corresponding Fleet branch head was
 `42086bbe2cf05f5d09362fbc777e514907d64462`. This implementation is stacked there,
-including the dependent PXE/runtime code. **Configured tag is not an observed
-deployed revision.** No cluster rollout or live import was performed.
+including the dependent PXE/runtime code. **That original configured-tag check
+was not a deployed-revision observation.** A subsequent read-only staging API
+check is recorded in the [staging baseline and acceptance checklist](physical-inventory-staging.md#read-only-baseline-observed-on-november-20-2026).
+It observed the manual-inventory base, not this physical extension. No cluster
+rollout or live import was performed.
 
 The documented environment/token-file paths did not provide authorized NetBox
 access in this implementation checkout. No live inventory audit was performed;
@@ -221,12 +238,11 @@ unvalidated. Source interpretation comes from the pinned infra
 `d9198940a499be4e744ee0564cf3dc0b3bfcee34` loaders and site-build documents, as
 recorded in the [source evidence appendix](../proposals/fleet-management/inventory-reference.md#source-evidence-and-limits).
 
-Before live evaluation, establish a private source audit, resolve required mappings,
-render/install the six-kind schema in an explicitly approved environment, and
-confirm authorized staff can browse while consumers cannot. Compare counts and
-every classified row, test repeated and interrupted handoffs, and confirm original
-Device/claim/Capacity identities remain unchanged. None of this establishes
-physical qualification or safe capacity release.
+For manual staging evaluation, use the [acceptance and rollback checklist](physical-inventory-staging.md).
+If an operator separately chooses the optional source comparison, establish its
+private audit and mappings, compare every classified row, and test repeated and
+interrupted candidate generation. No live NetBox access means no claim of source
+parity, not a blocker for manually entering and reviewing physical records.
 
 ```sh
 python3 -m unittest discover -s hack -p test_netbox_inventory.py

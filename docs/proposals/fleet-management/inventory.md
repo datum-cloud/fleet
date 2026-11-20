@@ -175,8 +175,10 @@ expected connections are stored on ports. This proposal instead uses a new plan
 for each installation and separate Cable records. That difference must be settled
 before automating moves and replacements.
 
-Import should preserve existing equipment identities, customer reservations and
-history. Change the responsible writer one record type at a time. Do not delete
+The current implementation uses manual entry and operator-controlled migration,
+not automated import. NetBox and optional offline candidate review are not required.
+Migration must preserve existing equipment identities, customer reservations and
+history. Change the responsible writer only through an explicit approval. Do not delete
 and recreate assets, assume occupied space is free, or mark old records ready
 without new checks.
 

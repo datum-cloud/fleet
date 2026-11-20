@@ -15,7 +15,8 @@ export function PhysicalInventory({ inventory }: { inventory: Inventory }) {
   return <section aria-label="Physical inventory" className="flex flex-col gap-4">
     <h2>Physical records · verification Unknown</h2>
     <p>Observational records do not reserve space, establish an active binding, or authorize hardware operations. Cable is the typed topology authority; legacy inline peers remain unmigrated history.</p>
-    <label>Inspect a private import report locally (not uploaded)
+    <p>Operators enter and review records in the private inventory Git source. Flux is the staging writer. NetBox and import reports are not required; this page never applies or synchronizes inventory.</p>
+    <label>Optional: inspect a private review report locally (not uploaded)
       <input type="file" accept="application/json,.json" onChange={async (event) => {
         setReport([]); setError(''); setSummary(undefined);
         const file = event.target.files?.[0];
@@ -33,12 +34,12 @@ export function PhysicalInventory({ inventory }: { inventory: Inventory }) {
       }} />
     </label>
     {error && <p role="alert">{error}</p>}
-    {summary && <div><h3>Import reconciliation — candidates, not applied records</h3>
+    {summary && <div><h3>Optional source comparison — candidates, not applied records</h3>
       <p>Collection fetch: {summary.complete ? 'Complete (not physical parity)' : 'Incomplete or Unknown'} · {report.length} classified records</p>
       <ul>{summary.errors.map((message) => <li key={message}>{message}</li>)}</ul>
       <p>Missing source records are retained, never deleted: {summary.missing.length}</p>
       <ul>{summary.missing.map((identity, index) => <li key={`${identity}/${index}`}>{identity}</li>)}</ul>
-      <label>Filter reconciliation <input value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <label>Filter review report <input value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <p>Showing {Math.min(matching.length, 250)} of {matching.length} matching rows</p>
       <ul>{matching.slice(0, 250).map((row) => <li key={row.source}>{row.source}: {row.classification} — {row.reason}</li>)}</ul>
     </div>}

@@ -184,7 +184,15 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   consumer set. It does not release custody, call a provider, delete records,
   or rewrite status, including for a project with active custody. Its
   deadlines and queued events are dropped, and re-engagement resumes from the
-  retained private records.
+  retained private records. Unbinding drains direct and dependency-route
+  reconciliations that already acquired the runtime before removing it from the
+  registry; a retained runtime pointer cannot start work after that barrier.
+  A blocked in-flight handler therefore delays completed departure rather than
+  falsely reporting it. This fixes an inherited race where informer removal and
+  registry removal could finish while a handler could still write. It does not
+  roll back effects already admitted before departure. Regression tests block a
+  handler explicitly and assert the barrier, in addition to the active-custody
+  no-write/no-release test.
 - **Observational discovery.** The provider declares no managed resources,
   teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer. Its
   discovery clients refuse every write. The library would otherwise patch
@@ -720,12 +728,14 @@ No metal role grants inventory access.
 The staff portal plugin's read-only Inventory tab pages through all six kinds,
 shows physical relationships and components, and can inspect a private import
 report locally. Multiple historical bindings remain ambiguous rather than being
-resolved by edit time. Python's standard-library `hack/netbox_inventory.py`
-exports sanitized GET-only NetBox snapshots and prepares an offline create-only
-handoff to the existing Flux writer. Unit tests run API-server validation offline,
+resolved by edit time. The primary workflow is [manual entry and review](../operations/physical-inventory.md#manually-record-a-small-installation)
+through the existing Flux writer, with no NetBox dependency. The optional,
+operator-invoked standard-library `hack/netbox_inventory.py` reads GET-only snapshots
+and generates offline review candidates; it never applies, schedules, synchronizes,
+deletes or changes Git. Unit tests run API-server validation offline,
 check IAM and exercise pagination, source conflicts, omissions and interrupted
 imports. See [safe NetBox evaluation](../operations/netbox-physical-import.md).
-No live source coverage, deployed revision, physical verification, concurrent
+No live source coverage, deployment of this physical extension, physical verification, concurrent
 reservation, deletion safety, adoption or new hardware-effect path is established.
 
 ## Build, test, and run

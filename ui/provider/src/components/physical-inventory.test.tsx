@@ -5,6 +5,25 @@ import { toInventory, placementLabel } from '../inventory';
 import { fixtureDeviceClaims } from '../lib/fixtures';
 
 describe('physical inventory', () => {
+  it('browses manual facilities, racks, cables and feeds without a source report', () => {
+    const provenance = fixtureDeviceClaims[0].spec.provenance;
+    const inventory = toInventory([], [], [
+      { kind: 'Facility', metadata: { name: 'premises', namespace: 'default' }, spec: { displayName: 'Manual premises', provenance } },
+      { kind: 'Rack', metadata: { name: 'rack', namespace: 'default' }, spec: { displayName: 'Manual rack', facilityRef: { name: 'premises' }, provenance } },
+      { kind: 'PowerFeed', metadata: { name: 'feed', namespace: 'default' }, spec: { displayName: 'Manual feed', facilityRef: { name: 'premises' }, rackRef: { name: 'rack' }, provenance } },
+      { kind: 'Cable', metadata: { name: 'cable', namespace: 'default' }, spec: { displayName: 'Manual cable', medium: 'Power', lanes: [{ id: 'power', a: { powerFeedRef: { name: 'feed' }, componentID: 'outlet', position: 1 }, b: { deviceRef: { name: 'server' }, componentID: 'psu', position: 1 } }], provenance } },
+    ]);
+    render(<PhysicalInventory inventory={inventory} />);
+    for (const kind of ['Facility', 'Rack', 'PowerFeed', 'Cable']) {
+      expect(screen.getByText(new RegExp(`^${kind}: Manual`))).toBeInTheDocument();
+    }
+    expect(screen.getByText(/feed\/outlet:1 ↔ server\/psu:1/)).toBeInTheDocument();
+    expect(screen.getByText(/Usable budget and redundancy: Unknown/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Verification: Unknown/)).toHaveLength(4);
+    expect(screen.queryByText(/classified records/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /apply|sync|import|delete/i })).not.toBeInTheDocument();
+  });
+
   it('keeps partial placement and free space unknown', () => {
     const claim = { ...fixtureDeviceClaims[0], spec: { ...fixtureDeviceClaims[0].spec, placement: { scope: 'RackMembership' as const, rackRef: { name: 'rack-example' } } } };
     expect(placementLabel(claim)).toContain('no reserved units');
@@ -17,7 +36,8 @@ describe('physical inventory', () => {
 
   it('reads reconciliation locally and rejects malformed reports', async () => {
     render(<PhysicalInventory inventory={toInventory([], [])} />);
-    const input = screen.getByLabelText(/Inspect a private import report/);
+    expect(screen.getByText(/NetBox and import reports are not required/)).toBeInTheDocument();
+    const input = screen.getByLabelText(/Optional: inspect a private review report/);
     fireEvent.change(input, { target: { files: [{ size: 100, text: async () => JSON.stringify({ version: 1, records: [{ source: 'dcim/devices/1', classification: 'unresolved', reason: 'Review premises' }] }) }] } });
     await waitFor(() => expect(screen.getByText(/dcim\/devices\/1: unresolved/)).toBeInTheDocument());
     expect(screen.getByText(/Incomplete or Unknown/)).toBeInTheDocument();

@@ -1,7 +1,10 @@
 package v1alpha1
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -9,7 +12,62 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/yaml"
 )
+
+const manualInventoryExample = "../../../../hack/testdata/physical/manual.yaml"
+
+var inventoryRecords = flag.String("inventory-records", manualInventoryExample, "private YAML records to validate offline; never applies records")
+
+func TestManualInventoryRecordsPassAdmission(t *testing.T) {
+	data, err := os.ReadFile(*inventoryRecords)
+	if err != nil {
+		t.Fatal("cannot read inventory records")
+	}
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
+	crds := loadCRDs(t)
+	seen := map[string]bool{}
+	count := 0
+	for {
+		var record map[string]any
+		if err := decoder.Decode(&record); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal("cannot decode inventory records")
+		}
+		if len(record) == 0 {
+			continue
+		}
+		kind, ok := record["kind"].(string)
+		if !ok || crds[kind] == nil {
+			t.Fatal("expected one of the six physical kinds")
+		}
+		seen[kind] = true
+		if *inventoryRecords == manualInventoryExample {
+			spec := record["spec"].(map[string]any)
+			provenance := spec["provenance"].(map[string]any)
+			if provenance["method"] != "Manual" || provenance["source"] != nil || record["status"] != nil {
+				t.Fatal("manual example must have no source dependency or status assertion")
+			}
+			if kind == "DeviceClaim" && spec["lifecycle"] != "Installation" || kind == "Device" && spec["topologyAuthority"] != "Cable" {
+				t.Fatal("new manual records must use typed installation and Cable topology")
+			}
+		}
+		for _, previous := range []map[string]any{nil, object(t, record)} {
+			if errs := admit(t, kind, object(t, record), previous); len(errs) != 0 {
+				t.Fatalf("record %d (%s) failed admission with %d errors; inspect privately", count+1, kind, len(errs))
+			}
+		}
+		count++
+	}
+	if count == 0 {
+		t.Fatal("no inventory records validated")
+	}
+	if *inventoryRecords == manualInventoryExample && len(seen) != 6 {
+		t.Fatal("manual example must exercise all six physical kinds")
+	}
+	t.Logf("validated %d records for create and unchanged update; no API writes", count)
+}
 
 func TestSyntheticNetBoxHandoffPassesAdmission(t *testing.T) {
 	data, err := os.ReadFile("../../../../hack/testdata/netbox/candidates.json")

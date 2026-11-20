@@ -90,9 +90,11 @@ to that array instead.
 The read-only Inventory tab now loads all six physical inventory collections
 with pagination. It retains unknown placement and ambiguous historical bindings,
 shows Facility/Rack/Cable/PowerFeed relationships and typed asset components,
-and supports local-only review of import reports. These reads require the
+and supports optional local-only review of source-comparison reports. Manual
+inventory needs no NetBox or report; operators review the private Git source and
+Flux is the sole staging writer. The portal never writes or synchronizes records. These reads require the
 provider-scoped inventory viewer role, not a consumer Metal role. See the
-[physical import operator guide](../../docs/operations/netbox-physical-import.md)
+[optional source-comparison guide](../../docs/operations/netbox-physical-import.md)
 for the offline Flux handoff and the distinction between records and readiness.
 
 - staff-portal runs react-router 7, so this plugin pins it for types and

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""GET-only NetBox snapshot and offline, create-only Fleet GitOps handoff."""
+"""Optional operator-run review aid: GET-only snapshots and offline candidates.
+
+Manual inventory entry needs neither NetBox nor this tool. Nothing is applied,
+scheduled, synchronized, or deleted; an operator reviews every proposed record.
+"""
 
 import argparse
 import copy
@@ -656,18 +660,18 @@ def private_output(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    export = subparsers.add_parser("snapshot")
+    export = subparsers.add_parser("snapshot", help="explicitly read a private NetBox snapshot; optional")
     export.add_argument("--url", default=os.environ.get("NETBOX_URL", "https://netbox.datum-infra.net"))
     export.add_argument("--source", required=True)
     export.add_argument("--auth-scheme", choices=("Bearer", "Token"), default="Bearer")
     export.add_argument("--output", required=True)
-    plan = subparsers.add_parser("plan")
+    plan = subparsers.add_parser("plan", help="review a local snapshot offline; never apply records")
     plan.add_argument("--snapshot", required=True)
     plan.add_argument("--mapping")
     plan.add_argument("--existing")
     plan.add_argument("--previous")
     plan.add_argument("--output", required=True)
-    plan.add_argument("--handoff", action="store_true")
+    plan.add_argument("--handoff", action="store_true", help="also write optional review candidates; never apply, commit, or push")
     plan.add_argument("--allow-partial", action="store_true")
     args = parser.parse_args(argv)
     output = Path(args.output)

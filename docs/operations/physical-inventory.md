@@ -11,14 +11,14 @@ take ownership of it.
 This package implements a minimal subset of the
 [inventory lifecycle and trust proposal (#63)](https://github.com/datum-cloud/fleet/pull/63).
 It now has six operator-written kinds in `fleet.datumapis.com/v1alpha1`.
-The [NetBox physical import and migration guide](netbox-physical-import.md)
-describes the additive physical schema, typed components, partial placement,
-same-namespace relationships, import reconciliation and current limits. The
-manual examples below preserve the original long-lived-slot representation:
+The primary workflow is **manual entry, operator review, and explicit GitOps
+ownership**. NetBox, bulk conversion, and a source reconciliation service are not
+required. The [optional NetBox comparison guide](netbox-physical-import.md)
+describes a separately invoked review aid, not an automated migration.
 
 | Kind | What it is | Writer |
 | --- | --- | --- |
-| `DeviceClaim` | The installation plan for one slot: facility, rack, position and face, expected model, and expected ports with their expected cable peers. It is usually written before the hardware arrives, and the slot outlives any one Device. | The installation planner (an operator, for now) |
+| `DeviceClaim` | An observational installation plan with expected model and known placement. New records use typed placement and Cable references; existing long-lived slots retain their legacy representation. | Installation planner, through the existing GitOps writer |
 | `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, the model, an optional BMC endpoint, interfaces, and provenance. | The registrar (an operator, for now) |
 | `Facility` / `Rack` | Explicit premises and rack definitions; membership is not free-capacity evidence. | Inventory operator through the environment's existing writer |
 | `Cable` / `PowerFeed` | Typed termination/lane topology and physical supply dependencies. | Inventory operator through the environment's existing writer |
@@ -31,7 +31,7 @@ manual examples below preserve the original long-lived-slot representation:
 | Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and two IAM roles. Management and synthetic-staging overlays install none of them. |
 | Staff portal | Read-only **Inventory** tab in the Bare Metal provider plugin (`ui/provider`): a claim list and a per-claim detail page. |
 | Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds and synthetic importer output. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
-| Controllers | None. Offline import and staff browsing read the records; no reconciler accepts plans, verifies hardware, or publishes eligibility. |
+| Controllers | None for inventory. Staff browsing is read-only; no reconciler accepts plans, verifies hardware, discovers or synchronizes NetBox, or publishes eligibility. Flux applies only operator-reviewed Git records. |
 | Hardware qualification | None. Records hold operator-entered facts, not verified hardware state. |
 
 ## What registration does and does not do
@@ -105,7 +105,65 @@ Use `unmappedMACAddresses` for MACs detected on the asset that cannot yet be
 attributed to a named port. Do not guess a mapping; #63 requires an
 authenticated, complete NIC mapping before any network path depends on it.
 
-## Example
+## Manually record a small installation
+
+1. Choose the provider project and namespace, and inspect its existing private
+   inventory source. In staging, `fleet-provider-inventory` reconciles
+   `apps/fleet-system/staging/provider-inventory` with `prune: false` and
+   `deletionPolicy: Orphan`. Flux is the sole API writer. Do not run a parallel
+   `kubectl apply`, importer, scheduled job, or discovery controller.
+2. Enter the Facility and Rack facts you actually know. Record the operator and
+   time with `provenance.method: Manual`. Leave unknown dimensions absent. Rack
+   membership is not a reserved footprint or evidence of available space.
+3. For a new installation, set `DeviceClaim.spec.lifecycle: Installation` and
+   typed placement. Use `Facility` when only the premises are known,
+   `RackMembership` when the rack is known, or explicitly reviewed `RackUnits`
+   with position, height and face. Never guess a rack position. Use a new record
+   only for a genuinely new installation, not to evade an existing immutable binding.
+4. Register an actual Device against that claim only when its identity is known.
+   A manual Device requires a real serial or system UUID; if neither is known,
+   keep the plan and defer registration. Provider host IDs and asset tags are
+   not serials. Use typed `components` and `topologyAuthority: Cable`; put expected
+   connections in Cable records, not `ports.expectedPeer` or `interfaces.peer`.
+   Add PowerFeed facts without inferring usable power or independent redundancy.
+5. Review every reference in the same namespace, component type and position,
+   cable endpoint, and potential duplicate against existing records. API validation
+   cannot enforce cross-object existence or exclusive endpoints. Preserve existing
+   names, Device identities, claim bindings and MachineCapacity references.
+6. Review the private Git diff with another operator. It must contain no status,
+   capacity publication, hardware action, deletion or ownership transfer. Submit
+   only the individually approved records through the established Flux source.
+   After reconciliation, compare the intended records with read-only API and
+   staff views. An interrupted or failed reconciliation is not readiness.
+
+The [complete synthetic six-record example](../../hack/testdata/physical/manual.yaml)
+shows this workflow without NetBox or credentials. It includes a partial rack
+placement, typed network and power components, and one Cable from a PowerFeed to
+the Device. It is a test fixture, not an automatically installed overlay. Copy
+its shape into private configuration and replace synthetic facts only after
+review. No physical status is asserted.
+
+Validate the synthetic example locally:
+
+```sh
+go test ./internal/api/inventory/v1alpha1 -run TestManualInventoryRecordsPassAdmission -v
+```
+
+The same offline check accepts a private multi-document YAML file of existing
+records. It validates creation and unchanged updates against the proposed schemas;
+it does not read a cluster, check cross-object relationships, or write records.
+Keep the file outside Git. Diagnostics report only kind, ordinal and error count.
+
+```sh
+go test ./internal/api/inventory/v1alpha1 -run TestManualInventoryRecordsPassAdmission \
+  -count=1 -v -args -inventory-records /private/tmp/reviewed-inventory.yaml
+```
+
+## Historical legacy example
+
+The following representation remains supported for existing long-lived slots.
+It is **not the template for new records**. Do not convert existing claims in
+place or copy their inline topology into a second Cable authority.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -208,7 +266,7 @@ read. #63's ledger, trust, and enrollment protocol would still sit behind these
 records if adopted.
 
 **Compatibility decision:** legacy slots retain all historical bindings. New
-imports use a distinct `Installation` lifecycle, but no automatic move or
+typed records use a distinct `Installation` lifecycle, but no automatic move or
 replacement handover exists. Device identity and its original claimRef remain
 immutable. The [migration decisions](netbox-physical-import.md#compatibility-and-migration-decisions)
 explain why imports cannot delete/recreate or relabel legacy records to bypass this.
@@ -216,8 +274,9 @@ explain why imports cannot delete/recreate or relabel legacy records to bypass t
 ## Applying the records
 
 `config/milo` installs the CRDs, ProtectedResources, and roles into Milo. Apply
-claims and Devices into the provider project after those are established,
-claims before the Devices that name them. Keep records with real serials,
+operator-reviewed records through the provider project's established GitOps
+source after those are established, claims before the Devices that name them.
+Do not apply directly to staging; Flux remains its only writer. Keep records with real serials,
 UUIDs, MACs, endpoints, or cabling in the environment's private configuration,
 not in this repository.
 
