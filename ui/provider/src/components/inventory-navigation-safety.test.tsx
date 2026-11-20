@@ -45,7 +45,7 @@ it.each([false, true])('same-principal query navigation retains usable managemen
   expect(writes).toEqual([editing ? 'PATCH' : 'POST']);
 });
 
-it.each([false, true])('navigation revokes pending work while admitting a fresh form: edit=%s', async editing => {
+it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(transition => ({ editing, transition }))))('$transition revokes pending work while admitting a fresh form: edit=$editing', async ({ editing, transition }) => {
   let reviews = 0;
   let release: ((value: unknown) => void) | undefined;
   const writes: string[] = [];
@@ -62,7 +62,10 @@ it.each([false, true])('navigation revokes pending work while admitting a fresh 
   await open(editing);
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
   await waitFor(() => expect(release).toBeDefined());
-  await act(async () => { await router.navigate('/?kind=Facility&name=independent-review'); });
+  await act(async () => {
+    if (transition === 'revalidation') await router.revalidate();
+    else await router.navigate('/?kind=Facility&name=independent-review');
+  });
   await open(editing);
   await act(async () => release!(response({ status: { allowed: true } })));
   expect(writes).toEqual([]);

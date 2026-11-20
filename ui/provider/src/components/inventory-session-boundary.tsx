@@ -24,6 +24,20 @@ function SessionQueries({ children, principal }: { children: ReactNode; principa
 }
 
 function HostedInventory({ children }: { children: ReactNode }) {
+  const host = useContext(UNSAFE_DataRouterContext);
+  const [hostGeneration, setHostGeneration] = useState(0);
+  useLayoutEffect(() => {
+    if (!host) return;
+    let pending = host.router.state.revalidation !== 'idle' || host.router.state.navigation.state !== 'idle';
+    return host.router.subscribe(state => {
+      if (state.revalidation !== 'idle' || state.navigation.state !== 'idle') {
+        pending = true;
+      } else if (pending) {
+        pending = false;
+        setHostGeneration(current => current + 1);
+      }
+    });
+  }, [host]);
   const identity = useRouteLoaderData('layouts/milo.layout') as { user?: { metadata?: { uid?: string; name?: string } } } | undefined;
   const principal = identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name;
   const location = useLocation();
@@ -74,7 +88,7 @@ function HostedInventory({ children }: { children: ReactNode }) {
   if (checking || revalidator.state !== 'idle' || navigation.state !== 'idle') return <LoadingState />;
   if (failed) return <InventoryAccessState status={503} />;
   if (!principal) return <InventoryAccessState status={401} />;
-  return <SessionQueries key={JSON.stringify([principal, location.key])} principal={principal}>{children}</SessionQueries>;
+  return <SessionQueries key={JSON.stringify([principal, location.key, hostGeneration])} principal={principal}>{children}</SessionQueries>;
 }
 
 export function InventorySessionBoundary({ children }: { children: ReactNode }) {

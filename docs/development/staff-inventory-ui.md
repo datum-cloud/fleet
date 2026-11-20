@@ -152,6 +152,9 @@ There is no automatic save or retry when returning to a page.
 Completed route navigation starts a new operation scope and query cache, even
 when the principal is unchanged. Pending navigation unmounts the inventory view;
 old operations stay revoked rather than being reactivated for new forms.
+The host router subscription also tracks completed revalidation generations.
+Even if React batches loading and idle without rendering a loading screen,
+completion replaces the scope and cache; it never renews old operation objects.
 Inventory queries are also isolated per mounted view and refresh manually.
 Known-denied collections are removed
 from the rendered data, including stale supplied results and related names;
