@@ -103,22 +103,45 @@ func TestInventoryRolesSplitReadFromWrite(t *testing.T) {
 	for _, r := range decodeDir[role](t, filepath.Join(inventoryRoot, "roles")) {
 		roles[r.Metadata.Name] = r
 	}
-	viewer, editor := roles["fleet.datumapis.com-inventory-viewer"], roles["fleet.datumapis.com-inventory-editor"]
-	if len(roles) != 2 || len(viewer.Spec.Included) == 0 || len(editor.Spec.Included) == 0 {
-		t.Fatalf("want exactly the inventory viewer and editor roles, got %v", roles)
+	wantVerbs := map[string][]string{
+		"fleet.datumapis.com-inventory-viewer":  {"get", "list", "watch"},
+		"fleet.datumapis.com-inventory-editor":  {"create", "update", "patch", "delete"},
+		"fleet.datumapis.com-inventory-manager": {"create", "update", "patch"},
 	}
-	for _, permission := range append(slices.Clone(viewer.Spec.Included), editor.Spec.Included...) {
-		if !declared[permission] {
-			t.Fatalf("role permission %s has no ProtectedResource", permission)
-		}
+	if len(roles) != len(wantVerbs) {
+		t.Fatalf("want exactly viewer, editor and manager roles, got %v", roles)
 	}
-	for _, permission := range viewer.Spec.Included {
-		if verb := permission[strings.LastIndex(permission, ".")+1:]; verb != "get" && verb != "list" && verb != "watch" {
-			t.Fatalf("viewer grants %s", permission)
-		}
-	}
-	if len(editor.Spec.Inherited) != 1 || editor.Spec.Inherited[0].Name != viewer.Metadata.Name {
-		t.Fatal("editor must inherit the viewer role")
+	for name, verbs := range wantVerbs {
+		t.Run(name, func(t *testing.T) {
+			current, ok := roles[name]
+			if !ok {
+				t.Fatalf("missing role %s", name)
+			}
+			var expected []string
+			for _, resource := range []string{"deviceclaims", "devices", "facilities", "racks", "cables", "powerfeeds"} {
+				for _, verb := range verbs {
+					expected = append(expected, GroupVersion.Group+"/"+resource+"."+verb)
+				}
+			}
+			actual := slices.Clone(current.Spec.Included)
+			slices.Sort(expected)
+			slices.Sort(actual)
+			if !slices.Equal(actual, expected) {
+				t.Fatalf("%s permissions = %v, want %v", name, actual, expected)
+			}
+			for _, permission := range actual {
+				if !declared[permission] {
+					t.Fatalf("role permission %s has no ProtectedResource", permission)
+				}
+			}
+			if name == "fleet.datumapis.com-inventory-viewer" {
+				if len(current.Spec.Inherited) != 0 {
+					t.Fatal("viewer must not inherit additional permissions")
+				}
+			} else if len(current.Spec.Inherited) != 1 || current.Spec.Inherited[0].Name != "fleet.datumapis.com-inventory-viewer" {
+				t.Fatal("editor and manager must inherit only the viewer role")
+			}
+		})
 	}
 }
 

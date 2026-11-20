@@ -4,7 +4,7 @@ A [staff-portal](https://github.com/datum-cloud/staff-portal) plugin for the
 provider project's Bare Metal resources (`metal.datumapis.com`). It is a Module Federation remote: the
 portal fetches `plugin-manifest.json` and `remoteEntry.js` server-side and
 mounts its pages under `/plugins/<slug>/`, with a **Bare Metal** item under
-Operations in the navigation. The page has three tabs:
+Operations in the navigation. The page has four tabs:
 
 - **Capacity** (the mount root, where the nav item points) lists the
   provider's MachineCapacities in every namespace and creates new ones. The
@@ -20,16 +20,17 @@ Operations in the navigation. The page has three tabs:
   profiles a class allows, the namespace and capacity-pool label of the
   MachineCapacities that serve it, and whether consumers get power control. Custom
   profiles and console access stay off.
-- **Inventory** (`inventory`) is read-only. It lists the provider project's
-  DeviceClaims (`fleet.datumapis.com`) in every namespace, with each claim's
-  placement, expected model, bound Device and serial. Devices that name a
-  missing claim are listed separately. `inventory/:namespace/:claim` shows one
-  claim's planned placement, expected ports and peers, and provenance. It also
-  shows every Device bound to it: model, serial, system UUID, BMC endpoint,
-  interfaces, typed components, separate asset tags/provider IDs, unmapped MACs
-  and provenance. Multiple historical Devices keep the active binding Unknown;
-  edit time does not establish current hardware. Operators write through GitOps; the
-  plugin never writes them.
+- **Inventory** (`inventory`) is a read-only hardware directory, starting with
+  Devices rather than installation claims. Six searchable categories cover
+  Devices, Facilities, Racks, Claims, Cables, and Power feeds. Query-string detail
+  links retain the kind, namespace, and record name without adding host routes.
+  Facilities lead to racks and installation plans; claims lead to all registered
+  devices; cable endpoints lead to devices or feeds. Identity, typed components,
+  internal paths, external service references, legacy peers, and provenance remain
+  visible. Missing claims do not hide hardware, and historical registrations do
+  not establish an active device. The original `inventory/:namespace/:claim`
+  route remains available for existing links. The plugin never writes inventory;
+  this is a UI limitation, not a requirement to manage inventory through Git.
 
 The portal proxy forwards the staff member's own token, so creating capacity,
 profiles and classes needs a Bare Metal role with `machinecapacities.create`,
@@ -87,15 +88,27 @@ to that array instead.
 
 ## Differences from the consumer plugin
 
-The read-only Inventory tab now loads all six physical inventory collections
-with pagination. It retains unknown placement and ambiguous historical bindings,
-shows Facility/Rack/Cable/PowerFeed relationships and typed asset components,
-and supports optional local-only review of source-comparison reports. Manual
-inventory needs no NetBox or report; operators review the private Git source and
-Flux is the sole staging writer. The portal never writes or synchronizes records. These reads require the
-provider-scoped inventory viewer role, not a consumer Metal role. See the
-[optional source-comparison guide](../../docs/operations/netbox-physical-import.md)
-for the offline Flux handoff and the distinction between records and readiness.
+The Inventory tab loads all six physical inventory collections with API pagination.
+Counts describe loaded records, not capacity or verified equipment. Unknown
+occupancy, power budgets, and ambiguous bindings stay unknown. Contextual help
+explains these boundaries; there is no report picker, automatic import, sync, or
+hardware action. Reads require the provider-scoped inventory viewer role, not a
+consumer Metal role. Management separately checks backend create/patch permission
+in the provider project: Facility/Rack creation and portal-owned display-name
+editing only. The proposed `fleet.datumapis.com-inventory-manager` role and
+`physical-inventory-managers` group binding are separate IAM work, not deployed
+by this UI. Group names/staff membership never enable controls. Flux/imported
+records remain read-only pending ownership review. Namespace choice is not an
+authorization boundary. Denied collections and detail links show access guidance,
+not empty inventory; readable sections remain available.
+See [hardware directory scope and design gaps](../../docs/development/staff-inventory-ui.md).
+
+The standalone harness imports `src/preview.css`, compiling the installed Datum UI
+theme with Tailwind. That stylesheet is not imported by federated pages; the host
+still supplies its design system. Inventory-specific CSS is scoped under
+`.fleet-inventory` and shipped with the existing remote. No second app or host
+navigation is introduced. Fixture mode includes all six inventory kinds with
+explicitly synthetic identities and no verified state.
 
 - staff-portal runs react-router 7, so this plugin pins it for types and
   shares it with `requiredVersion: false`.

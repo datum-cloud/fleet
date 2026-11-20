@@ -11,14 +11,16 @@ take ownership of it.
 This package implements a minimal subset of the
 [inventory lifecycle and trust proposal (#63)](https://github.com/datum-cloud/fleet/pull/63).
 It now has six operator-written kinds in `fleet.datumapis.com/v1alpha1`.
-The primary workflow is **manual entry, operator review, and explicit GitOps
-ownership**. NetBox, bulk conversion, and a source reconciliation service are not
+The primary workflow is **manual entry, operator review, and explicit record
+ownership**. Authorized direct API creation is supported for new/imported records;
+legacy Flux-owned records require a reviewed ownership transition before edits
+by another writer. NetBox, bulk conversion, and a source reconciliation service are not
 required. The [optional NetBox comparison guide](netbox-physical-import.md)
 describes a separately invoked review aid, not an automated migration.
 
 | Kind | What it is | Writer |
 | --- | --- | --- |
-| `DeviceClaim` | An observational installation plan with expected model and known placement. New records use typed placement and Cable references; existing long-lived slots retain their legacy representation. | Installation planner, through the existing GitOps writer |
+| `DeviceClaim` | An observational installation plan with expected model and known placement. New records use typed placement and Cable references; existing long-lived slots retain their legacy representation. | Installation planner, through the record's explicitly assigned writer |
 | `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, the model, an optional BMC endpoint, interfaces, and provenance. | The registrar (an operator, for now) |
 | `Facility` / `Rack` | Explicit premises and rack definitions; membership is not free-capacity evidence. | Inventory operator through the environment's existing writer |
 | `Cable` / `PowerFeed` | Typed termination/lane topology and physical supply dependencies. | Inventory operator through the environment's existing writer |
@@ -28,8 +30,8 @@ describes a separately invoked review aid, not an automated migration.
 | Aspect | State |
 | --- | --- |
 | CRDs and Go types | Implemented in `config/components/inventory` and `internal/api/inventory/v1alpha1`. |
-| Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and two IAM roles. Management and synthetic-staging overlays install none of them. |
-| Staff portal | Read-only **Inventory** tab in the Bare Metal provider plugin (`ui/provider`): a claim list and a per-claim detail page. |
+| Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and three IAM roles. Management and synthetic-staging overlays install none of them. |
+| Staff portal | Six-kind hardware directory in the Bare Metal provider plugin (`ui/provider`), with permission-aware browsing and limited authorized Facility/Rack creation and portal-owned name edits. See [implementation scope](../development/staff-inventory-ui.md). |
 | Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds and synthetic importer output. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
 | Controllers | None for inventory. Staff browsing is read-only; no reconciler accepts plans, verifies hardware, discovers or synchronizes NetBox, or publishes eligibility. Flux applies only operator-reviewed Git records. |
 | Hardware qualification | None. Records hold operator-entered facts, not verified hardware state. |
@@ -66,12 +68,36 @@ project control plane serves the kinds. Access is what keeps consumers out:
 | --- | --- |
 | `fleet.datumapis.com-inventory-viewer` | `get`, `list`, `watch` on all six physical kinds |
 | `fleet.datumapis.com-inventory-editor` | The viewer role plus `create`, `update`, `patch`, `delete` |
+| `fleet.datumapis.com-inventory-manager` | The viewer role plus `create`, `update`, `patch`; no deletion or status writes |
 
-No `metal.datumapis.com` role includes or inherits either. The consumer,
+No `metal.datumapis.com` role includes or inherits any inventory role. The consumer,
 claimant, and viewer roles that reach customer projects therefore grant no
 inventory access, and the provider role does not either. Bind the inventory
 roles explicitly, scoped to the provider project. No role grants status
 writes, because status has no writer yet.
+
+The manager is a separate least-privilege role for explicitly authorized inventory
+staff; it does not change the existing editor or give staff viewers write access.
+It grants only the six physical kinds, never hardware operations, allocation,
+installation, Metal, networking, billing, or IAM administration. Fleet owns this
+role and its tests; environment-specific groups and project bindings belong in
+the infrastructure repository. The role ships through `config/milo`; shipping a
+role does not bind it or add members in any environment.
+
+A Project resource selector is project-wide, not a namespace filter. These
+ProtectedResources have Project parents, and a binding's `metadata.namespace`
+locates the IAM object, not the inventory it authorizes. Choosing `default` in a
+portal request is a convention, not isolation from other namespaces in that
+project. Require a separately supported and tested authorization boundary before
+promising namespace-only access.
+
+The manager contract is validated offline with
+`go test ./internal/api/inventory/v1alpha1`. That checks manifests, not deployed
+authorization. Before adding named members, an environment owner must validate
+the deployed role and binding, and explicitly decide record-writer ownership.
+IAM capability does not transfer ownership away from Flux or permit two writers
+for the same records. Existing GitOps-owned records remain GitOps-owned until a
+separate reviewed transition; this role does not perform that transition.
 
 The ProtectedResources use `serviceRef: fleet.datumapis.com`. The authorization
 provider looks resources up by `{apiGroup}/{plural}`, so the service name must
@@ -274,9 +300,12 @@ explain why imports cannot delete/recreate or relabel legacy records to bypass t
 ## Applying the records
 
 `config/milo` installs the CRDs, ProtectedResources, and roles into Milo. Apply
-operator-reviewed records through the provider project's established GitOps
-source after those are established, claims before the Devices that name them.
-Do not apply directly to staging; Flux remains its only writer. Keep records with real serials,
+operator-reviewed records through their approved writer after those are established,
+claims before the Devices that name them. New or imported records may be created
+directly through the provider API with authorization and ownership safeguards.
+Existing Flux-owned records remain with Flux until a reviewed transition stops
+reconciliation for those exact records. Do not overwrite or adopt them implicitly.
+Keep records with real serials,
 UUIDs, MACs, endpoints, or cabling in the environment's private configuration,
 not in this repository.
 

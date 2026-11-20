@@ -7,6 +7,10 @@ import type { Device as RawDevice, DeviceClaim as RawDeviceClaim, List, Physical
 export type { RawDevice, RawDeviceClaim };
 export type RawDeviceList = List<RawDevice>;
 export type RawDeviceClaimList = List<RawDeviceClaim>;
+export type InventoryKind = 'Device' | 'DeviceClaim' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
+export const inventoryResources: Record<InventoryKind, string> = {
+  Device: 'devices', DeviceClaim: 'deviceclaims', Facility: 'facilities', Rack: 'racks', Cable: 'cables', PowerFeed: 'powerfeeds',
+};
 
 export interface InventorySlot {
   key: string;
@@ -18,6 +22,7 @@ export interface Inventory {
   slots: InventorySlot[];
   unboundDevices: RawDevice[];
   physical: PhysicalRecord[];
+  issues?: Partial<Record<InventoryKind, { status: number }>>;
 }
 
 export function slotKey(namespace: string | undefined, name: string): string {

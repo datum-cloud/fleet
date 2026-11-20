@@ -1,8 +1,10 @@
 import { FleetPage } from '../components/fleet-page';
 import { endpointLabel } from '../components/physical-inventory';
-import { ErrorOrRestrictedState, LoadingState } from '../components/states';
+import { LoadingState } from '../components/states';
+import { InventoryAccessState } from '../components/inventory-access-state';
+import { InventorySessionBoundary } from '../components/inventory-session-boundary';
 import { StatusBadge } from '../components/status-badge';
-import { PROVIDER_PROJECT, useInventory } from '../lib/api';
+import { useInventory } from '../lib/api';
 import { currentDevice, modelLabel, placementLabel, slotKey, type RawDevice } from '../inventory';
 import type { Provenance } from '../../../shared/fleet-api';
 import { Card, CardContent } from '@datum-cloud/datum-ui/card';
@@ -90,10 +92,15 @@ function DeviceSection({ device, current }: { device: RawDevice; current: boolea
 }
 
 export default function DeviceClaimDetail() {
+  return <InventorySessionBoundary><ClaimDetailContent /></InventorySessionBoundary>;
+}
+
+function ClaimDetailContent() {
   const { slug, namespace = '', claim: claimName = '' } = useParams();
   const { data, isLoading, error, refetch } = useInventory();
-  const slot = data?.slots.find((s) => s.key === slotKey(namespace, claimName));
-  const current = slot && currentDevice(slot);
+  const accessIssue = error?.status ?? data?.issues?.DeviceClaim?.status;
+  const slot = !error && !isLoading && accessIssue === undefined ? data?.slots.find((s) => s.key === slotKey(namespace, claimName)) : undefined;
+  const current = slot && !data?.issues?.Device && currentDevice(slot);
 
   return (
     <FleetPage testId="fleet-plugin-claim-detail">
@@ -103,15 +110,9 @@ export default function DeviceClaimDetail() {
 
       {isLoading && <LoadingState />}
 
-      {!isLoading && error && (
-        <ErrorOrRestrictedState
-          error={error}
-          restrictedMessage={`You don't have permission to view DeviceClaims and Devices in ${PROVIDER_PROJECT}.`}
-          onRetry={() => void refetch()}
-        />
-      )}
+      {!isLoading && (error || accessIssue !== undefined) && <InventoryAccessState status={accessIssue ?? 0} onRetry={() => void refetch()} />}
 
-      {!isLoading && !error && data && !slot && (
+      {!isLoading && !error && accessIssue === undefined && data && !slot && (
         <Text as="p" textColor="muted" data-testid="fleet-plugin-claim-missing">
           No DeviceClaim {claimName} in namespace {namespace}.
         </Text>
@@ -126,7 +127,7 @@ export default function DeviceClaimDetail() {
               <Field label="Expected serial">{slot.claim.spec.expectedIdentity.serial ?? '—'}</Field>
               <Field label="Namespace">{slot.claim.metadata.namespace ?? '—'}</Field>
               <Field label="Bound device">
-                {current ? current.metadata.name : <StatusBadge type="muted">{slot.devices.length > 1 ? 'Multiple records; active binding Unknown' : 'Not registered'}</StatusBadge>}
+                {data?.issues?.Device ? 'Device details unavailable' : current ? current.metadata.name : <StatusBadge type="muted">{slot.devices.length > 1 ? 'Multiple records; active binding Unknown' : 'Not registered'}</StatusBadge>}
               </Field>
             </div>
             {(slot.claim.spec.ports ?? []).length > 0 && (
@@ -143,11 +144,12 @@ export default function DeviceClaimDetail() {
             )}
             <ProvenanceFields provenance={slot.claim.spec.provenance} />
           </Section>
-          {[...slot.devices].reverse().map((device) => (
+          {data?.issues?.Device && <InventoryAccessState status={data.issues.Device.status} />}
+          {(!data?.issues?.Device ? [...slot.devices].reverse() : []).map((device) => (
             <DeviceSection key={device.metadata.name} device={device} current={device === current} />
           ))}
           <Section title="Related cable records" testId="fleet-plugin-related-cables">
-            {data?.physical.filter((record) => record.kind === 'Cable' && record.metadata.namespace === slot.claim.metadata.namespace && record.spec.lanes?.some((lane) => slot.devices.some((device) => lane.a.deviceRef?.name === device.metadata.name || lane.b.deviceRef?.name === device.metadata.name))).map((cable) => <div key={cable.metadata.name}><Text>{cable.spec.displayName} · verification Unknown</Text>{cable.spec.lanes?.map((lane) => <Text key={lane.id}>{endpointLabel(lane.a)} ↔ {endpointLabel(lane.b)}</Text>)}</div>)}
+            {data?.issues?.Cable ? <InventoryAccessState status={data.issues.Cable.status} /> : !data?.issues?.Device && data?.physical.filter((record) => record.kind === 'Cable' && record.metadata.namespace === slot.claim.metadata.namespace && record.spec.lanes?.some((lane) => slot.devices.some((device) => lane.a.deviceRef?.name === device.metadata.name || lane.b.deviceRef?.name === device.metadata.name))).map((cable) => <div key={cable.metadata.name}><Text>{cable.spec.displayName} · verification Unknown</Text>{cable.spec.lanes?.map((lane) => <Text key={lane.id}>{endpointLabel(lane.a)} ↔ {endpointLabel(lane.b)}</Text>)}</div>)}
             <Text>No displayed path proves an uncabled or free termination.</Text>
           </Section>
         </>

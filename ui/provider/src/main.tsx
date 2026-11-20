@@ -3,6 +3,8 @@ import CapacityList from './pages/capacity-list';
 import MachineProfileList from './pages/machine-profile-list';
 import DeviceInventoryList from './pages/device-inventory-list';
 import DeviceClaimDetail from './pages/device-claim-detail';
+import './preview.css';
+import { InventoryPreviewContext } from './components/inventory-session-boundary';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -13,14 +15,10 @@ const queryClient = new QueryClient();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <div style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1rem', fontFamily: 'system-ui' }}>
-        <p style={{ opacity: 0.6 }}>
-          Standalone preview. staff-portal loads this plugin through
-          <code> /plugin-manifest.json</code> and <code>/remoteEntry.js</code>, not this page.
-          Without the staff-portal proxy the list shows its error state unless
-          <code> VITE_FLEET_FIXTURES=true</code>.
-        </p>
+      <div className="fleet-preview">
+        <p className="fleet-preview-notice">Local plugin preview · {import.meta.env.VITE_FLEET_FIXTURES === 'true' ? 'Synthetic example data — not live inventory' : 'Requires the staff-portal API proxy'}</p>
         <MemoryRouter initialEntries={['/plugins/metal-datumapis-com']}>
+          <InventoryPreviewContext.Provider value={true}>
           <Routes>
             <Route path="/plugins/:slug" element={<CapacityList />} />
             <Route path="/plugins/:slug/profiles" element={<MachineProfileList />} />
@@ -28,6 +26,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/plugins/:slug/inventory" element={<DeviceInventoryList />} />
             <Route path="/plugins/:slug/inventory/:namespace/:claim" element={<DeviceClaimDetail />} />
           </Routes>
+          </InventoryPreviewContext.Provider>
         </MemoryRouter>
       </div>
     </QueryClientProvider>

@@ -1,0 +1,5 @@
+@import 'tailwindcss';
+@import '@datum-cloud/datum-ui/styles';
+
+.fleet-preview { max-width:1440px; margin:0 auto; }
+.fleet-preview-notice { padding:10px 24px; font-size:12px; background:var(--muted); color:var(--muted-foreground); border-bottom:1px solid var(--border); }

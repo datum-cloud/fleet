@@ -1,5 +1,6 @@
 import { federation } from '@module-federation/vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 // The host (staff-portal) loads this remote and provides react / react-dom /
@@ -26,6 +27,7 @@ export default defineConfig({
     minify: false,
   },
   plugins: [
+    tailwindcss(),
     react(),
     federation({
       // MUST equal the manifest `name`; the host keys the remote by this id.

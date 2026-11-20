@@ -1,5 +1,6 @@
 import { ApiError } from './api';
 import type { RawDevice, RawDeviceClaim } from '../inventory';
+import type { PhysicalRecord } from '../../../shared/fleet-api';
 import type { RawMachineCapacity, RawMachineClass, RawMachineProfile } from '../types';
 
 // Synthetic MachineCapacities used while the Fleet API cannot be read
@@ -198,3 +199,16 @@ export const fixtureDevices: RawDevice[] = [
     },
   },
 ];
+
+const inventoryProvenance = { method: 'Manual' as const, recordedBy: 'inventory@example.com', recordedAt: '2026-01-10T10:00:00Z' };
+
+export const fixturePhysicalRecords: PhysicalRecord[] = [
+  { kind: 'Facility', metadata: { name: 'example-facility', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Example facility', provenance: inventoryProvenance, locationRef: { name: 'example-region' } } },
+  { kind: 'Rack', metadata: { name: 'rack-01', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Rack 01', provenance: inventoryProvenance, facilityRef: { name: 'example-facility' }, heightUnits: 42 } },
+  { kind: 'PowerFeed', metadata: { name: 'feed-a', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Feed A', provenance: inventoryProvenance, facilityRef: { name: 'example-facility' }, rackRef: { name: 'rack-01' }, supply: { type: 'AC', voltageV: 208, currentA: 30, phase: 'Single' }, terminations: [{ id: 'outlet-1', name: 'Outlet 1', type: 'PowerOutlet', connector: 'IEC C13', positions: 1 }], upstreamSources: [{ system: 'example-provider', type: 'Supply', id: 'synthetic-supply-a' }] } },
+  { kind: 'Cable', metadata: { name: 'power-01', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Server power cable', provenance: inventoryProvenance, medium: 'Power', lanes: [{ id: 'power', a: { powerFeedRef: { name: 'feed-a' }, componentID: 'outlet-1', position: 1 }, b: { deviceRef: { name: 'rack-01-u12-synthetic-0001' }, componentID: 'psu-1', position: 1 } }] } },
+];
+
+export const fixturePhysicalClaims: RawDeviceClaim[] = fixtureDeviceClaims.map(record => ({ ...record, spec: { ...record.spec, displayName: `Server installation · U${record.spec.placement.position}`, placement: { scope: 'RackUnits', rackRef: { name: 'rack-01' }, position: record.spec.placement.position, height: 1, face: 'front' } } }));
+
+export const fixturePhysicalDevices: RawDevice[] = fixtureDevices.map((record, index) => index ? record : ({ ...record, spec: { ...record.spec, displayName: 'Example compute server', assetTag: 'EXAMPLE-001', topologyAuthority: 'Cable', modelShape: { heightUnits: 1, fullDepth: true }, components: [{ id: 'psu-1', name: 'Power supply 1', type: 'PowerInlet', connector: 'IEC C14', positions: 1 }, { id: 'eth0', name: 'Ethernet 0', type: 'NetworkPort', connector: 'SFP28', positions: 1 }] } }));

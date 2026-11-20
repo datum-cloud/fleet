@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - viewer.yaml
   - editor.yaml
+  - manager.yaml
