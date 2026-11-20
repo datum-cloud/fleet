@@ -164,7 +164,28 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   consumer set. It does not release custody, call a provider, delete records,
   or rewrite status, including for a project with active custody. Its
   deadlines and queued events are dropped, and re-engagement resumes from the
-  retained private records.
+  retained private records. Unbinding drains direct and dependency-route
+  reconciliations that already acquired the runtime before removing it from the
+  registry; a retained runtime pointer cannot start work after that barrier.
+  A blocked in-flight handler therefore delays completed departure rather than
+  falsely reporting it. This fixes an inherited race where informer removal and
+  registry removal could finish while a handler could still write. It does not
+  roll back effects already admitted before departure. Regression tests block a
+  handler explicitly and assert the barrier, in addition to the active-custody
+  no-write/no-release test.
+  Re-engagement also drains the previous runtime before publishing either
+  registry entry, so a new lifecycle owner's independent request locks cannot
+  overlap old work. The wait never holds the registry mutex. After waiting,
+  engagement rechecks both the cluster pointer and project-lifetime ownership;
+  a concurrent successor must itself drain, and a conflicting route is refused.
+  Cancellation aborts the waiting engagement without publishing its runtime or
+  engaging its controllers. An already initiated drain continues to completion;
+  it is not rolled back into an active runtime. Cancellation retires the prior
+  entry after its drain completes, without removing a concurrent successor.
+  A handler that never returns still prevents safe replacement; cancellation is
+  not evidence that its effects have stopped. Deterministic direct/routed replacement,
+  cancellation, stale-pointer, registry-revalidation and concurrent engagement
+  tests cover these process-local barriers, not distributed executor fencing.
 - **Observational discovery.** The provider declares no managed resources,
   teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer. Its
   discovery clients refuse every write. The library would otherwise patch
