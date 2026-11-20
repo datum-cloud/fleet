@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="720" viewBox="0 0 1120 720" role="img" aria-labelledby="title description">
+  <title id="title">Proposed standalone Metal network handoff</title>
+  <desc id="description">Management admits exact subject intent on the hub. One selected cell writes local results reflected by Karmada. Networking owns paths and addresses; Fleet boot owns admitted boot responses when applicable. Physical maintenance consumes active owners' prerequisite fences, not new network materialization or boot authority.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
+    <style>
+      text { font-family: sans-serif; fill: #172554; }
+      .title { font-size: 23px; font-weight: bold; }
+      .heading { font-size: 18px; font-weight: bold; }
+      .body { font-size: 15px; }
+      .note { font-size: 14px; fill: #475569; }
+      .box { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 10; }
+      .owner { fill: #f0fdf4; stroke: #15803d; stroke-width: 2; rx: 10; }
+      .gate { fill: #fff7ed; stroke: #c2410c; stroke-width: 2; rx: 10; }
+      .edge { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1120" height="720" fill="#ffffff"/>
+  <text x="32" y="40" class="title">Standalone Metal: authority, paths and acknowledged handoff</text>
+  <text x="32" y="66" class="note">PROPOSED CONTRACT • no implemented integration or hardware qualification implied</text>
+  <rect x="32" y="102" width="310" height="130" class="box"/>
+  <text x="50" y="132" class="heading">Fleet management</text>
+  <text x="50" y="159" class="body">Exact subject + admitted operation</text>
+  <text x="50" y="183" class="body">Typed plan, inputs, fence, custody</text>
+  <text x="50" y="207" class="body">Verifies evidence before public status</text>
+  <rect x="402" y="102" width="280" height="130" class="box"/>
+  <text x="420" y="132" class="heading">Federation hub</text>
+  <text x="420" y="159" class="body">Management-authored exact intent</text>
+  <text x="420" y="183" class="body">Karmada delivers to selected cell</text>
+  <text x="420" y="207" class="body">Only Karmada reflects results</text>
+  <rect x="742" y="102" width="346" height="130" class="box"/>
+  <text x="760" y="132" class="heading">Selected cell</text>
+  <text x="760" y="159" class="body">Local execution + local results only</text>
+  <text x="760" y="183" class="body">No project or hub API credentials</text>
+  <text x="760" y="207" class="body">No expanded authority during partition</text>
+  <path d="M342 145 H402" class="edge"/>
+  <path d="M682 145 H742" class="edge"/>
+  <path d="M742 211 H704 V263 H368 V211 H342" class="edge"/>
+  <text x="399" y="286" class="note">Local result → reflection → management verification</text>
+  <rect x="32" y="326" width="510" height="150" class="owner"/>
+  <text x="50" y="357" class="heading">Networking owner: path + address authority</text>
+  <text x="50" y="385" class="body">Feasibility ≠ address reservation ≠ programmed attachment</text>
+  <text x="50" y="411" class="body">NIC mapping, IPAM, switch, DHCP/RA, routing, isolation</text>
+  <text x="50" y="437" class="body">Exact binding revisions + attributable dataplane evidence</text>
+  <text x="50" y="460" class="note">Provider-assigned facts are observations, not Datum intent</text>
+  <rect x="578" y="326" width="510" height="150" class="owner"/>
+  <text x="596" y="357" class="heading">Fleet boot + scoped proxy: admitted response</text>
+  <text x="596" y="385" class="body">Installation or service boot plan, digest and step budget</text>
+  <text x="596" y="411" class="body">Every connection/redirect/artifact origin policy checked</text>
+  <text x="596" y="437" class="body">Execution proves stop; local boot only when applicable</text>
+  <text x="596" y="460" class="note">No customer DHCP authority or direct-fetch escape</text>
+  <path d="M915 232 V305 H287 V326" class="edge"/>
+  <path d="M915 305 V326" class="edge"/>
+  <rect x="32" y="530" width="1056" height="140" class="gate"/>
+  <text x="50" y="561" class="heading">Release barrier: unknown never becomes free capacity</text>
+  <text x="50" y="590" class="body">Close admission → fence old effects → disconnect acknowledgment → coordinator settlement → claim disposition</text>
+  <text x="50" y="618" class="body">Networking holds exact assignments; stale detach cannot touch a new binding even if the IP is reused.</text>
+  <text x="50" y="646" class="body">Release requires each subject's applicable proofs; passive maintenance has no boot or installer requirement.</text>
+  <path d="M287 476 V530" class="edge"/>
+  <path d="M833 476 V530" class="edge"/>
+  <text x="32" y="701" class="note">PhysicalMaintenance: owner prerequisite fences before field work; no borrowed active-custody rights or automatic reconnect.</text>
+</svg>
