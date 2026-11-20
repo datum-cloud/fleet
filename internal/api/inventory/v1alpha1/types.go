@@ -1,8 +1,8 @@
-// Package v1alpha1 holds a minimal subset of the proposed physical inventory
-// API in fleet.datumapis.com: DeviceClaim, the installation plan for one slot,
-// and Device, the actual asset bound to a claim.
+// Package v1alpha1 holds the six observational physical inventory kinds in
+// fleet.datumapis.com. Legacy slot claims retain their historical bindings;
+// new typed claims describe individual installations without accepting them.
 //
-// Both are operator-written records. Neither has a controller. Registering a
+// All are operator-written records. None has a controller. Registering a
 // Device authorizes no hardware effect and creates or changes no
 // MachineCapacity. Status is reserved for future collectors and verifiers and
 // has no writer.
@@ -29,11 +29,11 @@ type Provenance struct {
 	RecordedAt metav1.Time `json:"recordedAt"`
 	// Reference is an optional, opaque pointer to where the facts came from.
 	// Fleet does not interpret it.
-	Reference string `json:"reference,omitempty"`
+	Reference string           `json:"reference,omitempty"`
+	Source    *SourceReference `json:"source,omitempty"`
 }
 
-// DeviceClaim is the plan for one physical slot, written by the installation
-// planner before hardware arrives. The slot outlives any one Device.
+// DeviceClaim retains legacy slot plans and typed observational installations.
 type DeviceClaim struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -42,6 +42,9 @@ type DeviceClaim struct {
 }
 
 type DeviceClaimSpec struct {
+	DisplayName      string           `json:"displayName,omitempty"`
+	Lifecycle        string           `json:"lifecycle,omitempty"`
+	CableRefs        []LocalReference `json:"cableRefs,omitempty"`
 	Provenance       Provenance       `json:"provenance"`
 	ExpectedIdentity ExpectedIdentity `json:"expectedIdentity"`
 	Placement        Placement        `json:"placement"`
@@ -56,14 +59,17 @@ type ExpectedIdentity struct {
 	Serial       string `json:"serial,omitempty"`
 }
 
-// Placement is the planned mount: the lowest occupied rack unit, the number of
-// units, and the face. Facility and Rack are names until those kinds exist.
+// Placement retains legacy text placement or an explicit typed scope.
 type Placement struct {
-	Facility string `json:"facility"`
-	Rack     string `json:"rack"`
-	Position int32  `json:"position"`
-	Height   int32  `json:"height,omitempty"`
-	Face     string `json:"face"`
+	Scope       string          `json:"scope,omitempty"`
+	FacilityRef *LocalReference `json:"facilityRef,omitempty"`
+	RackRef     *LocalReference `json:"rackRef,omitempty"`
+	Mount       string          `json:"mount,omitempty"`
+	Facility    string          `json:"facility,omitempty"`
+	Rack        string          `json:"rack,omitempty"`
+	Position    int32           `json:"position,omitempty"`
+	Height      int32           `json:"height,omitempty"`
+	Face        string          `json:"face,omitempty"`
 }
 
 // ExpectedPort is a planned physical port and the cable peer it should reach.
@@ -95,11 +101,19 @@ type Device struct {
 }
 
 type DeviceSpec struct {
-	ClaimRef   LocalReference `json:"claimRef"`
-	Provenance Provenance     `json:"provenance"`
-	Identity   DeviceIdentity `json:"identity"`
-	BMC        *BMC           `json:"bmc,omitempty"`
-	Interfaces []Interface    `json:"interfaces,omitempty"`
+	DisplayName         string               `json:"displayName,omitempty"`
+	ModelShape          *ModelShape          `json:"modelShape,omitempty"`
+	AssetTag            string               `json:"assetTag,omitempty"`
+	ProviderHostRef     *ExternalReference   `json:"providerHostRef,omitempty"`
+	Components          []Component          `json:"components,omitempty"`
+	InternalMappings    []InternalMapping    `json:"internalMappings,omitempty"`
+	ServiceAssociations []ServiceAssociation `json:"serviceAssociations,omitempty"`
+	TopologyAuthority   string               `json:"topologyAuthority,omitempty"`
+	ClaimRef            LocalReference       `json:"claimRef"`
+	Provenance          Provenance           `json:"provenance"`
+	Identity            DeviceIdentity       `json:"identity"`
+	BMC                 *BMC                 `json:"bmc,omitempty"`
+	Interfaces          []Interface          `json:"interfaces,omitempty"`
 	// UnmappedMACAddresses are MACs detected on the asset that the registrar
 	// could not attribute to a named interface.
 	UnmappedMACAddresses []string `json:"unmappedMACAddresses,omitempty"`
@@ -110,11 +124,12 @@ type LocalReference struct {
 }
 
 // DeviceIdentity is the detected chassis identity. Serial and SystemUUID are
-// matching evidence, not authenticators. At least one is required.
+// matching evidence, not authenticators. Imports can instead retain source identity.
 type DeviceIdentity struct {
-	Manufacturer string `json:"manufacturer,omitempty"`
-	Model        string `json:"model"`
-	Serial       string `json:"serial,omitempty"`
+	SourceIdentity *ExternalReference `json:"sourceIdentity,omitempty"`
+	Manufacturer   string             `json:"manufacturer,omitempty"`
+	Model          string             `json:"model"`
+	Serial         string             `json:"serial,omitempty"`
 	// SystemUUID is the SMBIOS system UUID in lowercase canonical form.
 	SystemUUID string `json:"systemUUID,omitempty"`
 }
@@ -148,7 +163,7 @@ type DeviceList struct {
 }
 
 func addKnown(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &DeviceClaim{}, &DeviceClaimList{}, &Device{}, &DeviceList{})
+	s.AddKnownTypes(GroupVersion, &DeviceClaim{}, &DeviceClaimList{}, &Device{}, &DeviceList{}, &Facility{}, &FacilityList{}, &Rack{}, &RackList{}, &Cable{}, &CableList{}, &PowerFeed{}, &PowerFeedList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }

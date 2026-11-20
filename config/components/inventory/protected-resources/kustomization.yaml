@@ -3,3 +3,7 @@ kind: Kustomization
 resources:
   - deviceclaim.yaml
   - device.yaml
+  - facility.yaml
+  - rack.yaml
+  - cable.yaml
+  - powerfeed.yaml

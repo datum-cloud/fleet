@@ -1,0 +1,21 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fleet.datumapis.com-cable
+spec:
+  serviceRef:
+    name: fleet.datumapis.com
+  kind: Cable
+  plural: cables
+  singular: cable
+  permissions:
+  - list
+  - get
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+  parentResources:
+  - apiGroup: resourcemanager.miloapis.com
+    kind: Project

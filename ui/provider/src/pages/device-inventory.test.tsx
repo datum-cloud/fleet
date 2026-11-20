@@ -112,7 +112,7 @@ describe('DeviceClaimDetail', () => {
     expect(screen.getByTestId('fleet-plugin-claim-missing')).toBeInTheDocument();
   });
 
-  it('lists earlier hardware after the current Device', () => {
+  it('preserves history without guessing an active replacement', () => {
     const replacement = {
       ...fixtureDevices[0],
       metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002' },
@@ -120,7 +120,7 @@ describe('DeviceClaimDetail', () => {
     };
     mockInventory({ data: toInventory(fixtureDeviceClaims, [fixtureDevices[0], replacement]) });
     renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');
-    expect(within(screen.getByTestId('fleet-plugin-claim')).getByText('rack-01-u12-synthetic-0002')).toBeInTheDocument();
-    expect(within(screen.getByTestId('fleet-plugin-device-rack-01-u12-synthetic-0001')).getByText('Earlier hardware for this slot')).toBeInTheDocument();
+    expect(within(screen.getByTestId('fleet-plugin-claim')).getByText('Multiple records; active binding Unknown')).toBeInTheDocument();
+    expect(within(screen.getByTestId('fleet-plugin-device-rack-01-u12-synthetic-0001')).getByText('Historical binding; active placement Unknown')).toBeInTheDocument();
   });
 });

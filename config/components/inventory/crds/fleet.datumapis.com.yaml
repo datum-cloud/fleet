@@ -6,77 +6,252 @@ metadata:
     discovery.miloapis.com/parent-contexts: Project
 spec:
   group: fleet.datumapis.com
-  names: {kind: DeviceClaim, listKind: DeviceClaimList, plural: deviceclaims, singular: deviceclaim}
+  names:
+    kind: DeviceClaim
+    listKind: DeviceClaimList
+    plural: deviceclaims
+    singular: deviceclaim
   scope: Namespaced
   versions:
   - name: v1alpha1
     served: true
     storage: true
-    subresources: {status: {}}
+    subresources:
+      status: {}
     additionalPrinterColumns:
-    - {name: Facility, type: string, jsonPath: .spec.placement.facility}
-    - {name: Rack, type: string, jsonPath: .spec.placement.rack}
-    - {name: Position, type: integer, jsonPath: .spec.placement.position}
-    - {name: Model, type: string, jsonPath: .spec.expectedIdentity.model}
-    - {name: Recorded At, type: date, jsonPath: .spec.provenance.recordedAt}
+    - name: Facility
+      type: string
+      jsonPath: .spec.placement.facility
+    - name: Rack
+      type: string
+      jsonPath: .spec.placement.rack
+    - name: Position
+      type: integer
+      jsonPath: .spec.placement.position
+    - name: Model
+      type: string
+      jsonPath: .spec.expectedIdentity.model
+    - name: Recorded At
+      type: date
+      jsonPath: .spec.provenance.recordedAt
     schema:
       openAPIV3Schema:
         type: object
-        required: [spec]
+        required:
+        - spec
         properties:
-          apiVersion: {type: string}
-          kind: {type: string}
-          metadata: {type: object}
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
           spec:
             type: object
-            required: [provenance, expectedIdentity, placement]
+            required:
+            - provenance
+            - expectedIdentity
+            - placement
             x-kubernetes-validations:
             - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
               message: every change to a claim must advance provenance.recordedAt
+            - rule: has(self.lifecycle) == has(oldSelf.lifecycle)
+              message: legacy claims cannot be reinterpreted as installations
+            - rule: '!has(self.lifecycle) || self.placement == oldSelf.placement'
+              message: installation placement is immutable; migration requires an explicit handover
+            - rule: '!has(self.lifecycle) || !has(self.ports) || self.ports.all(p, !has(p.expectedPeer))'
+              message: Cable is the only expected topology authority for installations
+            - rule: has(self.lifecycle) == has(self.placement.scope)
+              message: typed placement requires an installation lifecycle; legacy slots keep their text placement
             properties:
               provenance:
                 type: object
-                required: [method, recordedBy, recordedAt]
+                required:
+                - method
+                - recordedBy
+                - recordedAt
                 properties:
-                  method: {type: string, enum: [Manual]}
-                  recordedBy: {type: string, minLength: 1, maxLength: 253}
-                  recordedAt: {type: string, format: date-time}
-                  reference: {type: string, minLength: 1, maxLength: 1024}
+                  method:
+                    type: string
+                    enum:
+                    - Manual
+                    - NetBoxImport
+                  recordedBy:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  recordedAt:
+                    type: string
+                    format: date-time
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  source:
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      snapshotDigest:
+                        type: string
+                        pattern: ^sha256:[a-f0-9]{64}$
+                      mappingRevision:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      observedAt:
+                        type: string
+                        format: date-time
+                    required:
+                    - system
+                    - type
+                    - id
+                    - snapshotDigest
+                    - mappingRevision
+                    - observedAt
+                x-kubernetes-validations:
+                - rule: self.method != 'NetBoxImport' || has(self.source)
+                  message: NetBox imports require source provenance
+                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
+                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
+                  message: source identity is immutable
               expectedIdentity:
                 type: object
-                required: [model]
+                required:
+                - model
                 properties:
-                  manufacturer: {type: string, maxLength: 253}
-                  model: {type: string, minLength: 1, maxLength: 253}
-                  serial: {type: string, minLength: 1, maxLength: 253}
+                  manufacturer:
+                    type: string
+                    maxLength: 253
+                  model:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  serial:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
               placement:
                 type: object
-                required: [facility, rack, position, face]
                 properties:
-                  facility: {type: string, minLength: 1, maxLength: 253}
-                  rack: {type: string, minLength: 1, maxLength: 253}
-                  position: {type: integer, format: int32, minimum: 1, maximum: 100}
-                  height: {type: integer, format: int32, minimum: 1, maximum: 100, default: 1}
-                  face: {type: string, enum: [front, rear]}
+                  facility:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  rack:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  position:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  height:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  face:
+                    type: string
+                    enum:
+                    - front
+                    - rear
+                  scope:
+                    type: string
+                    enum:
+                    - Facility
+                    - RackMembership
+                    - RackUnits
+                    - NonRackUnitMount
+                  facilityRef: &id001
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        maxLength: 253
+                        pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    required:
+                    - name
+                  rackRef: *id001
+                  mount:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                x-kubernetes-validations:
+                - rule: 'has(self.scope) ? (!has(self.facility) && !has(self.rack)) : (has(self.facility) && has(self.rack)
+                    && has(self.position) && has(self.face) && !has(self.facilityRef) && !has(self.rackRef) && !has(self.mount))'
+                  message: choose legacy text placement or typed placement, never both
+                - rule: '!has(self.scope) || (self.scope == ''Facility'' ? (has(self.facilityRef) && !has(self.rackRef))
+                    : (has(self.rackRef) && !has(self.facilityRef)))'
+                  message: typed placement requires exactly the reference appropriate to its scope
+                - rule: '!has(self.scope) || (self.scope == ''RackUnits'' ? (has(self.position) && has(self.height)
+                    && has(self.face) && !has(self.mount)) : (!has(self.position) && !has(self.height) && !has(self.face)
+                    && (self.scope == ''NonRackUnitMount'' ? has(self.mount) : !has(self.mount))))'
+                  message: partial placement cannot assert rack units; non-unit mounts require a mount identifier
               ports:
                 type: array
                 maxItems: 128
                 x-kubernetes-list-type: map
-                x-kubernetes-list-map-keys: [name]
+                x-kubernetes-list-map-keys:
+                - name
                 items:
                   type: object
-                  required: [name]
+                  required:
+                  - name
                   properties:
-                    name: {type: string, minLength: 1, maxLength: 63}
-                    type: {type: string, maxLength: 253}
-                    speedMbps: {type: integer, format: int64, minimum: 1}
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    type:
+                      type: string
+                      maxLength: 253
+                    speedMbps:
+                      type: integer
+                      format: int64
+                      minimum: 1
                     expectedPeer:
                       type: object
-                      required: [device, port]
+                      required:
+                      - device
+                      - port
                       properties:
-                        device: {type: string, minLength: 1, maxLength: 253}
-                        port: {type: string, minLength: 1, maxLength: 253}
-          status: {type: object}
+                        device:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        port:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+              lifecycle:
+                type: string
+                enum:
+                - Installation
+              cableRefs:
+                type: array
+                maxItems: 256
+                items: *id001
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - name
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+          status:
+            type: object
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -86,30 +261,53 @@ metadata:
     discovery.miloapis.com/parent-contexts: Project
 spec:
   group: fleet.datumapis.com
-  names: {kind: Device, listKind: DeviceList, plural: devices, singular: device}
+  names:
+    kind: Device
+    listKind: DeviceList
+    plural: devices
+    singular: device
   scope: Namespaced
   versions:
   - name: v1alpha1
     served: true
     storage: true
-    subresources: {status: {}}
+    subresources:
+      status: {}
     additionalPrinterColumns:
-    - {name: Claim, type: string, jsonPath: .spec.claimRef.name}
-    - {name: Model, type: string, jsonPath: .spec.identity.model}
-    - {name: Serial, type: string, jsonPath: .spec.identity.serial}
-    - {name: System UUID, type: string, priority: 1, jsonPath: .spec.identity.systemUUID}
-    - {name: Recorded At, type: date, jsonPath: .spec.provenance.recordedAt}
+    - name: Claim
+      type: string
+      jsonPath: .spec.claimRef.name
+    - name: Model
+      type: string
+      jsonPath: .spec.identity.model
+    - name: Serial
+      type: string
+      jsonPath: .spec.identity.serial
+    - name: System UUID
+      type: string
+      priority: 1
+      jsonPath: .spec.identity.systemUUID
+    - name: Recorded At
+      type: date
+      jsonPath: .spec.provenance.recordedAt
     schema:
       openAPIV3Schema:
         type: object
-        required: [spec]
+        required:
+        - spec
         properties:
-          apiVersion: {type: string}
-          kind: {type: string}
-          metadata: {type: object}
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
           spec:
             type: object
-            required: [claimRef, provenance, identity]
+            required:
+            - claimRef
+            - provenance
+            - identity
             x-kubernetes-validations:
             - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
               message: every change to a device must advance provenance.recordedAt
@@ -117,66 +315,961 @@ spec:
               message: claimRef is immutable; bind replacement hardware as a new Device
             - rule: self.identity == oldSelf.identity
               message: identity is immutable; a hardware swap is a new Device
-            - rule: >-
-                !has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) ||
-                (self.interfaces.filter(b, has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 &&
-                (!has(self.unmappedMACAddresses) || !(a.macAddress in self.unmappedMACAddresses))))
+            - rule: '!has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) || (self.interfaces.filter(b,
+                has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 && (!has(self.unmappedMACAddresses)
+                || !(a.macAddress in self.unmappedMACAddresses))))'
               message: a MAC address may be recorded only once
+            - rule: '!has(self.identity.sourceIdentity) || self.provenance.method == "NetBoxImport"'
+              message: source identity is for observational imports only
+            - rule: '!has(self.topologyAuthority) || !has(self.interfaces) || self.interfaces.all(p, !has(p.peer))'
+              message: Cable topology excludes inline peers
+            - rule: '!has(self.components) || has(self.topologyAuthority)'
+              message: typed components require Cable topology
+            - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, (m.from.componentID
+                != m.to.componentID || m.from.position != m.to.position) && self.components.exists(c, c.id == m.from.componentID
+                && m.from.position <= (has(c.positions) ? c.positions : 1)) && self.components.exists(c, c.id ==
+                m.to.componentID && m.to.position <= (has(c.positions) ? c.positions : 1))))'
+              message: internal mappings must reference present component positions
+            - rule: '!has(self.internalMappings) || self.internalMappings.all(m, self.internalMappings.filter(n,
+                n.from == m.from).size() == 1)'
+              message: each internal source position maps once
+            - rule: '!has(self.identity.sourceIdentity) || (has(self.provenance.source) && self.identity.sourceIdentity.system
+                == self.provenance.source.system && self.identity.sourceIdentity.type == self.provenance.source.type
+                && self.identity.sourceIdentity.id == self.provenance.source.id)'
+              message: observational identity must match provenance source identity
+            - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, self.components.exists(c,
+                c.id == m.from.componentID && c.type == ''FrontPort'') ? self.components.exists(c, c.id == m.to.componentID
+                && c.type == ''RearPort'') : (self.components.exists(c, c.id == m.from.componentID && c.type ==
+                ''PowerOutlet'') && self.components.exists(c, c.id == m.to.componentID && c.type == ''PowerInlet''))))'
+              message: internal paths must map front to rear or power outlet to inlet
+            - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, !self.components.exists(c,
+                c.id == m.from.componentID && c.type == ''FrontPort'') || self.internalMappings.filter(n, n.to.componentID
+                == m.to.componentID && n.to.position == m.to.position).size() == 1))'
+              message: a pass-through rear position can be mapped only once
+            - rule: '!has(self.serviceAssociations) || (has(self.components) && self.serviceAssociations.all(a,
+                self.components.exists(c, c.id == a.componentID)))'
+              message: service associations must reference present components
             properties:
               claimRef:
                 type: object
-                required: [name]
+                required:
+                - name
                 properties:
-                  name: {type: string, minLength: 1, maxLength: 253}
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
               provenance:
                 type: object
-                required: [method, recordedBy, recordedAt]
+                required:
+                - method
+                - recordedBy
+                - recordedAt
                 properties:
-                  method: {type: string, enum: [Manual]}
-                  recordedBy: {type: string, minLength: 1, maxLength: 253}
-                  recordedAt: {type: string, format: date-time}
-                  reference: {type: string, minLength: 1, maxLength: 1024}
+                  method:
+                    type: string
+                    enum:
+                    - Manual
+                    - NetBoxImport
+                  recordedBy:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  recordedAt:
+                    type: string
+                    format: date-time
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  source:
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      snapshotDigest:
+                        type: string
+                        pattern: ^sha256:[a-f0-9]{64}$
+                      mappingRevision:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      observedAt:
+                        type: string
+                        format: date-time
+                    required:
+                    - system
+                    - type
+                    - id
+                    - snapshotDigest
+                    - mappingRevision
+                    - observedAt
+                x-kubernetes-validations:
+                - rule: self.method != 'NetBoxImport' || has(self.source)
+                  message: NetBox imports require source provenance
+                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
+                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
+                  message: source identity is immutable
               identity:
                 type: object
-                required: [model]
+                required:
+                - model
                 x-kubernetes-validations:
-                - rule: has(self.serial) || has(self.systemUUID)
-                  message: a device needs a serial or a system UUID
+                - rule: has(self.serial) || has(self.systemUUID) || has(self.sourceIdentity)
+                  message: a device needs serial, UUID, or an observational source identity
                 properties:
-                  manufacturer: {type: string, maxLength: 253}
-                  model: {type: string, minLength: 1, maxLength: 253}
-                  serial: {type: string, minLength: 1, maxLength: 253}
-                  systemUUID: {type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
+                  manufacturer:
+                    type: string
+                    maxLength: 253
+                  model:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  serial:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  systemUUID:
+                    type: string
+                    pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+                  sourceIdentity: &id001
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - system
+                    - type
+                    - id
               bmc:
                 type: object
-                required: [endpoint]
+                required:
+                - endpoint
                 properties:
                   endpoint:
                     type: string
                     maxLength: 2048
                     x-kubernetes-validations:
-                    - rule: isURL(self) && url(self).getScheme() == 'https' && !self.contains('@') && url(self).getHostname() != ''
+                    - rule: isURL(self) && url(self).getScheme() == 'https' && !self.contains('@') && url(self).getHostname()
+                        != ''
                       message: bmc.endpoint must be an https URL without credentials
               interfaces:
                 type: array
                 maxItems: 32
                 x-kubernetes-list-type: map
-                x-kubernetes-list-map-keys: [name]
+                x-kubernetes-list-map-keys:
+                - name
                 items:
                   type: object
-                  required: [name]
+                  required:
+                  - name
                   properties:
-                    name: {type: string, minLength: 1, maxLength: 63}
-                    macAddress: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    macAddress:
+                      type: string
+                      maxLength: 17
+                      pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
                     peer:
                       type: object
-                      required: [device, port]
+                      required:
+                      - device
+                      - port
                       properties:
-                        device: {type: string, minLength: 1, maxLength: 253}
-                        port: {type: string, minLength: 1, maxLength: 253}
+                        device:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        port:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
               unmappedMACAddresses:
                 type: array
                 maxItems: 32
                 x-kubernetes-list-type: set
-                items: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
-          status: {type: object}
+                items:
+                  type: string
+                  maxLength: 17
+                  pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
+              assetTag:
+                type: string
+                minLength: 1
+                maxLength: 253
+              providerHostRef: *id001
+              components:
+                type: array
+                maxItems: 256
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    type:
+                      type: string
+                      enum:
+                      - NetworkPort
+                      - PowerInlet
+                      - PowerOutlet
+                      - ConsolePort
+                      - ConsoleServerPort
+                      - FrontPort
+                      - RearPort
+                      - Module
+                      - InventoryItem
+                      - DeviceBay
+                    connector:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    positions:
+                      type: integer
+                      minimum: 1
+                      maximum: 256
+                    serial:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    assetTag:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    sourceRef: *id001
+                  required:
+                  - id
+                  - name
+                  - type
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+              internalMappings:
+                type: array
+                maxItems: 256
+                items:
+                  type: object
+                  properties:
+                    from: &id002
+                      type: object
+                      properties:
+                        componentID:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        position:
+                          type: integer
+                          minimum: 1
+                          maximum: 256
+                      required:
+                      - componentID
+                      - position
+                    to: *id002
+                  required:
+                  - from
+                  - to
+              serviceAssociations:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  properties:
+                    serviceRef: *id001
+                    componentID:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                  required:
+                  - serviceRef
+                  - componentID
+              topologyAuthority:
+                type: string
+                enum:
+                - Cable
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              modelShape:
+                type: object
+                properties:
+                  heightUnits:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+                  fullDepth:
+                    type: boolean
+          status:
+            type: object
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: facilities.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Facility
+    listKind: FacilityList
+    plural: facilities
+    singular: facility
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              provenance:
+                type: object
+                required:
+                - method
+                - recordedBy
+                - recordedAt
+                properties:
+                  method:
+                    type: string
+                    enum:
+                    - Manual
+                    - NetBoxImport
+                  recordedBy:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  recordedAt:
+                    type: string
+                    format: date-time
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  source:
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      snapshotDigest:
+                        type: string
+                        pattern: ^sha256:[a-f0-9]{64}$
+                      mappingRevision:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      observedAt:
+                        type: string
+                        format: date-time
+                    required:
+                    - system
+                    - type
+                    - id
+                    - snapshotDigest
+                    - mappingRevision
+                    - observedAt
+                x-kubernetes-validations:
+                - rule: self.method != 'NetBoxImport' || has(self.source)
+                  message: NetBox imports require source provenance
+                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
+                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
+                  message: source identity is immutable
+              locationRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                required:
+                - name
+            required:
+            - displayName
+            - provenance
+            x-kubernetes-validations:
+            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
+              message: every spec change must advance provenance.recordedAt
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: racks.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Rack
+    listKind: RackList
+    plural: racks
+    singular: rack
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              provenance:
+                type: object
+                required:
+                - method
+                - recordedBy
+                - recordedAt
+                properties:
+                  method:
+                    type: string
+                    enum:
+                    - Manual
+                    - NetBoxImport
+                  recordedBy:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  recordedAt:
+                    type: string
+                    format: date-time
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  source:
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      snapshotDigest:
+                        type: string
+                        pattern: ^sha256:[a-f0-9]{64}$
+                      mappingRevision:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      observedAt:
+                        type: string
+                        format: date-time
+                    required:
+                    - system
+                    - type
+                    - id
+                    - snapshotDigest
+                    - mappingRevision
+                    - observedAt
+                x-kubernetes-validations:
+                - rule: self.method != 'NetBoxImport' || has(self.source)
+                  message: NetBox imports require source provenance
+                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
+                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
+                  message: source identity is immutable
+              facilityRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                required:
+                - name
+              heightUnits:
+                type: integer
+                minimum: 1
+                maximum: 100
+            required:
+            - displayName
+            - provenance
+            - facilityRef
+            x-kubernetes-validations:
+            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
+              message: every spec change must advance provenance.recordedAt
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: cables.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Cable
+    listKind: CableList
+    plural: cables
+    singular: cable
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              provenance:
+                type: object
+                required:
+                - method
+                - recordedBy
+                - recordedAt
+                properties:
+                  method:
+                    type: string
+                    enum:
+                    - Manual
+                    - NetBoxImport
+                  recordedBy:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  recordedAt:
+                    type: string
+                    format: date-time
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  source:
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      snapshotDigest:
+                        type: string
+                        pattern: ^sha256:[a-f0-9]{64}$
+                      mappingRevision:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      observedAt:
+                        type: string
+                        format: date-time
+                    required:
+                    - system
+                    - type
+                    - id
+                    - snapshotDigest
+                    - mappingRevision
+                    - observedAt
+                x-kubernetes-validations:
+                - rule: self.method != 'NetBoxImport' || has(self.source)
+                  message: NetBox imports require source provenance
+                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
+                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
+                  message: source identity is immutable
+              medium:
+                type: string
+                enum:
+                - Copper
+                - Fiber
+                - Power
+                - Console
+                - Unknown
+              lanes:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    a: &id002
+                      type: object
+                      properties:
+                        deviceRef: &id001
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              maxLength: 253
+                              pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                          required:
+                          - name
+                        powerFeedRef: *id001
+                        componentID:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        position:
+                          type: integer
+                          minimum: 1
+                          maximum: 256
+                      required:
+                      - componentID
+                      - position
+                      x-kubernetes-validations:
+                      - rule: has(self.deviceRef) != has(self.powerFeedRef)
+                        message: exactly one local endpoint owner is required
+                    b: *id002
+                  required:
+                  - id
+                  - a
+                  - b
+                  x-kubernetes-validations:
+                  - rule: '!(self.a.componentID == self.b.componentID && self.a.position == self.b.position && ((has(self.a.deviceRef)
+                      && has(self.b.deviceRef) && self.a.deviceRef.name == self.b.deviceRef.name) || (has(self.a.powerFeedRef)
+                      && has(self.b.powerFeedRef) && self.a.powerFeedRef.name == self.b.powerFeedRef.name)))'
+                    message: a cable lane must have different endpoints
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                minItems: 1
+            required:
+            - displayName
+            - provenance
+            - medium
+            - lanes
+            x-kubernetes-validations:
+            - rule: self.lanes.all(l, self.lanes.filter(m, (m.a.componentID == l.a.componentID && m.a.position ==
+                l.a.position && ((has(m.a.deviceRef) && has(l.a.deviceRef) && m.a.deviceRef.name == l.a.deviceRef.name)
+                || (has(m.a.powerFeedRef) && has(l.a.powerFeedRef) && m.a.powerFeedRef.name == l.a.powerFeedRef.name)))
+                || (m.b.componentID == l.a.componentID && m.b.position == l.a.position && ((has(m.b.deviceRef) &&
+                has(l.a.deviceRef) && m.b.deviceRef.name == l.a.deviceRef.name) || (has(m.b.powerFeedRef) && has(l.a.powerFeedRef)
+                && m.b.powerFeedRef.name == l.a.powerFeedRef.name)))).size() == 1 && self.lanes.filter(m, (m.a.componentID
+                == l.b.componentID && m.a.position == l.b.position && ((has(m.a.deviceRef) && has(l.b.deviceRef)
+                && m.a.deviceRef.name == l.b.deviceRef.name) || (has(m.a.powerFeedRef) && has(l.b.powerFeedRef)
+                && m.a.powerFeedRef.name == l.b.powerFeedRef.name))) || (m.b.componentID == l.b.componentID && m.b.position
+                == l.b.position && ((has(m.b.deviceRef) && has(l.b.deviceRef) && m.b.deviceRef.name == l.b.deviceRef.name)
+                || (has(m.b.powerFeedRef) && has(l.b.powerFeedRef) && m.b.powerFeedRef.name == l.b.powerFeedRef.name)))).size()
+                == 1)
+              message: each termination position can occur only once in a cable
+            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
+              message: every spec change must advance provenance.recordedAt
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: powerfeeds.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: PowerFeed
+    listKind: PowerFeedList
+    plural: powerfeeds
+    singular: powerfeed
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              provenance:
+                type: object
+                required:
+                - method
+                - recordedBy
+                - recordedAt
+                properties:
+                  method:
+                    type: string
+                    enum:
+                    - Manual
+                    - NetBoxImport
+                  recordedBy:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  recordedAt:
+                    type: string
+                    format: date-time
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  source:
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      snapshotDigest:
+                        type: string
+                        pattern: ^sha256:[a-f0-9]{64}$
+                      mappingRevision:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      observedAt:
+                        type: string
+                        format: date-time
+                    required:
+                    - system
+                    - type
+                    - id
+                    - snapshotDigest
+                    - mappingRevision
+                    - observedAt
+                x-kubernetes-validations:
+                - rule: self.method != 'NetBoxImport' || has(self.source)
+                  message: NetBox imports require source provenance
+                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
+                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
+                  message: source identity is immutable
+              facilityRef: &id001
+                type: object
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                required:
+                - name
+              rackRef: *id001
+              supply:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum:
+                    - AC
+                    - DC
+                    - Unknown
+                  voltageV:
+                    type: integer
+                    minimum: 1
+                    maximum: 100000
+                  currentA:
+                    type: integer
+                    minimum: 1
+                    maximum: 100000
+                  phase:
+                    type: string
+                    enum:
+                    - single-phase
+                    - three-phase
+                    - Unknown
+                required:
+                - type
+              terminations:
+                type: array
+                maxItems: 256
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    type:
+                      type: string
+                      enum:
+                      - NetworkPort
+                      - PowerInlet
+                      - PowerOutlet
+                      - ConsolePort
+                      - ConsoleServerPort
+                      - FrontPort
+                      - RearPort
+                      - Module
+                      - InventoryItem
+                      - DeviceBay
+                    connector:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    positions:
+                      type: integer
+                      minimum: 1
+                      maximum: 256
+                    serial:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    assetTag:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    sourceRef: &id002
+                      type: object
+                      properties:
+                        system:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        type:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                      required:
+                      - system
+                      - type
+                      - id
+                  required:
+                  - id
+                  - name
+                  - type
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                minItems: 1
+              upstreamSources:
+                type: array
+                maxItems: 64
+                items: *id002
+            required:
+            - displayName
+            - provenance
+            - facilityRef
+            - terminations
+            x-kubernetes-validations:
+            - rule: self.terminations.all(t, t.type == 'PowerOutlet')
+              message: feed terminations must be power outlets
+            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
+              message: every spec change must advance provenance.recordedAt
+          status:
+            type: object
+        required:
+        - spec

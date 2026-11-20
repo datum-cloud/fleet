@@ -10,22 +10,28 @@ take ownership of it.
 
 This package implements a minimal subset of the
 [inventory lifecycle and trust proposal (#63)](https://github.com/datum-cloud/fleet/pull/63).
-It has two operator-written kinds in `fleet.datumapis.com/v1alpha1`:
+It now has six operator-written kinds in `fleet.datumapis.com/v1alpha1`.
+The [NetBox physical import and migration guide](netbox-physical-import.md)
+describes the additive physical schema, typed components, partial placement,
+same-namespace relationships, import reconciliation and current limits. The
+manual examples below preserve the original long-lived-slot representation:
 
 | Kind | What it is | Writer |
 | --- | --- | --- |
 | `DeviceClaim` | The installation plan for one slot: facility, rack, position and face, expected model, and expected ports with their expected cable peers. It is usually written before the hardware arrives, and the slot outlives any one Device. | The installation planner (an operator, for now) |
 | `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, the model, an optional BMC endpoint, interfaces, and provenance. | The registrar (an operator, for now) |
+| `Facility` / `Rack` | Explicit premises and rack definitions; membership is not free-capacity evidence. | Inventory operator through the environment's existing writer |
+| `Cable` / `PowerFeed` | Typed termination/lane topology and physical supply dependencies. | Inventory operator through the environment's existing writer |
 
 ## Status
 
 | Aspect | State |
 | --- | --- |
 | CRDs and Go types | Implemented in `config/components/inventory` and `internal/api/inventory/v1alpha1`. |
-| Home | Milo. `config/milo` registers both CRDs, two ProtectedResources and two IAM roles, like the `metal.datumapis.com` kinds. `config/overlays/management-plane` and `config/overlays/synthetic-staging` install none of them. |
+| Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and two IAM roles. Management and synthetic-staging overlays install none of them. |
 | Staff portal | Read-only **Inventory** tab in the Bare Metal provider plugin (`ui/provider`): a claim list and a per-claim detail page. |
-| Tests | Unit tests run the API server's schema, list-type, defaulting, and CEL validation offline, for both kinds. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover the list, detail, restricted, and empty states. |
-| Controllers | None. No Fleet code reads or writes these kinds. |
+| Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds and synthetic importer output. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
+| Controllers | None. Offline import and staff browsing read the records; no reconciler accepts plans, verifies hardware, or publishes eligibility. |
 | Hardware qualification | None. Records hold operator-entered facts, not verified hardware state. |
 
 ## What registration does and does not do
@@ -48,17 +54,17 @@ namespace resolves by name. Nothing checks that reference yet.
 
 ## Where the records live
 
-Milo is the single home. DeviceClaims and Devices are namespaced objects in the
+Milo is the single home. All six kinds are namespaced objects in the
 **provider project's** control plane, in the same namespace as the
 MachineCapacities they will back. No copy exists on the Fleet management
 cluster, and no controller syncs them anywhere.
 
-Both CRDs carry `discovery.miloapis.com/parent-contexts: Project`, so every
+All six CRDs carry `discovery.miloapis.com/parent-contexts: Project`, so every
 project control plane serves the kinds. Access is what keeps consumers out:
 
 | Role | Grants |
 | --- | --- |
-| `fleet.datumapis.com-inventory-viewer` | `get`, `list`, `watch` on `deviceclaims` and `devices` |
+| `fleet.datumapis.com-inventory-viewer` | `get`, `list`, `watch` on all six physical kinds |
 | `fleet.datumapis.com-inventory-editor` | The viewer role plus `create`, `update`, `patch`, `delete` |
 
 No `metal.datumapis.com` role includes or inherits either. The consumer,
@@ -81,15 +87,15 @@ in the provider project. The plugin never writes.
 
 | Rule | Kind | Why |
 | --- | --- | --- |
-| `provenance` is required: `method: Manual`, `recordedBy`, `recordedAt`, and an optional opaque `reference` | Both | Every plan and registration is attributable to a person and a time. |
-| Any spec change must set a later `provenance.recordedAt` | Both | An edit cannot pass off new facts under old provenance. |
+| `provenance` is required: `Manual` or `NetBoxImport`, `recordedBy`, `recordedAt`, optional opaque reference; imports also require structured source provenance | All six | Attribution is retained; imported claims are observations, not authenticated hardware evidence. |
+| Any spec change must set a later `provenance.recordedAt` | All six | An edit cannot pass off new facts under old provenance. |
 | `claimRef` is required and immutable | Device | A Device binds to exactly one claim, and moving hardware to another slot is not an edit. |
-| `identity` (manufacturer, model, serial, system UUID) is immutable, including adding a missing field; at least one of serial or system UUID is required | Device | Serial and UUID are matching evidence. A hardware swap is a new Device bound to the same claim. |
+| `identity` is immutable, including adding missing fields; requires serial, system UUID, or an import source identity matching provenance | Device | Source identity does not prove chassis identity. Legacy bindings are preserved; hardware handover is not automated. |
 | Serial is optional | DeviceClaim | It is usually unknown at plan time. |
 | Port and interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
 | `bmc.endpoint` is an `https` URL without credentials | Device | Credentials never live in inventory records. |
-| `status` is a separate subresource that declares no fields | Both | Reserved for future collectors and verifiers to report drift and mismatch. Status never carries identity, and nothing writes it yet. |
+| `status` is a separate subresource that declares no fields | All six | Reserved for future collectors and verifiers to report drift and mismatch. Status never carries identity, and nothing writes it yet. |
 
 The CRDs cannot check that `claimRef` names an existing DeviceClaim, because
 CEL cannot read other objects. Until a registrar enforces it, the operator
@@ -172,12 +178,11 @@ The names and writers match #63:
 - Serial and SMBIOS UUID are matching evidence, not authenticators.
 - Logical LAGs and VLANs are not ports.
 
-Deferred to #63, and deliberately absent:
+Still deferred to #63:
 
-- `Facility`, `Rack`, `Cable`, and `PowerFeed` kinds. Facility and rack are
-  names on the claim, and the expected cable peer is inline on each claimed
-  port, until those kinds replace them. Rack geometry beyond position, height,
-  and face is also deferred.
+- Qualified geometry/reservations and automatic migration of legacy text
+  placement/inline peers. The four additional physical record kinds now exist;
+  typed records do not silently take over historical surfaces.
 - Plan acceptance, revisions, and reservations; canonical-identity
   adjudication and duplicate detection; and the protected ledger.
 - Trust roots, qualification profiles, enrollment challenges, technician and
@@ -202,11 +207,11 @@ for one authoritative record that MachineCapacity can name and that staff can
 read. #63's ledger, trust, and enrollment protocol would still sit behind these
 records if adopted.
 
-**Divergence to resolve:** this package's convention is that a whole-server
-replacement binds a new Device to the same DeviceClaim, because the planned slot
-outlives the hardware. #63's current text says whole-server replacement creates a
-new DeviceClaim as well. The schema enforces neither convention. Settle this in
-#63 before either path is automated.
+**Compatibility decision:** legacy slots retain all historical bindings. New
+imports use a distinct `Installation` lifecycle, but no automatic move or
+replacement handover exists. Device identity and its original claimRef remain
+immutable. The [migration decisions](netbox-physical-import.md#compatibility-and-migration-decisions)
+explain why imports cannot delete/recreate or relabel legacy records to bypass this.
 
 ## Applying the records
 
@@ -216,7 +221,7 @@ claims before the Devices that name them. Keep records with real serials,
 UUIDs, MACs, endpoints, or cabling in the environment's private configuration,
 not in this repository.
 
-`config/inventory` still renders the two CRDs alone, for an environment that
+`config/inventory` still renders the inventory CRDs alone, for an environment that
 applied them to the management cluster before Milo became their home. Once that
 environment has moved its records into Milo and stopped reconciling the root, it
 will be removed. New environments must not use it.

@@ -704,22 +704,29 @@ corrupt or uses an unsupported schema version.
 
 ## Physical inventory subset
 
-`internal/api/inventory/v1alpha1` defines `DeviceClaim`, the plan for one rack
-slot, and `Device`, the asset bound to one claim. Operators write both by hand
-into the provider project in Milo. `config/components/inventory` holds their
+`internal/api/inventory/v1alpha1` defines Facility, Rack, DeviceClaim, Device,
+Cable and PowerFeed records. Legacy slot claims coexist with new observational
+installation claims; no move or replacement handover is automated. Records live
+in the provider project in Milo. `config/components/inventory` holds their
 CRDs, ProtectedResources, and the `fleet.datumapis.com-inventory-viewer` and
 `-editor` roles. Only `config/milo` includes it.
 
-CEL requires `Manual` provenance on both kinds and requires every edit to
+CEL requires `Manual` or source-attributed `NetBoxImport` provenance and every edit to
 advance `recordedAt`. It keeps a Device's `claimRef` and identity immutable,
 rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
 BMC endpoints. Status is a reserved subresource with no fields and no writer.
 No metal role grants inventory access.
 
-The staff portal plugin's read-only Inventory tab lists claims and shows each
-claim's bound Devices. Unit tests run the API server's validation offline and
-check the IAM shape. See
-[Planning and registering physical devices](../operations/physical-inventory.md).
+The staff portal plugin's read-only Inventory tab pages through all six kinds,
+shows physical relationships and components, and can inspect a private import
+report locally. Multiple historical bindings remain ambiguous rather than being
+resolved by edit time. Python's standard-library `hack/netbox_inventory.py`
+exports sanitized GET-only NetBox snapshots and prepares an offline create-only
+handoff to the existing Flux writer. Unit tests run API-server validation offline,
+check IAM and exercise pagination, source conflicts, omissions and interrupted
+imports. See [safe NetBox evaluation](../operations/netbox-physical-import.md).
+No live source coverage, deployed revision, physical verification, concurrent
+reservation, deletion safety, adoption or new hardware-effect path is established.
 
 ## Build, test, and run
 

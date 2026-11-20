@@ -237,10 +237,11 @@ export const INVENTORY_API_GROUP = 'fleet.datumapis.com';
 export const INVENTORY_API_VERSION = 'v1alpha1';
 
 export interface Provenance {
-  method: 'Manual';
+  method: 'Manual' | 'NetBoxImport';
   recordedBy: string;
   recordedAt: string;
   reference?: string;
+  source?: ExternalReference & { snapshotDigest: string; mappingRevision: string; observedAt: string };
 }
 
 export interface PortPeer {
@@ -255,7 +256,10 @@ export interface DeviceClaim {
   spec: {
     provenance: Provenance;
     expectedIdentity: { manufacturer?: string; model: string; serial?: string };
-    placement: { facility: string; rack: string; position: number; height?: number; face: 'front' | 'rear' };
+    lifecycle?: 'Installation';
+    displayName?: string;
+    cableRefs?: LocalReference[];
+    placement: { facility?: string; rack?: string; position?: number; height?: number; face?: 'front' | 'rear'; scope?: 'Facility' | 'RackMembership' | 'RackUnits' | 'NonRackUnitMount'; facilityRef?: LocalReference; rackRef?: LocalReference; mount?: string };
     ports?: { name: string; type?: string; speedMbps?: number; expectedPeer?: PortPeer }[];
   };
 }
@@ -267,9 +271,51 @@ export interface Device {
   spec: {
     claimRef: LocalReference;
     provenance: Provenance;
-    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string };
+    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string; sourceIdentity?: ExternalReference };
+    assetTag?: string;
+    displayName?: string;
+    modelShape?: { heightUnits?: number; fullDepth?: boolean };
+    providerHostRef?: ExternalReference;
+    topologyAuthority?: 'Cable';
+    components?: PhysicalComponent[];
+    internalMappings?: { from: ComponentPosition; to: ComponentPosition }[];
+    serviceAssociations?: { serviceRef: ExternalReference; componentID: string }[];
     bmc?: { endpoint: string };
     interfaces?: { name: string; macAddress?: string; peer?: PortPeer }[];
     unmappedMACAddresses?: string[];
+  };
+}
+
+export interface ExternalReference { system: string; type: string; id: string }
+export interface ComponentPosition { componentID: string; position: number }
+export interface PhysicalComponent {
+  id: string;
+  name: string;
+  type: 'NetworkPort' | 'PowerInlet' | 'PowerOutlet' | 'ConsolePort' | 'ConsoleServerPort' | 'FrontPort' | 'RearPort' | 'Module' | 'InventoryItem' | 'DeviceBay';
+  connector?: string;
+  positions?: number;
+  serial?: string;
+  assetTag?: string;
+  sourceRef?: ExternalReference;
+}
+export interface CableEndpoint extends ComponentPosition {
+  deviceRef?: LocalReference;
+  powerFeedRef?: LocalReference;
+}
+export interface PhysicalRecord {
+  metadata: ObjectMeta;
+  kind: 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
+  spec: {
+    displayName: string;
+    provenance: Provenance;
+    facilityRef?: LocalReference;
+    rackRef?: LocalReference;
+    locationRef?: LocalReference;
+    heightUnits?: number;
+    medium?: string;
+    lanes?: { id: string; a: CableEndpoint; b: CableEndpoint }[];
+    supply?: { type: string; voltageV?: number; currentA?: number; phase?: string };
+    terminations?: PhysicalComponent[];
+    upstreamSources?: ExternalReference[];
   };
 }

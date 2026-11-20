@@ -18,3 +18,19 @@ spec:
     - fleet.datumapis.com/devices.update
     - fleet.datumapis.com/devices.patch
     - fleet.datumapis.com/devices.delete
+    - fleet.datumapis.com/facilities.create
+    - fleet.datumapis.com/facilities.update
+    - fleet.datumapis.com/facilities.patch
+    - fleet.datumapis.com/facilities.delete
+    - fleet.datumapis.com/racks.create
+    - fleet.datumapis.com/racks.update
+    - fleet.datumapis.com/racks.patch
+    - fleet.datumapis.com/racks.delete
+    - fleet.datumapis.com/cables.create
+    - fleet.datumapis.com/cables.update
+    - fleet.datumapis.com/cables.patch
+    - fleet.datumapis.com/cables.delete
+    - fleet.datumapis.com/powerfeeds.create
+    - fleet.datumapis.com/powerfeeds.update
+    - fleet.datumapis.com/powerfeeds.patch
+    - fleet.datumapis.com/powerfeeds.delete

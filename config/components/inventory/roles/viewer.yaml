@@ -14,3 +14,15 @@ spec:
     - fleet.datumapis.com/devices.list
     - fleet.datumapis.com/devices.get
     - fleet.datumapis.com/devices.watch
+    - fleet.datumapis.com/facilities.get
+    - fleet.datumapis.com/facilities.list
+    - fleet.datumapis.com/facilities.watch
+    - fleet.datumapis.com/racks.get
+    - fleet.datumapis.com/racks.list
+    - fleet.datumapis.com/racks.watch
+    - fleet.datumapis.com/cables.get
+    - fleet.datumapis.com/cables.list
+    - fleet.datumapis.com/cables.watch
+    - fleet.datumapis.com/powerfeeds.get
+    - fleet.datumapis.com/powerfeeds.list
+    - fleet.datumapis.com/powerfeeds.watch

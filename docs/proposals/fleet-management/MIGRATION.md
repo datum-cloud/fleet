@@ -31,6 +31,21 @@ migration configuration remains in infra.
 
 ## Post-import amendments
 
+- 2026-11-20: Added the limited [observational physical inventory implementation](../../operations/netbox-physical-import.md)
+  on the staging-selected manual-inventory feature base. Six record kinds, typed
+  components, partial placement, read-only staff relationships and offline NetBox
+  handoff are implemented separately from this proposal's acceptance, reservations,
+  verification and lifecycle controllers. Legacy identities/bindings remain intact;
+  no live source parity, deployed readiness or hardware qualification is asserted.
+
+- 2026-11-20: Expanded the existing [inventory proposal](inventory.md) with the
+  six physical contracts, partial placement, typed components, circuit-boundary
+  proposals, evidence and qualification requirements. Recorded the pinned
+  manual-record implementation's claim-lifetime and authority migration gates,
+  plus source-backed NetBox import constraints. These remain proposed contracts,
+  not implementation changes or proof of live-data parity. The proposal keeps
+  the design narrative; field details, examples, migration evidence and test
+  cases are retained in its [reference appendix](inventory-reference.md).
 - 2026-11-17: MachineProfile CPU cores and memory capacity changed from `min`
   ranges to exact requests, with the resolved request pinned in Machine status.
   The `standard-metal` example and the capacity publication text were updated

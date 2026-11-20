@@ -1,5 +1,6 @@
 import { fixtureClasses, fixtureCapacities, fixtureDeviceClaims, fixtureDevices, fixtureProfiles } from './fixtures';
 import { toInventory, type Inventory, type RawDeviceClaimList, type RawDeviceList } from '../inventory';
+import type { List, PhysicalRecord } from '../../../shared/fleet-api';
 import {
   toMachineCapacity,
   toMachineClass,
@@ -261,11 +262,26 @@ export function useDeleteMachineClass(): UseMutationResult<void, ApiError, strin
 
 export async function fetchInventory(): Promise<Inventory> {
   if (USE_FIXTURES) return toInventory(fixtureDeviceClaims, fixtureDevices);
-  const [claims, devices] = await Promise.all([
-    proxyFetch<RawDeviceClaimList>(PROVIDER_PROJECT, `${INVENTORY_API}/deviceclaims?limit=500`),
-    proxyFetch<RawDeviceList>(PROVIDER_PROJECT, `${INVENTORY_API}/devices?limit=500`),
+  const [claims, devices, ...physical] = await Promise.all([
+    fetchInventoryCollection<NonNullable<RawDeviceClaimList['items']>[number]>('deviceclaims'),
+    fetchInventoryCollection<NonNullable<RawDeviceList['items']>[number]>('devices'),
+    ...['facilities', 'racks', 'cables', 'powerfeeds'].map((kind) => fetchInventoryCollection<PhysicalRecord>(kind)),
   ]);
-  return toInventory(claims.items ?? [], devices.items ?? []);
+  return toInventory(claims, devices, physical.flat());
+}
+
+export async function fetchInventoryCollection<T>(plural: string): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  let continuation = '';
+  do {
+    const page = await proxyFetch<List<T> & { metadata?: { continue?: string } }>(PROVIDER_PROJECT, `${INVENTORY_API}/${plural}?limit=500${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
+    items.push(...(page.items ?? []));
+    continuation = page.metadata?.continue ?? '';
+    if (continuation && seen.has(continuation)) throw new ApiError(502, 'Inventory pagination repeated; completeness Unknown');
+    seen.add(continuation);
+  } while (continuation);
+  return items;
 }
 
 export function useInventory(): UseQueryResult<Inventory, ApiError> {

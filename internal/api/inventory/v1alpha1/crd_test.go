@@ -55,8 +55,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestInventoryCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-	if len(crds) != 2 || crds["DeviceClaim"] == nil || crds["Device"] == nil {
-		t.Fatalf("got CRDs %v, want exactly DeviceClaim and Device", crds)
+	if len(crds) != 6 || crds["DeviceClaim"] == nil || crds["Device"] == nil {
+		t.Fatalf("got %d CRDs, want six physical kinds", len(crds))
 	}
 	for kind, crd := range crds {
 		if crd.Spec.Group != GroupVersion.Group || crd.Name != crd.Spec.Names.Plural+"."+GroupVersion.Group || crd.Spec.Scope != extensionsv1.NamespaceScoped {
@@ -188,13 +188,13 @@ func TestValidRecordsAreAccepted(t *testing.T) {
 	}
 }
 
-func TestClaimDoesNotRequireSerialAndDefaultsHeight(t *testing.T) {
+func TestClaimDoesNotRequireSerialOrInventHeight(t *testing.T) {
 	claim := object(t, syntheticClaim())
 	if errs := admit(t, "DeviceClaim", claim, nil); len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	if height := claim["spec"].(map[string]any)["placement"].(map[string]any)["height"]; height != int64(1) {
-		t.Fatalf("height defaulted to %v", height)
+	if height := claim["spec"].(map[string]any)["placement"].(map[string]any)["height"]; height != nil {
+		t.Fatalf("height must not invent a partial-placement footprint: %v", height)
 	}
 }
 
