@@ -57,6 +57,21 @@ logical attachments, address allocation, and switch configuration. Galactic owns
 fabric and routing intent. DNS, certificates, and service addresses stay with
 their owning services. Fleet consumes these contracts and their evidence.
 
+The [PXE enhancement](../enhancements/pxe-installation/README.md) defines the target
+Metal installation contract, with Fleet as an optional provider implementation.
+It supersedes older image-only examples for current design work without rewriting
+the pinned source history. Installation has exactly one managedImage/delegatedPXE
+source, consumes its predecessor atomically, and retains explicit completion mode,
+assurance and one execution driver. Provisioning Redfish sessions attach to that
+admitted operation, never independent boot authority. Installation, runtime power,
+and release share serialization/fencing; session closure or callbacks do not prove
+executor shutdown. Managed consumers require QualifiedImage assurance.
+
+For Fleet execution, management writes hub intent, the selected cell writes only
+local results, Karmada reflects them, management validates exact identity, fence
+and freshness, and the projector publishes public status. Cells have no hub
+credentials. Partitions or uncertain results never imply readiness or settlement.
+
 ## Lifecycle and authority contracts
 
 1. **Preserve distinct identities.** DeviceClaim describes an approved physical
