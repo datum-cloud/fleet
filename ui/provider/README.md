@@ -26,15 +26,16 @@ Operations in the navigation. The page has three tabs:
   missing claim are listed separately. `inventory/:namespace/:claim` shows one
   claim's planned placement, expected ports and peers, and provenance. It also
   shows every Device bound to it: model, serial, system UUID, BMC endpoint,
-  interfaces, unmapped MACs and provenance, with the most recently recorded
-  Device as the current one. Operators write these records through GitOps; the
+  interfaces, typed components, separate asset tags/provider IDs, unmapped MACs
+  and provenance. Multiple historical Devices keep the active binding Unknown;
+  edit time does not establish current hardware. Operators write through GitOps; the
   plugin never writes them.
 
 The portal proxy forwards the staff member's own token, so creating capacity,
 profiles and classes needs a Bare Metal role with `machinecapacities.create`,
 `machineprofiles.create` and `machineclasses.create` in the provider project,
-such as `metal.datumapis.com-provider`. The Inventory tab needs `deviceclaims.list`
-and `devices.list` in `fleet.datumapis.com`, which
+such as `metal.datumapis.com-provider`. The Inventory tab needs list access to
+all six physical kinds in `fleet.datumapis.com`, which
 `fleet.datumapis.com-inventory-viewer` grants; metal roles grant no inventory
 access. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
@@ -85,6 +86,16 @@ If staff-portal's `.env` already sets `PORTAL_PLUGINS_JSON`, add
 to that array instead.
 
 ## Differences from the consumer plugin
+
+The read-only Inventory tab now loads all six physical inventory collections
+with pagination. It retains unknown placement and ambiguous historical bindings,
+shows Facility/Rack/Cable/PowerFeed relationships and typed asset components,
+and supports optional local-only review of source-comparison reports. Manual
+inventory needs no NetBox or report; operators review the private Git source and
+Flux is the sole staging writer. The portal never writes or synchronizes records. These reads require the
+provider-scoped inventory viewer role, not a consumer Metal role. See the
+[optional source-comparison guide](../../docs/operations/netbox-physical-import.md)
+for the offline Flux handoff and the distinction between records and readiness.
 
 - staff-portal runs react-router 7, so this plugin pins it for types and
   shares it with `requiredVersion: false`.

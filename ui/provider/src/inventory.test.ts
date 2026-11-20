@@ -19,7 +19,7 @@ describe('toInventory', () => {
     expect(inventory.unboundDevices).toHaveLength(1);
   });
 
-  it('treats the most recently recorded Device as the current hardware', () => {
+  it('does not infer active hardware from the most recently edited record', () => {
     const replacement = {
       ...fixtureDevices[0],
       metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002' },
@@ -28,7 +28,7 @@ describe('toInventory', () => {
     const inventory = toInventory(fixtureDeviceClaims, [replacement, fixtureDevices[0]]);
     const u12 = inventory.slots.find((s) => s.claim.metadata.name === 'rack-01-u12')!;
     expect(u12.devices).toHaveLength(2);
-    expect(currentDevice(u12)?.metadata.name).toBe('rack-01-u12-synthetic-0002');
+    expect(currentDevice(u12)).toBeUndefined();
   });
 
   it('labels single and multi-unit placements', () => {

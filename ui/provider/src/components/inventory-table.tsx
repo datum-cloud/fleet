@@ -17,10 +17,11 @@ function matchesSearch(slot: InventorySlot, search: string): boolean {
   const { claim } = slot;
   return [
     claim.metadata.name,
+    claim.spec.displayName,
     placementLabel(claim),
     modelLabel(claim.spec.expectedIdentity),
     claim.spec.expectedIdentity.serial,
-    ...slot.devices.flatMap((d) => [d.metadata.name, d.spec.identity.serial, d.spec.identity.systemUUID]),
+    ...slot.devices.flatMap((d) => [d.metadata.name, d.spec.displayName, d.spec.assetTag, d.spec.providerHostRef?.id, d.spec.identity.serial, d.spec.identity.systemUUID]),
   ]
     .filter(Boolean)
     .join(' ')
@@ -38,7 +39,7 @@ export function InventoryTable({ slots, base }: { slots: InventorySlot[]; base: 
         <Link
           to={`${base}/inventory/${encodeURIComponent(row.original.claim.metadata.namespace ?? '')}/${encodeURIComponent(row.original.claim.metadata.name)}`}
           className="font-medium underline-offset-4 hover:underline">
-          {row.original.claim.metadata.name}
+          {row.original.claim.spec.displayName ?? row.original.claim.metadata.name}
         </Link>
       ),
     },
@@ -53,7 +54,7 @@ export function InventoryTable({ slots, base }: { slots: InventorySlot[]; base: 
       header: 'Device',
       cell: ({ row }) => {
         const device = currentDevice(row.original);
-        if (!device) return <StatusBadge type="muted">Not registered</StatusBadge>;
+        if (!device) return <StatusBadge type="muted">{row.original.devices.length > 1 ? 'Active binding Unknown' : 'Not registered'}</StatusBadge>;
         return <Text>{device.metadata.name}</Text>;
       },
     },

@@ -184,7 +184,58 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   consumer set. It does not release custody, call a provider, delete records,
   or rewrite status, including for a project with active custody. Its
   deadlines and queued events are dropped, and re-engagement resumes from the
-  retained private records.
+  retained private records. Unbinding drains direct and dependency-route
+  reconciliations that already acquired the runtime before removing it from the
+  registry; a retained runtime pointer cannot start work after that barrier.
+  A blocked in-flight handler therefore delays completed departure rather than
+  falsely reporting it. This fixes an inherited race where informer removal and
+  registry removal could finish while a handler could still write. It does not
+  roll back effects already admitted before departure. Regression tests block a
+  handler explicitly and assert the barrier, in addition to the active-custody
+  no-write/no-release test.
+  Re-engagement also drains the previous runtime before publishing either
+  registry entry, so a new lifecycle owner's independent request locks cannot
+  overlap old work. The wait never holds the registry mutex. After waiting,
+  engagement rechecks both the cluster pointer and project-lifetime ownership;
+  a concurrent successor must itself drain, and a conflicting route is refused.
+  Cancellation aborts the waiting engagement without publishing its runtime or
+  engaging its controllers. An already initiated drain continues to completion;
+  it is not rolled back into an active runtime. Cancellation retires the prior
+  entry after its drain completes, without removing a concurrent successor.
+  A handler that never returns still prevents safe replacement; cancellation is
+  not evidence that its effects have stopped. Deterministic direct/routed replacement,
+  cancellation, stale-pointer, registry-revalidation and concurrent engagement
+  tests cover these process-local barriers, not distributed executor fencing.
+  A per-cluster-route engagement gate also serializes publication through the
+  entire downstream controller setup call and failure cleanup. Draining alone
+  was insufficient: a paused predecessor's setup could otherwise resume after
+  its successor and replace the successor's controller watches. The gate is
+  acquired after effect-free runtime construction; waiting is context-cancellable
+  and never holds the registry mutex. Cancelling a waiter does not stop the
+  current runtime. Gates are reference-counted and removed after their last
+  holder or waiter leaves; unrelated routes remain independent. Project-lifetime
+  conflicts across routes are still checked under the registry mutex.
+  Each published runtime owns a child engagement context, cancelled when its
+  drain begins. This cancels partial downstream engagements on failure and invalidates
+  the old context even when replacement uses the same cluster implementation.
+  Cancellation starts draining immediately, but cleanup cannot remove lifetime
+  ownership or admit a successor until downstream setup returns and admitted
+  handlers finish. A downstream call that ignores cancellation therefore blocks
+  that route rather than allowing an unfenced successor. A setup that returns
+  nil after cancellation is reported as cancelled, not successful engagement.
+  Cleanup under an already-held gate uses a separate internal path, avoiding
+  recursive locking; stale cleanup can only cancel and remove its own runtime.
+  Downstream setup may read the registries and engage another route. Synchronous
+  recursion back into a held route with the supplied context is rejected with
+  `ErrProjectEngagementReentrant`, including cycles through another route.
+  Nested setup also refuses to wait on any other occupied route in this registry,
+  preventing two concurrent callbacks from deadlocking by requesting each
+  other's routes. Ordinary independent callers still wait cancellably.
+  Callbacks must propagate that context rather than create a detached context
+  and synchronously wait on their own engagement. Deterministic regressions
+  cover blocked setup, direct/dependency handlers, failed/cancelled setup,
+  cancelled waiters, cross-route lifetime transfer, stale cleanup, unrelated
+  progress, reentrant setup and same-implementation context replacement.
 - **Observational discovery.** The provider declares no managed resources,
   teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer. Its
   discovery clients refuse every write. The library would otherwise patch
@@ -704,22 +755,31 @@ corrupt or uses an unsupported schema version.
 
 ## Physical inventory subset
 
-`internal/api/inventory/v1alpha1` defines `DeviceClaim`, the plan for one rack
-slot, and `Device`, the asset bound to one claim. Operators write both by hand
-into the provider project in Milo. `config/components/inventory` holds their
+`internal/api/inventory/v1alpha1` defines Facility, Rack, DeviceClaim, Device,
+Cable and PowerFeed records. Legacy slot claims coexist with new observational
+installation claims; no move or replacement handover is automated. Records live
+in the provider project in Milo. `config/components/inventory` holds their
 CRDs, ProtectedResources, and the `fleet.datumapis.com-inventory-viewer` and
 `-editor` roles. Only `config/milo` includes it.
 
-CEL requires `Manual` provenance on both kinds and requires every edit to
+CEL requires `Manual` or source-attributed `NetBoxImport` provenance and every edit to
 advance `recordedAt`. It keeps a Device's `claimRef` and identity immutable,
 rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
 BMC endpoints. Status is a reserved subresource with no fields and no writer.
 No metal role grants inventory access.
 
-The staff portal plugin's read-only Inventory tab lists claims and shows each
-claim's bound Devices. Unit tests run the API server's validation offline and
-check the IAM shape. See
-[Planning and registering physical devices](../operations/physical-inventory.md).
+The staff portal plugin's read-only Inventory tab pages through all six kinds,
+shows physical relationships and components, and can inspect a private import
+report locally. Multiple historical bindings remain ambiguous rather than being
+resolved by edit time. The primary workflow is [manual entry and review](../operations/physical-inventory.md#manually-record-a-small-installation)
+through the existing Flux writer, with no NetBox dependency. The optional,
+operator-invoked standard-library `hack/netbox_inventory.py` reads GET-only snapshots
+and generates offline review candidates; it never applies, schedules, synchronizes,
+deletes or changes Git. Unit tests run API-server validation offline,
+check IAM and exercise pagination, source conflicts, omissions and interrupted
+imports. See [safe NetBox evaluation](../operations/netbox-physical-import.md).
+No live source coverage, deployment of this physical extension, physical verification, concurrent
+reservation, deletion safety, adoption or new hardware-effect path is established.
 
 ## Build, test, and run
 

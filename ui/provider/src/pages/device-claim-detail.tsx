@@ -1,4 +1,5 @@
 import { FleetPage } from '../components/fleet-page';
+import { endpointLabel } from '../components/physical-inventory';
 import { ErrorOrRestrictedState, LoadingState } from '../components/states';
 import { StatusBadge } from '../components/status-badge';
 import { PROVIDER_PROJECT, useInventory } from '../lib/api';
@@ -35,6 +36,7 @@ function ProvenanceFields({ provenance }: { provenance: Provenance }) {
       <Field label="Recorded by">{provenance.recordedBy}</Field>
       <Field label="Recorded at">{provenance.recordedAt}</Field>
       <Field label="Method">{provenance.method}</Field>
+      {provenance.source && <Field label="Import reconciliation">{provenance.source.system}/{provenance.source.type}/{provenance.source.id} · mapping {provenance.source.mappingRevision} · observed {provenance.source.observedAt} · verification Unknown</Field>}
       {provenance.reference && (
         <div className="sm:col-span-3">
           <Field label="Reference">{provenance.reference}</Field>
@@ -48,14 +50,21 @@ function DeviceSection({ device, current }: { device: RawDevice; current: boolea
   const { identity, bmc, interfaces = [], unmappedMACAddresses = [] } = device.spec;
   return (
     <Section title={`Device ${device.metadata.name}`} testId={`fleet-plugin-device-${device.metadata.name}`}>
-      {!current && <StatusBadge type="muted">Earlier hardware for this slot</StatusBadge>}
+      {!current && <StatusBadge type="muted">Historical binding; active placement Unknown</StatusBadge>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Model">{modelLabel(identity)}</Field>
+        <Field label="Display name">{device.spec.displayName ?? device.metadata.name}</Field>
+        <Field label="Model dimensions (not occupied units)">{device.spec.modelShape?.heightUnits ?? 'Unknown'} U</Field>
         <Field label="Serial">{identity.serial ?? '—'}</Field>
         <Field label="System UUID">{identity.systemUUID ?? '—'}</Field>
         <Field label="BMC endpoint">{bmc?.endpoint ?? '—'}</Field>
         <Field label="Claim">{device.spec.claimRef.name}</Field>
+        <Field label="Asset tag">{device.spec.assetTag ?? 'Unknown'}</Field>
+        <Field label="Provider host ID">{device.spec.providerHostRef ? `${device.spec.providerHostRef.system}/${device.spec.providerHostRef.id}` : 'Unknown'}</Field>
       </div>
+      {device.spec.components?.map((component) => <Text key={component.id}>{component.name} ({component.type}) · {component.id} · connector {component.connector ?? 'Unknown'}</Text>)}
+      {device.spec.internalMappings?.map((mapping) => <Text key={`${mapping.from.componentID}:${mapping.from.position}`}>Internal path: {mapping.from.componentID}:{mapping.from.position} → {mapping.to.componentID}:{mapping.to.position}</Text>)}
+      {device.spec.serviceAssociations?.map((association) => <Text key={`${association.componentID}/${association.serviceRef.id}`}>Demarcation {association.componentID} → {association.serviceRef.system}/{association.serviceRef.type}/{association.serviceRef.id}</Text>)}
       {interfaces.length > 0 && (
         <div className="flex flex-col gap-1">
           <Text as="span" size="xs" textColor="muted">Interfaces</Text>
@@ -117,7 +126,7 @@ export default function DeviceClaimDetail() {
               <Field label="Expected serial">{slot.claim.spec.expectedIdentity.serial ?? '—'}</Field>
               <Field label="Namespace">{slot.claim.metadata.namespace ?? '—'}</Field>
               <Field label="Bound device">
-                {current ? current.metadata.name : <StatusBadge type="muted">Not registered</StatusBadge>}
+                {current ? current.metadata.name : <StatusBadge type="muted">{slot.devices.length > 1 ? 'Multiple records; active binding Unknown' : 'Not registered'}</StatusBadge>}
               </Field>
             </div>
             {(slot.claim.spec.ports ?? []).length > 0 && (
@@ -137,6 +146,10 @@ export default function DeviceClaimDetail() {
           {[...slot.devices].reverse().map((device) => (
             <DeviceSection key={device.metadata.name} device={device} current={device === current} />
           ))}
+          <Section title="Related cable records" testId="fleet-plugin-related-cables">
+            {data?.physical.filter((record) => record.kind === 'Cable' && record.metadata.namespace === slot.claim.metadata.namespace && record.spec.lanes?.some((lane) => slot.devices.some((device) => lane.a.deviceRef?.name === device.metadata.name || lane.b.deviceRef?.name === device.metadata.name))).map((cable) => <div key={cable.metadata.name}><Text>{cable.spec.displayName} · verification Unknown</Text>{cable.spec.lanes?.map((lane) => <Text key={lane.id}>{endpointLabel(lane.a)} ↔ {endpointLabel(lane.b)}</Text>)}</div>)}
+            <Text>No displayed path proves an uncabled or free termination.</Text>
+          </Section>
         </>
       )}
     </FleetPage>

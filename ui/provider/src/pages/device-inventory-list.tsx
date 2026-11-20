@@ -1,4 +1,5 @@
 import { FleetPage } from '../components/fleet-page';
+import { PhysicalInventory } from '../components/physical-inventory';
 import { InventoryTable } from '../components/inventory-table';
 import { ErrorOrRestrictedState, LoadingState } from '../components/states';
 import { PROVIDER_PROJECT, useInventory } from '../lib/api';
@@ -14,10 +15,11 @@ export default function DeviceInventoryList() {
   const { slug } = useParams();
   const base = `/plugins/${slug}`;
   const { data, isLoading, error, refetch } = useInventory();
-  const isEmpty = !isLoading && !error && data && data.slots.length === 0 && data.unboundDevices.length === 0;
+  const isEmpty = !isLoading && !error && data && data.slots.length === 0 && data.unboundDevices.length === 0 && data.physical.length === 0;
 
   return (
     <FleetPage testId="fleet-plugin-inventory-list">
+      {!isLoading && !error && data && <PhysicalInventory inventory={data} />}
       {isLoading && <LoadingState />}
 
       {!isLoading && error && (
