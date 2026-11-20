@@ -82,6 +82,21 @@ Locally implemented management is deliberately narrower than that role:
 - Submit denial, expiry, and conflicts retain safe input without reporting
   success. Ambiguous network/server failures stop repeat submission and ask the
   operator to inspect inventory before another attempt.
+- Every imperative create/edit requires an operation lease tied to both the form
+  lifetime and host session generation. The router subscription invalidates it
+  synchronously when revalidation/navigation begins or identity changes, before
+  React needs to commit an unmount. Blur, page hide, hidden-document and unmount
+  boundaries also revoke it. Each awaited permission/record prerequisite is
+  followed by an authority check before any write dispatch. Revoked work never
+  dispatches a later POST/PATCH under the next cookie session.
+- An already-dispatched write cannot be recalled by invalidating its lease.
+  Its late response (including success) remains an unknown outcome to the stale
+  operation. No automatic retry, cancellation-success or late save confirmation
+  is produced. Refresh and inspect authoritative inventory before another attempt.
+- Opening an edit captures a deep copy of its original UID/resourceVersion and
+  display name. Refreshing props never advances that open form's baseline. A
+  concurrent change produces a conflict while retaining input; explicitly closing
+  and reopening starts a new reviewed baseline.
 
 Host integration was inspected at staff-portal HEAD
 `b1489125fe5b77ea6fc379ad378c8e1951174de5` on November 20, 2026:
@@ -128,7 +143,9 @@ changes synchronously replace the query scope. Blur, page hide and hidden-docume
 events remove inventory and clear its private cache. Focus, visibility restoration
 and back-forward-cache restoration revalidate the actual protected host loader
 before mounting a fresh inventory view. Pending/failed revalidation cannot render
-old records. This intentionally resets open forms on session/background boundaries;
+old records. Focus checks carry a generation and foreground/visibility condition;
+obsolete completions cannot undo a later hide or a newer check. This intentionally
+resets open forms on session/background boundaries;
 submit denial while the view remains active still retains safe unsaved input.
 There is no automatic save or retry when returning to a page.
 
@@ -160,7 +177,7 @@ For local browser checks: `VITE_FLEET_FIXTURES=true pnpm dev --port 7796`, then
 open the Inventory tab. Synthetic data is explicitly labeled and includes all
 six kinds. No live inventory calls are made in fixture mode.
 
-Local checks: 98 tests in 11 files pass; typecheck and production build pass.
+Local checks after review fixes: 121 tests in 14 files pass; typecheck and production build pass.
 The inventory Go package tests validate the exact manager/viewer/editor grants.
 Both ordinary and race-enabled package tests pass.
 The build reports transitive undici sharing and Zod annotation warnings; these
@@ -207,3 +224,22 @@ authorization. Native Pencil fidelity remains a design gap, not an IAM gate.
 
 These are local checks, not evidence of deployed availability, authorization,
 hardware verification, or a completed native Pencil visual comparison.
+
+### Adversarial review regressions
+
+The independent suite against `0673b82f073ab065327192a14c74d2dc6720b003`
+was copied into `ui/provider/src/components/adversarial-review.test.tsx` with
+its original assertions intact. Before fixes it reproduced three failures and
+one passing no-read check. All now pass; additional tests cover same-tick router
+invalidation before React commits, create/edit permission and GET prerequisites,
+blur/unmount, repeated session generations, Strict Mode lifecycle restart,
+already-dispatched success/failure remaining unknown, frozen edit conflicts,
+and out-of-order focus completions.
+
+Synthetic browser replay independently delayed the create SSAR, switched the
+host principal and released the review: zero writes dispatched. An edit opened
+at revision 1 retained input while props/API advanced to revision 2: zero patches
+and a calm conflict state. A delayed focus revalidation completed after a second
+blur without restoring inventory; a new focus restored it only after a fresh
+check. Desktop/mobile checks used intercepted requests only. These fixes await
+a new independent review; passing local regressions are not self-approval.

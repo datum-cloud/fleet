@@ -1,15 +1,26 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { UNSAFE_DataRouterStateContext, useRevalidator, useRouteLoaderData } from 'react-router';
+import { UNSAFE_DataRouterContext, UNSAFE_DataRouterStateContext, useRevalidator, useRouteLoaderData } from 'react-router';
 import { InventoryAccessState } from './inventory-access-state';
 import { LoadingState } from './states';
+import { InventoryOperationContext, InventoryOperationScope } from '../lib/inventory-operation';
 
 export const InventoryPreviewContext = createContext(false);
 
-function SessionQueries({ children }: { children: ReactNode }) {
+function SessionQueries({ children, principal }: { children: ReactNode; principal: string }) {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } }));
+  const [scope] = useState(() => new InventoryOperationScope());
+  const host = useContext(UNSAFE_DataRouterContext);
+  useLayoutEffect(() => {
+    scope.startLifecycle();
+    const unsubscribe = host?.router.subscribe(state => {
+      const identity = state.loaderData['layouts/milo.layout'] as { user?: { metadata?: { uid?: string; name?: string } } } | undefined;
+      if (state.revalidation !== 'idle' || state.navigation.state !== 'idle' || (identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name) !== principal) scope.invalidate();
+    });
+    return () => { scope.invalidate(); unsubscribe?.(); };
+  }, [host, principal, scope]);
   useEffect(() => () => client.clear(), [client]);
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return <InventoryOperationContext.Provider value={scope}><QueryClientProvider client={client}>{children}</QueryClientProvider></InventoryOperationContext.Provider>;
 }
 
 function HostedInventory({ children }: { children: ReactNode }) {
@@ -20,20 +31,25 @@ function HostedInventory({ children }: { children: ReactNode }) {
   revalidate.current = revalidator.revalidate;
   const [checking, setChecking] = useState(() => typeof document !== 'undefined' && document.visibilityState === 'hidden');
   const [failed, setFailed] = useState(false);
-  const checkingRef = useRef(false);
+  const generation = useRef(0);
+  const foreground = useRef(true);
   useEffect(() => {
     let active = true;
-    const hide = () => setChecking(true);
+    const hide = () => {
+      generation.current++;
+      foreground.current = false;
+      setChecking(true);
+    };
     const verify = () => {
-      if (document.visibilityState === 'hidden' || checkingRef.current) return;
-      checkingRef.current = true;
+      if (document.visibilityState === 'hidden') return;
+      foreground.current = true;
+      const attempt = ++generation.current;
       setChecking(true);
       setFailed(false);
       void revalidate.current().catch(() => {
-        if (active) setFailed(true);
+        if (active && attempt === generation.current && foreground.current) setFailed(true);
       }).finally(() => {
-        checkingRef.current = false;
-        if (active) setChecking(false);
+        if (active && attempt === generation.current && foreground.current && document.visibilityState !== 'hidden') setChecking(false);
       });
     };
     const visibility = () => document.visibilityState === 'hidden' ? hide() : verify();
@@ -45,6 +61,7 @@ function HostedInventory({ children }: { children: ReactNode }) {
     document.addEventListener('visibilitychange', visibility);
     return () => {
       active = false;
+      generation.current++;
       window.removeEventListener('blur', hide);
       window.removeEventListener('focus', verify);
       window.removeEventListener('pagehide', hide);
@@ -55,7 +72,7 @@ function HostedInventory({ children }: { children: ReactNode }) {
   if (checking || revalidator.state !== 'idle') return <LoadingState />;
   if (failed) return <InventoryAccessState status={503} />;
   if (!principal) return <InventoryAccessState status={401} />;
-  return <SessionQueries key={principal}>{children}</SessionQueries>;
+  return <SessionQueries key={principal} principal={principal}>{children}</SessionQueries>;
 }
 
 export function InventorySessionBoundary({ children }: { children: ReactNode }) {

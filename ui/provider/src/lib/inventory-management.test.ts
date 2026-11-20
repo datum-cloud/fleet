@@ -1,3 +1,4 @@
+import { InventoryOperationScope } from './inventory-operation';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canEditInventoryLabel, createInventoryRecord, editInventoryLabel, inventoryPayload, inventoryPermission, INVENTORY_FIELD_MANAGER, type InventoryFormValues } from './inventory-management';
 import type { PhysicalRecord } from '../../../shared/fleet-api';
@@ -24,14 +25,14 @@ describe('inventory management authority', () => {
   it('cannot write when permission is revoked at submit', async () => {
     const fetch = vi.fn().mockResolvedValue(response({ status: { allowed: false } }));
     vi.stubGlobal('fetch', fetch);
-    await expect(createInventoryRecord('Facility', values)).rejects.toMatchObject({ status: 403 });
+    await expect(createInventoryRecord('Facility', values, new InventoryOperationScope().begin())).rejects.toMatchObject({ status: 403 });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('creates only an explicitly named observational record, without apply or overwrite', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(owned, 201));
     vi.stubGlobal('fetch', fetch);
-    expect(await createInventoryRecord('Facility', values)).toEqual(owned);
+    expect(await createInventoryRecord('Facility', values, new InventoryOperationScope().begin())).toEqual(owned);
     const [url, init] = fetch.mock.calls[1];
     expect(url).toContain('/namespaces/default/facilities?fieldManager=fleet-staff-inventory-ui');
     expect(init.method).toBe('POST');
@@ -55,7 +56,7 @@ describe('inventory management authority', () => {
   it('edits only a display name and provenance with UID and revision preconditions', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(owned)).mockResolvedValueOnce(response(owned));
     vi.stubGlobal('fetch', fetch);
-    await editInventoryLabel(owned, { ...values, displayName: 'New name' });
+    await editInventoryLabel(owned, { ...values, displayName: 'New name' }, new InventoryOperationScope().begin());
     const init = fetch.mock.calls[2][1];
     expect(init.method).toBe('PATCH');
     expect(init.headers['Content-Type']).toBe('application/json-patch+json');
@@ -65,17 +66,17 @@ describe('inventory management authority', () => {
   it('does not patch after ownership or revision changes', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response({ ...owned, metadata: { ...owned.metadata, resourceVersion: '2' } }));
     vi.stubGlobal('fetch', fetch);
-    await expect(editInventoryLabel(owned, values)).rejects.toMatchObject({ status: 409 });
+    await expect(editInventoryLabel(owned, values, new InventoryOperationScope().begin())).rejects.toMatchObject({ status: 409 });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('does not retry a backend denial or unknown save outcome', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(undefined, 403));
     vi.stubGlobal('fetch', fetch);
-    await expect(createInventoryRecord('Facility', values)).rejects.toMatchObject({ status: 403 });
+    await expect(createInventoryRecord('Facility', values, new InventoryOperationScope().begin())).rejects.toMatchObject({ status: 403 });
     expect(fetch).toHaveBeenCalledTimes(2);
     fetch.mockReset().mockResolvedValueOnce(response({ status: { allowed: true } })).mockRejectedValueOnce(new Error('Connection lost'));
-    await expect(createInventoryRecord('Facility', values)).rejects.toThrow('Connection lost');
+    await expect(createInventoryRecord('Facility', values, new InventoryOperationScope().begin())).rejects.toThrow('Connection lost');
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

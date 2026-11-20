@@ -64,4 +64,24 @@ describe('host inventory session isolation', () => {
     expect(loader).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();
   });
+
+  it('only restores the newest focused generation after successive blur and focus events', async () => {
+    const releases: (() => void)[] = [];
+    let reads = 0;
+    mountHost(async () => {
+      if (++reads > 1) await new Promise<void>(resolve => releases.push(resolve));
+      return { user: { metadata: { uid: 'staff-a' } } };
+    }, 'Private inventory');
+    await screen.findByText('Private inventory');
+    fireEvent(window, new Event('blur'));
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(releases).toHaveLength(1));
+    fireEvent(window, new Event('blur'));
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(releases).toHaveLength(2));
+    await act(async () => releases[0]());
+    expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();
+    await act(async () => releases[1]());
+    await screen.findByText('Private inventory');
+  });
 });

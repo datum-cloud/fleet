@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, PLUGIN_ID, PROVIDER_PROJECT, proxyFetch } from './api';
 import type { PhysicalRecord } from '../../../shared/fleet-api';
+import type { InventoryOperation } from './inventory-operation';
 
 export type ManagedKind = 'Facility' | 'Rack';
 export const INVENTORY_FIELD_MANAGER = 'fleet-staff-inventory-ui';
@@ -53,35 +54,45 @@ async function requirePermission(kind: ManagedKind, namespace: string, verb: 'cr
   if (!await inventoryPermission(kind, namespace, verb, name)) throw new ApiError(403, 'Inventory management permission is not available.');
 }
 
-export async function createInventoryRecord(kind: ManagedKind, values: InventoryFormValues) {
+export async function createInventoryRecord(kind: ManagedKind, values: InventoryFormValues, operation: InventoryOperation) {
+  operation.assertCurrent();
   const payload = inventoryPayload(kind, values);
   await requirePermission(kind, values.namespace, 'create');
+  operation.assertCurrent();
   if (kind === 'Rack') {
     const facility = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath('Facility', values.namespace)}/${encodeURIComponent(values.facility)}`);
+    operation.assertCurrent();
     if (!facility?.metadata?.uid || facility.metadata.deletionTimestamp) throw new ApiError(409, 'Facility is not available. Refresh inventory before continuing.');
   }
-  const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath(kind, values.namespace)}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'POST', body: payload });
+  operation.dispatch();
+  const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath(kind, values.namespace)}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'POST', body: payload }).catch(error => { operation.assertCurrent(); throw error; });
+  operation.assertCurrent();
   if (!record?.metadata?.uid) throw new Error('Save outcome could not be confirmed.');
   return record;
 }
 
-export async function editInventoryLabel(original: PhysicalRecord, values: InventoryFormValues) {
+export async function editInventoryLabel(original: PhysicalRecord, values: InventoryFormValues, operation: InventoryOperation) {
+  operation.assertCurrent();
   if (!canEditInventoryLabel(original)) throw new ApiError(409, 'This record needs an explicit ownership review before editing.');
   const kind = original.kind as ManagedKind;
   const namespace = original.metadata.namespace ?? '';
   await requirePermission(kind, namespace, 'patch', original.metadata.name);
+  operation.assertCurrent();
   const path = `${resourcePath(kind, namespace)}/${encodeURIComponent(original.metadata.name)}`;
   const current = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, path);
+  operation.assertCurrent();
   if (!current || current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canEditInventoryLabel(current)) throw new ApiError(409, 'The record or its ownership changed. Reload it before editing.');
   const now = new Date().toISOString();
   if (now <= current.spec.provenance.recordedAt) throw new ApiError(409, 'The recorded timestamp is not earlier than this clock. Review the record before editing.');
   const validated = inventoryPayload('Facility', { ...values, name: original.metadata.name, namespace }, now);
+  operation.dispatch();
   const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${path}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'PATCH', contentType: 'application/json-patch+json', body: [
     { op: 'test', path: '/metadata/uid', value: current.metadata.uid },
     { op: 'test', path: '/metadata/resourceVersion', value: current.metadata.resourceVersion },
     { op: 'replace', path: '/spec/displayName', value: validated.spec.displayName },
     { op: 'replace', path: '/spec/provenance', value: validated.spec.provenance },
-  ] });
+  ] }).catch(error => { operation.assertCurrent(); throw error; });
+  operation.assertCurrent();
   if (!record?.metadata?.uid) throw new Error('Save outcome could not be confirmed.');
   return record;
 }
