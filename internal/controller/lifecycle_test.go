@@ -99,7 +99,11 @@ func (e *memoryExecutor) Execute(_ context.Context, request simulator.Request) (
 	e.requests = append(e.requests, request)
 	now := time.Now()
 	evidence := map[string]string{"cleanup": "clean", "install": "installed"}[request.Kind]
-	result := simulator.OperationResult{ID: request.ID, Kind: request.Kind, Phase: "Succeeded", Result: evidence, CompletedAt: &now}
+	digest, err := simulator.RequestDigest(request)
+	if err != nil {
+		return simulator.OperationResult{}, err
+	}
+	result := simulator.OperationResult{ID: request.ID, Kind: request.Kind, Phase: "Succeeded", Result: evidence, InputDigest: digest, CompletedAt: &now}
 	if e.malform {
 		result.CompletedAt = nil
 	}

@@ -33,7 +33,11 @@ func (e *testExecutor) Execute(_ context.Context, request simulator.Request) (si
 	defer e.mu.Unlock()
 	e.requests = append(e.requests, request)
 	now := time.Now()
-	return simulator.OperationResult{ID: request.ID, Kind: request.Kind, Phase: "Succeeded", Result: map[string]string{"cleanup": "clean", "install": "installed"}[request.Kind], CompletedAt: &now}, nil
+	digest, err := simulator.RequestDigest(request)
+	if err != nil {
+		return simulator.OperationResult{}, err
+	}
+	return simulator.OperationResult{ID: request.ID, Kind: request.Kind, Phase: "Succeeded", Result: map[string]string{"cleanup": "clean", "install": "installed"}[request.Kind], InputDigest: digest, CompletedAt: &now}, nil
 }
 func (e *testExecutor) Lookup(context.Context, string) (simulator.OperationResult, bool, error) {
 	return simulator.OperationResult{}, false, nil
