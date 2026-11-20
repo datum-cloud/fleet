@@ -195,6 +195,39 @@ class PlanTests(unittest.TestCase):
         report, _ = self.plan()
         self.assertGreaterEqual(len(report["conflicts"]), 2)
 
+    def test_rear_capacity_cannot_default_to_singleton_or_allow_handoff(self):
+        for capacity in (None, 0, -1, True, False, 1.5, "2", 257, "missing"):
+            with self.subTest(capacity=capacity):
+                self.source, self.mapping = fixture()
+                rear = self.source["objects"]["dcim/rear-ports"][0]
+                rear["positions"] = capacity
+                if capacity == "missing":
+                    del rear["positions"]
+                self.source["objects"]["dcim/cables"].append({"id": 2, "a_terminations": [{"object_type": "dcim.rearport", "object_id": 1}], "b_terminations": [{"object_type": "dcim.interface", "object_id": 1}]})
+                self.mapping["cables"]["2"] = {"medium": "Copper"}
+                report, records = self.plan()
+                entry = next(row for row in report["records"] if row["source"] == "dcim/rear-ports/1")
+                self.assertEqual("unresolved", entry["classification"])
+                self.assertTrue(report["conflicts"])
+                self.assertFalse(any(component["id"] == "rear-ports-1" for record in records for component in record["spec"].get("components", [])))
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    existing = {"items": [], "target": self.mapping["target"], "collections": ["Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"]}
+                    for name, data in (("source", self.source), ("mapping", self.mapping), ("existing", existing)):
+                        inventory.write_private(root / (name + ".json"), data)
+                    with self.assertRaisesRegex(ValueError, "reconciliation conflicts"):
+                        inventory.main(["plan", "--snapshot", str(root / "source.json"), "--mapping", str(root / "mapping.json"), "--existing", str(root / "existing.json"), "--output", str(root / "blocked"), "--handoff", "--allow-partial"])
+                    self.assertFalse((root / "blocked/candidates.json").exists())
+
+    def test_rear_capacity_preserves_supported_geometry(self):
+        for capacity in (1, 2, 256):
+            with self.subTest(capacity=capacity):
+                self.source["objects"]["dcim/rear-ports"][0]["positions"] = capacity
+                report, records = self.plan()
+                self.assertEqual({}, report["conflicts"])
+                rear = next(component for record in records for component in record["spec"].get("components", []) if component["id"] == "rear-ports-1")
+                self.assertEqual(capacity, rear["positions"])
+
     def test_front_port_requires_explicit_valid_rear_position(self):
         for position in (None, 0, -1, True, False, 1.0, "1", 257, "missing"):
             with self.subTest(position=position):

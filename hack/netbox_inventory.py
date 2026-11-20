@@ -332,7 +332,10 @@ class Planner:
                 if connector:
                     component["connector"] = connector
                 positions = record.get("positions")
-                if isinstance(positions, int) and 1 <= positions <= 256:
+                if (collection == "rear-ports" or "positions" in record) and (type(positions) is not int or not 1 <= positions <= 256):
+                    self.mark(key, "unresolved", "component capacity must be an explicit integer from 1 to 256; never infer singleton geometry", [target])
+                    continue
+                if positions is not None:
                     component["positions"] = positions
                 for source_field, target_field in (("serial", "serial"), ("asset_tag", "assetTag")):
                     if record.get(source_field):
