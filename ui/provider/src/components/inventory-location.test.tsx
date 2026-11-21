@@ -25,14 +25,20 @@ it.each([
   expect(within(elevation).getAllByLabelText('Occupancy unverified')).toHaveLength(42 - height);
   expect(within(screen.getByRole('list', { name: `${face === 'front' ? 'rear' : 'front'} recorded plans` })).queryByRole('link')).not.toBeInTheDocument();
 });
-it('keeps overlapping multi-unit plans in separate columns without hiding either', () => {
-  const claims = [10, 11].map((position, index) => ({ ...fixturePhysicalClaims[0], metadata: { ...fixturePhysicalClaims[0].metadata, name: `overlap-${index}` }, spec: { ...fixturePhysicalClaims[0].spec, displayName: `Plan ${index}`, placement: { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position, height: 2, face: 'front' as const } } }));
+it.each([1, 2])('keeps overlapping %iU plans identifiable with height-aware labels', height => {
+  const claims = [10, 10 + height - 1].map((position, index) => ({ ...fixturePhysicalClaims[0], metadata: { ...fixturePhysicalClaims[0].metadata, name: `overlap-${index}` }, spec: { ...fixturePhysicalClaims[0].spec, displayName: `Plan ${index}`, placement: { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position, height, face: 'front' as const } } }));
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={toInventory(claims, [], [rack])} /></MemoryRouter></QueryClientProvider>);
   const elevation = screen.getByRole('list', { name: 'front recorded plans' });
   const links = within(elevation).getAllByRole('link', { name: /overlapping plans/ });
   expect(links).toHaveLength(2);
-  expect(links[0].parentElement).toHaveStyle({ gridColumn: '2', gridRow: '32 / span 2' });
-  expect(links[1].parentElement).toHaveStyle({ gridColumn: '3', gridRow: '31 / span 2' });
+  expect(links[0].parentElement).toHaveStyle({ gridColumn: '2', gridRow: `${34 - height} / span ${height}` });
+  expect(links[1].parentElement).toHaveStyle({ gridColumn: '3', gridRow: `${35 - 2 * height} / span ${height}` });
+  for (const link of links) {
+    expect(within(link).getByText('!')).toHaveClass('inventory-rack-overlap');
+    expect(link.querySelectorAll('small')).toHaveLength(height > 1 ? 1 : 0);
+    expect(link.querySelector('.inventory-rack-plan-name')).toHaveTextContent(/Plan/);
+  }
+  expect(screen.getByText(/! indicates overlapping plans requiring review/)).toBeInTheDocument();
 });
 it('renders recorded front/rear plans, never free units or occupancy percentages', () => {
   show();

@@ -47,7 +47,7 @@ function RackFace({ rack, slots, side }: { rack: PhysicalRecord; slots: Inventor
         const range = plan.height === 1 ? `U${plan.position}` : `U${plan.position}–U${top}`;
         const label = `${name} · ${range} · ${plan.height}U${overlap ? ' · overlapping plans, review required' : ''}`;
         return <li key={plan.slot.key} className="inventory-rack-plan" style={{ gridRow: `${height - top + 1} / span ${plan.height}`, gridColumn: plan.lane + 2 }}>
-          <Link title={label} to={inventoryHref('DeviceClaim', plan.slot.claim.metadata.namespace, plan.slot.claim.metadata.name)} aria-label={`Review ${label}, ${side}`}>{name}{plan.height > 1 && <small>{range} · {plan.height}U</small>}{overlap && <small>Overlapping plans</small>}</Link>
+          <Link title={label} to={inventoryHref('DeviceClaim', plan.slot.claim.metadata.namespace, plan.slot.claim.metadata.name)} aria-label={`Review ${label}, ${side}`}><span className="inventory-rack-plan-heading">{overlap && <span className="inventory-rack-overlap" aria-hidden="true">!</span>}<span className="inventory-rack-plan-name">{name}</span></span>{plan.height > 1 && <small>{range} · {plan.height}U</small>}</Link>
         </li>;
       })}
     </ol>
@@ -67,7 +67,7 @@ export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; invent
     <aside className="inventory-elevation">
       <div className="inventory-list-heading"><h3>Rack elevation</h3><span>{height ? `${height}U` : 'Height unknown'}</span></div>
       <div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <button key={value} type="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</button>)}</div>
-      <p className="inventory-muted">Recorded installation plans, not verified occupancy. Blank units are not available space.</p>
+      <p className="inventory-muted">Recorded installation plans, not verified occupancy. Blank units are not available space. ! indicates overlapping plans requiring review.</p>
       {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} rack={rack} slots={positioned} side={side} />)}</div>}
     </aside>
     <div className="inventory-equipment-sections">
