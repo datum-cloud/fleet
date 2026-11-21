@@ -174,6 +174,12 @@ requested. Existing target differences still block automatic updates or takeover
 All candidate changes, including identifiers on an existing Facility, require
 separate operator review. Name similarity never creates a mapping.
 
+Facility identifier mappings must be lists of at most 64 objects containing exactly
+the string fields `provider`, `type`, and `value`. Unknown fields (including `uid`),
+malformed containers/elements, duplicate identities, and invalid field values
+quarantine the Facility and dependent candidates before handoff; they are not
+silently stripped or left for server-side pruning.
+
 Malformed Site names, code/display-name types or lengths, unknown mapping fields,
 and malformed, duplicate or oversized reference lists quarantine the source's
 candidate cohort. Missing verification, unavailable referenced premises or an

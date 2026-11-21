@@ -56,6 +56,32 @@ def fixture():
 
 
 class PlanTests(unittest.TestCase):
+    def test_invalid_identifier_shapes_are_quarantined(self):
+        valid = {"provider": "example", "type": "PremisesCode", "value": "EX1"}
+        invalid = [None, {}, "invalid", 1, False, [None], ["invalid"], [[]],
+                   [dict(valid, uid="forbidden")], [dict(valid, other="unknown")],
+                   [dict(valid, provider=[])], [dict(valid, type={})],
+                   [dict(valid, value=None)], [{"provider": "example"}],
+                   [valid, valid], [dict(valid, value=str(index)) for index in range(65)]]
+        for identifiers in invalid:
+            with self.subTest(identifiers=identifiers):
+                source, mapping = fixture()
+                mapping["facilities"][0].update(identifiersVerified=True, identifiers=identifiers)
+                report, candidates = inventory.Planner(source, mapping).run()
+                self.assertIn("Facility/example-premises", report["conflicts"])
+                self.assertFalse(any(record["kind"] == "Facility" for record in candidates))
+
+    def test_identifier_cardinality_boundary(self):
+        for count in (0, 64):
+            with self.subTest(count=count):
+                source, mapping = fixture()
+                identifiers = [{"provider": "example", "type": "PremisesCode", "value": str(index)} for index in range(count)]
+                mapping["facilities"][0].update(identifiersVerified=True, identifiers=identifiers)
+                report, candidates = inventory.Planner(source, mapping).run()
+                self.assertNotIn("Facility/example-premises", report["conflicts"])
+                facility = next(record for record in candidates if record["kind"] == "Facility")
+                self.assertEqual(facility["spec"]["identifiers"], identifiers)
+
     def operational_mapping(self):
         source, mapping = fixture()
         _, records = inventory.Planner(source, mapping).run()

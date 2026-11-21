@@ -238,7 +238,7 @@ class Planner:
             if key not in self.records or key.rsplit("/", 1)[0] not in ("dcim/sites", "dcim/locations"):
                 raise ValueError("facility source must name a present site or location")
             spec = {"displayName": facility["displayName"]}
-            if facility.get("identifiers"):
+            if "identifiers" in facility:
                 if facility.get("identifiersVerified") is not True:
                     raise ValueError("provider premises identifiers require explicit verification")
                 spec["identifiers"] = copy.deepcopy(facility["identifiers"])
@@ -657,7 +657,14 @@ def validate_graph(records):
                 seen_names.add(reference.get("name"))
         if record["kind"] == "Facility":
             seen_identifiers = set()
-            for identifier in spec.get("identifiers", []):
+            identifiers = spec.get("identifiers", [])
+            if not isinstance(identifiers, list) or len(identifiers) > 64:
+                fail(key, "premises identifiers must be a list with at most 64 entries")
+                identifiers = []
+            for identifier in identifiers:
+                if not isinstance(identifier, dict) or set(identifier) != {"provider", "type", "value"} or not all(isinstance(value, str) for value in identifier.values()):
+                    fail(key, "premises identifier must contain only provider, type and value strings")
+                    continue
                 identity = tuple(identifier.get(field) for field in ("provider", "type", "value"))
                 if not name_ok(identifier.get("provider")) or identifier.get("type") not in ("PremisesCode", "PremisesAlias", "PremisesID") or not isinstance(identifier.get("value"), str) or not 1 <= len(identifier["value"]) <= 253 or identity in seen_identifiers:
                     fail(key, "invalid provider-qualified premises identifier")
