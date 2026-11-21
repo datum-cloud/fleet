@@ -1,10 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { createMemoryRouter, MemoryRouter, Outlet, RouterProvider } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { createMemoryRouter, MemoryRouter, Outlet, RouterProvider, UNSAFE_DataRouterContext } from 'react-router';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useContext } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InventorySessionBoundary } from './inventory-session-boundary';
-import { InventoryOperationContext, InventoryOperationInvalidated, type InventoryOperationScope } from '../lib/inventory-operation';
+import { InventorySessionBoundary, SessionQueries } from './inventory-session-boundary';
+import { InventoryOperationContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
 
 function mountHost(loader: () => unknown, content: React.ReactNode) {
   const router = createMemoryRouter([{
@@ -64,15 +64,18 @@ describe('host inventory session isolation', () => {
   });
 
   it('replaces caches on visible focus principal changes including batched A to B to A', async () => {
+    let client: QueryClient | undefined;
     let principal = 'staff-a';
     let revision = 1;
     const read = vi.fn(async () => `${principal} inventory ${revision}`);
     function Records() {
+      client = useQueryClient();
       const query = useQuery({ queryKey: ['inventory'], queryFn: read, staleTime: Infinity });
       return <p>{query.data}</p>;
     }
     const router = mountHost(() => ({ user: { metadata: { uid: principal } } }), <Records />);
     await screen.findByText('staff-a inventory 1');
+    const originalClient = client;
     await act(async () => {
       principal = 'staff-b';
       fireEvent(window, new Event('focus'));
@@ -82,7 +85,66 @@ describe('host inventory session isolation', () => {
       await router.revalidate();
     });
     await screen.findByText('staff-a inventory 2');
+    expect(client).not.toBe(originalClient);
     expect(screen.queryByText('staff-a inventory 1')).not.toBeInTheDocument();
+  });
+
+  it('does not start operation authority for a principal different from the current host', async () => {
+    const start = vi.spyOn(InventoryOperationScope.prototype, 'startLifecycle');
+    const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-b' } } }), element: null }]);
+    await waitFor(() => expect(router.state.initialized).toBe(true));
+    let scope: InventoryOperationScope | undefined;
+    function Probe() {
+      scope = useContext(InventoryOperationContext);
+      return null;
+    }
+    render(<UNSAFE_DataRouterContext.Provider value={{ router, navigator: router, static: false, basename: '/' } as never}>
+      <SessionQueries principal="staff-a" authority={true} generation={0}><Probe /></SessionQueries>
+    </UNSAFE_DataRouterContext.Provider>);
+    expect(() => scope!.begin().assertCurrent()).toThrow(InventoryOperationInvalidated);
+    expect(start).not.toHaveBeenCalled();
+    router.dispose();
+  });
+
+  it('replaces the cache when idle principal snapshots change A to B to A within one render batch', async () => {
+    const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><Records /></InventorySessionBoundary> }] }]);
+    const subscribers: Parameters<typeof router.subscribe>[0][] = [];
+    const subscribe = router.subscribe.bind(router);
+    vi.spyOn(router, 'subscribe').mockImplementation(callback => {
+      subscribers.push(callback);
+      return subscribe(callback);
+    });
+    let client: QueryClient | undefined;
+    function Records() {
+      client = useQueryClient();
+      return <p>Inventory cache mounted</p>;
+    }
+    render(<RouterProvider router={router} />);
+    await screen.findByText('Inventory cache mounted');
+    const original = client;
+    act(() => {
+      for (const principal of ['staff-b', 'staff-a']) {
+        const state = { ...router.state, loaderData: { 'layouts/milo.layout': { user: { metadata: { uid: principal } } } } };
+        for (const subscriber of subscribers.slice()) subscriber(state, { deletedFetchers: [], newErrors: null, flushSync: false });
+      }
+    });
+    expect(client).not.toBe(original);
+    router.dispose();
+  });
+
+  it('keeps failed focus verification masked until the next verification succeeds', async () => {
+    const router = mountHost(() => ({ user: { metadata: { uid: 'staff-a' } } }), 'Private inventory');
+    await screen.findByText('Private inventory');
+    let release!: () => void;
+    vi.spyOn(router, 'revalidate').mockRejectedValueOnce(new Error('verification failed')).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(screen.queryByText('Private inventory')).not.toBeInTheDocument());
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(release).toBeDefined());
+    expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();
+    await act(async () => release());
+    await screen.findByText('Private inventory');
+    router.dispose();
   });
 
   it.each(['logout', 'failure'])('clears visible data when focus verification observes %s', async outcome => {

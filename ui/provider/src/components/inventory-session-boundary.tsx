@@ -9,7 +9,7 @@ import { InventoryReadContext, InventoryReadScope } from '../lib/inventory-read'
 
 export const InventoryPreviewContext = createContext(false);
 
-function SessionQueries({ children, principal, authority, generation }: { children: ReactNode; principal: string; authority: boolean; generation: number }) {
+export function SessionQueries({ children, principal, authority, generation }: { children: ReactNode; principal: string; authority: boolean; generation: number }) {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } }));
   const [scope] = useState(() => new InventoryOperationScope());
   const [reads] = useState(() => new InventoryReadScope());
@@ -137,17 +137,20 @@ function HostedInventory({ children }: { children: ReactNode }) {
       softRequested.current = !masked.current;
       setSoftVerification(!masked.current);
       setFailed(false);
+      let succeeded = true;
       void revalidate.current().catch(() => {
+        succeeded = false;
         if (active && attempt === generation.current && foreground.current) {
           masked.current = true;
+          setChecking(true);
           setFailed(true);
         }
       }).finally(() => {
         if (active && attempt === generation.current && foreground.current && document.visibilityState !== 'hidden') {
           setVerifying(false);
           softRequested.current = false;
-          setChecking(false);
-          masked.current = false;
+          setChecking(!succeeded);
+          masked.current = !succeeded;
         }
       });
     };
@@ -168,8 +171,8 @@ function HostedInventory({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
-  if (checking || (revalidator.state !== 'idle' && !softVerification) || navigation.state !== 'idle') return <LoadingState />;
   if (failed) return <InventoryAccessState status={503} />;
+  if (checking || (revalidator.state !== 'idle' && !softVerification) || navigation.state !== 'idle') return <LoadingState />;
   if (!principal) return <InventoryAccessState status={401} />;
   return <SessionQueries key={JSON.stringify([principal, location.key, sessionGeneration])} principal={principal} authority={focused && !verifying && revalidator.state === 'idle'} generation={hostGeneration}>{children}</SessionQueries>;
 }
