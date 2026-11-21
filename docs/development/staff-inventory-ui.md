@@ -105,6 +105,9 @@ cancelled before cached records are removed. Session expiry hides all kinds.
 Reopening inventory starts a fresh access evaluation; refreshing an existing view
 does not clear its recorded read failures. Search indexes explicit visible fields
 and readable endpoint identities, not raw records or redacted references.
+The retained direct claim route uses the same issue-aware placement and endpoint
+labels. Legacy expected peers hide both the referenced device and port whenever
+Device reads are unavailable, including temporary collection failures.
 
 ### Retained host source evidence
 

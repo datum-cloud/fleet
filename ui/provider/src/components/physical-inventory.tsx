@@ -4,6 +4,7 @@ import { Building2, Cable, ClipboardList, HardDrive, Search, Server, Zap } from 
 import {
   modelLabel,
   placementLabel,
+  legacyPeerLabel,
   slotKey,
   type Inventory,
   type RawDevice,
@@ -58,9 +59,7 @@ const sections = [
   },
 ] as const;
 
-export function endpointLabel(endpoint: CableEndpoint): string {
-  return `${endpoint.deviceRef?.name ?? endpoint.powerFeedRef?.name ?? 'Unknown'}/${endpoint.componentID}:${endpoint.position}`;
-}
+export { endpointLabel } from '../inventory';
 
 function recordName(entry: RecordEntry) {
   return entry.record.spec.displayName || entry.record.metadata.name;
@@ -172,7 +171,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
     );
   const plannedPlacement = (claim: RawDeviceClaim) => {
     const location = claim.spec.placement;
-    if (!location.scope) return placementLabel({ ...claim, spec: { ...claim.spec, placement: { ...location, facility: inventory.issues?.Facility ? 'Facility unavailable' : location.facility, rack: inventory.issues?.Rack ? 'Rack unavailable' : location.rack } } });
+    if (!location.scope) return placementLabel(claim, inventory.issues);
     const rack = location.rackRef ? find('Rack', claim.metadata.namespace, location.rackRef.name) : undefined;
     const facilityName =
       location.facilityRef?.name ?? (rack?.record as PhysicalRecord | undefined)?.spec.facilityRef?.name;
@@ -258,6 +257,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
     );
 
   function Endpoint({ endpoint, namespace }: { endpoint: CableEndpoint; namespace?: string }) {
+    if ((endpoint.deviceRef && inventory.issues?.Device) || (endpoint.powerFeedRef && inventory.issues?.PowerFeed)) return <span>Related endpoint unavailable</span>;
     return (
       <span>
         {endpoint.deviceRef
@@ -451,7 +451,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                 {device.spec.interfaces?.map((iface) => (
                   <li key={iface.name}>
                     {iface.name} · {iface.macAddress ?? 'MAC not recorded'}
-                    {iface.peer && ` · legacy peer ${iface.peer.device}/${iface.peer.port}`}
+                    {iface.peer && ` · legacy peer ${legacyPeerLabel(iface.peer, inventory.issues)}`}
                   </li>
                 ))}
               </ul>
@@ -477,7 +477,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                 {claim.spec.ports?.map((port) => (
                   <li key={port.name}>
                     {port.name} · {port.type ?? 'Type not recorded'} · {port.speedMbps ?? 'Unknown'} Mb/s
-                    {port.expectedPeer && ` → ${port.expectedPeer.device}/${port.expectedPeer.port}`}
+                    {port.expectedPeer && ` → ${legacyPeerLabel(port.expectedPeer, inventory.issues)}`}
                   </li>
                 ))}
               </ul>
