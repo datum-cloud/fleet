@@ -107,6 +107,12 @@ unknown rather than becoming cancelled-success.
 
 ### Visible browser blur versus session authority
 
+Visible blur also suspends new inventory/permission query dispatch and publication
+and cancels outstanding queries without removing their previously authorized data.
+Manual refresh cannot publish responses during unresolved host identity checks.
+Read generations reject late successes and errors, even after authority resumes;
+only the verified principal's fresh reads can renew management controls.
+
 The visible-blur correction separates read visibility from write authority.
 Previously, opening Safari's URL bar called the same hide path as backgrounding
 the document, unmounting inventory and showing LoadingState. A visible window

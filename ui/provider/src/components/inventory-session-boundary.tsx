@@ -5,12 +5,14 @@ import { InventoryAccessState } from './inventory-access-state';
 import { LoadingState } from './states';
 import { InventoryOperationContext, InventoryOperationGenerationContext, InventoryOperationReadyContext, InventoryOperationScope } from '../lib/inventory-operation';
 import { inventoryResources, type Inventory, type InventoryKind } from '../inventory';
+import { InventoryReadContext, InventoryReadScope } from '../lib/inventory-read';
 
 export const InventoryPreviewContext = createContext(false);
 
 function SessionQueries({ children, principal, authority, generation }: { children: ReactNode; principal: string; authority: boolean; generation: number }) {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } }));
   const [scope] = useState(() => new InventoryOperationScope());
+  const [reads] = useState(() => new InventoryReadScope());
   const readGeneration = useRef(generation);
   const [readyGeneration, setReadyGeneration] = useState(generation);
   const ready = authority && readyGeneration === generation;
@@ -19,22 +21,28 @@ function SessionQueries({ children, principal, authority, generation }: { childr
     const identity = host?.router.state.loaderData['layouts/milo.layout'] as { user?: { metadata?: { uid?: string; name?: string } } } | undefined;
     if (ready && host?.router.state.revalidation === 'idle' && host.router.state.navigation.state === 'idle' && (identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name) === principal) scope.startLifecycle();
     else scope.invalidate();
-    const invalidate = () => scope.invalidate();
+    const invalidate = () => {
+      scope.invalidate();
+      reads.suspend();
+      void client.cancelQueries();
+    };
+    if (authority && host?.router.state.revalidation === 'idle' && host.router.state.navigation.state === 'idle' && (identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name) === principal) reads.resume();
+    else invalidate();
     const visibility = () => { if (document.visibilityState === 'hidden') invalidate(); };
     window.addEventListener('blur', invalidate);
     window.addEventListener('pagehide', invalidate);
     document.addEventListener('visibilitychange', visibility);
     const unsubscribe = host?.router.subscribe(state => {
       const identity = state.loaderData['layouts/milo.layout'] as { user?: { metadata?: { uid?: string; name?: string } } } | undefined;
-      if (state.revalidation !== 'idle' || state.navigation.state !== 'idle' || (identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name) !== principal) scope.invalidate();
+      if (state.revalidation !== 'idle' || state.navigation.state !== 'idle' || (identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name) !== principal) invalidate();
     });
     return () => {
-      scope.invalidate(); unsubscribe?.();
+      invalidate(); unsubscribe?.();
       window.removeEventListener('blur', invalidate);
       window.removeEventListener('pagehide', invalidate);
       document.removeEventListener('visibilitychange', visibility);
     };
-  }, [host, principal, scope, ready, generation]);
+  }, [host, principal, scope, ready, generation, authority, reads, client]);
   useEffect(() => {
     if (readGeneration.current === generation) return;
     readGeneration.current = generation;
@@ -52,7 +60,7 @@ function SessionQueries({ children, principal, authority, generation }: { childr
     return () => { active = false; };
   }, [client, generation]);
   useEffect(() => () => client.clear(), [client]);
-  return <InventoryOperationContext.Provider value={scope}><InventoryOperationGenerationContext.Provider value={generation}><InventoryOperationReadyContext.Provider value={ready}><QueryClientProvider client={client}>{children}</QueryClientProvider></InventoryOperationReadyContext.Provider></InventoryOperationGenerationContext.Provider></InventoryOperationContext.Provider>;
+  return <InventoryReadContext.Provider value={reads}><InventoryOperationContext.Provider value={scope}><InventoryOperationGenerationContext.Provider value={generation}><InventoryOperationReadyContext.Provider value={ready}><QueryClientProvider client={client}>{children}</QueryClientProvider></InventoryOperationReadyContext.Provider></InventoryOperationGenerationContext.Provider></InventoryOperationContext.Provider></InventoryReadContext.Provider>;
 }
 
 function HostedInventory({ children }: { children: ReactNode }) {
