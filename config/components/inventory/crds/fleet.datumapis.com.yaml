@@ -955,19 +955,12 @@ spec:
                 x-kubernetes-list-map-keys: [name]
                 items:
                   type: object
-                  required: [name, uid]
+                  required: [name]
                   properties:
                     name:
                       type: string
                       maxLength: 253
                       pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                    uid:
-                      type: string
-                      minLength: 1
-                      maxLength: 128
-                x-kubernetes-validations:
-                - rule: self.all(ref, self.filter(other, other.uid == ref.uid).size() == 1)
-                  message: Facility UIDs must be unique within a Site
             required:
             - displayName
             - code

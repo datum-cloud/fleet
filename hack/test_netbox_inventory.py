@@ -63,7 +63,7 @@ class PlanTests(unittest.TestCase):
             record["metadata"]["uid"] = "uid-" + record["metadata"]["name"]
         facility = next(record for record in records if record["kind"] == "Facility")
         existing = {"target": mapping["target"], "collections": ["Site", "Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"], "items": records}
-        mapping["operationalSites"] = [{"name": "site-stable", "displayName": "Example operational identity", "code": "EX3", "source": "dcim/sites/1", "verified": True, "facilityRefs": [{"name": facility["metadata"]["name"], "uid": facility["metadata"]["uid"]}]}]
+        mapping["operationalSites"] = [{"name": "site-stable", "displayName": "Example operational identity", "code": "EX3", "source": "dcim/sites/1", "verified": True, "facilityRefs": [{"name": facility["metadata"]["name"]}]}]
         return source, mapping, existing
 
     def test_site_mapping_is_explicit_and_observational(self):
@@ -73,6 +73,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual({}, report["conflicts"])
         self.assertEqual(["Site"], [record["kind"] for record in records])
         self.assertEqual("EX3", records[0]["spec"]["code"])
+        self.assertEqual([{"name": "example-premises"}], records[0]["spec"]["facilityRefs"])
         self.assertEqual(before, existing)
         self.assertEqual([], report["deletions"])
         self.assertFalse(report["applied"])
@@ -81,16 +82,20 @@ class PlanTests(unittest.TestCase):
         _, records = inventory.Planner(source, mapping, existing).run()
         self.assertFalse(any(record["kind"] == "Site" for record in records))
 
-    def test_site_mapping_requires_verified_existing_incarnations(self):
-        for invalid in ("unverified", "replaced", "missing", "incomplete", "namespace", "deleting"):
+    def test_site_mapping_requires_verified_existing_names(self):
+        for invalid in ("unverified", "uid", "missing", "incomplete", "namespace", "deleting", "empty-name", "extra-namespace"):
             with self.subTest(invalid=invalid):
                 source, mapping, existing = self.operational_mapping()
                 site = mapping["operationalSites"][0]
                 facility = next(record for record in existing["items"] if record["kind"] == "Facility")
                 if invalid == "unverified":
                     site["verified"] = False
-                elif invalid == "replaced":
+                elif invalid == "uid":
                     site["facilityRefs"][0]["uid"] = "other-uid"
+                elif invalid == "empty-name":
+                    site["facilityRefs"][0]["name"] = ""
+                elif invalid == "extra-namespace":
+                    site["facilityRefs"][0]["namespace"] = "other"
                 elif invalid == "missing":
                     existing["items"] = []
                 elif invalid == "incomplete":
@@ -101,6 +106,18 @@ class PlanTests(unittest.TestCase):
                     facility["metadata"]["deletionTimestamp"] = source["observedAt"]
                 with self.assertRaises(ValueError):
                     inventory.Planner(source, mapping, existing).run()
+
+    def test_site_mapping_does_not_pin_server_uids(self):
+        source, mapping, existing = self.operational_mapping()
+        facility = next(record for record in existing["items"] if record["kind"] == "Facility")
+        facility["metadata"]["uid"] = "replacement-server-uid"
+        report, records = inventory.Planner(source, mapping, existing).run()
+        self.assertEqual({}, report["conflicts"])
+        self.assertEqual([{"name": "example-premises"}], records[0]["spec"]["facilityRefs"])
+        facility["metadata"].pop("uid")
+        report_without_uid, records_without_uid = inventory.Planner(source, mapping, existing).run()
+        self.assertEqual({}, report_without_uid["conflicts"])
+        self.assertEqual(records, records_without_uid)
 
     def test_provider_identifier_collisions_are_qualified_not_inferred(self):
         source, mapping = fixture()

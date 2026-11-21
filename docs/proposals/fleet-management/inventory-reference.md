@@ -19,8 +19,9 @@ used as authored cross-control-plane references.
 
 For the implemented local-only Site membership and provider-qualified premises
 identifier subset, see [Site–Facility relationship](../../development/site-facility-relationship.md).
-Its name/UID references are same-project, same-namespace incarnation pins, not
-authored cross-control-plane IDs or allocation policy.
+Its name-only references are scoped to the same project and namespace, not
+authored cross-control-plane IDs or allocation policy. Reusing a Facility name
+rebinds the relationship; observed resource UIDs do not belong in desired-state spec.
 
 - [Contract details](#contract-details)
   - [Metadata and evidence](#shared-metadata-references-and-evidence)

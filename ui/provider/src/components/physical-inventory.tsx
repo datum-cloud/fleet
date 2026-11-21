@@ -356,6 +356,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
             <Field label="Internal Site code">{(record as PhysicalRecord).spec.code}</Field>
             <Field label="Physical premises">{siteFacilities(record as PhysicalRecord, inventory).map((membership, index) => <div key={index}>{membership.facility ? <>{reference('Facility', namespace, membership.facility.metadata.name)} · {facilityIdentifiers(membership.facility)}</> : membership.state}</div>)}{!inventory.issues?.Facility && !(record as PhysicalRecord).spec.facilityRefs?.length && 'Unmapped · no Facilities recorded'}</Field>
             <Field label="Authority">Membership grants no placement eligibility, capacity, or operational authority.</Field>
+            <Field label="Reference semantics">Facility references follow namespace/name. Recreating a name resolves to the replacement; this does not verify physical continuity.</Field>
           </>}
           {kind === 'Facility' && <>
             <Field label="Provider premises identifiers">{facilityIdentifiers(record as PhysicalRecord)}</Field>

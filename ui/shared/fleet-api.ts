@@ -327,7 +327,7 @@ export interface PhysicalRecord {
     displayName: string;
     provenance: Provenance;
     code?: string;
-    facilityRefs?: { name: string; uid: string }[];
+    facilityRefs?: LocalReference[];
     identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];
     facilityRef?: LocalReference;
     rackRef?: LocalReference;

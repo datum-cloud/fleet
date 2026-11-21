@@ -40,15 +40,10 @@ type FacilityIdentifier struct {
 	Value    string `json:"value"`
 }
 
-type FacilityMembershipReference struct {
-	Name string `json:"name"`
-	UID  string `json:"uid"`
-}
-
 type SiteSpec struct {
 	PhysicalMetadata `json:",inline"`
-	Code             string                        `json:"code"`
-	FacilityRefs     []FacilityMembershipReference `json:"facilityRefs,omitempty"`
+	Code             string           `json:"code"`
+	FacilityRefs     []LocalReference `json:"facilityRefs,omitempty"`
 }
 
 type Site struct {

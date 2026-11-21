@@ -36,7 +36,7 @@ resource, provider metro code, account grouping, or Location readiness claim.
 
 - A Facility owns physical premises. Racks continue to reference exactly one
   Facility through their existing `facilityRef`; nothing rewrites these references.
-- A Site may record zero to many Facility references (bounded at 64 per record).
+- A Site may record zero to many name-only Facility references (bounded at 64 per record).
   A Facility may participate in zero to many Sites. This permits multiple
   operational boundaries at shared premises and a boundary spanning premises
   without inventing duplicated buildings. Zero means unmapped, never all premises.
@@ -52,25 +52,57 @@ resource, provider metro code, account grouping, or Location readiness claim.
 
 `Site.spec.code` is the mutable internal human code; `displayName` is a mutable
 label. Neither is a reference key or globally unique identifier. Resource names
-are stable API addresses; Kubernetes UIDs identify exact resource incarnations.
-Site identity references must pin name and UID, never a code. Changing a human
-code or label does not require rename, deletion, recreation or UID changes.
+are API addresses scoped by namespace and project; `metadata.uid` is the server's
+resource incarnation identity, never desired-state configuration. References use
+the established namespace/name conventions, never human codes or UIDs in spec.
+Changing a human code or label does not require rename, deletion, recreation or
+metadata UID changes.
 
-`Site.spec.facilityRefs` contains `{name, uid}` entries scoped to the Site's own
-namespace and project. Duplicate names or UIDs and missing reference fields fail
-schema admission. `ReadSiteFacilities` reads through the caller-provided authorized
-reader, returns no partial result on failure, checks namespace, deletion and exact
-UID, and redacts read error details. It is not a policy resolver. Its caller must
+`Site.spec.facilityRefs` reuses `LocalReference`: `{name}` entries scoped to the
+Site's own namespace and project. Duplicate names and missing names fail schema
+admission. Neither a namespace override nor an incarnation pin is part of the
+local reference. `ReadSiteFacilities` reads through the caller-provided authorized
+reader, returns no partial result on failure, checks namespace and deletion, and
+redacts read error details. It is not a policy resolver. Its caller must
 already be authorized to read the Site; it neither grants credentials nor bypasses
 the supplied reader's authorization. A privileged reader is not a user IAM check.
 
 CRD CEL cannot perform cross-object existence/authorization checks. A structurally
-valid but missing, stale, or cross-namespace target remains **unresolved**, not
-accepted placement or authority. UI readers likewise require exact namespace,
-name and UID before showing a related Facility. Name reuse cannot silently bind
-the replacement. Reference repair requires explicit operator review and new
-provenance. This is observational validation, not atomic graph admission or a
-referential-integrity controller.
+valid but missing or deleting target remains **unresolved**, not accepted placement
+or authority. A same-name Facility in another namespace does not resolve the local
+reference. UI readers use these same namespace/name semantics.
+
+**Name reuse rebinds:** deleting a Facility and recreating it under the same name
+in the same namespace makes an existing Site reference resolve to the replacement,
+even though its server UID differs. This does not preserve historical incarnation
+identity or prove physical continuity; the spec may remain unchanged. Operators
+must review reused names and physical evidence, not treat a resolved reference as
+verification, capacity or authority. A reference edit still requires explicit
+operator review and advanced provenance. This is observational validation, not
+atomic graph admission or a referential-integrity controller.
+
+No new status fields are necessary: there is no Site reconciler or observation
+writer requiring retained incarnation tracking. If that later becomes necessary,
+observed server identity belongs in status, not desired-state spec. Existing
+ephemeral client UID/resourceVersion checks and frozen mutation baselines remain
+unchanged; they protect an individual edit, not indefinite reference binding.
+
+### UID audit for PR100
+
+The only UID-bearing spec field introduced by the first PR100 revision was
+`Site.spec.facilityRefs[].uid`; it has been removed from Go and TypeScript types,
+CRD schema, importer mappings/candidates, fixtures and examples. The reference
+now reuses the existing `LocalReference` type, and deep copies retain name-only
+references independently while preserving server metadata. Site status remains
+empty. Provider identifiers, Site codes and record provenance introduce no
+resource UID fields.
+
+Separately, the preexisting `Device.spec.identity.systemUUID` field is a hardware
+SMBIOS UUID, not a Kubernetes resource UID; it is unchanged. No other explicit
+resource UID spec fields were found in the existing public API types and CRD
+schemas inspected for this change. Internal lifecycle custody/authority records
+and ephemeral UI mutation baselines retain their existing UID fencing; this is
+not an unrelated legacy API migration.
 
 `Facility.spec.identifiers` is an optional bounded list of
 `{provider, type, value}`. `provider` is a canonical provider namespace (for example
@@ -123,16 +155,20 @@ An optional `operationalSites` list accepts this synthetic shape:
   "code": "EX3",
   "source": "dcim/sites/1",
   "verified": true,
-  "facilityRefs": [{"name": "premises-stable", "uid": "existing-premises-uid"}]
+  "facilityRefs": [{"name": "premises-stable"}]
 }
 ```
 
 The source must be a present source site/location, but that alone establishes no
 mapping. The explicit verified entry and a complete current Fleet snapshot,
 including the Site collection, are required. Each Facility must already exist at
-the exact namespace/name/UID, not be deleting, and survive graph reconciliation.
-New Facility candidates have no API UID, so a mapping to them must wait for a
-separately authorized creation and a new snapshot. No UID is invented. Existing
+the referenced namespace/name, not be deleting, and survive graph reconciliation.
+The importer continues to require an existing Facility snapshot rather than a
+new candidate alone; this is a review boundary, not UID pinning. Mapping entries
+containing `uid` or other extra reference fields are rejected, not copied into
+specs. Regenerate earlier PR100 mapping files using name-only references. A
+subsequent snapshot with a new server UID at the same name resolves by name;
+no indefinite incarnation guarantee is claimed. Existing
 six-collection snapshots remain usable when no operational Site mapping is
 requested. Existing target differences still block automatic updates or takeover.
 All candidate changes, including identifiers on an existing Facility, require
@@ -146,9 +182,10 @@ separate operator review. Name similarity never creates a mapping.
 2. Read existing records privately and preserve stable names, UIDs, provenance,
    ownership and revision baselines. Agree canonical provider namespaces and
    verify individual premises identity before adding descriptive identifiers.
-3. Separately authorize any Site creation or membership edit. Pin actual Facility
-   UIDs from authorized reads and use current resourceVersion/UID preconditions
-   for corrections. No delete/recreate migration is required or allowed here.
+3. Separately authorize any Site creation or membership edit. Use names from
+   authorized reads for spec references. Preserve ephemeral metadata UID and
+   resourceVersion preconditions for corrections outside the spec. Review name
+   reuse explicitly. No delete/recreate migration is required or allowed here.
 4. Independently review IAM and authenticated staging behavior before rollout.
    This task changes no live counts or memberships and does not deploy. The nine
    DFW3 reported-placement corrections and separate audit companion are out of scope.
@@ -171,14 +208,14 @@ git diff --check
 ```
 
 Tests cover additive schema, provider qualification/collisions, legacy records,
-provenance, stable identity despite label changes, stale/invalid relationships,
+provenance, name references despite label changes, name-reuse rebinding, invalid relationships,
 read denial/redaction, observational imports and existing independent safety
 scenarios. Existing six-collection request-count assertions now count seven;
 their denial, session lifetime, operation and no-write assertions remain intact.
 
 Local validation on this implementation passed the full `go test -race ./...`
 suite (the two manager envtest tests skip without `KUBEBUILDER_ASSETS`), provider
-and consumer tests/typechecks/builds, 33 importer tests, six reported-placement
+and consumer tests/typechecks/builds, 34 importer tests, six reported-placement
 planner tests, inventory manifest rendering, local documentation links and
 whitespace checks. This is not authenticated staging acceptance. Mobile inspection
 was attempted at 390×844 with synthetic fixtures, but both browser snapshots timed

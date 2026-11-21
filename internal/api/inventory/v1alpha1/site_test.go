@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,7 +19,7 @@ func syntheticSite() *Site {
 	return &Site{
 		TypeMeta:   metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "Site"},
 		ObjectMeta: metav1.ObjectMeta{Name: "site-stable", Namespace: "inventory", UID: "site-uid"},
-		Spec:       SiteSpec{PhysicalMetadata: PhysicalMetadata{DisplayName: "Example operational site", Provenance: Provenance{Method: "Manual", RecordedBy: "synthetic", RecordedAt: metav1.NewTime(recordedAt)}}, Code: "EX3", FacilityRefs: []FacilityMembershipReference{{Name: "facility-stable", UID: "facility-uid"}}},
+		Spec:       SiteSpec{PhysicalMetadata: PhysicalMetadata{DisplayName: "Example operational site", Provenance: Provenance{Method: "Manual", RecordedBy: "synthetic", RecordedAt: metav1.NewTime(recordedAt)}}, Code: "EX3", FacilityRefs: []LocalReference{{Name: "facility-stable"}}},
 	}
 }
 
@@ -54,14 +55,10 @@ func TestSiteAndFacilityAdmission(t *testing.T) {
 		t.Fatal(errs)
 	}
 	for name, mutate := range map[string]func(*Site){
-		"missing UID":  func(candidate *Site) { candidate.Spec.FacilityRefs[0].UID = "" },
 		"missing name": func(candidate *Site) { candidate.Spec.FacilityRefs[0].Name = "" },
 		"missing code": func(candidate *Site) { candidate.Spec.Code = "" },
-		"duplicate UID": func(candidate *Site) {
-			candidate.Spec.FacilityRefs = append(candidate.Spec.FacilityRefs, FacilityMembershipReference{Name: "other", UID: "facility-uid"})
-		},
 		"duplicate name": func(candidate *Site) {
-			candidate.Spec.FacilityRefs = append(candidate.Spec.FacilityRefs, FacilityMembershipReference{Name: "facility-stable", UID: "other"})
+			candidate.Spec.FacilityRefs = append(candidate.Spec.FacilityRefs, LocalReference{Name: "facility-stable"})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -91,7 +88,7 @@ func (deniedFacilityReader) Get(context.Context, client.ObjectKey, client.Object
 	return fmt.Errorf("forbidden secret-provider-code")
 }
 
-func TestSiteReaderIsObservationalAndIncarnationBound(t *testing.T) {
+func TestSiteReaderIsObservationalAndNamespaceScoped(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -114,7 +111,8 @@ func TestSiteReaderIsObservationalAndIncarnationBound(t *testing.T) {
 	}
 	for _, candidate := range []*Site{
 		{ObjectMeta: metav1.ObjectMeta{Namespace: "other", UID: site.UID}, Spec: site.Spec},
-		{ObjectMeta: site.ObjectMeta, Spec: SiteSpec{FacilityRefs: []FacilityMembershipReference{{Name: facility.Name, UID: "replaced"}}}},
+		{ObjectMeta: site.ObjectMeta, Spec: SiteSpec{FacilityRefs: []LocalReference{{Name: "missing"}}}},
+		{ObjectMeta: site.ObjectMeta, Spec: SiteSpec{FacilityRefs: []LocalReference{{Name: facility.Name}, {Name: facility.Name}}}},
 	} {
 		if records, err := ReadSiteFacilities(context.Background(), store, candidate); err == nil || records != nil {
 			t.Fatal("unresolved membership was treated as resolved")
@@ -134,5 +132,72 @@ func TestSiteReaderIsObservationalAndIncarnationBound(t *testing.T) {
 	}
 	if !reflect.DeepEqual(object(t, storedSite)["spec"], object(t, syntheticSite())["spec"]) {
 		t.Fatal("reader changed stored Site")
+	}
+}
+
+func TestSiteNameReuseResolvesReplacementWithoutChangingDesiredState(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	site, facility := syntheticSite(), syntheticFacility()
+	store := fake.NewClientBuilder().WithScheme(scheme).WithObjects(site, facility).Build()
+	before := site.DeepCopyObject().(*Site)
+	if err := store.Delete(context.Background(), facility); err != nil {
+		t.Fatal(err)
+	}
+	if records, err := ReadSiteFacilities(context.Background(), store, site); err == nil || records != nil {
+		t.Fatal("missing name should remain unresolved")
+	}
+	replacement := syntheticFacility()
+	replacement.UID = "replacement-server-uid"
+	if err := store.Create(context.Background(), replacement); err != nil {
+		t.Fatal(err)
+	}
+	records, err := ReadSiteFacilities(context.Background(), store, site)
+	if err != nil || len(records) != 1 || records[0].UID != replacement.UID {
+		t.Fatalf("name reference must resolve the replacement: %v, %v", records, err)
+	}
+	if !reflect.DeepEqual(object(t, site)["spec"], object(t, before)["spec"]) {
+		t.Fatal("reader changed desired state")
+	}
+	replacement.DeletionTimestamp = &metav1.Time{Time: recordedAt}
+	replacement.Finalizers = []string{"test.example/retain"}
+	deleting := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
+	if records, err := ReadSiteFacilities(context.Background(), deleting, site); err == nil || records != nil {
+		t.Fatal("deleting Facility should remain unavailable")
+	}
+}
+
+func TestSiteAndFacilitySpecsContainNoUIDFields(t *testing.T) {
+	var inspect func(extensionsv1.JSONSchemaProps, string)
+	inspect = func(schema extensionsv1.JSONSchemaProps, path string) {
+		for name, property := range schema.Properties {
+			if strings.Contains(strings.ToLower(name), "uid") {
+				t.Fatalf("UID field in desired-state schema: %s.%s", path, name)
+			}
+			inspect(property, path+"."+name)
+		}
+		if schema.Items != nil && schema.Items.Schema != nil {
+			inspect(*schema.Items.Schema, path+"[]")
+		}
+	}
+	crds := loadCRDs(t)
+	for _, kind := range []string{"Site", "Facility"} {
+		inspect(crds[kind].Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"], kind+".spec")
+	}
+	site := syntheticSite()
+	encoded := object(t, site)
+	refs := encoded["spec"].(map[string]any)["facilityRefs"].([]any)
+	if !reflect.DeepEqual(refs[0], map[string]any{"name": "facility-stable"}) {
+		t.Fatal("serialized spec reference must contain only a name")
+	}
+	if encoded["metadata"].(map[string]any)["uid"] != "site-uid" {
+		t.Fatal("server metadata UID was lost")
+	}
+	copy := site.DeepCopyObject().(*Site)
+	copy.Spec.FacilityRefs[0].Name = "other"
+	if site.Spec.FacilityRefs[0].Name != "facility-stable" || copy.UID != site.UID {
+		t.Fatal("deep copy must isolate references and retain server identity")
 	}
 }

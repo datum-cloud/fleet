@@ -504,8 +504,8 @@ class Planner:
             for reference in site["facilityRefs"]:
                 facility = existing.get("Facility/" + reference.get("name", ""), {})
                 metadata = facility.get("metadata", {})
-                if set(reference) != {"name", "uid"} or not reference.get("uid") or metadata.get("uid") != reference["uid"] or metadata.get("namespace") != self.namespace or metadata.get("deletionTimestamp"):
-                    raise ValueError("operational Site mapping requires an existing exact Facility incarnation")
+                if set(reference) != {"name"} or not name_ok(reference.get("name")) or metadata.get("namespace") != self.namespace or metadata.get("deletionTimestamp"):
+                    raise ValueError("operational Site mapping requires a name-only reference to an existing Facility in this namespace")
             self.add(source, "Site", site["name"], {"displayName": site["displayName"], "code": site["code"], "facilityRefs": copy.deepcopy(site["facilityRefs"])})
 
     def reconcile(self):
@@ -537,7 +537,7 @@ class Planner:
                     pairs = [(spec.get("assetTag"), other_spec.get("assetTag")), (spec.get("providerHostRef"), other_spec.get("providerHostRef")), (spec.get("providerHostRef", {}).get("id"), other_spec["identity"].get("serial")), (spec["identity"].get("serial"), other_spec["identity"].get("serial")), (spec["identity"].get("sourceIdentity"), other_spec["identity"].get("sourceIdentity"))]
                     if any(left and left == right for left, right in pairs):
                         conflicts[key] = "possible existing asset identity; preserve Device/claim/capacity and adjudicate privately"
-        all_records = {**current, **{key: candidate for key, candidate in self.candidates.items() if key not in unchanged}}
+        all_records = {**current, **self.candidates}
         for key, reasons in validate_graph(all_records).items():
             if key in self.candidates:
                 conflicts[key] = "; ".join(reasons)
@@ -630,14 +630,13 @@ def validate_graph(records):
                 fail(key, "missing local reference " + target)
         spec = record["spec"]
         if record["kind"] == "Site":
-            seen_names, seen_uids = set(), set()
+            seen_names = set()
             for reference in spec.get("facilityRefs", []):
                 target = records.get("Facility/" + reference.get("name", ""), {})
                 metadata = target.get("metadata", {})
-                if not reference.get("uid") or metadata.get("uid") != reference["uid"] or metadata.get("namespace") != record["metadata"].get("namespace") or metadata.get("deletionTimestamp") or reference.get("name") in seen_names or reference.get("uid") in seen_uids:
-                    fail(key, "invalid or stale Facility membership reference")
+                if set(reference) != {"name"} or not name_ok(reference.get("name")) or metadata.get("namespace") != record["metadata"].get("namespace") or metadata.get("deletionTimestamp") or reference.get("name") in seen_names:
+                    fail(key, "invalid or unavailable Facility membership reference")
                 seen_names.add(reference.get("name"))
-                seen_uids.add(reference.get("uid"))
         if record["kind"] == "Facility":
             seen_identifiers = set()
             for identifier in spec.get("identifiers", []):
