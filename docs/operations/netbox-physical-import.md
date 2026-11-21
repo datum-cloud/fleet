@@ -1,5 +1,9 @@
 # Optional NetBox review aids for manual inventory
 
+[Operational Site mappings](../development/site-facility-relationship.md#explicit-offline-importer-mapping)
+are optional, explicitly verified and namespace/name-based. They never infer premises from
+provider metros, accounts or similar names.
+
 [Device-reported placement](../development/device-reported-placement.md) adds
 explicit per-device source-report opt-in for new candidates and a prepare-only
 guarded patch planner for existing records. Claim placement semantics remain unchanged.
@@ -160,6 +164,16 @@ not bypass collection errors or target conflicts. The handoff emits candidate
 objects and a receipt containing the exact target plus source, mapping, Fleet
 snapshot and candidate digests. Nothing invokes kubectl apply or writes Git.
 
+New direct-API handoffs use `target.writer: Operator` and
+`target.application: provider-inventory` in the mapping and matching snapshot.
+An operational Site mapping always produces operator/direct-API guidance, even
+when its input snapshot retains the legacy Flux target: the receipt's writer is
+Operator for new candidates only, not an ownership transfer. Physical-only legacy
+Flux handoffs remain compatible; do not use them for the Site import workflow.
+Site field validation quarantines malformed candidate cohorts; `--allow-partial`
+cannot override their conflicts. See the [Site relationship contract](../development/site-facility-relationship.md)
+for name-only references, name-reuse semantics and validation boundaries.
+
 ## Optional private source comparison
 
 Skip this entire section for manual entry. No NetBox credentials or parity audit
@@ -208,9 +222,10 @@ source comparison when separately requested and authorized by the operator.
    in a public Fleet PR. Do not apply the candidate List directly to Milo.
 7. Use the explicitly approved writer for individual **new** records. A separately
    authorized one-time API creation must be additive, reject existing names rather
-   than overwrite them, and retain per-record receipts for recovery. Alternatively,
-   if Flux ownership is chosen for those new records, stage them additively in the
-   private source. Preserve existing files, identities and bindings; never replace
+   than overwrite them, and retain per-record receipts for recovery. Operational
+   Site imports use this direct-API path, never GitOps. Only for the unrelated
+   legacy physical-only Flux workflow, stage approved new records additively in
+   its private source. Preserve existing files, identities and bindings; never replace
    the collection with this partial candidate list. Review exact inputs for no
    deletes, modifications of existing bindings, capacities or readiness/status.
    Retain source/mapping/report/receipts in the approved private evidence store.

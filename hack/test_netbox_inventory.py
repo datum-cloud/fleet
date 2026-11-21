@@ -56,6 +56,158 @@ def fixture():
 
 
 class PlanTests(unittest.TestCase):
+    def test_invalid_identifier_shapes_are_quarantined(self):
+        valid = {"provider": "example", "type": "PremisesCode", "value": "EX1"}
+        invalid = [None, {}, "invalid", 1, False, [None], ["invalid"], [[]],
+                   [dict(valid, uid="forbidden")], [dict(valid, other="unknown")],
+                   [dict(valid, provider=[])], [dict(valid, type={})],
+                   [dict(valid, value=None)], [{"provider": "example"}],
+                   [valid, valid], [dict(valid, value=str(index)) for index in range(65)]]
+        for identifiers in invalid:
+            with self.subTest(identifiers=identifiers):
+                source, mapping = fixture()
+                mapping["facilities"][0].update(identifiersVerified=True, identifiers=identifiers)
+                report, candidates = inventory.Planner(source, mapping).run()
+                self.assertIn("Facility/example-premises", report["conflicts"])
+                self.assertFalse(any(record["kind"] == "Facility" for record in candidates))
+
+    def test_identifier_cardinality_boundary(self):
+        for count in (0, 64):
+            with self.subTest(count=count):
+                source, mapping = fixture()
+                identifiers = [{"provider": "example", "type": "PremisesCode", "value": str(index)} for index in range(count)]
+                mapping["facilities"][0].update(identifiersVerified=True, identifiers=identifiers)
+                report, candidates = inventory.Planner(source, mapping).run()
+                self.assertNotIn("Facility/example-premises", report["conflicts"])
+                facility = next(record for record in candidates if record["kind"] == "Facility")
+                self.assertEqual(facility["spec"]["identifiers"], identifiers)
+
+    def operational_mapping(self):
+        source, mapping = fixture()
+        _, records = inventory.Planner(source, mapping).run()
+        for record in records:
+            record["metadata"]["uid"] = "uid-" + record["metadata"]["name"]
+        facility = next(record for record in records if record["kind"] == "Facility")
+        existing = {"target": mapping["target"], "collections": ["Site", "Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"], "items": records}
+        mapping["operationalSites"] = [{"name": "site-stable", "displayName": "Example operational identity", "code": "EX3", "source": "dcim/sites/1", "verified": True, "facilityRefs": [{"name": facility["metadata"]["name"]}]}]
+        return source, mapping, existing
+
+    def test_site_mapping_is_explicit_and_observational(self):
+        source, mapping, existing = self.operational_mapping()
+        before = copy.deepcopy(existing)
+        report, records = inventory.Planner(source, mapping, existing).run()
+        self.assertEqual({}, report["conflicts"])
+        self.assertEqual(["Site"], [record["kind"] for record in records])
+        self.assertEqual("EX3", records[0]["spec"]["code"])
+        self.assertEqual([{"name": "example-premises"}], records[0]["spec"]["facilityRefs"])
+        self.assertEqual(before, existing)
+        self.assertEqual([], report["deletions"])
+        self.assertFalse(report["applied"])
+        self.assertEqual("Unknown", report["readiness"])
+        mapping.pop("operationalSites")
+        _, records = inventory.Planner(source, mapping, existing).run()
+        self.assertFalse(any(record["kind"] == "Site" for record in records))
+
+    def test_site_mapping_requires_verified_existing_names(self):
+        for invalid in ("unverified", "uid", "missing", "incomplete", "namespace", "deleting", "empty-name", "extra-namespace"):
+            with self.subTest(invalid=invalid):
+                source, mapping, existing = self.operational_mapping()
+                site = mapping["operationalSites"][0]
+                facility = next(record for record in existing["items"] if record["kind"] == "Facility")
+                if invalid == "unverified":
+                    site["verified"] = False
+                elif invalid == "uid":
+                    site["facilityRefs"][0]["uid"] = "other-uid"
+                elif invalid == "empty-name":
+                    site["facilityRefs"][0]["name"] = ""
+                elif invalid == "extra-namespace":
+                    site["facilityRefs"][0]["namespace"] = "other"
+                elif invalid == "missing":
+                    existing["items"] = []
+                elif invalid == "incomplete":
+                    existing["collections"].remove("Site")
+                elif invalid == "namespace":
+                    facility["metadata"]["namespace"] = "other"
+                else:
+                    facility["metadata"]["deletionTimestamp"] = source["observedAt"]
+                if invalid in ("uid", "empty-name", "extra-namespace"):
+                    report, records = inventory.Planner(source, mapping, existing).run()
+                    self.assertTrue(report["conflicts"])
+                    self.assertFalse(any(record["kind"] == "Site" for record in records))
+                else:
+                    with self.assertRaises(ValueError):
+                        inventory.Planner(source, mapping, existing).run()
+
+    def test_malformed_site_fields_are_quarantined(self):
+        invalid_fields = [("code", value) for value in ("", None, 1, [], "x" * 65)]
+        invalid_fields += [("displayName", value) for value in ("", None, 1, "x" * 254)]
+        invalid_fields += [("name", value) for value in ("", "premises..one", "premises.-one", "premises-.one", "x" * 254)]
+        invalid_fields += [("facilityRefs", value) for value in (None, [], "bad", [None], [{"name": "premises..one"}], [{"name": "example-premises"}] * 2, [{"name": "example-premises"}] * 65)]
+        invalid_fields += [("uid", "not-a-spec-field")]
+        for field, value in invalid_fields:
+            with self.subTest(field=field, value=value):
+                source, mapping, existing = self.operational_mapping()
+                mapping["operationalSites"][0][field] = value
+                report, records = inventory.Planner(source, mapping, existing).run()
+                self.assertTrue(report["conflicts"])
+                self.assertFalse(any(record["kind"] == "Site" for record in records))
+
+    def test_operator_handoff_supports_site_and_physical_candidates(self):
+        for sites in (True, False):
+            with self.subTest(sites=sites), tempfile.TemporaryDirectory() as directory:
+                source, mapping, existing = self.operational_mapping()
+                mapping["target"]["writer"] = "Operator"
+                if not sites:
+                    mapping.pop("operationalSites")
+                    existing["items"] = []
+                root = Path(directory)
+                for name, data in (("source", source), ("mapping", mapping), ("existing", existing)):
+                    inventory.write_private(root / (name + ".json"), data)
+                inventory.main(["plan", "--snapshot", str(root / "source.json"), "--mapping", str(root / "mapping.json"), "--existing", str(root / "existing.json"), "--output", str(root / "output"), "--handoff", "--allow-partial"])
+                handoff = json.loads((root / "output/handoff.json").read_text())
+                self.assertEqual("Operator", handoff["target"]["writer"])
+                self.assertIn("direct API", handoff["application"])
+                self.assertNotIn("Flux", handoff["application"])
+                self.assertFalse(handoff["applied"])
+
+    def test_valid_mapping_cannot_clear_same_source_quarantine(self):
+        source, mapping, existing = self.operational_mapping()
+        malformed = dict(mapping["operationalSites"][0], code="", name="malformed-site")
+        mapping["operationalSites"].insert(0, malformed)
+        report, records = inventory.Planner(source, mapping, existing).run()
+        self.assertTrue(report["conflicts"])
+        self.assertFalse(any(record["kind"] == "Site" for record in records))
+
+    def test_site_mapping_does_not_pin_server_uids(self):
+        source, mapping, existing = self.operational_mapping()
+        facility = next(record for record in existing["items"] if record["kind"] == "Facility")
+        facility["metadata"]["uid"] = "replacement-server-uid"
+        report, records = inventory.Planner(source, mapping, existing).run()
+        self.assertEqual({}, report["conflicts"])
+        self.assertEqual([{"name": "example-premises"}], records[0]["spec"]["facilityRefs"])
+        facility["metadata"].pop("uid")
+        report_without_uid, records_without_uid = inventory.Planner(source, mapping, existing).run()
+        self.assertEqual({}, report_without_uid["conflicts"])
+        self.assertEqual(records, records_without_uid)
+
+    def test_provider_identifier_collisions_are_qualified_not_inferred(self):
+        source, mapping = fixture()
+        identifiers = [{"provider": provider, "type": "PremisesCode", "value": "EX1"} for provider in ("example-a", "example-b")]
+        mapping["facilities"][0].update(identifiers=identifiers, identifiersVerified=True)
+        report, records = inventory.Planner(source, mapping).run()
+        self.assertEqual({}, report["conflicts"])
+        self.assertEqual(identifiers, next(record for record in records if record["kind"] == "Facility")["spec"]["identifiers"])
+        self.assertFalse(any(record["kind"] == "Site" for record in records))
+        mapping["facilities"][0]["identifiersVerified"] = False
+        with self.assertRaises(ValueError):
+            inventory.Planner(source, mapping).run()
+
+    def test_provider_metro_is_not_a_premises_identifier(self):
+        source, mapping = fixture()
+        mapping["facilities"][0].update(identifiers=[{"provider": "example", "type": "Metro", "value": "EX"}], identifiersVerified=True)
+        report, _ = inventory.Planner(source, mapping).run()
+        self.assertIn("Facility/example-premises", report["conflicts"])
+
     def setUp(self):
         self.source, self.mapping = fixture()
 

@@ -72,7 +72,7 @@ def sanitize(item):
 
 
 def name_ok(name):
-    return isinstance(name, str) and len(name) <= 253 and re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", name)
+    return isinstance(name, str) and len(name) <= 253 and re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*", name)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -188,8 +188,11 @@ class Planner:
         self.existing = existing
         if existing is not None and existing.get("target") != self.target:
             raise ValueError("Fleet snapshot target must exactly match the reviewed provider project, namespace and application")
-        if existing is not None and set(existing.get("collections", [])) != {"Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"}:
+        physical_kinds = {"Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"}
+        if existing is not None and set(existing.get("collections", [])) not in (physical_kinds, physical_kinds | {"Site"}):
             raise ValueError("Fleet snapshot must attest all six inventory collections, including empty ones")
+        if mapping.get("operationalSites") and (existing is None or "Site" not in existing.get("collections", [])):
+            raise ValueError("operational Site mapping requires a complete Fleet snapshot including Sites")
         self.previous = previous
         self.digest = digest(source)
         self.device_names, self.rack_names, self.feed_names = {}, {}, {}
@@ -235,6 +238,10 @@ class Planner:
             if key not in self.records or key.rsplit("/", 1)[0] not in ("dcim/sites", "dcim/locations"):
                 raise ValueError("facility source must name a present site or location")
             spec = {"displayName": facility["displayName"]}
+            if "identifiers" in facility:
+                if facility.get("identifiersVerified") is not True:
+                    raise ValueError("provider premises identifiers require explicit verification")
+                spec["identifiers"] = copy.deepcopy(facility["identifiers"])
             if facility.get("locationRef"):
                 spec["locationRef"] = local_ref(facility["locationRef"])
             self.add(key, "Facility", facility["name"], spec)
@@ -486,6 +493,39 @@ class Planner:
             name = self.stable_name("cable", reference_id(record))
             self.add(key, "Cable", name, {"displayName": record.get("label") or name, "medium": medium, "lanes": lanes})
 
+    def operational_sites(self):
+        existing = {record["kind"] + "/" + record["metadata"]["name"]: record for record in (self.existing or {}).get("items", [])}
+        malformed_sources = set()
+        sites = self.mapping.get("operationalSites", [])
+        if not isinstance(sites, list):
+            raise ValueError("operational Site mappings must be a list")
+        for site in sites:
+            if not isinstance(site, dict):
+                raise ValueError("operational Site mapping must be an object")
+            if site.get("verified") is not True:
+                raise ValueError("operational Site mapping requires explicit verified Facility references")
+            source = site.get("source", "")
+            if not isinstance(source, str) or source not in self.records or source.rsplit("/", 1)[0] not in ("dcim/sites", "dcim/locations"):
+                raise ValueError("operational Site source must name a present site or location")
+            refs = site.get("facilityRefs")
+            valid = (set(site) <= {"name", "displayName", "code", "source", "verified", "facilityRefs"}
+                     and name_ok(site.get("name"))
+                     and isinstance(site.get("displayName"), str) and 1 <= len(site["displayName"]) <= 253
+                     and isinstance(site.get("code"), str) and 1 <= len(site["code"]) <= 64
+                     and isinstance(refs, list) and 1 <= len(refs) <= 64
+                     and all(isinstance(ref, dict) and set(ref) == {"name"} and name_ok(ref["name"]) for ref in refs))
+            if not valid or len({ref["name"] for ref in refs}) != len(refs):
+                malformed_sources.add(source)
+                continue
+            for reference in site["facilityRefs"]:
+                facility = existing.get("Facility/" + reference.get("name", ""), {})
+                metadata = facility.get("metadata", {})
+                if set(reference) != {"name"} or not name_ok(reference.get("name")) or metadata.get("namespace") != self.namespace or metadata.get("deletionTimestamp"):
+                    raise ValueError("operational Site mapping requires a name-only reference to an existing Facility in this namespace")
+            self.add(source, "Site", site["name"], {"displayName": site["displayName"], "code": site["code"], "facilityRefs": copy.deepcopy(site["facilityRefs"])})
+        for source in malformed_sources:
+            self.mark(source, "unresolved", "malformed operational Site mapping; review field types, lengths and unique name-only references", self.report[source]["targets"])
+
     def reconcile(self):
         current = {}
         for record in (self.existing or {}).get("items", []):
@@ -553,6 +593,7 @@ class Planner:
         self.feeds()
         self.circuits()
         self.cables()
+        self.operational_sites()
         for key in self.records:
             collection = key.rsplit("/", 1)[0]
             if collection.startswith("dcim/") and collection.split("/")[1] in SUPPORT:
@@ -580,6 +621,8 @@ class Planner:
 def dependencies(record):
     spec = record["spec"]
     references = []
+    for reference in spec.get("facilityRefs", []):
+        references.append("Facility/" + reference["name"])
     for field, kind in (("claimRef", "DeviceClaim"), ("facilityRef", "Facility"), ("rackRef", "Rack")):
         if spec.get(field):
             references.append(kind + "/" + spec[field]["name"])
@@ -604,6 +647,28 @@ def validate_graph(records):
             if target not in records:
                 fail(key, "missing local reference " + target)
         spec = record["spec"]
+        if record["kind"] == "Site":
+            seen_names = set()
+            for reference in spec.get("facilityRefs", []):
+                target = records.get("Facility/" + reference.get("name", ""), {})
+                metadata = target.get("metadata", {})
+                if set(reference) != {"name"} or not name_ok(reference.get("name")) or metadata.get("namespace") != record["metadata"].get("namespace") or metadata.get("deletionTimestamp") or reference.get("name") in seen_names:
+                    fail(key, "invalid or unavailable Facility membership reference")
+                seen_names.add(reference.get("name"))
+        if record["kind"] == "Facility":
+            seen_identifiers = set()
+            identifiers = spec.get("identifiers", [])
+            if not isinstance(identifiers, list) or len(identifiers) > 64:
+                fail(key, "premises identifiers must be a list with at most 64 entries")
+                identifiers = []
+            for identifier in identifiers:
+                if not isinstance(identifier, dict) or set(identifier) != {"provider", "type", "value"} or not all(isinstance(value, str) for value in identifier.values()):
+                    fail(key, "premises identifier must contain only provider, type and value strings")
+                    continue
+                identity = tuple(identifier.get(field) for field in ("provider", "type", "value"))
+                if not name_ok(identifier.get("provider")) or identifier.get("type") not in ("PremisesCode", "PremisesAlias", "PremisesID") or not isinstance(identifier.get("value"), str) or not 1 <= len(identifier["value"]) <= 253 or identity in seen_identifiers:
+                    fail(key, "invalid provider-qualified premises identifier")
+                seen_identifiers.add(identity)
         components = {component["id"]: component for component in spec.get("components", [])}
         mapped_positions = set()
         for mapping in spec.get("internalMappings", []):
@@ -707,14 +772,17 @@ def main(argv=None):
     write_private(output / "report.json", report)
     if args.handoff:
         target = mapping.get("target", {})
-        if not args.existing or not mapping.get("revision") or not name_ok(target.get("project")) or not name_ok(target.get("namespace")) or target.get("writer") != "Flux" or target.get("application") != "provider-inventory":
-            raise ValueError("handoff requires an explicit provider project/namespace, reviewed mapping revision, Flux/provider-inventory target, and current Fleet snapshot")
+        direct = bool(mapping.get("operationalSites")) or target.get("writer") == "Operator"
+        if not args.existing or not mapping.get("revision") or not name_ok(target.get("project")) or not name_ok(target.get("namespace")) or target.get("writer") not in ("Flux", "Operator") or target.get("application") != "provider-inventory":
+            raise ValueError("handoff requires an explicit provider project/namespace, reviewed mapping revision, Operator (or legacy Flux)/provider-inventory target, and current Fleet snapshot")
         if report["collectionErrors"] or report["conflicts"]:
             raise ValueError("handoff blocked by incomplete source coverage or reconciliation conflicts; inspect the private report")
         if not args.allow_partial and any(row["classification"] in ("unresolved", "unsupported") for row in report["records"]):
             raise ValueError("handoff has unresolved or unsupported records; review the report and explicitly choose --allow-partial for a partial cohort")
         write_private(output / "candidates.json", {"apiVersion": "v1", "kind": "List", "items": candidates})
-        write_private(output / "handoff.json", {"target": target, "snapshotDigest": report["snapshotDigest"], "mappingDigest": digest(mapping), "existingDigest": digest(planner.existing), "candidateDigest": digest(candidates), "application": "review and add individual new records to the private Flux provider-inventory source; never replace or prune that source", "applied": False})
+        application = ("operator review and individual direct API creation of new records only; re-read authorized targets and check absence before creating; never update, replace, prune, or transfer existing ownership"
+                       if direct else "review and add individual new records to the private Flux provider-inventory source; never replace or prune that source")
+        write_private(output / "handoff.json", {"target": dict(target, writer="Operator") if direct else target, "snapshotDigest": report["snapshotDigest"], "mappingDigest": digest(mapping), "existingDigest": digest(planner.existing), "candidateDigest": digest(candidates), "application": application, "applied": False})
     print("Private report saved; observational candidates:", len(candidates), "(nothing applied)")
     counts = {state: sum(row["classification"] == state for row in report["records"]) for state in ("imported", "unresolved", "unsupported", "excluded")}
     print("Record classifications:", canonical(counts), "; collection errors:", len(report["collectionErrors"]), "; readiness: Unknown")

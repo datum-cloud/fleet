@@ -322,10 +322,13 @@ export interface CableEndpoint extends ComponentPosition {
 }
 export interface PhysicalRecord {
   metadata: ObjectMeta;
-  kind: 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
+  kind: 'Site' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
   spec: {
     displayName: string;
     provenance: Provenance;
+    code?: string;
+    facilityRefs?: LocalReference[];
+    identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];
     facilityRef?: LocalReference;
     rackRef?: LocalReference;
     locationRef?: LocalReference;

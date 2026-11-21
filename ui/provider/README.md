@@ -20,23 +20,25 @@ Operations in the navigation. The page has four tabs:
   profiles a class allows, the namespace and capacity-pool label of the
   MachineCapacities that serve it, and whether consumers get power control. Custom
   profiles and console access stay off.
-- **Inventory** (`inventory`) is a read-only hardware directory, starting with
-  Devices rather than installation claims. Six searchable categories cover
-  Devices, Facilities, Racks, Claims, Cables, and Power feeds. Query-string detail
+- **Inventory** (`inventory`) is a hardware directory, starting with
+  Devices rather than installation claims. Seven searchable categories cover
+  Devices, Operational sites, Facilities, Racks, Claims, Cables, and Power feeds. Query-string detail
   links retain the kind, namespace, and record name without adding host routes.
   Facilities lead to racks and installation plans; claims lead to all registered
   devices; cable endpoints lead to devices or feeds. Identity, typed components,
   internal paths, external service references, legacy peers, and provenance remain
   visible. Missing claims do not hide hardware, and historical registrations do
   not establish an active device. The original `inventory/:namespace/:claim`
-  route remains available for existing links. The plugin never writes inventory;
-  this is a UI limitation, not a requirement to manage inventory through Git.
+  route remains available for existing links. Authorized manual management uses
+  the existing guarded forms; Site membership and premises identifiers remain
+  direct API operations. Records are not managed through Git. See the
+  [Site–Facility contract](../../docs/development/site-facility-relationship.md).
 
 The portal proxy forwards the staff member's own token, so creating capacity,
 profiles and classes needs a Bare Metal role with `machinecapacities.create`,
 `machineprofiles.create` and `machineclasses.create` in the provider project,
 such as `metal.datumapis.com-provider`. The Inventory tab needs list access to
-all six physical kinds in `fleet.datumapis.com`, which
+the six physical kinds and observational Sites in `fleet.datumapis.com`, which
 `fleet.datumapis.com-inventory-viewer` grants; metal roles grant no inventory
 access. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.

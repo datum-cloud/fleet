@@ -55,6 +55,11 @@ useful operational outcomes.
 
 ### Site and cluster resources
 
+Implementation note: the additive [operational Site identity subset](../../development/site-facility-relationship.md)
+records identity and observational Facility membership only. The allocation
+selection below remains proposed; membership does not grant eligibility or
+authority and must not be substituted for this future policy.
+
 `Site` is an operational placement and capacity-sharing boundary. Geography
 belongs to `Location`; physical premises belong to the provider-neutral
 `Facility` in `fleet.datumapis.com`. A Site selects permitted

@@ -13,7 +13,10 @@ take ownership of it.
 
 This package implements a minimal subset of the
 [inventory lifecycle and trust proposal (#63)](https://github.com/datum-cloud/fleet/pull/63).
-It now has six operator-written kinds in `fleet.datumapis.com/v1alpha1`.
+It has six physical kinds plus the observational operational `Site` kind in
+`fleet.datumapis.com/v1alpha1`. See the implemented
+[Site–Facility relationship](../development/site-facility-relationship.md) for
+stable membership references, provider premises identifiers and rollout gates.
 The primary workflow is **manual entry, operator review, and explicit record
 ownership**. Authorized direct API creation is supported for new/imported records;
 legacy Flux-owned records require a reviewed ownership transition before edits

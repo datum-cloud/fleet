@@ -1,5 +1,9 @@
 # Staff physical inventory UI
 
+The additive [Site–Facility directory](site-facility-relationship.md) extends this
+baseline with operational Site reads and provider-qualified premises identifiers.
+Its identity/membership fields are managed by direct API, not new UI forms.
+
 Local, uncommitted implementation on `0b6c8977227157575d388a42aac127769258f998`
 (PR95 merged into `feat/manual-inventory-records`). This phase does not publish,
 deploy, import records, change IAM membership, or change inventory ownership.

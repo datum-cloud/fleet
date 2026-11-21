@@ -8,6 +8,13 @@ function response(data: unknown, status = 200) {
 }
 
 describe('physical inventory reads', () => {
+  it('preserves legacy physical inventory while the Site API is not installed', async () => {
+    const facility = { kind: 'Facility', metadata: { name: 'legacy', namespace: 'inventory' }, spec: { displayName: 'Legacy premises' } };
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.includes('/sites?') ? response(undefined, 404) : response({ items: url.includes('/facilities?') ? [facility] : [] }))));
+    const inventory = await fetchInventory();
+    expect(inventory.physical).toEqual([facility]);
+    expect(inventory.issues).toEqual({ Site: { status: 404 } });
+  });
   it('reads every page with the project proxy and only GET', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ items: [{ id: 1 }], metadata: { continue: 'opaque+/=' } })).mockResolvedValueOnce(response({ items: [{ id: 2 }] }));
     vi.stubGlobal('fetch', fetch);
@@ -22,14 +29,14 @@ describe('physical inventory reads', () => {
     await expect(fetchInventoryCollection('racks')).rejects.toThrow('completeness Unknown');
   });
 
-  it('reads all six collections and retains per-kind denial without fake inventory', async () => {
+  it('reads six physical collections and Sites and retains per-kind denial without fake inventory', async () => {
     const fetch = vi.fn().mockResolvedValue(response({ items: [] }));
     vi.stubGlobal('fetch', fetch);
     expect((await fetchInventory()).physical).toEqual([]);
-    expect(fetch).toHaveBeenCalledTimes(6);
+    expect(fetch).toHaveBeenCalledTimes(7);
     fetch.mockResolvedValue(response(undefined, 403));
     const inventory = await fetchInventory();
-    expect(Object.values(inventory.issues ?? {})).toEqual(Array.from({ length: 6 }, () => ({ status: 403 })));
+    expect(Object.values(inventory.issues ?? {})).toEqual(Array.from({ length: 7 }, () => ({ status: 403 })));
     expect(inventory.physical).toEqual([]);
   });
 

@@ -19,8 +19,9 @@ import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { FacilityOverview, RackOverview, inventoryHref as href } from './inventory-location';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
+import { facilityIdentifiers, facilitySites, siteFacilities } from '../lib/site-membership';
 
-type Kind = 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed';
+type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
 const sections = [
   {
@@ -28,6 +29,12 @@ const sections = [
     title: 'Devices',
     icon: HardDrive,
     description: 'Physical hardware, identity, and recorded connections.',
+  },
+  {
+    kind: 'Site',
+    title: 'Operational sites',
+    icon: Building2,
+    description: 'Internal operational identity and recorded premises membership. Not placement eligibility or authority.',
   },
   {
     kind: 'Facility',
@@ -204,6 +211,8 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
         : 'Claim record not found';
     }
     const record = entry.record as PhysicalRecord;
+    if (entry.kind === 'Site') return 'Operational membership only';
+    if (entry.kind === 'Facility') return facilitySites(record, inventory);
     if (record.spec.rackRef) return inventory.issues?.Rack ? 'Rack unavailable' : record.spec.rackRef.name;
     if (record.spec.facilityRef) return inventory.issues?.Facility ? 'Facility unavailable' : record.spec.facilityRef.name;
     return 'Not recorded';
@@ -213,6 +222,8 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
     if (entry.kind === 'DeviceClaim')
       return modelLabel((entry.record as RawDeviceClaim).spec.expectedIdentity);
     const record = entry.record as PhysicalRecord;
+    if (entry.kind === 'Site') return `Operational Site · ${record.spec.code}`;
+    if (entry.kind === 'Facility') return facilityIdentifiers(record);
     if (entry.kind === 'Rack')
       return record.spec.heightUnits ? `${record.spec.heightUnits}U rack` : 'Height not recorded';
     if (entry.kind === 'Cable')
@@ -341,7 +352,18 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
         {kind === 'Facility' && <FacilityOverview facility={record as PhysicalRecord} inventory={inventory} />}
         {kind === 'Rack' && <RackOverview rack={record as PhysicalRecord} inventory={inventory} />}
         <dl className="inventory-fields">
+          {kind === 'Site' && <>
+            <Field label="Internal Site code">{(record as PhysicalRecord).spec.code}</Field>
+            <Field label="Physical premises">{siteFacilities(record as PhysicalRecord, inventory).map((membership, index) => <div key={index}>{membership.facility ? <>{reference('Facility', namespace, membership.facility.metadata.name)} · {facilityIdentifiers(membership.facility)}</> : membership.state}</div>)}{!inventory.issues?.Facility && !(record as PhysicalRecord).spec.facilityRefs?.length && 'Unmapped · no Facilities recorded'}</Field>
+            <Field label="Authority">Membership grants no placement eligibility, capacity, or operational authority.</Field>
+            <Field label="Reference semantics">Facility references follow namespace/name. Recreating a name resolves to the replacement; this does not verify physical continuity.</Field>
+          </>}
+          {kind === 'Facility' && <>
+            <Field label="Provider premises identifiers">{facilityIdentifiers(record as PhysicalRecord)}</Field>
+            <Field label="Operational sites">{facilitySites(record as PhysicalRecord, inventory)}</Field>
+          </>}
           <Field label="Record name">{record.metadata.name}</Field>
+          {kind === 'Site' && <Field label="Resource UID">{record.metadata.uid}</Field>}
           <Field label="Namespace">{namespace || 'Not recorded'}</Field>
           {device && (
             <>

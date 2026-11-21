@@ -57,6 +57,10 @@ logical attachments, address allocation, and switch configuration. Galactic owns
 fabric and routing intent. DNS, certificates, and service addresses stay with
 their owning services. Fleet consumes these contracts and their evidence.
 
+The implemented [Site identity and Facility membership subset](../development/site-facility-relationship.md)
+is observational only. Proposed Site placement policy remains unimplemented;
+membership does not change the actual Location/ServiceAvailability authority.
+
 The [PXE enhancement](../enhancements/pxe-installation/README.md) defines the target
 Metal installation contract, with Fleet as an optional provider implementation.
 It supersedes older image-only examples for current design work without rewriting
