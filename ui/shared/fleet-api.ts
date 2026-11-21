@@ -289,9 +289,12 @@ export interface Device {
 }
 
 export interface ReportedPlacement {
-  revision: 1;
+  revision: number;
   observedAt: string;
-  snapshotDigest: string;
+  snapshotDigest?: string;
+  method?: 'Manual' | 'NetBoxImport';
+  reason?: string;
+  reference?: string;
   facilityRef?: LocalReference;
   rackRef?: LocalReference;
   position?: number;
