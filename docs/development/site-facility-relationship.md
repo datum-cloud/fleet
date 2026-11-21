@@ -174,6 +174,23 @@ requested. Existing target differences still block automatic updates or takeover
 All candidate changes, including identifiers on an existing Facility, require
 separate operator review. Name similarity never creates a mapping.
 
+Malformed Site names, code/display-name types or lengths, unknown mapping fields,
+and malformed, duplicate or oversized reference lists quarantine the source's
+candidate cohort. Missing verification, unavailable referenced premises or an
+unusable source/snapshot fail closed before handoff. New reference and provider
+names enforce DNS subdomain label boundaries (no empty labels or leading/trailing
+hyphens within labels). This does not migrate unrelated legacy CRD references.
+
+For new imports use target `writer: Operator` and `application: provider-inventory`
+in both the mapping and matching Fleet snapshot. Handoffs containing operational
+Site mappings always prescribe individually reviewed direct API creation, including
+when an older snapshot attests a Flux target. The receipt records `writer: Operator`
+for that new cohort; the original mapping/snapshot digests preserve the reviewed
+inputs. It does not transfer existing record ownership or authorize updates.
+Legacy physical-only Flux handoffs remain supported solely for compatibility;
+they are not the operational Site workflow. All handoffs remain offline and require
+fresh authorized reads and absence checks before any separately approved creation.
+
 ## Rollout and remaining gates
 
 1. Review and deploy CRD/IAM definitions through the existing packaging path,
@@ -200,6 +217,7 @@ premises truth or production readiness.
 ```sh
 go test -race ./internal/api/inventory/v1alpha1 ./internal/location
 python3 -m unittest discover -s hack -p 'test_*inventory.py'
+python3 -m unittest discover -s hack -p 'test_pr100_independent.py'
 python3 -m unittest discover -s hack -p 'test_device_placement.py'
 (cd ui/provider && pnpm test && pnpm typecheck && pnpm build)
 (cd ui/consumer && pnpm test && pnpm typecheck && pnpm build)
@@ -214,9 +232,10 @@ scenarios. Existing six-collection request-count assertions now count seven;
 their denial, session lifetime, operation and no-write assertions remain intact.
 
 Local validation on this implementation passed the full `go test -race ./...`
-suite (the two manager envtest tests skip without `KUBEBUILDER_ASSETS`), provider
-and consumer tests/typechecks/builds, 34 importer tests, six reported-placement
-planner tests, inventory manifest rendering, local documentation links and
+suite with Kubernetes 1.37 envtest assets, provider (392) and consumer (44)
+tests/typechecks/builds, 37 importer tests plus three independent importer
+regressions, six reported-placement planner tests, inventory and Milo manifest
+rendering, local documentation links and
 whitespace checks. This is not authenticated staging acceptance. Mobile inspection
 was attempted at 390×844 with synthetic fixtures, but both browser snapshots timed
 out; the alternate browser host reported unavailable. Visual mobile acceptance

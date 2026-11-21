@@ -104,8 +104,53 @@ class PlanTests(unittest.TestCase):
                     facility["metadata"]["namespace"] = "other"
                 else:
                     facility["metadata"]["deletionTimestamp"] = source["observedAt"]
-                with self.assertRaises(ValueError):
-                    inventory.Planner(source, mapping, existing).run()
+                if invalid in ("uid", "empty-name", "extra-namespace"):
+                    report, records = inventory.Planner(source, mapping, existing).run()
+                    self.assertTrue(report["conflicts"])
+                    self.assertFalse(any(record["kind"] == "Site" for record in records))
+                else:
+                    with self.assertRaises(ValueError):
+                        inventory.Planner(source, mapping, existing).run()
+
+    def test_malformed_site_fields_are_quarantined(self):
+        invalid_fields = [("code", value) for value in ("", None, 1, [], "x" * 65)]
+        invalid_fields += [("displayName", value) for value in ("", None, 1, "x" * 254)]
+        invalid_fields += [("name", value) for value in ("", "premises..one", "premises.-one", "premises-.one", "x" * 254)]
+        invalid_fields += [("facilityRefs", value) for value in (None, [], "bad", [None], [{"name": "premises..one"}], [{"name": "example-premises"}] * 2, [{"name": "example-premises"}] * 65)]
+        invalid_fields += [("uid", "not-a-spec-field")]
+        for field, value in invalid_fields:
+            with self.subTest(field=field, value=value):
+                source, mapping, existing = self.operational_mapping()
+                mapping["operationalSites"][0][field] = value
+                report, records = inventory.Planner(source, mapping, existing).run()
+                self.assertTrue(report["conflicts"])
+                self.assertFalse(any(record["kind"] == "Site" for record in records))
+
+    def test_operator_handoff_supports_site_and_physical_candidates(self):
+        for sites in (True, False):
+            with self.subTest(sites=sites), tempfile.TemporaryDirectory() as directory:
+                source, mapping, existing = self.operational_mapping()
+                mapping["target"]["writer"] = "Operator"
+                if not sites:
+                    mapping.pop("operationalSites")
+                    existing["items"] = []
+                root = Path(directory)
+                for name, data in (("source", source), ("mapping", mapping), ("existing", existing)):
+                    inventory.write_private(root / (name + ".json"), data)
+                inventory.main(["plan", "--snapshot", str(root / "source.json"), "--mapping", str(root / "mapping.json"), "--existing", str(root / "existing.json"), "--output", str(root / "output"), "--handoff", "--allow-partial"])
+                handoff = json.loads((root / "output/handoff.json").read_text())
+                self.assertEqual("Operator", handoff["target"]["writer"])
+                self.assertIn("direct API", handoff["application"])
+                self.assertNotIn("Flux", handoff["application"])
+                self.assertFalse(handoff["applied"])
+
+    def test_valid_mapping_cannot_clear_same_source_quarantine(self):
+        source, mapping, existing = self.operational_mapping()
+        malformed = dict(mapping["operationalSites"][0], code="", name="malformed-site")
+        mapping["operationalSites"].insert(0, malformed)
+        report, records = inventory.Planner(source, mapping, existing).run()
+        self.assertTrue(report["conflicts"])
+        self.assertFalse(any(record["kind"] == "Site" for record in records))
 
     def test_site_mapping_does_not_pin_server_uids(self):
         source, mapping, existing = self.operational_mapping()

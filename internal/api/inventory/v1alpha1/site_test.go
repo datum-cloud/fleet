@@ -82,6 +82,23 @@ func TestSiteAndFacilityAdmission(t *testing.T) {
 	}
 }
 
+func TestSiteReferenceAndProviderDNSLabelBoundaries(t *testing.T) {
+	for _, name := range []string{"premises..one", "premises.-one", "premises-.one", "Upper", "_invalid"} {
+		facility := syntheticFacility()
+		facility.Spec.Identifiers[0].Provider = name
+		if errs := admit(t, "Facility", object(t, facility), nil); len(errs) == 0 {
+			t.Fatalf("accepted invalid provider namespace %q", name)
+		}
+	}
+	for _, name := range []string{"premises", "premises.one", "premises-one.provider-two"} {
+		site := syntheticSite()
+		site.Spec.FacilityRefs[0].Name = name
+		if errs := admit(t, "Site", object(t, site), nil); len(errs) != 0 {
+			t.Fatalf("rejected valid reference %q: %v", name, errs)
+		}
+	}
+}
+
 type deniedFacilityReader struct{ client.Reader }
 
 func (deniedFacilityReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
