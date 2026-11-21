@@ -36,9 +36,9 @@ describes a separately invoked review aid, not an automated migration.
 | Aspect | State |
 | --- | --- |
 | CRDs and Go types | Implemented in `config/components/inventory` and `internal/api/inventory/v1alpha1`. |
-| Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and three IAM roles. Management and synthetic-staging overlays install none of them. |
+| Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and four IAM roles. Management and synthetic-staging overlays install none of them. |
 | Staff portal | Six-kind hardware directory in the Bare Metal provider plugin (`ui/provider`), with permission-aware browsing and limited authorized Facility/Rack creation and portal-owned name edits. See [implementation scope](../development/staff-inventory-ui.md). |
-| Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds and synthetic importer output. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
+| Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds and synthetic importer output. IAM tests check ProtectedResource shape, the exact permissions and inherited role of each inventory role, and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
 | Controllers | None for inventory. Staff browsing is read-only; no reconciler accepts plans, verifies hardware, discovers or synchronizes NetBox, or publishes eligibility. Flux applies only operator-reviewed Git records. |
 | Hardware qualification | None. Records hold operator-entered facts, not verified hardware state. |
 
@@ -98,6 +98,15 @@ created, so an importer cannot take over records another writer owns. Which
 kinds an importer creates is the importer's decision; Fleet does not encode
 any source system in the role. Binding it, scoped to the provider project, is
 the explicit opt-in for that identity to write.
+
+An importer must create records with a plain create. Server-side apply also needs
+`patch`, which the importer role withholds, so an apply fails even for a new
+record.
+
+Create-only does not stop an importer from referencing another writer's record.
+A new Device can name any existing DeviceClaim in `claimRef`, and `claimRef` is
+immutable, so an importer that registers a Device first binds that hardware to
+the claim. Nothing in the role limits an importer to claims it created.
 
 A Project resource selector is project-wide, not a namespace filter. These
 ProtectedResources have Project parents, and a binding's `metadata.namespace`
