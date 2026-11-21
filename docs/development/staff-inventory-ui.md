@@ -1,251 +1,187 @@
-# Staff hardware directory
+# Staff physical inventory UI
 
-Local implementation on the PR94 baseline (`bebb7eba0af040bd1234a736c8a9c8aeee47b5d8`),
-not a deployment or a change to inventory ownership. The
-[provider plugin](../../ui/provider/README.md) remains the existing staff-portal
-Module Federation remote. Contracts come from the current six-kind API, not the
-broader [inventory proposal](../proposals/fleet-management/inventory.md).
+Local, uncommitted implementation on `0b6c8977227157575d388a42aac127769258f998`
+(PR95 merged into `feat/manual-inventory-records`). This phase does not publish,
+deploy, import records, change IAM membership, or change inventory ownership.
+The [provider plugin](../../ui/provider/README.md) remains the existing staff-portal
+Module Federation remote. The implemented six-kind API, not the broader
+[inventory proposal](../proposals/fleet-management/inventory.md), bounds the UI.
 
-## Design direction
+## Native Pencil comparison
 
-Inspected `/Users/scotwells/Downloads/asset-inventory.pen` as read-only JSON, not
-`iam.pen`. Relevant native frames are Physical Devices (`IqwfB`), Locations
-(`IReVL`), Site Detail (`fbmDU`), Rack Detail (`Kick4`), Cable Plant (`qLV4T`), and
-Rack Elevation (`i8lb9P`). The 1440×900 screens use a compact sidebar, a heading
-and description, search/filter row, bordered tables, location drill-downs, and
-separate rack/connection detail. Reuse those information patterns within the
-existing portal shell rather than introducing the design's second sidebar.
-
-Pencil `get_app_state` and `read_skill` both failed with
-`transport not connected to app: desktop`; no Pencil app was available locally.
-Consequently native visual rendering of the source design is **not verified**.
-The structural review is not a claim of pixel-faithful implementation. The source
-was never written. Its observed SHA-256 is
+Read and rendered `/Users/scotwells/Downloads/asset-inventory.pen` with Pencil's
+native Get, TakeScreenshot and Export tools. No design mutations were made.
+Source SHA-256:
 `1c20996c68b29206597c69ad2bd6b7833854b906427b2ec30d63b6afd0c40590`.
 
-## Implemented locally
+Inspected Physical Devices (`IqwfB`), Locations (`IReVL`), Site Detail (`fbmDU`),
+Rack Detail (`Kick4`), Rack Elevation (`i8lb9P`), Cable Plant (`qLV4T`), device
+create/edit (`owtU7`, `txtZw`), site registration (`lj6gc`), add-device panel
+(`vSVae`), non-racked equipment (`GcX1u`), and cable creation (`zFUzi`). Native
+exports of Devices, Rack Detail and Cable Plant are retained locally under
+`/tmp/fleet-pencil-reference/`; they are not runtime assets.
 
-- Hardware-first Devices list, plus Facilities, Racks, Claims, Cables and Power
-  feeds with actual record counts, search, detail links, and category empty states.
-- Kind/namespace/name query links support host navigation without adding exposed
-  modules. Same-namespace typed references resolve to descriptive labels; missing
-  references remain visible and never resolve to another namespace's namesake.
-- Facilities and racks expose installation plans. A plan's placement remains
-  planned, not proof of a device's present location. Legacy location strings are
-  displayed but do not fabricate typed relationships.
-- Devices retain serials, asset tags, UUIDs, provider/source identifiers, BMC
-  endpoint text, typed components, internal mappings, service references, legacy
-  interfaces/peers, unmapped MACs, and provenance. All registrations remain visible.
-- Cable lanes preserve both typed endpoint references and component positions.
-  Power feeds show supply ratings, terminations, and external upstream references.
-- Verification and implementation caveats move into contextual disclosures;
-  occupancy and power uncertainty remain beside the relevant facts. The optional
-  report file picker is removed. Inventory editing is not framed as Git-only.
-- Existing six-kind API reads, pagination, federation exports, and the old
-  claim-detail route are retained. Narrow authorized record management is
-  described below. No sync, provisioning, capacity authorization, IPAM, routing,
-  or billing behavior is added.
-- Local fixture preview now compiles the installed Datum UI theme. The preview
-  stylesheet is isolated from federated pages; inventory CSS uses host tokens.
+| Design pattern | Before this phase | Local implementation |
+| --- | --- | --- |
+| Compact heading, search/filter, dense bordered rows | Duplicate Bare Metal and inventory headings; six large kind tiles | Inherited portal tabs, compact category tabs and one section heading; real model/facility/medium filters |
+| Location drill-down | Generic record/relationship directory | Facility racks and facility-only equipment; descriptive facility → rack → equipment links |
+| Front/rear elevation beside equipment | Placement text only | Recorded plan geometry beside equipment; separate unpositioned and non-unit mounts |
+| Device identity and components | Read-only generic details | Hardware registration with typed components; immutable identity preserved in details |
+| Cable plant and endpoints | Generic records | Endpoint columns, medium filter, lane details and typed endpoint creation |
+| Restrained physical forms | Facility/Rack only | Facility, Rack, installation plan, Device and Cable creation with permission checks |
 
-## Management and authorization contract
+The result follows the actual design's information layout, not its invented
+operational facts. The host sidebar is not duplicated. Phone layouts stack
+sections and keep wide tables internally scrollable. This is not a claim of
+pixel identity or completed authenticated staging acceptance.
 
-The integrated companion IAM role is `fleet.datumapis.com-inventory-manager`,
-inheriting `fleet.datumapis.com-inventory-viewer` and adding create/update/patch
-for all six kinds. Its empty `physical-inventory-managers` group is bound to
-the `datum-cloud` Project, not only the `default` namespace. Existing staff
-viewers remain readers. The Fleet role and regression tests are included here;
-the infra group/binding patch is separate and has not been applied by this work.
-No live membership, grant, or deployed authorization is asserted. The UI never checks
-group names or assumes staff membership permits a write.
+## Supported workflows
 
-Locally implemented management is deliberately narrower than that role:
+- Browse Devices, Facilities, Racks, Installation plans (the API's DeviceClaim),
+  Cables and Power feeds. Counts are loaded records, not verified hardware.
+- Search recorded values; filter by actual model, facility and cable medium.
+  Namespaced detail links, typed references and historical registrations remain.
+- Rack elevation renders only complete, in-range RackUnits plans with a known
+  front/rear face and known rack height. Blank units are unverified, never free
+  capacity. Unknown placement stays in the explicit unpositioned section;
+  NonRackUnitMount remains separate. Multiple registrations do not select an
+  active device. Overlapping plans are labeled for review, not resolved silently.
+- Create Facility/Rack facts; rack height is optional. Create an Installation
+  plan at a known Facility or Rack with unknown unit position, then separately
+  register a Device with a real serial or system UUID and typed components.
+  This is not an atomic multi-record workflow or an adoption operation.
+- Create Cable records with a medium and named lanes using existing readable
+  Device/PowerFeed components with recorded positions. No guessed ports, cable
+  lengths or live connectivity. Reference owner UID/resourceVersion is retained
+  and checked before creation; the API still cannot atomically reserve endpoints.
+- Edit display name and recording details only for records with established
+  portal ownership. No device identity, claim binding, components, topology,
+  placement, lifecycle, status or operational changes are exposed through edit.
 
-- Facility and Rack creation by namespaced POST, without apply or overwrite.
-  The namespace defaults to `default` but is editable; it is not an IAM boundary.
-  Rack creation requires an existing same-namespace Facility. Unknown height
-  remains absent; known height must be a whole number from 1 through 100.
-- Display-name edits only for Manual records whose managed fields all belong to
-  `fleet-staff-inventory-ui`, with no import source, deletion marker, or detected
-  Flux/Argo/ownership marker. Flux-owned, imported, and unknown-writer records
-  remain read-only with an ownership-review explanation. IAM grants do not
-  transfer ownership. A reviewed transition for migrated records remains open.
-- Before enabling controls and again before submission, POST a
-  `SelfSubjectAccessReview` to the provider project's control-plane authorization
-  API for the exact namespace/resource/name and create or patch verb. Missing,
-  denied, errored, or unresolved permission reviews fail closed. The actual
-  inventory API must still authorize the request using the signed-in user's token.
-- Edits re-read the record and revalidate ownership, UID and resourceVersion.
-  JSON Patch tests UID and resourceVersion atomically, changing only displayName
-  and provenance with a newer recordedAt. Identity, claim binding, placement,
-  topology and lifecycle fields remain untouched. No delete/status controls exist.
-- Submit denial, expiry, and conflicts retain safe input without reporting
-  success. Ambiguous network/server failures stop repeat submission and ask the
-  operator to inspect inventory before another attempt.
-- Every imperative create/edit requires an operation lease tied to both the form
-  lifetime and host session generation. The router subscription invalidates it
-  synchronously when revalidation/navigation begins or identity changes, before
-  React needs to commit an unmount. Blur, page hide, hidden-document and unmount
-  boundaries also revoke it. Each awaited permission/record prerequisite is
-  followed by an authority check before any write dispatch. Revoked work never
-  dispatches a later POST/PATCH under the next cookie session.
-- An already-dispatched write cannot be recalled by invalidating its lease.
-  Its late response (including success) remains an unknown outcome to the stale
-  operation. No automatic retry, cancellation-success or late save confirmation
-  is produced. Refresh and inspect authoritative inventory before another attempt.
-- Opening an edit captures a deep copy of its original UID/resourceVersion and
-  display name. Refreshing props never advances that open form's baseline. A
-  concurrent change produces a conflict while retaining input; explicitly closing
-  and reopening starts a new reviewed baseline.
+## Authorization, ownership and concurrency
 
-Host integration was inspected at staff-portal HEAD
-`b1489125fe5b77ea6fc379ad378c8e1951174de5` on November 20, 2026:
+The existing `fleet.datumapis.com-inventory-manager` role inherits the viewer and
+adds create/update/patch for six kinds, project-wide. The UI uses exact-resource
+SelfSubjectAccessReviews and the signed-in principal's API request, never group
+names or staff membership. Role/binding deployment and membership are separate
+work; nothing here asserts their live state. There are no delete/status grants.
 
-- `app/server/routes/internal.ts` accepts all methods under `/api/internal/*`.
-  `app/server/lib/proxy.ts` forwards method, body, Content-Type and the caller's
-  bearer token, including SSAR POST, inventory POST and JSON Patch.
-- `app/server/middleware/auth.ts` requires an authenticated staff session.
-  `same-origin.ts` additionally rejects mutation requests without matching
-  Origin or same-origin fetch metadata. The browser sends ordinary same-origin
-  requests; the plugin neither manufactures auth headers nor bypasses this check.
-- `app/server/response.ts` returns successful data in the `data` envelope with
-  HTTP 200 and no-store headers, and errors with their actual HTTP status and
-  `error` string. The plugin does not depend on upstream creation returning 201.
-- `app/layouts/milo.layout.tsx` loads `requireStaffUser`, which returns the
-  authenticated IAM User; the route ID is `layouts/milo.layout` in `app/routes.ts`.
-  The plugin reads only its metadata UID/name, never tokens or group claims.
-- `app/routes/auth/logout.tsx` redirects out of the protected layout; OAuth
-  login/callback remount it. The host's QueryClient is a module singleton and
-  is not cleared by logout, so inventory must not reuse its caches across users.
+Inventory is direct API/operator-managed, not GitOps-only. Import provenance is
+history, **not evidence of Flux ownership**. Legacy Flux-managed records keep
+their writer until an explicit safe transition. This UI's deliberately narrow
+edit policy still requires Manual provenance and exclusively
+`fleet-staff-inventory-ui` managed fields, with no import/deletion/other-owner
+markers. Imported and unknown-writer records remain read-only pending an agreed
+writer/ownership policy; API authorization alone does not establish a handover.
+New authorized API records do not require editing Git.
 
-The existing access-review contract was inspected at cloud-portal commit
-`116ffb527a0c4acc1e28257c7b2b686967d46e5c` (access-review resource service/schema
-and generated authorization SDK). This verifies source support, not the revision
-running in staging or deployed upstream SSAR grants. Live acceptance must verify
-the deployed host revision, same-origin configuration and upstream authorization.
-No new proxy endpoint or IAM permission is invented by this implementation.
+Before writes, the UI renews exact create/patch permission. Hardware references
+are re-read and checked against selected UID/resourceVersion and lifecycle/type.
+Each awaited prerequisite rechecks the operation authority. Edits freeze their
+original UID/resourceVersion and use atomic JSON Patch test operations. They do
+not silently adopt a refreshed baseline. No automatic write retries occur.
 
-## Viewing and denial behavior
+Existing session protections are retained: principal-isolated QueryClients,
+authority invalidation at session/revalidation/navigation/background/unmount
+boundaries, fresh authority generations even for React-batched revalidation,
+and generation-guarded focus checks. Already-dispatched uncertain outcomes stay
+unknown rather than becoming cancelled-success. This phase does not modify the
+session-boundary or operation-authority implementations.
 
-Collection results are handled independently. Forbidden categories are hidden;
-explicit links to them show calm access guidance, not empty or zero inventory.
-Other readable categories remain accessible. Unavailable categories show no
-count. Both query-linked details and the existing claim detail route handle
-denial. Session expiry (401), access needed (403), unavailable API (404), missing
-record, and transient failure have separate plain-language states. No raw proxy
-errors, global error toast, invented request-access flow, or automatic retry loop
-is introduced.
+Read-only users browse without enabled writes. No-read and direct-link denials
+show calm access guidance, not empty/zero inventory. Partial collection failures
+preserve readable sections and do not offer inaccessible references as choices.
+401, 403, 404 and transient errors remain distinct. Submit denial retains safe
+input, blocks retries and explains the change. Restricted cached records are
+removed on an observed denial/session boundary. Reads are manually refreshed;
+this is not instantaneous notification of a server-side grant change during an
+idle session. Detail pages now offer the same explicit Refresh inventory action.
 
-Inventory runs under a private QueryClient keyed to the host loader's authenticated
-principal, not the host's persistent singleton. Missing host identity fails closed;
-the standalone preview explicitly opts into a separate preview context. Principal
-changes synchronously replace the query scope. Blur, page hide and hidden-document
-events remove inventory and clear its private cache. Focus, visibility restoration
-and back-forward-cache restoration revalidate the actual protected host loader
-before mounting a fresh inventory view. Pending/failed revalidation cannot render
-old records. Focus checks carry a generation and foreground/visibility condition;
-obsolete completions cannot undo a later hide or a newer check. This intentionally
-resets open forms on session/background boundaries;
-submit denial while the view remains active still retains safe unsaved input.
-There is no automatic save or retry when returning to a page.
+### Retained host source evidence
 
-Completed route navigation starts a new operation scope and query cache, even
-when the principal is unchanged. Pending navigation unmounts the inventory view;
-old operations stay revoked rather than being reactivated for new forms.
-The host router subscription also tracks completed revalidation generations.
-Even if React batches loading and idle without rendering a loading screen,
-completion replaces the scope and cache; it never renews old operation objects.
-Inventory queries are also isolated per mounted view and refresh manually.
-Known-denied collections are removed
-from the rendered data, including stale supplied results and related names;
-global session failure suppresses the inventory. Instantaneous server-side role
-revocation while an idle page stays foregrounded is not observable without a
-server event; the next read or submit enforces the new result. Live revocation
-and total effective grants require integration testing; synthetic checks do not
-prove deployed authorization.
+The prior implementation inspected staff-portal source at
+`b1489125fe5b77ea6fc379ad378c8e1951174de5`: `app/server/routes/internal.ts`
+accepts methods under `/api/internal/*`; `app/server/lib/proxy.ts` forwards body,
+Content-Type and the caller's token, supporting SSAR POST, inventory POST and
+JSON Patch. Authentication and same-origin middleware still apply. Successful
+responses use an HTTP 200 `data` envelope; failures retain actual HTTP status
+and an `error` string. No new proxy method is assumed by the added forms.
 
-## Deliberate gaps
+The protected `layouts/milo.layout` loader supplies the IAM User metadata
+UID/name. The host QueryClient is a singleton and must not be reused for private
+inventory across principals. The existing plugin boundary provides the isolated
+cache and synchronous router invalidation. Source support does not prove the
+deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 
-| Design capability | Current boundary |
+## Deliberate gaps and decisions
+
+| Interaction | Remaining boundary |
 | --- | --- |
-| Device/Claim/Cable/PowerFeed create/edit, assign device, placement actions | Not implemented. The proposed manager role permits record writes, but safe field/lifecycle forms and ownership transitions remain to be designed. Facility/Rack creation and portal-owned display-name editing are the only write affordances. Deletion is excluded entirely. |
-| Online/active/connected badges, verified occupancy, free rack units, power utilization or redundancy | The API has no verification status/evidence projection. Do not infer them from records, dimensions, port count, or ratings. |
-| Front/rear rack elevation | Deferred. Planned positions are displayed as text, including partial and non-rack-unit placement; no empty space is depicted as available. |
-| Device type filters and primary IP | No authoritative device-role/primary-IP fields in this inventory contract. Models, identifiers and existing management endpoint text are shown instead. |
-| Cages, maps, site address, circuit/service CRUD, hosted infrastructure | Not represented by the six-kind API. External service identities remain references, not new Fleet authorities. |
-| Audit timeline and active replacement | Provenance and all registrations are visible, but neither constitutes a complete revision history or verified active binding. |
-| Native Pencil comparison and real host integration | Pencil desktop connection was unavailable. Browser checks use the existing local harness with synthetic data; production staff-portal authentication/proxy and deployment are not exercised. |
+| Imported/other-writer edits | Requires a reviewed ownership policy/transition, not a Git-only requirement; do not simply remove guards |
+| Rack position entry, move/assign equipment | Not exposed; immutable installation/binding and handover semantics need an explicit workflow. New plan creation records unknown position only |
+| PowerFeed creation; component or endpoint edits | API kinds exist, but these forms are not implemented. Existing records remain browsable; no dead action buttons |
+| Online/active/connected badges, occupancy/free units, power utilization | No verified evidence projection; never infer health/readiness from inventory |
+| Device role/primary IP, cages/maps/address, cable length/color | No matching authoritative fields in the present contract |
+| Hosted infrastructure, circuit/service CRUD, provisioning | Out of scope; networking, IPAM, routing and billing remain with their owners |
+| Cross-object consistency and endpoint exclusivity | Prerequisite re-reads are not backend transactions/reservations; operators must review duplicates and changed references |
+| Authenticated host acceptance | Still unverified. Supplied host pin `b1489125fe5b77ea6fc379ad378c8e1951174de5` uses Router `^8.3.1`; local harness uses Router 7.18.2. No live login was manipulated |
 
-## Validation
+## Validation and review
 
-From `ui/provider`, run `pnpm test`, `pnpm typecheck`, and `pnpm build`.
-For local browser checks: `VITE_FLEET_FIXTURES=true pnpm dev --port 7796`, then
-open the Inventory tab. Synthetic data is explicitly labeled and includes all
-six kinds. No live inventory calls are made in fixture mode.
+Run from the repository:
 
-Local checks after review fixes: 121 tests in 14 files pass; typecheck and production build pass.
-The inventory Go package tests validate the exact manager/viewer/editor grants.
-Both ordinary and race-enabled package tests pass.
-The build reports transitive undici sharing and Zod annotation warnings; these
-do not fail the build. Federation exposes retain scoped inventory CSS without
-the standalone preview's global theme stylesheet.
+```sh
+pnpm --dir ui/provider test
+pnpm --dir ui/provider typecheck
+pnpm --dir ui/provider build
+go test ./internal/api/inventory/...
+git diff --check
+```
 
-Tests cover category navigation, filtering, empty/missing records, typed links,
-same-namespace relationship resolution (not namespace authorization isolation),
-historical registrations, components, uncertainty, no-read/read-only/manager
-states, direct links, partial denial, stale denied data, session expiry, backend
-failure, exact access reviews, submit revocation, ownership and revision changes.
+Final local results: 278 tests in 20 files, TypeScript check, production build,
+and the Go inventory package tests pass. Build warnings concern the existing
+transitive undici share and Zod annotation handling; they do not fail the build.
+Documentation relative links and whitespace are checked. The 68 independent
+tests remain byte-for-byte identical to the supplied review suite.
 
-Synthetic browser checks exercise facility → rack → claim → device and cable →
-feed, search and details at 1280/1440 desktop widths and 390×844 phone size.
-Additional intercepted requests verify reader controls are unavailable, manager
-creation succeeds only with an acknowledged response, revoked submit retains
-input without a write, and subsequent read denial removes visible records.
-Desktop/mobile access-needed states, detail-route partial denial, session expiry,
-404 and transient failure are checked without raw error leakage or page-wide
-horizontal overflow. No live write was made. The standalone harness uses an
-in-memory router; direct entry paths are also covered in route tests.
+The final independent suite from the previously reviewed `239dd312` head is
+copied unchanged into `exact-head-independent.test.tsx` (68 cases), alongside
+the original adversarial regressions. New tests cover geometry, unknown height,
+non-unit mounts, real filters, hardware payloads, typed references, permission
+denial, input retention, unavailable prerequisites, and unmount during delayed
+endpoint validation. These are regression evidence, not a new independent review.
 
-After adding session isolation, browser checks mounted the production boundary
-under a synthetic host-shaped data router (not the preview bypass). Switching
-authenticated loader identity from a reader to a denied principal removed all
-previous device names; blur/focus with an expired identity produced the calm
-sign-in state without stale data. A synthetic authorized JSON Patch updated the
-facility name; changing its writer to Flux then removed editing controls. These
-checks used the real plugin and intercepted proxy envelopes, at desktop and
-390×844 phone size, without a live host session or inventory mutation.
+Local browser checks use the existing standalone harness with synthetic fixtures
+or intercepted `/api/internal` envelopes only. Desktop and 390×844 phone checks
+cover compact lists, rack faces/equipment, location and cable links, device and
+cable forms, reader/manager controls, denial after submit, partial/no-read states,
+session expiry, backend failure, and removed stale identities after observed
+denial. Synthetic successful submissions are not live inventory mutations.
+Screenshots are local browser artifacts; the original Pencil exports are separate.
 
-## Review and rollout gates
+### Local visual evidence
 
-This branch targets `feat/manual-inventory-records` at
-`bebb7eba0af040bd1234a736c8a9c8aeee47b5d8`. Publication is authorized; merge and
-deployment remain with the parent after independent adversarial review and CI.
-The manager role must be deployed before the separate infrastructure group
-binding. This work does not import records, add memberships, or modify infra.
-Validate the deployed staff-portal revision and authenticated loader ID/shape,
-SSAR availability, same-origin proxy configuration, reader/manager/denied users,
-session switching and actual upstream denials before accepting staging rollout.
-Neither the offline IAM tests nor the intercepted browser harness proves live
-authorization. Native Pencil fidelity remains a design gap, not an IAM gate.
+Screenshots below are in `/Users/scotwells/.t3/userdata/browser-artifacts/`
+(synthetic data only, not committed application assets):
 
-These are local checks, not evidence of deployed availability, authorization,
-hardware verification, or a completed native Pencil visual comparison.
+| Check | Screenshot file |
+| --- | --- |
+| Before: generic directory | `browser-screenshot-localhost-mwpst023-01d6f601.png` |
+| After: compact desktop devices | `browser-screenshot-localhost-mwptcps2-5bac903c.png` |
+| After: desktop rack and equipment | `browser-screenshot-127-0-0-1-mwpvdwjl-dfeb7d93.png` |
+| After: mobile devices | `browser-screenshot-127-0-0-1-mwpv9qeo-18b6794c.png` |
+| After: mobile device form | `browser-screenshot-127-0-0-1-mwpvb96u-707e61d0.png` |
+| After: mobile rack faces | `browser-screenshot-127-0-0-1-mwpvcnqw-6a677229.png` |
+| Detail read revocation, desktop | `browser-screenshot-127-0-0-1-mwpvf3ib-0af0ac53.png` |
+| Detail read revocation, mobile | `browser-screenshot-127-0-0-1-mwpvfer9-fdda9c70.png` |
 
-### Adversarial review regressions
+Keyboard search and Tab navigation, Enter on the rear-face control, facility →
+rack and cable → device links were checked. Explicit detail refresh after a
+synthetic 403 removed the restricted device name while retaining other categories.
+Mobile lists, forms and rack views had no page-wide horizontal overflow. These
+checks do not replace screen-reader testing or authenticated host acceptance.
 
-The independent suite against `0673b82f073ab065327192a14c74d2dc6720b003`
-was copied into `ui/provider/src/components/adversarial-review.test.tsx` with
-its original assertions intact. Before fixes it reproduced three failures and
-one passing no-read check. All now pass; additional tests cover same-tick router
-invalidation before React commits, create/edit permission and GET prerequisites,
-blur/unmount, repeated session generations, Strict Mode lifecycle restart,
-already-dispatched success/failure remaining unknown, frozen edit conflicts,
-and out-of-order focus completions.
-
-Synthetic browser replay independently delayed the create SSAR, switched the
-host principal and released the review: zero writes dispatched. An edit opened
-at revision 1 retained input while props/API advanced to revision 2: zero patches
-and a calm conflict state. A delayed focus revalidation completed after a second
-blur without restoring inventory; a new focus restored it only after a fresh
-check. Desktop/mobile checks used intercepted requests only. These fixes await
-a new independent review; passing local regressions are not self-approval.
+The tested local diff requires a **new independent adversarial review** before
+publication. No commit, push, PR, merge, deployment or live mutation is authorized
+in this implementation phase. Authenticated staging integration, including host
+principal changes and proxy enforcement, remains a release acceptance check.

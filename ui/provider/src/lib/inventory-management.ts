@@ -1,11 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, PLUGIN_ID, PROVIDER_PROJECT, proxyFetch } from './api';
-import type { PhysicalRecord } from '../../../shared/fleet-api';
+import type { Device, DeviceClaim, PhysicalRecord } from '../../../shared/fleet-api';
 import type { InventoryOperation } from './inventory-operation';
+import { hardwarePayload, validateHardwareReferences, type HardwareFields } from './inventory-hardware';
+import { inventoryResources } from '../inventory';
 
-export type ManagedKind = 'Facility' | 'Rack';
+export type ManagedKind = 'Facility' | 'Rack' | 'Device' | 'Cable' | 'DeviceClaim';
+export type ManagedRecord = PhysicalRecord | Device | DeviceClaim;
 export const INVENTORY_FIELD_MANAGER = 'fleet-staff-inventory-ui';
-const resources = { Facility: 'facilities', Rack: 'racks' } as const;
+const resources = inventoryResources;
 const fixtures = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const resourcePath = (kind: ManagedKind, namespace: string) => `/apis/fleet.datumapis.com/v1alpha1/namespaces/${encodeURIComponent(namespace)}/${resources[kind]}`;
 
@@ -21,14 +24,14 @@ export function useInventoryPermission(kind: ManagedKind, namespace: string, ver
   return useQuery({ queryKey: [PLUGIN_ID, 'inventory-permission', PROVIDER_PROJECT, kind, namespace, verb, name], queryFn: () => inventoryPermission(kind, namespace, verb, name), enabled: !!namespace, retry: false, gcTime: 0, staleTime: 0, refetchOnMount: 'always' });
 }
 
-export function canEditInventoryLabel(record: PhysicalRecord): boolean {
+export function canEditInventoryLabel(record: ManagedRecord): boolean {
   const { metadata, spec } = record;
-  return (record.kind === 'Facility' || record.kind === 'Rack') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp && !spec.provenance.source && spec.provenance.method === 'Manual' &&
+  return ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp && !spec.provenance.source && spec.provenance.method === 'Manual' &&
     !Object.keys({ ...metadata.labels, ...metadata.annotations }).some(key => /fluxcd\.io|argocd|inventory.*owner/i.test(key)) &&
     !!metadata.managedFields?.length && metadata.managedFields.every(field => field.manager === INVENTORY_FIELD_MANAGER && !field.subresource);
 }
 
-export interface InventoryFormValues {
+export interface InventoryFormValues extends HardwareFields {
   name: string;
   namespace: string;
   displayName: string;
@@ -38,10 +41,11 @@ export interface InventoryFormValues {
   height: string;
 }
 
-export function inventoryPayload(kind: ManagedKind, values: InventoryFormValues, now = new Date().toISOString()): PhysicalRecord & { apiVersion: string } {
+export function inventoryPayload(kind: 'Facility' | 'Rack', values: InventoryFormValues, now = new Date().toISOString()): PhysicalRecord & { apiVersion: string } {
   const resourceName = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
   if (!resourceName.test(values.name) || values.name.length > 253 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(values.namespace) || values.namespace.length > 63) throw new ApiError(422, 'Enter a valid record name and namespace.');
   if (!values.displayName.trim() || values.displayName.trim().length > 253 || !values.recordedBy.trim() || values.recordedBy.trim().length > 253) throw new ApiError(422, 'Display name and recorder are required (at most 253 characters each).');
+  if (values.reference.trim().length > 1024) throw new ApiError(422, 'The change reference is too long.');
   if (kind === 'Rack' && !resourceName.test(values.facility)) throw new ApiError(422, 'Choose a facility in this namespace.');
   if (kind === 'Rack' && values.height && (!/^\d+$/.test(values.height) || Number(values.height) < 1 || Number(values.height) > 100)) throw new ApiError(422, 'Rack height must be a whole number from 1 to 100, or left blank when unknown.');
   return { apiVersion: 'fleet.datumapis.com/v1alpha1', kind, metadata: { name: values.name, namespace: values.namespace }, spec: {
@@ -56,8 +60,11 @@ async function requirePermission(kind: ManagedKind, namespace: string, verb: 'cr
 
 export async function createInventoryRecord(kind: ManagedKind, values: InventoryFormValues, operation: InventoryOperation) {
   operation.assertCurrent();
-  const payload = inventoryPayload(kind, values);
+  const common = inventoryPayload(kind === 'Rack' ? 'Rack' : 'Facility', values);
+  const payload = kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim' ? hardwarePayload(kind, values, common) : common;
   await requirePermission(kind, values.namespace, 'create');
+  operation.assertCurrent();
+  if (kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim') await validateHardwareReferences(kind, values, operation);
   operation.assertCurrent();
   if (kind === 'Rack') {
     const facility = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath('Facility', values.namespace)}/${encodeURIComponent(values.facility)}`);
@@ -71,7 +78,7 @@ export async function createInventoryRecord(kind: ManagedKind, values: Inventory
   return record;
 }
 
-export async function editInventoryLabel(original: PhysicalRecord, values: InventoryFormValues, operation: InventoryOperation) {
+export async function editInventoryLabel(original: ManagedRecord, values: InventoryFormValues, operation: InventoryOperation) {
   operation.assertCurrent();
   if (!canEditInventoryLabel(original)) throw new ApiError(409, 'This record needs an explicit ownership review before editing.');
   const kind = original.kind as ManagedKind;
@@ -79,7 +86,7 @@ export async function editInventoryLabel(original: PhysicalRecord, values: Inven
   await requirePermission(kind, namespace, 'patch', original.metadata.name);
   operation.assertCurrent();
   const path = `${resourcePath(kind, namespace)}/${encodeURIComponent(original.metadata.name)}`;
-  const current = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, path);
+  const current = await proxyFetch<ManagedRecord>(PROVIDER_PROJECT, path);
   operation.assertCurrent();
   if (!current || current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canEditInventoryLabel(current)) throw new ApiError(409, 'The record or its ownership changed. Reload it before editing.');
   const now = new Date().toISOString();
@@ -89,7 +96,7 @@ export async function editInventoryLabel(original: PhysicalRecord, values: Inven
   const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${path}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'PATCH', contentType: 'application/json-patch+json', body: [
     { op: 'test', path: '/metadata/uid', value: current.metadata.uid },
     { op: 'test', path: '/metadata/resourceVersion', value: current.metadata.resourceVersion },
-    { op: 'replace', path: '/spec/displayName', value: validated.spec.displayName },
+    { op: current.spec.displayName === undefined ? 'add' : 'replace', path: '/spec/displayName', value: validated.spec.displayName },
     { op: 'replace', path: '/spec/provenance', value: validated.spec.provenance },
   ] }).catch(error => { operation.assertCurrent(); throw error; });
   operation.assertCurrent();
