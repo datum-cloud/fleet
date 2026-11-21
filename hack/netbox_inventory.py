@@ -292,6 +292,9 @@ class Planner:
             if serial and selected["serialMeaning"] == "chassis":
                 asset_identity["serial"] = serial
             spec = {"displayName": record.get("name") or name, "claimRef": local_ref(claim_name), "identity": asset_identity, "topologyAuthority": "Cable"}
+            if selected.get("includeReportedPlacement") is True:
+                from device_placement import source_report
+                spec["reportedPlacement"] = source_report(self.snapshot, record, model, placement.get("rackRef", {}).get("name"), placement.get("facilityRef", {}).get("name"))
             shape = {}
             try:
                 height = float(model.get("u_height", ""))
@@ -582,6 +585,8 @@ def dependencies(record):
             references.append(kind + "/" + spec[field]["name"])
         if spec.get("placement", {}).get(field):
             references.append(kind + "/" + spec["placement"][field]["name"])
+        if spec.get("reportedPlacement", {}).get(field):
+            references.append(kind + "/" + spec["reportedPlacement"][field]["name"])
     for lane in spec.get("lanes", []):
         for endpoint in (lane["a"], lane["b"]):
             for field, kind in (("deviceRef", "Device"), ("powerFeedRef", "PowerFeed")):

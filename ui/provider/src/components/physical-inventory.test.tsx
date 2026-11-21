@@ -51,7 +51,7 @@ describe('hardware directory', () => {
   it('offers six navigable kinds without writes or a report upload', () => {
     const { container } = browse();
     const navigation = within(screen.getByRole('navigation', { name: 'Inventory categories' }));
-    for (const name of ['Devices', 'Facilities', 'Racks', 'Installation plans', 'Cables', 'Power feeds']) expect(navigation.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
+    for (const name of ['Devices', 'Facilities', 'Racks', 'Claims & registrations', 'Cables', 'Power feeds']) expect(navigation.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /create|edit|delete|apply|sync|import/i })).not.toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
     expect(screen.queryByText(/GitOps|Flux/)).not.toBeInTheDocument();

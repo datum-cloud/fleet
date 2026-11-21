@@ -1,5 +1,9 @@
 # Optional NetBox review aids for manual inventory
 
+[Device-reported placement](../development/device-reported-placement.md) adds
+explicit per-device source-report opt-in for new candidates and a blocked offline
+review planner for existing records. Claim placement semantics remain unchanged.
+
 [Physical inventory](physical-inventory.md) · [Inventory proposal](../proposals/fleet-management/inventory.md) · [Detailed proposed contracts](../proposals/fleet-management/inventory-reference.md)
 
 Start with [manual entry and operator review](physical-inventory.md#manually-record-a-small-installation).
@@ -50,8 +54,8 @@ remain Unknown. Existing editor delete permissions are not a safe retirement API
   explicit handover protocol; the importer does not create a replacement identity
   to work around immutability.
 - A Facility reference means no rack is asserted. `RackMembership` records a known
-  rack but forbids position, height and face. The importer deliberately imports
-  no exact rack-unit positions, including seemingly plausible positions. This
+  rack but forbids position, height and face. The default importer deliberately imports
+  no exact claim rack-unit positions, including seemingly plausible positions. This
   prevents servers.com's generated 1U placements from becoming occupied or
   verified footprints. The API also represents exact `RackUnits` and
   `NonRackUnitMount` plans for separately reviewed manual records.

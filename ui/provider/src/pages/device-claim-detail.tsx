@@ -4,7 +4,8 @@ import { InventoryAccessState } from '../components/inventory-access-state';
 import { InventorySessionBoundary } from '../components/inventory-session-boundary';
 import { StatusBadge } from '../components/status-badge';
 import { useInventory } from '../lib/api';
-import { currentDevice, endpointLabel, legacyPeerLabel, modelLabel, placementLabel, slotKey, type RawDevice } from '../inventory';
+import { currentDevice, endpointLabel, legacyPeerLabel, modelLabel, placementLabel, slotKey, type Inventory, type RawDevice } from '../inventory';
+import { devicePlacement, reportedPlacementLabel } from '../lib/device-placement';
 import type { Provenance } from '../../../shared/fleet-api';
 import { Card, CardContent } from '@datum-cloud/datum-ui/card';
 import { Text } from '@datum-cloud/datum-ui/typography';
@@ -47,14 +48,16 @@ function ProvenanceFields({ provenance }: { provenance: Provenance }) {
   );
 }
 
-function DeviceSection({ device, current }: { device: RawDevice; current: boolean }) {
+function DeviceSection({ device, current, inventory }: { device: RawDevice; current: boolean; inventory: Inventory }) {
   const { identity, bmc, interfaces = [], unmappedMACAddresses = [] } = device.spec;
+  const placement = devicePlacement(device, inventory);
   return (
     <Section title={`Device ${device.metadata.name}`} testId={`fleet-plugin-device-${device.metadata.name}`}>
       {!current && <StatusBadge type="muted">Historical binding; active placement Unknown</StatusBadge>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Model">{modelLabel(identity)}</Field>
         <Field label="Display name">{device.spec.displayName ?? device.metadata.name}</Field>
+        <Field label="Location / Reported placement">{placement ? reportedPlacementLabel(placement, inventory) : 'Unknown'} · not physically verified</Field>
         <Field label="Model dimensions (not occupied units)">{device.spec.modelShape?.heightUnits ?? 'Unknown'} U</Field>
         <Field label="Serial">{identity.serial ?? '—'}</Field>
         <Field label="System UUID">{identity.systemUUID ?? '—'}</Field>
@@ -121,7 +124,7 @@ function ClaimDetailContent() {
         <>
           <Section title={`DeviceClaim ${slot.claim.metadata.name}`} testId="fleet-plugin-claim">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Field label="Placement">{placementLabel(slot.claim, data?.issues)}</Field>
+              <Field label="Claim placement (intent / history)">{placementLabel(slot.claim, data?.issues)}</Field>
               <Field label="Expected model">{modelLabel(slot.claim.spec.expectedIdentity)}</Field>
               <Field label="Expected serial">{slot.claim.spec.expectedIdentity.serial ?? '—'}</Field>
               <Field label="Namespace">{slot.claim.metadata.namespace ?? '—'}</Field>
@@ -145,7 +148,7 @@ function ClaimDetailContent() {
           </Section>
           {data?.issues?.Device && <InventoryAccessState status={data.issues.Device.status} />}
           {(!data?.issues?.Device ? [...slot.devices].reverse() : []).map((device) => (
-            <DeviceSection key={device.metadata.name} device={device} current={device === current} />
+            <DeviceSection key={device.metadata.name} device={device} current={device === current} inventory={data!} />
           ))}
           <Section title="Related cable records" testId="fleet-plugin-related-cables">
             {data?.issues?.Cable ? <InventoryAccessState status={data.issues.Cable.status} /> : !data?.issues?.Device && data?.physical.filter((record) => record.kind === 'Cable' && record.metadata.namespace === slot.claim.metadata.namespace && record.spec.lanes?.some((lane) => slot.devices.some((device) => lane.a.deviceRef?.name === device.metadata.name || lane.b.deviceRef?.name === device.metadata.name))).map((cable) => <div key={cable.metadata.name}><Text>{cable.spec.displayName} · verification Unknown</Text>{cable.spec.lanes?.map((lane) => <Text key={lane.id}>{endpointLabel(lane.a, data?.issues)} ↔ {endpointLabel(lane.b, data?.issues)}</Text>)}</div>)}

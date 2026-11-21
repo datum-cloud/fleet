@@ -63,6 +63,11 @@ pixel identity or completed authenticated staging acceptance.
 
 ## Authorization, ownership and concurrency
 
+Device source reports and labelled claim fallback now share a placement
+projection. See [Device-reported placement](device-reported-placement.md) for the
+additive contract and server-enforced correction freeze. Imported corrections
+remain disabled; import provenance alone is not proof of another writer's ownership.
+
 The existing `fleet.datumapis.com-inventory-manager` role inherits the viewer and
 adds create/update/patch for six kinds, project-wide. The UI uses exact-resource
 SelfSubjectAccessReviews and the signed-in principal's API request, never group

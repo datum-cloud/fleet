@@ -101,6 +101,7 @@ type Device struct {
 }
 
 type DeviceSpec struct {
+	ReportedPlacement   *ReportedPlacement   `json:"reportedPlacement,omitempty"`
 	DisplayName         string               `json:"displayName,omitempty"`
 	ModelShape          *ModelShape          `json:"modelShape,omitempty"`
 	AssetTag            string               `json:"assetTag,omitempty"`
@@ -117,6 +118,19 @@ type DeviceSpec struct {
 	// UnmappedMACAddresses are MACs detected on the asset that the registrar
 	// could not attribute to a named interface.
 	UnmappedMACAddresses []string `json:"unmappedMACAddresses,omitempty"`
+}
+
+type ReportedPlacement struct {
+	Revision       int32           `json:"revision"`
+	ObservedAt     metav1.Time     `json:"observedAt"`
+	SnapshotDigest string          `json:"snapshotDigest"`
+	FacilityRef    *LocalReference `json:"facilityRef,omitempty"`
+	RackRef        *LocalReference `json:"rackRef,omitempty"`
+	Position       *float64        `json:"position,omitempty"`
+	Height         *float64        `json:"height,omitempty"`
+	Face           string          `json:"face,omitempty"`
+	FullDepth      *bool           `json:"fullDepth,omitempty"`
+	Mount          string          `json:"mount,omitempty"`
 }
 
 type LocalReference struct {

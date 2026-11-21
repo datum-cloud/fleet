@@ -270,6 +270,7 @@ export interface Device {
   kind?: string;
   metadata: ObjectMeta;
   spec: {
+    reportedPlacement?: ReportedPlacement;
     claimRef: LocalReference;
     provenance: Provenance;
     identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string; sourceIdentity?: ExternalReference };
@@ -285,6 +286,19 @@ export interface Device {
     interfaces?: { name: string; macAddress?: string; peer?: PortPeer }[];
     unmappedMACAddresses?: string[];
   };
+}
+
+export interface ReportedPlacement {
+  revision: 1;
+  observedAt: string;
+  snapshotDigest: string;
+  facilityRef?: LocalReference;
+  rackRef?: LocalReference;
+  position?: number;
+  height?: number;
+  face?: 'front' | 'rear';
+  fullDepth?: boolean;
+  mount?: string;
 }
 
 export interface ExternalReference { system: string; type: string; id: string }
