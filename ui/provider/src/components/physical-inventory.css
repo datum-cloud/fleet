@@ -59,12 +59,16 @@
 .inventory-rack-faces { display:flex; gap:10px; }
 .inventory-rack-faces > div { flex:1; min-width:0; }
 .inventory-rack-faces h4 { text-align:center; text-transform:uppercase; font-size:11px; letter-spacing:.06em; margin-bottom:8px; }
-.inventory-rack-units { list-style:none; padding:0; margin:0; border:1px solid var(--border,#dce3df); }
-.inventory-rack-units li { height:16px; display:grid; grid-template-columns:28px 1fr; border-bottom:1px solid var(--border,#dce3df); font-size:9px; line-height:15px; }
-.inventory-rack-units li > span { padding:0 3px; background:var(--muted,#f5f7f5); }
-.inventory-rack-units li > div { min-width:0; padding:0 3px; display:flex; }
-.inventory-rack-units li a { display:block; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.inventory-unit-recorded { background:var(--accent,#eaf1ed); }
+.inventory-rack-units { display:grid; list-style:none; padding:0; margin:0; border:1px solid var(--border,#dce3df); font-size:9px; line-height:15px; }
+.inventory-rack-unit { display:grid; grid-template-columns:28px 1fr; border-bottom:1px solid var(--border,#dce3df); }
+.inventory-rack-unit > span { padding:0 3px; background:var(--muted,#f5f7f5); }
+.inventory-rack-plan { z-index:1; min-width:0; min-height:0; border:1px solid var(--border,#dce3df); background:var(--accent,#eaf1ed); }
+.inventory-rack-plan a { display:flex; flex-direction:column; justify-content:center; height:100%; min-width:0; padding:0 3px; overflow:hidden; white-space:nowrap; }
+.inventory-rack-plan-heading { display:flex; align-items:center; gap:3px; flex:none; min-width:0; line-height:12px; }
+.inventory-rack-plan-name { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.inventory-rack-overlap { flex:none; font-weight:700; }
+.inventory-rack-plan a:focus-visible { outline:2px solid var(--ring,#32765a); outline-offset:-2px; }
+.inventory-rack-plan small { flex:none; overflow:hidden; text-overflow:ellipsis; font-size:8px; line-height:12px; }
 .inventory-face-switch { display:flex; gap:4px; }
 .inventory-face-switch button { flex:1; padding:6px; border:1px solid var(--border,#dce3df); border-radius:5px; font-size:12px; cursor:pointer; }
 .inventory-face-switch button[aria-pressed=true] { background:var(--accent,#eaf1ed); font-weight:600; }

@@ -46,6 +46,9 @@ pixel identity or completed authenticated staging acceptance.
   capacity. Unknown placement stays in the explicit unpositioned section;
   NonRackUnitMount remains separate. Multiple registrations do not select an
   active device. Overlapping plans are labeled for review, not resolved silently.
+  Multi-unit plans render as one continuous block spanning their recorded unit
+  range, with one detail link; overlapping plans occupy separate visual columns.
+  Model height alone never supplies missing placement geometry.
 - Create Facility/Rack facts; rack height is optional. Create an Installation
   plan at a known Facility or Rack with unknown unit position, then separately
   register a Device with a real serial or system UUID and typed components.

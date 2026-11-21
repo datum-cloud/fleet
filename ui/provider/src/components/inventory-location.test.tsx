@@ -11,6 +11,35 @@ function show(placement = fixturePhysicalClaims[0].spec.placement, issues = {}, 
   const claim = { ...fixturePhysicalClaims[0], spec: { ...fixturePhysicalClaims[0].spec, placement } };
   return render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={{ ...toInventory([claim], fixturePhysicalDevices, [{ ...rack, spec: { ...rack.spec, heightUnits: height ?? undefined } }]), issues }} /></MemoryRouter></QueryClientProvider>);
 }
+it.each([
+  { position: 1, height: 2, face: 'front' as const, row: '41 / span 2' },
+  { position: 39, height: 4, face: 'rear' as const, row: '1 / span 4' },
+  { position: 12, height: 4, face: 'front' as const, row: '28 / span 4' },
+])('renders one continuous block for $height units at $position on $face', ({ position, height, face, row }) => {
+  show({ scope: 'RackUnits', rackRef: { name: 'rack-01' }, position, height, face });
+  const elevation = screen.getByRole('list', { name: `${face} recorded plans` });
+  const links = within(elevation).getAllByRole('link');
+  expect(links).toHaveLength(1);
+  expect(links[0]).toHaveAccessibleName(new RegExp(`U${position}–U${position + height - 1}.*${height}U`));
+  expect(links[0].parentElement).toHaveStyle({ gridRow: row, gridColumn: '2' });
+  expect(within(elevation).getAllByLabelText('Occupancy unverified')).toHaveLength(42 - height);
+  expect(within(screen.getByRole('list', { name: `${face === 'front' ? 'rear' : 'front'} recorded plans` })).queryByRole('link')).not.toBeInTheDocument();
+});
+it.each([1, 2])('keeps overlapping %iU plans identifiable with height-aware labels', height => {
+  const claims = [10, 10 + height - 1].map((position, index) => ({ ...fixturePhysicalClaims[0], metadata: { ...fixturePhysicalClaims[0].metadata, name: `overlap-${index}` }, spec: { ...fixturePhysicalClaims[0].spec, displayName: `Plan ${index}`, placement: { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position, height, face: 'front' as const } } }));
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={toInventory(claims, [], [rack])} /></MemoryRouter></QueryClientProvider>);
+  const elevation = screen.getByRole('list', { name: 'front recorded plans' });
+  const links = within(elevation).getAllByRole('link', { name: /overlapping plans/ });
+  expect(links).toHaveLength(2);
+  expect(links[0].parentElement).toHaveStyle({ gridColumn: '2', gridRow: `${34 - height} / span ${height}` });
+  expect(links[1].parentElement).toHaveStyle({ gridColumn: '3', gridRow: `${35 - 2 * height} / span ${height}` });
+  for (const link of links) {
+    expect(within(link).getByText('!')).toHaveClass('inventory-rack-overlap');
+    expect(link.querySelectorAll('small')).toHaveLength(height > 1 ? 1 : 0);
+    expect(link.querySelector('.inventory-rack-plan-name')).toHaveTextContent(/Plan/);
+  }
+  expect(screen.getByText(/! indicates overlapping plans requiring review/)).toBeInTheDocument();
+});
 it('renders recorded front/rear plans, never free units or occupancy percentages', () => {
   show();
   const front = screen.getByRole('list', { name: 'front recorded plans' });
@@ -24,6 +53,8 @@ it.each([
   { scope: 'RackMembership' as const, rackRef: { name: 'rack-01' } },
   { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position: 45, height: 1, face: 'front' as const },
   { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position: 12, height: 1 },
+  { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position: 41, height: 4, face: 'front' as const },
+  { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position: 12, face: 'front' as const },
 ])('keeps incomplete or out-of-range geometry out of the elevation: %j', placement => {
   show(placement);
   expect(within(screen.getByRole('list', { name: 'front recorded plans' })).queryByRole('link')).not.toBeInTheDocument();
