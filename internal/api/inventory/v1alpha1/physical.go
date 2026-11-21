@@ -24,8 +24,8 @@ type SourceReference struct {
 }
 
 type PhysicalMetadata struct {
-	DisplayName string     `json:"displayName"`
-	Provenance  Provenance `json:"provenance"`
+	DisplayName string      `json:"displayName"`
+	Provenance  *Provenance `json:"provenance,omitempty"`
 }
 
 type FacilitySpec struct {
