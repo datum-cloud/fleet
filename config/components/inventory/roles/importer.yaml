@@ -1,0 +1,19 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-inventory-importer
+  annotations:
+    kubernetes.io/display-name: Fleet Inventory Importer
+    kubernetes.io/description: Create physical inventory records from an external source without changing or deleting existing ones
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-inventory-viewer
+  includedPermissions:
+    - fleet.datumapis.com/sites.create
+    - fleet.datumapis.com/deviceclaims.create
+    - fleet.datumapis.com/devices.create
+    - fleet.datumapis.com/facilities.create
+    - fleet.datumapis.com/racks.create
+    - fleet.datumapis.com/cables.create
+    - fleet.datumapis.com/powerfeeds.create
