@@ -12,6 +12,43 @@ const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+it.each([false, true])('keeps real table mounted on visible focus and refreshes read authorization denied=%s', async denied => {
+  let rechecking = false;
+  let release: (() => void) | undefined;
+  const requests = vi.fn(async (url: string) => {
+    if (url.includes('selfsubjectaccessreviews')) return response({ status: { allowed: false } });
+    if (rechecking && denied) return { ok: false, status: 403, json: async () => ({ error: 'Private diagnostic' }) };
+    return response({ items: url.includes('/facilities?') ? [original] : [] });
+  });
+  vi.stubGlobal('fetch', requests);
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => {
+    if (rechecking) await new Promise<void>(resolve => { release = resolve; });
+    return { user: { metadata: { uid: 'staff-a' } } };
+  }, element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }], { initialEntries: ['/?kind=Facility'] });
+  render(<RouterProvider router={router} />);
+  await screen.findByRole('link', { name: /Original label/ });
+  const table = screen.getByRole('table');
+  const loadingStates: boolean[] = [];
+  const observer = new MutationObserver(() => loadingStates.push(!!screen.queryByTestId('fleet-plugin-loading')));
+  observer.observe(document.body, { childList: true, subtree: true });
+  rechecking = true;
+  fireEvent(window, new Event('blur'));
+  expect(screen.getByRole('table')).toBe(table);
+  fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(release).toBeDefined());
+  expect(screen.getByRole('table')).toBe(table);
+  await act(async () => release!());
+  if (denied) {
+    await screen.findByRole('heading', { name: 'Inventory access needed' });
+    expect(screen.queryByText(/Original label|Private diagnostic/)).not.toBeInTheDocument();
+  } else {
+    await waitFor(() => expect(requests.mock.calls.filter(([url]) => url.includes('/facilities?'))).toHaveLength(2));
+    expect(screen.getByRole('table')).toBe(table);
+  }
+  observer.disconnect();
+  expect(loadingStates).not.toContain(true);
+});
+
 it('renders calm denied access with exactly seven list attempts and no permission reviews or writes', async () => {
   const requests = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: 'DO NOT DISPLAY internal authorization diagnostic' }) }));
   vi.stubGlobal('fetch', requests);
@@ -105,16 +142,16 @@ it('must not silently advance an open edit form to a refreshed resourceVersion',
   expect(patches).toEqual([]);
 });
 
-it('must keep inventory concealed if focus verification finishes after another blur', async () => {
+it('must keep inventory concealed if focus verification finishes after pagehide', async () => {
   let release: (() => void) | undefined;
   let count = 0;
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => { if (++count === 2) await new Promise<void>(resolve => { release = resolve; }); return { user: { metadata: { uid: 'staff-a' } } }; }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary>Private inventory label</InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
   await screen.findByText('Private inventory label');
-  fireEvent(window, new Event('blur'));
+  fireEvent(window, new Event('pagehide'));
   fireEvent(window, new Event('focus'));
   await waitFor(() => expect(release).toBeDefined());
-  fireEvent(window, new Event('blur'));
+  fireEvent(window, new Event('pagehide'));
   await act(async () => { release!(); });
   expect(screen.queryByText('Private inventory label')).not.toBeInTheDocument();
 });

@@ -103,8 +103,79 @@ Existing session protections are retained: principal-isolated QueryClients,
 authority invalidation at session/revalidation/navigation/background/unmount
 boundaries, fresh authority generations even for React-batched revalidation,
 and generation-guarded focus checks. Already-dispatched uncertain outcomes stay
-unknown rather than becoming cancelled-success. This phase does not modify the
-session-boundary or operation-authority implementations.
+unknown rather than becoming cancelled-success.
+
+### Visible browser blur versus session authority
+
+The visible-blur correction separates read visibility from write authority.
+Previously, opening Safari's URL bar called the same hide path as backgrounding
+the document, unmounting inventory and showing LoadingState. A visible window
+blur is not evidence of logout, account switching, or document backgrounding.
+It can also mean focus moved to another visible window. Intentionally, already
+authorized inventory remains on screen in all these visible-blur cases; this
+is not a screen-privacy curtain for unfocused windows.
+
+Writes remain conservatively fenced synchronously on every blur, pagehide,
+hidden visibility transition, router revalidation/navigation, and principal
+change. Returning focus verifies the real host loader. During that verification,
+the existing same-principal read view stays mounted but operation authority
+remains invalid and management forms are unmounted. Old operations never regain authority, including SSAR/reference
+reads completing after an await; dispatched writes retain unknown outcomes.
+After verification, forms get a fresh generation (and must be reopened), without
+remounting the inventory table or changing its view-specific query key. Immutable
+edit baselines are never transferred to the new forms. Existing per-form blur
+fences remain unchanged.
+
+Successful same-principal focus checks cancel older query work and refresh reads
+in the isolated client before remounting management forms, which renew their
+permissions. A failed or wholly unavailable inventory read keeps forms suspended
+until the next successful focus verification or reopened inventory. The cache's
+settled read result, not a potentially delayed React observer, gates this renewal:
+no SSAR is sent for stale forms while the new read result denies all inventory.
+An observed read denial still redacts records; revalidation is not removed. Hidden documents and pagehide immediately
+unmount and clear the client; foreground restoration waits for verification.
+Explicit host revalidation/navigation also retains its masking/cache-reset
+policy. Principal transitions reset the client, including observed A→B→A
+transitions batched into one React render. Missing identities and host failures
+remove private content. A focus check completing after a newer blur cannot
+restore write authority; after a newer hidden/pagehide event it cannot restore
+read visibility either. The host completion generation is still observed via
+the synchronous router subscription, not only React's possibly batched loading
+state. The soft-read policy remains latched until the next router cycle so a
+promise completion preceding React's idle render cannot momentarily unmount it.
+
+This intentionally replaces tests that treated visible blur as a privacy mask.
+Equivalent pagehide/hidden coverage is retained, and the adversarial write matrix
+now exercises both visible focus/blur and focus/pagehide (create/edit,
+pending SSAR, dispatched success/error, and StrictMode). Actual inventory-table
+tests assert DOM identity through visible focus and verify refreshed denials;
+operation-generation tests retain stale-completion and A→B→A protection.
+
+For a synthetic browser check, run from `ui/provider`:
+
+```sh
+pnpm exec vite --config vitest.config.ts --host 127.0.0.1 --port 7793
+```
+
+Open `/session-fixture.html`. This mounts the actual inventory page and boundary
+under a synthetic host loader, not the preview bypass. All API calls are handled
+in memory; writes return a synthetic failure and never reach an API. The browser
+console's `inventorySessionFixture` exposes `hold(boolean)`, `release()`,
+`principal(string|null)`, `denied(boolean)`, and `stats()` for controlled loader
+completion, account transitions, and read denial. Dispatch window blur/focus or
+pagehide to inspect transitions. This harness is not a production build entry.
+
+Local browser evidence on 2026-11-21 uses synthetic events and data. Visible
+blur/focus retained the identical table DOM node with no observed LoadingState;
+collection reads renewed from seven to fourteen. Pagehide removed the table and
+kept LoadingState through the held return-focus check; release restored a fresh
+read view. A subsequent synthetic 403 replaced it with access guidance and no
+private table. No fixture writes were dispatched. The real
+staging URL redirected to sign-in; no login was manipulated. That evidence and
+the supplied Safari screenshot do not prove authenticated Safari URL-bar
+acceptance. Independent adversarial signoff, CI, and authenticated staging/Safari
+acceptance remain deployment gates; no inventory, IAM, or NetBox data is changed
+by this correction.
 
 Read-only users browse without enabled writes. No-read and direct-link denials
 show calm access guidance, not empty/zero inventory. Partial collection failures

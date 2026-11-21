@@ -1,15 +1,21 @@
-import { useContext, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useContext, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { ApiError, PLUGIN_ID, PROVIDER_PROJECT } from '../lib/api';
 import { canEditInventoryLabel, createInventoryRecord, editInventoryLabel, useInventoryPermission, type InventoryFormValues, type ManagedKind, type ManagedRecord } from '../lib/inventory-management';
 import type { Device, DeviceClaim, PhysicalRecord } from '../../../shared/fleet-api';
-import { InventoryOperationContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
+import { InventoryOperationContext, InventoryOperationGenerationContext, InventoryOperationReadyContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
 import { InventoryHardwareFields } from './inventory-hardware-fields';
 import type { Inventory } from '../inventory';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 
-export function InventoryManagement({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], compact = false, issues: sourceIssues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
+export function InventoryManagement(props: ComponentProps<typeof InventoryManagementForm>) {
+  const generation = useContext(InventoryOperationGenerationContext);
+  const ready = useContext(InventoryOperationReadyContext);
+  return ready ? <InventoryManagementForm key={generation} {...props} /> : null;
+}
+
+function InventoryManagementForm({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], compact = false, issues: sourceIssues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
   const client = useQueryClient();
   const onReadFailure = useContext(InventoryReadAccessContext);
   const [readIssues, setReadIssues] = useState<Inventory['issues']>({});

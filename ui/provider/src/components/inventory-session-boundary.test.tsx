@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { describe, expect, it, vi } from 'vitest';
+import { useContext } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InventorySessionBoundary } from './inventory-session-boundary';
+import { InventoryOperationContext, InventoryOperationInvalidated, type InventoryOperationScope } from '../lib/inventory-operation';
 
 function mountHost(loader: () => unknown, content: React.ReactNode) {
   const router = createMemoryRouter([{
@@ -17,6 +19,111 @@ function mountHost(loader: () => unknown, content: React.ReactNode) {
 }
 
 describe('host inventory session isolation', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it('keeps visible inventory through browser-chrome blur/focus while fencing old and pending authority', async () => {
+    let scope: InventoryOperationScope | undefined;
+    let release: (() => void) | undefined;
+    let reads = 0;
+    const inventoryRead = vi.fn(async () => 'Visible inventory');
+    function Records() {
+      scope = useContext(InventoryOperationContext);
+      const query = useQuery({ queryKey: ['inventory'], queryFn: inventoryRead, staleTime: Infinity });
+      return <p>{query.data ?? 'Empty inventory cache'}</p>;
+    }
+    mountHost(async () => {
+      if (++reads > 1) await new Promise<void>(resolve => { release = resolve; });
+      return { user: { metadata: { uid: 'staff-a' } } };
+    }, <Records />);
+    await screen.findByText('Visible inventory');
+    const before = scope!.begin();
+    const dispatched = scope!.begin();
+    dispatched.dispatch();
+    fireEvent(window, new Event('blur'));
+    expect(screen.getByText('Visible inventory')).toBeInTheDocument();
+    expect(() => before.assertCurrent()).toThrow(InventoryOperationInvalidated);
+    expect(() => dispatched.assertCurrent()).toThrow(/outcome is unknown/);
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(release).toBeDefined());
+    expect(screen.getByText('Visible inventory')).toBeInTheDocument();
+    const during = scope!.begin();
+    expect(() => during.assertCurrent()).toThrow(InventoryOperationInvalidated);
+    fireEvent(window, new Event('blur'));
+    await act(async () => release!());
+    expect(screen.getByText('Visible inventory')).toBeInTheDocument();
+    expect(() => scope!.begin().assertCurrent()).toThrow(InventoryOperationInvalidated);
+    release = undefined;
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(release).toBeDefined());
+    await act(async () => release!());
+    expect(screen.getByText('Visible inventory')).toBeInTheDocument();
+    expect(inventoryRead).toHaveBeenCalledTimes(3);
+    expect(() => scope!.begin().assertCurrent()).not.toThrow();
+    expect(() => before.assertCurrent()).toThrow(InventoryOperationInvalidated);
+    expect(() => during.assertCurrent()).toThrow(InventoryOperationInvalidated);
+    expect(() => dispatched.assertCurrent()).toThrow(/outcome is unknown/);
+  });
+
+  it('replaces caches on visible focus principal changes including batched A to B to A', async () => {
+    let principal = 'staff-a';
+    let revision = 1;
+    const read = vi.fn(async () => `${principal} inventory ${revision}`);
+    function Records() {
+      const query = useQuery({ queryKey: ['inventory'], queryFn: read, staleTime: Infinity });
+      return <p>{query.data}</p>;
+    }
+    const router = mountHost(() => ({ user: { metadata: { uid: principal } } }), <Records />);
+    await screen.findByText('staff-a inventory 1');
+    await act(async () => {
+      principal = 'staff-b';
+      fireEvent(window, new Event('focus'));
+      await router.revalidate();
+      principal = 'staff-a';
+      revision++;
+      await router.revalidate();
+    });
+    await screen.findByText('staff-a inventory 2');
+    expect(screen.queryByText('staff-a inventory 1')).not.toBeInTheDocument();
+  });
+
+  it.each(['logout', 'failure'])('clears visible data when focus verification observes %s', async outcome => {
+    let expired = false;
+    mountHost(() => {
+      if (expired && outcome === 'failure') throw new Response('Synthetic failure', { status: 503 });
+      if (expired) return { user: null };
+      return { user: { metadata: { uid: 'staff-a' } } };
+    }, 'Visible inventory');
+    await screen.findByText('Visible inventory');
+    expired = true;
+    fireEvent(window, new Event('blur'));
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(screen.queryByText('Visible inventory')).not.toBeInTheDocument());
+  });
+
+  it('discards genuine hidden data and waits for visible verification before a fresh read', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    let release: (() => void) | undefined;
+    let reads = 0;
+    const inventoryRead = vi.fn(async () => 'Private inventory');
+    function Records() {
+      const query = useQuery({ queryKey: ['inventory'], queryFn: inventoryRead, staleTime: Infinity });
+      return <p>{query.data}</p>;
+    }
+    mountHost(async () => {
+      if (++reads > 1) await new Promise<void>(resolve => { release = resolve; });
+      return { user: { metadata: { uid: 'staff-a' } } };
+    }, <Records />);
+    await screen.findByText('Private inventory');
+    visibility.mockReturnValue('hidden');
+    fireEvent(document, new Event('visibilitychange'));
+    expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();
+    visibility.mockReturnValue('visible');
+    fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => expect(release).toBeDefined());
+    expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();
+    await act(async () => release!());
+    await screen.findByText('Private inventory');
+    expect(inventoryRead).toHaveBeenCalledTimes(2);
+  });
   it('fails closed outside the authenticated host unless explicitly previewing', () => {
     render(<MemoryRouter><InventorySessionBoundary>Restricted inventory</InventorySessionBoundary></MemoryRouter>);
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();
@@ -56,16 +163,18 @@ describe('host inventory session isolation', () => {
     const loader = vi.fn(() => ({ user: { metadata: { uid: 'staff-a' } } }));
     mountHost(loader, 'Restricted inventory');
     await screen.findByText('Restricted inventory');
-    fireEvent(window, new Event('blur'));
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    fireEvent(document, new Event('visibilitychange'));
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();
     loader.mockReturnValue({ user: null } as never);
+    visibility.mockReturnValue('visible');
     fireEvent(window, new Event('focus'));
     await screen.findByText('Your session has expired');
     expect(loader).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();
   });
 
-  it('only restores the newest focused generation after successive blur and focus events', async () => {
+  it('only restores the newest foreground generation after successive pagehide and focus events', async () => {
     const releases: (() => void)[] = [];
     let reads = 0;
     mountHost(async () => {
@@ -73,10 +182,10 @@ describe('host inventory session isolation', () => {
       return { user: { metadata: { uid: 'staff-a' } } };
     }, 'Private inventory');
     await screen.findByText('Private inventory');
-    fireEvent(window, new Event('blur'));
+    fireEvent(window, new Event('pagehide'));
     fireEvent(window, new Event('focus'));
     await waitFor(() => expect(releases).toHaveLength(1));
-    fireEvent(window, new Event('blur'));
+    fireEvent(window, new Event('pagehide'));
     fireEvent(window, new Event('focus'));
     await waitFor(() => expect(releases).toHaveLength(2));
     await act(async () => releases[0]());
