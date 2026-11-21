@@ -1,6 +1,6 @@
 # Planning and registering physical devices
 
-For additive source reports and the server-enforced correction freeze, see
+For source reports and authorized, concurrency-safe location record corrections, see
 [Device-reported placement](../development/device-reported-placement.md).
 
 [Operations guide](README.md) · [Architecture](../architecture/README.md) ·

@@ -60,13 +60,17 @@ pixel identity or completed authenticated staging acceptance.
 - Edit display name and recording details only for records with established
   portal ownership. No device identity, claim binding, components, topology,
   placement, lifecycle, status or operational changes are exposed through edit.
+- Correct Device-reported location in a separate form, including the first report
+  on an existing imported Device. Manual source/evidence/reason and explicit
+  unknown geometry are retained without changing identity or claim binding.
 
 ## Authorization, ownership and concurrency
 
 Device source reports and labelled claim fallback now share a placement
 projection. See [Device-reported placement](device-reported-placement.md) for the
-additive contract and server-enforced correction freeze. Imported corrections
-remain disabled; import provenance alone is not proof of another writer's ownership.
+additive contract and ordinary authorized corrections, including first reports
+on existing imported Devices. Original import provenance and immutable identity
+remain intact; manual corrections do not claim NetBox authorship.
 
 The existing `fleet.datumapis.com-inventory-manager` role inherits the viewer and
 adds create/update/patch for six kinds, project-wide. The UI uses exact-resource
@@ -77,10 +81,12 @@ work; nothing here asserts their live state. There are no delete/status grants.
 Inventory is direct API/operator-managed, not GitOps-only. Import provenance is
 history, **not evidence of Flux ownership**. Legacy Flux-managed records keep
 their writer until an explicit safe transition. This UI's deliberately narrow
-edit policy still requires Manual provenance and exclusively
+display-name edit policy still requires Manual provenance and exclusively
 `fleet-staff-inventory-ui` managed fields, with no import/deletion/other-owner
-markers. Imported and unknown-writer records remain read-only pending an agreed
-writer/ownership policy; API authorization alone does not establish a handover.
+markers. The separate reported-location editor permits imported operator-managed
+Devices under normal manager authorization, excluding legacy Flux markers from
+its UI. These markers are not server authorization or owner isolation. Location
+record correction is not a handover or installation move.
 New authorized API records do not require editing Git.
 
 Before writes, the UI renews exact create/patch permission. Hardware references
@@ -137,8 +143,8 @@ deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 
 | Interaction | Remaining boundary |
 | --- | --- |
-| Imported/other-writer edits | Requires a reviewed ownership policy/transition, not a Git-only requirement; do not simply remove guards |
-| Rack position entry, move/assign equipment | Not exposed; immutable installation/binding and handover semantics need an explicit workflow. New plan creation records unknown position only |
+| Imported/other-writer edits | Reported-location correction is available to managers, including imported Devices; legacy Flux remains outside the UI. Other edit forms retain their existing restrictions |
+| Rack position entry, move/assign equipment | Reported-location correction supports unknown or explicit geometry; physical moves, installation/binding changes and handovers still require separate workflows |
 | PowerFeed creation; component or endpoint edits | API kinds exist, but these forms are not implemented. Existing records remain browsable; no dead action buttons |
 | Online/active/connected badges, occupancy/free units, power utilization | No verified evidence projection; never infer health/readiness from inventory |
 | Device role/primary IP, cages/maps/address, cable length/color | No matching authoritative fields in the present contract |
