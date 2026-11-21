@@ -14,6 +14,7 @@ import type { CableEndpoint, PhysicalComponent, PhysicalRecord } from '../../../
 import './physical-inventory.css';
 import { InventoryAccessState } from './inventory-access-state';
 import { InventoryManagement } from './inventory-management';
+import { DevicePlacementEdit } from './device-placement-edit';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { FacilityOverview, RackOverview, inventoryHref as href } from './inventory-location';
@@ -354,8 +355,8 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
               <Field label="Location / Reported placement">{placement(entry)}</Field>
               {device.spec.reportedPlacement?.rackRef && <Field label="Reported rack">{reference('Rack', namespace, device.spec.reportedPlacement.rackRef.name)}</Field>}
               {device.spec.reportedPlacement?.facilityRef && <Field label="Reported facility">{reference('Facility', namespace, device.spec.reportedPlacement.facilityRef.name)}</Field>}
-              {device.spec.reportedPlacement && <Field label="Source report">Revision {device.spec.reportedPlacement.revision} · {device.spec.reportedPlacement.observedAt} · source-reported, not physically verified</Field>}
-              <Field label="Placement corrections">Disabled pending authenticated durable audit. Recordkeeping is not a physical move or a capacity reservation.</Field>
+              {device.spec.reportedPlacement && <Field label="Source report">Revision {device.spec.reportedPlacement.revision} · {device.spec.reportedPlacement.observedAt} · {device.spec.reportedPlacement.method === 'Manual' ? 'Manual observation/correction' : 'NetBox source report'}, not physically verified{device.spec.reportedPlacement.reason && ` · Reason: ${device.spec.reportedPlacement.reason}`}{device.spec.reportedPlacement.reference && ` · Evidence: ${device.spec.reportedPlacement.reference}`}</Field>}
+              <Field label="Placement corrections">Recordkeeping is not a physical move or a capacity reservation.</Field>
               <Field label="Dimensions">
                 {device.spec.modelShape
                   ? `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'Depth not recorded' : device.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}`
@@ -605,6 +606,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
       devices={entries.filter(entry => entry.kind === 'Device').map(entry => entry.record as RawDevice)}
       feeds={inventory.physical.filter(record => record.kind === 'PowerFeed')}
     /> : null;
+  const placementEditor = selected?.kind === 'Device' && !inventory.issues?.Device ? <DevicePlacementEdit key={`${selectedNamespace}/${selectedName}`} device={selected.record as RawDevice} locations={inventory.physical} issues={inventory.issues} /> : null;
   if (Object.values(inventory.issues ?? {}).some(issue => issue?.status === 401)) return <InventoryAccessState status={401} />;
   return (
     <InventoryReadAccessContext.Provider value={error => setReadIssues(previous => ({ ...previous, ...readFailureIssues(error) }))}>
@@ -629,6 +631,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
               <div className="inventory-topline"><h2 ref={heading} tabIndex={-1}>
                 {selected ? recordName(selected) : 'Record not found'}
               </h2>{management}</div>
+              {placementEditor}
               {selected ? (
                 <>
                   <p className="inventory-muted">

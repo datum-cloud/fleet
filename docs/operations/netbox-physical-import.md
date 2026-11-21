@@ -1,8 +1,8 @@
 # Optional NetBox review aids for manual inventory
 
 [Device-reported placement](../development/device-reported-placement.md) adds
-explicit per-device source-report opt-in for new candidates and a blocked offline
-review planner for existing records. Claim placement semantics remain unchanged.
+explicit per-device source-report opt-in for new candidates and a prepare-only
+guarded patch planner for existing records. Claim placement semantics remain unchanged.
 
 [Physical inventory](physical-inventory.md) · [Inventory proposal](../proposals/fleet-management/inventory.md) · [Detailed proposed contracts](../proposals/fleet-management/inventory-reference.md)
 

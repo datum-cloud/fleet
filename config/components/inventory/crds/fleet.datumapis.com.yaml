@@ -315,9 +315,12 @@ spec:
               message: claimRef is immutable; bind replacement hardware as a new Device
             - rule: self.identity == oldSelf.identity
               message: identity is immutable; a hardware swap is a new Device
-            - rule: has(self.reportedPlacement) == has(oldSelf.reportedPlacement) && (!has(self.reportedPlacement) || self.reportedPlacement == oldSelf.reportedPlacement)
-              message: placement corrections are disabled pending authenticated durable audit; additions and removals are corrections too
-            - rule: '!has(self.reportedPlacement) || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
+            - rule: '!has(oldSelf.reportedPlacement) || has(self.reportedPlacement)'
+              message: retain a report; omit unknown location fields rather than removing the report
+            - rule: '!has(self.reportedPlacement) || (oldSelf.hasValue() && has(oldSelf.value().reportedPlacement) ? (self.reportedPlacement == oldSelf.value().reportedPlacement || self.reportedPlacement.revision == oldSelf.value().reportedPlacement.revision + 1) : self.reportedPlacement.revision == 1)'
+              optionalOldSelf: true
+              message: first report revision must be 1; every changed report must increment revision exactly once
+            - rule: '!has(self.reportedPlacement) || (has(self.reportedPlacement.method) && self.reportedPlacement.method == "Manual") || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && has(self.reportedPlacement.snapshotDigest) && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
               message: reported placement must retain the imported source snapshot and observation time
             - rule: '!has(self.reportedPlacement) || self.reportedPlacement.observedAt <= self.provenance.recordedAt'
               message: the source observation cannot postdate its recording
@@ -358,8 +361,10 @@ spec:
             properties:
               reportedPlacement:
                 type: object
-                required: [revision, observedAt, snapshotDigest]
+                required: [revision, observedAt]
                 x-kubernetes-validations:
+                - rule: 'has(self.method) && self.method == "Manual" ? (has(self.reason) && has(self.reference) && !has(self.snapshotDigest)) : has(self.snapshotDigest)'
+                  message: manual reports require reason and evidence reference, not an imported snapshot digest
                 - rule: '(!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth) && !has(self.mount)) || has(self.rackRef)'
                   message: rack geometry requires a reported rack
                 - rule: '!has(self.mount) || (!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth))'
@@ -369,7 +374,21 @@ spec:
                 properties:
                   revision:
                     type: integer
-                    enum: [1]
+                    minimum: 1
+                    maximum: 2147483647
+                  method:
+                    type: string
+                    enum: [Manual, NetBoxImport]
+                  reason:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                    pattern: '\S'
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                    pattern: '\S'
                   observedAt:
                     type: string
                     format: date-time

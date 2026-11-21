@@ -123,7 +123,10 @@ type DeviceSpec struct {
 type ReportedPlacement struct {
 	Revision       int32           `json:"revision"`
 	ObservedAt     metav1.Time     `json:"observedAt"`
-	SnapshotDigest string          `json:"snapshotDigest"`
+	SnapshotDigest string          `json:"snapshotDigest,omitempty"`
+	Method         string          `json:"method,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
+	Reference      string          `json:"reference,omitempty"`
 	FacilityRef    *LocalReference `json:"facilityRef,omitempty"`
 	RackRef        *LocalReference `json:"rackRef,omitempty"`
 	Position       *float64        `json:"position,omitempty"`

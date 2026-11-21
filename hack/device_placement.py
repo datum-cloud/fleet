@@ -1,4 +1,4 @@
-"""Offline Device placement review only. No API client or execution path."""
+"""Prepare guarded Device placement patches only. No API client or execution path."""
 
 import argparse
 import copy
@@ -11,29 +11,23 @@ from netbox_inventory import digest, read_json, reference_id, write_private, pri
 
 
 def source_report(snapshot, device, model, rack_name=None, facility_name=None):
-    report = {"revision": 1, "observedAt": snapshot["observedAt"], "snapshotDigest": digest(snapshot)}
+    report = {"revision": 1, "method": "NetBoxImport", "observedAt": snapshot["observedAt"], "snapshotDigest": digest(snapshot)}
     if facility_name:
         report["facilityRef"] = {"name": facility_name}
     if not rack_name:
         return report
     report["rackRef"] = {"name": rack_name}
-    for source, field, minimum in ((device, "position", 1), (model, "u_height", 0)):
-        raw = source.get(field)
-        if raw is None:
-            continue
+    raw = device.get("position")
+    if raw is not None:
         if isinstance(raw, bool):
             raise ValueError("invalid source geometry")
         try:
             number = float(raw)
         except (ValueError, TypeError):
             raise ValueError("invalid source geometry") from None
-        if field == "u_height" and number == 0:
-            continue
-        if not math.isfinite(number) or number < minimum or number > 100:
+        if not math.isfinite(number) or number < 1 or number > 100:
             raise ValueError("invalid source geometry")
-        report["position" if field == "position" else "height"] = number
-    if report.get("position", 1) + report.get("height", 0) > 101:
-        raise ValueError("source geometry exceeds supported rack bounds")
+        report["position"] = number
     face = device.get("face")
     if isinstance(face, dict):
         face = face.get("value")
@@ -41,16 +35,21 @@ def source_report(snapshot, device, model, rack_name=None, facility_name=None):
         if face not in ("front", "rear"):
             raise ValueError("invalid source face")
         report["face"] = face
-    if isinstance(model.get("is_full_depth"), bool):
-        report["fullDepth"] = model["is_full_depth"]
     return report
 
 
-def enrichment_plan(snapshot, target, allowlist):
+def enrichment_plan(snapshot, target, allowlist, now=None):
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    for observed in (snapshot.get("observedAt"), target.get("observedAt")):
+        if not isinstance(observed, str):
+            raise ValueError("fresh source and target observation timestamps required")
+        timestamp = datetime.datetime.fromisoformat(observed.replace("Z", "+00:00"))
+        if timestamp.tzinfo is None or not 0 <= (now - timestamp).total_seconds() <= 900:
+            raise ValueError("source and target reads must be no more than 15 minutes old")
     destination = target.get("target", {})
     if set(destination) != {"project", "namespace"} or not all(isinstance(value, str) and value for value in destination.values()):
         raise ValueError("explicit direct-API project and namespace required")
-    if set(allowlist) != {"target", "devices"} or allowlist["target"] != target.get("target"):
+    if set(allowlist) != {"source", "target", "devices"} or allowlist["target"] != target.get("target") or allowlist["source"] != snapshot.get("source"):
         raise ValueError("exact target and device allowlist required")
     if not allowlist["devices"] or snapshot.get("errors"):
         raise ValueError("empty allowlist or incomplete source snapshot")
@@ -66,16 +65,17 @@ def enrichment_plan(snapshot, target, allowlist):
         if key in records:
             raise ValueError("duplicate target identity")
         records[key] = record
-    planned, seen = [], set()
+    planned, seen, seen_sources = [], set(), set()
     for selection in allowlist["devices"]:
         if set(selection) != {"name", "namespace", "uid", "resourceVersion", "sourceID"}:
             raise ValueError("device allowlist has unexpected or missing fields")
         if selection["namespace"] != destination["namespace"]:
             raise ValueError("selection is outside the reviewed target namespace")
         key = ("Device", selection["namespace"], selection["name"])
-        if key in seen:
+        if key in seen or selection["sourceID"] in seen_sources:
             raise ValueError("duplicate allowlist target")
         seen.add(key)
+        seen_sources.add(selection["sourceID"])
         device = records[key]
         metadata, spec = device["metadata"], device["spec"]
         if any(not selection[field] or metadata.get(field) != selection[field] for field in ("uid", "resourceVersion")) or metadata.get("deletionTimestamp"):
@@ -86,7 +86,7 @@ def enrichment_plan(snapshot, target, allowlist):
         identity = {"system": snapshot["source"], "type": "dcim/devices", "id": selection["sourceID"]}
         if provenance["method"] != "NetBoxImport" or spec["identity"].get("sourceIdentity") != identity or any(provenance.get("source", {}).get(field) != value for field, value in identity.items()):
             raise ValueError("not a matching imported device")
-        if any("flux" in entry.get("manager", "").lower() or "kustomize-controller" in entry.get("manager", "").lower() for entry in metadata.get("managedFields", [])):
+        if gitops_owned(device):
             raise ValueError("legacy Flux records are excluded")
         claim = records[("DeviceClaim", selection["namespace"], spec["claimRef"]["name"])]
         placement = claim["spec"]["placement"]
@@ -98,6 +98,8 @@ def enrichment_plan(snapshot, target, allowlist):
         if rack_source.get("system") != snapshot["source"] or rack_source.get("type") != "dcim/racks" or rack_source.get("id") != reference_id(source.get("rack")):
             raise ValueError("rack contradiction or unresolved rack source")
         for reference in (claim, rack):
+            if gitops_owned(reference):
+                raise ValueError("legacy Flux references are excluded")
             if not reference["metadata"].get("uid") or not reference["metadata"].get("resourceVersion") or reference["metadata"].get("deletionTimestamp"):
                 raise ValueError("reference incarnation unresolved")
         model = models[reference_id(source["device_type"])]
@@ -110,12 +112,32 @@ def enrichment_plan(snapshot, target, allowlist):
         after = copy.deepcopy(device)
         after["spec"]["reportedPlacement"] = report
         after["spec"]["provenance"]["recordedAt"] = snapshot["observedAt"]
-        after["spec"]["provenance"]["source"].update(observedAt=snapshot["observedAt"], snapshotDigest=digest(snapshot), mappingRevision="device-reported-placement-review-v1")
+        after["spec"]["provenance"]["source"].update(observedAt=snapshot["observedAt"], snapshotDigest=digest(snapshot), mappingRevision="device-reported-placement-review-v2")
+        preconditions = [{"op": "test", "path": "/metadata/uid", "value": selection["uid"]}, {"op": "test", "path": "/metadata/resourceVersion", "value": selection["resourceVersion"]}]
+        patch = preconditions + [{"op": "add", "path": "/spec/reportedPlacement", "value": report}, {"op": "replace", "path": "/spec/provenance", "value": after["spec"]["provenance"]}]
         planned.append({"selection": selection, "before": device, "proposedAfter": after, "references": [claim, rack], "sourceDevice": source, "sourceModel": model,
-                        "preconditions": [{"op": "test", "path": "/metadata/uid", "value": selection["uid"]}, {"op": "test", "path": "/metadata/resourceVersion", "value": selection["resourceVersion"]}],
-                        "disposition": "Blocked: correction admission closed; ownership and authenticated durable audit unresolved"})
-    return {"version": 1, "executable": False, "applied": False, "sourceDigest": digest(snapshot), "targetDigest": digest(target), "allowlistDigest": digest(allowlist), "target": target["target"], "devices": planned,
-            "next": "Fresh source and target snapshots required after reviewed audit/admission implementation. Review one canary, retain exact inputs before dispatch, read back exact UID/spec. On timeout reconcile by GET; changed UID or competing revision is conflict, never retry automatically. No rollback deletion or observation-pruning schema rollback."}
+                        "preconditions": preconditions, "patch": patch, "patchDigest": digest(patch),
+                        "contentType": "application/json-patch+json", "serverDryRunQuery": "dryRun=All&fieldManager=fleet-placement-enrichment",
+                        "disposition": "Prepared only: require reviewed deployed head, fresh dependency reads, server dry-run, approved canary and exact readback"})
+    return {"version": 2, "executable": False, "applied": False, "preparedAt": now.isoformat(), "sourceDigest": digest(snapshot), "targetDigest": digest(target), "allowlistDigest": digest(allowlist), "target": target["target"], "devices": planned,
+            "next": "Do not execute from this file alone. Confirm reviewed deployed schema head, refresh source/target and exact allowlist, retain authority and digests, server dry-run each patch, approve one canary, read back UID/spec before the remainder. Timeout is unknown: reconcile by GET; changed UID or competing revision is conflict, never retry automatically. No deletion or schema pruning rollback."}
+
+
+def gitops_owned(record):
+    metadata = record["metadata"]
+    return any(any(marker in key.lower() for marker in ("fluxcd.io", "argocd")) for key in {**metadata.get("labels", {}), **metadata.get("annotations", {})}) or any(any(marker in entry.get("manager", "").lower() for marker in ("flux", "kustomize-controller", "helm-controller", "argocd")) for entry in metadata.get("managedFields", []))
+
+
+def reconcile(item, current):
+    if not isinstance(current, dict) or "metadata" not in current or "spec" not in current:
+        return "Unknown"
+    if current["metadata"].get("uid") != item["selection"]["uid"] or current["metadata"].get("deletionTimestamp"):
+        return "Conflict"
+    if current["spec"] == item["proposedAfter"]["spec"] and current["metadata"].get("resourceVersion") and current["metadata"]["resourceVersion"] != item["selection"]["resourceVersion"]:
+        return "Applied"
+    if current["spec"] == item["before"]["spec"] and current["metadata"].get("resourceVersion") == item["selection"]["resourceVersion"]:
+        return "Unchanged; no automatic retry"
+    return "Conflict"
 
 
 def main():
@@ -127,7 +149,7 @@ def main():
     output = Path(args.output)
     private_output(output)
     write_private(output / "placement-review.json", result)
-    print("Blocked offline review saved; no writes dispatched:", len(result["devices"]))
+    print("Prepared offline review saved; no writes dispatched:", len(result["devices"]))
 
 
 if __name__ == "__main__":
