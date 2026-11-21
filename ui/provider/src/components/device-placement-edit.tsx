@@ -1,14 +1,20 @@
-import { useContext, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useContext, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import { ApiError, PLUGIN_ID, PROVIDER_PROJECT } from '../lib/api';
 import { canCorrectPlacement, correctDevicePlacement, placementFields, type PlacementFields } from '../lib/device-placement-edit';
 import { useInventoryPermission } from '../lib/inventory-management';
-import { InventoryOperationContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
+import { InventoryOperationContext, InventoryOperationGenerationContext, InventoryOperationReadyContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 
-export function DevicePlacementEdit({ device, locations, issues }: { device: Device; locations: PhysicalRecord[]; issues?: Inventory['issues'] }) {
+export function DevicePlacementEdit(props: ComponentProps<typeof DevicePlacementForm>) {
+  const generation = useContext(InventoryOperationGenerationContext);
+  const ready = useContext(InventoryOperationReadyContext);
+  return ready ? <DevicePlacementForm key={generation} {...props} /> : null;
+}
+
+function DevicePlacementForm({ device, locations, issues }: { device: Device; locations: PhysicalRecord[]; issues?: Inventory['issues'] }) {
   const client = useQueryClient();
   const session = useContext(InventoryOperationContext);
   const readFailure = useContext(InventoryReadAccessContext);

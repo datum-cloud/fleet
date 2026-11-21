@@ -24,6 +24,8 @@ export class InventoryOperationScope {
 }
 
 export const InventoryOperationContext = createContext<InventoryOperationScope | undefined>(undefined);
+export const InventoryOperationGenerationContext = createContext(0);
+export const InventoryOperationReadyContext = createContext(true);
 
 export class InventoryOperation {
   private dispatched = false;

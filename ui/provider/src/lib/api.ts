@@ -1,6 +1,7 @@
 import { fixtureClasses, fixtureCapacities, fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords, fixtureProfiles } from './fixtures';
 import { toInventory, inventoryResources, type InventoryKind, type Inventory, type RawDeviceClaimList, type RawDeviceList } from '../inventory';
 import { useId } from 'react';
+import { useInventoryRead } from './inventory-read';
 import type { List, PhysicalRecord } from '../../../shared/fleet-api';
 import {
   toMachineCapacity,
@@ -293,9 +294,10 @@ export async function fetchInventoryCollection<T>(plural: string): Promise<T[]> 
 
 export function useInventory(): UseQueryResult<Inventory, ApiError> {
   const view = useId();
+  const read = useInventoryRead(fetchInventory);
   return useQuery({
     queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT, view],
-    queryFn: fetchInventory,
+    queryFn: read,
     refetchInterval: false,
     refetchOnWindowFocus: 'always',
     gcTime: 0,

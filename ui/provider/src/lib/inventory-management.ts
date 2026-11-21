@@ -5,6 +5,7 @@ import type { InventoryOperation } from './inventory-operation';
 import { hardwarePayload, validateHardwareReferences, type HardwareFields } from './inventory-hardware';
 import { inventoryResources } from '../inventory';
 import { readInventoryReference } from './inventory-read-access';
+import { useInventoryRead } from './inventory-read';
 
 export type ManagedKind = 'Facility' | 'Rack' | 'Device' | 'Cable' | 'DeviceClaim';
 export type ManagedRecord = PhysicalRecord | Device | DeviceClaim;
@@ -22,7 +23,8 @@ export async function inventoryPermission(kind: ManagedKind, namespace: string, 
 }
 
 export function useInventoryPermission(kind: ManagedKind, namespace: string, verb: 'create' | 'patch', name?: string) {
-  return useQuery({ queryKey: [PLUGIN_ID, 'inventory-permission', PROVIDER_PROJECT, kind, namespace, verb, name], queryFn: () => inventoryPermission(kind, namespace, verb, name), enabled: !!namespace, retry: false, gcTime: 0, staleTime: 0, refetchOnMount: 'always' });
+  const read = useInventoryRead(() => inventoryPermission(kind, namespace, verb, name));
+  return useQuery({ queryKey: [PLUGIN_ID, 'inventory-permission', PROVIDER_PROJECT, kind, namespace, verb, name], queryFn: read, enabled: !!namespace, retry: false, gcTime: 0, staleTime: 0, refetchOnMount: 'always' });
 }
 
 export function canEditInventoryLabel(record: ManagedRecord): boolean {

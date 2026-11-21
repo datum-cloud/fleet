@@ -19,7 +19,7 @@ async function open(editing: boolean, label: string) {
   fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'synthetic' } });
 }
 
-it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['review', 'dispatch-ok', 'dispatch-error'].flatMap(stage => ['fast-repeat', 'slow', 'overlap', 'cancel-navigation', 'focus-blur'].map(transition => ({ strict, editing, stage, transition }))))))('independent $transition $stage edit=$editing strict=$strict', async ({ strict, editing, stage, transition }) => {
+it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['review', 'dispatch-ok', 'dispatch-error'].flatMap(stage => ['fast-repeat', 'slow', 'overlap', 'cancel-navigation', 'focus-blur', 'focus-pagehide'].map(transition => ({ strict, editing, stage, transition }))))))('independent $transition $stage edit=$editing strict=$strict', async ({ strict, editing, stage, transition }) => {
   let submitting = false;
   let intercepted = false;
   let releaseOperation: ((value: unknown) => void) | undefined;
@@ -50,11 +50,11 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
     await act(async () => { await router.revalidate(); await router.revalidate(); await router.revalidate(); });
   } else {
     holdLoader = true;
-    act(() => { if (transition === 'focus-blur') window.dispatchEvent(new Event('focus')); else if (transition === 'cancel-navigation') void router.navigate('/?kind=Rack'); else void router.revalidate(); });
+    act(() => { if (transition.startsWith('focus-')) window.dispatchEvent(new Event('focus')); else if (transition === 'cancel-navigation') void router.navigate('/?kind=Rack'); else void router.revalidate(); });
     await waitFor(() => expect(loaders).toHaveLength(1));
     expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
-    if (transition === 'focus-blur') {
-      fireEvent(window, new Event('blur'));
+    if (transition.startsWith('focus-')) {
+      fireEvent(window, new Event(transition === 'focus-blur' ? 'blur' : 'pagehide'));
       await act(async () => loaders[0]());
       expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
@@ -82,7 +82,7 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
   router.dispose();
 });
 
-it.each([false, true].flatMap(strict => [401, 403, 404, 503].map(status => ({ strict, status }))))('late previous cache never overrides new denial $status strict=$strict', async ({ strict, status }) => {
+it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => ['revalidate', 'focus'].map(transition => ({ strict, status, transition })))))('late previous cache never overrides new denial $status strict=$strict via=$transition', async ({ strict, status, transition }) => {
   let phase = 'initial';
   const releases: (() => void)[] = [];
   const freshRequests: string[] = [];
@@ -105,7 +105,10 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].map(status => ({ st
   fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
   await waitFor(() => expect(releases).toHaveLength(7));
   phase = 'denied';
-  await act(async () => { await router.revalidate(); await router.revalidate(); });
+  await act(async () => {
+    if (transition === 'focus') { fireEvent(window, new Event('blur')); fireEvent(window, new Event('focus')); }
+    else { await router.revalidate(); await router.revalidate(); }
+  });
   const title = status === 401 ? 'Your session has expired' : status === 403 ? 'Inventory access needed' : status === 404 ? 'Inventory section unavailable' : 'Inventory is temporarily unavailable';
   await screen.findByRole('heading', { name: title });
   await act(async () => releases.forEach(release => release()));
