@@ -1,0 +1,7 @@
+{
+  "MODE": "Local",
+  "HTTPS": "Disable",
+  "TRAYS": [],
+  "SPEC": "Redfish",
+  "POPULATE": "/etc/fleet-bmc/populate-config.json"
+}

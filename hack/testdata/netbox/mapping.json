@@ -1,0 +1,68 @@
+{
+  "cables": {
+    "1": {
+      "medium": "Power"
+    }
+  },
+  "circuits": {
+    "1": {
+      "id": "Example-service",
+      "system": "example-service-owner",
+      "type": "transport"
+    }
+  },
+  "demarcations": {
+    "1": {
+      "componentSource": "dcim/rear-ports/1"
+    }
+  },
+  "devices": {
+    "1": {
+      "classification": "physical",
+      "placement": {
+        "scope": "RackMembership"
+      },
+      "provider": "example-provider",
+      "serialMeaning": "providerHostID"
+    },
+    "2": {
+      "classification": "physical",
+      "placement": {
+        "scope": "RackMembership"
+      },
+      "serialMeaning": "unknown"
+    },
+    "3": {
+      "classification": "physical",
+      "placement": {
+        "facility": "example-premises",
+        "scope": "Facility"
+      },
+      "serialMeaning": "unknown"
+    }
+  },
+  "facilities": [
+    {
+      "displayName": "Example premises",
+      "name": "example-premises",
+      "source": "dcim/sites/1"
+    }
+  ],
+  "feeds": {
+    "1": {
+      "facility": "example-premises"
+    }
+  },
+  "racks": {
+    "1": {
+      "facility": "example-premises"
+    }
+  },
+  "revision": "example-reviewed-1",
+  "target": {
+    "application": "provider-inventory",
+    "namespace": "inventory",
+    "project": "example-provider",
+    "writer": "Flux"
+  }
+}

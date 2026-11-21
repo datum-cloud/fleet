@@ -58,7 +58,8 @@ processes or service-catalog entries.
 | Group | Resources and responsibility | Status |
 | --- | --- | --- |
 | `metal.datumapis.com` | `MachineClass`: offerings and consumer references. `MachineProfile`: hardware requirements. `MachineCapacity`: provider supply. `Machine`: customer allocation and runtime intent. `MachineAllocation`: protected allocation identity. `Installation`: immutable OS installation or reinstall request. | Six alpha CRDs at `v1alpha1`. Production admission and real providers remain incomplete. |
-| `fleet.datumapis.com` | Physical inventory: `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`. Physical preparation and provider execution remain operator responsibilities. | Proposed inventory APIs; no physical inventory CRDs or real provider executor are implemented here. |
+| `provider.metal.datumapis.com` | Proposed `MachineOffering` owns installation/management capability policy; `MachineOfferingAssignment` controls acquisition access. MachineClass becomes only a one-hop published consumer view; MachineProfile remains immutable requirements in Metal. | Proposed target design, not implemented by the six alpha CRDs above. |
+| `fleet.datumapis.com` | Physical inventory: `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`. Physical preparation and provider execution remain operator responsibilities. | Proposed inventory APIs. Only a minimal, operator-written subset of `DeviceClaim` and `Device` is implemented. Its alpha CRDs, ProtectedResources and inventory roles are [registered in Milo](../operations/physical-inventory.md) by `config/milo`, and the records live in the provider project; no controller reads them. No real provider executor is implemented here. |
 | `coordination.fleet.datumapis.com` | Intended management-to-location execution handoff, retaining exact allocation identity, location, admitted inputs, release intent, and execution evidence. `MachineAllocationHandoff` is a candidate resource. | Architecture decision only on the current main implementation: no coordination CRD or cell controller is packaged. Replaces the earlier prototype name `internal.fleet.datumapis.com`. |
 
 MachineCapacity and MachineAllocation belong to the Metal allocation contract
@@ -72,6 +73,18 @@ customer's durable handle, MachineAllocation identifies the exclusive binding,
 and Installation identifies an OS incarnation. Managed NodeClaim identity stays
 above allocation. These identities and lifetimes remain separate. Standalone
 and managed consumers use the same allocator and installation contract.
+
+Metal is the common public contract, independent of provider implementation.
+Fleet is optional for fulfillment. Allocations retain accepted offering identity,
+contract/profile and installation/management capabilities. Catalog or assignment
+withdrawal blocks new allocations, not retained runtime rights. Current action,
+image, secret and endpoint permissions and explicit safety/suspension controls
+still apply; cleanup uses retained obligations rather than acquisition grants.
+The [PXE design](../enhancements/pxe-installation/README.md) defines the proposed
+immutable managedImage/delegatedPXE union, exclusive execution drivers, and
+completion assurance. Managed consumers require qualified assurance, not merely
+an Installation Ready condition. These changes specify the target design without
+compatibility or migration machinery for earlier drafts.
 
 The broader proposals describe managed clusters, node services, image catalogs,
 and OS policy. Their implementation and final group placement remain separate
@@ -87,18 +100,23 @@ not create additional service registrations for them.
 | Protected allocation custody | Service-owned private storage | The allocator retains exact identities, authority, and cleanup obligations before effects. |
 | Fleet physical inventory | Intended operator/provider infrastructure control planes | Inventory and provider controllers own their respective facts and execution contracts; exact scopes and deployment remain proposed. |
 | Coordination intent | Intended Karmada federation hub | Management writes admitted handoff intent. |
-| Coordination replicas and execution | Intended selected location/cell | Federation delivers intent; the cell executes location work and reports status directly to the hub. |
+| Coordination replicas and execution | Intended selected location/cell | Federation delivers intent; the cell executes location work and writes cell-local results only. |
+| Reflected execution results | Intended Karmada federation hub | Karmada reflects results from the selected cell; management validates them before public projection. |
 
 The coordination design requires its CRD on the federation hub and participating
 cells, not in customer Milo project control planes. Management owns handoff
-intent and the selected cell owns execution status. The management process's
-deployment cluster is not implicitly the authoritative handoff store.
+intent; the selected cell owns local execution results, and Karmada alone reflects
+them to the hub. Cells receive no hub or consumer-project API credentials. The
+management process's deployment cluster is not implicitly the authoritative handoff store.
 
 Management retains admission and reservation authority before creating a
 handoff. Federation targets the selected location, and the cell asks networking
-to prepare the admitted interfaces. Current location evidence is projected into
-the customer's Metal resource. Release requires verified location cleanup before
-provider cleanup and quota settlement complete. Missing, stale, or uncertain
+to prepare the admitted interfaces. The status path is cell-local result ->
+Karmada reflection -> management validation -> public projection. Validation checks
+selected cell, allocation, operation identity/revision, executor fence, and evidence
+freshness. Wrong-cell, stale, conflicting, or partition-delayed results cannot
+advance readiness; reflected status itself is not authority. Release requires
+verified location cleanup before provider cleanup and quota settlement complete. Missing, stale, or uncertain
 execution evidence remains unknown.
 
 Networking/IPAM and Galactic retain authority over attachments, addresses,

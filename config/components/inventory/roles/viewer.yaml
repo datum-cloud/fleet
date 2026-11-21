@@ -1,0 +1,28 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-inventory-viewer
+  annotations:
+    kubernetes.io/display-name: Fleet Inventory Viewer
+    kubernetes.io/description: View the provider's planned slots and registered devices
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fleet.datumapis.com/deviceclaims.list
+    - fleet.datumapis.com/deviceclaims.get
+    - fleet.datumapis.com/deviceclaims.watch
+    - fleet.datumapis.com/devices.list
+    - fleet.datumapis.com/devices.get
+    - fleet.datumapis.com/devices.watch
+    - fleet.datumapis.com/facilities.get
+    - fleet.datumapis.com/facilities.list
+    - fleet.datumapis.com/facilities.watch
+    - fleet.datumapis.com/racks.get
+    - fleet.datumapis.com/racks.list
+    - fleet.datumapis.com/racks.watch
+    - fleet.datumapis.com/cables.get
+    - fleet.datumapis.com/cables.list
+    - fleet.datumapis.com/cables.watch
+    - fleet.datumapis.com/powerfeeds.get
+    - fleet.datumapis.com/powerfeeds.list
+    - fleet.datumapis.com/powerfeeds.watch

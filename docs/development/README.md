@@ -18,7 +18,26 @@ scenario exercises local-scope contention, install recovery, cleanup, and
 capacity reuse. An explicit Milo-routed synthetic staging overlay exercises
 event-driven Machine allocation, contention, cleanup, and reuse through the
 public project API. Production caller-preserving
-admission, replayable Milo event adapters, and real providers are not implemented.
+admission, replayable Milo event adapters, and production provider integration are not implemented.
+An opt-in [local KVM installation harness](../operations/local-vm.md) implements
+a bounded libvirt executor and guest installer using the same lifecycle library.
+It uses a disposable Kubernetes API and explicit local authority fixtures; it is
+not wired into the production manager.
+The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
+that executor with native Milo project APIs and actual Karmada delivery. On the
+selected cell it runs as [Flux-owned site Deployments and kro-created per-operation worker Jobs](../operations/site-execution.md).
+Each local cluster's [Flux](../operations/gitops.md) installs Milo, Karmada, kro and the shared site services from
+an OCI artifact staged from the checkout. Run it
+with `task multiplane:acceptance`. Its exit codes, bounded phases and sanitized
+`evidence/` directory are documented there; `task multiplane:test-harness` runs its
+offline tests, which CI also runs.
+`internal/redfish` implements a Redfish executor behind the same contracts: discovery,
+one-time boot overrides, power, observation-based recovery and a booted wipe
+cleanup. [Redfish-mode acceptance](../operations/redfish-lab.md)
+(`task multiplane:redfish-acceptance`) exercises it against the unmodified DMTF Redfish
+Interface Emulator and a lab-only libvirt adapter. It is not qualified against a
+physical BMC or server, and the production manager does not use it.
+
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
@@ -26,7 +45,8 @@ Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
 The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the
 Bare Metal service as `metal`; entitlement and location-availability readers use
-that reference. Physical Device references use `fleet.datumapis.com`. The
+that reference. Physical Device references use `fleet.datumapis.com`; that group
+implements only a minimal, operator-written `DeviceClaim` and `Device` today. The
 [API architecture](../architecture/README.md) documents the proposed coordination group,
 control-plane placement, and rollout constraints. Group renaming does not migrate
 stored allocations or establish live acceptance.
@@ -164,7 +184,58 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   consumer set. It does not release custody, call a provider, delete records,
   or rewrite status, including for a project with active custody. Its
   deadlines and queued events are dropped, and re-engagement resumes from the
-  retained private records.
+  retained private records. Unbinding drains direct and dependency-route
+  reconciliations that already acquired the runtime before removing it from the
+  registry; a retained runtime pointer cannot start work after that barrier.
+  A blocked in-flight handler therefore delays completed departure rather than
+  falsely reporting it. This fixes an inherited race where informer removal and
+  registry removal could finish while a handler could still write. It does not
+  roll back effects already admitted before departure. Regression tests block a
+  handler explicitly and assert the barrier, in addition to the active-custody
+  no-write/no-release test.
+  Re-engagement also drains the previous runtime before publishing either
+  registry entry, so a new lifecycle owner's independent request locks cannot
+  overlap old work. The wait never holds the registry mutex. After waiting,
+  engagement rechecks both the cluster pointer and project-lifetime ownership;
+  a concurrent successor must itself drain, and a conflicting route is refused.
+  Cancellation aborts the waiting engagement without publishing its runtime or
+  engaging its controllers. An already initiated drain continues to completion;
+  it is not rolled back into an active runtime. Cancellation retires the prior
+  entry after its drain completes, without removing a concurrent successor.
+  A handler that never returns still prevents safe replacement; cancellation is
+  not evidence that its effects have stopped. Deterministic direct/routed replacement,
+  cancellation, stale-pointer, registry-revalidation and concurrent engagement
+  tests cover these process-local barriers, not distributed executor fencing.
+  A per-cluster-route engagement gate also serializes publication through the
+  entire downstream controller setup call and failure cleanup. Draining alone
+  was insufficient: a paused predecessor's setup could otherwise resume after
+  its successor and replace the successor's controller watches. The gate is
+  acquired after effect-free runtime construction; waiting is context-cancellable
+  and never holds the registry mutex. Cancelling a waiter does not stop the
+  current runtime. Gates are reference-counted and removed after their last
+  holder or waiter leaves; unrelated routes remain independent. Project-lifetime
+  conflicts across routes are still checked under the registry mutex.
+  Each published runtime owns a child engagement context, cancelled when its
+  drain begins. This cancels partial downstream engagements on failure and invalidates
+  the old context even when replacement uses the same cluster implementation.
+  Cancellation starts draining immediately, but cleanup cannot remove lifetime
+  ownership or admit a successor until downstream setup returns and admitted
+  handlers finish. A downstream call that ignores cancellation therefore blocks
+  that route rather than allowing an unfenced successor. A setup that returns
+  nil after cancellation is reported as cancelled, not successful engagement.
+  Cleanup under an already-held gate uses a separate internal path, avoiding
+  recursive locking; stale cleanup can only cancel and remove its own runtime.
+  Downstream setup may read the registries and engage another route. Synchronous
+  recursion back into a held route with the supplied context is rejected with
+  `ErrProjectEngagementReentrant`, including cycles through another route.
+  Nested setup also refuses to wait on any other occupied route in this registry,
+  preventing two concurrent callbacks from deadlocking by requesting each
+  other's routes. Ordinary independent callers still wait cancellably.
+  Callbacks must propagate that context rather than create a detached context
+  and synchronously wait on their own engagement. Deterministic regressions
+  cover blocked setup, direct/dependency handlers, failed/cancelled setup,
+  cancelled waiters, cross-route lifetime transfer, stale cleanup, unrelated
+  progress, reentrant setup and same-implementation context replacement.
 - **Observational discovery.** The provider declares no managed resources,
   teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer. Its
   discovery clients refuse every write. The library would otherwise patch
@@ -251,7 +322,11 @@ namespaces as project stand-ins and one synthetic `us-central-1` machine with 24
 cores and 128Gi of memory. The allocate phase retains custody before adding the
 Fleet finalizer, binds one claim, and leaves the competing claim pending. The
 install phase admits one exact digest-pinned operation through the persistent
-simulator and is idempotent across worker and simulator restart. The release
+simulator and is idempotent across worker and simulator restart. A bounded
+reinstall phase uses a distinct Installation naming the initial Installation as
+its predecessor, retains the same allocation, and recovers the same successor
+operation across retries and restart. Unknown completion closes readiness and
+keeps the capacity occupied. The release
 phase verifies cleanup before finalizer removal and advances the retained asset
 epoch before the waiting claim binds.
 
@@ -677,6 +752,34 @@ not a production executor identity protocol.
 The persisted schema and HTTP endpoints are internal alpha interfaces. No
 compatibility promise exists yet. The process fails closed if retained state is
 corrupt or uses an unsupported schema version.
+
+## Physical inventory subset
+
+`internal/api/inventory/v1alpha1` defines Facility, Rack, DeviceClaim, Device,
+Cable and PowerFeed records. Legacy slot claims coexist with new observational
+installation claims; no move or replacement handover is automated. Records live
+in the provider project in Milo. `config/components/inventory` holds their
+CRDs, ProtectedResources, and the `fleet.datumapis.com-inventory-viewer` and
+`-editor` roles. Only `config/milo` includes it.
+
+CEL requires `Manual` or source-attributed `NetBoxImport` provenance and every edit to
+advance `recordedAt`. It keeps a Device's `claimRef` and identity immutable,
+rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
+BMC endpoints. Status is a reserved subresource with no fields and no writer.
+No metal role grants inventory access.
+
+The staff portal plugin's read-only Inventory tab pages through all six kinds,
+shows physical relationships and components, and can inspect a private import
+report locally. Multiple historical bindings remain ambiguous rather than being
+resolved by edit time. The primary workflow is [manual entry and review](../operations/physical-inventory.md#manually-record-a-small-installation)
+through the existing Flux writer, with no NetBox dependency. The optional,
+operator-invoked standard-library `hack/netbox_inventory.py` reads GET-only snapshots
+and generates offline review candidates; it never applies, schedules, synchronizes,
+deletes or changes Git. Unit tests run API-server validation offline,
+check IAM and exercise pagination, source conflicts, omissions and interrupted
+imports. See [safe NetBox evaluation](../operations/netbox-physical-import.md).
+No live source coverage, deployment of this physical extension, physical verification, concurrent
+reservation, deletion safety, adoption or new hardware-effect path is established.
 
 ## Build, test, and run
 

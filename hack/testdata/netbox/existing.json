@@ -1,0 +1,17 @@
+{
+  "collections": [
+    "Facility",
+    "Rack",
+    "DeviceClaim",
+    "Device",
+    "Cable",
+    "PowerFeed"
+  ],
+  "items": [],
+  "target": {
+    "application": "provider-inventory",
+    "namespace": "inventory",
+    "project": "example-provider",
+    "writer": "Flux"
+  }
+}

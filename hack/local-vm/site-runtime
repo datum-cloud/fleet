@@ -1,0 +1,31 @@
+#!/bin/sh
+# VM runtime for the Kubernetes site: libvirtd only. Workers reach it through
+# the socket directory shared on the site volume; nothing listens on TCP.
+set -eu
+[ "${FLEET_LOCAL_VM_ACCEL:-}" = tcg ] || { echo 'site runtime requires FLEET_LOCAL_VM_ACCEL=tcg' >&2; exit 1; }
+boot_ip=${FLEET_BOOT_IP:?boot Service ClusterIP required}
+case "$boot_ip" in *[!0-9.]*|'') echo 'invalid boot Service IP' >&2; exit 1 ;; esac
+sock=/run/fleet-libvirt
+mkdir -p "$sock" /run/libvirt /var/lib/libvirt/images /var/log/libvirt/qemu
+# A previous runtime Pod's socket is stale; libvirtd recreates it.
+rm -f "$sock"/libvirt-sock "$sock"/libvirt-sock-ro "$sock"/libvirt-admin-sock
+# Firmware on the provisioning bridge may reach this namespace (DHCP) and the
+# boot Service only. Anything else forwarded from the bridge is dropped.
+iptables -t mangle -N FLEET-PXE 2>/dev/null || iptables -t mangle -F FLEET-PXE
+iptables -t mangle -A FLEET-PXE -m addrtype --dst-type LOCAL -j RETURN
+iptables -t mangle -A FLEET-PXE -m addrtype --dst-type BROADCAST -j RETURN
+iptables -t mangle -A FLEET-PXE -d "$boot_ip" -p tcp --dport 8080 -j RETURN
+iptables -t mangle -A FLEET-PXE -j DROP
+iptables -t mangle -C PREROUTING -i fleetpxe0 -j FLEET-PXE 2>/dev/null || iptables -t mangle -A PREROUTING -i fleetpxe0 -j FLEET-PXE
+if [ "${FLEET_SITE_PROVIDER:-libvirt}" = redfish ]; then
+ # Redfish mode: persistent lab targets. Their disks are created once on the
+ # retained volume and never recreated; the lab BMC adapter defines the
+ # domains and the provisioning network through this daemon's socket.
+ mkdir -p /var/lib/fleet-lab/disks /var/lib/fleet-lab-console
+ for t in target-a target-b; do
+  [ -e "/var/lib/fleet-lab/disks/$t.raw" ] || truncate -s 2G "/var/lib/fleet-lab/disks/$t.raw"
+ done
+fi
+virtlogd --daemon
+virtlockd --daemon
+exec /usr/bin/tini -- libvirtd

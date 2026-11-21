@@ -1,0 +1,178 @@
+# kro's grant for the handoff dispatcher graph. kro creates only per-operation
+# worker objects; the shared site services, their Service and the journal
+# volume are Flux-owned and kro may only read them.
+#
+# Reads are cluster-wide because kro v0.9.4 watches every kind it manages or
+# references with cluster-wide metadata informers. Writes are namespaced:
+# Jobs and ServiceAccounts in fleet-site, Roles and RoleBindings in
+# fleet-coordination. kro holds no Deployment, Service, volume, ConfigMap or
+# Secret write and no handoff spec or status write. To create a per-operation
+# Role granting get on one handoff, kro itself must hold that get permission.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-site-kro
+  # Aggregated into the kro controller ClusterRole (chart rbac.mode=aggregation).
+  labels: {rbac.kro.run/aggregate-to-controller: "true"}
+rules:
+  - apiGroups: [site.fleet.datumapis.com]
+    resources: [handoffdispatchers, handoffdispatchers/status, handoffdispatchers/finalizers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [machineallocationhandoffs]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, services, serviceaccounts]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-site-kro-workers, namespace: fleet-site}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-site-kro-workers, namespace: fleet-site}
+subjects:
+  - {kind: ServiceAccount, name: kro, namespace: kro-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-site-kro-workers}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: fleet-site-kro-worker-rbac, namespace: fleet-coordination}
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: fleet-site-kro-worker-rbac, namespace: fleet-coordination}
+subjects:
+  - {kind: ServiceAccount, name: kro, namespace: kro-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-site-kro-worker-rbac}
+---
+# RBAC alone would still let a graph revision create any Job in fleet-site,
+# including one that runs as the observer (the status writer) or as a
+# privileged container. These policies bind kro's writes to the per-operation
+# shape: w-<handoff> names, the matching ServiceAccount, the site image the
+# shared services run (parameter written by the services layer), no privilege,
+# no host namespaces and no volume other than the journal claim and emptyDir.
+# They apply only to kro's own requests; nothing else in the cluster is gated.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: fleet-site-kro-worker-jobs}
+spec:
+  failurePolicy: Fail
+  paramKind: {apiVersion: v1, kind: ConfigMap}
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: fleet-site}
+    resourceRules:
+      - {apiGroups: [batch], apiVersions: ["*"], resources: [jobs], operations: [CREATE, UPDATE]}
+  matchConditions:
+    - name: kro-controller
+      expression: "request.userInfo.username == 'system:serviceaccount:kro-system:kro'"
+  variables:
+    - name: pod
+      expression: object.spec.template.spec
+    - name: handoff
+      expression: "has(object.metadata.labels) && 'fleet.datumapis.com/handoff' in object.metadata.labels ? object.metadata.labels['fleet.datumapis.com/handoff'] : ''"
+  validations:
+    - expression: "variables.handoff.startsWith('op-') && object.metadata.name == 'w-' + variables.handoff"
+      message: a worker Job must be named w-<handoff> and labelled with that handoff
+    - expression: "has(variables.pod.serviceAccountName) && variables.pod.serviceAccountName == object.metadata.name"
+      message: a worker Job must run as its own per-operation ServiceAccount
+    - expression: >-
+        size(variables.pod.containers) == 1 &&
+        (!has(variables.pod.initContainers) || size(variables.pod.initContainers) == 0) &&
+        variables.pod.containers.all(c, c.image == params.data.image)
+      message: a worker Job must run one container from the site image the shared services run
+    - expression: >-
+        variables.pod.containers.all(c, has(c.securityContext) &&
+        (!has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+        has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation &&
+        has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) &&
+        'ALL' in c.securityContext.capabilities.drop &&
+        (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0))
+      message: a worker Job must be unprivileged with all capabilities dropped
+    - expression: >-
+        !(has(variables.pod.hostNetwork) && variables.pod.hostNetwork) &&
+        !(has(variables.pod.hostPID) && variables.pod.hostPID) &&
+        !(has(variables.pod.hostIPC) && variables.pod.hostIPC)
+      message: a worker Job must not use host namespaces
+    - expression: >-
+        !has(variables.pod.volumes) || variables.pod.volumes.all(v,
+        (has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == 'fleet-site-state') || has(v.emptyDir))
+      message: a worker Job may mount only the site journal claim and emptyDir
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: fleet-site-kro-worker-jobs}
+spec:
+  policyName: fleet-site-kro-worker-jobs
+  validationActions: [Deny]
+  paramRef:
+    name: fleet-site-worker-policy
+    namespace: fleet-site
+    parameterNotFoundAction: Deny
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: fleet-site-kro-worker-identity}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - {key: kubernetes.io/metadata.name, operator: In, values: [fleet-site, fleet-coordination]}
+    resourceRules:
+      - {apiGroups: [""], apiVersions: ["*"], resources: [serviceaccounts], operations: [CREATE, UPDATE]}
+      - {apiGroups: [rbac.authorization.k8s.io], apiVersions: ["*"], resources: [roles, rolebindings], operations: [CREATE, UPDATE]}
+  matchConditions:
+    - name: kro-controller
+      expression: "request.userInfo.username == 'system:serviceaccount:kro-system:kro'"
+  variables:
+    - name: kind
+      expression: request.resource.resource
+    - name: handoff
+      expression: "object.metadata.name.startsWith('w-op-') ? object.metadata.name.substring(2) : ''"
+  validations:
+    - expression: "variables.handoff != ''"
+      message: kro may create only per-operation identities named w-<handoff>
+    - expression: "variables.kind != 'serviceaccounts' || request.namespace == 'fleet-site'"
+      message: worker ServiceAccounts live in fleet-site
+    - expression: >-
+        variables.kind != 'roles' || (has(object.rules) && size(object.rules) == 1 &&
+        object.rules.all(r, r.apiGroups == ['coordination.fleet.datumapis.com'] &&
+        r.resources == ['machineallocationhandoffs'] && r.verbs == ['get'] &&
+        has(r.resourceNames) && r.resourceNames == [variables.handoff]))
+      message: a worker Role may grant only get on its own handoff
+    - expression: >-
+        variables.kind != 'rolebindings' || (object.roleRef.kind == 'Role' &&
+        object.roleRef.name == object.metadata.name && has(object.subjects) && size(object.subjects) == 1 &&
+        object.subjects[0].kind == 'ServiceAccount' && object.subjects[0].name == object.metadata.name &&
+        object.subjects[0].namespace == 'fleet-site')
+      message: a worker RoleBinding may bind only its own Role to its own ServiceAccount
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: fleet-site-kro-worker-identity}
+spec:
+  policyName: fleet-site-kro-worker-identity
+  validationActions: [Deny]

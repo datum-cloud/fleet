@@ -1,4 +1,7 @@
-import { fixtureClasses, fixtureCapacities, fixtureProfiles } from './fixtures';
+import { fixtureClasses, fixtureCapacities, fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords, fixtureProfiles } from './fixtures';
+import { toInventory, inventoryResources, type InventoryKind, type Inventory, type RawDeviceClaimList, type RawDeviceList } from '../inventory';
+import { useId } from 'react';
+import type { List, PhysicalRecord } from '../../../shared/fleet-api';
 import {
   toMachineCapacity,
   toMachineClass,
@@ -31,6 +34,7 @@ const USE_FIXTURES = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const REFETCH_INTERVAL_MS = 10_000;
 
 const METAL_API = '/apis/metal.datumapis.com/v1alpha1';
+const INVENTORY_API = '/apis/fleet.datumapis.com/v1alpha1';
 
 export class ApiError extends Error {
   status: number;
@@ -55,17 +59,17 @@ interface ProxyEnvelope<T> {
   error?: string;
 }
 
-async function proxyFetch<T>(
+export async function proxyFetch<T>(
   projectName: string,
   path: string,
-  init: { method?: string; body?: unknown } = {}
+  init: { method?: string; body?: unknown; contentType?: string } = {}
 ): Promise<T> {
   const url = `/api/internal${getProjectScopedBase(projectName)}${path}`;
   const res = await fetch(url, {
     method: init.method ?? 'GET',
     headers: {
       Accept: 'application/json',
-      ...(init.body !== undefined && { 'Content-Type': 'application/json' }),
+      ...(init.body !== undefined && { 'Content-Type': init.contentType ?? 'application/json' }),
     },
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
@@ -249,5 +253,52 @@ export function useDeleteMachineClass(): UseMutationResult<void, ApiError, strin
     mutationFn: deleteMachineClass,
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machineclasses', PROVIDER_PROJECT] }),
+  });
+}
+
+// DeviceClaims and Devices are namespaced provider inventory, read across every
+// namespace of the provider project. Staff need a role with
+// fleet.datumapis.com/deviceclaims.list and devices.list there, such as
+// fleet.datumapis.com-inventory-viewer.
+
+export async function fetchInventory(): Promise<Inventory> {
+  if (USE_FIXTURES) return toInventory(fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords);
+  const issues: Inventory['issues'] = {};
+  const results = await Promise.all(Object.entries(inventoryResources).map(async ([kind, plural]) => {
+    try { return { kind, records: await fetchInventoryCollection<PhysicalRecord>(plural) }; }
+    catch (error) {
+      if (error instanceof ApiError && error.status === 401) throw error;
+      issues[kind as InventoryKind] = { status: error instanceof ApiError ? error.status : 0 };
+      return { kind, records: [] };
+    }
+  }));
+  const claims = results.find(result => result.kind === 'DeviceClaim')!.records as unknown as NonNullable<RawDeviceClaimList['items']>;
+  const devices = results.find(result => result.kind === 'Device')!.records as unknown as NonNullable<RawDeviceList['items']>;
+  return { ...toInventory(claims, devices, results.filter(result => result.kind !== 'Device' && result.kind !== 'DeviceClaim').flatMap(result => result.records)), issues };
+}
+
+export async function fetchInventoryCollection<T>(plural: string): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
+  let continuation = '';
+  do {
+    const page = await proxyFetch<List<T> & { metadata?: { continue?: string } }>(PROVIDER_PROJECT, `${INVENTORY_API}/${plural}?limit=500${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
+    items.push(...(page.items ?? []));
+    continuation = page.metadata?.continue ?? '';
+    if (continuation && seen.has(continuation)) throw new ApiError(502, 'Inventory pagination repeated; completeness Unknown');
+    seen.add(continuation);
+  } while (continuation);
+  return items;
+}
+
+export function useInventory(): UseQueryResult<Inventory, ApiError> {
+  const view = useId();
+  return useQuery({
+    queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT, view],
+    queryFn: fetchInventory,
+    refetchInterval: false,
+    refetchOnWindowFocus: 'always',
+    gcTime: 0,
+    retry: false,
   });
 }

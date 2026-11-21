@@ -7,556 +7,215 @@ latest-milestone: "v0.1"
 <!-- omit from toc -->
 # Fleet inventory
 
-Part of the [Fleet infrastructure management service](README.md). Inventory owns
-physical installation intent, registered assets, and verified physical
-topology. [Machine allocation](bare-metal-hardware.md) consumes those records;
-[bare-metal provisioning](bare-metal-provisioning.md) executes authorized work
-on the hardware. Separate controllers and permissions preserve these
-responsibilities within Fleet.
+Part of the [Fleet infrastructure management service](README.md). Fleet inventory
+should give infrastructure operators a reliable answer to four questions: what
+equipment do we have, where is it, how is it connected, and is it ready for use?
+
+**Status:** This is a proposal. The existing manual records cover only part of
+this experience; the verification and safety requirements below have not yet
+been implemented or tested on hardware. Implementation details belong in the
+[physical inventory contracts, examples, and migration notes](inventory-reference.md).
 
 - [Summary](#summary)
-- [Goals](#goals)
-- [Non-goals](#non-goals)
+- [Goals and boundaries](#goals-and-boundaries)
 - [Proposal](#proposal)
-  - [Resources and authority](#resources-and-authority)
-  - [Plan a physical installation](#plan-a-physical-installation)
-  - [Reserve physical resources](#reserve-physical-resources)
-  - [Register and bind a device](#register-and-bind-a-device)
-  - [Verify the installation](#verify-the-installation)
-  - [Cabling, power, and network configuration](#cabling-power-and-network-configuration)
+  - [Resources and responsibilities](#resources-and-responsibilities)
+  - [From installation plan to ready equipment](#from-installation-plan-to-ready-equipment)
+  - [Location and equipment identity](#location-and-equipment-identity)
+  - [Connections and power](#connections-and-power)
   - [Moves, replacements, and retirement](#moves-replacements-and-retirement)
-- [Implementation](#implementation)
-- [Rollout plan](#rollout-plan)
-- [Open qualification questions](#open-qualification-questions)
+- [Bringing existing records into Fleet](#bringing-existing-records-into-fleet)
+- [First release and success criteria](#first-release-and-success-criteria)
+- [Decisions still needed](#decisions-still-needed)
 
 ## Summary
 
-Operators declare a `DeviceClaim` before equipment is registered. It expresses
-the expected hardware, approved rack placement, declared ports, and required
-cables. Acceptance reserves the physical resources. A trusted registrar matches
-the equipment to that accepted plan and creates an exclusively bound `Device`.
-Controllers compare physical evidence with the plan before reporting readiness.
+Operators need to plan new installations without double-booking rack space,
+confirm that delivered equipment matches the plan, and identify missing or
+incorrect connections before making it available. They also need to move, repair
+and replace equipment without losing its history or disrupting customers by
+accident.
 
-A `DeviceClaim` is a physical installation expectation. A customer `Machine` is
-the consumer lifecycle resource whose private MachineAllocation reserves provider
-compute capacity. They have independent lifetimes.
-Neither registering a Device nor making its DeviceClaim Ready authorizes power
-changes, boot-based inspection, installation, cleaning, or consumer allocation.
+Fleet should keep the installation plan separate from what technicians and
+trusted tools actually find. Operators should be able to see what has been
+checked, what is wrong, and what is still unknown, with supporting records for
+each result. A missing measurement must not look like a successful check.
 
-This is the target Fleet inventory model, independent of the existing inventory
-service's schema. The proposed group is `fleet.datumapis.com/v1alpha1`;
-the API group, fields, and scopes remain provisional. Examples show operator
-resources in `infra-ops`, not implemented CRDs or manifests to apply. Hardware
-identifiers and evidence handles are illustrative; Kubernetes UIDs remain private
-same-API-server recreation evidence rather than authored references.
+Inventory readiness is one input to [machine allocation](bare-metal-hardware.md),
+not permission to use or change equipment. Recording a device or marking it ready
+must never start it, erase it, install software, assign it to a customer, or end
+an existing customer reservation. Those actions require separate approval through
+[hardware provisioning and operations](bare-metal-provisioning.md).
 
-## Goals
+## Goals and boundaries
 
-- Record physical identity, placement, cabling, and power dependencies once.
-- Reserve nonconflicting installations before hardware arrives.
-- Admit equipment only through trusted registration against an accepted claim.
-- Preserve expected and observed state separately, including incomplete work.
-- Provide current, attributable evidence for allocation and operation gates.
-- Support servers, network devices, power equipment, and passive infrastructure.
-- Preserve asset history through repairs, moves, and changes of consumer.
+- Give operators one reliable record of equipment, placement, cables and power.
+- Prevent conflicting installation plans and show what remains to be completed.
+- Preserve equipment history through imports, moves, repairs and retirement.
+- Support servers, network and power equipment, and passive devices such as patch
+  panels, including equipment that cannot report its own state.
 
-## Non-goals
-
-- Allocating compute to consumers, configuring an OS, or managing clusters.
-- Storing BMC/switch credentials in broadly readable inventory objects.
-- Owning VLANs, VRFs, IP allocations, routing, or workload network attachments.
-- Treating discovery as authorization to adopt or modify hardware.
-- Inferring physical completion from a YAML declaration or link reachability.
-- Automating procurement, warehouse management, or every field-work process in
-  the first implementation.
+Fleet inventory does not replace purchasing, billing, work scheduling, network
+address management, routing, or cluster management. It links to those services
+rather than keeping competing records. Passwords and other credentials never
+belong in public inventory or repository examples.
 
 ## Proposal
 
-### Resources and authority
+### Resources and responsibilities
 
-- **`Facility`:** Provider-neutral physical premises, associated with geographic Location.
-  Provider codes do not define its identity.
-- **`Rack`:** Facility membership, mounting capacity, and physical constraints.
-- **`DeviceClaim`:** Operator's expected installation, physical reservations, and one
-  committed Device binding.
-- **`Device`:** Canonical registered physical asset: server, switch, router, PDU, console
-  server, or patch panel.
-- **`Cable`:** Sole authority for expected physical connections and their termination
-  mappings.
-- **`PowerFeed`:** Electrical supply connection, capacity, and upstream dependency
-  information.
+The proposed experience uses six records:
 
-Ports and components are typed entries with stable IDs within a Device. They do
-not require a separate public kind initially. Network interfaces, power
-inlets/outlets, console ports, and pass-through terminations have different
-connection rules. Component identity must remain distinct from mutable OS names
-such as `eth0` and from logical interfaces such as a VLAN or bond.
+| Record | What it tells an operator |
+| --- | --- |
+| Facility | The physical premises where equipment is installed. |
+| Rack | The rack's location, available mounting space and physical limits. |
+| DeviceClaim | What equipment is expected for one installation and which resources are reserved for it. |
+| Device | The actual piece of equipment, its identity and its components. |
+| Cable | Which physical ports should be connected. |
+| PowerFeed | Where electrical supply comes from and how much load it can support. |
 
-For owned servers, `MachineCapacity` has an immutable `deviceRef` to the
-registered Device. It is provider capacity with allocation and reclamation
-policy; it does not independently edit the asset's serial number, rack placement,
-or cabling. A switch or patch panel can be a Device without being
-MachineCapacity. Inventory owns
-physical observations; the provider owns management configuration and hardware
-operations; networking owns network configuration. An inventory relationship
-is not a Kubernetes garbage-collection ownership relationship.
+Geographic Location and physical Facility are separate from
+[Site rules for choosing where machines may run](cluster-lifecycle.md#site-and-cluster-resources).
+A provider's metro name may cover several buildings; it must not be treated as
+one physical facility without checking.
 
-A Device represents identifiable physical equipment. Do not fabricate a Device,
-rack, or physical port for a provider VM or an offering that discloses no
-physical asset identity. Such providers still participate through the generic
-MachineCapacity contract and their own observed capabilities.
+Operators approve installation plans. Authorized registration establishes which
+physical equipment matches each plan. Technicians and trusted tools provide
+observations; Fleet checks those observations against the approved plan rather
+than silently changing the plan to match them.
 
-Operator authorization controls claims, physical plans, and manual evidence.
-Only the trusted registration service creates registered Devices and writes
-identity/placement bindings. Collectors write observations through validated
-interfaces; they cannot change the approved plan. References crossing an
-administrative scope require explicit authorization on both sides. A namespace
-or matching label alone does not grant that authority.
+Each record has one responsible writer. Providers remain responsible for hardware
+controls, networking services for addresses and switch configuration, and Galactic
+for routing. Management addresses, customer information and supporting documents
+remain visible only to authorized users.
 
-### Plan a physical installation
+### From installation plan to ready equipment
 
-The Facility describes physical premises. A Fleet `Site` can select eligible
-Facilities as operational policy without moving their assets. Location remains
-the geographic reference; neither Site nor Facility is a provider identifier.
+1. **Plan the installation.** Record the expected equipment, location, cables,
+   power needs and required checks. Reserve the relevant space, ports and power
+   so another installation cannot claim them, even if requests arrive together.
+2. **Record what arrived.** Check the actual equipment against the approved plan.
+   One installation plan identifies one device, and a device has only one active
+   placement. Retrying a registration must not create a duplicate asset.
+3. **Check the installation.** Verify equipment identity, placement and required
+   network and power paths. Show missing work and mismatches separately from
+   completed checks. Connected devices can be checked together; neither must
+   already be ready before its cable endpoints can be identified.
+4. **Report what is ready.** State which checks passed and what they cover.
+   For example, confirming a facility does not confirm a rack position. Services
+   using inventory must require the checks appropriate to their task.
 
-```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Facility
-metadata:
-  name: iad1
-  namespace: infra-ops
-spec:
-  displayName: Ashburn Facility 1
-  locationRef:
-    name: us-east-1
----
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Rack
-metadata:
-  name: iad1-r12
-  namespace: infra-ops
-spec:
-  facilityRef: {name: iad1}
-  heightUnits: 42
----
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: DeviceClaim
-metadata:
-  name: iad1-r12-u20-server
-  namespace: infra-ops
-spec:
-  role: Server
-  expectedIdentity:
-    manufacturer: Dell
-    model: PowerEdge-R650
-    serialNumber: EXAMPLE-SERVER-001
-  placement:
-    rackRef: {name: iad1-r12}
-    position: 20
-    heightUnits: 1
-    face: Front
-    fullDepth: true
-  verification:
-    requiredChecks: [Identity, RackPlacement, NetworkPaths, PowerPaths]
-  ports:
-    - {id: bmc, type: EthernetPort, role: Management, physicalLabel: BMC}
-    - {id: nic1-p1, type: EthernetPort, role: Data, physicalLabel: NIC1/P1}
-    - {id: psu1, type: PowerInlet, physicalLabel: PSU1}
-    - {id: psu2, type: PowerInlet, physicalLabel: PSU2}
-  cableRefs:
-    - {name: iad1-r12-srv01-management}
-    - {name: iad1-r12-srv01-data}
-    - {name: iad1-r12-srv01-power-a}
-    - {name: iad1-r12-srv01-power-b}
-```
+Keep the approved plan, supporting evidence and change history behind each result.
+A cable change or component replacement requires new checks where it affects the
+installation. Old results must not carry over merely because a name was reused.
+If collecting evidence requires starting or changing equipment, that work needs
+separate authorization.
 
-The example assumes an existing management switch `iad1-oob01`, data switch
-`iad1-r12-leaf-a`, and PDUs `iad1-r12-pdu-a`/`iad1-r12-pdu-b`, each registered
-through its own claim. Their referenced components and upstream power paths
-must exist and be verified. These four Cable plans describe the server's
-required connections before the server Device exists:
+### Location and equipment identity
 
-```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Cable
-metadata:
-  name: iad1-r12-srv01-management
-  namespace: infra-ops
-spec:
-  medium: CopperEthernet
-  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: bmc}]
-  b: [{deviceRef: {name: iad1-oob01}, componentID: port12}]
----
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Cable
-metadata:
-  name: iad1-r12-srv01-data
-  namespace: infra-ops
-spec:
-  medium: DirectAttachCopper
-  a: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: nic1-p1}]
-  b: [{deviceRef: {name: iad1-r12-leaf-a}, componentID: ethernet20}]
----
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Cable
-metadata:
-  name: iad1-r12-srv01-power-a
-  namespace: infra-ops
-spec:
-  medium: Power
-  a: [{deviceRef: {name: iad1-r12-pdu-a}, componentID: outlet20}]
-  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu1}]
----
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Cable
-metadata:
-  name: iad1-r12-srv01-power-b
-  namespace: infra-ops
-spec:
-  medium: Power
-  a: [{deviceRef: {name: iad1-r12-pdu-b}, componentID: outlet20}]
-  b: [{deviceClaimRef: {name: iad1-r12-u20-server}, portID: psu2}]
-```
+Operators should be able to record only what is known: a facility, a rack without
+an exact position, an exact rack position, or a side-mounted location. Unknown
+space must not appear available. Invented positions cannot justify reservations
+or verification; new reservations need enough evidence to avoid existing equipment.
 
-`cableRefs` identifies prerequisites; it does not repeat expected peers. Cable
-owns the endpoint declarations. A planned endpoint references a DeviceClaim
-and its declared port ID; a registered endpoint references a Device and stable
-component ID. Names are convenient authoring references. Acceptance retains the
-exact local object incarnations privately and records approved dependency
-revisions. Recreating an object with the same name never inherits a reservation.
+Keep manufacturer serial numbers, operator asset tags and provider host IDs
+separate, including where each value came from. None alone proves that equipment
+is trusted. Virtual machines must not become physical Fleet devices just because
+an imported system records them alongside hardware.
 
-Placement may instead name `placement.facilityRef` without a rack. This covers
-unracked equipment and rented bare metal whose physical Facility is known but
-whose rack/patching is not disclosed. The claim must state its verification
-requirements explicitly; for example:
+Track network, power, console and patch-panel ports separately, along with
+replaceable parts. A software interface name is not a physical port identity.
+After a repair, preserve the device history but record the replacement part and
+recheck affected connections. Reusable model descriptions can reduce repeated
+entry, but must be checked against the actual equipment.
 
-```yaml
-# Excerpt for an identified physical server with facility-level visibility.
-spec:
-  placement:
-    facilityRef: {name: iad1}
-  verification:
-    requiredChecks: [Identity, FacilityPlacement]
-```
+### Connections and power
 
-Admission constrains required checks using operator policy and the intended
-offering. Authors cannot weaken verification to make a failed installation
-pass. Rack placement derives Facility through the Rack; if both references are
-supplied they must agree. Undisclosed rack/cable facts remain unknown, not
-invented or marked physically inapplicable. `Ready` for a facility-scoped claim
-does not imply verified rack position, cabling, power redundancy, or eligibility
-for an offering that requires those facts. Historical UUID/IP/disk lists are
-migration inputs, not sufficient verification evidence.
+Cable records are the single source for planned physical connections. Device
+plans reference them rather than keeping another list of expected neighbors.
+Checks must follow patch panels and split cables, not assume that a working
+end-to-end link proves every connection is correct.
 
-### Reserve physical resources
+Power checks must follow the supply through distribution equipment to the device.
+Two power supplies do not prove redundancy if they share an upstream failure
+point. Reserve enough power for the agreed failure scenario, not just normal
+operation. Unknown supply details must remain unverified.
 
-Acceptance commits a retained plan covering the claim and its required Cable
-inputs. Inventory must reserve the applicable declared rack footprint, physical
-terminations, and power capacity without races. Rack checks include occupied units,
-front/rear constraints, full-depth equipment, and pending installations. The
-model also supports 0U mounting and equipment outside a rack; it must not assign
-them fictitious rack-unit positions.
-
-Endpoint reservations belong to one exact Cable incarnation and identify one
-exact Device or DeviceClaim incarnation plus termination/position. Local object
-identity is retained as private same-API-server evidence. Two cables cannot reserve the same
-exclusive termination. Resolving a claim endpoint to a registered component
-must preserve that reservation, including conflicts with direct Device
-references. A successor placement cannot reserve an occupied resource merely
-because the previous object's readiness is False.
-
-Use durable conditional commits or an equivalent serialized reservation
-protocol, not an admission-time list check or controller-local lock. Partial
-acquisition stays Pending and is recovered or explicitly unwound. Report
-`Accepted=True` only after the complete current plan is committed. Hold
-reservations through controller restarts and uncertainty; timeouts and expired
-worker leases do not prove that space, cabling, or power is physically free.
-
-Referenced Cable plans may target other unbound claims. Validate and reserve
-the intended endpoints without requiring those Devices to be Ready. Otherwise
-two devices awaiting a connection could never be commissioned. Editing an
-unbound plan requires revalidation and a new committed plan revision; stale
-acceptance or registration requests cannot use the previous revision.
-
-### Register and bind a device
-
-A registration request must authenticate its enrollment channel and identify
-an existing accepted DeviceClaim and approved plan revision. Match expected
-identity against independently trusted evidence. Serial numbers, MAC
-addresses, and SMBIOS UUIDs are matching attributes, not authentication.
-Passive devices register through an authorized technician or integration;
-they do not need to run a host agent.
-
-The registrar commits one reciprocal DeviceClaim-to-Device relationship and
-retains both local object incarnations as private same-API-server evidence. One
-claim binds one Device for one installation incarnation. One physical asset
-cannot acquire duplicate Device identities,
-and one Device has at most one active placement authority. Recovery after a
-lost response finds the committed registration instead of creating a second
-asset. Ambiguous matches, unexpected identities, expired authorization, or
-already-bound claims fail closed. Unknown equipment remains isolated discovery
-evidence; it cannot manufacture an accepted claim or eligible capacity.
-
-Registration does not require all physical verification to have succeeded. A
-Device can exist in commissioning with a placement or wiring discrepancy:
-
-```yaml
-# Registrar-created snapshot, not an operator-authored apply input.
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Device
-metadata:
-  name: server-example-001
-  namespace: infra-ops
-spec:
-  # Registry-owned. A raw reference edit cannot move the asset.
-  claimRef:
-    name: iad1-r12-u20-server
-  identity:
-    manufacturer: Dell
-    model: PowerEdge-R650
-    serialNumber: EXAMPLE-SERVER-001
-status:
-  observedPlacement:
-    rackRef:
-      name: iad1-r12
-    position: 20
-    face: Front
-    evidenceRef: installation-scan-001
-  components:
-    - {id: management-port-1, type: EthernetPort, physicalLabel: BMC}
-    - id: nic-slot2-port1
-      type: EthernetPort
-      physicalLabel: NIC1/P1
-      macAddress: "02:00:00:00:12:01"
-    - {id: power-supply-1, type: PowerInlet, physicalLabel: PSU1}
-    - {id: power-supply-2, type: PowerInlet, physicalLabel: PSU2}
-```
-
-Declared claim ports resolve using trusted chassis labels, qualified hardware
-layout, and physical component identity. A controller cannot swap the mapping
-of `nic1-p1` to a different NIC merely to make the observed neighbor match.
-The Device records actual components; the claim records the approved mapping
-from its intended ports to those components.
-
-### Verify the installation
-
-Commissioning has an ordered dependency graph:
-
-```text
-Accepted plan and physical reservations
-  -> trusted registration and exclusive Device binding
-  -> claim-port mapping and Cable endpoint resolution
-  -> identity, placement, network, and power evidence evaluated
-  -> physical Ready
-```
-
-Cable resolution depends on binding, not Device Ready. Protected enrollment
-connectivity must exist before complete production-path verification. Any
-inspection that boots or modifies a device requires a separately authorized
-hardware operation; inventory readiness cannot authorize its own evidence
-collection effects.
-
-- **Hardware identity and capabilities:** Authenticated BMC/qualified agent observations
-  or trusted installation evidence matched to the enrolled asset. Claimed identifiers
-  alone are insufficient.
-- **Switch and port adjacency:** Trusted switch-side observations corroborated with the
-  enrolled NIC mapping. MAC learning or agent-reported LLDP alone does not prove asset
-  identity.
-- **Link capability:** Current port state, negotiated parameters, and relevant hardware
-  observations; link-up is not proof of a complete passive path.
-- **Exact rack position/orientation:** Authorized installation scans/attestations or
-  qualified rack instrumentation. Management-network reachability does not establish a
-  rack unit.
-- **Passive cable identity and patch path:** Verified endpoint/cable-label scans or
-  qualified instrumentation. LLDP does not identify each passive segment.
-- **PSU, outlet, and upstream feed:** Verified physical mappings and suitable
-  observations/instrumentation. Two healthy PSUs do not establish independent supplies.
-
-Link discovery can supply switch/port observations through qualified collectors;
-it does not establish every physical fact above. Redfish's rack/offset fields
-are writable metadata, so copying the intended position into a BMC and reading
-it back is not independent placement evidence. See the
-[Redfish data model](https://redfish.dmtf.org/schemas/v1/DSP0268_2025.3.pdf).
-
-Conditions report `Accepted`, `Bound`, `IdentityVerified`, `PlacementVerified`,
-`NetworkPathVerified`, `PowerPathVerified`, and `Ready` separately. Readiness
-requires every admitted required check for the current approved plan and
-records the evaluated verification scope. `PlacementVerified` identifies
-whether it evaluated Facility or exact Rack placement. Missing or stale
-required evidence is Unknown; a verified mismatch is False. Checks outside the
-scope remain explicitly unevaluated. A policy may mark a check physically
-inapplicable, such as power for a passive panel; absence of evidence must not
-silently become an exemption. Downstream controllers require the specific
-verified facts their operation or offering needs, not an unqualified Ready bit.
-
-Each evaluation privately retains the exact local claim, Cable, Rack, PowerFeed,
-and Device incarnations and records their revisions, Device
-identity/component/trust revision, evaluated input digest,
-evidence provenance, and verification time. Standard condition fields include
-`observedGeneration`, reason, message, and transition time. The owning object's
-generation alone is insufficient: recabling, a NIC replacement, or new trust
-material can invalidate evidence without changing that object's spec.
-
-Keep bounded summaries and protected evidence references in status. Retain the
-evaluated plan and evidence needed to explain the result. Evidence freshness
-is check-specific: a current adjacency observation and an installation scan
-have different validity rules. Relevant topology or hardware changes invalidate
-the applicable result; an old `Ready=True` is not blanket authorization.
-
-```yaml
-# Abbreviated controller-written verification snapshot after successful checks.
-# Routine condition timestamps/messages are omitted for readability.
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: DeviceClaim
-metadata:
-  name: iad1-r12-u20-server
-  namespace: infra-ops
-status:
-  observedGeneration: 1
-  evaluatedPlanDigest: "sha256:<claim and resolved dependency inputs>"
-  evaluatedChecks: [Identity, RackPlacement, NetworkPaths, PowerPaths]
-  evidenceRef: commissioning-evaluation-001
-  deviceRef:
-    name: server-example-001
-  portBindings:
-    - {claimPortID: bmc, deviceComponentID: management-port-1}
-    - {claimPortID: nic1-p1, deviceComponentID: nic-slot2-port1}
-    - {claimPortID: psu1, deviceComponentID: power-supply-1}
-    - {claimPortID: psu2, deviceComponentID: power-supply-2}
-  conditions:
-    - {type: Accepted, status: "True", reason: PhysicalReservationsCommitted, observedGeneration: 1}
-    - {type: Bound, status: "True", reason: ExclusiveDeviceBindingCommitted, observedGeneration: 1}
-    - {type: IdentityVerified, status: "True", reason: TrustedEnrollmentMatched, observedGeneration: 1}
-    - {type: PlacementVerified, status: "True", reason: InstallationScanVerified, observedGeneration: 1}
-    - {type: NetworkPathVerified, status: "True", reason: TrustedPeerEvidenceMatched, observedGeneration: 1}
-    - {type: PowerPathVerified, status: "True", reason: PowerPathEvidenceVerified, observedGeneration: 1}
-    - {type: Ready, status: "True", reason: RequiredEvidenceCurrent, observedGeneration: 1}
-```
-
-Cable status similarly reports resolved Device names/component IDs; protected
-evidence privately retains the exact local Device incarnations. It separately
-reports evidence for endpoint adjacency, cable identity, and any pass-through
-path. It never rewrites spec to agree with discovery. Physical drift blocks
-new allocations and operations that require the invalidated fact and alerts
-operators. It does not independently authorize eviction, power-off, wiping, or
-release of an existing consumer reservation.
-
-### Cabling, power, and network configuration
-
-A Cable connects typed physical terminations. Pass-through components on patch
-panels retain explicit internal front/rear mappings. Breakout cables require
-explicit position/lane mappings. Trace the complete supporting path; reject an
-unsupported mapping rather than assuming a direct connection. NetBox's
-[cable model](https://netboxlabs.com/docs/netbox/models/dcim/cable/) provides an
-established physical-path precedent. It is not a requirement to use NetBox's
-schema or implementation.
-
-A PDU is a Device. Its component model maps each outlet to the input that
-supplies it. Power cables connect feeds to PDU inputs and outlets to device
-inlets; a feed termination uses a typed `powerFeedRef`, resolved by name with its
-exact local incarnation retained privately.
-PowerFeed records include rated/usable capacity and known upstream
-sources; unknown dependencies remain explicit. Reservation calculations must
-account for the declared redundancy/failure scenario, not assume that each of
-two feeds supplies half the load. Two differently named PDUs can share the same
-UPS or upstream circuit. See the
-[power-feed](https://netboxlabs.com/docs/netbox/models/dcim/powerfeed/) and
-[outlet](https://netboxlabs.com/docs/netbox/models/dcim/poweroutlet/) precedents.
-
-Rack, switch, and power failure domains are derived from verified dependency
-information, including shared upstream resources. Labels can expose validated
-domains for selection; different labels do not establish physical independence.
-
-Physical connectivity does not select the VLAN, VRF, IP address, routing
-adjacency, or tenant network carried over a link. Network management resources
-reference registered Devices/components and own those behaviors. The
-bare-metal provider requests attachment or isolation through the networking
-authority, which remains the sole writer of the relevant switch configuration.
-This physical/logical separation is consistent with
-[RFC 8348's hardware model](https://www.rfc-editor.org/rfc/rfc8348.html) and
-[RFC 8345's layered topology model](https://www.rfc-editor.org/rfc/rfc8345.html).
+Operators also need circuit identifiers and the physical handoff points for
+internet, transport and out-of-band management connections. The proposal links
+these to the service owner's records and local cables. Service delivery, prices,
+addresses and routing remain with their owners. Whether Fleet needs a separate
+Circuit record is still an open decision, not an approved addition.
 
 ### Moves, replacements, and retirement
 
-- **Move the same asset:** create a successor DeviceClaim naming the existing
-  Device and reserve the destination. A coordinated maintenance transition
-  transfers active placement authority with exact predecessor/binding
-  preconditions. The successor cannot become a second active placement claim.
-  Preserve the Device and MachineCapacity identities; verify the new placement and
-  paths before restoring eligibility. Release old physical reservations only
-  after the affected space/terminations are confirmed free.
-- **Replace the whole server:** create a new DeviceClaim, Device, and MachineCapacity.
-  Do not transfer an existing customer Machine or inherit identity from a reused
-  name, BMC address, serial field, or rack position. Managed-node replacement
-  uses the separate NodeClaim/fencing contract.
-- **Repair a component:** retain Device identity where the asset remains the
-  same, but record the replacement component identity and inventory/trust
-  revision. Revalidate affected port, disk, power, and management bindings.
-  Reusing a slot ID must not make old component evidence current.
-- **Retire or remove equipment:** coordinate physical removal, active consumer
-  obligations, and reference cleanup explicitly. Deleting an inventory object
-  does not destroy equipment, release a customer Machine, or prove a rack is empty.
+- **Move equipment:** create a new installation plan for the same device, reserve
+  its destination and check its new connections. Keep the device and provider
+  capacity identities. Release old space and ports only after confirming they
+  are free.
+- **Replace equipment:** create a new installation plan, device record and provider
+  capacity record. Do not transfer customer assignments or successful checks just
+  because the replacement uses the same rack position or management address.
+- **Repair equipment:** keep the device record, record changed parts and repeat
+  the affected checks.
+- **Retire equipment or cancel a plan:** keep the history and outstanding customer
+  obligations. Deleting a record does not prove removal, data erasure or release.
 
-Bound claims retain their committed Device name and private incarnation evidence
-as history. A placement handover
-changes the registry-owned active relationship, not the historical binding.
-Required Cable plans must be explicitly changed or replaced during a move;
-they do not silently follow a Device into another rack. Retain fulfilled claims
-while Cable references rely on them, or transfer those references through the
-placement-change protocol. Protect active references and reservations during
-deletion, including recovery from partial transitions.
+A replacement cannot double-book an occupied slot. When work is interrupted or
+its outcome is unclear, retain the reservation until it is safe to release it.
+Moves also require explicit cable-plan changes; cables do not automatically
+follow a device to its new location.
 
-## Implementation
+## Bringing existing records into Fleet
 
-Inventory requires admission/authorization, a durable reservation and binding
-coordinator, trusted registration, and evidence evaluation. These are controller
-responsibilities, not a requirement for another public type per process.
-Implementations may share infrastructure with other Fleet subsystems while
-retaining separate field ownership and credentials.
+The [existing manual inventory guide][manual-guide] describes a smaller model:
+installation plans represent long-lived slots, locations are text fields, and
+expected connections are stored on ports. This proposal instead uses a new plan
+for each installation and separate Cable records. That difference must be settled
+before automating moves and replacements.
 
-Hardware providers and network collectors submit authenticated observations;
-authorized technicians submit physical-work evidence. Enrollment of passive
-infrastructure follows the same claim and binding rules. Backfill existing
-assets through explicit approved claims and non-destructive registration;
-importing a record must not invoke boot, cleaning, or network changes.
+The current implementation uses manual entry and operator-controlled migration,
+not automated import. NetBox and optional offline candidate review are not required.
+Migration must preserve existing equipment identities, customer reservations and
+history. Change the responsible writer only through an explicit approval. Do not delete
+and recreate assets, assume occupied space is free, or mark old records ready
+without new checks.
 
-Consumers read only the inventory projections they are authorized to see.
-Privileged BMC/switch endpoints, credentials, and tenant allocation details
-remain in their respective management domains. Physical evidence must be
-available to the controllers enforcing prerequisites without requiring those
-controllers to assume inventory ownership.
+Source data needs interpretation: NetBox sites may group several premises,
+serial fields may contain provider host IDs, device lists may include virtual
+machines, and rack positions may have been invented for display. Preserve these
+limitations rather than turning them into verified facts.
 
-## Rollout plan
+See the [comparison with existing records and migration steps](inventory-reference.md#existing-records-and-migration)
+and the [source review and its limits](inventory-reference.md#source-evidence-and-limits).
+No live NetBox audit has been performed, and complete coverage of existing data
+has not been established.
 
-1. Implement Facility/Rack/DeviceClaim/Device/Cable/PowerFeed contracts, typed
-   components, physical reservation validation, and trusted operator
-   registration. Qualify one hardware/rack layout, including passive equipment.
-2. Exercise one facility's management, data, console where used, and power
-   paths. Demonstrate wrong identity, wrong port, wrong rack placement, missing
-   evidence, and stale evidence remaining unavailable without destructive
-   side effects. Verify patch-panel/breakout paths used by that facility.
-3. Integrate current physical-readiness evidence with MachineCapacity eligibility and
-   network attachment prerequisites. Test concurrent claims, duplicate
-   registration, lost responses, controller restart, object-name reuse, and
-   changes to dependencies during evaluation.
-4. Qualify moves, component replacement, retirement, and a recovered reservation
-   database. Demonstrate no duplicate active placement, premature capacity
-   reuse, or implicit consumer eviction before expanding to more facilities.
+## First release and success criteria
 
-## Open qualification questions
+Start with a small set of equipment in one facility. Operators should be able to
+plan an installation, register equipment, find incorrect or incomplete work, and
+see which checks make it suitable for use.
 
-- Which platform scopes and IAM permissions govern shared Facilities, operator
-  claims, registrar writes, evidence submission, and cross-scope references?
-- Which durable reservation/commit mechanism enforces rack, termination,
-  power-capacity, and identity uniqueness through crashes and restoration?
-- What independently trusted enrollment mechanism and identity-deduplication
-  rules apply to each active and passive hardware family?
-- Which rack/cable/power checks require technician evidence, which have
-  qualified instrumentation, and what invalidates or expires each result?
-- What component, pass-through, breakout, and redundant-power layouts must the
-  first facility support, and how is unsupported topology reported?
-- What explicit maintenance and placement-handover protocol preserves active
-  allocations and releases old physical reservations only after verification?
+Before expanding, demonstrate that Fleet prevents conflicting reservations,
+keeps unknown facts visible, and preserves occupied resources after interrupted
+work. Moves, replacements, repairs and retirement must preserve history without
+accidentally releasing customer equipment. Imported records must not trigger
+hardware actions or become available capacity on their own.
 
-These are implementation qualification gates. None changes the ownership,
-exclusive-binding, or no-implicit-destructive-action contracts above.
+The [detailed validation and hardware acceptance checks](inventory-reference.md#validation-and-qualification-matrix)
+describe work still required; they are not a report of tests already passed.
+
+## Decisions still needed
+
+- Agree how to move from long-lived slot plans to one plan per installation
+  without losing existing bindings or history.
+- Decide who can view and change shared facilities, racks, cables and feeds,
+  and where their authoritative records live.
+- Choose how reservations survive failures, which hardware and connection layouts
+  are supported first, and what evidence is sufficient and recent enough.
+- Assign ownership of circuit references and physical handoff points, and decide
+  whether a separate Circuit record is needed.
+
+[manual-guide]: https://github.com/datum-cloud/fleet/blob/08d6dde8563b7c999ecf839565db2bd37b4dda7e/docs/operations/physical-inventory.md

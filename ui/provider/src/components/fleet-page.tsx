@@ -25,16 +25,18 @@ export function FleetPage({
     { label: 'Capacity', href: base },
     { label: 'Profiles', href: `${base}/profiles` },
     { label: 'Classes', href: `${base}/classes` },
+    { label: 'Inventory', href: `${base}/inventory` },
   ];
   const active = tabs.slice(1).find((t) => pathname.startsWith(t.href))?.href ?? base;
+  const inventory = pathname.startsWith(`${base}/inventory`);
 
   return (
     <div data-testid={testId} className="flex min-w-0 flex-col gap-6 p-4 sm:p-6">
-      <PageTitle
+      {!inventory && <PageTitle
         title="Bare Metal"
         description={`Provider resources in ${PROVIDER_PROJECT}`}
         actions={actions}
-      />
+      />}
       <div className="border-border border-b">
         <Tabs value={active} className="gap-0">
           <TabsList variant="line">

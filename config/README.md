@@ -14,7 +14,7 @@ API servers and must be reconciled independently.
 
 | Root | Destination | Contents |
 | --- | --- | --- |
-| `config/milo` | Milo root control plane | Fleet CRDs, IAM protected resources and roles, service registration, and machine quota registration |
+| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service registration, and machine quota registration |
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
@@ -27,8 +27,22 @@ contracts charge, as billing ServicePricings for `metal.datumapis.com`. Staging'
 on `config/milo`; production doesn't, so production has no Bare Metal prices.
 A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
 
+`config/components/inventory` registers the operator-written `DeviceClaim` and
+`Device` kinds of `fleet.datumapis.com` in Milo: their CRDs, ProtectedResources,
+and inventory viewer and editor roles. Only `config/milo` includes it; records
+live in the provider project. `config/inventory` renders the CRDs alone for a
+legacy management-cluster install and will be removed. See
+[Planning and registering physical devices](../docs/operations/physical-inventory.md).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
+
+`config/multiplane` and `config/site` are the Flux source for the local
+multi-plane acceptance only: Flux definitions per local cluster, Milo test
+workloads, Karmada and kro releases, the coordination API and the kro site
+graph. The harness stages them into an OCI artifact; see
+[Flux-reconciled local environment](../docs/operations/gitops.md). They are not
+production roots, and neither production root may reference them.
 
 `config/overlays/synthetic-staging` is the temporary Milo-routed acceptance
 environment. It uses the real private custody, exclusivity, cleanup, and reuse

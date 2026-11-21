@@ -1,0 +1,475 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "Facility",
+      "metadata": {
+        "name": "example-premises",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "displayName": "Example premises",
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "1",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/sites"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "Rack",
+      "metadata": {
+        "name": "nb-2f51dc9cdc336da3c50b9a8b",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "displayName": "Example rack",
+        "facilityRef": {
+          "name": "example-premises"
+        },
+        "heightUnits": 42,
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "1",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/racks"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "DeviceClaim",
+      "metadata": {
+        "name": "nb-d2728cbb6945a3e726ab702b",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "displayName": "Example server",
+        "expectedIdentity": {
+          "manufacturer": "Example",
+          "model": "Example physical model"
+        },
+        "lifecycle": "Installation",
+        "placement": {
+          "rackRef": {
+            "name": "nb-2f51dc9cdc336da3c50b9a8b"
+          },
+          "scope": "RackMembership"
+        },
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "1",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "Device",
+      "metadata": {
+        "name": "nb-b4a16a61aea025fc10ded221",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "assetTag": "asset-001",
+        "claimRef": {
+          "name": "nb-d2728cbb6945a3e726ab702b"
+        },
+        "components": [
+          {
+            "connector": "1000base-t",
+            "id": "interfaces-1",
+            "name": "eth0",
+            "sourceRef": {
+              "id": "1",
+              "system": "example-netbox",
+              "type": "dcim/interfaces"
+            },
+            "type": "NetworkPort"
+          },
+          {
+            "id": "power-ports-1",
+            "name": "PSU1",
+            "sourceRef": {
+              "id": "1",
+              "system": "example-netbox",
+              "type": "dcim/power-ports"
+            },
+            "type": "PowerInlet"
+          }
+        ],
+        "displayName": "Example server",
+        "identity": {
+          "manufacturer": "Example",
+          "model": "Example physical model",
+          "sourceIdentity": {
+            "id": "1",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        },
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "1",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        },
+        "providerHostRef": {
+          "id": "provider-001",
+          "system": "example-provider",
+          "type": "host"
+        },
+        "topologyAuthority": "Cable"
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "DeviceClaim",
+      "metadata": {
+        "name": "nb-80a1dd16980a83974841e810",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "displayName": "Example PDU",
+        "expectedIdentity": {
+          "manufacturer": "Example",
+          "model": "Example physical model"
+        },
+        "lifecycle": "Installation",
+        "placement": {
+          "rackRef": {
+            "name": "nb-2f51dc9cdc336da3c50b9a8b"
+          },
+          "scope": "RackMembership"
+        },
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "2",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "Device",
+      "metadata": {
+        "name": "nb-64e11cbf2b3c9f4866fa9eda",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "claimRef": {
+          "name": "nb-80a1dd16980a83974841e810"
+        },
+        "components": [
+          {
+            "id": "power-ports-2",
+            "name": "inlet",
+            "sourceRef": {
+              "id": "2",
+              "system": "example-netbox",
+              "type": "dcim/power-ports"
+            },
+            "type": "PowerInlet"
+          },
+          {
+            "id": "power-outlets-1",
+            "name": "outlet-1",
+            "sourceRef": {
+              "id": "1",
+              "system": "example-netbox",
+              "type": "dcim/power-outlets"
+            },
+            "type": "PowerOutlet"
+          }
+        ],
+        "displayName": "Example PDU",
+        "identity": {
+          "manufacturer": "Example",
+          "model": "Example physical model",
+          "sourceIdentity": {
+            "id": "2",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        },
+        "internalMappings": [
+          {
+            "from": {
+              "componentID": "power-outlets-1",
+              "position": 1
+            },
+            "to": {
+              "componentID": "power-ports-2",
+              "position": 1
+            }
+          }
+        ],
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "2",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        },
+        "topologyAuthority": "Cable"
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "DeviceClaim",
+      "metadata": {
+        "name": "nb-9032aa5e04cb441d10d37851",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "displayName": "Example panel",
+        "expectedIdentity": {
+          "manufacturer": "Example",
+          "model": "Example physical model"
+        },
+        "lifecycle": "Installation",
+        "placement": {
+          "facilityRef": {
+            "name": "example-premises"
+          },
+          "scope": "Facility"
+        },
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "3",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "Device",
+      "metadata": {
+        "name": "nb-25d8e4b769fdb899553c233e",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "claimRef": {
+          "name": "nb-9032aa5e04cb441d10d37851"
+        },
+        "components": [
+          {
+            "id": "front-ports-1",
+            "name": "front-1",
+            "sourceRef": {
+              "id": "1",
+              "system": "example-netbox",
+              "type": "dcim/front-ports"
+            },
+            "type": "FrontPort"
+          },
+          {
+            "id": "rear-ports-1",
+            "name": "rear-1",
+            "positions": 2,
+            "sourceRef": {
+              "id": "1",
+              "system": "example-netbox",
+              "type": "dcim/rear-ports"
+            },
+            "type": "RearPort"
+          }
+        ],
+        "displayName": "Example panel",
+        "identity": {
+          "manufacturer": "Example",
+          "model": "Example physical model",
+          "sourceIdentity": {
+            "id": "3",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        },
+        "internalMappings": [
+          {
+            "from": {
+              "componentID": "front-ports-1",
+              "position": 1
+            },
+            "to": {
+              "componentID": "rear-ports-1",
+              "position": 1
+            }
+          }
+        ],
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "3",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/devices"
+          }
+        },
+        "serviceAssociations": [
+          {
+            "componentID": "rear-ports-1",
+            "serviceRef": {
+              "id": "Example-service",
+              "system": "example-service-owner",
+              "type": "transport"
+            }
+          }
+        ],
+        "topologyAuthority": "Cable"
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "PowerFeed",
+      "metadata": {
+        "name": "nb-15e9e7aa88e11d9ab395e929",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "displayName": "Feed A",
+        "facilityRef": {
+          "name": "example-premises"
+        },
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "1",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/power-feeds"
+          }
+        },
+        "rackRef": {
+          "name": "nb-2f51dc9cdc336da3c50b9a8b"
+        },
+        "supply": {
+          "currentA": 30,
+          "type": "AC",
+          "voltageV": 208
+        },
+        "terminations": [
+          {
+            "id": "output",
+            "name": "output",
+            "type": "PowerOutlet"
+          }
+        ],
+        "upstreamSources": [
+          {
+            "id": "1",
+            "system": "example-netbox",
+            "type": "dcim/power-panels"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "Cable",
+      "metadata": {
+        "name": "nb-4cf1484ca48ba078ba94107c",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "displayName": "Power 1",
+        "lanes": [
+          {
+            "a": {
+              "componentID": "power-outlets-1",
+              "deviceRef": {
+                "name": "nb-64e11cbf2b3c9f4866fa9eda"
+              },
+              "position": 1
+            },
+            "b": {
+              "componentID": "power-ports-1",
+              "deviceRef": {
+                "name": "nb-b4a16a61aea025fc10ded221"
+              },
+              "position": 1
+            },
+            "id": "lane-1"
+          }
+        ],
+        "medium": "Power",
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedAt": "2026-11-20T12:00:00Z",
+          "recordedBy": "netbox-inventory-offline",
+          "source": {
+            "id": "1",
+            "mappingRevision": "example-reviewed-1",
+            "observedAt": "2026-11-20T12:00:00Z",
+            "snapshotDigest": "sha256:faeabf49ee04c9376ce308d9347196e38ec07c6dd92d9bc18ea5fc29878ddb08",
+            "system": "example-netbox",
+            "type": "dcim/cables"
+          }
+        }
+      }
+    }
+  ],
+  "kind": "List"
+}

@@ -1,6 +1,53 @@
 version: '3'
 
 tasks:
+  standalone:test:
+    desc: Run the synthetic lifecycle in a disposable local kind cluster.
+    cmds:
+      - ./hack/run-standalone-smoke.sh
+
+  multiplane:acceptance:
+    desc: Fresh local Milo/Karmada/kro/PXE acceptance, every service installed by per-cluster Flux from the checkout, in the task-owned Colima profile (exit 0 pass, 1 fail, 2 preflight, 3 blocked, 4 timeout).
+    env:
+      # Explicit opt-in for the documented reversible inotify adjustment inside the task VM only.
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh {{.CLI_ARGS}}
+
+  multiplane:redfish-acceptance:
+    desc: "The multi-plane acceptance in Redfish mode: workers drive two persistent lab VMs only through the DMTF Redfish Interface Emulator and its lab adapter (same exit codes)."
+    env:
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh --redfish {{.CLI_ARGS}}
+
+  multiplane:preflight:
+    desc: Check local prerequisites and implementation readiness without creating resources.
+    env:
+      FLEET_MULTIPLANE_INOTIFY: '1024'
+    cmds:
+      - ./hack/multiplane/run.sh --preflight-only {{.CLI_ARGS}}
+
+  multiplane:stop:
+    desc: Stop (never delete) one retained run's exact containers; custody stays Unknown.
+    requires:
+      vars: [STATE]
+    cmds:
+      - ./hack/multiplane/stop.sh "{{.STATE}}"
+
+  multiplane:test-harness:
+    desc: Offline tests for the multi-plane harness with fake runtime tools.
+    cmds:
+      - ./hack/multiplane/test-harness.sh
+
+  local-vm:acceptance:
+    desc: Single-plane local VM PXE acceptance with explicit TCG in the task-owned Colima profile.
+    env:
+      DOCKER_CONTEXT: colima-fleet-acceptance-tcg
+      FLEET_LOCAL_VM_ACCEL: tcg
+    cmds:
+      - bash hack/local-vm/run.sh
+
   manifests:validate:
     desc: Render and validate the production Fleet and Milo manifest roots.
     cmds:
