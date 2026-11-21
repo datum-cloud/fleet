@@ -315,6 +315,12 @@ spec:
               message: claimRef is immutable; bind replacement hardware as a new Device
             - rule: self.identity == oldSelf.identity
               message: identity is immutable; a hardware swap is a new Device
+            - rule: has(self.reportedPlacement) == has(oldSelf.reportedPlacement) && (!has(self.reportedPlacement) || self.reportedPlacement == oldSelf.reportedPlacement)
+              message: placement corrections are disabled pending authenticated durable audit; additions and removals are corrections too
+            - rule: '!has(self.reportedPlacement) || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
+              message: reported placement must retain the imported source snapshot and observation time
+            - rule: '!has(self.reportedPlacement) || self.reportedPlacement.observedAt <= self.provenance.recordedAt'
+              message: the source observation cannot postdate its recording
             - rule: '!has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) || (self.interfaces.filter(b,
                 has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 && (!has(self.unmappedMACAddresses)
                 || !(a.macAddress in self.unmappedMACAddresses))))'
@@ -350,6 +356,60 @@ spec:
                 self.components.exists(c, c.id == a.componentID)))'
               message: service associations must reference present components
             properties:
+              reportedPlacement:
+                type: object
+                required: [revision, observedAt, snapshotDigest]
+                x-kubernetes-validations:
+                - rule: '(!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth) && !has(self.mount)) || has(self.rackRef)'
+                  message: rack geometry requires a reported rack
+                - rule: '!has(self.mount) || (!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth))'
+                  message: non-unit mounts cannot also report unit geometry
+                - rule: '!has(self.position) || !has(self.height) || self.position + self.height <= 101.0'
+                  message: reported geometry exceeds supported rack bounds
+                properties:
+                  revision:
+                    type: integer
+                    enum: [1]
+                  observedAt:
+                    type: string
+                    format: date-time
+                  snapshotDigest:
+                    type: string
+                    pattern: ^sha256:[a-f0-9]{64}$
+                  facilityRef:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                  rackRef:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                  position:
+                    type: number
+                    minimum: 1
+                    maximum: 100
+                  height:
+                    type: number
+                    minimum: 0
+                    exclusiveMinimum: true
+                    maximum: 100
+                  face:
+                    type: string
+                    enum: [front, rear]
+                  fullDepth:
+                    type: boolean
+                  mount:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
               claimRef:
                 type: object
                 required:

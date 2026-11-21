@@ -17,6 +17,7 @@ import { InventoryManagement } from './inventory-management';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { FacilityOverview, RackOverview, inventoryHref as href } from './inventory-location';
+import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
 
 type Kind = 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -37,13 +38,13 @@ const sections = [
     kind: 'Rack',
     title: 'Racks',
     icon: Server,
-    description: 'Rack definitions and planned equipment placement.',
+    description: 'Rack definitions and reported equipment placement.',
   },
   {
     kind: 'DeviceClaim',
-    title: 'Installation plans',
+    title: 'Claims & registrations',
     icon: ClipboardList,
-    description: 'Installation plans, kept separate from physical hardware.',
+    description: 'Registration and intent history, kept separate from physical hardware. Installation lifecycle alone does not distinguish prospective from existing equipment.',
   },
   {
     kind: 'Cable',
@@ -194,10 +195,11 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
   const placement = (entry: RecordEntry): string => {
     if (entry.kind === 'DeviceClaim') return plannedPlacement(entry.record as RawDeviceClaim);
     if (entry.kind === 'Device') {
+      const projected = devicePlacement(entry.record as RawDevice, inventory);
+      if (projected?.basis === 'Reported placement') return reportedPlacementLabel(projected, inventory);
       if (inventory.issues?.DeviceClaim) return 'Claim details unavailable';
-      const slot = claimFor(entry.record as RawDevice);
-      return slot
-        ? `${plannedPlacement(slot.claim)}${slot.devices.length > 1 ? ' · multiple registrations' : ''}`
+      return projected?.claim
+        ? `Claim-derived fallback · ${plannedPlacement(projected.claim)}${projected.multipleRegistrations ? ' · multiple registrations · active device unknown' : ''}`
         : 'Claim record not found';
     }
     const record = entry.record as PhysicalRecord;
@@ -222,8 +224,13 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
   };
   const records = entries.filter((entry) => entry.kind === section.kind);
   const locationKey = (entry: RecordEntry) => {
-    if (inventory.issues?.Facility || (entry.kind === 'Device' && inventory.issues?.DeviceClaim)) return '';
-    const claim = entry.kind === 'Device' ? claimFor(entry.record as RawDevice)?.claim : entry.kind === 'DeviceClaim' ? entry.record as RawDeviceClaim : undefined;
+    if (entry.kind === 'Device') {
+      const projected = devicePlacement(entry.record as RawDevice, inventory);
+      const facility = projected && placementFacility(projected.placement, entry.record.metadata.namespace, inventory);
+      return facility ? slotKey(entry.record.metadata.namespace, facility) : '';
+    }
+    if (inventory.issues?.Facility) return '';
+    const claim = entry.kind === 'DeviceClaim' ? entry.record as RawDeviceClaim : undefined;
     const rackName = claim?.spec.placement.rackRef?.name ?? (entry.record as PhysicalRecord).spec.rackRef?.name;
     const rack = rackName && !inventory.issues?.Rack ? find('Rack', entry.record.metadata.namespace, rackName)?.record as PhysicalRecord | undefined : undefined;
     const facilityName = claim?.spec.placement.facilityRef?.name ?? (entry.record as PhysicalRecord).spec.facilityRef?.name ?? rack?.spec.facilityRef?.name;
@@ -314,7 +321,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
           [lane.a, lane.b].some((endpoint) => {
             if ((kind === 'Rack' || kind === 'Facility') && endpoint.deviceRef) {
               const targetDevice = find('Device', namespace, endpoint.deviceRef.name)?.record as RawDevice | undefined;
-              const location = targetDevice && claimFor(targetDevice)?.claim.spec.placement;
+              const location = targetDevice && devicePlacement(targetDevice, inventory)?.placement;
               const rack = location?.rackRef && find('Rack', namespace, location.rackRef.name)?.record as PhysicalRecord | undefined;
               return kind === 'Rack' ? location?.rackRef?.name === record.metadata.name : location?.facilityRef?.name === record.metadata.name || rack?.spec.facilityRef?.name === record.metadata.name;
             }
@@ -341,10 +348,14 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
               <Field label="Serial number">{device.spec.identity.serial}</Field>
               <Field label="Asset tag">{device.spec.assetTag}</Field>
               <Field label="System UUID">{device.spec.identity.systemUUID}</Field>
-              <Field label="Installation plan">
+              <Field label="Claim / registration history">
                 {reference('DeviceClaim', namespace, device.spec.claimRef.name)}
               </Field>
-              <Field label="Planned placement">{placement(entry)}</Field>
+              <Field label="Location / Reported placement">{placement(entry)}</Field>
+              {device.spec.reportedPlacement?.rackRef && <Field label="Reported rack">{reference('Rack', namespace, device.spec.reportedPlacement.rackRef.name)}</Field>}
+              {device.spec.reportedPlacement?.facilityRef && <Field label="Reported facility">{reference('Facility', namespace, device.spec.reportedPlacement.facilityRef.name)}</Field>}
+              {device.spec.reportedPlacement && <Field label="Source report">Revision {device.spec.reportedPlacement.revision} · {device.spec.reportedPlacement.observedAt} · source-reported, not physically verified</Field>}
+              <Field label="Placement corrections">Disabled pending authenticated durable audit. Recordkeeping is not a physical move or a capacity reservation.</Field>
               <Field label="Dimensions">
                 {device.spec.modelShape
                   ? `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'Depth not recorded' : device.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}`
@@ -365,7 +376,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
             <>
               <Field label="Expected hardware">{modelLabel(claim.spec.expectedIdentity)}</Field>
               <Field label="Expected serial">{claim.spec.expectedIdentity.serial}</Field>
-              <Field label="Planned placement">{plannedPlacement(claim)}</Field>
+              <Field label="Claim placement (intent / history)">{plannedPlacement(claim)}</Field>
               <Field label="Registered devices">{inventory.issues?.Device ? 'Device details unavailable' : slot?.devices.length ?? 0}</Field>
               {claim.spec.placement.facilityRef && (
                 <Field label="Facility">
@@ -674,7 +685,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                         </th>
                         <th>
                           {section.kind === 'Cable' ? 'End A' : section.kind === 'Device' || section.kind === 'DeviceClaim'
-                            ? 'Planned location'
+                            ? 'Location / Reported placement'
                             : 'Location / reference'}
                         </th>
                         <th>{section.kind === 'Cable' ? 'End B' : section.kind === 'Device' ? 'Serial / asset tag' : 'Namespace'}</th>
@@ -741,7 +752,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
       <details className="inventory-help">
         <summary>About this inventory</summary>
         <p>
-          These are recorded facts and installation plans, not live hardware status. A record does not
+          These are source reports and registration / intent history, not live hardware status. A record does not
           establish availability, verified placement, working connections, or permission to operate equipment.
         </p>
         <p>

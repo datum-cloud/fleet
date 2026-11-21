@@ -1,5 +1,8 @@
 # Planning and registering physical devices
 
+For additive source reports and the server-enforced correction freeze, see
+[Device-reported placement](../development/device-reported-placement.md).
+
 [Operations guide](README.md) · [Architecture](../architecture/README.md) ·
 [Implementation status](../development/README.md)
 
