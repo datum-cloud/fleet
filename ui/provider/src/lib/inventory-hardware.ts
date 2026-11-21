@@ -1,5 +1,6 @@
 import type { CableEndpoint, Device, DeviceClaim, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
-import { ApiError, PROVIDER_PROJECT, proxyFetch } from './api';
+import { ApiError } from './api';
+import { readInventoryReference } from './inventory-read-access';
 import type { InventoryOperation } from './inventory-operation';
 import type { InventoryFormValues } from './inventory-management';
 
@@ -55,23 +56,22 @@ export function hardwarePayload(kind: 'Device' | 'Cable' | 'DeviceClaim', values
 }
 
 export async function validateHardwareReferences(kind: 'Device' | 'Cable' | 'DeviceClaim', values: InventoryFormValues, operation: InventoryOperation) {
-  const base = `/apis/fleet.datumapis.com/v1alpha1/namespaces/${encodeURIComponent(values.namespace)}`;
   if (kind === 'DeviceClaim') {
     const snapshot = values.planLocation!;
-    const location = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${base}/${snapshot.kind === 'Facility' ? 'facilities' : 'racks'}/${encodeURIComponent(snapshot.name)}`);
+    const location = await readInventoryReference<PhysicalRecord>(snapshot.kind, values.namespace, snapshot.name, operation);
     operation.assertCurrent();
     if (!location || location.metadata.uid !== snapshot.uid || location.metadata.resourceVersion !== snapshot.resourceVersion || location.metadata.deletionTimestamp) throw new ApiError(409, 'The location changed. Review the installation plan.');
     return;
   }
   if (kind === 'Device') {
     const snapshot = values.claim!;
-    const claim = await proxyFetch<DeviceClaim>(PROVIDER_PROJECT, `${base}/deviceclaims/${encodeURIComponent(snapshot.name)}`);
+    const claim = await readInventoryReference<DeviceClaim>('DeviceClaim', values.namespace, snapshot.name, operation);
     operation.assertCurrent();
     if (!claim || claim.metadata.uid !== snapshot.uid || claim.metadata.resourceVersion !== snapshot.resourceVersion || claim.metadata.deletionTimestamp || claim.spec.lifecycle !== 'Installation') throw new ApiError(409, 'The installation plan changed or is a legacy binding. Review it before registration.');
     return;
   }
   for (const lane of values.cableLanes ?? []) for (const endpoint of [lane.a!, lane.b!]) {
-    const record = await proxyFetch<Device | PhysicalRecord>(PROVIDER_PROJECT, `${base}/${endpoint.kind === 'Device' ? 'devices' : 'powerfeeds'}/${encodeURIComponent(endpoint.name)}`);
+    const record = await readInventoryReference<Device | PhysicalRecord>(endpoint.kind, values.namespace, endpoint.name, operation);
     operation.assertCurrent();
     if (!record || record.metadata.uid !== endpoint.uid || record.metadata.resourceVersion !== endpoint.resourceVersion || record.metadata.deletionTimestamp) throw new ApiError(409, 'An endpoint changed. Review the cable before recording.');
     const components = endpoint.kind === 'Device' ? (record as Device).spec.components : (record as PhysicalRecord).spec.terminations;

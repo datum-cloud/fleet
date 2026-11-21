@@ -97,6 +97,15 @@ removed on an observed denial/session boundary. Reads are manually refreshed;
 this is not instantaneous notification of a server-side grant change during an
 idle session. Detail pages now offer the same explicit Refresh inventory action.
 
+A failed submit-time reference read is distinct from a denied write. It carries
+the reference kind and namespace, removes that kind's cached records and form
+choices conservatively across the current view, and clears selected references
+without discarding unrelated user-entered fields. In-flight inventory reads are
+cancelled before cached records are removed. Session expiry hides all kinds.
+Reopening inventory starts a fresh access evaluation; refreshing an existing view
+does not clear its recorded read failures. Search indexes explicit visible fields
+and readable endpoint identities, not raw records or redacted references.
+
 ### Retained host source evidence
 
 The prior implementation inspected staff-portal source at

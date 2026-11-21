@@ -7,9 +7,18 @@ import type { Device, DeviceClaim, PhysicalRecord } from '../../../shared/fleet-
 import { InventoryOperationContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
 import { InventoryHardwareFields } from './inventory-hardware-fields';
 import type { Inventory } from '../inventory';
+import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 
-export function InventoryManagement({ kind, record, facilities, claims = [], devices = [], feeds = [], racks = [], compact = false, issues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
+export function InventoryManagement({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], compact = false, issues: sourceIssues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
   const client = useQueryClient();
+  const onReadFailure = useContext(InventoryReadAccessContext);
+  const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
+  const issues = { ...sourceIssues, ...readIssues };
+  const facilities = issues.Facility ? [] : sourceFacilities;
+  const claims = issues.DeviceClaim ? [] : sourceClaims;
+  const devices = issues.Device ? [] : sourceDevices;
+  const feeds = issues.PowerFeed ? [] : sourceFeeds;
+  const racks = issues.Rack ? [] : sourceRacks;
   const sessionScope = useContext(InventoryOperationContext);
   const scope = useRef(new InventoryOperationScope());
   useLayoutEffect(() => {
@@ -32,7 +41,7 @@ export function InventoryManagement({ kind, record, facilities, claims = [], dev
   const editable = !record || canEditInventoryLabel(record);
   const permission = useInventoryPermission(kind, editable ? namespace : '', record ? 'patch' : 'create', record?.metadata.name);
   const dependenciesUnavailable = !record && ((kind === 'Device' && !!issues?.DeviceClaim) || (kind === 'Rack' && !!issues?.Facility) || (kind === 'DeviceClaim' && !!issues?.Facility && !!issues?.Rack) || (kind === 'Cable' && !!issues?.Device && !!issues?.PowerFeed));
-  const allowed = permission.data === true && !permission.isFetching && !permission.error && editable && !dependenciesUnavailable;
+  const allowed = permission.data === true && !permission.isFetching && !permission.error && editable && !dependenciesUnavailable && !issues[kind];
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -55,6 +64,26 @@ export function InventoryManagement({ kind, record, facilities, claims = [], dev
       await client.invalidateQueries({ queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT] });
     } catch (error) {
       if (error instanceof InventoryOperationInvalidated) { setMessage(error.message); setBlocked(true); }
+      else if (error instanceof InventoryReferenceReadError) {
+        const denied = readFailureIssues(error);
+        setReadIssues(previous => ({ ...previous, ...denied }));
+        onReadFailure(error);
+        setValues(previous => ({ ...previous,
+          facility: denied?.Facility ? '' : previous.facility,
+          claim: denied?.DeviceClaim ? undefined : previous.claim,
+          planLocation: previous.planLocation && denied?.[previous.planLocation.kind] ? undefined : previous.planLocation,
+          cableLanes: previous.cableLanes?.map(lane => ({ ...lane,
+            a: lane.a && denied?.[lane.a.kind] ? undefined : lane.a,
+            b: lane.b && denied?.[lane.b.kind] ? undefined : lane.b,
+          })),
+        }));
+        if (record || error.status === 401) { setOpen(false); setBaseline(undefined); }
+        setMessage(error.status === 401 ? 'Your session expired. Sign in through the staff portal before continuing.' : 'Related inventory is no longer readable. Restricted choices were removed; your other input is kept. Reopen inventory after viewing access is restored.');
+        setBlocked(true);
+        const queryKey = [PLUGIN_ID, 'inventory', PROVIDER_PROJECT];
+        await client.cancelQueries({ queryKey });
+        client.setQueriesData<Inventory>({ queryKey }, previous => previous ? redactInventory(previous, denied) : previous);
+      }
       else if (error instanceof ApiError && error.status === 403) { setMessage('Your management permission changed. Your input is kept here. Ask your administrator for access before trying again.'); setBlocked(true); }
       else if (error instanceof ApiError && error.status === 401) { setMessage('Your session expired. Your input is kept here. Sign in through the staff portal before continuing.'); setBlocked(true); }
       else if (error instanceof ApiError && error.status === 409) { setMessage('The record already exists, changed, or has another writer. Your input is kept here. Refresh and review the record before continuing.'); setBlocked(true); }

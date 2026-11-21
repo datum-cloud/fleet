@@ -4,6 +4,7 @@ import type { Device, DeviceClaim, PhysicalRecord } from '../../../shared/fleet-
 import type { InventoryOperation } from './inventory-operation';
 import { hardwarePayload, validateHardwareReferences, type HardwareFields } from './inventory-hardware';
 import { inventoryResources } from '../inventory';
+import { readInventoryReference } from './inventory-read-access';
 
 export type ManagedKind = 'Facility' | 'Rack' | 'Device' | 'Cable' | 'DeviceClaim';
 export type ManagedRecord = PhysicalRecord | Device | DeviceClaim;
@@ -67,7 +68,7 @@ export async function createInventoryRecord(kind: ManagedKind, values: Inventory
   if (kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim') await validateHardwareReferences(kind, values, operation);
   operation.assertCurrent();
   if (kind === 'Rack') {
-    const facility = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath('Facility', values.namespace)}/${encodeURIComponent(values.facility)}`);
+    const facility = await readInventoryReference<PhysicalRecord>('Facility', values.namespace, values.facility, operation);
     operation.assertCurrent();
     if (!facility?.metadata?.uid || facility.metadata.deletionTimestamp) throw new ApiError(409, 'Facility is not available. Refresh inventory before continuing.');
   }
@@ -86,7 +87,7 @@ export async function editInventoryLabel(original: ManagedRecord, values: Invent
   await requirePermission(kind, namespace, 'patch', original.metadata.name);
   operation.assertCurrent();
   const path = `${resourcePath(kind, namespace)}/${encodeURIComponent(original.metadata.name)}`;
-  const current = await proxyFetch<ManagedRecord>(PROVIDER_PROJECT, path);
+  const current = await readInventoryReference<ManagedRecord>(kind, namespace, original.metadata.name, operation);
   operation.assertCurrent();
   if (!current || current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canEditInventoryLabel(current)) throw new ApiError(409, 'The record or its ownership changed. Reload it before editing.');
   const now = new Date().toISOString();
