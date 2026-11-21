@@ -4,6 +4,7 @@ resources:
   - deviceclaim.yaml
   - device.yaml
   - facility.yaml
+  - site.yaml
   - rack.yaml
   - cable.yaml
   - powerfeed.yaml

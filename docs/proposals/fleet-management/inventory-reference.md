@@ -17,6 +17,11 @@ CRDs or manifests to apply; illustrative identifiers and evidence do not establi
 physical truth. Local object incarnations are retained privately rather than
 used as authored cross-control-plane references.
 
+For the implemented local-only Site membership and provider-qualified premises
+identifier subset, see [Site–Facility relationship](../../development/site-facility-relationship.md).
+Its name/UID references are same-project, same-namespace incarnation pins, not
+authored cross-control-plane IDs or allocation policy.
+
 - [Contract details](#contract-details)
   - [Metadata and evidence](#shared-metadata-references-and-evidence)
   - [Facility and Rack](#facility-and-rack-contracts)

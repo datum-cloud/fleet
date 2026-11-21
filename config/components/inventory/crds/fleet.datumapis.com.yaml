@@ -805,6 +805,27 @@ spec:
                 - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
                     oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
                   message: source identity is immutable
+              identifiers:
+                type: array
+                maxItems: 64
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [provider, type, value]
+                items:
+                  type: object
+                  required: [provider, type, value]
+                  properties:
+                    provider:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    type:
+                      type: string
+                      enum: [PremisesCode, PremisesAlias, PremisesID]
+                    value:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
               locationRef:
                 type: object
                 properties:
@@ -816,6 +837,140 @@ spec:
                 - name
             required:
             - displayName
+            - provenance
+            x-kubernetes-validations:
+            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
+              message: every spec change must advance provenance.recordedAt
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sites.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Site
+    listKind: SiteList
+    plural: sites
+    singular: site
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              provenance:
+                type: object
+                required:
+                - method
+                - recordedBy
+                - recordedAt
+                properties:
+                  method:
+                    type: string
+                    enum:
+                    - Manual
+                    - NetBoxImport
+                  recordedBy:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  recordedAt:
+                    type: string
+                    format: date-time
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  source:
+                    type: object
+                    properties:
+                      system:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      id:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      snapshotDigest:
+                        type: string
+                        pattern: ^sha256:[a-f0-9]{64}$
+                      mappingRevision:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      observedAt:
+                        type: string
+                        format: date-time
+                    required:
+                    - system
+                    - type
+                    - id
+                    - snapshotDigest
+                    - mappingRevision
+                    - observedAt
+                x-kubernetes-validations:
+                - rule: self.method != 'NetBoxImport' || has(self.source)
+                  message: NetBox imports require source provenance
+                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
+                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
+                  message: source identity is immutable
+              code:
+                type: string
+                minLength: 1
+                maxLength: 64
+              facilityRefs:
+                type: array
+                maxItems: 64
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name, uid]
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    uid:
+                      type: string
+                      minLength: 1
+                      maxLength: 128
+                x-kubernetes-validations:
+                - rule: self.all(ref, self.filter(other, other.uid == ref.uid).size() == 1)
+                  message: Facility UIDs must be unique within a Site
+            required:
+            - displayName
+            - code
             - provenance
             x-kubernetes-validations:
             - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt

@@ -14,7 +14,7 @@ function browse(query = '', data = inventory) {
 
 describe('hardware directory', () => {
   it('does not turn no-read permission into empty inventory or zero counts', () => {
-    browse('', { ...inventory, issues: { Device: { status: 403 }, DeviceClaim: { status: 403 }, Facility: { status: 403 }, Rack: { status: 403 }, Cable: { status: 403 }, PowerFeed: { status: 403 } } });
+    browse('', { ...inventory, issues: { Site: { status: 403 }, Device: { status: 403 }, DeviceClaim: { status: 403 }, Facility: { status: 403 }, Rack: { status: 403 }, Cable: { status: 403 }, PowerFeed: { status: 403 } } });
     expect(screen.getByRole('heading', { name: 'Inventory access needed' })).toBeInTheDocument();
     expect(screen.queryByText('No devices recorded')).not.toBeInTheDocument();
     expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
@@ -48,10 +48,10 @@ describe('hardware directory', () => {
     expect(screen.queryByText('No devices recorded')).not.toBeInTheDocument();
   });
 
-  it('offers six navigable kinds without writes or a report upload', () => {
+  it('offers physical kinds and operational Sites without writes or a report upload', () => {
     const { container } = browse();
     const navigation = within(screen.getByRole('navigation', { name: 'Inventory categories' }));
-    for (const name of ['Devices', 'Facilities', 'Racks', 'Claims & registrations', 'Cables', 'Power feeds']) expect(navigation.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
+    for (const name of ['Devices', 'Operational sites', 'Facilities', 'Racks', 'Claims & registrations', 'Cables', 'Power feeds']) expect(navigation.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /create|edit|delete|apply|sync|import/i })).not.toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
     expect(screen.queryByText(/GitOps|Flux/)).not.toBeInTheDocument();

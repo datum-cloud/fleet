@@ -30,7 +30,49 @@ type PhysicalMetadata struct {
 
 type FacilitySpec struct {
 	PhysicalMetadata `json:",inline"`
-	LocationRef      *LocalReference `json:"locationRef,omitempty"`
+	LocationRef      *LocalReference      `json:"locationRef,omitempty"`
+	Identifiers      []FacilityIdentifier `json:"identifiers,omitempty"`
+}
+
+type FacilityIdentifier struct {
+	Provider string `json:"provider"`
+	Type     string `json:"type"`
+	Value    string `json:"value"`
+}
+
+type FacilityMembershipReference struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
+}
+
+type SiteSpec struct {
+	PhysicalMetadata `json:",inline"`
+	Code             string                        `json:"code"`
+	FacilityRefs     []FacilityMembershipReference `json:"facilityRefs,omitempty"`
+}
+
+type Site struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              SiteSpec `json:"spec"`
+}
+
+type SiteList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []Site `json:"items"`
+}
+
+func (in *Site) DeepCopyObject() runtime.Object {
+	out := new(Site)
+	deepCopy(in, out)
+	return out
+}
+
+func (in *SiteList) DeepCopyObject() runtime.Object {
+	out := new(SiteList)
+	deepCopy(in, out)
+	return out
 }
 
 type RackSpec struct {

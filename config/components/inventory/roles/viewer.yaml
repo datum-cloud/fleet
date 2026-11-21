@@ -8,6 +8,9 @@ metadata:
 spec:
   launchStage: Alpha
   includedPermissions:
+    - fleet.datumapis.com/sites.get
+    - fleet.datumapis.com/sites.list
+    - fleet.datumapis.com/sites.watch
     - fleet.datumapis.com/deviceclaims.list
     - fleet.datumapis.com/deviceclaims.get
     - fleet.datumapis.com/deviceclaims.watch

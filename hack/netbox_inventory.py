@@ -188,8 +188,11 @@ class Planner:
         self.existing = existing
         if existing is not None and existing.get("target") != self.target:
             raise ValueError("Fleet snapshot target must exactly match the reviewed provider project, namespace and application")
-        if existing is not None and set(existing.get("collections", [])) != {"Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"}:
+        physical_kinds = {"Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"}
+        if existing is not None and set(existing.get("collections", [])) not in (physical_kinds, physical_kinds | {"Site"}):
             raise ValueError("Fleet snapshot must attest all six inventory collections, including empty ones")
+        if mapping.get("operationalSites") and (existing is None or "Site" not in existing.get("collections", [])):
+            raise ValueError("operational Site mapping requires a complete Fleet snapshot including Sites")
         self.previous = previous
         self.digest = digest(source)
         self.device_names, self.rack_names, self.feed_names = {}, {}, {}
@@ -235,6 +238,10 @@ class Planner:
             if key not in self.records or key.rsplit("/", 1)[0] not in ("dcim/sites", "dcim/locations"):
                 raise ValueError("facility source must name a present site or location")
             spec = {"displayName": facility["displayName"]}
+            if facility.get("identifiers"):
+                if facility.get("identifiersVerified") is not True:
+                    raise ValueError("provider premises identifiers require explicit verification")
+                spec["identifiers"] = copy.deepcopy(facility["identifiers"])
             if facility.get("locationRef"):
                 spec["locationRef"] = local_ref(facility["locationRef"])
             self.add(key, "Facility", facility["name"], spec)
@@ -486,6 +493,21 @@ class Planner:
             name = self.stable_name("cable", reference_id(record))
             self.add(key, "Cable", name, {"displayName": record.get("label") or name, "medium": medium, "lanes": lanes})
 
+    def operational_sites(self):
+        existing = {record["kind"] + "/" + record["metadata"]["name"]: record for record in (self.existing or {}).get("items", [])}
+        for site in self.mapping.get("operationalSites", []):
+            if site.get("verified") is not True or not site.get("facilityRefs"):
+                raise ValueError("operational Site mapping requires explicit verified Facility references")
+            source = site.get("source", "")
+            if source not in self.records or source.rsplit("/", 1)[0] not in ("dcim/sites", "dcim/locations"):
+                raise ValueError("operational Site source must name a present site or location")
+            for reference in site["facilityRefs"]:
+                facility = existing.get("Facility/" + reference.get("name", ""), {})
+                metadata = facility.get("metadata", {})
+                if set(reference) != {"name", "uid"} or not reference.get("uid") or metadata.get("uid") != reference["uid"] or metadata.get("namespace") != self.namespace or metadata.get("deletionTimestamp"):
+                    raise ValueError("operational Site mapping requires an existing exact Facility incarnation")
+            self.add(source, "Site", site["name"], {"displayName": site["displayName"], "code": site["code"], "facilityRefs": copy.deepcopy(site["facilityRefs"])})
+
     def reconcile(self):
         current = {}
         for record in (self.existing or {}).get("items", []):
@@ -515,7 +537,7 @@ class Planner:
                     pairs = [(spec.get("assetTag"), other_spec.get("assetTag")), (spec.get("providerHostRef"), other_spec.get("providerHostRef")), (spec.get("providerHostRef", {}).get("id"), other_spec["identity"].get("serial")), (spec["identity"].get("serial"), other_spec["identity"].get("serial")), (spec["identity"].get("sourceIdentity"), other_spec["identity"].get("sourceIdentity"))]
                     if any(left and left == right for left, right in pairs):
                         conflicts[key] = "possible existing asset identity; preserve Device/claim/capacity and adjudicate privately"
-        all_records = {**current, **self.candidates}
+        all_records = {**current, **{key: candidate for key, candidate in self.candidates.items() if key not in unchanged}}
         for key, reasons in validate_graph(all_records).items():
             if key in self.candidates:
                 conflicts[key] = "; ".join(reasons)
@@ -553,6 +575,7 @@ class Planner:
         self.feeds()
         self.circuits()
         self.cables()
+        self.operational_sites()
         for key in self.records:
             collection = key.rsplit("/", 1)[0]
             if collection.startswith("dcim/") and collection.split("/")[1] in SUPPORT:
@@ -580,6 +603,8 @@ class Planner:
 def dependencies(record):
     spec = record["spec"]
     references = []
+    for reference in spec.get("facilityRefs", []):
+        references.append("Facility/" + reference["name"])
     for field, kind in (("claimRef", "DeviceClaim"), ("facilityRef", "Facility"), ("rackRef", "Rack")):
         if spec.get(field):
             references.append(kind + "/" + spec[field]["name"])
@@ -604,6 +629,22 @@ def validate_graph(records):
             if target not in records:
                 fail(key, "missing local reference " + target)
         spec = record["spec"]
+        if record["kind"] == "Site":
+            seen_names, seen_uids = set(), set()
+            for reference in spec.get("facilityRefs", []):
+                target = records.get("Facility/" + reference.get("name", ""), {})
+                metadata = target.get("metadata", {})
+                if not reference.get("uid") or metadata.get("uid") != reference["uid"] or metadata.get("namespace") != record["metadata"].get("namespace") or metadata.get("deletionTimestamp") or reference.get("name") in seen_names or reference.get("uid") in seen_uids:
+                    fail(key, "invalid or stale Facility membership reference")
+                seen_names.add(reference.get("name"))
+                seen_uids.add(reference.get("uid"))
+        if record["kind"] == "Facility":
+            seen_identifiers = set()
+            for identifier in spec.get("identifiers", []):
+                identity = tuple(identifier.get(field) for field in ("provider", "type", "value"))
+                if not name_ok(identifier.get("provider")) or identifier.get("type") not in ("PremisesCode", "PremisesAlias", "PremisesID") or not isinstance(identifier.get("value"), str) or not 1 <= len(identifier["value"]) <= 253 or identity in seen_identifiers:
+                    fail(key, "invalid provider-qualified premises identifier")
+                seen_identifiers.add(identity)
         components = {component["id"]: component for component in spec.get("components", [])}
         mapped_positions = set()
         for mapping in spec.get("internalMappings", []):

@@ -1,5 +1,9 @@
 # Optional NetBox review aids for manual inventory
 
+[Operational Site mappings](../development/site-facility-relationship.md#explicit-offline-importer-mapping)
+are optional, explicitly verified and UID-pinned. They never infer premises from
+provider metros, accounts or similar names.
+
 [Device-reported placement](../development/device-reported-placement.md) adds
 explicit per-device source-report opt-in for new candidates and a prepare-only
 guarded patch planner for existing records. Claim placement semantics remain unchanged.

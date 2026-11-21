@@ -103,7 +103,7 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].map(status => ({ st
   await screen.findByRole('button', { name: 'Create facility' });
   phase = 'pending';
   fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
-  await waitFor(() => expect(releases).toHaveLength(6));
+  await waitFor(() => expect(releases).toHaveLength(7));
   phase = 'denied';
   await act(async () => { await router.revalidate(); await router.revalidate(); });
   const title = status === 401 ? 'Your session has expired' : status === 403 ? 'Inventory access needed' : status === 404 ? 'Inventory section unavailable' : 'Inventory is temporarily unavailable';
@@ -112,7 +112,7 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].map(status => ({ st
   expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
   expect(screen.queryByText('Private facility label')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
-  expect(freshRequests.length).toBeGreaterThanOrEqual(6);
+  expect(freshRequests.length).toBeGreaterThanOrEqual(7);
   expect(freshRequests.every(method => method === 'GET')).toBe(true);
   router.dispose();
 });

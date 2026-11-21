@@ -7,9 +7,9 @@ import type { CableEndpoint, Device as RawDevice, DeviceClaim as RawDeviceClaim,
 export type { RawDevice, RawDeviceClaim };
 export type RawDeviceList = List<RawDevice>;
 export type RawDeviceClaimList = List<RawDeviceClaim>;
-export type InventoryKind = 'Device' | 'DeviceClaim' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
+export type InventoryKind = 'Site' | 'Device' | 'DeviceClaim' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
 export const inventoryResources: Record<InventoryKind, string> = {
-  Device: 'devices', DeviceClaim: 'deviceclaims', Facility: 'facilities', Rack: 'racks', Cable: 'cables', PowerFeed: 'powerfeeds',
+  Site: 'sites', Device: 'devices', DeviceClaim: 'deviceclaims', Facility: 'facilities', Rack: 'racks', Cable: 'cables', PowerFeed: 'powerfeeds',
 };
 
 export interface InventorySlot {

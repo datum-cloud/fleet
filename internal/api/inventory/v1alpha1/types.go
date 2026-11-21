@@ -180,7 +180,7 @@ type DeviceList struct {
 }
 
 func addKnown(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &DeviceClaim{}, &DeviceClaimList{}, &Device{}, &DeviceList{}, &Facility{}, &FacilityList{}, &Rack{}, &RackList{}, &Cable{}, &CableList{}, &PowerFeed{}, &PowerFeedList{})
+	s.AddKnownTypes(GroupVersion, &Site{}, &SiteList{}, &DeviceClaim{}, &DeviceClaimList{}, &Device{}, &DeviceList{}, &Facility{}, &FacilityList{}, &Rack{}, &RackList{}, &Cable{}, &CableList{}, &PowerFeed{}, &PowerFeedList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }

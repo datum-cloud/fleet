@@ -56,6 +56,70 @@ def fixture():
 
 
 class PlanTests(unittest.TestCase):
+    def operational_mapping(self):
+        source, mapping = fixture()
+        _, records = inventory.Planner(source, mapping).run()
+        for record in records:
+            record["metadata"]["uid"] = "uid-" + record["metadata"]["name"]
+        facility = next(record for record in records if record["kind"] == "Facility")
+        existing = {"target": mapping["target"], "collections": ["Site", "Facility", "Rack", "DeviceClaim", "Device", "Cable", "PowerFeed"], "items": records}
+        mapping["operationalSites"] = [{"name": "site-stable", "displayName": "Example operational identity", "code": "EX3", "source": "dcim/sites/1", "verified": True, "facilityRefs": [{"name": facility["metadata"]["name"], "uid": facility["metadata"]["uid"]}]}]
+        return source, mapping, existing
+
+    def test_site_mapping_is_explicit_and_observational(self):
+        source, mapping, existing = self.operational_mapping()
+        before = copy.deepcopy(existing)
+        report, records = inventory.Planner(source, mapping, existing).run()
+        self.assertEqual({}, report["conflicts"])
+        self.assertEqual(["Site"], [record["kind"] for record in records])
+        self.assertEqual("EX3", records[0]["spec"]["code"])
+        self.assertEqual(before, existing)
+        self.assertEqual([], report["deletions"])
+        self.assertFalse(report["applied"])
+        self.assertEqual("Unknown", report["readiness"])
+        mapping.pop("operationalSites")
+        _, records = inventory.Planner(source, mapping, existing).run()
+        self.assertFalse(any(record["kind"] == "Site" for record in records))
+
+    def test_site_mapping_requires_verified_existing_incarnations(self):
+        for invalid in ("unverified", "replaced", "missing", "incomplete", "namespace", "deleting"):
+            with self.subTest(invalid=invalid):
+                source, mapping, existing = self.operational_mapping()
+                site = mapping["operationalSites"][0]
+                facility = next(record for record in existing["items"] if record["kind"] == "Facility")
+                if invalid == "unverified":
+                    site["verified"] = False
+                elif invalid == "replaced":
+                    site["facilityRefs"][0]["uid"] = "other-uid"
+                elif invalid == "missing":
+                    existing["items"] = []
+                elif invalid == "incomplete":
+                    existing["collections"].remove("Site")
+                elif invalid == "namespace":
+                    facility["metadata"]["namespace"] = "other"
+                else:
+                    facility["metadata"]["deletionTimestamp"] = source["observedAt"]
+                with self.assertRaises(ValueError):
+                    inventory.Planner(source, mapping, existing).run()
+
+    def test_provider_identifier_collisions_are_qualified_not_inferred(self):
+        source, mapping = fixture()
+        identifiers = [{"provider": provider, "type": "PremisesCode", "value": "EX1"} for provider in ("example-a", "example-b")]
+        mapping["facilities"][0].update(identifiers=identifiers, identifiersVerified=True)
+        report, records = inventory.Planner(source, mapping).run()
+        self.assertEqual({}, report["conflicts"])
+        self.assertEqual(identifiers, next(record for record in records if record["kind"] == "Facility")["spec"]["identifiers"])
+        self.assertFalse(any(record["kind"] == "Site" for record in records))
+        mapping["facilities"][0]["identifiersVerified"] = False
+        with self.assertRaises(ValueError):
+            inventory.Planner(source, mapping).run()
+
+    def test_provider_metro_is_not_a_premises_identifier(self):
+        source, mapping = fixture()
+        mapping["facilities"][0].update(identifiers=[{"provider": "example", "type": "Metro", "value": "EX"}], identifiersVerified=True)
+        report, _ = inventory.Planner(source, mapping).run()
+        self.assertIn("Facility/example-premises", report["conflicts"])
+
     def setUp(self):
         self.source, self.mapping = fixture()
 
