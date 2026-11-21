@@ -94,11 +94,13 @@ occupancy, power budgets, and ambiguous bindings stay unknown. Contextual help
 explains these boundaries; there is no report picker, automatic import, sync, or
 hardware action. Reads require the provider-scoped inventory viewer role, not a
 consumer Metal role. Management separately checks backend create/patch permission
-in the provider project: Facility/Rack creation and portal-owned display-name
-editing only. The proposed `fleet.datumapis.com-inventory-manager` role and
-`physical-inventory-managers` group binding are separate IAM work, not deployed
-by this UI. Group names/staff membership never enable controls. Flux/imported
-records remain read-only pending ownership review. Namespace choice is not an
+in the provider project: Facility/Rack/Installation-plan/Device/Cable creation
+and portal-owned display-name editing. The existing
+`fleet.datumapis.com-inventory-manager` role and separate
+`physical-inventory-managers` group binding are not deployed by this UI phase.
+Group names/staff membership never enable controls. Flux/imported/unknown-writer
+records remain read-only pending ownership review; import provenance does not
+mean Git ownership. New inventory is direct API/operator-managed. Namespace choice is not an
 authorization boundary. Denied collections and detail links show access guidance,
 not empty inventory; readable sections remain available.
 See [hardware directory scope and design gaps](../../docs/development/staff-inventory-ui.md).
@@ -110,8 +112,10 @@ still supplies its design system. Inventory-specific CSS is scoped under
 navigation is introduced. Fixture mode includes all six inventory kinds with
 explicitly synthetic identities and no verified state.
 
-- staff-portal runs react-router 7, so this plugin pins it for types and
-  shares it with `requiredVersion: false`.
+- The local harness pins react-router 7.18.2 and shares it with
+  `requiredVersion: false`. The supplied current host pin uses Router ^8.3.1;
+  authenticated host integration remains an acceptance check, not proven by
+  local harness tests.
 - staff-portal shares only the `badge`, `button`, `card`, `icons` and
   `skeleton` datum-ui subpaths. Everything else, including the data table, is
   bundled, so its peer packages are runtime dependencies here.

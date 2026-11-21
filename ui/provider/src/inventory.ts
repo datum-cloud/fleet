@@ -2,7 +2,7 @@
 // Device that names it in the same namespace; a replacement leaves more than
 // one. Devices whose claim is missing are kept separately so they stay visible.
 
-import type { Device as RawDevice, DeviceClaim as RawDeviceClaim, List, PhysicalRecord } from '../../shared/fleet-api';
+import type { CableEndpoint, Device as RawDevice, DeviceClaim as RawDeviceClaim, List, PhysicalRecord } from '../../shared/fleet-api';
 
 export type { RawDevice, RawDeviceClaim };
 export type RawDeviceList = List<RawDevice>;
@@ -53,14 +53,25 @@ export function toInventory(claims: RawDeviceClaim[], devices: RawDevice[], phys
   };
 }
 
-export function placementLabel(claim: RawDeviceClaim): string {
+export function placementLabel(claim: RawDeviceClaim, issues?: Inventory['issues']): string {
   const { facility, rack, position, height = 1, face, scope, facilityRef, rackRef, mount } = claim.spec.placement;
-  if (scope === 'Facility') return `${facilityRef?.name} · rack and position Unknown`;
-  if (scope === 'RackMembership') return `${rackRef?.name} · position Unknown (no reserved units)`;
-  if (scope === 'NonRackUnitMount') return `${rackRef?.name} · mount ${mount}`;
+  const facilityName = issues?.Facility ? 'Facility unavailable' : facility ?? facilityRef?.name;
+  const rackName = issues?.Rack ? 'Rack unavailable' : rack ?? rackRef?.name;
+  if (scope === 'Facility') return `${facilityName} · rack and position Unknown`;
+  if (scope === 'RackMembership') return `${rackName} · position Unknown (no reserved units)`;
+  if (scope === 'NonRackUnitMount') return `${rackName} · mount ${mount}`;
   if (position === undefined) return 'Placement Unknown';
   const units = height > 1 ? `U${position}–U${position + height - 1}` : `U${position}`;
-  return `${facility ?? 'Facility via rack'} · ${rack ?? rackRef?.name} · ${units} ${face}`;
+  return `${facilityName ?? 'Facility via rack'} · ${rackName} · ${units} ${face}`;
+}
+
+export function endpointLabel(endpoint: CableEndpoint, issues?: Inventory['issues']): string {
+  if ((endpoint.deviceRef && issues?.Device) || (endpoint.powerFeedRef && issues?.PowerFeed)) return 'Related endpoint unavailable';
+  return `${endpoint.deviceRef?.name ?? endpoint.powerFeedRef?.name ?? 'Unknown'}/${endpoint.componentID}:${endpoint.position}`;
+}
+
+export function legacyPeerLabel(peer: { device: string; port: string }, issues?: Inventory['issues'], separator = '/'): string {
+  return issues?.Device ? 'Related device unavailable' : `${peer.device}${separator}${peer.port}`;
 }
 
 export function modelLabel(identity: { manufacturer?: string; model: string }): string {

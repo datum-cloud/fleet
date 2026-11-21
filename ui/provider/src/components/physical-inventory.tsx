@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { Card, CardContent } from '@datum-cloud/datum-ui/card';
 import { Building2, Cable, ClipboardList, HardDrive, Search, Server, Zap } from 'lucide-react';
 import {
   modelLabel,
   placementLabel,
+  legacyPeerLabel,
   slotKey,
   type Inventory,
   type RawDevice,
@@ -14,6 +14,9 @@ import type { CableEndpoint, PhysicalComponent, PhysicalRecord } from '../../../
 import './physical-inventory.css';
 import { InventoryAccessState } from './inventory-access-state';
 import { InventoryManagement } from './inventory-management';
+import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
+import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
+import { FacilityOverview, RackOverview, inventoryHref as href } from './inventory-location';
 
 type Kind = 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -38,7 +41,7 @@ const sections = [
   },
   {
     kind: 'DeviceClaim',
-    title: 'Claims',
+    title: 'Installation plans',
     icon: ClipboardList,
     description: 'Installation plans, kept separate from physical hardware.',
   },
@@ -56,21 +59,10 @@ const sections = [
   },
 ] as const;
 
-export function endpointLabel(endpoint: CableEndpoint): string {
-  return `${endpoint.deviceRef?.name ?? endpoint.powerFeedRef?.name ?? 'Unknown'}/${endpoint.componentID}:${endpoint.position}`;
-}
+export { endpointLabel } from '../inventory';
 
 function recordName(entry: RecordEntry) {
   return entry.record.spec.displayName || entry.record.metadata.name;
-}
-
-function href(kind: Kind, namespace?: string, name?: string) {
-  const params = new URLSearchParams({ kind });
-  if (name !== undefined) {
-    params.set('record', name);
-    params.set('namespace', namespace ?? '');
-  }
-  return `?${params}`;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -128,14 +120,12 @@ function Components({ components }: { components: PhysicalComponent[] }) {
 }
 
 export function PhysicalInventory({ inventory: source, onRetry }: { inventory: Inventory; onRetry?: () => void }) {
-  const inventory: Inventory = {
-    ...source,
-    slots: source.issues?.DeviceClaim ? [] : source.slots.map(slot => ({ ...slot, devices: source.issues?.Device ? [] : slot.devices })),
-    unboundDevices: source.issues?.Device ? [] : [...source.unboundDevices, ...(source.issues?.DeviceClaim ? source.slots.flatMap(slot => slot.devices) : [])],
-    physical: source.physical.filter(record => !source.issues?.[record.kind]),
-  };
+  const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
+  const inventory = redactInventory(source, readIssues);
   const [params] = useSearchParams();
   const [search, setSearch] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [modelFilter, setModelFilter] = useState('');
   const heading = useRef<HTMLHeadingElement>(null);
   const section = sections.find((item) => item.kind === params.get('kind')) ?? sections.find(item => !inventory.issues?.[item.kind]) ?? sections[0];
   const entries: RecordEntry[] = [
@@ -154,6 +144,8 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
   );
   useEffect(() => {
     setSearch('');
+    setLocationFilter('');
+    setModelFilter('');
     if (selectedName !== null) heading.current?.focus();
   }, [section.kind, selectedName, selectedNamespace]);
   const find = (kind: Kind, namespace: string | undefined, name: string) =>
@@ -179,14 +171,14 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
     );
   const plannedPlacement = (claim: RawDeviceClaim) => {
     const location = claim.spec.placement;
-    if (!location.scope) return placementLabel(claim);
+    if (!location.scope) return placementLabel(claim, inventory.issues);
     const rack = location.rackRef ? find('Rack', claim.metadata.namespace, location.rackRef.name) : undefined;
     const facilityName =
       location.facilityRef?.name ?? (rack?.record as PhysicalRecord | undefined)?.spec.facilityRef?.name;
     const facility = facilityName ? find('Facility', claim.metadata.namespace, facilityName) : undefined;
     const parts = [
-      facility ? recordName(facility) : facilityName,
-      rack ? recordName(rack) : location.rackRef?.name,
+      inventory.issues?.Facility ? 'Facility unavailable' : facility ? recordName(facility) : facilityName,
+      inventory.issues?.Rack ? 'Rack unavailable' : rack ? recordName(rack) : location.rackRef?.name,
     ];
     if (location.scope === 'Facility') parts.push('Rack not recorded');
     if (location.scope === 'RackMembership') parts.push('Position not recorded');
@@ -209,12 +201,9 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
         : 'Claim record not found';
     }
     const record = entry.record as PhysicalRecord;
-    return (
-      record.spec.rackRef?.name ??
-      record.spec.facilityRef?.name ??
-      record.spec.locationRef?.name ??
-      'Not recorded'
-    );
+    if (record.spec.rackRef) return inventory.issues?.Rack ? 'Rack unavailable' : record.spec.rackRef.name;
+    if (record.spec.facilityRef) return inventory.issues?.Facility ? 'Facility unavailable' : record.spec.facilityRef.name;
+    return 'Not recorded';
   };
   const summary = (entry: RecordEntry): string => {
     if (entry.kind === 'Device') return modelLabel((entry.record as RawDevice).spec.identity);
@@ -232,11 +221,32 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
     return 'Physical premises';
   };
   const records = entries.filter((entry) => entry.kind === section.kind);
+  const locationKey = (entry: RecordEntry) => {
+    if (inventory.issues?.Facility || (entry.kind === 'Device' && inventory.issues?.DeviceClaim)) return '';
+    const claim = entry.kind === 'Device' ? claimFor(entry.record as RawDevice)?.claim : entry.kind === 'DeviceClaim' ? entry.record as RawDeviceClaim : undefined;
+    const rackName = claim?.spec.placement.rackRef?.name ?? (entry.record as PhysicalRecord).spec.rackRef?.name;
+    const rack = rackName && !inventory.issues?.Rack ? find('Rack', entry.record.metadata.namespace, rackName)?.record as PhysicalRecord | undefined : undefined;
+    const facilityName = claim?.spec.placement.facilityRef?.name ?? (entry.record as PhysicalRecord).spec.facilityRef?.name ?? rack?.spec.facilityRef?.name;
+    return facilityName ? slotKey(entry.record.metadata.namespace, facilityName) : '';
+  };
+  const modelKey = (entry: RecordEntry) => entry.kind === 'Device' ? (entry.record as RawDevice).spec.identity.model : entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.medium ?? '' : '';
+  const filterOptions = [...new Set(records.map(modelKey).filter(Boolean))].sort();
+  const searchText = (entry: RecordEntry) => {
+    const device = entry.kind === 'Device' ? entry.record as RawDevice : undefined;
+    const physical = entry.record as PhysicalRecord;
+    const endpoints = entry.kind === 'Cable' ? physical.spec.lanes?.flatMap(lane => [lane.a, lane.b]).flatMap(endpoint => {
+      const kind = endpoint.deviceRef ? 'Device' : 'PowerFeed';
+      if (inventory.issues?.[kind]) return [];
+      const name = endpoint.deviceRef?.name ?? endpoint.powerFeedRef?.name ?? '';
+      const target = find(kind, entry.record.metadata.namespace, name);
+      return [name, target ? recordName(target) : '', endpoint.componentID];
+    }) : [];
+    return [recordName(entry), entry.record.metadata.name, entry.record.metadata.namespace, summary(entry), placement(entry), device?.spec.identity.serial, device?.spec.identity.systemUUID, device?.spec.assetTag, ...(endpoints ?? [])].filter(Boolean).join(' ').toLowerCase();
+  };
   const matching = records
+    .filter(entry => (!locationFilter || locationKey(entry) === locationFilter) && (!modelFilter || modelKey(entry) === modelFilter))
     .filter((entry) =>
-      `${JSON.stringify(entry.record)} ${placement(entry)}`
-        .toLowerCase()
-        .includes(search.trim().toLowerCase()),
+      searchText(entry).includes(search.trim().toLowerCase()),
     )
     .sort(
       (left, right) =>
@@ -247,6 +257,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
     );
 
   function Endpoint({ endpoint, namespace }: { endpoint: CableEndpoint; namespace?: string }) {
+    if ((endpoint.deviceRef && inventory.issues?.Device) || (endpoint.powerFeedRef && inventory.issues?.PowerFeed)) return <span>Related endpoint unavailable</span>;
     return (
       <span>
         {endpoint.deviceRef
@@ -300,18 +311,27 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
       const target = candidate.record as PhysicalRecord;
       if (target.kind === 'Cable')
         return target.spec.lanes?.some((lane) =>
-          [lane.a, lane.b].some((endpoint) =>
-            kind === 'Device'
+          [lane.a, lane.b].some((endpoint) => {
+            if ((kind === 'Rack' || kind === 'Facility') && endpoint.deviceRef) {
+              const targetDevice = find('Device', namespace, endpoint.deviceRef.name)?.record as RawDevice | undefined;
+              const location = targetDevice && claimFor(targetDevice)?.claim.spec.placement;
+              const rack = location?.rackRef && find('Rack', namespace, location.rackRef.name)?.record as PhysicalRecord | undefined;
+              return kind === 'Rack' ? location?.rackRef?.name === record.metadata.name : location?.facilityRef?.name === record.metadata.name || rack?.spec.facilityRef?.name === record.metadata.name;
+            }
+            return kind === 'Device'
               ? endpoint.deviceRef?.name === record.metadata.name
-              : kind === 'PowerFeed' && endpoint.powerFeedRef?.name === record.metadata.name,
-          ),
+              : kind === 'PowerFeed' && endpoint.powerFeedRef?.name === record.metadata.name;
+          }),
         );
       return kind === 'Facility'
         ? target.spec.facilityRef?.name === record.metadata.name
         : kind === 'Rack' && target.spec.rackRef?.name === record.metadata.name;
     });
+    const relatedRecords = kind === 'Facility' || kind === 'Rack' ? related.filter(item => item.kind === 'Cable' || item.kind === 'PowerFeed') : related;
     return (
       <>
+        {kind === 'Facility' && <FacilityOverview facility={record as PhysicalRecord} inventory={inventory} />}
+        {kind === 'Rack' && <RackOverview rack={record as PhysicalRecord} inventory={inventory} />}
         <dl className="inventory-fields">
           <Field label="Record name">{record.metadata.name}</Field>
           <Field label="Namespace">{namespace || 'Not recorded'}</Field>
@@ -321,7 +341,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
               <Field label="Serial number">{device.spec.identity.serial}</Field>
               <Field label="Asset tag">{device.spec.assetTag}</Field>
               <Field label="System UUID">{device.spec.identity.systemUUID}</Field>
-              <Field label="Installation claim">
+              <Field label="Installation plan">
                 {reference('DeviceClaim', namespace, device.spec.claimRef.name)}
               </Field>
               <Field label="Planned placement">{placement(entry)}</Field>
@@ -431,7 +451,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                 {device.spec.interfaces?.map((iface) => (
                   <li key={iface.name}>
                     {iface.name} · {iface.macAddress ?? 'MAC not recorded'}
-                    {iface.peer && ` · legacy peer ${iface.peer.device}/${iface.peer.port}`}
+                    {iface.peer && ` · legacy peer ${legacyPeerLabel(iface.peer, inventory.issues)}`}
                   </li>
                 ))}
               </ul>
@@ -457,7 +477,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                 {claim.spec.ports?.map((port) => (
                   <li key={port.name}>
                     {port.name} · {port.type ?? 'Type not recorded'} · {port.speedMbps ?? 'Unknown'} Mb/s
-                    {port.expectedPeer && ` → ${port.expectedPeer.device}/${port.expectedPeer.port}`}
+                    {port.expectedPeer && ` → ${legacyPeerLabel(port.expectedPeer, inventory.issues)}`}
                   </li>
                 ))}
               </ul>
@@ -515,14 +535,12 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
             )}
           </>
         )}
-        <h3>
-          {kind === 'Rack' || kind === 'Facility'
-            ? 'Recorded contents & installation plans'
-            : 'Related records'}
+        {(kind !== 'Facility' && kind !== 'Rack' || relatedRecords.length > 0) && <><h3>
+          Related records
         </h3>
-        {related.length ? (
+        {relatedRecords.length ? (
           <ul className="inventory-related">
-            {related.map((item) => (
+            {relatedRecords.map((item) => (
               <li key={`${item.kind}/${slotKey(namespace, item.record.metadata.name)}`}>
                 <span className="inventory-muted">
                   {sections.find((section) => section.kind === item.kind)?.title}
@@ -537,7 +555,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
             No related records found in this namespace. This does not establish that equipment or connections
             are absent.
           </p>
-        )}
+        )}</>}
         <details>
           <summary>Record history & verification</summary>
           <dl className="inventory-fields">
@@ -562,16 +580,24 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
     );
   }
 
+  const management = !inventory.issues?.[section.kind] &&
+    (['Facility', 'Rack', 'Device', 'Cable'].includes(section.kind) || (section.kind === 'DeviceClaim' && selectedName === null)) &&
+    (selectedName === null || selected) ? <InventoryManagement
+      compact
+      key={`${section.kind}/${selectedNamespace}/${selectedName ?? ''}`}
+      kind={section.kind as ManagedKind}
+      issues={inventory.issues}
+      record={selected ? { ...selected.record, kind: selected.kind } as ManagedRecord : undefined}
+      facilities={inventory.physical.filter(record => record.kind === 'Facility')}
+      racks={inventory.physical.filter(record => record.kind === 'Rack')}
+      claims={inventory.slots.map(slot => slot.claim)}
+      devices={entries.filter(entry => entry.kind === 'Device').map(entry => entry.record as RawDevice)}
+      feeds={inventory.physical.filter(record => record.kind === 'PowerFeed')}
+    /> : null;
+  if (Object.values(inventory.issues ?? {}).some(issue => issue?.status === 401)) return <InventoryAccessState status={401} />;
   return (
+    <InventoryReadAccessContext.Provider value={error => setReadIssues(previous => ({ ...previous, ...readFailureIssues(error) }))}>
     <section className="fleet-inventory" aria-label="Physical inventory">
-      <header className="inventory-heading">
-        <div>
-          <p className="inventory-eyebrow">HARDWARE DIRECTORY</p>
-          <h2>Physical inventory</h2>
-          <p className="inventory-muted">Explore facilities, equipment, and physical connections.</p>
-        </div>
-        {onRetry && <button className="inventory-readonly" type="button" onClick={onRetry}>Refresh inventory</button>}
-      </header>
       <nav className="inventory-sections" aria-label="Inventory categories">
         {sections.filter(item => inventory.issues?.[item.kind]?.status !== 403).map((item) => (
           <Link
@@ -585,14 +611,13 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
           </Link>
         ))}
       </nav>
-      <Card>
-        <CardContent className="inventory-body">
+      <div className="inventory-body">
           {inventory.issues?.[section.kind] ? <InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /> : selectedName !== null ? (
             <>
-              <Link to={href(section.kind)}>← Back to {section.title.toLowerCase()}</Link>
-              <h2 ref={heading} tabIndex={-1}>
+              <div className="inventory-list-heading"><Link to={href(section.kind)}>← Back to {section.title.toLowerCase()}</Link>{onRetry && <button className="inventory-readonly" type="button" onClick={onRetry}>Refresh inventory</button>}</div>
+              <div className="inventory-topline"><h2 ref={heading} tabIndex={-1}>
                 {selected ? recordName(selected) : 'Record not found'}
-              </h2>
+              </h2>{management}</div>
               {selected ? (
                 <>
                   <p className="inventory-muted">
@@ -610,7 +635,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
             </>
           ) : (
             <>
-              <div className="inventory-list-heading">
+              <div className="inventory-topline"><div className="inventory-list-heading">
                 <div>
                   <h3>{section.title}</h3>
                   <p className="inventory-muted">{section.description}</p>
@@ -618,7 +643,10 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                 <span className="inventory-muted">
                   {matching.length} of {records.length} records
                 </span>
+                {onRetry && <button className="inventory-readonly" type="button" onClick={onRetry}>Refresh inventory</button>}
               </div>
+              {management}</div>
+              <div className="inventory-toolbar">
               <label className="inventory-search">
                 <Search size={18} aria-hidden="true" />
                 <input
@@ -629,8 +657,12 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                   type="search"
                 />
               </label>
+              {!inventory.issues?.Facility && ['Device', 'DeviceClaim', 'Rack', 'PowerFeed'].includes(section.kind) && <select aria-label="Filter by facility" value={locationFilter} onChange={event => setLocationFilter(event.target.value)}><option value="">All facilities</option>{inventory.physical.filter(record => record.kind === 'Facility').map(record => <option key={slotKey(record.metadata.namespace, record.metadata.name)} value={slotKey(record.metadata.namespace, record.metadata.name)}>{record.spec.displayName || record.metadata.name} · {record.metadata.namespace}</option>)}</select>}
+              {filterOptions.length > 0 && <select aria-label={section.kind === 'Cable' ? 'Filter by medium' : 'Filter by model'} value={modelFilter} onChange={event => setModelFilter(event.target.value)}><option value="">{section.kind === 'Cable' ? 'All media' : 'All models'}</option>{filterOptions.map(value => <option key={value}>{value}</option>)}</select>}
+              {(locationFilter || modelFilter) && <button type="button" className="inventory-readonly" onClick={() => { setLocationFilter(''); setModelFilter(''); }}>Clear filters</button>}
+              </div>
               {matching.length ? (
-                <div className="inventory-scroll">
+                <div className="inventory-scroll" tabIndex={0} role="region" aria-label={`${section.title} table scroll area`}>
                   <table aria-label={section.title} data-testid="fleet-plugin-inventory-table">
                     <thead>
                       <tr>
@@ -641,11 +673,11 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                             : 'Details'}
                         </th>
                         <th>
-                          {section.kind === 'Device' || section.kind === 'DeviceClaim'
+                          {section.kind === 'Cable' ? 'End A' : section.kind === 'Device' || section.kind === 'DeviceClaim'
                             ? 'Planned location'
                             : 'Location / reference'}
                         </th>
-                        <th>{section.kind === 'Device' ? 'Serial / asset tag' : 'Namespace'}</th>
+                        <th>{section.kind === 'Cable' ? 'End B' : section.kind === 'Device' ? 'Serial / asset tag' : 'Namespace'}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -667,9 +699,9 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
                             </small>
                           </td>
                           <td>{summary(entry)}</td>
-                          <td>{placement(entry)}</td>
+                          <td>{entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.a} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Rack' && (entry.record as PhysicalRecord).spec.facilityRef ? reference('Facility', entry.record.metadata.namespace, (entry.record as PhysicalRecord).spec.facilityRef!.name) : placement(entry)}</td>
                           <td>
-                            {entry.kind === 'Device' ? (
+                            {entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.b} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Device' ? (
                               <>
                                 {(entry.record as RawDevice).spec.identity.serial ?? 'Serial not recorded'}
                                 <small>
@@ -705,9 +737,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
               )}
             </>
           )}
-        </CardContent>
-      </Card>
-      {!inventory.issues?.[section.kind] && (section.kind === 'Facility' || section.kind === 'Rack') && (selectedName === null || selected) && <InventoryManagement key={`${section.kind}/${selectedNamespace}/${selectedName ?? ''}`} kind={section.kind} record={selected?.record as PhysicalRecord | undefined} facilities={inventory.physical.filter(record => record.kind === 'Facility')} />}
+      </div>
       <details className="inventory-help">
         <summary>About this inventory</summary>
         <p>
@@ -715,8 +745,8 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
           establish availability, verified placement, working connections, or permission to operate equipment.
         </p>
         <p>
-          Viewing and management permissions are separate. Authorized inventory managers can create facilities
-          and racks here, and edit display names of records created by this portal. Other records require an
+          Viewing and management permissions are separate. Authorized inventory managers can create facilities,
+          racks, installation plans with unknown positions, device registrations, and cables here, and edit display names of records created by this portal. Other records require an
           explicit ownership review. Nothing here synchronizes external systems or provisions hardware.
         </p>
         <p>
@@ -725,5 +755,6 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
         </p>
       </details>
     </section>
+    </InventoryReadAccessContext.Provider>
   );
 }

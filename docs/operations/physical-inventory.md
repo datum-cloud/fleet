@@ -133,11 +133,14 @@ authenticated, complete NIC mapping before any network path depends on it.
 
 ## Manually record a small installation
 
-1. Choose the provider project and namespace, and inspect its existing private
-   inventory source. In staging, `fleet-provider-inventory` reconciles
+1. Choose the provider project and namespace, and inspect existing records and
+   their writers. The legacy staging `fleet-provider-inventory` reconciles
    `apps/fleet-system/staging/provider-inventory` with `prune: false` and
-   `deletionPolicy: Orphan`. Flux is the sole API writer. Do not run a parallel
-   `kubectl apply`, importer, scheduled job, or discovery controller.
+   `deletionPolicy: Orphan`. Flux remains the sole writer of those legacy records
+   until an explicit ownership transition. Do not run a competing apply/import
+   against them. New and separately imported inventory can be direct
+   API/operator-managed; GitOps is not required. Establish the authorized writer
+   per record before making changes; import provenance is not Flux ownership.
 2. Enter the Facility and Rack facts you actually know. Record the operator and
    time with `provenance.method: Manual`. Leave unknown dimensions absent. Rack
    membership is not a reserved footprint or evidence of available space.
@@ -156,11 +159,14 @@ authenticated, complete NIC mapping before any network path depends on it.
    cable endpoint, and potential duplicate against existing records. API validation
    cannot enforce cross-object existence or exclusive endpoints. Preserve existing
    names, Device identities, claim bindings and MachineCapacity references.
-6. Review the private Git diff with another operator. It must contain no status,
-   capacity publication, hardware action, deletion or ownership transfer. Submit
-   only the individually approved records through the established Flux source.
-   After reconciliation, compare the intended records with read-only API and
-   staff views. An interrupted or failed reconciliation is not readiness.
+6. Review the intended record changes with another operator. They must contain
+   no status, capacity publication, hardware action, deletion or implicit
+   ownership transfer. Submit individually approved new records through the
+   authorized API/operator workflow; use the established Flux source for records
+   still owned by Flux. Compare acknowledged writes with read-only API and staff
+   views. An interrupted or uncertain request is unknown, not failed or ready;
+   inspect the record before retrying. Portal forms expose only the subset
+   documented in the [staff UI scope](../development/staff-inventory-ui.md).
 
 The [complete synthetic six-record example](../../hack/testdata/physical/manual.yaml)
 shows this workflow without NetBox or credentials. It includes a partial rack
