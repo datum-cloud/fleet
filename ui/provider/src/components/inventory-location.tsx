@@ -22,6 +22,38 @@ function Equipment({ slots, devicesDenied }: { slots: InventorySlot[]; devicesDe
   </tbody></table></div>;
 }
 
+function RackFace({ rack, slots, side }: { rack: PhysicalRecord; slots: InventorySlot[]; side: 'front' | 'rear' }) {
+  const height = rack.spec.heightUnits!;
+  const plans = slots.map(slot => ({ slot, ...rackGeometry(slot, rack)! }))
+    .filter(plan => plan.face === side)
+    .sort((first, second) => first.position - second.position || first.slot.key.localeCompare(second.slot.key));
+  const laneEnds: number[] = [];
+  const placed = plans.map(plan => {
+    let lane = laneEnds.findIndex(end => end < plan.position);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = plan.position + plan.height - 1;
+    return { ...plan, lane };
+  });
+  return <div><h4>{side === 'front' ? 'Front' : 'Rear'}</h4>
+    <ol className="inventory-rack-units" aria-label={`${side} recorded plans`} style={{ gridTemplateRows: `repeat(${height}, 16px)`, gridTemplateColumns: `28px repeat(${Math.max(1, laneEnds.length)}, minmax(0, 1fr))` }}>
+      {Array.from({ length: height }, (_, index) => height - index).map(unit => {
+        const recorded = plans.some(plan => unit >= plan.position && unit < plan.position + plan.height);
+        return <li key={unit} className="inventory-rack-unit" style={{ gridRow: height - unit + 1, gridColumn: '1 / -1' }}><span>U{unit}</span>{!recorded && <span className="inventory-muted" aria-label="Occupancy unverified">—</span>}</li>;
+      })}
+      {placed.map(plan => {
+        const top = plan.position + plan.height - 1;
+        const overlap = plans.some(other => other.slot.key !== plan.slot.key && other.position <= top && other.position + other.height > plan.position);
+        const name = plan.slot.claim.spec.displayName || plan.slot.claim.metadata.name;
+        const range = plan.height === 1 ? `U${plan.position}` : `U${plan.position}–U${top}`;
+        const label = `${name} · ${range} · ${plan.height}U${overlap ? ' · overlapping plans, review required' : ''}`;
+        return <li key={plan.slot.key} className="inventory-rack-plan" style={{ gridRow: `${height - top + 1} / span ${plan.height}`, gridColumn: plan.lane + 2 }}>
+          <Link title={label} to={inventoryHref('DeviceClaim', plan.slot.claim.metadata.namespace, plan.slot.claim.metadata.name)} aria-label={`Review ${label}, ${side}`}>{name}{plan.height > 1 && <small>{range} · {plan.height}U</small>}{overlap && <small>Overlapping plans</small>}</Link>
+        </li>;
+      })}
+    </ol>
+  </div>;
+}
+
 export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; inventory: Inventory }) {
   const [face, setFace] = useState<'both' | 'front' | 'rear'>('both');
   const slots = inventory.slots.filter(slot => slot.claim.metadata.namespace === rack.metadata.namespace && slot.claim.spec.placement.rackRef?.name === rack.metadata.name);
@@ -36,12 +68,7 @@ export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; invent
       <div className="inventory-list-heading"><h3>Rack elevation</h3><span>{height ? `${height}U` : 'Height unknown'}</span></div>
       <div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <button key={value} type="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</button>)}</div>
       <p className="inventory-muted">Recorded installation plans, not verified occupancy. Blank units are not available space.</p>
-      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <div key={side}><h4>{side === 'front' ? 'Front' : 'Rear'}</h4><ol className="inventory-rack-units" aria-label={`${side} recorded plans`}>
-        {Array.from({ length: Math.min(height, 100) }, (_, index) => height - index).map(unit => {
-          const plans = positioned.filter(slot => { const geometry = rackGeometry(slot, rack)!; return geometry.face === side && unit >= geometry.position && unit < geometry.position + geometry.height; });
-          return <li key={unit} className={plans.length ? 'inventory-unit-recorded' : ''}><span>U{unit}</span><div>{plans.length ? plans.map(slot => <Link key={slot.key} title={`${slot.claim.spec.displayName || slot.claim.metadata.name}${plans.length > 1 ? ' · overlapping plans, review required' : ''}`} to={inventoryHref('DeviceClaim', slot.claim.metadata.namespace, slot.claim.metadata.name)} aria-label={`Review ${slot.claim.spec.displayName || slot.claim.metadata.name} at U${unit}, ${side}${plans.length > 1 ? ', overlapping plans' : ''}`}>{slot.claim.spec.displayName || slot.claim.metadata.name}</Link>) : <span className="inventory-muted" aria-label="Occupancy unverified">—</span>}</div></li>;
-        })}
-      </ol></div>)}</div>}
+      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} rack={rack} slots={positioned} side={side} />)}</div>}
     </aside>
     <div className="inventory-equipment-sections">
       <h3>Equipment & installation plans</h3>
