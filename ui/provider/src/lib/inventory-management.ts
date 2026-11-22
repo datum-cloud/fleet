@@ -29,7 +29,7 @@ export function useInventoryPermission(kind: ManagedKind, namespace: string, ver
 
 export function canEditInventoryLabel(record: ManagedRecord): boolean {
   const { metadata, spec } = record;
-  return ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp && !spec.provenance.source && spec.provenance.method === 'Manual' &&
+  return ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp && !!spec.provenance && !spec.provenance.source && spec.provenance.method === 'Manual' &&
     !Object.keys({ ...metadata.labels, ...metadata.annotations }).some(key => /fluxcd\.io|argocd|inventory.*owner/i.test(key)) &&
     !!metadata.managedFields?.length && metadata.managedFields.every(field => field.manager === INVENTORY_FIELD_MANAGER && !field.subresource);
 }
@@ -93,7 +93,7 @@ export async function editInventoryLabel(original: ManagedRecord, values: Invent
   operation.assertCurrent();
   if (!current || current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canEditInventoryLabel(current)) throw new ApiError(409, 'The record or its ownership changed. Reload it before editing.');
   const now = new Date().toISOString();
-  if (now <= current.spec.provenance.recordedAt) throw new ApiError(409, 'The recorded timestamp is not earlier than this clock. Review the record before editing.');
+  if (!current.spec.provenance || now <= current.spec.provenance.recordedAt) throw new ApiError(409, 'The recorded timestamp is missing or not earlier than this clock. Review the record before editing.');
   const validated = inventoryPayload('Facility', { ...values, name: original.metadata.name, namespace }, now);
   operation.dispatch();
   const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${path}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'PATCH', contentType: 'application/json-patch+json', body: [

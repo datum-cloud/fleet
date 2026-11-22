@@ -13,6 +13,13 @@ function browse(query = '', data = inventory) {
 }
 
 describe('hardware directory', () => {
+  it.each(inventory.physical)('renders $kind details without provenance', record => {
+    const data = structuredClone(inventory);
+    for (const item of data.physical) delete item.spec.provenance;
+    browse(`?kind=${record.kind}&record=${record.metadata.name}&namespace=${record.metadata.namespace}`, data);
+    expect(screen.getByText('Record history & verification')).toBeInTheDocument();
+    expect(screen.queryByText(/Unexpected Application Error/)).not.toBeInTheDocument();
+  });
   it('does not turn no-read permission into empty inventory or zero counts', () => {
     browse('', { ...inventory, issues: { Site: { status: 403 }, Device: { status: 403 }, DeviceClaim: { status: 403 }, Facility: { status: 403 }, Rack: { status: 403 }, Cable: { status: 403 }, PowerFeed: { status: 403 } } });
     expect(screen.getByRole('heading', { name: 'Inventory access needed' })).toBeInTheDocument();

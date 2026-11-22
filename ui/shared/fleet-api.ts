@@ -255,7 +255,7 @@ export interface DeviceClaim {
   kind?: string;
   metadata: ObjectMeta;
   spec: {
-    provenance: Provenance;
+    provenance?: Provenance;
     expectedIdentity: { manufacturer?: string; model: string; serial?: string };
     lifecycle?: 'Installation';
     displayName?: string;
@@ -272,7 +272,7 @@ export interface Device {
   spec: {
     reportedPlacement?: ReportedPlacement;
     claimRef: LocalReference;
-    provenance: Provenance;
+    provenance?: Provenance;
     identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string; sourceIdentity?: ExternalReference };
     assetTag?: string;
     displayName?: string;
@@ -325,7 +325,7 @@ export interface PhysicalRecord {
   kind: 'Site' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
   spec: {
     displayName: string;
-    provenance: Provenance;
+    provenance?: Provenance;
     code?: string;
     facilityRefs?: LocalReference[];
     identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];

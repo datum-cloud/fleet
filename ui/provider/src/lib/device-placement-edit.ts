@@ -74,7 +74,7 @@ export async function correctDevicePlacement(original: Device, fields: Placement
   operation.assertCurrent();
   if (current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canCorrectPlacement(current)) throw new ApiError(409, 'The Device changed. Refresh and reopen the form.');
   const now = new Date().toISOString();
-  if (Date.parse(now) <= Date.parse(current.spec.provenance.recordedAt)) throw new ApiError(409, 'Recording time must advance.');
+  if (current.spec.provenance && Date.parse(now) <= Date.parse(current.spec.provenance.recordedAt)) throw new ApiError(409, 'Recording time must advance.');
   const report = placementPayload(original, fields, now);
   if (report.facilityRef) {
     const facility = await readInventoryReference<PhysicalRecord>('Facility', namespace, report.facilityRef.name, operation);
@@ -93,7 +93,7 @@ export async function correctDevicePlacement(original: Device, fields: Placement
     { op: 'test', path: '/metadata/uid', value: original.metadata.uid },
     { op: 'test', path: '/metadata/resourceVersion', value: original.metadata.resourceVersion },
     { op: 'add', path: '/spec/reportedPlacement', value: report },
-    { op: 'replace', path: '/spec/provenance/recordedAt', value: now },
+    ...(current.spec.provenance ? [{ op: 'replace', path: '/spec/provenance/recordedAt', value: now }] : []),
   ];
   operation.dispatch();
   const saved = await proxyFetch<Device>(PROVIDER_PROJECT, path, { method: 'PATCH', contentType: 'application/json-patch+json', body: patch }).catch(error => {

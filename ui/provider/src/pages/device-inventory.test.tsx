@@ -152,7 +152,7 @@ describe('DeviceClaimDetail', () => {
     const replacement = {
       ...fixtureDevices[0],
       metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002' },
-      spec: { ...fixtureDevices[0].spec, provenance: { ...fixtureDevices[0].spec.provenance, recordedAt: '2026-02-01T00:00:00Z' } },
+      spec: { ...fixtureDevices[0].spec, provenance: { ...fixtureDevices[0].spec.provenance!, recordedAt: '2026-02-01T00:00:00Z' } },
     };
     mockInventory({ data: toInventory(fixtureDeviceClaims, [fixtureDevices[0], replacement]) });
     renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');

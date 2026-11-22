@@ -50,7 +50,8 @@ describe('inventory management authority', () => {
   it('rejects Flux-owned, imported, deleting and unknown-writer records', () => {
     expect(canEditInventoryLabel(owned)).toBe(true);
     for (const metadata of [{ ...owned.metadata, managedFields: undefined }, { ...owned.metadata, managedFields: [{ manager: 'kustomize-controller' }] }, { ...owned.metadata, deletionTimestamp: '2026-01-01T00:00:00Z' }, { ...owned.metadata, labels: { 'kustomize.toolkit.fluxcd.io/name': 'inventory' } }]) expect(canEditInventoryLabel({ ...owned, metadata })).toBe(false);
-    expect(canEditInventoryLabel({ ...owned, spec: { ...owned.spec, provenance: { ...owned.spec.provenance, method: 'NetBoxImport' } } })).toBe(false);
+    expect(canEditInventoryLabel({ ...owned, spec: { ...owned.spec, provenance: { ...owned.spec.provenance!, method: 'NetBoxImport' } } })).toBe(false);
+    expect(canEditInventoryLabel({ ...owned, spec: { ...owned.spec, provenance: undefined } })).toBe(false);
   });
 
   it('edits only a display name and provenance with UID and revision preconditions', async () => {
