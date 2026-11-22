@@ -9,18 +9,48 @@ name-derived Device reference, invented cleaning default, allocation checkbox,
 and unrestricted frontend create helper remain removed. Existing capacity
 listing and legacy values remain visible; no existing object is migrated.
 
+## Decision: no registration ledger
+
+An earlier revision kept a private ledger in host-cluster Secrets. Its job was
+to remember Device identities after a Device was deleted, and it grew into
+tombstones, incarnation fences, permanent alias retention, `Unknown` outcomes,
+a mutable tail with sealed segments, signed expansion and activation, epochs
+and growth limits. The user decided this was overengineering and replaced it
+with the following:
+
+1. **Devices are not deleted.** An optional ValidatingAdmissionPolicy denies
+   every Device `DELETE`. An environment decides whether to install it; see
+   [Device deletion protection](#device-deletion-protection).
+2. **No signed activation.** The bootstrap/activation gate, `/activationz`,
+   `/status`, the operator control key and ConfigMap,
+   `cmd/fleet-registration-control` and signed controls are gone. The
+   registration webhook is an ordinary fail-closed webhook (`failurePolicy:
+   Fail`) with mutual TLS, scoped credentials and least privilege.
+3. **Registration checks live objects.** The webhook keeps no state. It
+   checks the live Device and capacities through the API server on every
+   request.
+
+Rationale: when Devices are never deleted, the live Device list already holds
+every identity the ledger used to remember, so a second store adds failure
+modes without adding information. Environments that need to delete Devices,
+such as test and synthetic environments, do not hold real machines and do not
+need permanent identity retention.
+
 ## Public contract and authority
 
-The staff form selects an existing `Device` in `default`, retains its UID and
-resourceVersion as an immutable selection baseline, and authors an independent
-capacity name. It POSTs to the existing provider project's `MachineCapacity`
-API using the staff portal's caller-preserving proxy. `spec.deviceRef` remains
-a name-only reference. It must not be a generated capacity name masquerading as
-a Device name.
-
-The only admitted new capacity contract is:
+The staff form selects an existing `Device` in `default` and keeps its UID and
+resourceVersion as an immutable selection baseline. It POSTs to the provider
+project's `MachineCapacity` API through the staff portal's caller-preserving
+proxy. The admitted create is:
 
 ```yaml
+metadata:
+  name: device-<Device UID>
+  namespace: default
+  annotations:
+    fleet.datumapis.com/registration-device-uid: <Device UID>
+    fleet.datumapis.com/registration-device-version: <Device resourceVersion>
+    fleet.datumapis.com/registration-operation: <client operation ID>
 spec:
   deviceRef: {name: selected-device}
   allocationPolicy: Disabled
@@ -28,348 +58,273 @@ spec:
   cleaningPolicyRef: {name: ""}
 ```
 
+`spec.deviceRef` remains a name-only reference. The capacity name is no longer
+authored: it is `device-` followed by the Device UID (43 characters). This
+changes the earlier contract, where staff typed an independent name. All other
+fields and the three annotations are unchanged. The annotations are request
+preconditions and traceability, not authentication or ownership proofs. The
+operation ID is no longer used for deduplication.
+
 An empty cleaning-policy name explicitly means **unconfigured**, not a policy
-named `default`, synthetic cleaning, or authorization to prepare. The CRD permits
-it only while Disabled. The production admission handler rejects *all* capacity
-updates, status updates and deletes, including setting a nonempty policy and
-enabling in the same request. Real policy resolution and policy-use authorization
+named `default`, synthetic cleaning, or authorization to prepare. The CRD
+permits it only while Disabled. The webhook rejects *all* capacity updates,
+status updates and deletes. Real policy resolution and policy-use authorization
 are future prerequisites for a separately designed transition; there is no
-stage-1 preparation endpoint. Legacy nonempty cleaning references remain valid
-in the schema and synthetic lifecycle environments remain separate.
+stage-1 preparation endpoint.
 
-Three protected request-precondition annotations carry the selected UID,
-selected resourceVersion and stable client operation ID:
-`fleet.datumapis.com/registration-device-uid`,
-`fleet.datumapis.com/registration-device-version`, and
-`fleet.datumapis.com/registration-operation`. They are not authentication or
-ownership proofs. A create with copied annotations still goes through the full
-admission protocol; updates and deletion cannot remove or replace them. The
-private ledger, not these public annotations, binds the exact capacity UID.
+`cmd/fleet-registration` serves the validating webhook. For each create it:
 
-`cmd/fleet-registration` serves a validating admission webhook. Its production
-implementation uses Milo's authenticated `iam.miloapis.com/parent-*` extras,
-requires a single Project context and an actor UID, and resolves the current
-Project UID through the root Milo client. It does not use a project, actor or
-permission bypass from request annotations. Separate SubjectAccessReviews pass
-through the caller's username, UID, groups and extras for current
-`machinecapacities.create` and named `devices.get` in `default`. Permission errors,
-denials, missing identity and incomplete evaluations fail closed. Both checks
-are repeated before reservation, alongside uncached Device and namespace
-lifetime/version reads. Controller credentials supply reads and SAR evaluation,
-not the caller's registration authority.
+1. requires Milo's authenticated `iam.miloapis.com/parent-*` extras naming a
+   single Project in the configured provider scope, and an actor UID;
+2. requires the `default` namespace, the exact shape above, and a name equal
+   to `device-<annotated Device UID>`;
+3. resolves the current Project lifetime through the root Milo client;
+4. runs SubjectAccessReviews with the caller's username, UID, groups and
+   extras for `machinecapacities.create` and named `devices.get` in
+   `default`. Denials, errors and incomplete evaluations fail closed. This
+   happens before the Device is read, so an unauthorized caller cannot learn
+   whether a Device exists;
+5. reads the Device uncached. A missing Device is denied. Its UID and
+   resourceVersion must equal the annotations, and it must not be deleting;
+6. requires both a non-placeholder serial and a canonical system UUID, and a
+   complete provider host reference when one is present;
+7. lists Devices and capacities in **all namespaces of every configured
+   provider project** and denies when:
+   - another Device shares a normalized alias (below);
+   - any capacity already references this Device by name or by its UID
+     annotation;
+   - any capacity has unresolved physical identity, so non-conflict cannot be
+     established; or
+   - any capacity is backed by a Device that shares an alias.
+
+The webhook writes nothing. Dry-run requests are evaluated like real ones
+(`sideEffects: None`). Controller credentials supply reads and SAR evaluation,
+not the caller's registration authority. Errors about records in another
+provider project do not name them.
 
 The webhook accepts only mutually authenticated TLS from a dedicated API-server
 client CA. Do not use a broad tenant/client CA: an AdmissionReview received from
-an untrusted client is not evidence of an authenticated actor. The server also
-checks the installed root webhook configuration at signed activation and before admission:
-the exact write rules, explicit serving CA, Fail policy, common authority
-endpoint, and the restricted match conditions described below. Label selectors,
-missing fences, expanded rules, and conditions differing from the configured
-provider scope are rejected. Scope changes require an operator-coordinated
-manifest and ledger migration, not caller-selected labels or annotations.
+an untrusted client is not evidence of an authenticated actor.
 
-## Physical identity and bounded deduplication
+## Physical identity and duplicates
 
-The complete operator-configured provider-project list and Milo authority are
-fixed in one private ledger. All replicas, names and projects in that scope use
-the same resourceVersion CAS. Configuration must match the retained scope
-exactly; changing the list requires an explicit ledger migration, not a restart
-with a smaller list. The packaged UI and deployment use `datum-cloud`.
-
-Eligible Devices must have **both** a recorded non-placeholder serial and a
-canonical non-placeholder system UUID. The canonical asset key is the digest of
-`uuid:` plus that UUID. Known reservation aliases include the digests of the
-normalized serial, UUID, and, when present, provider host system/type/ID tuple.
-Normalization trims and lowercases values; conservative false-positive
-collisions require operator investigation rather than choosing a winner.
-MAC addresses, BMC endpoints, installation claims, rack placement and asset tags
-are not canonical chassis identifiers in this stage.
-
-Every known alias is claimed in the same CAS transaction. A second Device with
-any shared alias, including inconsistent serial/UUID pairs or a shared provider
-host reference, is ambiguous and is rejected rather than merged or adopted.
-Before reservation the handler reads Devices and capacities in **all namespaces
-of every configured provider project**. Existing unresolved legacy capacity
-blocks new registration because non-conflict cannot be established. Existing
-capacity bound to a conflicting asset blocks it regardless of allocation
-policy or reported readiness. None of these records or allocations is changed.
+Aliases are the digests of the normalized serial, system UUID and, when
+present, provider host system/type/ID tuple. Normalization trims and lowercases
+values. A shared alias between two Devices, including inconsistent
+serial/UUID pairs, is ambiguous: registration is denied for both until a person
+resolves the duplicate. Neither is merged or adopted. MAC addresses, BMC
+endpoints, installation claims, rack placement and asset tags are not chassis
+identifiers in this stage.
 
 This is **not universal physical deduplication** or proof of real hardware
-identity. Serial-only and UUID-only records cannot prove the same hardware in
-the absence of shared evidence; neither can be selected for registration.
-Different fabricated or incomplete identifiers, assets outside the configured
-provider scope, and physical equipment absent from inventory cannot be compared
-reliably. Recording identity does not establish physical verification or
-ownership. Production allocation remains disabled independently.
+identity. Hardware outside the provider scope or absent from inventory cannot
+be compared. Recording identity does not establish physical verification or
+ownership.
 
-## Serialization and recovery
+### One capacity per Device
 
-`fleet-capacity-registration-v1` is a separate host-cluster Secret in
-`fleet-system-private`; it is **not** allocation custody. The service updates only
-that root and can create/read immutable retained segments under the host policy.
-The [storage and bootstrap protocol](registration-storage-rollout.md) adds signed
-lossless expansion and deny-only transport startup. Its JSON retains the actor, exact
-API-normalized create object, admission request UID, client operation ID,
-Project/namespace lifetimes, Device UID/resourceVersion, aliases, canonical key,
-and API-assigned capacity UID **before allowing the public create**. Kubernetes
-assigns that UID before validating admission; envtest verifies a caller-supplied
-UID is replaced and the retained UID matches the actual result.
+Two creates for the same Device carry the same derived name, so the API server
+rejects the second with `AlreadyExists` even when both pass admission
+concurrently. The webhook also refuses a Device that a legacy capacity already
+references under another name. A replacement Device created under a deleted
+Device's name is refused too, because the old capacity still references that
+name.
 
-CAS conflicts repeat authorization and observation before another reservation
-attempt. No public object, allocation, status, provider, networking, or cleaning
-write is performed by the registration service. Capacity persistence is the
-original caller's API-server operation. All new entries start `Unknown` because
-another admission plugin, API storage failure, timeout or crash can still prevent
-the create. A failed CAS response may itself have committed: it is not released.
+### The documented duplicate race
 
-Device creation also reserves its known aliases before admission completes.
-Device deletion retains a permanent UID tombstone before admission completes.
-Both use the same ledger CAS, closing the registration-versus-pending-create or
-delete race. Potentially changing Device updates retain their old resourceVersion
-before admission completes. Registration rejects a selected version with such an update fence;
-only an explicitly selected newer persisted version can pass it. This serializes
-pending metadata/spec updates with registration without silently refreshing the
-selection. The sole exception is a provably unchanged update: the complete old
-and new admission JSON objects are equal, including metadata, managed fields,
-status and any fields unknown to Fleet's typed Device. JSON key order and
-whitespace are immaterial; numbers are compared without floating-point rounding.
-An unchanged Kubernetes update can keep its existing resourceVersion, and must
-not permanently fence that still-current version. This exception adds no new
-reservation and **never removes an existing pending-update fence**. It does not
-infer success from a later read, refresh a selected version, or relax identity
-and registered-spec checks. Any differing field still takes the conservative
-fencing path. An uncertain potentially changing update can therefore leave its
-old version ineligible even if storage ultimately made no change. Failed Device
-creates can likewise retain an alias reservation.
-Update fences are coalesced to one record per provider Project and Device UID,
-not one per observation. Before replacing a retained version, admission reads
-the Device directly through the uncached project client and requires the current
-UID and resourceVersion to equal both incoming update incarnations/baselines.
-It rejects stale admissions rather than replacing a newer pending fence. The
-ledger snapshot precedes that authoritative read; a competing ledger write
-forces a full CAS retry and another Device read. All concurrent updates at the
-same baseline share its fence. Once the API server has persisted a newer version,
-optimistic concurrency prevents an older-baseline write from subsequently
-committing; an API-server storage retry must re-enter admission at its new
-baseline. Thus superseded fences can be compacted without allowing an unfinished
-current-baseline update to race registration. ResourceVersions are compared only
-for equality, never ordered numerically.
+The duplicate check is a point-in-time list. It does not close this race:
 
-Coalescing unions creation aliases and never clears a deletion tombstone.
-A deletion replaces update history with a permanent all-version tombstone;
-later changing updates for that UID are rejected. Older-build multiple-version
-records are compacted only when this same authoritative update check succeeds,
-or when deletion installs a stronger permanent tombstone. Unrelated incarnations
-are untouched. An unknown/rejected write at the still-current version stays
-fenced, including after restart and no-op updates. Recovery still requires a
-genuine persisted change and explicit new selection, not automatic ledger cleanup.
-The selected Device's own successful creation reservation is not a conflict.
-Identity/provider-alias changes are forbidden; registered Device specs are
-frozen, and its deletion and same-name replacement are forbidden. The default
-provider namespace and configured provider Project deletions are denied.
+- Device A is being registered while Device B, which shares A's serial, is
+  being created. If B is not yet visible when A's registration lists Devices,
+  A's capacity is admitted.
 
-Recovery observes the exact retained capacity UID, namespace and Project
-lifetimes, Device incarnation, aliases and authored input. An exact observed
-object becomes `Recorded`, which means only that the inert record exists.
-Absence remains `Unknown`; replacement or lifetime loss is a conflict/tombstone,
-never adoption. Recovery never creates, deletes, retries under a different name,
-or publishes positive readiness. It runs every 30 seconds and after restart;
-CAS conflicts leave evidence retained for a later observation. Repeating POST
-is not the recovery mechanism: inspect the original name and retained operation.
+No reservation store closes this, by decision. The consequences are bounded:
 
-Reservations and tombstones have no automatic expiry or release path in stage 1.
-This deliberately includes create attempts that never persisted and deleted
-Devices that were never registered: their known hardware aliases remain reserved,
-and recreating that hardware under a new UID fails closed. Stage 1 has no safe
-operator release command. Future reconciliation must prove the original outcome,
-all competing operations and lifetime ownership before designing a fenced release;
-neither manual Secret editing nor speculative expiry is an accepted workaround.
+- B can never be registered, because A now exists and shares its alias.
+- A's capacity is `Disabled`, and the webhook denies every capacity update, so
+  it can never become available in stage 1.
+- The staff registration form lists every Device and marks each one that
+  shares an alias with another as **Conflicting**, so both A and B show the
+  conflict until a person resolves it.
+- Any future transition that enables capacity must recheck duplicates against
+  live Devices at that time.
 
-Routine updates to an incarnation use one record with at most one pending
-resourceVersion, retained aliases and a deletion bit. This bounds growth by
-distinct incarnations/aliases and registration operations, **not** by elapsed
-collector observations. It is not an unlimited-inventory or universal deduplication
-guarantee: retained incarnations and reservations can still fill the pilot ledger.
-The mutable tail refuses growth past 650,000 encoded bytes (the boundary fits),
-leaving sealing headroom. Signed expansion seals up to sixteen immutable segments;
-existing v1 tails up to 750,000 bytes can migrate losslessly. This is bounded growth,
-not unlimited capacity, alias expiry, or permission to increase caps.
-Admission makes at most six CAS attempts with complete reevaluation after conflicts;
-exhaustion emits a structured error with project, operation identity and attempt
-count, without actor credentials or ledger contents. Lost or corrupt
-ledger state, scope changes, uncertain operations and full ledgers require
-operator-led reconciliation/migration; deleting or recreating the ledger is not
-a repair. Ledger update protection and private-namespace deletion protection
-are installed in the host cluster. Cluster administrators who can remove those
-fences or restore arbitrary storage remain outside the guarantee.
+Two registrations racing for two already-existing Devices that share an alias
+both fail, because each sees the other Device. Device status has no writer
+today, so there is no server-side eligibility condition to set; reporting
+conflicts through Device status is a follow-up.
+
+## Device deletion protection
+
+`config/components/device-deletion-protection` is a Kustomize component with a
+ValidatingAdmissionPolicy and binding named `fleet-device-deletion-protection`.
+It denies every `DELETE` on `devices.fleet.datumapis.com` (all versions, all
+namespaces) with `failurePolicy: Fail` and reason `Forbidden`.
+
+- **Where it is installed.** Devices are stored and admitted by the Milo
+  control plane: `config/components/inventory` registers the CRD there, and
+  records live in provider projects. The component therefore belongs with the
+  Milo root, not the management-cluster host overlays, which have no Device
+  CRD. Like the registration webhook, it is installed at the Milo root and
+  relies on Milo running its root admission policies for project-routed
+  requests (pinned Milo `v0.36.9` enables the `ValidatingAdmissionPolicy`
+  plugin). Confirm this on the deployed Milo before relying on it.
+- **Which roots include it.** `config/milo-production` is `config/milo` plus
+  the component, and is the production-style root. `config/milo` (consumed by
+  staging and test control planes that need Device deletion),
+  `config/milo-synthetic`, `config/inventory`, `config/standalone` and every
+  host overlay leave it out. `hack/validate-overlay-isolation.sh` fails if a
+  production-style root lacks it, or if any other root renders it.
+- **No exemptions.** No user, group or service account is exempt, including
+  cluster administrators. The escape hatch is an environment not installing
+  the component. Anyone able to delete the binding is outside the guarantee.
+- **deletecollection.** The API server admits each object of a collection
+  delete individually as a `DELETE`, so a collection delete that includes a
+  Device fails and leaves Devices in place. Other objects in the same call may
+  already be gone.
+- **Garbage collection and finalizers.** Owner-reference cascades issue the
+  same `DELETE` and are denied. Because the `DELETE` is denied, a Device never
+  gets a deletion timestamp, so finalizers never run.
+- **Namespace and project deletion (fail-closed: stays stuck).** A policy
+  cannot see what a namespace contains, so it does not block the namespace
+  `DELETE`. The namespace becomes `Terminating`, the namespace controller
+  deletes the other contents, and its Device deletions are denied. The
+  namespace stays `Terminating` with its Devices intact and readable; it
+  accepts no new objects. Milo keeps `default` undeletable, and Milo's project
+  purge drains `default` in place and reports remaining Devices as blockers on
+  the Project. So deleting a provider project stops with its Devices in place.
+  Other inventory in that namespace or project (for example DeviceClaims) is
+  still deleted before the cascade stops. Capacity is not, because the
+  registration webhook denies capacity deletes. Do not delete namespaces or
+  projects that hold Devices.
+- **Remediation for a stuck namespace or project.** Kubernetes cannot cancel
+  a namespace deletion. Either leave it `Terminating`, which keeps every
+  Device, or have the environment owner deliberately decide to give up those
+  identities: remove the binding, let the cascade finish, and reinstall the
+  component. The second option loses the Device records and their duplicate
+  protection, so it is an explicit ownership decision, not routine repair.
+- **Retirement.** A machine leaving service keeps its Device. Its capacity is
+  already `Disabled` and cannot be changed, which is the only retirement state
+  stage 1 has. Devices have no lifecycle or retirement field (see
+  [Planning and registering physical devices](../operations/physical-inventory.md)).
+  A Device retirement state is a follow-up.
+
+### Deleting a Device where deletion is allowed
+
+Without the component, deleting a Device that backs capacity leaves the
+capacity in place, still `Disabled`. The webhook denies every update and
+delete of it, so it cannot become available. No owner reference links the two:
+the webhook rejects owner references on registration, and garbage collection
+would be denied anyway because capacity deletes are fenced. The orphaned
+capacity keeps its Device UID annotation and name, which also prevents a
+replacement Device with the same name from registering. Clean it up only in
+environments where capacity writes are not fenced, such as synthetic ones.
 
 ## Production packaging and rollout
 
-- `config/milo` includes the mandatory Fail-closed registration webhook on the
-  **actual project resource path**, not just a manager-side helper. Four separate
-  admission entries use the same endpoint. Capacity create/update/delete/status
-  remains globally fenced. Device create/update/delete/status excludes only
-  proven unrelated Project contexts (in **all namespaces**, because alias scans
-  cover all of them). Namespace deletion matches only `default` in protected or
-  ambiguous contexts. Project deletion matches only exact configured provider Project
-  names, including root requests without parent extras. Unnamed collection
-  deletion cannot prove exclusion of protected lifetimes and is explicitly
-  denied (including when transport is healthy); delete unrelated lifetimes by
-  exact name instead. No object-label opt-in or opt-out exists.
-- `config/overlays/management-plane` includes a separate two-replica registration
-  Deployment, TLS Service, narrowly scoped host RBAC, and private retention
-  policies. It does not enable production lifecycle handlers.
-- The webhook consumes parent context from Milo's standard admission extras.
-  The API server evaluates the inventory/lifetime CEL match conditions **before
-  webhook transport**. An unreachable service or incomplete certificate rollout
-  therefore cannot block unrelated consumers' Device writes, other namespaces,
-  or unrelated Project deletions through these entries. In-scope writes remain
-  Fail-closed during transport failure; capacity writes remain globally blocked.
-  Handler-side exemptions alone are not an outage-isolation boundary.
-- These conditions rely on **server-established routing context**, not arbitrary
-  identity-provider claims. In pinned Milo `v0.36.9`,
-  `ProjectRouterWithRequestInfo` establishes the project from the routed path;
-  `ProjectContextAuthorizationDecorator` overwrites all three parent extras
-  after authentication/impersonation and before authorization/admission
-  (`cmd/milo/apiserver/config.go`). The pinned filter regression verifies that
-  conflicting caller extras are overwritten while actor identity is preserved.
-  Only a singleton `Project` / `resourcemanager.miloapis.com` / nonempty name
-  outside the protected list proves that inventory is unrelated and skips the
-  webhook. Missing, malformed, root, Organization and User inventory contexts
-  remain fail-closed. This conservative fallback matters: pinned Milo's later
-  Organization/User decorators can obscure the Project extras for nested paths;
-  a non-Project context must not be mistaken for proof of unrelated storage.
-  Regression tests exercise those actual pinned decorators and the resulting
-  admission matching. Root Project deletion still uses only exact protected
-  names; other namespace names remain outside the namespace fence.
-  This scope is **not safe on a server that lets caller-supplied extras replace
-  its actual routing context**, or exposes an alternate provider-storage path
-  appearing as a different valid Project. Confirm these properties on the
-  deployed Milo path before enabling use. Unscoped/root Device writes are not
-  supported by this pilot; that is an explicit fail-closed limit, not universal
-  outage isolation for every possible inventory route.
-- Legacy capacity writes in configured production scope fail closed; legacy
-  records remain readable and unchanged. Outside configured provider scope,
-  ordinary inventory writes are unaffected, but new capacity writes are denied.
-  The synthetic/standalone test APIs do not install this production webhook.
-  Pair the synthetic staging overlay with `config/milo-synthetic` on a separate
-  non-production API server; that overlay excludes registration workloads and
-  retention policies. Never use these synthetic roots in production or share
-  the registration authority's ledger. This is deployment isolation, not a
-  caller-selected bypass.
+- `config/milo` includes the mandatory fail-closed registration webhook
+  (`config/components/registration-admission`). Its one entry matches
+  capacity create/update/delete and status in every namespace, with no
+  selectors or match conditions. An unreachable service blocks capacity
+  writes globally and nothing else: Device, namespace and Project writes do
+  not pass through the registration webhook.
+- `config/milo-production` adds Device deletion protection.
+- `config/overlays/management-plane` includes a separate two-replica
+  registration Deployment and TLS Service. The pod does not mount a service
+  account token and has no host RBAC. It does not enable production lifecycle
+  handlers.
+- The synthetic staging overlay excludes the registration workload; pair it
+  with `config/milo-synthetic`, which installs neither the webhook nor the
+  deletion policy. Never use synthetic roots in production.
+- The handler trusts parent context from Milo's admission extras. In pinned
+  Milo `v0.36.9`, `ProjectRouterWithRequestInfo` establishes the project from
+  the routed path and `ProjectContextAuthorizationDecorator` overwrites the
+  parent extras before authorization and admission. The pinned filter
+  regression verifies that conflicting caller extras are overwritten while
+  actor identity is preserved, and that nested Organization/User contexts do
+  not present as a Project. Only a singleton
+  `Project`/`resourcemanager.miloapis.com` context is accepted.
+- Legacy capacity writes fail closed; legacy records remain readable and
+  unchanged.
 
-Environment-owned inputs are required, just as for the existing manager. No
-real credentials or certificates are supplied by this repository:
+Environment-owned inputs, none of which this repository supplies:
 
-1. Preserve the existing `fleet-manager-config` authority and discovery paths.
-   Supply separate `fleet-registration-milo-kubeconfig` and
-   `fleet-registration-project-kubeconfig` Secrets at the mounted paths. The root
-   credential needs Project reads and registration webhook-configuration reads;
-   the project credential needs Device and capacity get/list across the complete
-   scope, namespace get, and SubjectAccessReview create. It needs **no public
-   capacity or Device writes**, allocation permissions or provider credentials.
-2. Supply `fleet-registration-tls` with `tls.crt`, `tls.key`, and a dedicated
-   `client-ca.crt`. Configure Milo's admission webhook client kubeconfig with an
-   API-server client certificate signed by that CA. Patch the webhook URL for
-   actual cross-cluster reachability and set every entry's
-   `clientConfig.caBundle` to the serving CA. All four entries must have the same
-   client configuration. No empty or guessed trust defaults are accepted.
-3. Install the host retention policies. Bootstrap the ledger **once**, using
-   create, never apply/upsert, with environment-matching authority and sorted
-   projects. Its initial JSON has `authority`, `projects`, `entries: []` and
-   `deviceFences: []`. It is intentionally absent from GitOps resources so a
-   later reconcile cannot overwrite accumulated reservations. Do not label it
-   as legacy allocation custody (`fleet.datumapis.com/private-record`).
-4. Quiesce provider inventory/capacity writes while installing the root webhook
-   and service. Validate the complete provider scope and legacy inventory before
-   reopening writes. Unavailable TLS, credentials, ledger or service leave
-   in-scope writes blocked. The API server must support webhook CEL match
-   conditions; preserve the packaged conditions, including the exact sorted
-   provider-name lists matching `--provider-projects` and the private ledger.
-   Do not replace them with namespace/object label selectors. A missing or
-   mismatched fence also prevents registration startup/admission; this does not
-   authorize unquiesced partial installation or deletion of admission policy.
-   Readiness is process reachability, not asset eligibility.
+1. Keep the existing `fleet-manager-config` authority and discovery paths.
+   Supply `fleet-registration-milo-kubeconfig` (Project reads) and
+   `fleet-registration-project-kubeconfig` (Device and capacity get/list
+   across the complete provider scope, and SubjectAccessReview create). It
+   needs no public writes, allocation permissions or provider credentials.
+2. Supply `fleet-registration-tls` with `tls.crt`, `tls.key` and a dedicated
+   `client-ca.crt`. Configure Milo's admission webhook client with an
+   API-server client certificate signed by that CA, patch the webhook URL for
+   reachability, and set `clientConfig.caBundle` to the serving CA.
+3. Keep `--provider-projects` equal to the complete provider scope.
+4. Choose the Milo root: `config/milo-production` to forbid Device deletion,
+   or `config/milo` to allow it.
 5. Before rolling out the UI, verify caller-preserving project routing, named
-   Device read denial, registration denial, direct write/status/delete fences,
-   TLS rejection, and duplicate concurrency in the target environment. This
-   change performs **no live writes or deployment**, so it does not claim those
-   environment-specific checks have been performed.
+   Device read denial, registration denial, capacity mutation denial, TLS
+   rejection, Device deletion denial where installed, and duplicate handling
+   in the target environment. This change performs **no live writes or
+   deployment**, so it does not claim those checks.
 
-## UI and verification
+Removing the ledger deletes nothing live. An environment that bootstrapped the
+old `fleet-capacity-registration-v1` Secret, its segments, the
+`fleet-registration-control` ConfigMap, or the old retention policies keeps
+those objects until its owner removes them; the new service ignores them.
 
-The Datum dialog uses the existing real host-session boundary and isolated read
-cache. Missing host authority, denied registration, unavailable Devices and
-partial identity have explicit explanations. Selecting a Device snapshots its
-baseline; neither refetch nor visible browser-chrome blur/focus changes it. A
-named current read immediately precedes dispatch. Session changes fence pending
-work. After dispatch, uncertain results retain the authored name and disable
-retry; the existing unfenced legacy deletion helper is never used for rollback.
+## UI
 
-Tests cover concurrent CAS, serial/UUID/provider aliases and provider projects,
-stale UID/RV, Device deletion fences, namespace/Project recreation, permission
-revocation, unknown commit and restart, copied-annotation incarnation conflicts,
-real API-assigned UID binding, direct mutation fences and no public effects.
-Regression coverage also includes real successful unchanged updates retaining
-their RV followed by `Recorded` registration, genuine-edit/stale-selection
-controls, preservation of pending real-update fences, and transport-outage
-isolation for Device writes and namespace/Project deletion. The original reviewer
-reproduction is retained byte-for-byte in
-`internal/registration/testdata/review_adversarial_test.go.txt`; it is evidence,
-not an executable regression because it asserts the former outage failure and
-assumes the no-op registration failed before its same-asset control. Derived
-regressions use separate assets and assert the corrected behavior.
-Envtest exercises the production authorization function against real SARs,
-the packaged validating webhook, and the host retention policies against a
-disposable API server. The outage regression uses a minimal Project CRD solely
-to exercise root deletion admission and disables envtest's built-in
-NamespaceLifecycle plugin so its independent ban on deleting `default` cannot
-mask the webhook test. It uses dry-run deletion for shared `default`, and actual
-deletion for unrelated namespaces/Projects. This does not alter production
-admission plugins. The trust-boundary test imports the pinned Milo routing
-filters (their test-build transitive dependencies are now recorded in `go.mod`).
-TLS tests reject unauthenticated webhook transport. It is not a live Milo
-deployment or independent security review. Frontend tests use real session
-components and mocked transport. Run the existing Go/envtest, race, vet,
-provider/consumer test/typecheck/build, manifest-isolation and documentation
-checks described in the [development guide](README.md#build-test-and-run).
+The Datum dialog uses the existing host-session boundary and isolated read
+cache. It shows the derived capacity name instead of a name field. Missing
+host authority, denied registration, unavailable Devices, partial identity and
+conflicting identities have explicit explanations. Selecting a Device
+snapshots its baseline; neither refetch nor browser blur/focus changes it. A
+named current read immediately precedes dispatch. Session changes fence
+pending work. After dispatch, an uncertain result keeps the selection, disables
+retry in that form, and asks the operator to check whether the derived capacity
+exists. A repeat cannot create a second record. The unfenced legacy deletion
+helper is never used for rollback.
 
-Boundedness regressions perform 120 successive persisted collector observations
-and 120 metadata updates through the packaged webhook, assert one incarnation
-fence and stable ledger size, then register the current selection and recover it
-to `Recorded`. The disposable Device CRD adds a test-only integer status observation
-because the current production `DeviceStatus` is empty; this exercises real
-`/status` storage and admission without inventing a production collector API.
-Deterministic interleavings retain a newer pending fence while stale admission
-retries, and keep unknown/rejected baselines fenced across restart/no-op requests.
-An envtest race pauses two admitted updates at successive resourceVersions: after
-coalescing, the older in-flight update conflicts at actual API-server storage,
-the newer pending version remains unregistrable, and only its persisted successor
-can be explicitly selected and recorded.
-Real API-server Secret conflicts exercise success after five conflicts and six-conflict
-exhaustion/logging. Separate tests assert the exact size boundary and effect-free
-dry-run denial.
+## Verification
 
-The publishing workflow applies the server build tag to `config/base/registration`,
-as it does to the manager. A regression reads the workflow's image transforms,
-applies them to a temporary config tree, and renders the management-plane bundle
-to assert that `/fleet-registration` uses the published server image tag rather
-than `latest`. It also verifies registration remains absent from synthetic staging.
-Raw source manifests still contain template `latest` references: direct deployment
-must supply equivalent immutable build-tag or digest transforms, plus the required
-trust/credential configuration. No published bundle or live deployment was tested.
+Run with Kubernetes 1.37.0 envtest assets:
 
-### Review-fix validation, November 22, 2026
+```sh
+KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)" go test -race -count=1 ./...
+./hack/validate-overlay-isolation.sh </dev/null
+./hack/test-overlay-isolation.sh </dev/null
+```
 
-- Full `go test -race ./...` with Kubernetes 1.37.0 envtest assets, `go vet ./...`,
-  and `go build ./cmd/...` pass locally.
-- Provider tests: 693 pass; consumer tests: 44 pass. Both typechecks and builds
-  pass. One initial provider timing failure under concurrent validation load
-  passed on a full rerun without modifying UI code or reviewer tests.
-- Production and synthetic manifest renders, overlay isolation tests,
-  standalone/synthetic render checks, documentation links and whitespace pass.
-- The bounded-fencing rework adds real delayed-update and Secret-contention races,
-  exact-size/dry-run guards, repeated status-write bounds, and rendered publishing
-  image-transform checks. The original reviewer reproduction remains byte-identical.
-- These are local checks, not live Milo acceptance or independent re-review.
-  No deployment, merge, live resource mutation, or ledger migration was performed.
+`internal/registration/envtest_test.go` runs the production handler behind the
+packaged webhook against a real API server and checks that:
+
+- a duplicate alias across two live Devices is denied for both;
+- a missing Device is denied;
+- a caller without capacity permission, or without Device read permission, is
+  denied;
+- an authored name is denied, and concurrent creates for one Device persist
+  once;
+- a second capacity for the same Device is refused, including against legacy
+  capacity;
+- without the component, Device `DELETE` succeeds and the backing capacity
+  stays `Disabled` and cannot be updated, deleted or re-registered by a
+  same-name replacement;
+- with the component applied from its manifest, Device `DELETE` is denied for
+  every caller, `deletecollection` is denied, and namespace deletion stays
+  `Terminating` with its Devices while other content drains. envtest has no
+  namespace controller, so the test issues the controller's content deletions
+  itself;
+- a webhook outage blocks capacity writes but not Device writes.
+
+Unit tests cover the remaining negative cases, normalization, cross-project
+duplicates, project lifetime and the packaged webhook shape.
+`cmd/fleet-registration` tests reject unauthenticated and untrusted webhook
+transport. The overlay isolation tests cover where the deletion component may
+and must appear. Frontend tests cover the derived name and conflict marking
+with mocked transport. None of this is a live Milo deployment or an independent
+security review.
+
+The publishing workflow applies the server build tag to
+`config/base/registration`. A regression applies the workflow's image
+transforms to a temporary config tree and asserts the management-plane bundle
+uses the published tag and synthetic staging has no registration workload.

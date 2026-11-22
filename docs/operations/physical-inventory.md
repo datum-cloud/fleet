@@ -329,7 +329,9 @@ spec:
 
 To replace the hardware, create a new Device with its own name and identity
 that names the same claim. Leave the old Device in place until its retirement
-is settled. This package does not model retirement.
+is settled. This package does not model retirement. Environments with
+[Device deletion protection](../development/inventory-capacity-registration.md#device-deletion-protection)
+never delete a Device.
 
 ## Relationship to the inventory proposal
 
@@ -412,7 +414,10 @@ Two kinds of stored record no longer validate once pruned:
 
 - A Device whose only identity was `identity.sourceIdentity` is left with no
   serial or system UUID. Because `identity` is immutable, delete it and create
-  a new Device with a serial or system UUID.
+  a new Device with a serial or system UUID. Where
+  [Device deletion protection](../development/inventory-capacity-registration.md#device-deletion-protection)
+  is installed the record cannot be deleted; leave it in place and create the
+  new Device alongside it.
 - A Device whose `reportedPlacement` lacks `reason` or `reference` must gain
   both the next time its report changes.
 

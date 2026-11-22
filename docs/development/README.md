@@ -20,9 +20,9 @@ event-driven Machine allocation, contention, cleanup, and reuse through the
 public project API. Production caller-preserving allocation
 admission, replayable Milo event adapters, and production provider integration are not implemented.
 Inert [inventory-backed capacity registration](inventory-capacity-registration.md)
-now has a caller-preserving admission service, a separate CAS registration
-ledger, exact-incarnation recovery, and a session-fenced default-namespace Device
-picker. It admits only Disabled/Retain records with cleaning explicitly
+now has a stateless caller-preserving admission service that checks live
+Devices, one capacity per Device through a Device-derived name, optional Device
+deletion protection, and a session-fenced default-namespace Device picker. It admits only Disabled/Retain records with cleaning explicitly
 unconfigured; deployment trust inputs and live Milo acceptance remain required.
 An opt-in [local KVM installation harness](../operations/local-vm.md) implements
 a bounded libvirt executor and guest installer using the same lifecycle library.

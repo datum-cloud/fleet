@@ -9,42 +9,45 @@ entitlements, ServiceAvailability resources, and publication rules must referenc
 `metal`. See the [API architecture](../docs/architecture/README.md) for group separation
 and breaking alpha rename constraints.
 
-The repository publishes two production manifest roots. They target different
-API servers and must be reconciled independently.
+The repository publishes Milo and management-cluster manifest roots. They
+target different API servers and must be reconciled independently.
 
 | Root | Destination | Contents |
 | --- | --- | --- |
-| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, and the mandatory capacity-registration webhook |
+| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, and the mandatory capacity-registration webhook. Devices can be deleted. |
+| `config/milo-production` | Milo root control plane (production-style) | `config/milo` plus Device deletion protection |
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
-The synthetic staging overlay explicitly excludes the inert-registration
-service and its retention policies. Pair it with `config/milo-synthetic` in a
-**separate non-production Milo control plane**, not production `config/milo`.
-That root preserves the pre-registration synthetic API contract. There is no
-request field, actor exemption, or runtime switch that bypasses production
-registration admission. Never point synthetic lifecycle handlers at the
-production registration authority or its private ledger.
+`config/components/device-deletion-protection` is an optional component: a
+ValidatingAdmissionPolicy and binding that deny every Device `DELETE`, with no
+exemptions. Each environment chooses whether to install it. Production-style
+Milo control planes use `config/milo-production`; test, staging and synthetic
+control planes that need Device deletions use `config/milo` or
+`config/milo-synthetic`. `hack/validate-overlay-isolation.sh` rejects any other
+root that renders the policy. Namespace and project deletions that reach a
+protected Device stay stuck rather than deleting it; see
+[Device deletion protection](../docs/development/inventory-capacity-registration.md#device-deletion-protection).
+
+The synthetic staging overlay excludes the inert-registration service. Pair it
+with `config/milo-synthetic` in a **separate non-production Milo control
+plane**, not production `config/milo`. That root preserves the
+pre-registration synthetic API contract. There is no request field, actor
+exemption, or runtime switch that bypasses production registration admission.
 
 The one `fleet-manager` Deployment serves every Milo project that consumes the
 `metal` service; see [project discovery](#project-discovery).
 
-The [signed expansion and transport-first contract](../docs/development/registration-storage-rollout.md)
-defines the required operator public-key ConfigMap, retained segments, activation
-gate, byte budgets and ordered parent infrastructure work. Pod TCP readiness is
-transport-only; it must not enable UI registration.
-
 The separate `fleet-registration` Deployment serves inert inventory-backed
-capacity admission only. Its TLS trust, read/SAR credentials, webhook serving CA
-and one-time private ledger bootstrap are environment-owned. Read the
+capacity admission only. It keeps no state: each capacity create is checked
+against live Devices and capacities in the provider projects. Its TLS trust,
+read/SAR credentials and webhook serving CA are environment-owned; it has no
+host RBAC and mounts no service account token. Read the
 [registration rollout contract](../docs/development/inventory-capacity-registration.md#production-packaging-and-rollout)
-before applying either root: an unavailable authority blocks capacity writes
-globally, and fences Device writes and protected lifetime deletions in provider
-or ambiguous inventory contexts. Admission-time trusted-context conditions keep
-proven unrelated Project inventory independent of webhook availability. All four webhook
-entries require the same serving CA and endpoint; their scope must match the
-private ledger, which must never be reset by GitOps. This does not enable
-production allocation or provisioning.
+before applying either root: an unavailable service blocks capacity writes
+globally, and nothing else. Pod TCP readiness is transport-only; it must not
+enable UI registration. This does not enable production allocation or
+provisioning.
 
 `config/components/service-catalog-staging` is a Kustomize component with
 staging's Bare Metal prices: committed servers and server setup, which
@@ -122,6 +125,7 @@ Render both production roots before publishing the Kustomize bundle:
 
 ```sh
 kustomize build config/milo >/dev/null
+kustomize build config/milo-production >/dev/null
 kustomize build config/milo-synthetic >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
 kustomize build config/overlays/synthetic-staging >/dev/null
