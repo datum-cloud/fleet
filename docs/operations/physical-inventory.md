@@ -75,6 +75,7 @@ project control plane serves the kinds. Access is what keeps consumers out:
 | `fleet.datumapis.com-inventory-viewer` | `get`, `list`, `watch` on all six physical kinds |
 | `fleet.datumapis.com-inventory-editor` | The viewer role plus `create`, `update`, `patch`, `delete` |
 | `fleet.datumapis.com-inventory-manager` | The viewer role plus `create`, `update`, `patch`; no deletion or status writes |
+| `fleet.datumapis.com-inventory-importer` | The viewer role plus `create`; no updates, deletion or status writes |
 
 No `metal.datumapis.com` role includes or inherits any inventory role. The consumer,
 claimant, and viewer roles that reach customer projects therefore grant no
@@ -89,6 +90,14 @@ installation, Metal, networking, billing, or IAM administration. Fleet owns this
 role and its tests; environment-specific groups and project bindings belong in
 the infrastructure repository. The role ships through `config/milo`; shipping a
 role does not bind it or add members in any environment.
+
+The importer is the role for an external importer's identity. It can read
+every physical kind, to detect existing records and identity collisions, and
+create new ones. It cannot change or delete any record, including ones it
+created, so an importer cannot take over records another writer owns. Which
+kinds an importer creates is the importer's decision; Fleet does not encode
+any source system in the role. Binding it, scoped to the provider project, is
+the explicit opt-in for that identity to write.
 
 A Project resource selector is project-wide, not a namespace filter. These
 ProtectedResources have Project parents, and a binding's `metadata.namespace`
@@ -119,8 +128,7 @@ in the provider project. The plugin never writes.
 
 | Rule | Kind | Why |
 | --- | --- | --- |
-| `provenance` is required: `Manual` or `NetBoxImport`, `recordedBy`, `recordedAt`, optional opaque reference; imports also require structured source provenance | All six | Attribution is retained; imported claims are observations, not authenticated hardware evidence. |
-| Any spec change must set a later `provenance.recordedAt` | All six | An edit cannot pass off new facts under old provenance. |
+| `provenance` is optional and deprecated; when present it is still validated. Spec changes no longer need a later `provenance.recordedAt` | All six | Transitional: provenance is being removed. Resource audit logs record who changed a record and `metadata.creationTimestamp` records when it was created. |
 | `claimRef` is required and immutable | Device | A Device binds to exactly one claim, and moving hardware to another slot is not an edit. |
 | `identity` is immutable, including adding missing fields; requires serial, system UUID, or an import source identity matching provenance | Device | Source identity does not prove chassis identity. Legacy bindings are preserved; hardware handover is not automated. |
 | Serial is optional | DeviceClaim | It is usually unknown at plan time. |
