@@ -276,8 +276,8 @@ fences or restore arbitrary storage remain outside the guarantee.
 Environment-owned inputs are required, just as for the existing manager. No
 real credentials or certificates are supplied by this repository:
 
-The [staging integration assessment](registration-staging-integration.md) records
-the observed mixed deployment and outstanding release gate. A green Flux
+The [activation gate](registration-activation-gate.md) lists the outstanding
+release decision, installation order and caller acceptance. A green Flux
 reconciliation is not registration acceptance. Do not proceed with the steps
 below until that gate and the environment isolation decision are approved.
 
