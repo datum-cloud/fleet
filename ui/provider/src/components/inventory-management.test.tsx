@@ -32,7 +32,6 @@ describe('management affordances', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
     fireEvent.change(screen.getByLabelText('Record name'), { target: { value: 'example' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Example' } });
-    fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'operator@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Facility record created.'));
   });
@@ -43,7 +42,6 @@ describe('management affordances', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
     fireEvent.change(screen.getByLabelText('Record name'), { target: { value: 'example' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Unsaved facility' } });
-    fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'operator@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('input is kept here'));
     expect(screen.getByLabelText('Display name')).toHaveValue('Unsaved facility');

@@ -9,8 +9,8 @@ import { InventoryOperationContext, InventoryOperationScope } from '../lib/inven
 
 vi.mock('../lib/inventory-management', async () => ({ ...await vi.importActual('../lib/inventory-management'), useInventoryPermission: vi.fn() }));
 const permission = vi.mocked(useInventoryPermission);
-const device: Device = { ...fixturePhysicalDevices[0], metadata: { name: 'example', namespace: 'default', uid: 'uid', resourceVersion: '7' }, spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: undefined, provenance: { ...fixturePhysicalDevices[0].spec.provenance, method: 'NetBoxImport', recordedAt: '2026-01-01T00:00:00Z' } } };
-const rack: PhysicalRecord = { kind: 'Rack', metadata: { name: 'rack', namespace: 'default', uid: 'rack-uid' }, spec: { displayName: 'Restricted rack name', heightUnits: 42, provenance: device.spec.provenance } };
+const device: Device = { ...fixturePhysicalDevices[0], metadata: { name: 'example', namespace: 'default', uid: 'uid', resourceVersion: '7' }, spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: undefined } };
+const rack: PhysicalRecord = { kind: 'Rack', metadata: { name: 'rack', namespace: 'default', uid: 'rack-uid' }, spec: { displayName: 'Restricted rack name', heightUnits: 42 } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 function setup(record = device, session = new InventoryOperationScope()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -20,16 +20,16 @@ function setup(record = device, session = new InventoryOperationScope()) {
 function openAndFill(existing = false) {
   fireEvent.click(screen.getByRole('button', { name: existing ? 'Correct location' : 'Add reported location' }));
   fireEvent.change(screen.getByLabelText('Observation time (ISO 8601)'), { target: { value: '2026-01-02T00:00:00Z' } });
-  fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Correct source record' } });
+  fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Correct recorded location' } });
   fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/example' } });
 }
 beforeEach(() => { vi.clearAllMocks(); permission.mockReturnValue({ data: true, isFetching: false, error: null } as never); });
 afterEach(() => vi.unstubAllGlobals());
 
 describe('reported location editor', () => {
-  it.each([false, true])('adds/edits an imported Device and refreshes projections: %s', async existing => {
+  it.each([false, true])('adds/edits a Device reported location and refreshes projections: %s', async existing => {
     const record = structuredClone(device);
-    if (existing) record.spec.reportedPlacement = { revision: 1, observedAt: '2026-01-01T00:00:00Z', snapshotDigest: `sha256:${'a'.repeat(64)}`, rackRef: { name: 'rack' }, position: 12, height: 4, face: 'rear', fullDepth: true };
+    if (existing) record.spec.reportedPlacement = { revision: 1, observedAt: '2026-01-01T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: 'rack' }, position: 12, height: 4, face: 'rear', fullDepth: true };
     const fetch = vi.fn().mockImplementation(async (_url: string, request: RequestInit) => {
       if (request.method === 'POST') return response({ status: { allowed: true } });
       if (request.method === 'PATCH') return response({ ...record, metadata: { ...record.metadata, resourceVersion: '8' }, spec: { ...record.spec, reportedPlacement: JSON.parse(request.body as string)[2].value } });

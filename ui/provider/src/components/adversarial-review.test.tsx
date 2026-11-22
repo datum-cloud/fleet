@@ -7,8 +7,8 @@ import { InventorySessionBoundary } from './inventory-session-boundary';
 import DeviceInventoryList from '../pages/device-inventory-list';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 
-const values = { name: 'review-facility', namespace: 'default', displayName: 'Original label', recordedBy: 'synthetic-reviewer', reference: '', facility: '', height: '' };
-const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: 'default', uid: 'synthetic-only', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
+const values = { name: 'review-facility', namespace: 'default', displayName: 'Original label', facility: '', height: '' };
+const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic-only', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -81,7 +81,6 @@ it('invalidates authority synchronously before React commits the session transit
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: values.displayName } });
-  fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: values.recordedBy } });
   fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
   await waitFor(() => expect(releaseReview).toBeDefined());
   principal = 'staff-b';
@@ -110,7 +109,6 @@ it('must not send a create after the initiating authenticated principal unmounts
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: values.displayName } });
-  fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: values.recordedBy } });
   fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
   await waitFor(() => expect(releaseReview).toBeDefined());
   principal = 'staff-b';
@@ -134,7 +132,6 @@ it('must not silently advance an open edit form to a refreshed resourceVersion',
   fireEvent.click(screen.getByText('Manage this record'));
   fireEvent.click(screen.getByRole('button', { name: 'Edit display name' }));
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'My unsaved label' } });
-  fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: values.recordedBy } });
   current = { ...original, metadata: { ...original.metadata, resourceVersion: '2' }, spec: { ...original.spec, displayName: 'Other operator saved this' } };
   mounted.rerender(content());
   fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));

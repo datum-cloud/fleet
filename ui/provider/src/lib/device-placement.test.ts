@@ -4,7 +4,7 @@ import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords }
 import { devicePlacement, equipmentGeometry, equipmentPlacements, placementFacility, reportedPlacementLabel } from './device-placement';
 import type { ReportedPlacement } from '../../../shared/fleet-api';
 
-const report: ReportedPlacement = { revision: 1, observedAt: '2026-11-21T00:00:00Z', snapshotDigest: `sha256:${'a'.repeat(64)}`, rackRef: { name: 'rack-01' }, position: 12, height: 4, face: 'rear', fullDepth: true };
+const report: ReportedPlacement = { revision: 1, observedAt: '2026-11-21T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: 'rack-01' }, position: 12, height: 4, face: 'rear', fullDepth: true };
 const device = { ...fixturePhysicalDevices[0], spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: report } };
 const inventory = toInventory(fixturePhysicalClaims, [device], fixturePhysicalRecords);
 

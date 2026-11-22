@@ -4,7 +4,7 @@ import { fixturePhysicalDevices } from './fixtures';
 import { canCorrectPlacement, correctDevicePlacement, placementFields, placementPayload } from './device-placement-edit';
 import { InventoryOperationScope } from './inventory-operation';
 
-const original: Device = { ...fixturePhysicalDevices[0], metadata: { name: 'example', namespace: 'default', uid: 'device-uid', resourceVersion: '7' }, spec: { ...fixturePhysicalDevices[0].spec, provenance: { method: 'NetBoxImport', recordedAt: '2026-01-01T00:00:00Z', recordedBy: 'original-importer', source: { system: 'example', type: 'dcim/devices', id: '1', observedAt: '2026-01-01T00:00:00Z', snapshotDigest: `sha256:${'a'.repeat(64)}`, mappingRevision: 'example' } } } };
+const original: Device = { ...fixturePhysicalDevices[0], metadata: { name: 'example', namespace: 'default', uid: 'device-uid', resourceVersion: '7' } };
 const fields = { ...placementFields(), observedAt: '2026-01-02T00:00:00Z', reason: 'Correct location', reference: 'ticket/example' };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 const saved = (request: RequestInit) => {
@@ -14,21 +14,19 @@ const saved = (request: RequestInit) => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('direct placement correction', () => {
-  it.each([false, true])('adds/updates imported records without altering import provenance: %s', async existing => {
+  it.each([false, true])('adds/updates the reported location with only UID/resourceVersion preconditions: %s', async existing => {
     const baseline = structuredClone(original);
-    if (existing) baseline.spec.reportedPlacement = { revision: 1, observedAt: fields.observedAt, snapshotDigest: `sha256:${'a'.repeat(64)}` };
+    if (existing) baseline.spec.reportedPlacement = { revision: 1, observedAt: fields.observedAt, reason: 'Synthetic survey', reference: 'ticket/synthetic' };
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(baseline)).mockImplementationOnce((_url, request) => saved(request));
     vi.stubGlobal('fetch', fetch);
     await correctDevicePlacement(baseline, fields, new InventoryOperationScope().begin());
     const patch = JSON.parse(fetch.mock.calls[2][1].body);
     expect(patch.slice(0, 2)).toEqual([{ op: 'test', path: '/metadata/uid', value: 'device-uid' }, { op: 'test', path: '/metadata/resourceVersion', value: '7' }]);
-    expect(patch.map((entry: { path: string }) => entry.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/reportedPlacement', '/spec/provenance/recordedAt']);
-    expect(patch[2].value).toMatchObject({ method: 'Manual', revision: existing ? 2 : 1 });
-    expect(patch[2].value.snapshotDigest).toBeUndefined();
-    expect(baseline.spec.provenance).toEqual(original.spec.provenance);
+    expect(patch.map((entry: { path: string }) => entry.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/reportedPlacement']);
+    expect(patch[2].value).toMatchObject({ revision: existing ? 2 : 1, reason: fields.reason, reference: fields.reference });
   });
   it('does not infer geometry or location from a model or claim', () => {
-    expect(placementPayload(original, fields)).toEqual({ revision: 1, observedAt: fields.observedAt.replace('Z', '.000Z'), method: 'Manual', reason: fields.reason, reference: fields.reference });
+    expect(placementPayload(original, fields)).toEqual({ revision: 1, observedAt: fields.observedAt.replace('Z', '.000Z'), reason: fields.reason, reference: fields.reference });
     expect(canCorrectPlacement(original)).toBe(true);
     expect(canCorrectPlacement({ ...original, metadata: { ...original.metadata, managedFields: [{ manager: 'kustomize-controller' }] } })).toBe(false);
   });

@@ -8,7 +8,7 @@ import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords }
 
 const rack = fixturePhysicalRecords[1];
 it.each([true, false, undefined])('draws reported Device geometry with explicit depth %s', fullDepth => {
-  const device = { ...fixturePhysicalDevices[0], spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: { revision: 1 as const, observedAt: '2026-11-21T00:00:00Z', snapshotDigest: `sha256:${'a'.repeat(64)}`, rackRef: { name: rack.metadata.name }, position: 12, height: 4, face: 'rear' as const, fullDepth } } };
+  const device = { ...fixturePhysicalDevices[0], spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: { revision: 1 as const, observedAt: '2026-11-21T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: rack.metadata.name }, position: 12, height: 4, face: 'rear' as const, fullDepth } } };
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={toInventory([fixturePhysicalClaims[0]], [device], [rack])} /></MemoryRouter></QueryClientProvider>);
   const rear = within(screen.getByRole('list', { name: 'rear recorded placements' })).getByRole('link', { name: /Reported placement/ });
   expect(rear).toHaveAttribute('href', expect.stringContaining('kind=Device&'));

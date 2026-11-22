@@ -7,7 +7,7 @@
 This additive implementation starts from staging feature revision
 `0bc37cf23ca949df97b6ede8bc78f2a71c670ac4`. It adds an operator-written `Site`
 record, Facility premises identifiers, observational readers, IAM declarations,
-staff directory views and an offline import option. It does not install these
+and staff directory views. It does not install these
 changes, mutate live records or assert authenticated staging acceptance.
 
 The clarification **Datum Site DFW3 relates to DataBank premises DFW1** describes
@@ -45,7 +45,7 @@ resource, provider metro code, account grouping, or Location readiness claim.
   every device, installation, allocation, or NodeClaim there to that Site.
   Per-consumer operational membership remains with its future owning contract.
 - Site and Facility are namespaced provider-project inventory records with the
-  same explicit direct-API writer and provenance discipline. This adds no mapping
+  same explicit direct-API writer discipline. This adds no mapping
   service, controller, synchronization owner, or GitOps ownership for records.
 
 ## Stable identity and references
@@ -78,7 +78,7 @@ even though its server UID differs. This does not preserve historical incarnatio
 identity or prove physical continuity; the spec may remain unchanged. Operators
 must review reused names and physical evidence, not treat a resolved reference as
 verification, capacity or authority. A reference edit still requires explicit
-operator review and advanced provenance. This is observational validation, not
+operator review. This is observational validation, not
 atomic graph admission or a referential-integrity controller.
 
 No new status fields are necessary: there is no Site reconciler or observation
@@ -91,11 +91,10 @@ unchanged; they protect an individual edit, not indefinite reference binding.
 
 The only UID-bearing spec field introduced by the first PR100 revision was
 `Site.spec.facilityRefs[].uid`; it has been removed from Go and TypeScript types,
-CRD schema, importer mappings/candidates, fixtures and examples. The reference
+CRD schema, fixtures and examples. The reference
 now reuses the existing `LocalReference` type, and deep copies retain name-only
 references independently while preserving server metadata. Site status remains
-empty. Provider identifiers, Site codes and record provenance introduce no
-resource UID fields.
+empty. Provider identifiers and Site codes introduce no resource UID fields.
 
 Separately, the preexisting `Device.spec.identity.systemUUID` field is a hardware
 SMBIOS UUID, not a Kubernetes resource UID; it is unchanged. No other explicit
@@ -113,7 +112,6 @@ duplicate entries are rejected. These are sourced descriptive facts, not resourc
 references or global uniqueness claims. A repeated qualified identifier on
 different Facilities requires human adjudication; it never merges records.
 Provider metro, account, service and host identifiers are not premises identifiers.
-Identifier edits, Site code changes and membership edits must advance provenance.
 
 ## Staff access and compatibility
 
@@ -135,74 +133,18 @@ also covers the additional collection. No credentials or secret-bearing fields
 are added to search, details or forms.
 
 Old Facilities without identifiers remain valid and browsable, and all existing
-rack/device/claim references, resource UIDs, immutable identity/source bindings,
+rack/device/claim references, resource UIDs, immutable identity bindings,
 reportedPlacement revisions and unknown geometry retain their contracts.
 No allocation, installation, provisioning, capacity, reservation or verification
 effects result from any new record. Empty rack units and missing Site mappings
 remain observations, not available capacity or readiness.
-
-## Explicit offline importer mapping
-
-The existing NetBox planner still makes no writes. Facility mapping may optionally
-include `identifiers` and `identifiersVerified: true`; identifiers are not inferred
-from source names. Invalid types such as Metro or Account are quarantined.
-An optional `operationalSites` list accepts this synthetic shape:
-
-```json
-{
-  "name": "site-stable",
-  "displayName": "Example operational boundary",
-  "code": "EX3",
-  "source": "dcim/sites/1",
-  "verified": true,
-  "facilityRefs": [{"name": "premises-stable"}]
-}
-```
-
-The source must be a present source site/location, but that alone establishes no
-mapping. The explicit verified entry and a complete current Fleet snapshot,
-including the Site collection, are required. Each Facility must already exist at
-the referenced namespace/name, not be deleting, and survive graph reconciliation.
-The importer continues to require an existing Facility snapshot rather than a
-new candidate alone; this is a review boundary, not UID pinning. Mapping entries
-containing `uid` or other extra reference fields are rejected, not copied into
-specs. Regenerate earlier PR100 mapping files using name-only references. A
-subsequent snapshot with a new server UID at the same name resolves by name;
-no indefinite incarnation guarantee is claimed. Existing
-six-collection snapshots remain usable when no operational Site mapping is
-requested. Existing target differences still block automatic updates or takeover.
-All candidate changes, including identifiers on an existing Facility, require
-separate operator review. Name similarity never creates a mapping.
-
-Facility identifier mappings must be lists of at most 64 objects containing exactly
-the string fields `provider`, `type`, and `value`. Unknown fields (including `uid`),
-malformed containers/elements, duplicate identities, and invalid field values
-quarantine the Facility and dependent candidates before handoff; they are not
-silently stripped or left for server-side pruning.
-
-Malformed Site names, code/display-name types or lengths, unknown mapping fields,
-and malformed, duplicate or oversized reference lists quarantine the source's
-candidate cohort. Missing verification, unavailable referenced premises or an
-unusable source/snapshot fail closed before handoff. New reference and provider
-names enforce DNS subdomain label boundaries (no empty labels or leading/trailing
-hyphens within labels). This does not migrate unrelated legacy CRD references.
-
-For new imports use target `writer: Operator` and `application: provider-inventory`
-in both the mapping and matching Fleet snapshot. Handoffs containing operational
-Site mappings always prescribe individually reviewed direct API creation, including
-when an older snapshot attests a Flux target. The receipt records `writer: Operator`
-for that new cohort; the original mapping/snapshot digests preserve the reviewed
-inputs. It does not transfer existing record ownership or authorize updates.
-Legacy physical-only Flux handoffs remain supported solely for compatibility;
-they are not the operational Site workflow. All handoffs remain offline and require
-fresh authorized reads and absence checks before any separately approved creation.
 
 ## Rollout and remaining gates
 
 1. Review and deploy CRD/IAM definitions through the existing packaging path,
    then the provider UI. Do not apply any example records. The UI tolerates Site
    API absence before rollout while keeping physical inventory browsable.
-2. Read existing records privately and preserve stable names, UIDs, provenance,
+2. Read existing records privately and preserve stable names, UIDs,
    ownership and revision baselines. Agree canonical provider namespaces and
    verify individual premises identity before adding descriptive identifiers.
 3. Separately authorize any Site creation or membership edit. Use names from
@@ -222,9 +164,6 @@ premises truth or production readiness.
 
 ```sh
 go test -race ./internal/api/inventory/v1alpha1 ./internal/location
-python3 -m unittest discover -s hack -p 'test_*inventory.py'
-python3 -m unittest discover -s hack -p 'test_pr100_independent.py'
-python3 -m unittest discover -s hack -p 'test_device_placement.py'
 (cd ui/provider && pnpm test && pnpm typecheck && pnpm build)
 (cd ui/consumer && pnpm test && pnpm typecheck && pnpm build)
 bash hack/validate-doc-links.sh
@@ -232,15 +171,14 @@ git diff --check
 ```
 
 Tests cover additive schema, provider qualification/collisions, legacy records,
-provenance, name references despite label changes, name-reuse rebinding, invalid relationships,
-read denial/redaction, observational imports and existing independent safety
+name references despite label changes, name-reuse rebinding, invalid relationships,
+read denial/redaction and existing independent safety
 scenarios. Existing six-collection request-count assertions now count seven;
 their denial, session lifetime, operation and no-write assertions remain intact.
 
 Local validation on this implementation passed the full `go test -race ./...`
 suite with Kubernetes 1.37 envtest assets, provider (392) and consumer (44)
-tests/typechecks/builds, 37 importer tests plus three independent importer
-regressions, six reported-placement planner tests, inventory and Milo manifest
+tests/typechecks/builds, inventory and Milo manifest
 rendering, local documentation links and
 whitespace checks. This is not authenticated staging acceptance. Mobile inspection
 was attempted at 390×844 with synthetic fixtures, but both browser snapshots timed

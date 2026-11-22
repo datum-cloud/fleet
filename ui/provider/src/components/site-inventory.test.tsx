@@ -6,9 +6,8 @@ import type { PhysicalRecord } from '../../../shared/fleet-api';
 import { PhysicalInventory } from './physical-inventory';
 import { toInventory, type Inventory } from '../inventory';
 
-const provenance = { method: 'Manual' as const, recordedBy: 'synthetic', recordedAt: '2026-01-01T00:00:00Z' };
-const facility: PhysicalRecord = { kind: 'Facility', metadata: { name: 'premises-stable', namespace: 'inventory', uid: 'premises-uid' }, spec: { displayName: 'Physical premises', provenance, identifiers: [{ provider: 'example-provider', type: 'PremisesCode', value: 'EX1' }] } };
-const site: PhysicalRecord = { kind: 'Site', metadata: { name: 'site-stable', namespace: 'inventory', uid: 'site-uid' }, spec: { displayName: 'Operational identity', code: 'EX3', provenance, facilityRefs: [{ name: facility.metadata.name }] } };
+const facility: PhysicalRecord = { kind: 'Facility', metadata: { name: 'premises-stable', namespace: 'inventory', uid: 'premises-uid' }, spec: { displayName: 'Physical premises', identifiers: [{ provider: 'example-provider', type: 'PremisesCode', value: 'EX1' }] } };
+const site: PhysicalRecord = { kind: 'Site', metadata: { name: 'site-stable', namespace: 'inventory', uid: 'site-uid' }, spec: { displayName: 'Operational identity', code: 'EX3', facilityRefs: [{ name: facility.metadata.name }] } };
 const inventory = toInventory([], [], [facility, site]);
 
 function view(query: string, data: Inventory) {

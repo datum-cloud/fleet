@@ -3,8 +3,8 @@ import { waitFor } from '@testing-library/react';
 import { createInventoryRecord, editInventoryLabel, inventoryPayload, INVENTORY_FIELD_MANAGER } from './inventory-management';
 import { InventoryOperationInvalidated, InventoryOperationScope } from './inventory-operation';
 
-const values = { name: 'synthetic-facility', namespace: 'default', displayName: 'Original', recordedBy: 'synthetic-operator', reference: '', facility: 'parent', height: '' };
-const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: values.namespace, uid: 'synthetic-uid', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
+const values = { name: 'synthetic-facility', namespace: 'default', displayName: 'Original', facility: 'parent', height: '' };
+const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: values.namespace, uid: 'synthetic-uid', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 afterEach(() => vi.unstubAllGlobals());
 

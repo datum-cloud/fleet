@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canEditInventoryLabel, createInventoryRecord, editInventoryLabel, inventoryPayload, inventoryPermission, INVENTORY_FIELD_MANAGER, type InventoryFormValues } from './inventory-management';
 import type { PhysicalRecord } from '../../../shared/fleet-api';
 
-const values: InventoryFormValues = { name: 'example-facility', namespace: 'default', displayName: 'Example facility', recordedBy: 'operator@example.com', reference: 'Example review', facility: '', height: '' };
-const owned: PhysicalRecord = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: values.namespace, uid: 'synthetic-uid', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
+const values: InventoryFormValues = { name: 'example-facility', namespace: 'default', displayName: 'Example facility', facility: '', height: '' };
+const owned: PhysicalRecord = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: values.namespace, uid: 'synthetic-uid', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => ({ data }) });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -38,7 +38,7 @@ describe('inventory management authority', () => {
     expect(init.method).toBe('POST');
     const payload = JSON.parse(init.body);
     expect(payload.status).toBeUndefined();
-    expect(payload.spec.provenance.method).toBe('Manual');
+    expect(Object.keys(payload.spec)).toEqual(['displayName']);
     expect(payload.metadata).toEqual({ name: values.name, namespace: 'default' });
   });
 
@@ -47,20 +47,19 @@ describe('inventory management authority', () => {
     for (const height of ['0', '101', '1.5', '-2']) expect(() => inventoryPayload('Rack', { ...values, facility: 'example-facility', height })).toThrow();
   });
 
-  it('rejects Flux-owned, imported, deleting and unknown-writer records', () => {
+  it('rejects Flux-owned, deleting and unknown-writer records', () => {
     expect(canEditInventoryLabel(owned)).toBe(true);
     for (const metadata of [{ ...owned.metadata, managedFields: undefined }, { ...owned.metadata, managedFields: [{ manager: 'kustomize-controller' }] }, { ...owned.metadata, deletionTimestamp: '2026-01-01T00:00:00Z' }, { ...owned.metadata, labels: { 'kustomize.toolkit.fluxcd.io/name': 'inventory' } }]) expect(canEditInventoryLabel({ ...owned, metadata })).toBe(false);
-    expect(canEditInventoryLabel({ ...owned, spec: { ...owned.spec, provenance: { ...owned.spec.provenance, method: 'NetBoxImport' } } })).toBe(false);
   });
 
-  it('edits only a display name and provenance with UID and revision preconditions', async () => {
+  it('edits only a display name with UID and revision preconditions', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(owned)).mockResolvedValueOnce(response(owned));
     vi.stubGlobal('fetch', fetch);
     await editInventoryLabel(owned, { ...values, displayName: 'New name' }, new InventoryOperationScope().begin());
     const init = fetch.mock.calls[2][1];
     expect(init.method).toBe('PATCH');
     expect(init.headers['Content-Type']).toBe('application/json-patch+json');
-    expect(JSON.parse(init.body).map((operation: { path: string }) => operation.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/displayName', '/spec/provenance']);
+    expect(JSON.parse(init.body).map((operation: { path: string }) => operation.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/displayName']);
   });
 
   it('does not patch after ownership or revision changes', async () => {

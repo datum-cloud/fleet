@@ -176,21 +176,22 @@ for each installation and separate Cable records. That difference must be settle
 before automating moves and replacements.
 
 The current implementation uses manual entry and operator-controlled migration,
-not automated import. NetBox and optional offline candidate review are not required.
+not automated import. Fleet does not read any external inventory source.
 Migration must preserve existing equipment identities, customer reservations and
 history. Change the responsible writer only through an explicit approval. Do not delete
 and recreate assets, assume occupied space is free, or mark old records ready
 without new checks.
 
-Source data needs interpretation: NetBox sites may group several premises,
-serial fields may contain provider host IDs, device lists may include virtual
-machines, and rack positions may have been invented for display. Preserve these
-limitations rather than turning them into verified facts.
+A separate writer that copies records from another system into Fleet writes
+ordinary records through the same API and validation as any other writer. Data
+copied that way needs interpretation: one external site may group several
+premises, serial fields may contain provider host IDs, device lists may include
+virtual machines, and rack positions may have been invented for display. Such a
+writer should preserve these limitations rather than turning them into verified
+facts. Where facts came from is that writer's concern, recorded on its own labels
+and annotations; Fleet does not model it.
 
-See the [comparison with existing records and migration steps](inventory-reference.md#existing-records-and-migration)
-and the [source review and its limits](inventory-reference.md#source-evidence-and-limits).
-No live NetBox audit has been performed, and complete coverage of existing data
-has not been established.
+See the [comparison with existing records and migration steps](inventory-reference.md#existing-records-and-migration).
 
 ## First release and success criteria
 
