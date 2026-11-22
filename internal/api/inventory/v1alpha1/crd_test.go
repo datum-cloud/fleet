@@ -133,8 +133,8 @@ func object(t *testing.T, value any) map[string]any {
 
 var recordedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-func provenance(at time.Time) Provenance {
-	return Provenance{Method: ProvenanceManual, RecordedBy: "operator@example.com", RecordedAt: metav1.NewTime(at), Reference: "rack plan 1234"}
+func provenance(at time.Time) *Provenance {
+	return &Provenance{Method: ProvenanceManual, RecordedBy: "operator@example.com", RecordedAt: metav1.NewTime(at), Reference: "rack plan 1234"}
 }
 
 func syntheticClaim() DeviceClaim {
@@ -252,39 +252,35 @@ func TestInvalidDevicesAreRejected(t *testing.T) {
 	}
 }
 
-func TestEveryEditMustAdvanceRecordedAt(t *testing.T) {
-	oldClaim := object(t, syntheticClaim())
-	if errs := admit(t, "DeviceClaim", object(t, syntheticClaim()), oldClaim); len(errs) > 0 {
-		t.Fatalf("unchanged claim update rejected: %v", errs)
+// TestProvenanceIsOptional keeps records written before and after provenance
+// was retired admissible, including an update that drops it.
+func TestProvenanceIsOptional(t *testing.T) {
+	withProvenance := object(t, syntheticDevice())
+	without := syntheticDevice()
+	without.Spec.Provenance = nil
+	if errs := admit(t, "Device", object(t, without), nil); len(errs) > 0 {
+		t.Fatalf("device without provenance rejected: %v", errs)
 	}
-	for name, at := range map[string]metav1.Time{"same time": metav1.NewTime(recordedAt), "backdated": later(-time.Hour)} {
-		claim := syntheticClaim()
-		claim.Spec.Placement.Position = 14
-		claim.Spec.Provenance.RecordedAt = at
-		if errs := admit(t, "DeviceClaim", object(t, claim), oldClaim); len(errs) == 0 {
-			t.Errorf("claim edit with %s accepted", name)
-		}
+	if errs := admit(t, "Device", object(t, without), withProvenance); len(errs) > 0 {
+		t.Fatalf("dropping provenance rejected: %v", errs)
 	}
-	replanned := syntheticClaim()
-	replanned.Spec.Placement.Position = 14
-	replanned.Spec.Provenance.RecordedAt = later(time.Hour)
-	if errs := admit(t, "DeviceClaim", object(t, replanned), oldClaim); len(errs) > 0 {
-		t.Fatalf("re-recorded claim edit rejected: %v", errs)
+	// identity is immutable, so an imported Device keeps its sourceIdentity and
+	// must still be able to stop sending provenance.
+	imported := reportedDevice()
+	importedWithout := reportedDevice()
+	importedWithout.Spec.Provenance = nil
+	if errs := admit(t, "Device", object(t, importedWithout), object(t, imported)); len(errs) > 0 {
+		t.Fatalf("dropping provenance from an imported device rejected: %v", errs)
 	}
-
-	oldDevice := object(t, syntheticDevice())
-	stale := syntheticDevice()
-	stale.Spec.BMC.Endpoint = "https://192.0.2.101"
-	if errs := admit(t, "Device", object(t, stale), oldDevice); len(errs) == 0 {
-		t.Error("device edit without a newer recordedAt accepted")
+	claim := syntheticClaim()
+	claim.Spec.Provenance = nil
+	if errs := admit(t, "DeviceClaim", object(t, claim), object(t, syntheticClaim())); len(errs) > 0 {
+		t.Fatalf("dropping claim provenance rejected: %v", errs)
 	}
-	updated := syntheticDevice()
-	updated.Spec.BMC.Endpoint = "https://192.0.2.101"
-	updated.Spec.UnmappedMACAddresses = nil
-	updated.Spec.Interfaces = append(updated.Spec.Interfaces, Interface{Name: "eth1", MACAddress: "00:00:5e:00:53:03"})
-	updated.Spec.Provenance.RecordedAt = later(time.Hour)
-	if errs := admit(t, "Device", object(t, updated), oldDevice); len(errs) > 0 {
-		t.Fatalf("re-recorded device edit rejected: %v", errs)
+	edited := syntheticClaim()
+	edited.Spec.Placement.Position = 14
+	if errs := admit(t, "DeviceClaim", object(t, edited), object(t, syntheticClaim())); len(errs) > 0 {
+		t.Fatalf("claim edit without a newer recordedAt rejected: %v", errs)
 	}
 }
 

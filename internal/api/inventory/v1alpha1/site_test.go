@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +18,7 @@ func syntheticSite() *Site {
 	return &Site{
 		TypeMeta:   metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "Site"},
 		ObjectMeta: metav1.ObjectMeta{Name: "site-stable", Namespace: "inventory", UID: "site-uid"},
-		Spec:       SiteSpec{PhysicalMetadata: PhysicalMetadata{DisplayName: "Example operational site", Provenance: Provenance{Method: "Manual", RecordedBy: "synthetic", RecordedAt: metav1.NewTime(recordedAt)}}, Code: "EX3", FacilityRefs: []LocalReference{{Name: "facility-stable"}}},
+		Spec:       SiteSpec{PhysicalMetadata: PhysicalMetadata{DisplayName: "Example operational site", Provenance: &Provenance{Method: "Manual", RecordedBy: "synthetic", RecordedAt: metav1.NewTime(recordedAt)}}, Code: "EX3", FacilityRefs: []LocalReference{{Name: "facility-stable"}}},
 	}
 }
 
@@ -47,10 +46,6 @@ func TestSiteAndFacilityAdmission(t *testing.T) {
 	renamed := site.DeepCopyObject().(*Site)
 	renamed.Spec.Code = "NEW-CODE"
 	renamed.Spec.DisplayName = "Renamed operational label"
-	if errs := admit(t, "Site", object(t, renamed), object(t, site)); len(errs) == 0 {
-		t.Fatal("a rename must advance provenance")
-	}
-	renamed.Spec.Provenance.RecordedAt = metav1.NewTime(recordedAt.Add(time.Second))
 	if errs := admit(t, "Site", object(t, renamed), object(t, site)); len(errs) != 0 {
 		t.Fatal(errs)
 	}

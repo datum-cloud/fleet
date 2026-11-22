@@ -49,12 +49,9 @@ spec:
           spec:
             type: object
             required:
-            - provenance
             - expectedIdentity
             - placement
             x-kubernetes-validations:
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every change to a claim must advance provenance.recordedAt
             - rule: has(self.lifecycle) == has(oldSelf.lifecycle)
               message: legacy claims cannot be reinterpreted as installations
             - rule: '!has(self.lifecycle) || self.placement == oldSelf.placement'
@@ -306,11 +303,8 @@ spec:
             type: object
             required:
             - claimRef
-            - provenance
             - identity
             x-kubernetes-validations:
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every change to a device must advance provenance.recordedAt
             - rule: self.claimRef == oldSelf.claimRef
               message: claimRef is immutable; bind replacement hardware as a new Device
             - rule: self.identity == oldSelf.identity
@@ -322,15 +316,13 @@ spec:
             - rule: '!has(self.reportedPlacement) || (oldSelf.hasValue() && has(oldSelf.value().reportedPlacement) ? (self.reportedPlacement == oldSelf.value().reportedPlacement || self.reportedPlacement.revision == oldSelf.value().reportedPlacement.revision + 1) : self.reportedPlacement.revision == 1)'
               optionalOldSelf: true
               message: first report revision must be 1; every changed report must increment revision exactly once
-            - rule: '!has(self.reportedPlacement) || (has(self.reportedPlacement.method) && self.reportedPlacement.method == "Manual") || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && has(self.reportedPlacement.snapshotDigest) && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
+            - rule: '!has(self.reportedPlacement) || !has(self.provenance) || (has(self.reportedPlacement.method) && self.reportedPlacement.method == "Manual") || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && has(self.reportedPlacement.snapshotDigest) && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
               message: reported placement must retain the imported source snapshot and observation time
-            - rule: '!has(self.reportedPlacement) || self.reportedPlacement.observedAt <= self.provenance.recordedAt'
-              message: the source observation cannot postdate its recording
             - rule: '!has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) || (self.interfaces.filter(b,
                 has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 && (!has(self.unmappedMACAddresses)
                 || !(a.macAddress in self.unmappedMACAddresses))))'
               message: a MAC address may be recorded only once
-            - rule: '!has(self.identity.sourceIdentity) || self.provenance.method == "NetBoxImport"'
+            - rule: '!has(self.identity.sourceIdentity) || !has(self.provenance) || self.provenance.method == "NetBoxImport"'
               message: source identity is for observational imports only
             - rule: '!has(self.topologyAuthority) || !has(self.interfaces) || self.interfaces.all(p, !has(p.peer))'
               message: Cable topology excludes inline peers
@@ -344,7 +336,7 @@ spec:
             - rule: '!has(self.internalMappings) || self.internalMappings.all(m, self.internalMappings.filter(n,
                 n.from == m.from).size() == 1)'
               message: each internal source position maps once
-            - rule: '!has(self.identity.sourceIdentity) || (has(self.provenance.source) && self.identity.sourceIdentity.system
+            - rule: '!has(self.identity.sourceIdentity) || !has(self.provenance) || (has(self.provenance.source) && self.identity.sourceIdentity.system
                 == self.provenance.source.system && self.identity.sourceIdentity.type == self.provenance.source.type
                 && self.identity.sourceIdentity.id == self.provenance.source.id)'
               message: observational identity must match provenance source identity
@@ -849,10 +841,6 @@ spec:
                 - name
             required:
             - displayName
-            - provenance
-            x-kubernetes-validations:
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every spec change must advance provenance.recordedAt
           status:
             type: object
         required:
@@ -976,10 +964,6 @@ spec:
             required:
             - displayName
             - code
-            - provenance
-            x-kubernetes-validations:
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every spec change must advance provenance.recordedAt
           status:
             type: object
         required:
@@ -1098,11 +1082,7 @@ spec:
                 maximum: 100
             required:
             - displayName
-            - provenance
             - facilityRef
-            x-kubernetes-validations:
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every spec change must advance provenance.recordedAt
           status:
             type: object
         required:
@@ -1267,7 +1247,6 @@ spec:
                 minItems: 1
             required:
             - displayName
-            - provenance
             - medium
             - lanes
             x-kubernetes-validations:
@@ -1284,8 +1263,6 @@ spec:
                 || (has(m.b.powerFeedRef) && has(l.b.powerFeedRef) && m.b.powerFeedRef.name == l.b.powerFeedRef.name)))).size()
                 == 1)
               message: each termination position can occur only once in a cable
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every spec change must advance provenance.recordedAt
           status:
             type: object
         required:
@@ -1500,14 +1477,11 @@ spec:
                 items: *id002
             required:
             - displayName
-            - provenance
             - facilityRef
             - terminations
             x-kubernetes-validations:
             - rule: self.terminations.all(t, t.type == 'PowerOutlet')
               message: feed terminations must be power outlets
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every spec change must advance provenance.recordedAt
           status:
             type: object
         required:

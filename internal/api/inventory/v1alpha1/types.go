@@ -21,8 +21,8 @@ var GroupVersion = schema.GroupVersion{Group: "fleet.datumapis.com", Version: "v
 // ProvenanceManual marks a record an operator entered by hand.
 const ProvenanceManual = "Manual"
 
-// Provenance says how, by whom, and when a record's spec was written. Every
-// change to a spec must advance RecordedAt.
+// Provenance optionally says how, by whom, and when a record's spec was
+// written. It is deprecated and no longer required.
 type Provenance struct {
 	Method     string      `json:"method"`
 	RecordedBy string      `json:"recordedBy"`
@@ -45,7 +45,7 @@ type DeviceClaimSpec struct {
 	DisplayName      string           `json:"displayName,omitempty"`
 	Lifecycle        string           `json:"lifecycle,omitempty"`
 	CableRefs        []LocalReference `json:"cableRefs,omitempty"`
-	Provenance       Provenance       `json:"provenance"`
+	Provenance       *Provenance      `json:"provenance,omitempty"`
 	ExpectedIdentity ExpectedIdentity `json:"expectedIdentity"`
 	Placement        Placement        `json:"placement"`
 	Ports            []ExpectedPort   `json:"ports,omitempty"`
@@ -112,7 +112,7 @@ type DeviceSpec struct {
 	ServiceAssociations []ServiceAssociation `json:"serviceAssociations,omitempty"`
 	TopologyAuthority   string               `json:"topologyAuthority,omitempty"`
 	ClaimRef            LocalReference       `json:"claimRef"`
-	Provenance          Provenance           `json:"provenance"`
+	Provenance          *Provenance          `json:"provenance,omitempty"`
 	Identity            DeviceIdentity       `json:"identity"`
 	BMC                 *BMC                 `json:"bmc,omitempty"`
 	Interfaces          []Interface          `json:"interfaces,omitempty"`
