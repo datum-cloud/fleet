@@ -103,6 +103,36 @@ labels/annotations and audit logs; Fleet does not interpret it or acquire owners
 from it. Creating catalog records remains observational, never a capacity or
 provisioning action.
 
+## Manufacturer detail (implemented)
+
+Manufacturer detail now shows recorded overview fields, linked DeviceTypes with
+associated Device counts, and linked Devices with their model and reported
+location. Joins use same-namespace `manufacturerRef` and `deviceTypeRef` only;
+inline manufacturer text and aliases never establish relationships. Rows/counts
+are deduplicated by namespace/name. Deleting or missing targets remain unresolved.
+Locations use the Device's report only, with links to readable Facility/Rack
+records; plans and nominal templates never fill in physical observations.
+
+Display names lead catalog tables, links and registration choices, with resource
+names as fallback and contextual identifiers only for colliding labels. The
+manufacturer's metadata is collapsed under Technical details. Existing Datum
+tables, page chrome, query/history behavior and authorized collection cache are
+reused, without new reads, forms, mutations, session policies or backend changes.
+Unavailable model/device collections produce unknown counts, not zero; unreadable
+dependencies lose their labels and links immediately. Resolved subsets remain
+visible with missing-reference guidance. Initial loading stays in the page shell.
+
+Local validation on 2026-11-22: provider full suite (42 files / 692 tests),
+typecheck and production build pass, as do documentation-link and whitespace
+checks. Validation used Node 22.22.0 and pnpm 11.28.9; the documented Node 26
+runtime was not exercised. Focused tests cover reference scope, unrelated and
+dangling records, duplicate rows/counts/labels, fallback labels, catalog picker
+choices, denied/partial collections, actual destination URLs, reported-only
+location, loading and history/filter retention. Existing session, write-precondition
+and visible-focus regressions also pass. Shared/consumer code is unchanged, so
+consumer validation is not required. No browser/host acceptance, live reads or
+writes, migration, deployment, physical verification or readiness is claimed.
+
 ## Explicitly deferred user-visible work
 
 Staff can browse Manufacturers/DeviceTypes and see catalog-backed Device labels,

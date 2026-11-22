@@ -42,6 +42,13 @@ const inventory = toInventory(fixtureDeviceClaims, fixtureDevices);
 beforeEach(() => useInventoryMock.mockReset());
 
 describe('DeviceInventoryList', () => {
+  it('keeps manufacturer deep links in loading state without claiming empty relationships', () => {
+    mockInventory({ isLoading: true });
+    renderAt('/plugins/metal-datumapis-com/inventory?kind=Manufacturer&namespace=default&record=private-vendor');
+    expect(screen.getByTestId('fleet-plugin-loading')).toBeInTheDocument();
+    expect(screen.queryByText(/No device types linked|No devices explicitly linked|private-vendor/)).not.toBeInTheDocument();
+  });
+
   it('marks the Inventory tab active', () => {
     mockInventory({ data: inventory });
     renderAt('/plugins/metal-datumapis-com/inventory');

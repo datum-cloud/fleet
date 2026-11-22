@@ -16,6 +16,8 @@ import {
 import type { CableEndpoint, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import './physical-inventory.css';
 import { SiteOverview } from './site-overview';
+import { ManufacturerOverview } from './manufacturer-overview';
+import { catalogLabel } from '../lib/manufacturer-inventory';
 import { InventoryAccessState } from './inventory-access-state';
 import { InventoryManagement } from './inventory-management';
 import { DevicePlacementEdit } from './device-placement-edit';
@@ -135,7 +137,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
     if (inventory.issues?.[kind]) return <span>Related record unavailable</span>;
     const target = find(kind, namespace, name);
     return target ? (
-      <Link to={href(kind, namespace, name)}>{recordName(target)}</Link>
+      <Link to={href(kind, namespace, name)}>{kind === 'Manufacturer' || kind === 'DeviceType' ? catalogLabel(target.record, entries.filter(entry => entry.kind === kind && entry.record.metadata.namespace === namespace).map(entry => entry.record)) : recordName(target)}</Link>
     ) : (
       <span>
         {name} <small>(record not found)</small>
@@ -264,6 +266,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
   function Detail({ entry }: { entry: RecordEntry }) {
     const { record, kind } = entry;
     if (kind === 'Site') return <SiteOverview site={record as PhysicalRecord} inventory={inventory} />;
+    if (kind === 'Manufacturer') return <ManufacturerOverview manufacturer={record as PhysicalRecord} inventory={inventory} />;
     const namespace = record.metadata.namespace;
     const device = kind === 'Device' ? (record as RawDevice) : undefined;
     const catalog = device && deviceCatalog(device, inventory);
@@ -323,10 +326,6 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
         {kind === 'Facility' && <FacilityOverview facility={record as PhysicalRecord} inventory={inventory} />}
         {kind === 'Rack' && <RackOverview rack={record as PhysicalRecord} inventory={inventory} />}
         <dl className="inventory-fields">
-          {kind === 'Manufacturer' && <>
-            <Field label="Canonical name">{physical?.spec.canonicalName}</Field>
-            <Field label="Descriptive aliases">{physical?.spec.aliases?.join(' · ')}</Field>
-          </>}
           {kind === 'DeviceType' && <>
             <Field label="Manufacturer">{physical?.spec.manufacturerRef && reference('Manufacturer', namespace, physical.spec.manufacturerRef.name)}</Field>
             <Field label="Normalized model identity">{physical?.spec.model}</Field>
@@ -606,7 +605,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
               {placementEditor}
               {selected ? (
                 <>
-                  {selected.kind !== 'Site' && <p className="inventory-muted">
+                  {selected.kind !== 'Site' && selected.kind !== 'Manufacturer' && <p className="inventory-muted">
                     {section.title} /{' '}
                     {selected.record.metadata.name}
                   </p>}
@@ -633,11 +632,11 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
                             ? 'Hardware'
                             : 'Details'}
                         </TableHead>
-                        <TableHead>
+                        {section.kind !== 'Manufacturer' && <TableHead>
                           {section.kind === 'Cable' ? 'End A' : section.kind === 'Device' || section.kind === 'DeviceClaim'
                             ? 'Location / Reported placement'
                             : 'Location / reference'}
-                        </TableHead>
+                        </TableHead>}
                         {(section.kind === 'Cable' || section.kind === 'Device') && <TableHead>{section.kind === 'Cable' ? 'End B' : 'Serial / asset tag'}</TableHead>}
                       </TableRow>
                     </TableHeader>
@@ -654,10 +653,10 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
                             >
                               {recordName(entry)}
                             </Link>
-                            {entry.record.spec.displayName && <small>{entry.record.metadata.name}</small>}
+                            {entry.record.spec.displayName && (entry.kind !== 'Manufacturer' && entry.kind !== 'DeviceType' || catalogLabel(entry.record, records.map(item => item.record)) !== recordName(entry)) && <small>{entry.record.metadata.name}</small>}
                           </TableCell>
                           <TableCell>{summary(entry)}</TableCell>
-                          <TableCell>{entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.a} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Rack' && (entry.record as PhysicalRecord).spec.facilityRef ? reference('Facility', entry.record.metadata.namespace, (entry.record as PhysicalRecord).spec.facilityRef!.name) : placement(entry)}</TableCell>
+                          {entry.kind !== 'Manufacturer' && <TableCell>{entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.a} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Rack' && (entry.record as PhysicalRecord).spec.facilityRef ? reference('Facility', entry.record.metadata.namespace, (entry.record as PhysicalRecord).spec.facilityRef!.name) : placement(entry)}</TableCell>}
                           {(entry.kind === 'Cable' || entry.kind === 'Device') && <TableCell>
                             {entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.b} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Device' ? (
                               <>
