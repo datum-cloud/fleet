@@ -155,6 +155,15 @@ describe('hardware directory', () => {
     expect(screen.getByText('Claim record not found')).toBeInTheDocument();
   });
 
+  it('shows the explicit no-hardware-identity marker instead of a missing serial', () => {
+    const original = fixturePhysicalDevices[0];
+    const panel = { ...original, metadata: { ...original.metadata, name: 'synthetic-patch-panel' }, spec: { ...original.spec, displayName: 'Synthetic patch panel', bmc: undefined, identity: { model: 'Example 24-port panel', unidentified: true, unidentifiedReason: 'passive panel; no serial on the chassis' } } };
+    browse('?kind=Device', toInventory(fixturePhysicalClaims, [panel]));
+    expect(screen.getByText('No hardware identity')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: 'Synthetic patch panel' }));
+    expect(screen.getByText(/passive panel; no serial on the chassis · cannot back machine capacity/)).toBeInTheDocument();
+  });
+
   it('does not fabricate a rack relationship from legacy location text', () => {
     const legacy = { ...fixturePhysicalClaims[0], spec: { ...fixturePhysicalClaims[0].spec, placement: { facility: 'example-facility', rack: 'rack-01', position: 12 } } };
     browse('?kind=Rack&record=rack-01&namespace=default', toInventory([legacy], [], [fixturePhysicalRecords[1]]));

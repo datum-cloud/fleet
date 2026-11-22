@@ -764,7 +764,8 @@ CRDs, ProtectedResources, and the `fleet.datumapis.com-inventory-viewer` and
 
 Records carry no attribution fields: resource audit logs record who changed a
 record and `metadata.creationTimestamp` records when it was created. CEL requires
-a Device serial or system UUID and keeps a Device's `claimRef` and identity immutable,
+a Device serial or system UUID, or the explicit `identity.unidentified` marker
+with a reason and neither, and keeps a Device's `claimRef` and identity immutable,
 rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
 BMC endpoints. Status is a reserved subresource with no fields and no writer.
 No metal role grants inventory access.

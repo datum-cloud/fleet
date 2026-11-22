@@ -218,7 +218,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       const target = find(kind, entry.record.metadata.namespace, name);
       return [name, target ? recordName(target) : '', endpoint.componentID];
     }) : [];
-    return [recordName(entry), entry.record.metadata.name, entry.record.metadata.namespace, summary(entry), placement(entry), device?.spec.identity.serial, device?.spec.identity.systemUUID, device?.spec.assetTag, ...(endpoints ?? [])].filter(Boolean).join(' ').toLowerCase();
+    return [recordName(entry), entry.record.metadata.name, entry.record.metadata.namespace, summary(entry), placement(entry), device?.spec.identity.serial, device?.spec.identity.systemUUID, device?.spec.identity.unidentifiedReason, device?.spec.assetTag, ...(endpoints ?? [])].filter(Boolean).join(' ').toLowerCase();
   };
   const matching = records
     .filter(entry => (!locationFilter || locationKey(entry) === locationFilter) && (!modelFilter || modelKey(entry) === modelFilter))
@@ -328,6 +328,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
               <Field label="Serial number">{device.spec.identity.serial}</Field>
               <Field label="Asset tag">{device.spec.assetTag}</Field>
               <Field label="System UUID">{device.spec.identity.systemUUID}</Field>
+              {device.spec.identity.unidentified && <Field label="Hardware identity">No serial or system UUID recorded · {device.spec.identity.unidentifiedReason} · cannot back machine capacity</Field>}
               <Field label="Claim / registration history">
                 {reference('DeviceClaim', namespace, device.spec.claimRef.name)}
               </Field>
@@ -667,7 +668,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
                           <TableCell>
                             {entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.b} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Device' ? (
                               <>
-                                {(entry.record as RawDevice).spec.identity.serial ?? 'Serial not recorded'}
+                                {(entry.record as RawDevice).spec.identity.serial ?? ((entry.record as RawDevice).spec.identity.unidentified ? 'No hardware identity' : 'Serial not recorded')}
                                 <small>
                                   {(entry.record as RawDevice).spec.assetTag ?? 'Asset tag not recorded'}
                                 </small>

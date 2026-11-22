@@ -263,7 +263,9 @@ export interface Device {
   spec: {
     reportedPlacement?: ReportedPlacement;
     claimRef: LocalReference;
-    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string };
+    // unidentified records deliberately that no serial or system UUID exists;
+    // it excludes both and requires unidentifiedReason.
+    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string; unidentified?: boolean; unidentifiedReason?: string };
     assetTag?: string;
     displayName?: string;
     modelShape?: { heightUnits?: number; fullDepth?: boolean };

@@ -123,13 +123,21 @@ type LocalReference struct {
 }
 
 // DeviceIdentity is the detected chassis identity. Serial and SystemUUID are
-// matching evidence, not authenticators; at least one is required.
+// matching evidence, not authenticators. A Device carries at least one of
+// them, or sets Unidentified with neither.
 type DeviceIdentity struct {
 	Manufacturer string `json:"manufacturer,omitempty"`
 	Model        string `json:"model"`
 	Serial       string `json:"serial,omitempty"`
 	// SystemUUID is the SMBIOS system UUID in lowercase canonical form.
 	SystemUUID string `json:"systemUUID,omitempty"`
+	// Unidentified records deliberately that the equipment has no serial or
+	// system UUID on record, such as a patch panel. It may only be true, needs
+	// UnidentifiedReason, and excludes Serial and SystemUUID. Like the rest of
+	// identity it is immutable: recording a serial later is a new Device. An
+	// unidentified Device cannot back MachineCapacity.
+	Unidentified       bool   `json:"unidentified,omitempty"`
+	UnidentifiedReason string `json:"unidentifiedReason,omitempty"`
 }
 
 // BMC records where the management controller was reached. Credentials never
