@@ -47,6 +47,8 @@ export const sections = [
     icon: Zap,
     description: 'Supply ratings, terminations, and upstream sources.',
   },
+  { kind: 'Manufacturer', title: 'Manufacturers', icon: Building2, description: 'Shared canonical names and descriptive aliases. Aliases never merge identities.' },
+  { kind: 'DeviceType', title: 'Device types', icon: Server, description: 'Reference-only model shapes and component templates, not installed equipment or occupancy.' },
 ] as const;
 
 export function InventoryNavigation({ inventory }: { inventory?: Inventory }) {

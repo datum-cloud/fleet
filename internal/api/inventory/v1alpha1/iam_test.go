@@ -119,7 +119,7 @@ func TestInventoryRolesSplitReadFromWrite(t *testing.T) {
 				t.Fatalf("missing role %s", name)
 			}
 			var expected []string
-			for _, resource := range []string{"sites", "deviceclaims", "devices", "facilities", "racks", "cables", "powerfeeds"} {
+			for _, resource := range []string{"manufacturers", "devicetypes", "sites", "deviceclaims", "devices", "facilities", "racks", "cables", "powerfeeds"} {
 				for _, verb := range verbs {
 					expected = append(expected, GroupVersion.Group+"/"+resource+"."+verb)
 				}

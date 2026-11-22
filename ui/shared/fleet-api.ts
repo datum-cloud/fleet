@@ -262,6 +262,7 @@ export interface Device {
   metadata: ObjectMeta;
   spec: {
     reportedPlacement?: ReportedPlacement;
+    deviceTypeRef?: LocalReference;
     claimRef: LocalReference;
     // unidentified records deliberately that no serial or system UUID exists;
     // it excludes both and requires unidentifiedReason.
@@ -311,10 +312,16 @@ export interface CableEndpoint extends ComponentPosition {
 }
 export interface PhysicalRecord {
   metadata: ObjectMeta;
-  kind: 'Site' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
+  kind: 'Site' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
   spec: {
     displayName: string;
     code?: string;
+    canonicalName?: string;
+    aliases?: string[];
+    manufacturerRef?: LocalReference;
+    model?: string;
+    modelShape?: { heightUnits?: number; fullDepth?: boolean };
+    componentTemplates?: Omit<PhysicalComponent, 'serial' | 'assetTag'>[];
     facilityRefs?: LocalReference[];
     identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];
     facilityRef?: LocalReference;

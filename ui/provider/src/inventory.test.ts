@@ -11,6 +11,9 @@ describe('toInventory', () => {
     const slot = inventory.slots.find(item => item.claim.metadata.name === devices[0].spec.claimRef.name)!;
     expect(slot.devices).toHaveLength(2);
     expect(currentDevice(slot)).toBeUndefined();
+    expect(slot.devices.map(device => device.metadata.name)).toEqual(['another-device', devices[0].metadata.name]);
+    const reversed = toInventory(fixtureDeviceClaims, [...devices].reverse());
+    expect(reversed.slots.find(item => item.claim.metadata.name === devices[0].spec.claimRef.name)!.devices).toEqual(slot.devices);
   });
   it('binds Devices to claims in the same namespace and keeps orphans visible', () => {
     const inventory = toInventory(fixtureDeviceClaims, fixtureDevices);

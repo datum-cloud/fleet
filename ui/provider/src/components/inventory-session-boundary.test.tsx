@@ -127,13 +127,17 @@ describe('host inventory session isolation', () => {
     const router = await mountHost(() => ({ user: { metadata: { uid: 'staff-a' } } }), 'Private inventory');
     await screen.findByText('Private inventory');
     let release!: () => void;
-    vi.spyOn(router, 'revalidate').mockRejectedValueOnce(new Error('verification failed')).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
-    fireEvent(window, new Event('pagehide'));
-    fireEvent(window, new Event('pageshow'));
+    const revalidate = vi.spyOn(router, 'revalidate').mockRejectedValueOnce(new Error('verification failed')).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    await act(async () => {
+      fireEvent(window, new Event('pagehide'));
+      fireEvent(window, new Event('pageshow'));
+    });
+    expect(revalidate).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.queryByText('Private inventory')).not.toBeInTheDocument());
     fireEvent(window, new Event('pagehide'));
     fireEvent(window, new Event('pageshow'));
     await waitFor(() => expect(release).toBeDefined());
+    expect(revalidate).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();
     await act(async () => release());
     await screen.findByText('Private inventory');
