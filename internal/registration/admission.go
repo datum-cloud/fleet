@@ -111,8 +111,8 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 	if request.Resource.Group != metal.GroupVersion.Group || request.Resource.Resource != "machinecapacities" {
 		return admission.Denied("unsupported registration admission resource")
 	}
-	if request.Operation != admissionv1.Create || request.SubResource != "" {
-		return admission.Denied("capacity mutation and deletion are disabled; registered and legacy capacity require operator reconciliation")
+	if request.SubResource != "" || (request.Operation != admissionv1.Create && request.Operation != admissionv1.Update) {
+		return admission.Denied(mutationDisabled)
 	}
 	name, err := projectName(request.UserInfo)
 	if err != nil {
@@ -121,10 +121,50 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 	if !slices.Contains(handler.Projects, name) {
 		return admission.Denied("project is outside the configured provider registration scope")
 	}
+	if request.Operation == admissionv1.Update {
+		return admission.Denied(handler.evaluateUpdate(ctx, name, request).Error())
+	}
 	if err := handler.evaluate(ctx, name, request); err != nil {
 		return admission.Denied(err.Error())
 	}
 	return admission.Allowed("inert inventory registration only; no availability or preparation authority")
+}
+
+const mutationDisabled = "capacity mutation and deletion are disabled; registered and legacy capacity require operator reconciliation"
+
+// evaluateUpdate explains why a capacity update is denied. Stage 1 denies
+// every update. An update that would move capacity out of Disabled for a
+// Device that is not Active is denied for that reason first, so the rule
+// already holds when a future stage allows enabling capacity. It always
+// returns an error.
+func (handler *Handler) evaluateUpdate(ctx context.Context, name string, request admission.Request) error {
+	var capacity metal.MachineCapacity
+	if err := json.Unmarshal(request.Object.Raw, &capacity); err != nil {
+		return err
+	}
+	if capacity.Spec.AllocationPolicy == "Disabled" {
+		return errors.New(mutationDisabled)
+	}
+	project, err := handler.Resolve(ctx, name)
+	if err != nil || !project.Identity.Valid() || project.Identity.RouteName != name {
+		return errors.New("provider project lifetime is unavailable")
+	}
+	// The API server has authorized the capacity update itself. Reading the
+	// backing Device additionally requires the caller to be able to read it.
+	if err := handler.Authorize(ctx, project, request.UserInfo, inventory.GroupVersion.Group, "devices", capacity.Spec.DeviceRef.Name); err != nil {
+		return err
+	}
+	device := &inventory.Device{}
+	if err := project.Client.Get(ctx, client.ObjectKey{Namespace: request.Namespace, Name: capacity.Spec.DeviceRef.Name}, device); err != nil {
+		if apierrors.IsNotFound(err) {
+			return errors.New("capacity cannot leave Disabled: its Device does not exist")
+		}
+		return errors.New("capacity cannot leave Disabled: its Device is unavailable")
+	}
+	if lifecycle := inventory.LifecycleOf(device); lifecycle != inventory.DeviceActive {
+		return fmt.Errorf("capacity cannot leave Disabled: its Device is %s; only an Active Device can back available capacity", lifecycle)
+	}
+	return errors.New(mutationDisabled)
 }
 
 func (handler *Handler) evaluate(ctx context.Context, name string, request admission.Request) error {
@@ -175,6 +215,9 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 	}
 	if device.UID != types.UID(annotations[DeviceUIDAnnotation]) || device.ResourceVersion != annotations[DeviceVersionAnnotation] || !device.DeletionTimestamp.IsZero() {
 		return errors.New("selected Device incarnation or version changed; do not silently refresh the selection")
+	}
+	if lifecycle := inventory.LifecycleOf(device); lifecycle != inventory.DeviceActive {
+		return fmt.Errorf("selected Device is %s; only an Active Device can be registered as capacity", lifecycle)
 	}
 	if !eligible(device) {
 		return errors.New("registration requires non-placeholder serial, canonical system UUID, and complete provider aliases; incomplete identity is ambiguous")

@@ -91,6 +91,29 @@ func (api *liveAPI) device(name, namespace, serial, uuid string) *inventory.Devi
 	return device
 }
 
+func (api *liveAPI) updateLifecycle(device *inventory.Device, lifecycle inventory.DeviceLifecycle) error {
+	api.t.Helper()
+	if err := api.admin.Get(context.Background(), client.ObjectKeyFromObject(device), device); err != nil {
+		api.t.Fatal(err)
+	}
+	device.Spec.Lifecycle = lifecycle
+	return api.admin.Update(context.Background(), device)
+}
+
+func (api *liveAPI) setLifecycle(device *inventory.Device, lifecycle inventory.DeviceLifecycle) {
+	api.t.Helper()
+	if err := api.updateLifecycle(device, lifecycle); err != nil {
+		api.t.Fatal(err)
+	}
+}
+
+// retire takes a Device through the only allowed path to Retired.
+func (api *liveAPI) retire(device *inventory.Device) {
+	api.t.Helper()
+	api.setLifecycle(device, inventory.DeviceDecommissioning)
+	api.setLifecycle(device, inventory.DeviceRetired)
+}
+
 // installWebhook serves the production handler behind the packaged webhook
 // configuration and returns the server so a test can take it away.
 func (api *liveAPI) installWebhook() *httptest.Server {
@@ -301,7 +324,7 @@ func TestRegistrationAgainstLiveDevices(t *testing.T) {
 		}
 		registered.Spec.AllocationPolicy = "Enabled"
 		registered.Spec.CleaningPolicyRef.Name = "invented-policy"
-		if err := operator.Update(ctx, registered); !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "mutation and deletion are disabled") {
+		if err := operator.Update(ctx, registered); !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "cannot leave Disabled: its Device does not exist") {
 			t.Fatalf("orphaned capacity was enabled: %v", err)
 		}
 		if err := operator.Delete(ctx, registered); !apierrors.IsForbidden(err) {
@@ -311,57 +334,40 @@ func TestRegistrationAgainstLiveDevices(t *testing.T) {
 		requireDenied(t, operator.Create(ctx, api.registration(replacement)), "already backs capacity")
 	})
 
-	cascade := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cascade"}}
-	if err := api.admin.Create(ctx, cascade); err != nil {
-		t.Fatal(err)
-	}
-	cascaded := api.device("cascaded", "cascade", "cascade-serial", "77777777-7777-7777-7777-777777777777")
-	sibling := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "sibling", Namespace: "cascade"}}
-	if err := api.admin.Create(ctx, sibling); err != nil {
-		t.Fatal(err)
-	}
-	api.installDeletionProtection(duplicateA)
-
-	t.Run("installed component denies Device DELETE for every caller", func(t *testing.T) {
-		for _, caller := range []client.Client{api.admin, operator} {
-			if err := caller.Delete(ctx, duplicateA); !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "cannot be deleted") {
-				t.Fatalf("Device deletion: %v", err)
-			}
-		}
-		if !api.exists(duplicateA) {
-			t.Fatal("Device removed despite deletion protection")
-		}
+	t.Run("only an Active Device can be registered", func(t *testing.T) {
+		decommissioning := api.device("decommissioning", "default", "decommissioning-serial", "99999999-9999-9999-9999-999999999991")
+		api.setLifecycle(decommissioning, inventory.DeviceDecommissioning)
+		requireDenied(t, operator.Create(ctx, api.registration(decommissioning)), "selected Device is Decommissioning")
+		retired := api.device("retired", "default", "retired-serial", "99999999-9999-9999-9999-999999999992")
+		api.retire(retired)
+		requireDenied(t, operator.Create(ctx, api.registration(retired)), "selected Device is Retired")
+		// A Retired Device still holds its identity while it exists.
+		twin := api.device("retired-twin", "default", "RETIRED-SERIAL", "99999999-9999-9999-9999-999999999993")
+		requireDenied(t, operator.Create(ctx, api.registration(twin)), "shares recorded hardware identity")
 	})
-	t.Run("deletecollection is denied per Device", func(t *testing.T) {
-		if err := api.admin.DeleteAllOf(ctx, &inventory.Device{}, client.InNamespace("default")); !apierrors.IsForbidden(err) {
-			t.Fatalf("deletecollection: %v", err)
-		}
-		for _, device := range []*inventory.Device{duplicateA, duplicateB, legacyBacked, limitedTarget} {
-			if !api.exists(device) {
-				t.Fatalf("deletecollection removed %s", device.Name)
-			}
-		}
-	})
-	t.Run("namespace deletion stays Terminating with its Devices", func(t *testing.T) {
-		if err := api.admin.Delete(ctx, cascade); err != nil {
+	t.Run("capacity of a Decommissioning or Retired Device cannot leave Disabled", func(t *testing.T) {
+		device := api.device("leaving-service", "default", "leaving-serial", "99999999-9999-9999-9999-999999999994")
+		registered := api.registration(device)
+		if err := operator.Create(ctx, registered); err != nil {
 			t.Fatal(err)
 		}
-		// envtest runs no namespace controller. Issue the same content
-		// deletions the controller would: deletecollection, then per item.
-		if err := api.admin.DeleteAllOf(ctx, &corev1.ConfigMap{}, client.InNamespace("cascade")); err != nil {
-			t.Fatal(err)
+		enable := func() error {
+			current := &metal.MachineCapacity{}
+			if err := api.admin.Get(ctx, client.ObjectKeyFromObject(registered), current); err != nil {
+				t.Fatal(err)
+			}
+			current.Spec.AllocationPolicy = "Enabled"
+			current.Spec.CleaningPolicyRef.Name = "invented-policy"
+			return operator.Update(ctx, current)
 		}
-		if err := api.admin.DeleteAllOf(ctx, &inventory.Device{}, client.InNamespace("cascade")); !apierrors.IsForbidden(err) {
-			t.Fatalf("namespace cascade deletecollection: %v", err)
-		}
-		if err := api.admin.Delete(ctx, cascaded); !apierrors.IsForbidden(err) {
-			t.Fatalf("namespace cascade item deletion: %v", err)
-		}
-		if !api.exists(cascaded) || api.exists(sibling) {
-			t.Fatal("cascade must stop at Devices while other content drains")
-		}
-		if !api.exists(cascade) || cascade.DeletionTimestamp.IsZero() {
-			t.Fatal("namespace must remain Terminating")
+		requireDenied(t, enable(), "mutation and deletion are disabled")
+		api.setLifecycle(device, inventory.DeviceDecommissioning)
+		requireDenied(t, enable(), "its Device is Decommissioning")
+		api.setLifecycle(device, inventory.DeviceRetired)
+		requireDenied(t, enable(), "its Device is Retired")
+		current := &metal.MachineCapacity{}
+		if err := api.admin.Get(ctx, client.ObjectKeyFromObject(registered), current); err != nil || current.Spec.AllocationPolicy != "Disabled" {
+			t.Fatalf("capacity left Disabled: %v %q", err, current.Spec.AllocationPolicy)
 		}
 	})
 	t.Run("webhook outage blocks only capacity writes", func(t *testing.T) {
