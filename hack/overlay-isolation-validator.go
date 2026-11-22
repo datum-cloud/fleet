@@ -37,12 +37,18 @@ const (
 	inventoryComponent = "components/inventory"
 
 	// deletionProtectionExpression is the only admitted rule: a Device DELETE
-	// passes when its namespace is being deleted or it is Retired. It is
-	// compared with whitespace normalized.
+	// passes when its namespace is being deleted, it is Retired, or the
+	// request's username is listed exactly in the parameter ConfigMap's
+	// cleanupUsernames. It is compared with whitespace normalized, so wildcard,
+	// prefix, group-based or null-params-allows-all variants are rejected.
 	deletionProtectionExpression = `(namespaceObject != null && has(namespaceObject.metadata) &&
 has(namespaceObject.metadata.deletionTimestamp)) ||
 (oldObject != null && has(oldObject.spec) && has(oldObject.spec.lifecycle) &&
-oldObject.spec.lifecycle == 'Retired')`
+oldObject.spec.lifecycle == 'Retired') ||
+(params != null && has(params.data) && 'cleanupUsernames' in params.data &&
+request.userInfo.username != '' &&
+params.data.cleanupUsernames.replace('\n', ',').split(',').exists(entry,
+entry.trim() != '' && entry.trim() == request.userInfo.username))`
 )
 
 type kustomization struct {
@@ -331,20 +337,35 @@ func checkDeletionProtection(root string, objects []*unstructured.Unstructured, 
 	spec := policy.Object["spec"].(map[string]any)
 	_, hasConditions := spec["matchConditions"]
 	_, hasVariables := spec["variables"]
-	_, hasParams := spec["paramKind"]
-	if policy.GetName() != deletionProtection || failurePolicy != "Fail" || !policyMatchesDeviceDelete(policy) || !unscopedConstraints(policy) || hasConditions || hasVariables || hasParams || len(validations) != 1 {
+	if policy.GetName() != deletionProtection || failurePolicy != "Fail" || !policyMatchesDeviceDelete(policy) || !unscopedConstraints(policy) || hasConditions || hasVariables || len(validations) != 1 {
 		return fmt.Errorf("%s: Device deletion policy must fail closed, match DELETE on devices and have no exemptions", root)
 	}
+	if !configMapParamKind(spec["paramKind"]) {
+		return fmt.Errorf("%s: Device deletion policy paramKind must be exactly core/v1 ConfigMap", root)
+	}
 	if expression, _, _ := unstructured.NestedString(validations[0].(map[string]any), "expression"); strings.Join(strings.Fields(expression), " ") != strings.Join(strings.Fields(deletionProtectionExpression), " ") {
-		return fmt.Errorf("%s: Device deletion policy must allow DELETE only for a Retired Device or a deleting namespace", root)
+		return fmt.Errorf("%s: Device deletion policy must allow DELETE only for a Retired Device, a deleting namespace or an exactly listed cleanup username", root)
 	}
 	actions, _, _ := unstructured.NestedStringSlice(binding.Object, "spec", "validationActions")
 	_, hasMatch := binding.Object["spec"].(map[string]any)["matchResources"]
-	_, hasParamRef := binding.Object["spec"].(map[string]any)["paramRef"]
-	if len(actions) != 1 || actions[0] != "Deny" || hasMatch || hasParamRef {
+	if len(actions) != 1 || actions[0] != "Deny" || hasMatch {
 		return fmt.Errorf("%s: Device deletion binding must Deny in every namespace", root)
 	}
+	// The component ships the cleanup identity off. A deploying repository
+	// adds the paramRef, with parameterNotFoundAction: Deny, alongside its own
+	// ConfigMap; a paramRef here, and above all one that Allows a missing
+	// parameter (which skips the policy), is rejected.
+	if _, hasParamRef := binding.Object["spec"].(map[string]any)["paramRef"]; hasParamRef {
+		return fmt.Errorf("%s: Device deletion binding must not set paramRef; deploying repositories enable the cleanup identity", root)
+	}
 	return nil
+}
+
+// configMapParamKind reports whether a policy paramKind is exactly core/v1
+// ConfigMap, the only parameter the cleanup identity reads.
+func configMapParamKind(value any) bool {
+	paramKind, ok := value.(map[string]any)
+	return ok && len(paramKind) == 2 && paramKind["apiVersion"] == "v1" && paramKind["kind"] == "ConfigMap"
 }
 
 func policyMatchesDeviceDelete(policy *unstructured.Unstructured) bool {

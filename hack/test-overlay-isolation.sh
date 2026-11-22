@@ -479,13 +479,36 @@ weakened "renamed Device deletion policy and binding" "components/device-deletio
 weakened "audit-only Device deletion binding" "must Deny in every namespace" -e 's/validationActions: \[Deny\]/validationActions: [Audit]/'
 weakened "warn-only Device deletion binding" "must Deny in every namespace" -e 's/validationActions: \[Deny\]/validationActions: [Warn]/'
 weakened "fail-open Device deletion policy" "must fail closed" -e 's/failurePolicy: Fail/failurePolicy: Ignore/'
-weakened "always-true Device deletion expression" "allow DELETE only for a Retired Device or a deleting namespace" -e "s/oldObject.spec.lifecycle == 'Retired')/oldObject.spec.lifecycle == 'Retired') || true/"
-weakened "Decommissioning Device deletion allowed" "allow DELETE only for a Retired Device or a deleting namespace" -e "s/== 'Retired')/!= 'Active')/"
+weakened "always-true Device deletion expression" "allow DELETE only for a Retired Device, a deleting namespace or an exactly listed cleanup username" -e "s/oldObject.spec.lifecycle == 'Retired')/oldObject.spec.lifecycle == 'Retired') || true/"
+weakened "Decommissioning Device deletion allowed" "allow DELETE only for a Retired Device, a deleting namespace or an exactly listed cleanup username" -e "s/== 'Retired')/!= 'Active')/"
 weakened "namespace-scoped Device deletion policy" "must fail closed" -e 's/    matchPolicy: Equivalent/    matchPolicy: Equivalent\
     namespaceSelector: {matchLabels: {protected: "true"}}/'
 weakened "subject exemption in Device deletion policy" "must fail closed" -e 's/^  validations:/  matchConditions:\
     - name: not-admin\
       expression: "request.userInfo.username != '\''admin'\''"\
   validations:/'
+
+# The cleanup identity clause admits only an exactly listed, non-empty
+# username from a ConfigMap parameter, and the component ships it off.
+allowed="allow DELETE only for a Retired Device, a deleting namespace or an exactly listed cleanup username"
+weakened "always-true cleanup identity clause" "$allowed" -e "s/entry.trim() != '' && entry.trim() == request.userInfo.username/true/"
+weakened "wildcard cleanup username" "$allowed" -e "s/entry.trim() == request.userInfo.username/(entry.trim() == '*' || entry.trim() == request.userInfo.username)/"
+weakened "prefix cleanup username" "$allowed" -e "s/entry.trim() == request.userInfo.username/request.userInfo.username.startsWith(entry.trim())/"
+weakened "group-based cleanup exemption" "$allowed" -e "s/entry.trim() == request.userInfo.username))/entry.trim() == request.userInfo.username)) ||\\
+        (params != null \&\& request.userInfo.groups.exists(group, group in params.data.cleanupUsernames.split(',')))/"
+weakened "absent params allowing every Device deletion" "$allowed" -e "s/(params != null && has(params.data)/(params == null || has(params.data)/"
+weakened "empty username matching an empty entry" "$allowed" -e "s/entry.trim() != '' && entry.trim() == request.userInfo.username/entry.trim() == request.userInfo.username/" -e "/request.userInfo.username != '' &&\$/d"
+weakened "Secret paramKind" "paramKind must be exactly core/v1 ConfigMap" -e 's/^    kind: ConfigMap$/    kind: Secret/'
+weakened "missing paramKind" "paramKind must be exactly core/v1 ConfigMap" -e '/^  paramKind:$/d' -e '/^    apiVersion: v1$/d' -e '/^    kind: ConfigMap$/d'
+weakened "Allow parameterNotFoundAction in the component" "must not set paramRef" -e 's/^  validationActions: \[Deny\]/  validationActions: [Deny]\
+  paramRef:\
+    name: synthetic-device-cleanup\
+    namespace: synthetic-device-cleanup\
+    parameterNotFoundAction: Allow/'
+weakened "cleanup identity enabled in the component" "must not set paramRef" -e 's/^  validationActions: \[Deny\]/  validationActions: [Deny]\
+  paramRef:\
+    name: synthetic-device-cleanup\
+    namespace: synthetic-device-cleanup\
+    parameterNotFoundAction: Deny/'
 
 "$repo_root/hack/validate-overlay-isolation.sh" "$fixture_root/config" "$fixture_root/config/standalone"

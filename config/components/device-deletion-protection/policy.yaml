@@ -3,20 +3,36 @@
 # spec.lifecycle to Decommissioning and then Retired; the CRD rejects every
 # other path to Retired, and Retired is terminal.
 #
-# The one other exception is a Device whose namespace is being deleted
-# (namespaceObject.metadata.deletionTimestamp is set). Deleting a namespace is
-# the privileged escape hatch: it lets the namespace controller finish and
-# takes its Devices with it. Nothing keys off who makes the request, and there
-# are no exemptions. The API server runs admission once per object for
-# deletecollection, garbage collection and namespace cleanup, so each of those
-# paths is held to the same rule. A missing namespace object or an evaluation
-# error denies the request (failurePolicy: Fail).
+# Three exceptions admit a DELETE:
+#
+# 1. The Device's namespace is being deleted
+#    (namespaceObject.metadata.deletionTimestamp is set). Deleting a namespace
+#    is the privileged escape hatch: it lets the namespace controller finish
+#    and takes its Devices with it.
+# 2. The Device is Retired.
+# 3. The request's username is listed, exactly, in the cleanupUsernames key of
+#    the binding's parameter ConfigMap. This lets a project cleanup controller
+#    drain Devices in place, which namespace deletion cannot do for `default`.
+#    Entries are separated by commas or newlines and trimmed; empty entries
+#    and an empty username never match. Groups, prefixes and wildcards are not
+#    consulted.
+#
+# The binding below has no paramRef, so params is null and exception 3 is off.
+# A deploying repository turns it on by adding the ConfigMap and patching the
+# binding with a paramRef that sets parameterNotFoundAction: Deny; a missing
+# ConfigMap then denies every Device DELETE. The API server runs admission once
+# per object for deletecollection, garbage collection and namespace cleanup, so
+# each of those paths is held to the same rule. A missing namespace object or
+# an evaluation error denies the request (failurePolicy: Fail).
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: fleet-device-deletion-protection
 spec:
   failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
   matchConstraints:
     matchPolicy: Equivalent
     resourceRules:
@@ -29,13 +45,20 @@ spec:
         (namespaceObject != null && has(namespaceObject.metadata) &&
         has(namespaceObject.metadata.deletionTimestamp)) ||
         (oldObject != null && has(oldObject.spec) && has(oldObject.spec.lifecycle) &&
-        oldObject.spec.lifecycle == 'Retired')
+        oldObject.spec.lifecycle == 'Retired') ||
+        (params != null && has(params.data) && 'cleanupUsernames' in params.data &&
+        request.userInfo.username != '' &&
+        params.data.cleanupUsernames.replace('\n', ',').split(',').exists(entry,
+        entry.trim() != '' && entry.trim() == request.userInfo.username))
       reason: Forbidden
       message: >-
-        Only a Retired Device can be deleted. Move the Device to Decommissioning,
-        then Retired, first; its identity must stay visible to duplicate-hardware
-        checks while it is in service.
+        A Device can be deleted only when it is Retired, when its namespace is
+        being deleted, or by a configured cleanup identity. Move the Device to
+        Decommissioning, then Retired, first; its identity must stay visible to
+        duplicate-hardware checks while it is in service.
 ---
+# No paramRef: params is null and only the namespace and Retired exceptions
+# apply. See docs/development/inventory-capacity-registration.md#cleanup-identity.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
