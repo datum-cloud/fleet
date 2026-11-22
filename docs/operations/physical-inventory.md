@@ -333,15 +333,28 @@ each spec change to advance `provenance.recordedAt`, and accepted Device
 `reportedPlacement.method`/`snapshotDigest`. These fields are gone. The served
 and stored version remains `v1alpha1`; this is an alpha breaking change.
 
-No migration is needed. Each schema is structural and does not preserve unknown
-fields, so the API server prunes the removed fields from stored objects when it
-reads them and drops them from requests; they leave storage on the next write.
+Records that still validate without the removed fields need no migration. Each
+schema is structural and does not preserve unknown fields, so the API server
+prunes the removed fields from stored objects when it reads them and drops them
+from requests; they leave storage on the next write.
+
+Two kinds of stored record no longer validate once pruned:
+
+- A Device whose only identity was `identity.sourceIdentity` is left with no
+  serial or system UUID. Because `identity` is immutable, delete it and create
+  a new Device with a serial or system UUID.
+- A Device whose `reportedPlacement` lacks `reason` or `reference` must gain
+  both the next time its report changes.
+
+Until then, such a record can still be read and deleted, and it accepts
+metadata or status updates that leave the invalid fields unchanged, through
+CRD validation ratcheting. Ratcheting is always on from Kubernetes 1.33, and
+Milo builds on 1.37. Any other spec change is rejected until the record is
+valid.
 A client that still sends them is not rejected unless it asks for strict field
 validation: by default the server drops the fields and returns an unknown-field
 warning, while strict validation (the `kubectl` default) returns an error.
-Remove the fields from GitOps sources and other writers. An old reported
-placement that lacks `reason` or `reference` must gain both the next time its
-report changes.
+Remove the fields from GitOps sources and other writers.
 
 Retirement happened in two steps so that GitOps-applied records could drop the
 fields first: provenance became optional and stopped gating edits, then the
