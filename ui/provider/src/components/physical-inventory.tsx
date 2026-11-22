@@ -607,7 +607,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           {inventory.issues?.[section.kind] ? <><InventoryDirectoryHeading section={section} onRetry={onRetry} management={management} /><InventoryToolbar section={section} /><InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /></> : selectedName !== null ? (
             <>
               <div className="inventory-list-heading"><Link to={href(section.kind)}>← Back to {section.title.toLowerCase()}</Link>{onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>}</div>
-              <div ref={heading} tabIndex={-1}><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} directory={href(section.kind)} actions={management} /></div>
+              <div ref={heading} tabIndex={-1}><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} actions={management} /></div>
               {placementEditor}
               {selected ? (
                 <>

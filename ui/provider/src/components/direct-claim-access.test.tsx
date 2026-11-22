@@ -26,6 +26,9 @@ it.each(['Facility', 'Rack', 'PowerFeed'] as const)('direct claim route hides de
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'reviewer' } } }), element: <Outlet />, children: [{ path: 'plugins/:slug/inventory/:namespace/:claim', element: <DeviceClaimDetail /> }] }], { initialEntries: [`/plugins/test/inventory/default/${claim.metadata.name}`] });
   render(<RouterProvider router={router} />);
   await screen.findByTestId('fleet-plugin-claim');
+  expect(screen.getByRole('tab', { name: 'Installation plans' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('link', { name: 'Claims & registrations' })).toHaveAttribute('href', '/plugins/test/inventory?kind=DeviceClaim');
+  expect(screen.getByRole('link', { name: '← All claims' })).toHaveAttribute('href', '/plugins/test/inventory?kind=DeviceClaim');
   expect(screen.queryAllByText(/secret-denied-reference/)).toEqual([]);
   router.dispose();
 });

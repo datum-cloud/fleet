@@ -1,5 +1,60 @@
 # Staff physical inventory UI
 
+## Grouped inventory navigation (implemented)
+
+This follow-up starts from PR133's exact head
+`15f99a3234019faac8dca53248216d7719b60f97`. PR133 merged into
+`feat/manual-inventory-records` as `ce65b369ccf4a0d113cd23db7ab5052b089a5b87`;
+this navigation change retains that required source head rather than incorporating
+unrelated target-branch changes. It supersedes the flat nine-category navigation
+described in the historical notes below, not inventory contracts or IAM.
+
+| Primary route tab | Secondary navigation | Meaning |
+| --- | --- | --- |
+| Equipment | Devices, Cables, Power feeds | Physical assets and recorded connections/supplies |
+| Locations | Operational sites, Facilities, Racks | Site operational membership is distinct from physical Facility premises and rack containment |
+| Installation plans | None | The directory remains **Claims & registrations**: DeviceClaim intent, legacy slots, and registration history, not a claim that every legacy record is an installation plan or allocates capacity |
+| Hardware catalog | Manufacturers, Device types | Reference descriptions/templates, not installed assets or available capacity |
+
+- Uses the installed Datum `Tabs`, `TabsList variant="line"`, and
+  `TabsLinkTrigger` with React Router links, matching the pinned Compute and
+  cloud-portal sources. No custom underline imitation, sidebar, or category menu.
+  Primary tabs remain mounted; secondary tabs depend only on the selected group,
+  never access results. Each row scrolls horizontally on narrow screens.
+- Equipment / Devices is the default. Group links select the first kind unless
+  already in that group. Existing `?kind=...`, record/namespace bookmarks, child
+  create routes, and legacy claim URLs remain valid. Detail and task breadcrumbs
+  include group and category, for example Equipment / Devices / record name.
+  Protected names appear only after successful access checks, not from URL text.
+- Search, filters, refresh, and Create remain page controls, not navigation.
+  Same-category links retain `q`, `location`, and `model`; switching categories
+  starts an unfiltered directory, and browser Back/Forward restores prior URLs.
+  Clicking the already-current tab is a no-op, not an implicit refresh.
+- Same-principal presentation navigation reuses authorized default-namespace
+  collection data, including changes to the three known client-side filters.
+  The narrow presentation allowlist does not include unknown query parameters,
+  route changes, form submissions, or explicit revalidation. Host loaders still
+  verify navigations; changed principal, logout, real denial, hidden/pagehide,
+  and unknown-scope boundaries still fence/clear private data. Operation
+  generations restart independently of retained read caches.
+- Route tabs use manual activation: arrows/Home/End move focus, Enter or Space
+  activates the focused link. Lists are named and selected tabs expose their
+  selected/current state, with visible keyboard focus. No dangling panel IDs are
+  emitted for route-linked tabs. Dirty dialog/task navigation, immutable edit
+  baselines, unknown write outcomes, and visible blur/focus no-op behavior remain.
+
+Synthetic validation covers direct links for all nine kinds, group defaults,
+detail/task breadcrumbs, dirty task navigation, keyboard focus/activation,
+Back/Forward and filters, stable access-state navigation, and zero additional
+collection reads for same-principal presentation changes. Provider and consumer
+full tests, typechecks, and production builds pass. Local Chromium fixture checks
+at 1280px and 390px verify actual underline components, mobile scroll containment,
+group and secondary routes, rack breadcrumbs, and Arrow/End/Enter/Space navigation
+without page errors. The 390px page stays 390px wide while the primary tab row
+scrolls internally. These are not authenticated staff-portal or staging acceptance.
+No live writes, deployment, schema changes, or new capacity-allocation semantics
+are introduced; Go validation is not rerun because this follow-up changes no Go.
+
 ## Default-only directory and stable controls
 
 Implemented on top of `baa210318fe17927f447a8e9e9e8053a23f6b173` on
@@ -20,8 +75,8 @@ access-dependent navigation descriptions in the historical phase notes below.
   projections only use readable default records. Inventory query cache keys
   include the fixed namespace; real denial still redacts cached data and drafts.
 - The namespace input and Namespace & access disclosure are removed. Namespace
-  columns and repeated default labels are unnecessary in this UI. The nine public
-  category labels never disappear or change their active default because of
+  columns and repeated default labels are unnecessary in this UI. Public group
+  and selected-group category labels never disappear or change their active default because of
   access results. No private record names or counts appear in the public shell.
 - Pending, allowed, and denied directory states share heading, action, count,
   status, and search/filter layout slots. Actions remain mounted and disabled
@@ -67,7 +122,8 @@ archives (these are source observations, not authenticated visual acceptance):
 
 - Directory, details, and task pages use a local composition of Datum Breadcrumb
   and PageTitle, with explicit accessible headings and stable action/status slots.
-  Existing line-style Bare Metal tabs and nine inventory categories remain; no
+  Existing line-style Bare Metal tabs remain; the grouped-navigation follow-up
+  organizes the nine inventory categories without changing their contracts. No
   new global navigation or unsupported Activity/audit surface is added.
 - Facility/Rack creation and portal-owned Facility/Rack/Device/Cable display-name
   edits use controlled Datum Dialog. Reported-location correction is a separate

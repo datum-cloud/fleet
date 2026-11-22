@@ -99,6 +99,20 @@ to that array instead.
 
 ## Differences from the consumer plugin
 
+Inventory uses four route-linked Datum underline groups: Equipment (Devices,
+Cables, Power feeds), Locations (Operational sites, Facilities, Racks), Installation
+plans, and Hardware catalog (Manufacturers, Device types). Only the selected
+group's secondary navigation is shown. Installation plans opens the existing
+Claims & registrations directory: legacy slots and registrations are not all
+installation plans, and claims do not allocate capacity. Site membership and
+Facility premises remain distinct. The default is Equipment / Devices.
+Search/filter/refresh/Create stay in the page toolbar. Existing query bookmarks,
+detail and task routes work with group/category breadcrumbs; Back/Forward restores
+filters. Static navigation survives access checks and denial without exposing
+protected names or counts. Rows scroll horizontally on small screens, with
+keyboard-focus navigation and Enter/Space link activation. See the
+[implemented navigation and safety boundaries](../../docs/development/staff-inventory-ui.md#grouped-inventory-navigation-implemented).
+
 The Inventory tab loads all six physical inventory collections with API pagination.
 Counts describe loaded records, not capacity or verified equipment. Unknown
 occupancy, power budgets, and ambiguous bindings stay unknown. Contextual help

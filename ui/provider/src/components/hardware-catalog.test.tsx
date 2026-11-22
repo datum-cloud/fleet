@@ -128,10 +128,10 @@ describe('hardware catalog readers', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'private old vendor' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
     expect(screen.getByRole('link', { name: 'Private vendor label' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /Device types/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Device types' }));
     fireEvent.click(screen.getByRole('link', { name: model.spec.displayName }));
     expect(screen.getByText(/Template-only port/)).toBeInTheDocument();
-    expect(screen.getByText(/not installed|No installed assets/)).toBeInTheDocument();
+    expect(screen.getAllByText(/not installed|No installed assets/).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /create|edit|delete|apply|select/i })).not.toBeInTheDocument();
   });
 

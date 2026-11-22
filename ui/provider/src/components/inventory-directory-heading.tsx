@@ -11,7 +11,7 @@ import { InventoryPageTitle } from './inventory-page-title';
 export function InventoryDirectoryHeading({ section, count, management, onRetry }: { section: typeof sections[number]; count?: string; management?: ReactNode; onRetry?: () => void }) {
   const creatable = ['Facility', 'Rack', 'Device', 'Cable', 'DeviceClaim'].includes(section.kind);
   return <div className="inventory-topline inventory-directory-title">
-    <InventoryPageTitle title={section.title} description={section.description} actions={<>
+    <InventoryPageTitle title={section.title} category={section} description={section.description} actions={<>
       <span className="inventory-record-count inventory-muted">{count}</span>
       <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!onRetry} onClick={onRetry}>Refresh inventory</Button>
     {management ?? <><div className="inventory-management-controls">{creatable && <Button type="secondary" theme="outline" size="small" htmlType="button" disabled>Create {section.kind === 'DeviceClaim' ? 'installation plan' : section.kind.toLowerCase()}</Button>}</div><p role="status" className="inventory-management-status" /></>}

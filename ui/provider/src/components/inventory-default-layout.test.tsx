@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { PhysicalInventory } from './physical-inventory';
 import { InventoryNavigation, sections } from './inventory-navigation';
+import { inventoryGroup } from './inventory-groups';
 import { InventoryPendingShell } from './inventory-directory-heading';
 import { toInventory, type Inventory } from '../inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
@@ -34,7 +35,8 @@ it.each(sections)('keeps $kind category, heading, action and filter structure ac
   const navMarkup = nav.innerHTML;
   const pendingShape = shape(result.container);
   const toolbarLabels = [...result.container.querySelectorAll('.inventory-toolbar [aria-label]')].map(element => element.getAttribute('aria-label'));
-  expect(within(nav).getAllByRole('link')).toHaveLength(9);
+  const group = inventoryGroup(section.kind);
+  expect(within(nav).getAllByRole('tab')).toHaveLength(4 + (group.kinds.length > 1 ? group.kinds.length : 0));
   expect(screen.getByRole('heading', { name: section.title })).toBeInTheDocument();
   expect(screen.getByRole('searchbox')).toBeDisabled();
   expect(result.container.textContent).not.toMatch(/Private vendor|Private model|Example compute server|\d+ of \d+ records/);
@@ -88,7 +90,7 @@ it.each(sections)('rejects a forced foreign $kind detail even when a same-named 
   expect(screen.getByText(/only supports the default namespace/)).toBeInTheDocument();
   expect(screen.queryByText('Foreign private record')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Edit display name|Correct location/ })).not.toBeInTheDocument();
-  fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: section.title }));
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('tab', { name: section.kind === 'DeviceClaim' ? 'Installation plans' : section.title }));
   expect(screen.queryByText('Foreign private record')).not.toBeInTheDocument();
   expect(screen.queryByRole('columnheader', { name: 'Namespace' })).not.toBeInTheDocument();
 });
