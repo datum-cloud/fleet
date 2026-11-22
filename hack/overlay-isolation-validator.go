@@ -27,13 +27,23 @@ const (
 	localProjectStandIn = "fleet.datumapis.com/local-project-stand-in"
 	sharedNamespace     = "fleet.datumapis.com/shared-with-standalone"
 
-	// Device deletion protection is optional per environment. Only the
-	// production-style roots below may render it, and they must.
+	// Device deletion protection is a reusable component that deploying
+	// repositories opt into. No root in this repository may render it, and the
+	// component rendered alone must be the exact fail-closed policy.
 	deletionProtection          = "fleet-device-deletion-protection"
 	deletionProtectionComponent = "components/device-deletion-protection"
-)
+	// inventoryComponent defines the Device CRD. A config tree that has it
+	// must also ship the deletion protection component.
+	inventoryComponent = "components/inventory"
 
-var deletionProtectedRoots = []string{"milo-production"}
+	// deletionProtectionExpression is the only admitted rule: a Device DELETE
+	// passes when its namespace is being deleted or it is Retired. It is
+	// compared with whitespace normalized.
+	deletionProtectionExpression = `(namespaceObject != null && has(namespaceObject.metadata) &&
+has(namespaceObject.metadata.deletionTimestamp)) ||
+(oldObject != null && has(oldObject.spec) && has(oldObject.spec.lifecycle) &&
+oldObject.spec.lifecycle == 'Retired')`
+)
 
 type kustomization struct {
 	Resources                   []string       `json:"resources"`
@@ -88,12 +98,11 @@ func main() {
 	if err := checkDeletionProtection("standalone", standaloneObjects, false); err != nil {
 		fatalf("render %s: %v", standaloneRoot, err)
 	}
+	componentPresent := false
 	if _, err := os.Stat(filepath.Join(configRoot, filepath.FromSlash(deletionProtectionComponent))); err == nil {
-		for _, root := range deletionProtectedRoots {
-			if _, err := os.Stat(filepath.Join(configRoot, root)); err != nil {
-				fatalf("production-style root %s must exist and install Device deletion protection: %v", root, err)
-			}
-		}
+		componentPresent = true
+	} else if _, err := os.Stat(filepath.Join(configRoot, filepath.FromSlash(inventoryComponent))); err == nil {
+		fatalf("%s defines Devices, so %s must exist for deploying repositories to opt into", inventoryComponent, deletionProtectionComponent)
 	}
 
 	entries, err := discover(configRoot)
@@ -101,7 +110,7 @@ func main() {
 	if len(entries) == 0 {
 		fatalf("no Kustomize entry points found below %s", configRoot)
 	}
-	checked := 0
+	checked, componentChecked := 0, false
 	for _, entry := range entries {
 		root := filepath.Dir(entry)
 		if v.definitionRoot(root) {
@@ -124,15 +133,16 @@ func main() {
 		check(err)
 		relative = filepath.ToSlash(relative)
 		required := relative == deletionProtectionComponent
-		for _, protected := range deletionProtectedRoots {
-			required = required || relative == protected
-		}
+		componentChecked = componentChecked || required
 		if err := checkDeletionProtection(relative, objects, required); err != nil {
 			fatalf("render %s: %v", root, err)
 		}
 	}
 	if checked == 0 {
 		fatalf("no non-standalone Kustomize entry point was validated")
+	}
+	if componentPresent && !componentChecked {
+		fatalf("%s was not rendered on its own", deletionProtectionComponent)
 	}
 }
 
@@ -287,9 +297,9 @@ func (v *validator) checkObject(object *unstructured.Unstructured) error {
 	return nil
 }
 
-// checkDeletionProtection requires the exact deny-all Device DELETE policy and
-// its binding in production-style roots, and forbids either object anywhere
-// else, so test and synthetic roots keep Device deletion available.
+// checkDeletionProtection requires the exact Device DELETE policy and its
+// binding when the component is rendered alone, and forbids either object in
+// every other root: deploying repositories opt in, this repository does not.
 func checkDeletionProtection(root string, objects []*unstructured.Unstructured, required bool) error {
 	var policy, binding *unstructured.Unstructured
 	for _, object := range objects {
@@ -309,26 +319,29 @@ func checkDeletionProtection(root string, objects []*unstructured.Unstructured, 
 	}
 	if !required {
 		if policy != nil || binding != nil {
-			return fmt.Errorf("%s renders Device deletion protection; only %v may install %s", root, deletionProtectedRoots, deletionProtectionComponent)
+			return fmt.Errorf("%s renders Device deletion protection; no root in this repository may include %s, deploying repositories opt in", root, deletionProtectionComponent)
 		}
 		return nil
 	}
 	if policy == nil || binding == nil {
-		return fmt.Errorf("production-style root %s must install the Device deletion policy and its binding", root)
+		return fmt.Errorf("%s must render the Device deletion policy and its binding", root)
 	}
 	failurePolicy, _, _ := unstructured.NestedString(policy.Object, "spec", "failurePolicy")
 	validations, _, _ := unstructured.NestedSlice(policy.Object, "spec", "validations")
-	_, hasConditions := policy.Object["spec"].(map[string]any)["matchConditions"]
-	if policy.GetName() != deletionProtection || failurePolicy != "Fail" || !policyMatchesDeviceDelete(policy) || hasConditions || len(validations) != 1 {
+	spec := policy.Object["spec"].(map[string]any)
+	_, hasConditions := spec["matchConditions"]
+	_, hasVariables := spec["variables"]
+	_, hasParams := spec["paramKind"]
+	if policy.GetName() != deletionProtection || failurePolicy != "Fail" || !policyMatchesDeviceDelete(policy) || !unscopedConstraints(policy) || hasConditions || hasVariables || hasParams || len(validations) != 1 {
 		return fmt.Errorf("%s: Device deletion policy must fail closed, match DELETE on devices and have no exemptions", root)
 	}
-	if expression, _, _ := unstructured.NestedString(validations[0].(map[string]any), "expression"); expression != "false" {
-		return fmt.Errorf("%s: Device deletion policy must deny every DELETE", root)
+	if expression, _, _ := unstructured.NestedString(validations[0].(map[string]any), "expression"); strings.Join(strings.Fields(expression), " ") != strings.Join(strings.Fields(deletionProtectionExpression), " ") {
+		return fmt.Errorf("%s: Device deletion policy must allow DELETE only for a Retired Device or a deleting namespace", root)
 	}
 	actions, _, _ := unstructured.NestedStringSlice(binding.Object, "spec", "validationActions")
 	_, hasMatch := binding.Object["spec"].(map[string]any)["matchResources"]
-	_, hasParams := binding.Object["spec"].(map[string]any)["paramRef"]
-	if len(actions) != 1 || actions[0] != "Deny" || hasMatch || hasParams {
+	_, hasParamRef := binding.Object["spec"].(map[string]any)["paramRef"]
+	if len(actions) != 1 || actions[0] != "Deny" || hasMatch || hasParamRef {
 		return fmt.Errorf("%s: Device deletion binding must Deny in every namespace", root)
 	}
 	return nil
@@ -347,6 +360,44 @@ func policyMatchesDeviceDelete(policy *unstructured.Unstructured) bool {
 		}
 	}
 	return false
+}
+
+// unscopedConstraints reports whether the policy's match constraints apply to
+// every namespace and object, with no exclusions or name restrictions.
+func unscopedConstraints(policy *unstructured.Unstructured) bool {
+	constraints, _, _ := unstructured.NestedMap(policy.Object, "spec", "matchConstraints")
+	for _, key := range []string{"namespaceSelector", "objectSelector", "excludeResourceRules"} {
+		if value, found := constraints[key]; found && !emptyValue(value) {
+			return false
+		}
+	}
+	rules, _, _ := unstructured.NestedSlice(policy.Object, "spec", "matchConstraints", "resourceRules")
+	for _, raw := range rules {
+		rule, ok := raw.(map[string]any)
+		if !ok {
+			return false
+		}
+		if names, found := rule["resourceNames"]; found && !emptyValue(names) {
+			return false
+		}
+		if scope, found := rule["scope"]; found && scope != "*" && scope != "Namespaced" {
+			return false
+		}
+	}
+	return true
+}
+
+func emptyValue(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case map[string]any:
+		return len(typed) == 0
+	case []any:
+		return len(typed) == 0
+	default:
+		return false
+	}
 }
 
 func contains(values []string, value string) bool {

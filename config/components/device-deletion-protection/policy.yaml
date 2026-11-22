@@ -1,9 +1,16 @@
-# Devices are never deleted where this component is installed. Retire a
-# machine through its capacity staying Disabled instead. The API server runs
-# admission once per object for deletecollection, garbage collection and
-# namespace or project cleanup, so every one of those paths is denied too.
-# There are no exemptions: an environment that needs Device deletion does not
-# install this component.
+# A Device is deleted only after it is Retired, so a Device in service stays
+# visible to duplicate-hardware checks. Retire a Device by moving
+# spec.lifecycle to Decommissioning and then Retired; the CRD rejects every
+# other path to Retired, and Retired is terminal.
+#
+# The one other exception is a Device whose namespace is being deleted
+# (namespaceObject.metadata.deletionTimestamp is set). Deleting a namespace is
+# the privileged escape hatch: it lets the namespace controller finish and
+# takes its Devices with it. Nothing keys off who makes the request, and there
+# are no exemptions. The API server runs admission once per object for
+# deletecollection, garbage collection and namespace cleanup, so each of those
+# paths is held to the same rule. A missing namespace object or an evaluation
+# error denies the request (failurePolicy: Fail).
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -18,12 +25,16 @@ spec:
         operations: [DELETE]
         resources: [devices]
   validations:
-    - expression: 'false'
+    - expression: >-
+        (namespaceObject != null && has(namespaceObject.metadata) &&
+        has(namespaceObject.metadata.deletionTimestamp)) ||
+        (oldObject != null && has(oldObject.spec) && has(oldObject.spec.lifecycle) &&
+        oldObject.spec.lifecycle == 'Retired')
       reason: Forbidden
       message: >-
-        Devices cannot be deleted in this environment. Their identity must stay
-        visible to duplicate-hardware checks. Leave the Device in place and
-        keep its capacity Disabled.
+        Only a Retired Device can be deleted. Move the Device to Decommissioning,
+        then Retired, first; its identity must stay visible to duplicate-hardware
+        checks while it is in service.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

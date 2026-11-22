@@ -1,5 +1,6 @@
-# Optional: install wherever Device objects are admitted (the Milo control
-# plane) in environments that must never lose a Device. See
+# Reusable and opt-in: no root in this repository includes it. A deploying
+# repository that must keep in-service Devices adds it to the root it applies
+# to the Milo control plane, where Devices are admitted. See
 # docs/development/inventory-capacity-registration.md#device-deletion-protection.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
