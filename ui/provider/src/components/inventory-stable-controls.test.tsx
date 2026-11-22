@@ -75,6 +75,9 @@ it.each(cases.flatMap(test => [false, true].flatMap(strict => [false, true].map(
   expect(() => operation.assertCurrent()).not.toThrow();
   fireEvent.click(opener);
   const input = screen.getByLabelText(mode === 'location' ? 'Correction reason' : 'Display name');
+  expect(input).toHaveAttribute('data-slot', 'input');
+  expect(input.closest('label')).toHaveAttribute('data-slot', 'label');
+  if (mode === 'location') expect(screen.getByRole('button', { name: 'Save reported location' })).toHaveAttribute('type', 'submit');
   fireEvent.change(input, { target: { value: 'Safe draft' } });
   const openMarkup = document.body.innerHTML;
   for (let cycle = 0; cycle < 3; cycle++) {

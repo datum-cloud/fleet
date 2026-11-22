@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 
 // Separate from vite.config.ts on purpose: the Module Federation plugin there
@@ -6,7 +7,7 @@ import { defineConfig } from 'vitest/config';
 // process, so tests get their own minimal Vite config (React + jsdom) rather
 // than trying to make MF cooperate with vitest.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [tailwindcss(), react()],
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],

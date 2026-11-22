@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { UNSAFE_DataRouterContext, UNSAFE_DataRouterStateContext, useLocation, useNavigation, useRevalidator, useRouteLoaderData } from 'react-router';
+import { UNSAFE_DataRouterContext, UNSAFE_DataRouterStateContext, useLocation, useNavigation, useRevalidator, useRouteLoaderData, type Location } from 'react-router';
 import { InventoryAccessState } from './inventory-access-state';
 import { LoadingState } from './states';
 import { InventoryOperationContext, InventoryOperationGenerationContext, InventoryOperationReadyContext, InventoryOperationScope } from '../lib/inventory-operation';
@@ -42,9 +42,21 @@ export function SessionQueries({ children, principal, authority, generation }: {
   return <InventoryReadContext.Provider value={reads}><InventoryOperationContext.Provider value={scope}><InventoryOperationGenerationContext.Provider value={generation}><InventoryOperationReadyContext.Provider value={ready}><QueryClientProvider client={client}>{children}</QueryClientProvider></InventoryOperationReadyContext.Provider></InventoryOperationGenerationContext.Provider></InventoryOperationContext.Provider></InventoryReadContext.Provider>;
 }
 
-function HostedInventory({ children }: { children: ReactNode }) {
+function isPresentationNavigation(current: Location, next: Location | undefined) {
+  if (!next || current.pathname !== next.pathname || current.search === next.search) return false;
+  const currentParams = new URLSearchParams(current.search);
+  const nextParams = new URLSearchParams(next.search);
+  for (const key of ['kind', 'record', 'namespace']) {
+    currentParams.delete(key);
+    nextParams.delete(key);
+  }
+  return currentParams.toString() === nextParams.toString();
+}
+
+function HostedInventory({ children, retainPresentationData = false, pending: pendingContent = <LoadingState /> }: { children: ReactNode; retainPresentationData?: boolean; pending?: ReactNode }) {
   const host = useContext(UNSAFE_DataRouterContext);
   const [sessionGeneration, setSessionGeneration] = useState(0);
+  const [operationGeneration, setOperationGeneration] = useState(0);
   useLayoutEffect(() => {
     if (!host) return;
     const readPrincipal = (state: typeof host.router.state) => {
@@ -53,6 +65,7 @@ function HostedInventory({ children }: { children: ReactNode }) {
     };
     let observedPrincipal = readPrincipal(host.router.state);
     let pending = host.router.state.revalidation !== 'idle' || host.router.state.navigation.state !== 'idle';
+    let resetAfterPending = pending;
     return host.router.subscribe(state => {
       const nextPrincipal = readPrincipal(state);
       if (nextPrincipal !== observedPrincipal) {
@@ -61,12 +74,15 @@ function HostedInventory({ children }: { children: ReactNode }) {
       }
       if (state.revalidation !== 'idle' || state.navigation.state !== 'idle') {
         pending = true;
+        if (!retainPresentationData || state.revalidation !== 'idle' || state.navigation.formMethod || !isPresentationNavigation(state.location, state.navigation.location)) resetAfterPending = true;
       } else if (pending) {
         pending = false;
-        setSessionGeneration(current => current + 1);
+        setOperationGeneration(current => current + 1);
+        if (resetAfterPending) setSessionGeneration(current => current + 1);
+        resetAfterPending = false;
       }
     });
-  }, [host]);
+  }, [host, retainPresentationData]);
   const identity = useRouteLoaderData('layouts/milo.layout') as { user?: { metadata?: { uid?: string; name?: string } } } | undefined;
   const principal = identity?.user?.metadata?.uid ?? identity?.user?.metadata?.name;
   const location = useLocation();
@@ -116,15 +132,16 @@ function HostedInventory({ children }: { children: ReactNode }) {
     };
   }, []);
   if (failed) return <InventoryAccessState status={503} />;
-  if (checking || revalidator.state !== 'idle' || navigation.state !== 'idle') return <LoadingState />;
+  const presentationPending = retainPresentationData && !navigation.formMethod && isPresentationNavigation(location, navigation.location);
+  if (checking || revalidator.state !== 'idle' || navigation.state !== 'idle' && !presentationPending) return <>{pendingContent}</>;
   if (!principal) return <InventoryAccessState status={401} />;
-  return <SessionQueries key={JSON.stringify([principal, location.key, sessionGeneration])} principal={principal} authority={true} generation={sessionGeneration}>{children}</SessionQueries>;
+  return <SessionQueries key={JSON.stringify([principal, retainPresentationData ? null : location.key, sessionGeneration])} principal={principal} authority={navigation.state === 'idle'} generation={operationGeneration}>{navigation.state !== 'idle' ? pendingContent : children}</SessionQueries>;
 }
 
-export function InventorySessionBoundary({ children }: { children: ReactNode }) {
+export function InventorySessionBoundary({ children, retainPresentationData, pending }: { children: ReactNode; retainPresentationData?: boolean; pending?: ReactNode }) {
   const router = useContext(UNSAFE_DataRouterStateContext);
   const preview = useContext(InventoryPreviewContext);
   if (preview) return <>{children}</>;
   if (!router) return <InventoryAccessState status={401} />;
-  return <HostedInventory>{children}</HostedInventory>;
+  return <HostedInventory retainPresentationData={retainPresentationData} pending={pending}>{children}</HostedInventory>;
 }

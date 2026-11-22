@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PhysicalInventory } from './physical-inventory';
 import { toInventory } from '../inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
+import { buttonVariants } from '@datum-cloud/datum-ui/button';
+import { cn } from '@datum-cloud/datum-ui/utils';
 
 const inventory = toInventory(fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords);
 
@@ -13,6 +15,27 @@ function browse(query = '', data = inventory) {
 }
 
 describe('hardware directory', () => {
+  it('uses Datum inputs, link buttons and table slots without nesting interactive controls', () => {
+    browse();
+    expect(screen.getByRole('searchbox', { name: 'Search devices' })).toHaveAttribute('data-slot', 'input');
+    const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
+    const devices = within(navigation).getByRole('link', { name: /^Devices/ });
+    expect(devices).toHaveClass(...cn(buttonVariants({ type: 'secondary', theme: 'light', size: 'small' })).split(' '));
+    expect(devices).toHaveAttribute('aria-current', 'page');
+    expect(navigation.querySelector('button')).toBeNull();
+    const table = screen.getByRole('table');
+    expect(table).toHaveAttribute('data-slot', 'table');
+    expect(within(table).getAllByRole('columnheader')[0]).toHaveAttribute('data-slot', 'table-head');
+    fireEvent.click(within(navigation).getByRole('link', { name: /^Facilities/ }));
+    expect(screen.getByRole('searchbox', { name: 'Search facilities' })).toHaveValue('');
+  });
+
+  it('uses the Datum card access state while keeping retry and region semantics', () => {
+    browse('', { ...inventory, issues: { Device: { status: 403 }, Site: { status: 403 }, Facility: { status: 403 }, Rack: { status: 403 }, DeviceClaim: { status: 403 }, Cable: { status: 403 }, PowerFeed: { status: 403 } } });
+    expect(screen.getByRole('region', { name: 'Inventory access needed' })).toHaveAttribute('data-slot', 'card');
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+  });
+
   it.each(inventory.physical)('renders $kind details without provenance', record => {
     const data = structuredClone(inventory);
     for (const item of data.physical) delete item.spec.provenance;
@@ -34,7 +57,7 @@ describe('hardware directory', () => {
     expect(screen.getByText('Inventory access needed')).toBeInTheDocument();
     expect(screen.queryByText(/private-device/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Devices/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: /Facilities 1/ }));
+    fireEvent.click(screen.getByRole('link', { name: 'Facilities' }));
     expect(screen.getByRole('link', { name: 'Example facility' })).toBeInTheDocument();
   });
 
@@ -72,7 +95,7 @@ describe('hardware directory', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'no-such-serial' } });
     expect(screen.getByText('No matching records')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
-    fireEvent.click(screen.getByRole('link', { name: /Facilities 1/ }));
+    fireEvent.click(screen.getByRole('link', { name: 'Facilities' }));
     expect(screen.getByRole('searchbox')).toHaveValue('');
     expect(screen.getByRole('link', { name: 'Example facility' })).toBeInTheDocument();
   });
