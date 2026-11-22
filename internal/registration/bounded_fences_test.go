@@ -118,17 +118,17 @@ func TestLedgerExactSizeCap(t *testing.T) {
 	secret, ledger, _ := handler.Store.Read(ctx)
 	ledger.DeviceFences = []DeviceFence{{Project: "provider", UID: "device", Aliases: []string{""}}}
 	encoded, _ := json.Marshal(ledger)
-	ledger.DeviceFences[0].Aliases[0] = strings.Repeat("x", 750000-len(encoded))
+	ledger.DeviceFences[0].Aliases[0] = strings.Repeat("x", TailBudget-len(encoded))
 	if err := handler.Store.Write(ctx, secret, ledger); err != nil {
-		t.Fatalf("exactly 750000 bytes must fit: %v", err)
+		t.Fatalf("exact tail budget must fit: %v", err)
 	}
 	before := secret.ResourceVersion
 	ledger.DeviceFences[0].Aliases[0] += "x"
 	if err := handler.Store.Write(ctx, secret, ledger); err == nil || !strings.Contains(err.Error(), "ledger is full") {
-		t.Fatalf("750001 bytes must fail closed: %v", err)
+		t.Fatalf("tail budget plus one must fail closed: %v", err)
 	}
 	current, _, err := handler.Store.Read(ctx)
-	if err != nil || current.ResourceVersion != before || len(current.Data["ledger.json"]) != 750000 {
+	if err != nil || current.ResourceVersion != before || len(current.Data["ledger.json"]) != TailBudget {
 		t.Fatal("oversized write changed durable reservations")
 	}
 }

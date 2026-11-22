@@ -28,12 +28,25 @@ func requiredFences(projects []string) []admissionv1.ValidatingWebhook {
 }
 
 func VerifyFence(ctx context.Context, reader client.Reader, projects []string) error {
-	if len(projects) == 0 || slices.Contains(projects, "") || !slices.IsSorted(projects) || len(slices.Compact(slices.Clone(projects))) != len(projects) {
-		return errors.New("registration admission requires the exact sorted provider scope")
-	}
+	_, err := VerifiedFenceDigest(ctx, reader, projects)
+	return err
+}
+
+func VerifiedFenceDigest(ctx context.Context, reader client.Reader, projects []string) (string, error) {
 	var configuration admissionv1.ValidatingWebhookConfiguration
 	if err := reader.Get(ctx, client.ObjectKey{Name: "fleet-capacity-registration"}, &configuration); err != nil {
-		return errors.New("project-plane registration admission configuration is unavailable")
+		return "", errors.New("project-plane registration admission configuration is unavailable")
+	}
+	if err := verifyFenceConfiguration(configuration, projects); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(configuration.Webhooks)
+	return digest(encoded), err
+}
+
+func verifyFenceConfiguration(configuration admissionv1.ValidatingWebhookConfiguration, projects []string) error {
+	if len(projects) == 0 || slices.Contains(projects, "") || !slices.IsSorted(projects) || len(slices.Compact(slices.Clone(projects))) != len(projects) {
+		return errors.New("registration admission requires the exact sorted provider scope")
 	}
 	if !configuration.DeletionTimestamp.IsZero() {
 		return errors.New("registration admission configuration is deleting")

@@ -55,7 +55,7 @@ spec:
               port: https
           resources:
             requests: {cpu: 50m, memory: 64Mi}
-            limits: {memory: 256Mi}
+            limits: {memory: 512Mi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -66,7 +66,12 @@ spec:
             - {name: root, mountPath: /var/run/fleet/milo, readOnly: true}
             - {name: projects, mountPath: /var/run/fleet/projects, readOnly: true}
             - {name: tls, mountPath: /etc/fleet/registration, readOnly: true}
+            - {name: control, mountPath: /etc/fleet/registration-control, readOnly: true}
       volumes:
+        - name: control
+          configMap:
+            name: fleet-registration-control
+            defaultMode: 0440
         - name: config
           configMap:
             name: fleet-manager-config

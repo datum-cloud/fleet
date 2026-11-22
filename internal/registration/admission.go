@@ -42,6 +42,7 @@ type Project struct {
 type Handler struct {
 	Store       Store
 	VerifyFence func(context.Context) error
+	FenceDigest func(context.Context) (string, error)
 	Resolve     func(context.Context, string) (Project, error)
 	Authorize   func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error
 }
@@ -87,6 +88,11 @@ func projectName(actor authenticationv1.UserInfo) (string, error) {
 }
 
 func (handler *Handler) Handle(ctx context.Context, request admission.Request) admission.Response {
+	if handler.Store.RequireActive {
+		if err := handler.Ready(ctx); err != nil {
+			return admission.Denied(err.Error())
+		}
+	}
 	if request.Operation == admissionv1.Delete && request.Name == "" && ((request.Resource.Group == "" && request.Resource.Resource == "namespaces") || (request.Resource.Group == "resourcemanager.miloapis.com" && request.Resource.Resource == "projects")) {
 		return admission.Denied("lifetime deletion requires an exact resource name; collection deletion cannot prove exclusion of retained lifetimes")
 	}
@@ -139,6 +145,15 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 	secret, ledger, err := handler.Store.Read(ctx)
 	if err != nil {
 		return fmt.Errorf("registration unavailable: %w", err)
+	}
+	if _, exists := secret.Data["routing.json"]; exists {
+		route, err := decodeRouting(secret)
+		if err != nil {
+			return err
+		}
+		if route.Pending != nil {
+			return errors.New("registration expansion is fenced")
+		}
 	}
 	project, err := handler.Resolve(ctx, name)
 	if err != nil {
@@ -224,6 +239,9 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 	}
 	for _, fence := range ledger.DeviceFences {
 		if fence.Project == name && fence.UID == device.UID {
+			if (fence.ProjectUID != "" && fence.ProjectUID != entry.ProjectUID) || (fence.NamespaceUID != "" && fence.NamespaceUID != entry.NamespaceUID) || (fence.Name != "" && (fence.Name != device.Name || fence.Namespace != device.Namespace)) {
+				return ErrConflict
+			}
 			if fence.Deleted || (fence.Version != "" && fence.Version == device.ResourceVersion) {
 				return ErrConflict
 			}
@@ -357,7 +375,14 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	if request.Operation == admissionv1.Update && identicalObjects(request.OldObject.Raw, request.Object.Raw) {
 		return nil
 	}
-	fence := DeviceFence{Project: project.Identity.RouteName, UID: device.UID, Deleted: request.Operation == admissionv1.Delete}
+	var namespace corev1.Namespace
+	if err := project.Client.Get(ctx, client.ObjectKey{Name: device.Namespace}, &namespace); err != nil {
+		return err
+	}
+	if namespace.UID == "" || !namespace.DeletionTimestamp.IsZero() {
+		return errors.New("Device namespace lifetime unavailable")
+	}
+	fence := DeviceFence{Project: project.Identity.RouteName, ProjectUID: project.Identity.UID, Namespace: device.Namespace, NamespaceUID: namespace.UID, Name: device.Name, UID: device.UID, Deleted: request.Operation == admissionv1.Delete}
 	if request.Operation == admissionv1.Update {
 		current := &inventory.Device{}
 		if err := project.Client.Get(ctx, client.ObjectKeyFromObject(&old), current); err != nil {
@@ -383,6 +408,9 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 			continue
 		}
 		if (retained.Deleted && !fence.Deleted) || (request.Operation == admissionv1.Create && !reflect.DeepEqual(retained, fence)) {
+			return ErrConflict
+		}
+		if (retained.ProjectUID != "" && retained.ProjectUID != fence.ProjectUID) || (retained.NamespaceUID != "" && retained.NamespaceUID != fence.NamespaceUID) || (retained.Name != "" && (retained.Name != fence.Name || retained.Namespace != fence.Namespace)) {
 			return ErrConflict
 		}
 		for _, alias := range retained.Aliases {

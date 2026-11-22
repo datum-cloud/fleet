@@ -6,6 +6,9 @@ metadata:
 rules:
   - apiGroups: ['']
     resources: [secrets]
+    verbs: [get, create]
+  - apiGroups: ['']
+    resources: [secrets]
     resourceNames: [fleet-capacity-registration-v1]
     verbs: [get, update]
 ---

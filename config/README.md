@@ -29,6 +29,11 @@ production registration authority or its private ledger.
 The one `fleet-manager` Deployment serves every Milo project that consumes the
 `metal` service; see [project discovery](#project-discovery).
 
+The [signed expansion and transport-first contract](../docs/development/registration-storage-rollout.md)
+defines the required operator public-key ConfigMap, retained segments, activation
+gate, byte budgets and ordered parent infrastructure work. Pod TCP readiness is
+transport-only; it must not enable UI registration.
+
 The separate `fleet-registration` Deployment serves inert inventory-backed
 capacity admission only. Its TLS trust, read/SAR credentials, webhook serving CA
 and one-time private ledger bootstrap are environment-owned. Read the

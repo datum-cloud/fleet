@@ -8,14 +8,19 @@ spec:
     resourceRules:
       - apiGroups: ['']
         apiVersions: [v1]
-        operations: [UPDATE, DELETE]
+        operations: [CREATE, UPDATE, DELETE]
         resources: [secrets]
   matchConditions:
     - name: registration-ledger
-      expression: request.namespace == 'fleet-system-private' && request.name == 'fleet-capacity-registration-v1'
+      expression: request.namespace == 'fleet-system-private' && (request.name == 'fleet-capacity-registration-v1' || request.name.startsWith('fleet-registration-segment-') || request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-registration')
   validations:
-    - expression: request.operation == 'UPDATE' && request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-registration'
-      message: Registration reservations are retained; only the registration service may update this ledger.
+    - expression: >-
+        (request.operation == 'CREATE' && request.name == 'fleet-capacity-registration-v1' && request.userInfo.username != 'system:serviceaccount:fleet-system:fleet-registration') ||
+        (request.operation == 'UPDATE' && request.name == 'fleet-capacity-registration-v1' && request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-registration' &&
+          (!has(oldObject.data) || !('routing.json' in oldObject.data) ||
+            (has(object.data) && 'routing.json' in object.data && 'ledger.json' in object.data && object.data['ledger.json'] == oldObject.data['ledger.json']))) ||
+        (request.operation == 'CREATE' && request.name.startsWith('fleet-registration-segment-') && request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-registration' && has(object.immutable) && object.immutable)
+      message: Registration roots cannot be downgraded or deleted; only the service may update the root or create immutable retained segments.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
