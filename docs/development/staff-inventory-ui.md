@@ -139,6 +139,9 @@ pixel identity or completed authenticated staging acceptance.
 - Create Facility/Rack facts; rack height is optional. Create an Installation
   plan at a known Facility or Rack with unknown unit position, then separately
   register a Device with a real serial or system UUID and typed components.
+  The form does not offer the `identity.unidentified` marker; record such a
+  Device through the API. Directory and detail views show the marker and its
+  reason as "No hardware identity".
   This is not an atomic multi-record workflow or an adoption operation.
 - Create Cable records with a medium and named lanes using existing readable
   Device/PowerFeed components with recorded positions. No guessed ports, cable

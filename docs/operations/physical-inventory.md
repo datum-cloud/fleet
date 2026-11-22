@@ -28,7 +28,7 @@ where facts came from on its own labels and annotations.
 | Kind | What it is | Writer |
 | --- | --- | --- |
 | `DeviceClaim` | An observational installation plan with expected model and known placement. New records use typed placement and Cable references; existing long-lived slots retain their legacy representation. | Installation planner, through the record's explicitly assigned writer |
-| `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, the model, an optional BMC endpoint, and interfaces. | The registrar (an operator, for now) |
+| `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, or an explicit marker that neither is on record, the model, an optional BMC endpoint, and interfaces. | The registrar (an operator, for now) |
 | `Facility` / `Rack` | Explicit premises and rack definitions; membership is not free-capacity evidence. | Inventory operator through the environment's existing writer |
 | `Cable` / `PowerFeed` | Typed termination/lane topology and physical supply dependencies. | Inventory operator through the environment's existing writer |
 
@@ -131,7 +131,8 @@ in the provider project. The plugin never writes.
 | --- | --- | --- |
 | Records carry no attribution fields | All six | Resource audit logs record who changed a record and `metadata.creationTimestamp` records when it was created. A writer that needs to remember where facts came from uses its own labels and annotations. |
 | `claimRef` is required and immutable | Device | A Device binds to exactly one claim, and moving hardware to another slot is not an edit. |
-| `identity` is immutable, including adding missing fields; requires a serial or system UUID | Device | Neither proves chassis identity. Legacy bindings are preserved; hardware handover is not automated. |
+| `identity` is immutable, including adding missing fields; requires a serial or system UUID, or `unidentified: true` with a reason and neither | Device | Neither proves chassis identity. Legacy bindings are preserved; hardware handover is not automated. See [Devices without hardware identity](#devices-without-hardware-identity). |
+| An unidentified Device cannot record a `bmc` endpoint | Device | Equipment that cannot be matched to a chassis must not be enrolled as machine capacity. |
 | Serial is optional | DeviceClaim | It is usually unknown at plan time. |
 | Port and interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
@@ -141,6 +142,67 @@ in the provider project. The plugin never writes.
 The CRDs cannot check that `claimRef` names an existing DeviceClaim, because
 CEL cannot read other objects. Until a registrar enforces it, the operator
 creates the claim first.
+
+## Devices without hardware identity
+
+Some equipment has no serial or system UUID on record: passive gear such as
+patch panels and cable managers, and active gear such as PDUs, switches,
+routers or console servers whose serial was never recorded or does not exist.
+Cables reference Devices, so this equipment still needs a Device record.
+Record it with an explicit marker instead of inventing a serial:
+
+```yaml
+spec:
+  claimRef:
+    name: rack-01-u40
+  identity:
+    manufacturer: Example Vendor
+    model: Example 24-port panel
+    unidentified: true
+    unidentifiedReason: passive patch panel; no serial on the chassis
+```
+
+The rules:
+
+- `identity.unidentified` may only be `true`. Omit it for a Device with a
+  serial or system UUID; there is no `false` spelling.
+- `identity.unidentifiedReason` is required with the marker and allowed only
+  with it: 1 to 1024 characters, not all whitespace. Say why no identity is
+  recorded, not where the record came from.
+- A marked Device carries no `serial` and no `systemUUID`. Every Device has
+  exactly one of the two forms.
+- The marker is part of `identity` and is immutable. If a serial is found or
+  recorded later, create a new Device with that identity against the same
+  claim, as for a hardware swap. Cables that name the old Device keep naming
+  it until they are updated.
+- A marked Device cannot record `bmc`.
+
+Use the marker only when no serial or system UUID is known. Do not use it to
+skip reading a serial that the equipment reports, and do not put an asset tag
+or provider host ID in `serial` to avoid it.
+
+**What it prevents.** A Device without hardware identity cannot back a
+MachineCapacity. Nothing can match it to a chassis, so enrollment, wiping and
+allocation could reach the wrong machine. Two things enforce this today:
+
+- Admission rejects a `bmc` endpoint on a marked Device, so it has no
+  management endpoint to enroll through.
+- `CapacityBackingError` in `internal/api/inventory/v1alpha1` is the
+  resolution contract for `MachineCapacity.spec.deviceRef`. It returns
+  `ErrUnidentifiedDevice` for a marked Device and `ErrDeviceIdentityMissing`
+  for one with no identity at all. Any resolver of `deviceRef` must call it
+  and treat a non-nil result as ineligible.
+
+Nothing resolves `deviceRef` yet: the allocator uses the name only to form the
+asset key and never reads the Device. Admission cannot check the reference
+either, because MachineCapacity is a separate API group and CEL cannot read
+other objects. Until a resolver exists, operators must not create a
+MachineCapacity whose `deviceRef` names a marked Device, just as they must not
+name a Device that does not exist.
+
+A marked Device still binds to a DeviceClaim through `claimRef`. Do not bind it
+to a claim whose `expectedIdentity.serial` is set; that claim expects
+identified hardware. Admission cannot check this across objects.
 
 Use `unmappedMACAddresses` for MACs detected on the asset that cannot yet be
 attributed to a named port. Do not guess a mapping; #63 requires an
@@ -165,7 +227,9 @@ authenticated, complete NIC mapping before any network path depends on it.
    with position, height and face. Never guess a rack position. Use a new record
    only for a genuinely new installation, not to evade an existing immutable binding.
 4. Register an actual Device against that claim only when its identity is known.
-   A manual Device requires a real serial or system UUID; if neither is known,
+   A manual Device requires a real serial or system UUID. If neither exists or
+   was recorded, use the explicit
+   [no-hardware-identity marker](#devices-without-hardware-identity); otherwise
    keep the plan and defer registration. Provider host IDs and asset tags are
    not serials. Use typed `components` and `topologyAuthority: Cable`; put expected
    connections in Cable records, not `ports.expectedPeer` or `interfaces.peer`.

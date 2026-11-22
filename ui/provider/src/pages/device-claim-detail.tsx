@@ -51,6 +51,7 @@ function DeviceSection({ device, current, inventory }: { device: RawDevice; curr
         <Field label="Model dimensions (not occupied units)">{device.spec.modelShape?.heightUnits ?? 'Unknown'} U</Field>
         <Field label="Serial">{identity.serial ?? '—'}</Field>
         <Field label="System UUID">{identity.systemUUID ?? '—'}</Field>
+        {identity.unidentified && <Field label="Hardware identity">No serial or system UUID recorded · {identity.unidentifiedReason} · cannot back machine capacity</Field>}
         <Field label="BMC endpoint">{bmc?.endpoint ?? '—'}</Field>
         <Field label="Claim">{device.spec.claimRef.name}</Field>
         <Field label="Asset tag">{device.spec.assetTag ?? 'Unknown'}</Field>

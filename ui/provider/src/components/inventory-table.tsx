@@ -64,7 +64,7 @@ export function InventoryTable({ slots, base }: { slots: InventorySlot[]; base: 
       header: 'Serial',
       cell: ({ row }) => {
         const device = currentDevice(row.original);
-        return <Muted>{device?.spec.identity.serial ?? row.original.claim.spec.expectedIdentity.serial ?? '—'}</Muted>;
+        return <Muted>{device?.spec.identity.serial ?? (device?.spec.identity.unidentified ? 'No hardware identity' : row.original.claim.spec.expectedIdentity.serial ?? '—')}</Muted>;
       },
     },
   ];
