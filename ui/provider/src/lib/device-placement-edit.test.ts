@@ -68,7 +68,7 @@ describe('direct placement correction', () => {
   });
   it.each([0, 1, 2, 3])('revokes authority after prerequisite %s', async delayed => {
     const scope = new InventoryOperationScope();
-    const prerequisites = [response({ status: { allowed: true } }), response(original), response({ metadata: { uid: 'facility' } }), response({ metadata: { uid: 'rack' }, spec: { facilityRef: { name: 'facility' }, heightUnits: 42 } })];
+    const prerequisites = [response({ status: { allowed: true } }), response(original), response({ metadata: { namespace: 'default', uid: 'facility' } }), response({ metadata: { namespace: 'default', uid: 'rack' }, spec: { facilityRef: { name: 'facility' }, heightUnits: 42 } })];
     let resolve!: (value: unknown) => void;
     let index = 0;
     const fetch = vi.fn().mockImplementation(() => index++ === delayed ? new Promise(done => { resolve = done; }) : Promise.resolve(prerequisites[index - 1]));

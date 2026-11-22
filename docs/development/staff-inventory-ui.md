@@ -1,5 +1,88 @@
 # Staff physical inventory UI
 
+## Default-only directory and stable controls
+
+Implemented on top of `baa210318fe17927f447a8e9e9e8053a23f6b173` on
+`feat/manual-inventory-records`. This update supersedes the namespace-choice and
+access-dependent navigation descriptions in the historical phase notes below.
+
+- All nine inventory collections, including Sites, Manufacturers, and DeviceTypes,
+  are read from `/namespaces/default/`, including every continuation page.
+  Collection responses and rendered inventory are filtered to explicit `default`
+  metadata; foreign and missing namespaces are not silently relabeled.
+- The directory, query-string details, and legacy claim detail route cannot select
+  a foreign namespace. A missing query namespace means `default`; an explicit
+  foreign namespace shows safe unsupported-scope guidance rather than resolving
+  even a same-named default record. Old explicit default links still work.
+- Creation, display-name editing, reported-placement editing, management reviews,
+  and reference rereads reject nondefault scope before any request. Reference
+  responses must also belong to `default`. Reference choices and relationship
+  projections only use readable default records. Inventory query cache keys
+  include the fixed namespace; real denial still redacts cached data and drafts.
+- The namespace input and Namespace & access disclosure are removed. Namespace
+  columns and repeated default labels are unnecessary in this UI. The nine public
+  category labels never disappear or change their active default because of
+  access results. No private record names or counts appear in the public shell.
+- Pending, allowed, and denied directory states share heading, action, count,
+  status, and search/filter layout slots. Actions remain mounted and disabled
+  until usable; successful authorization adds no “access checked” clutter.
+  Explanations for ownership restrictions, denied access, unavailable references,
+  expired sessions, and uncertain saves remain visible. Long failure explanations
+  may wrap rather than being clipped. Forms expand only after an explicit action.
+- Existing immutable edit baselines, submit-time authorization, read/write
+  generation guards, principal/logout and hidden/pagehide fences are retained.
+  Visible window blur/focus remains a complete no-op, including draft, DOM,
+  request, loader, and operation-authority behavior.
+
+This is a frontend scope restriction, not a new security boundary. Backend
+namespace support, schemas, IAM policies, other Bare Metal surfaces, audit logs,
+and live inventory are unchanged. Backend default-only enforcement or namespace
+migration remains deferred and would require separate design and authorization.
+
+Validation includes provider and consumer Vitest suites, typechecks and builds,
+inventory Go tests, documentation links and whitespace. New synthetic tests cover
+all nine kinds, static layout structure through access transitions, foreign URL
+and legacy-route selection, paginated default requests, and foreign reference and
+mutation guards. DOM/CSS structure checks do not prove pixel geometry in the
+authenticated staff portal. No browser login manipulation, live writes, deployment,
+or authenticated visual acceptance was performed for this update.
+
+### Platform composition follow-up (not implemented)
+
+The platform audit confirms that the mismatch is page/form composition, not a
+missing Datum primitive library. Source exemplars reviewed from the supplied audit
+archives (these are source observations, not authenticated visual acceptance):
+
+| Source and supplied pin | Concrete pattern | Fleet follow-up |
+| --- | --- | --- |
+| [Compute page chrome](https://github.com/datum-cloud/compute/blob/9521a49e10c55e13b42d652533caaa5c7fe09494/ui/consumer/src/components/workload-page-chrome.tsx) and [plugin tabs](https://github.com/datum-cloud/compute/blob/9521a49e10c55e13b42d652533caaa5c7fe09494/ui/consumer/src/components/plugin-tabs.tsx) | Breadcrumb, PageTitle actions, and line-style route tabs; disabled action while authority is pending | Standardize directory/detail breadcrumb and title/action/table chrome without copying provisioning behavior or introducing a global sidebar |
+| [Cloud portal domain form](https://github.com/datum-cloud/cloud-portal/blob/7456e469a8589d03afe13623b15992e712563d0f/app/features/edge/domain/domain-form-dialog.tsx) | Focused controlled `Form.Dialog`, closing after an acknowledged successful mutation | Separate focused display-name and reported-location dialogs; compact Facility/Rack create dialogs |
+| [Infra configurator part form](https://github.com/datum-cloud/infra-configurator/blob/25e5dc7d26ba892643f7dd7dadbc8711e4b1abe8/src/components/catalog/part-form-dialog.tsx) | Controlled Datum Dialog with an explicit viewport height cap and overflow scrolling | Bound dialog scrolling and keep explicit Cancel / Create record / Save changes actions accessible |
+
+Device, Cable, and installation-plan creation should move to dedicated child task
+routes rather than expanding the directory. Inline forms intentionally remain in
+this namespace/layout PR: migrating their mount points and navigation lifecycle
+at the same time would change the operation fences and immutable edit baselines
+this change must preserve. This PR does **not** claim whole-platform parity or
+completion of the user's non-expanding-form experience.
+
+That follow-up must add dirty-dismissal protection, dialog focus trap and return,
+bounded scrolling, and explicit dismissal coverage. Cancel after dispatch must
+not imply cancellation of a write; unknown results must neither auto-close as
+success nor encourage an automatic retry. Retain separate label/location writes,
+all after-await guards, real hidden/logout/denial fences, and no-op visible focus.
+Keep verification Unknown visible; do not invent an Activity/history API.
+
+The current Fleet federation configuration shares only Datum badge, button, card,
+icons, and skeleton subpaths. This PR adds no shared module or dependency.
+Before the follow-up imports Form/Dialog/PageTitle/Breadcrumb, verify the actual
+current staff-portal host contract and decide which subpaths must be bundled;
+`Form` cannot be assumed shared. Portal `Table.Client` and `useTableUrlAdapter`
+are application-local and must not be imported into this remote. No second writer
+or host navigation surface is introduced.
+
+## Historical implementation phases
+
 The additive [Site–Facility directory](site-facility-relationship.md) extends this
 baseline with operational Site reads and provider-qualified premises identifiers.
 Its identity/membership fields are managed by direct API, not new UI forms.
@@ -109,7 +192,7 @@ Implemented against PR103's merged staging base
 `f190d28397fc6110e02c9c83e6819a3a584258d0`. Ordinary visible window blur/focus
 is deliberately ignored. Opening the URL bar does not change the session:
 it does not suspend reads or writes, reset edit baselines, close or disable forms,
-change Namespace & access disclosures, or start host/permission/inventory requests.
+change controls, or start host/permission/inventory requests.
 Both the session boundary and individual management/location forms have no
 blur/focus listeners. QueryClient defaults and inventory queries disable window
 focus refetch. Drafts and frozen baselines remain usable without reopening.

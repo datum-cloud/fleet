@@ -91,9 +91,8 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
   return <section className="inventory-management" aria-label="Correct reported location">
     <Title as="h3" level={5}>Reported location</Title>
     <p>Correct a record, not a physical move, installation handover, or reservation. Identity and claim binding stay unchanged. Blank geometry means unknown; model and claim dimensions are not copied.</p>
-    {!editable ? <p>Legacy GitOps-managed or unavailable Devices are outside this editor.</p> : !permitted && <p>Device management permission must be confirmed before correcting location.</p>}
-    <p role="status" className="inventory-management-status">{message || (!ready || permission.isFetching ? 'Management: verification pending.' : open && blocked ? 'Management: close and reopen this form to continue.' : allowed ? 'Management: access checked.' : 'Management: unavailable.')}</p>
-    {permitted && !open && !needsRefresh && <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={() => {
+    <p role="status" className="inventory-management-status">{message || (!editable ? 'Legacy GitOps-managed or unavailable Devices are outside this editor.' : !ready || permission.isFetching ? 'Checking management access…' : open && blocked ? 'Close and reopen this form to continue.' : !permitted ? 'Device management permission must be confirmed before correcting location.' : '')}</p>
+    <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed || open || needsRefresh} onClick={() => {
       if (!allowed) return;
       scope.current = new InventoryOperationScope();
       setOpen(true);
@@ -102,7 +101,7 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
       if (unavailable.Facility) next.facility = '';
       if (unavailable.Rack) next.rack = '';
       setFields(next); setBlocked(false); setMessage('');
-    }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</Button>}
+    }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</Button>
     {open && permitted && <form className="inventory-form" onSubmit={save}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <p>Authenticated actor history uses existing resource audit logs.</p>

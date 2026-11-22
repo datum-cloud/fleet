@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -42,7 +43,7 @@ describe('hardware catalog readers', () => {
     }));
     render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} claims={[claim]} catalog={[manufacturer, model]} /></QueryClientProvider>);
     fireEvent.click(screen.getByText('Manage devices'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Create device' }));
+    fireEvent.click(await findEnabledButton({ name: 'Create device' }));
     for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Shared catalog model (optional)', 'model-uid']]) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }

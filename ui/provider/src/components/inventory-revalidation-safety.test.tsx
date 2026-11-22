@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -12,7 +13,7 @@ const response = (data: unknown) => ({ ok: true, status: 200, json: async () => 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function open(editing: boolean, rack = false) {
-  fireEvent.click(await screen.findByRole('button', { name: editing ? 'Edit display name' : rack ? 'Create rack' : 'Create facility' }));
+  fireEvent.click(await findEnabledButton({ name: editing ? 'Edit display name' : rack ? 'Create rack' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New input' } });
   if (rack) fireEvent.change(screen.getByLabelText('Facility'), { target: { value: values.name } });
@@ -27,7 +28,7 @@ it.each(['same-url', 'replace', 'back-forward', 'revalidate', 'hidden-return', '
   }));
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
   render(strict ? <StrictMode><RouterProvider router={router} /></StrictMode> : <RouterProvider router={router} />);
-  await screen.findByRole('button', { name: editing ? 'Edit display name' : 'Create facility' });
+  await findEnabledButton({ name: editing ? 'Edit display name' : 'Create facility' });
   await act(async () => {
     if (navigation === 'revalidate') await router.revalidate();
     else if (navigation === 'hidden-return') {

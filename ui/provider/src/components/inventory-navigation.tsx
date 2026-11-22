@@ -51,11 +51,11 @@ export const sections = [
   { kind: 'DeviceType', title: 'Device types', icon: Server, description: 'Reference-only model shapes and component templates, not installed equipment or occupancy.' },
 ] as const;
 
-export function InventoryNavigation({ inventory }: { inventory?: Inventory }) {
+export function InventoryNavigation(_props: { inventory?: Inventory }) {
   const [params] = useSearchParams();
-  const active = sections.find(item => item.kind === params.get('kind')) ?? sections.find(item => !inventory?.issues?.[item.kind]) ?? sections[0];
+  const active = sections.find(item => item.kind === params.get('kind')) ?? sections[0];
   return <nav className="inventory-sections" aria-label="Inventory categories">
-    {sections.filter(item => inventory?.issues?.[item.kind]?.status !== 403).map(item => <LinkButton
+    {sections.map(item => <LinkButton
       key={item.kind} as={Link} href={inventoryHref(item.kind)} type="secondary"
       theme={active.kind === item.kind ? 'light' : 'borderless'} size="small"
       aria-current={active.kind === item.kind ? 'page' : undefined}>

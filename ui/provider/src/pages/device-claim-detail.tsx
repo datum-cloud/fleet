@@ -11,6 +11,8 @@ import { Card, CardContent } from '@datum-cloud/datum-ui/card';
 import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
+import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
+import { redactInventory } from '../lib/inventory-read-access';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -87,9 +89,10 @@ export default function DeviceClaimDetail() {
 
 function ClaimDetailContent() {
   const { slug, namespace = '', claim: claimName = '' } = useParams();
-  const { data, isLoading, error, refetch } = useInventory();
+  const { data: source, isLoading, error, refetch } = useInventory();
+  const data = source && redactInventory(source, {});
   const accessIssue = error?.status ?? data?.issues?.DeviceClaim?.status;
-  const slot = !error && !isLoading && accessIssue === undefined ? data?.slots.find((s) => s.key === slotKey(namespace, claimName)) : undefined;
+  const slot = namespace === INVENTORY_NAMESPACE && !error && !isLoading && accessIssue === undefined ? data?.slots.find((s) => s.key === slotKey(namespace, claimName)) : undefined;
   const current = slot && !data?.issues?.Device && currentDevice(slot);
 
   return (
@@ -104,7 +107,7 @@ function ClaimDetailContent() {
 
       {!isLoading && !error && accessIssue === undefined && data && !slot && (
         <Text as="p" textColor="muted" data-testid="fleet-plugin-claim-missing">
-          No DeviceClaim {claimName} in namespace {namespace}.
+          {namespace !== INVENTORY_NAMESPACE ? 'This inventory UI only supports the default namespace.' : `No DeviceClaim ${claimName} in default inventory.`}
         </Text>
       )}
 
@@ -115,7 +118,6 @@ function ClaimDetailContent() {
               <Field label="Claim placement (intent / history)">{placementLabel(slot.claim, data?.issues)}</Field>
               <Field label="Expected model">{modelLabel(slot.claim.spec.expectedIdentity)}</Field>
               <Field label="Expected serial">{slot.claim.spec.expectedIdentity.serial ?? '—'}</Field>
-              <Field label="Namespace">{slot.claim.metadata.namespace ?? '—'}</Field>
               <Field label="Bound device">
                 {data?.issues?.Device ? 'Device details unavailable' : current ? current.metadata.name : <StatusBadge type="muted">{slot.devices.length > 1 ? 'Multiple records; active binding Unknown' : 'Not registered'}</StatusBadge>}
               </Field>

@@ -10,6 +10,7 @@ import { InventoryOperationContext, InventoryOperationGenerationContext, Invento
 import { InventoryHardwareFields } from './inventory-hardware-fields';
 import type { Inventory } from '../inventory';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
+import { INVENTORY_NAMESPACE, inInventoryNamespace } from '../lib/inventory-namespace';
 
 export function InventoryManagement(props: ComponentProps<typeof InventoryManagementForm>) {
   return <InventoryManagementForm {...props} />;
@@ -20,12 +21,12 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   const onReadFailure = useContext(InventoryReadAccessContext);
   const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
   const issues = { ...sourceIssues, ...readIssues };
-  const facilities = issues.Facility ? [] : sourceFacilities;
-  const claims = issues.DeviceClaim ? [] : sourceClaims;
-  const devices = issues.Device ? [] : sourceDevices;
-  const feeds = issues.PowerFeed ? [] : sourceFeeds;
-  const racks = issues.Rack ? [] : sourceRacks;
-  const catalog = issues.Manufacturer || issues.DeviceType ? [] : sourceCatalog;
+  const facilities = issues.Facility ? [] : sourceFacilities.filter(inInventoryNamespace);
+  const claims = issues.DeviceClaim ? [] : sourceClaims.filter(inInventoryNamespace);
+  const devices = issues.Device ? [] : sourceDevices.filter(inInventoryNamespace);
+  const feeds = issues.PowerFeed ? [] : sourceFeeds.filter(inInventoryNamespace);
+  const racks = issues.Rack ? [] : sourceRacks.filter(inInventoryNamespace);
+  const catalog = issues.Manufacturer || issues.DeviceType ? [] : sourceCatalog.filter(inInventoryNamespace);
   const sessionScope = useContext(InventoryOperationContext);
   const ready = useContext(InventoryOperationReadyContext);
   const generation = useContext(InventoryOperationGenerationContext);
@@ -44,9 +45,9 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
     };
   }, []);
   const [baseline, setBaseline] = useState<ManagedRecord>();
-  const [namespace, setNamespace] = useState(record?.metadata.namespace ?? 'default');
+  const namespace = INVENTORY_NAMESPACE;
   const editable = !record || canEditInventoryLabel(record);
-  const permission = useInventoryPermission(kind, editable ? namespace : '', record ? 'patch' : 'create', record?.metadata.name);
+  const permission = useInventoryPermission(kind, editable && !issues[kind] ? namespace : '', record ? 'patch' : 'create', record?.metadata.name);
   const dependenciesUnavailable = !record && ((kind === 'Device' && !!issues?.DeviceClaim) || (kind === 'Rack' && !!issues?.Facility) || (kind === 'DeviceClaim' && !!issues?.Facility && !!issues?.Rack) || (kind === 'Cable' && !!issues?.Device && !!issues?.PowerFeed));
   const visible = permission.data === true && !permission.error && editable && !dependenciesUnavailable && !issues[kind];
   const allowed = ready && visible && !permission.isFetching;
@@ -108,16 +109,10 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
     } finally { setPending(false); }
   }
   const Container = compact ? 'section' : 'details';
-  const Access = compact ? 'details' : 'div';
   return <Container className={`inventory-management ${compact ? 'inventory-management-compact' : ''}`}>
     {!compact && <summary>Manage {record ? 'this record' : `${kind === 'Facility' ? 'facilities' : `${kindLabel}s`}`}</summary>}
-    <div className="inventory-management-controls"><Access className="inventory-management-access">
-    {compact && <summary>{record ? 'Editing access' : 'Namespace & access'}</summary>}
-    {!record && <Label>Namespace<Input aria-label="Management namespace" value={namespace} disabled={!ready || open || pending} onChange={event => setNamespace(event.target.value)} /></Label>}
-    {dependenciesUnavailable && <p>Related records are unavailable, not empty. Creation needs readable location, installation, or endpoint records. Ask your administrator about viewing access, or try again after a temporary failure.</p>}
-    {!editable ? <p>Display-name editing uses a narrower portal writer policy and is unavailable for this record. Device location correction, when separately available, uses ordinary management access and does not perform an ownership handover.</p> : permission.error instanceof ApiError && permission.error.status === 401 ? <p>Your session expired. Sign in again through the staff portal before continuing. Unsaved input remains here.</p> : !visible && <p>Viewing and management access are separate. Ask your administrator about physical-inventory management access. A permission check must succeed before changes are available.</p>}
-    </Access>
-    {visible && !open && <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={() => {
+    <div className="inventory-management-controls">
+    <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed || open} onClick={() => {
       if (!allowed) return;
       scope.current = new InventoryOperationScope();
       if (record) {
@@ -126,9 +121,9 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
         setValues(previous => ({ ...previous, name: snapshot.metadata.name, displayName: snapshot.spec.displayName ?? '', namespace: snapshot.metadata.namespace ?? '' }));
       }
       setOpen(true); setMessage(''); setBlocked(false);
-    }}> {record ? 'Edit display name' : `Create ${kindLabel}`} </Button>}
+    }}> {record ? 'Edit display name' : `Create ${kindLabel}`} </Button>
     </div>
-    <p role="status" className="inventory-management-status">{message || (!ready || permission.isFetching ? 'Management: verification pending.' : open && blocked ? 'Management: close and reopen this form to continue.' : allowed ? 'Management: access checked.' : 'Management: unavailable.')}</p>
+    <p role="status" className="inventory-management-status">{message || (!editable ? 'Display-name editing requires a portal-owned record. Other records need ownership review.' : !ready || permission.isFetching ? 'Checking management access…' : dependenciesUnavailable ? 'Related records are unavailable, not empty. Creation requires viewing access to its references.' : permission.error instanceof ApiError && permission.error.status === 401 ? 'Your session expired. Sign in again through the staff portal.' : open && blocked ? 'Close and reopen this form to continue.' : !visible ? 'Viewing and management access are separate. Ask your administrator for physical-inventory management access, or retry after a temporary failure.' : '')}</p>
     {open && permission.data === true && !permission.error && !issues[kind] && <form onSubmit={save} className="inventory-form">
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <p>{record ? 'Only the display name changes. Identity, placement, geometry, connections, and history remain untouched.' : 'Create a physical record only. This does not verify equipment, reserve space, or provision hardware.'}</p>

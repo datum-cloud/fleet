@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -56,7 +57,7 @@ it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].
   const content = mode === 'location' ? <DevicePlacementEdit device={device} locations={[]} /> : <InventoryManagement kind="Facility" record={facility} facilities={[]} />;
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary>{content}</InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
-  const opener = await screen.findByRole('button', { name: mode === 'location' ? 'Add reported location' : 'Edit display name' });
+  const opener = await findEnabledButton({ name: mode === 'location' ? 'Add reported location' : 'Edit display name' });
   await waitFor(() => expect(opener).toBeEnabled());
   fireEvent.click(opener);
   const input = screen.getByLabelText(mode === 'location' ? 'Correction reason' : 'Display name');

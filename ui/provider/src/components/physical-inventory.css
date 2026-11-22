@@ -43,7 +43,7 @@
 .inventory-form > p,.inventory-form > div,.inventory-form > fieldset { grid-column:1/-1; }
 .inventory-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .inventory-toolbar .inventory-search { flex:1; max-width:none; min-width:200px; }
-.inventory-toolbar select { padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); font:inherit; max-width:100%; }
+.inventory-toolbar select { padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); font:inherit; width:180px; max-width:100%; }
 .inventory-rack-layout { display:grid; grid-template-columns:minmax(280px, .9fr) minmax(0,1.7fr); gap:24px; align-items:start; }
 .inventory-elevation { border:1px solid var(--border); border-radius:var(--radius); padding:16px; display:grid; gap:12px; background:var(--card); }
 .inventory-elevation p { font-size:12px; }
@@ -70,8 +70,11 @@
 .inventory-topline { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:12px 24px; }
 .inventory-management-compact { display:contents; }
 .inventory-management-compact .inventory-management-controls { display:flex; gap:12px; align-items:start; justify-content:flex-end; }
-.inventory-management-compact .inventory-management-access { border:0; padding:0; font-size:12px; max-width:320px; }
-.inventory-management-compact .inventory-management-access[open] { padding:12px; border:1px solid var(--border); border-radius:var(--radius); }
+.fleet-inventory .inventory-management-controls { min-width:180px; display:flex; justify-content:flex-end; }
+.fleet-inventory .inventory-management-controls > button { min-width:180px; }
+.fleet-inventory .inventory-record-count { min-width:130px; min-height:1.5em; }
+.fleet-inventory .inventory-management-status { grid-column:1/-1; min-height:3em; margin:0; font-size:12px; color:var(--muted-foreground); }
+.fleet-inventory .inventory-topline { min-height:130px; }
 .inventory-management-compact .inventory-form,.inventory-management-compact > [role=status] { grid-column:1/-1; }
 @media(max-width:800px) { .inventory-topline { grid-template-columns:1fr; } .inventory-management-compact .inventory-management-controls { justify-content:flex-start; } }
 .inventory-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 20px; }

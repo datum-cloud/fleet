@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -99,7 +100,7 @@ it.each([['Manufacturers', 'Search manufacturers'], ['Device types', 'Search dev
 
 it('fences an in-flight create across a cached tab transition without carrying its draft', async () => {
   const view = host('?kind=Facility', true);
-  fireEvent.click(await screen.findByRole('button', { name: 'Create facility' }));
+  fireEvent.click(await findEnabledButton({ name: 'Create facility' }));
   expect(screen.queryByLabelText('Recorded by')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Change reference')).not.toBeInTheDocument();
   for (const [label, value] of [['Record name', 'synthetic'], ['Display name', 'Private pending draft']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
@@ -112,7 +113,7 @@ it('fences an in-flight create across a cached tab transition without carrying i
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: 'Facilities' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Create facility' }));
+  fireEvent.click(await findEnabledButton({ name: 'Create facility' }));
   expect(screen.getByLabelText('Display name')).toHaveValue('');
   expect(screen.queryByText('Facility record created.')).not.toBeInTheDocument();
   view.router.dispose();
@@ -128,7 +129,7 @@ it('loads a direct namespaced link without requiring a previous directory visit'
 
 it('restarts management authority after immediate same-principal host navigation', async () => {
   const view = host('?kind=Facility', true);
-  await screen.findByRole('button', { name: 'Create facility' });
+  await findEnabledButton({ name: 'Create facility' });
   for (const [category, action] of [['Devices', 'Create device'], ['Facilities', 'Create facility'], ['Devices', 'Create device']]) {
     await act(async () => {
       fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: category }));

@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -16,7 +17,7 @@ function renderForm(kind: 'Device' | 'Cable') {
 }
 async function open(kind: 'Device' | 'Cable') {
   fireEvent.click(screen.getByText(`Manage ${kind.toLowerCase()}s`));
-  fireEvent.click(await screen.findByRole('button', { name: `Create ${kind.toLowerCase()}` }));
+  fireEvent.click(await findEnabledButton({ name: `Create ${kind.toLowerCase()}` }));
   for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 it('registers hardware through the real form without changing claim identity', async () => {
@@ -31,8 +32,7 @@ it('registers hardware through the real form without changing claim identity', a
   expect(model).toHaveAttribute('data-slot', 'input');
   expect(model.closest('label')).toHaveAttribute('data-slot', 'label');
   expect(model).toBeRequired();
-  expect(screen.getByLabelText('Management namespace')).toHaveAttribute('data-slot', 'input');
-  expect(screen.getByLabelText('Management namespace')).toBeDisabled();
+  expect(screen.queryByLabelText('Management namespace')).not.toBeInTheDocument();
   const addComponent = screen.getByRole('button', { name: 'Add component' });
   expect(addComponent).toHaveClass(...cn(buttonVariants({ type: 'secondary', theme: 'outline', size: 'small' })).split(' '));
   expect(addComponent).toHaveAttribute('type', 'button');
@@ -76,7 +76,7 @@ it('does not present an unreadable installation collection as an empty device pr
   fireEvent.click(screen.getByText('Manage devices'));
   await waitFor(() => expect(screen.queryByText('Checking management access…')).not.toBeInTheDocument());
   expect(screen.getByText(/Related records are unavailable, not empty/)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Create device' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Create device' })).toBeDisabled();
 });
 it('keeps readable cable endpoint choices with a partial-access explanation', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ status: { allowed: true } })));

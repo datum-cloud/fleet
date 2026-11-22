@@ -53,7 +53,7 @@ function isPresentationNavigation(current: Location, next: Location | undefined)
   return currentParams.toString() === nextParams.toString();
 }
 
-function HostedInventory({ children, retainPresentationData = false, pending: pendingContent = <LoadingState /> }: { children: ReactNode; retainPresentationData?: boolean; pending?: ReactNode }) {
+function HostedInventory({ children, retainPresentationData = false, pending: pendingContent = <LoadingState />, unavailable = status => <InventoryAccessState status={status} /> }: { children: ReactNode; retainPresentationData?: boolean; pending?: ReactNode; unavailable?: (status: number) => ReactNode }) {
   const host = useContext(UNSAFE_DataRouterContext);
   const [sessionGeneration, setSessionGeneration] = useState(0);
   const [operationGeneration, setOperationGeneration] = useState(0);
@@ -131,17 +131,17 @@ function HostedInventory({ children, retainPresentationData = false, pending: pe
       document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
-  if (failed) return <InventoryAccessState status={503} />;
+  if (failed) return unavailable(503);
   const presentationPending = retainPresentationData && !navigation.formMethod && isPresentationNavigation(location, navigation.location);
   if (checking || revalidator.state !== 'idle' || navigation.state !== 'idle' && !presentationPending) return <>{pendingContent}</>;
-  if (!principal) return <InventoryAccessState status={401} />;
+  if (!principal) return unavailable(401);
   return <SessionQueries key={JSON.stringify([principal, retainPresentationData ? null : location.key, sessionGeneration])} principal={principal} authority={navigation.state === 'idle'} generation={operationGeneration}>{navigation.state !== 'idle' ? pendingContent : children}</SessionQueries>;
 }
 
-export function InventorySessionBoundary({ children, retainPresentationData, pending }: { children: ReactNode; retainPresentationData?: boolean; pending?: ReactNode }) {
+export function InventorySessionBoundary({ children, retainPresentationData, pending, unavailable }: { children: ReactNode; retainPresentationData?: boolean; pending?: ReactNode; unavailable?: (status: number) => ReactNode }) {
   const router = useContext(UNSAFE_DataRouterStateContext);
   const preview = useContext(InventoryPreviewContext);
   if (preview) return <>{children}</>;
-  if (!router) return <InventoryAccessState status={401} />;
-  return <HostedInventory retainPresentationData={retainPresentationData} pending={pending}>{children}</HostedInventory>;
+  if (!router) return unavailable ? unavailable(401) : <InventoryAccessState status={401} />;
+  return <HostedInventory retainPresentationData={retainPresentationData} pending={pending} unavailable={unavailable}>{children}</HostedInventory>;
 }
