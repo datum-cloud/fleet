@@ -1,15 +1,19 @@
+// Package registration admits inert, inventory-backed MachineCapacity records.
+//
+// The webhook keeps no state of its own. Every decision is made against live
+// Devices and capacities in the configured provider projects, so the API
+// server remains the only store. One capacity per Device is enforced by the
+// API server itself: the capacity name is derived from the Device UID, and two
+// creates for the same Device collide on that name.
 package registration
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"reflect"
 	"regexp"
 	"slices"
@@ -21,7 +25,6 @@ import (
 	iam "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,7 +35,21 @@ const (
 	DeviceUIDAnnotation     = "fleet.datumapis.com/registration-device-uid"
 	DeviceVersionAnnotation = "fleet.datumapis.com/registration-device-version"
 	OperationAnnotation     = "fleet.datumapis.com/registration-operation"
+
+	// CapacityNamePrefix starts every registered capacity name. The rest of
+	// the name is the backing Device's UID.
+	CapacityNamePrefix = "device-"
+
+	// InventoryNamespace is the only namespace registration reads and writes.
+	InventoryNamespace = "default"
 )
+
+// CapacityName is the only name a registered capacity for this Device
+// incarnation may have. Because the API server rejects a second object with
+// the same name, concurrent registrations of one Device cannot both persist.
+func CapacityName(deviceUID types.UID) string {
+	return CapacityNamePrefix + string(deviceUID)
+}
 
 type Project struct {
 	Identity controller.ProjectIdentity
@@ -40,14 +57,17 @@ type Project struct {
 }
 
 type Handler struct {
-	Store       Store
-	VerifyFence func(context.Context) error
-	FenceDigest func(context.Context) (string, error)
-	Resolve     func(context.Context, string) (Project, error)
-	Authorize   func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error
+	// Projects is the complete provider scope. Duplicate identities are
+	// searched across all of it.
+	Projects  []string
+	Resolve   func(context.Context, string) (Project, error)
+	Authorize func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error
 }
 
-func aliases(device *inventory.Device) []string {
+// Aliases returns the normalized hardware identifiers of a Device: serial,
+// system UUID and, when present, the provider host reference. Two Devices
+// sharing any alias may be the same machine.
+func Aliases(device *inventory.Device) []string {
 	var result []string
 	pairs := [][2]string{{"serial", strings.ToLower(strings.TrimSpace(device.Spec.Identity.Serial))}, {"uuid", strings.ToLower(strings.TrimSpace(device.Spec.Identity.SystemUUID))}}
 	if reference := device.Spec.ProviderHostRef; reference != nil {
@@ -88,130 +108,69 @@ func projectName(actor authenticationv1.UserInfo) (string, error) {
 }
 
 func (handler *Handler) Handle(ctx context.Context, request admission.Request) admission.Response {
-	if !handler.Store.AllowInactiveForTests {
-		if err := handler.Ready(ctx); err != nil {
-			return admission.Denied(err.Error())
-		}
+	if request.Resource.Group != metal.GroupVersion.Group || request.Resource.Resource != "machinecapacities" {
+		return admission.Denied("unsupported registration admission resource")
 	}
-	if request.Operation == admissionv1.Delete && request.Name == "" && ((request.Resource.Group == "" && request.Resource.Resource == "namespaces") || (request.Resource.Group == "resourcemanager.miloapis.com" && request.Resource.Resource == "projects")) {
-		return admission.Denied("lifetime deletion requires an exact resource name; collection deletion cannot prove exclusion of retained lifetimes")
-	}
-	if request.Resource.Group == "" && request.Resource.Resource == "namespaces" && request.Name != "default" {
-		return admission.Allowed("outside the retained inventory namespace")
-	}
-	if request.Resource.Group == "resourcemanager.miloapis.com" && request.Resource.Resource == "projects" && request.Operation == admissionv1.Delete {
-		if slices.Contains(handler.Store.Projects, request.Name) {
-			return admission.Denied("provider project lifetime is retained by the registration authority")
-		}
-		return admission.Allowed("outside the provider registration scope")
-	}
-	if request.DryRun != nil && *request.DryRun {
-		return admission.Denied("registration admission retains reservations and does not support dry-run")
+	if request.Operation != admissionv1.Create || request.SubResource != "" {
+		return admission.Denied("capacity mutation and deletion are disabled; registered and legacy capacity require operator reconciliation")
 	}
 	name, err := projectName(request.UserInfo)
 	if err != nil {
 		return admission.Denied(err.Error())
 	}
-	if !slices.Contains(handler.Store.Projects, name) {
-		if (request.Resource.Group == "fleet.datumapis.com" && request.Resource.Resource == "devices") || (request.Resource.Group == "" && request.Resource.Resource == "namespaces") {
-			return admission.Allowed("outside the configured provider identity scope")
-		}
-		return admission.Denied("project is outside the configured registration authority")
+	if !slices.Contains(handler.Projects, name) {
+		return admission.Denied("project is outside the configured provider registration scope")
 	}
-	if request.UID == "" {
-		return admission.Denied("admission operation identity is required")
-	}
-	for attempt := 0; attempt < 6; attempt++ {
-		err = handler.evaluate(ctx, name, request)
-		if !apierrors.IsConflict(err) {
-			break
-		}
-	}
-	if err != nil {
-		if apierrors.IsConflict(err) {
-			slog.ErrorContext(ctx, "registration ledger CAS retries exhausted", "attempts", 6, "project", name, "operation", request.UID)
-		}
+	if err := handler.evaluate(ctx, name, request); err != nil {
 		return admission.Denied(err.Error())
 	}
 	return admission.Allowed("inert inventory registration only; no availability or preparation authority")
 }
 
 func (handler *Handler) evaluate(ctx context.Context, name string, request admission.Request) error {
-	if handler.VerifyFence != nil {
-		if err := handler.VerifyFence(ctx); err != nil {
-			return err
-		}
-	}
-	secret, ledger, err := handler.Store.Read(ctx)
-	if err != nil {
-		return fmt.Errorf("registration unavailable: %w", err)
-	}
-	if _, exists := secret.Data["routing.json"]; exists {
-		route, err := decodeRouting(secret)
-		if err != nil {
-			return err
-		}
-		if route.Pending != nil {
-			return errors.New("registration expansion is fenced")
-		}
-	}
-	project, err := handler.Resolve(ctx, name)
-	if err != nil {
-		return err
-	}
-	if !project.Identity.Valid() || project.Identity.RouteName != name || project.Identity.AuthorityID != ledger.Authority {
-		return errors.New("project lifetime unavailable")
-	}
-	if request.Resource.Group == "" && request.Resource.Resource == "namespaces" {
-		if request.Name == "default" && request.Operation == admissionv1.Delete {
-			return errors.New("the inventory namespace cannot be deleted within the registration authority")
-		}
-		return nil
-	}
-	if request.Resource.Group == "fleet.datumapis.com" && request.Resource.Resource == "devices" {
-		return handler.device(ctx, project, request, secret, ledger)
-	}
-	if request.Resource.Group != "metal.datumapis.com" || request.Resource.Resource != "machinecapacities" {
-		return errors.New("unsupported registration admission resource")
-	}
-	if request.Operation != admissionv1.Create || request.SubResource != "" {
-		return errors.New("capacity mutation and deletion are disabled; retained and legacy capacity require operator reconciliation")
-	}
-	if request.Namespace != "default" {
+	if request.Namespace != InventoryNamespace {
 		return errors.New("registration requires the default inventory namespace")
 	}
 	var capacity metal.MachineCapacity
 	if err := json.Unmarshal(request.Object.Raw, &capacity); err != nil {
 		return err
 	}
-	if capacity.UID == "" || capacity.Name == "" || capacity.Name != request.Name || capacity.Namespace != "default" || capacity.GenerateName != "" || !capacity.DeletionTimestamp.IsZero() {
-		return errors.New("an explicit capacity name and API-assigned incarnation are required")
+	if capacity.Name == "" || capacity.Name != request.Name || capacity.Namespace != InventoryNamespace || capacity.GenerateName != "" || !capacity.DeletionTimestamp.IsZero() {
+		return errors.New("an explicit capacity name in the default namespace is required")
 	}
 	if capacity.Spec.AllocationPolicy != "Disabled" || capacity.Spec.ReclaimPolicy != "Retain" || capacity.Spec.CleaningPolicyRef.Name != "" || !reflect.DeepEqual(capacity.Status, metal.MachineCapacityStatus{}) || len(capacity.OwnerReferences) != 0 || len(capacity.Finalizers) != 0 {
 		return errors.New("only Disabled/Retain registration with an explicitly unconfigured cleaning policy and no status or ownership is supported")
 	}
 	annotations := capacity.Annotations
 	if len(annotations) != 3 || annotations[DeviceUIDAnnotation] == "" || annotations[DeviceVersionAnnotation] == "" || annotations[OperationAnnotation] == "" {
-		return errors.New("exact Device UID/resourceVersion and a stable registration operation are required")
+		return errors.New("exact Device UID/resourceVersion and a client operation ID are required")
 	}
 	if len(annotations[OperationAnnotation]) > 128 {
 		return errors.New("registration operation is too long")
 	}
-	if err := handler.Authorize(ctx, project, request.UserInfo, "metal.datumapis.com", "machinecapacities", ""); err != nil {
+	if capacity.Name != CapacityName(types.UID(annotations[DeviceUIDAnnotation])) {
+		return fmt.Errorf("capacity name must be %q, derived from the selected Device UID, so one Device can back only one capacity", CapacityName(types.UID(annotations[DeviceUIDAnnotation])))
+	}
+	project, err := handler.Resolve(ctx, name)
+	if err != nil {
+		return errors.New("provider project lifetime is unavailable")
+	}
+	if !project.Identity.Valid() || project.Identity.RouteName != name {
+		return errors.New("provider project lifetime is unavailable")
+	}
+	// Authorize before reading the Device so an unauthorized caller cannot
+	// learn whether it exists.
+	if err := handler.Authorize(ctx, project, request.UserInfo, metal.GroupVersion.Group, "machinecapacities", ""); err != nil {
 		return err
 	}
-	if err := handler.Authorize(ctx, project, request.UserInfo, "fleet.datumapis.com", "devices", capacity.Spec.DeviceRef.Name); err != nil {
+	if err := handler.Authorize(ctx, project, request.UserInfo, inventory.GroupVersion.Group, "devices", capacity.Spec.DeviceRef.Name); err != nil {
 		return err
-	}
-	namespace := &corev1.Namespace{}
-	if err := project.Client.Get(ctx, client.ObjectKey{Name: "default"}, namespace); err != nil {
-		return err
-	}
-	if namespace.UID == "" || !namespace.DeletionTimestamp.IsZero() {
-		return errors.New("inventory namespace lifetime unavailable")
 	}
 	device := &inventory.Device{}
-	if err := project.Client.Get(ctx, client.ObjectKey{Namespace: "default", Name: capacity.Spec.DeviceRef.Name}, device); err != nil {
+	if err := project.Client.Get(ctx, client.ObjectKey{Namespace: InventoryNamespace, Name: capacity.Spec.DeviceRef.Name}, device); err != nil {
+		if apierrors.IsNotFound(err) {
+			return errors.New("selected Device does not exist in the provider project")
+		}
 		return errors.New("selected Device is unavailable")
 	}
 	if device.UID != types.UID(annotations[DeviceUIDAnnotation]) || device.ResourceVersion != annotations[DeviceVersionAnnotation] || !device.DeletionTimestamp.IsZero() {
@@ -220,72 +179,15 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 	if !eligible(device) {
 		return errors.New("registration requires non-placeholder serial, canonical system UUID, and complete provider aliases; incomplete identity is ambiguous")
 	}
-	entry := Entry{Operation: request.UID, Actor: request.UserInfo, Project: name, ProjectUID: project.Identity.UID, NamespaceUID: namespace.UID, Name: capacity.Name, CapacityUID: capacity.UID, DeviceName: device.Name, DeviceUID: device.UID, DeviceVersion: device.ResourceVersion, Aliases: aliases(device), Input: append(json.RawMessage(nil), request.Object.Raw...), Outcome: "Unknown"}
-	entry.AssetID = entry.Aliases[1]
-	for _, retained := range ledger.Entries {
-		if retained.Operation == entry.Operation && reflect.DeepEqual(retained, entry) {
-			return nil
-		}
-		if overlaps(retained.Aliases, entry.Aliases) || (retained.Project == name && (retained.Name == entry.Name || retained.DeviceUID == entry.DeviceUID)) {
-			return ErrConflict
-		}
-		var prior metal.MachineCapacity
-		if json.Unmarshal(retained.Input, &prior) != nil {
-			return errors.New("retained registration is corrupt")
-		}
-		if retained.Project == name && prior.Annotations[OperationAnnotation] == annotations[OperationAnnotation] {
-			return ErrConflict
-		}
-	}
-	for _, fence := range ledger.DeviceFences {
-		if fence.Project == name && fence.UID == device.UID {
-			if (fence.ProjectUID != "" && fence.ProjectUID != entry.ProjectUID) || (fence.NamespaceUID != "" && fence.NamespaceUID != entry.NamespaceUID) || (fence.Name != "" && (fence.Name != device.Name || fence.Namespace != device.Namespace)) {
-				return ErrConflict
-			}
-			if fence.Deleted || (fence.Version != "" && fence.Version == device.ResourceVersion) {
-				return ErrConflict
-			}
-			continue
-		}
-		if overlaps(fence.Aliases, entry.Aliases) {
-			return ErrConflict
-		}
-	}
-	if err := handler.scan(ctx, entry); err != nil {
-		return err
-	}
-	current, err := handler.Resolve(ctx, name)
-	if err != nil || current.Identity != project.Identity {
-		return errors.New("project lifetime changed")
-	}
-	if err := project.Client.Get(ctx, client.ObjectKeyFromObject(namespace), namespace); err != nil || namespace.UID != entry.NamespaceUID || !namespace.DeletionTimestamp.IsZero() {
-		return errors.New("namespace lifetime changed")
-	}
-	if err := project.Client.Get(ctx, client.ObjectKeyFromObject(device), device); err != nil || device.UID != entry.DeviceUID || device.ResourceVersion != entry.DeviceVersion || !device.DeletionTimestamp.IsZero() {
-		return errors.New("selected Device changed")
-	}
-	if err := handler.Authorize(ctx, project, request.UserInfo, "metal.datumapis.com", "machinecapacities", ""); err != nil {
-		return err
-	}
-	if err := handler.Authorize(ctx, project, request.UserInfo, "fleet.datumapis.com", "devices", device.Name); err != nil {
-		return err
-	}
-	current, err = handler.Resolve(ctx, name)
-	if err != nil || current.Identity != project.Identity {
-		return errors.New("project lifetime changed during authorization")
-	}
-	if err := project.Client.Get(ctx, client.ObjectKeyFromObject(namespace), namespace); err != nil || namespace.UID != entry.NamespaceUID || !namespace.DeletionTimestamp.IsZero() {
-		return errors.New("namespace lifetime changed during authorization")
-	}
-	if err := project.Client.Get(ctx, client.ObjectKeyFromObject(device), device); err != nil || device.UID != entry.DeviceUID || device.ResourceVersion != entry.DeviceVersion || !device.DeletionTimestamp.IsZero() {
-		return errors.New("selected Device changed during authorization")
-	}
-	ledger.Entries = append(ledger.Entries, entry)
-	return handler.Store.Write(ctx, secret, ledger)
+	return handler.scan(ctx, name, device)
 }
 
-func (handler *Handler) scan(ctx context.Context, entry Entry) error {
-	for _, name := range handler.Store.Projects {
+// scan compares the selected Device with every live Device and capacity in the
+// provider scope. It is a point-in-time read: see the stage-1 contract for the
+// race with a concurrently created duplicate Device.
+func (handler *Handler) scan(ctx context.Context, selectedProject string, selected *inventory.Device) error {
+	selectedAliases := Aliases(selected)
+	for _, name := range handler.Projects {
 		project, err := handler.Resolve(ctx, name)
 		if err != nil {
 			return errors.New("provider identity scope is unavailable")
@@ -298,17 +200,18 @@ func (handler *Handler) scan(ctx context.Context, entry Entry) error {
 		if err := project.Client.List(ctx, &capacities); err != nil {
 			return errors.New("provider capacity inventory is unavailable")
 		}
-		for _, device := range devices.Items {
-			if name == entry.Project && device.UID == entry.DeviceUID {
+		for index := range devices.Items {
+			device := &devices.Items[index]
+			if name == selectedProject && device.UID == selected.UID {
 				continue
 			}
-			if overlaps(aliases(&device), entry.Aliases) {
-				return errors.New("another Device shares recorded hardware identity; resolve aliases before registration")
+			if overlaps(Aliases(device), selectedAliases) {
+				return fmt.Errorf("another Device (%s) shares recorded hardware identity; resolve the duplicate before registration", describe(name, selectedProject, device.Namespace, device.Name))
 			}
 		}
 		for _, capacity := range capacities.Items {
-			if name == entry.Project && capacity.Namespace == "default" && capacity.Name == entry.Name {
-				return ErrConflict
+			if name == selectedProject && capacity.Namespace == selected.Namespace && (capacity.Spec.DeviceRef.Name == selected.Name || capacity.Annotations[DeviceUIDAnnotation] == string(selected.UID)) {
+				return fmt.Errorf("Device already backs capacity %s; one Device can back only one capacity", capacity.Name)
 			}
 			var matched *inventory.Device
 			for index := range devices.Items {
@@ -319,203 +222,31 @@ func (handler *Handler) scan(ctx context.Context, entry Entry) error {
 				}
 			}
 			if matched == nil || inventory.CapacityBackingError(matched) != nil {
-				return errors.New("legacy capacity has unresolved physical identity; registration cannot establish non-conflict")
+				return fmt.Errorf("capacity %s has unresolved physical identity; registration cannot establish non-conflict", describe(name, selectedProject, capacity.Namespace, capacity.Name))
 			}
-			if overlaps(aliases(matched), entry.Aliases) {
-				return ErrConflict
+			if overlaps(Aliases(matched), selectedAliases) {
+				return fmt.Errorf("capacity %s is backed by a Device sharing recorded hardware identity", describe(name, selectedProject, capacity.Namespace, capacity.Name))
 			}
 		}
 	}
 	return nil
 }
 
-func (handler *Handler) device(ctx context.Context, project Project, request admission.Request, secret *corev1.Secret, ledger Ledger) error {
-	var device, old inventory.Device
-	if request.Operation != admissionv1.Create {
-		if err := json.Unmarshal(request.OldObject.Raw, &old); err != nil {
-			return err
-		}
+// describe names a conflicting record for the caller. Records in other
+// provider projects are not named, because the caller may not be able to read
+// them.
+func describe(project, selectedProject, namespace, name string) string {
+	if project != selectedProject {
+		return "in another provider project"
 	}
-	if request.Operation != admissionv1.Delete {
-		if err := json.Unmarshal(request.Object.Raw, &device); err != nil {
-			return err
-		}
-	} else {
-		device = old
-	}
-	for _, entry := range ledger.Entries {
-		bound := entry.Project == project.Identity.RouteName && entry.DeviceUID == device.UID
-		if entry.Project == project.Identity.RouteName && device.Namespace == "default" && entry.DeviceName == device.Name && !bound {
-			return ErrConflict
-		}
-		if bound && (entry.ProjectUID != project.Identity.UID || request.Operation == admissionv1.Delete) {
-			return ErrConflict
-		}
-		if overlaps(entry.Aliases, aliases(&device)) && !bound {
-			return ErrConflict
-		}
-		if bound && !reflect.DeepEqual(device.Spec, old.Spec) {
-			return errors.New("registered Device specification is frozen")
-		}
-	}
-	if request.Operation == admissionv1.Update {
-		if device.UID != old.UID || !reflect.DeepEqual(device.Spec.Identity, old.Spec.Identity) || !reflect.DeepEqual(aliases(&device), aliases(&old)) {
-			return errors.New("Device incarnation and identity are immutable")
-		}
-		if old.ResourceVersion == "" {
-			return errors.New("Device update baseline is unavailable")
-		}
-	}
-	if request.Operation != admissionv1.Create && request.Operation != admissionv1.Delete && request.Operation != admissionv1.Update {
-		return errors.New("unsupported Device operation")
-	}
-	if device.UID == "" {
-		return errors.New("Device incarnation unavailable")
-	}
-	if request.Operation == admissionv1.Update && identicalObjects(request.OldObject.Raw, request.Object.Raw) {
-		return nil
-	}
-	// Deletes and finalizer removals are how a terminating namespace drains its
-	// Devices, so they must not depend on the namespace still being live.
-	releasing := request.Operation == admissionv1.Delete || (request.Operation == admissionv1.Update && finalizerRemoval(request.OldObject.Raw, request.Object.Raw))
-	deleting := request.Operation == admissionv1.Delete || (releasing && !old.DeletionTimestamp.IsZero())
-	namespaceUID, err := deviceNamespace(ctx, project, device, ledger, releasing)
-	if err != nil {
-		return err
-	}
-	fence := DeviceFence{Project: project.Identity.RouteName, ProjectUID: project.Identity.UID, Namespace: device.Namespace, NamespaceUID: namespaceUID, Name: device.Name, UID: device.UID, Deleted: deleting}
-	if request.Operation == admissionv1.Update {
-		current := &inventory.Device{}
-		if err := project.Client.Get(ctx, client.ObjectKeyFromObject(&old), current); err != nil {
-			return err
-		}
-		if current.UID != old.UID || current.ResourceVersion != old.ResourceVersion || device.ResourceVersion != old.ResourceVersion || (!current.DeletionTimestamp.IsZero() && !deleting) {
-			return errors.New("Device update baseline is no longer current")
-		}
-		if !deleting {
-			fence.Version = old.ResourceVersion
-		}
-	}
-	if request.Operation == admissionv1.Create {
-		fence.Aliases = aliases(&device)
-		for _, retained := range ledger.DeviceFences {
-			if overlaps(retained.Aliases, fence.Aliases) && !reflect.DeepEqual(retained, fence) {
-				return ErrConflict
-			}
-		}
-	}
-	coalesced := make([]DeviceFence, 0, len(ledger.DeviceFences)+1)
-	for _, retained := range ledger.DeviceFences {
-		if retained.Project != fence.Project || retained.UID != fence.UID {
-			coalesced = append(coalesced, retained)
-			continue
-		}
-		if (retained.Deleted && !fence.Deleted) || (request.Operation == admissionv1.Create && !reflect.DeepEqual(retained, fence)) {
-			return ErrConflict
-		}
-		if (retained.ProjectUID != "" && retained.ProjectUID != fence.ProjectUID) || (retained.NamespaceUID != "" && retained.NamespaceUID != fence.NamespaceUID) || (retained.Name != "" && (retained.Name != fence.Name || retained.Namespace != fence.Namespace)) {
-			return ErrConflict
-		}
-		for _, alias := range retained.Aliases {
-			if !slices.Contains(fence.Aliases, alias) {
-				fence.Aliases = append(fence.Aliases, alias)
-			}
-		}
-	}
-	slices.Sort(fence.Aliases)
-	coalesced = append(coalesced, fence)
-	if reflect.DeepEqual(ledger.DeviceFences, coalesced) {
-		return nil
-	}
-	ledger.DeviceFences = coalesced
-	return handler.Store.Write(ctx, secret, ledger)
+	return namespace + "/" + name
 }
 
-// deviceNamespace returns the namespace lifetime to bind into the Device fence.
-// Ordinary writes require a live namespace. Releasing writes accept a
-// terminating namespace, and once the namespace is gone they fall back to the
-// lifetime already recorded for this Device so the tombstone never loses it.
-func deviceNamespace(ctx context.Context, project Project, device inventory.Device, ledger Ledger, releasing bool) (types.UID, error) {
-	var namespace corev1.Namespace
-	err := project.Client.Get(ctx, client.ObjectKey{Name: device.Namespace}, &namespace)
-	if err != nil && (!releasing || !apierrors.IsNotFound(err)) {
-		return "", err
-	}
-	if err == nil {
-		if namespace.UID == "" || (!releasing && !namespace.DeletionTimestamp.IsZero()) {
-			return "", errors.New("Device namespace lifetime unavailable")
-		}
-		return namespace.UID, nil
-	}
-	for _, retained := range ledger.DeviceFences {
-		if retained.Project == project.Identity.RouteName && retained.UID == device.UID && retained.NamespaceUID != "" {
-			return retained.NamespaceUID, nil
+func overlaps(left, right []string) bool {
+	for _, first := range left {
+		if slices.Contains(right, first) {
+			return true
 		}
 	}
-	// A legacy fence never recorded the namespace; the tombstone stays
-	// legacy-shaped rather than inventing a lifetime or denying the delete.
-	return "", nil
-}
-
-// finalizerRemoval reports whether an update only removes finalizers. Server
-// managed field bookkeeping is ignored; any other change is a real edit.
-func finalizerRemoval(old, current []byte) bool {
-	decode := func(raw []byte) (map[string]any, []string, bool) {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		var object map[string]any
-		if err := decoder.Decode(&object); err != nil || object == nil || decoder.Decode(new(any)) != io.EOF {
-			return nil, nil, false
-		}
-		metadata, _ := object["metadata"].(map[string]any)
-		if metadata == nil {
-			return nil, nil, false
-		}
-		var finalizers []string
-		if values, exists := metadata["finalizers"]; exists {
-			list, ok := values.([]any)
-			if !ok {
-				return nil, nil, false
-			}
-			for _, value := range list {
-				name, ok := value.(string)
-				if !ok {
-					return nil, nil, false
-				}
-				finalizers = append(finalizers, name)
-			}
-		}
-		delete(metadata, "finalizers")
-		delete(metadata, "managedFields")
-		return object, finalizers, true
-	}
-	before, beforeFinalizers, beforeOK := decode(old)
-	after, afterFinalizers, afterOK := decode(current)
-	if !beforeOK || !afterOK || len(afterFinalizers) >= len(beforeFinalizers) || !reflect.DeepEqual(before, after) {
-		return false
-	}
-	for _, name := range afterFinalizers {
-		if !slices.Contains(beforeFinalizers, name) {
-			return false
-		}
-	}
-	return true
-}
-
-func identicalObjects(old, current []byte) bool {
-	decode := func(raw []byte) (map[string]any, error) {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		var object map[string]any
-		if err := decoder.Decode(&object); err != nil {
-			return nil, err
-		}
-		if err := decoder.Decode(new(any)); err != io.EOF {
-			return nil, errors.New("expected exactly one JSON object")
-		}
-		return object, nil
-	}
-	before, beforeErr := decode(old)
-	after, afterErr := decode(current)
-	return beforeErr == nil && afterErr == nil && before != nil && after != nil && reflect.DeepEqual(before, after)
+	return false
 }

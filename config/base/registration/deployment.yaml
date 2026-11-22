@@ -33,6 +33,9 @@ spec:
         app.kubernetes.io/name: fleet-registration
     spec:
       serviceAccountName: fleet-registration
+      # The service reads Milo through mounted credentials only; it needs no
+      # host Kubernetes API access.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -66,12 +69,7 @@ spec:
             - {name: root, mountPath: /var/run/fleet/milo, readOnly: true}
             - {name: projects, mountPath: /var/run/fleet/projects, readOnly: true}
             - {name: tls, mountPath: /etc/fleet/registration, readOnly: true}
-            - {name: control, mountPath: /etc/fleet/registration-control, readOnly: true}
       volumes:
-        - name: control
-          configMap:
-            name: fleet-registration-control
-            defaultMode: 0440
         - name: config
           configMap:
             name: fleet-manager-config

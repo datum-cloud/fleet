@@ -3,14 +3,14 @@ package registration
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,9 +19,9 @@ import (
 	"go.datum.net/fleet/internal/controller"
 	iam "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,11 +34,15 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func pemCertificate(raw []byte) []byte {
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw})
+type liveAPI struct {
+	t      *testing.T
+	config *rest.Config
+	scheme *runtime.Scheme
+	admin  client.Client
 }
 
-func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
+func startAPI(t *testing.T) *liveAPI {
+	t.Helper()
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS required")
 	}
@@ -53,307 +57,326 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		}
 	})
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, inventory.AddToScheme, metal.AddToScheme, admissionregistrationv1.AddToScheme, authorizationv1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, rbacv1.AddToScheme, inventory.AddToScheme, metal.AddToScheme, admissionregistrationv1.AddToScheme, authorizationv1.AddToScheme} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)
 		}
 	}
-	api, err := client.New(config, client.Options{Scheme: scheme})
+	admin, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
-	if err := api.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "fleet-system-private"}}); err != nil {
-		t.Fatal(err)
-	}
-	device := &inventory.Device{TypeMeta: metav1.TypeMeta{APIVersion: inventory.GroupVersion.String(), Kind: "Device"}, ObjectMeta: metav1.ObjectMeta{Name: "hardware", Namespace: "default"}, Spec: inventory.DeviceSpec{ClaimRef: inventory.LocalReference{Name: "installation"}, Identity: inventory.DeviceIdentity{Model: "test", Serial: "serial-1", SystemUUID: "11111111-1111-1111-1111-111111111111"}}}
-	if err := api.Create(ctx, device); err != nil {
-		t.Fatal(err)
-	}
-	encoded, _ := json.Marshal(Ledger{Authority: "milo", Projects: []string{"datum-cloud"}})
-	if err := api.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: "fleet-system-private"}, Data: map[string][]byte{"ledger.json": encoded}}); err != nil {
-		t.Fatal(err)
-	}
-	protection, err := os.ReadFile("../../config/base/registration/protection.yaml")
+	return &liveAPI{t: t, config: config, scheme: scheme, admin: admin}
+}
+
+// actor impersonates a caller routed through the provider project, as Milo's
+// routing filters establish it.
+func (api *liveAPI) actor(name string, groups ...string) client.Client {
+	api.t.Helper()
+	config := rest.CopyConfig(api.config)
+	config.Impersonate = rest.ImpersonationConfig{UserName: name, UID: name + "-uid", Groups: groups, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {"datum-cloud"}}}
+	actor, err := client.New(config, client.Options{Scheme: api.scheme})
 	if err != nil {
-		t.Fatal(err)
+		api.t.Fatal(err)
 	}
-	decoder := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(protection), 4096)
-	for {
-		var object unstructured.Unstructured
-		err := decoder.Decode(&object.Object)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := api.Create(ctx, &object); err != nil {
-			t.Fatal(err)
-		}
+	return actor
+}
+
+func (api *liveAPI) device(name, namespace, serial, uuid string) *inventory.Device {
+	api.t.Helper()
+	device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Spec: inventory.DeviceSpec{ClaimRef: inventory.LocalReference{Name: "installation"}, Identity: inventory.DeviceIdentity{Model: "test", Serial: serial, SystemUUID: uuid}}}
+	if err := api.admin.Create(context.Background(), device); err != nil {
+		api.t.Fatal(err)
 	}
-	protectionDeadline := time.Now().Add(10 * time.Second)
-	for {
-		probe := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: "fleet-system-private"}}
-		err := api.Delete(ctx, probe, client.DryRunAll)
-		if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
-			break
-		}
-		if time.Now().After(protectionDeadline) {
-			t.Fatalf("ledger retention policy did not engage: %v", err)
-		}
-		time.Sleep(30 * time.Millisecond)
-	}
-	for {
-		probe := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "fleet-system-private"}}
-		err := api.Delete(ctx, probe, client.DryRunAll)
-		if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
-			break
-		}
-		if time.Now().After(protectionDeadline) {
-			t.Fatalf("namespace retention policy did not engage: %v", err)
-		}
-		time.Sleep(30 * time.Millisecond)
-	}
-	privateConfig := rest.CopyConfig(config)
-	privateConfig.Impersonate = rest.ImpersonationConfig{UserName: "system:serviceaccount:fleet-system:fleet-registration", Groups: []string{"system:masters"}}
-	private, err := client.New(privateConfig, client.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var denied atomic.Bool
-	handler := &Handler{Store: Store{Client: private, Namespace: "fleet-system-private", Authority: "milo", Projects: []string{"datum-cloud"}}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }, Resolve: func(context.Context, string) (Project, error) {
-		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api}, nil
-	}, Authorize: func(ctx context.Context, project Project, actor authenticationv1.UserInfo, group, resource, name string) error {
-		if denied.Load() {
-			return ErrConflict
-		}
-		return Authorize(ctx, project, actor, group, resource, name)
-	}}
-	privateKey := controlFixture(t, handler)
-	handler.VerifyFence = func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }
-	handler.FenceDigest = func(ctx context.Context) (string, error) {
-		var current admissionregistrationv1.ValidatingWebhookConfiguration
-		if err := api.Get(ctx, client.ObjectKey{Name: "fleet-capacity-registration"}, &current); err != nil {
-			return "", err
-		}
-		encoded, err := json.Marshal(current.Webhooks)
-		return digest(encoded), err
-	}
-	lateAdmission, release := make(chan struct{}), make(chan struct{})
-	server := httptest.NewTLSServer(&admission.Webhook{Handler: admission.HandlerFunc(func(ctx context.Context, request admission.Request) admission.Response {
-		response := handler.Handle(ctx, request)
-		if response.Allowed && request.Resource.Resource == "machinecapacities" && request.Name == "admitted-never-persisted" {
-			close(lateAdmission)
-			select {
-			case <-release:
-			case <-ctx.Done():
-			}
-			return admission.Denied("synthetic later admission/storage failure")
-		}
-		return response
-	})})
-	t.Cleanup(server.Close)
-	url := server.URL
+	return device
+}
+
+// installWebhook serves the production handler behind the packaged webhook
+// configuration and returns the server so a test can take it away.
+func (api *liveAPI) installWebhook() *httptest.Server {
+	api.t.Helper()
+	handler := &Handler{Projects: []string{"datum-cloud"}, Resolve: func(context.Context, string) (Project, error) {
+		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api.admin}, nil
+	}, Authorize: Authorize}
+	server := httptest.NewTLSServer(&admission.Webhook{Handler: handler})
+	api.t.Cleanup(server.Close)
 	data, err := os.ReadFile("../../config/components/registration-admission/webhook.yaml")
 	if err != nil {
-		t.Fatal(err)
+		api.t.Fatal(err)
 	}
 	webhooks := &admissionregistrationv1.ValidatingWebhookConfiguration{}
 	if err := yaml.UnmarshalStrict(data, webhooks); err != nil {
-		t.Fatal(err)
+		api.t.Fatal(err)
 	}
+	url := server.URL
 	for index := range webhooks.Webhooks {
-		webhooks.Webhooks[index].ClientConfig = admissionregistrationv1.WebhookClientConfig{URL: &url, CABundle: pemCertificate(server.Certificate().Raw)}
+		webhooks.Webhooks[index].ClientConfig = admissionregistrationv1.WebhookClientConfig{URL: &url, CABundle: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})}
 	}
-	if err := api.Create(ctx, webhooks); err != nil {
-		t.Fatal(err)
+	if err := api.admin.Create(context.Background(), webhooks); err != nil {
+		api.t.Fatal(err)
 	}
-	activation := controlFor(t, handler, privateKey, "activate").Request
-	activation.FenceDigest, err = handler.FenceDigest(ctx)
+	operator := api.actor("operator", "system:masters")
+	api.eventually("registration webhook", func() bool {
+		probe := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "webhook-probe", Namespace: "default"}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: "absent"}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
+		return apierrors.IsForbidden(operator.Create(context.Background(), probe, client.DryRunAll))
+	})
+	return server
+}
+
+// installDeletionProtection applies the optional component's manifests as an
+// environment that opts in would.
+func (api *liveAPI) installDeletionProtection(probe *inventory.Device) {
+	api.t.Helper()
+	data, err := os.ReadFile("../../config/components/device-deletion-protection/policy.yaml")
 	if err != nil {
-		t.Fatal(err)
+		api.t.Fatal(err)
 	}
-	if err := handler.ApplyControl(ctx, SignControl(activation, privateKey)); err != nil {
-		t.Fatal(err)
-	}
-	actorConfig := rest.CopyConfig(config)
-	actorConfig.Impersonate = rest.ImpersonationConfig{UserName: "operator", UID: "actor-1", Groups: []string{"system:masters"}, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {"datum-cloud"}}}
-	actor, err := client.New(actorConfig, client.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(10 * time.Second)
+	decoder := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
 	for {
-		probe := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "dry-run-probe", Namespace: "default"}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: device.Name}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
-		err = actor.Create(ctx, probe, client.DryRunAll)
-		if apierrors.IsForbidden(err) {
+		var object unstructured.Unstructured
+		err := decoder.Decode(&object.Object)
+		if errors.Is(err, io.EOF) {
 			break
 		}
+		if err != nil {
+			api.t.Fatal(err)
+		}
+		if err := api.admin.Create(context.Background(), &object); err != nil {
+			api.t.Fatal(err)
+		}
+	}
+	api.eventually("Device deletion policy", func() bool {
+		return apierrors.IsForbidden(api.admin.Delete(context.Background(), probe, client.DryRunAll))
+	})
+}
+
+func (api *liveAPI) eventually(what string, condition func() bool) {
+	api.t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for !condition() {
 		if time.Now().After(deadline) {
-			t.Fatalf("webhook did not engage: %v", err)
+			api.t.Fatalf("%s did not engage", what)
 		}
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
-	var wins atomic.Int32
-	var workers sync.WaitGroup
-	for _, name := range []string{"first", "second", "third"} {
-		request := registrationRequest(t, device, name)
-		var capacity metal.MachineCapacity
-		_ = json.Unmarshal(request.Object.Raw, &capacity)
-		capacity.UID = "forged-client-uid"
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			if actor.Create(ctx, &capacity) == nil {
-				wins.Add(1)
+}
+
+func (api *liveAPI) exists(object client.Object) bool {
+	api.t.Helper()
+	err := api.admin.Get(context.Background(), client.ObjectKeyFromObject(object), object)
+	if err != nil && !apierrors.IsNotFound(err) {
+		api.t.Fatal(err)
+	}
+	return err == nil
+}
+
+// registration builds the exact create the staff portal sends for the
+// Device's current incarnation.
+func (api *liveAPI) registration(device *inventory.Device) *metal.MachineCapacity {
+	api.t.Helper()
+	if err := api.admin.Get(context.Background(), client.ObjectKeyFromObject(device), device); err != nil {
+		api.t.Fatal(err)
+	}
+	return &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: CapacityName(device.UID), Namespace: "default", Annotations: map[string]string{DeviceUIDAnnotation: string(device.UID), DeviceVersionAnnotation: device.ResourceVersion, OperationAnnotation: "operation-" + device.Name}}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: device.Name}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
+}
+
+func requireDenied(t *testing.T, err error, message string) {
+	t.Helper()
+	if !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), message) {
+		t.Fatalf("expected denial containing %q, got %v", message, err)
+	}
+}
+
+func TestRegistrationAgainstLiveDevices(t *testing.T) {
+	api := startAPI(t)
+	ctx := context.Background()
+	server := api.device("server", "default", "serial-1", "11111111-1111-1111-1111-111111111111")
+	duplicateA := api.device("duplicate-a", "default", "Shared-Serial", "22222222-2222-2222-2222-222222222222")
+	duplicateB := api.device("duplicate-b", "default", " shared-serial", "33333333-3333-3333-3333-333333333333")
+	legacyBacked := api.device("legacy-backed", "default", "legacy-serial", "44444444-4444-4444-4444-444444444444")
+	limitedTarget := api.device("limited-target", "default", "limited-serial", "55555555-5555-5555-5555-555555555555")
+	// Capacity that existed before registration admission was installed.
+	legacy := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "legacy-record", Namespace: "default"}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: legacyBacked.Name}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
+	if err := api.admin.Create(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	// The limited caller may create capacity but may not read Devices.
+	if err := api.admin.Create(ctx, &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "capacity-creator", Namespace: "default"}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{"metal.datumapis.com"}, Resources: []string{"machinecapacities"}, Verbs: []string{"create"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.admin.Create(ctx, &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "capacity-creator", Namespace: "default"}, RoleRef: rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: "capacity-creator"}, Subjects: []rbacv1.Subject{{APIGroup: "rbac.authorization.k8s.io", Kind: "User", Name: "limited"}}}); err != nil {
+		t.Fatal(err)
+	}
+	webhook := api.installWebhook()
+	operator := api.actor("operator", "system:masters")
+
+	t.Run("duplicate alias across two live Devices is denied", func(t *testing.T) {
+		for _, device := range []*inventory.Device{duplicateA, duplicateB} {
+			requireDenied(t, operator.Create(ctx, api.registration(device)), "shares recorded hardware identity")
+		}
+	})
+	t.Run("missing Device is denied", func(t *testing.T) {
+		missing := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: CapacityName("9d0c3c2e-1f5b-4f37-9e43-2f5c6a1b7d80"), Namespace: "default", Annotations: map[string]string{DeviceUIDAnnotation: "9d0c3c2e-1f5b-4f37-9e43-2f5c6a1b7d80", DeviceVersionAnnotation: "1", OperationAnnotation: "missing"}}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: "never-recorded"}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
+		requireDenied(t, operator.Create(ctx, missing), "does not exist")
+	})
+	t.Run("unauthorized caller is denied", func(t *testing.T) {
+		limited := api.actor("limited")
+		requireDenied(t, limited.Create(ctx, api.registration(limitedTarget)), "permission on devices is required")
+		outsider := api.actor("outsider")
+		if err := outsider.Create(ctx, api.registration(limitedTarget)); !apierrors.IsForbidden(err) {
+			t.Fatalf("caller without capacity permission: %v", err)
+		}
+		if api.exists(api.registration(limitedTarget)) {
+			t.Fatal("unauthorized registration persisted")
+		}
+	})
+	t.Run("authored names cannot bypass one capacity per Device", func(t *testing.T) {
+		authored := api.registration(server)
+		authored.Name = "authored-name"
+		requireDenied(t, operator.Create(ctx, authored), "derived from the selected Device UID")
+	})
+	t.Run("legacy capacity already backing the Device is refused", func(t *testing.T) {
+		requireDenied(t, operator.Create(ctx, api.registration(legacyBacked)), "already backs capacity legacy-record")
+	})
+	t.Run("concurrent registrations of one Device persist once", func(t *testing.T) {
+		var workers sync.WaitGroup
+		results := make(chan error, 8)
+		for range 8 {
+			capacity := api.registration(server)
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				results <- operator.Create(ctx, capacity)
+			}()
+		}
+		workers.Wait()
+		close(results)
+		wins := 0
+		for err := range results {
+			switch {
+			case err == nil:
+				wins++
+			case apierrors.IsAlreadyExists(err) || (apierrors.IsForbidden(err) && strings.Contains(err.Error(), "already backs capacity")):
+			default:
+				t.Fatalf("unexpected registration failure: %v", err)
 			}
-		}()
-	}
-	workers.Wait()
-	if wins.Load() != 1 {
-		t.Fatalf("wanted one admission, got %d", wins.Load())
-	}
-	if err := handler.Recover(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, ledger, err := handler.Store.Read(ctx)
-	if err != nil || len(ledger.Entries) != 1 || ledger.Entries[0].Outcome != "Recorded" || ledger.Entries[0].CapacityUID == "forged-client-uid" {
-		t.Fatalf("incarnation not bound by real API: %+v %v", ledger, err)
-	}
-	var capacity metal.MachineCapacity
-	if err := actor.Get(ctx, client.ObjectKey{Namespace: "default", Name: ledger.Entries[0].Name}, &capacity); err != nil {
-		t.Fatal(err)
-	}
-	capacity.Spec.AllocationPolicy = "Enabled"
-	capacity.Spec.CleaningPolicyRef.Name = "invented-policy"
-	if err := actor.Update(ctx, &capacity); !apierrors.IsForbidden(err) {
-		t.Fatalf("direct enabling bypass: %v", err)
-	}
-	if err := actor.Get(ctx, client.ObjectKeyFromObject(&capacity), &capacity); err != nil {
-		t.Fatal(err)
-	}
-	capacity.Annotations[DeviceUIDAnnotation] = "copied-other-incarnation"
-	if err := actor.Update(ctx, &capacity); !apierrors.IsForbidden(err) {
-		t.Fatalf("binding annotation bypass: %v", err)
-	}
-	if err := actor.Get(ctx, client.ObjectKeyFromObject(&capacity), &capacity); err != nil {
-		t.Fatal(err)
-	}
-	capacity.Status.Conditions = []metav1.Condition{{Type: "Available", Status: metav1.ConditionTrue, Reason: "Fabricated", Message: "Must not be accepted", LastTransitionTime: metav1.Now()}}
-	if err := actor.Status().Update(ctx, &capacity); !apierrors.IsForbidden(err) {
-		t.Fatalf("positive readiness bypass: %v", err)
-	}
-	if err := actor.Delete(ctx, &capacity); !apierrors.IsForbidden(err) {
-		t.Fatalf("direct deletion bypass: %v", err)
-	}
-	if err := actor.Delete(ctx, device); !apierrors.IsForbidden(err) {
-		t.Fatalf("Device deletion bypass: %v", err)
-	}
-	var namespace corev1.Namespace
-	if err := actor.Get(ctx, client.ObjectKey{Name: "default"}, &namespace); err != nil {
-		t.Fatal(err)
-	}
-	if err := actor.Delete(ctx, &namespace); !apierrors.IsForbidden(err) {
-		t.Fatalf("inventory namespace deletion bypass: %v", err)
-	}
-	var privateNamespace corev1.Namespace
-	if err := api.Get(ctx, client.ObjectKey{Name: "fleet-system-private"}, &privateNamespace); err != nil {
-		t.Fatal(err)
-	}
-	if err := api.Delete(ctx, &privateNamespace); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
-		t.Fatalf("private namespace deletion bypass: %v", err)
-	}
-	secret, _, err := handler.Store.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := api.Delete(ctx, secret); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
-		t.Fatalf("ledger deletion bypass: %v", err)
-	}
-	if err := api.Update(ctx, secret); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
-		t.Fatalf("ledger overwrite bypass: %v", err)
-	}
-	duplicate := device.DeepCopyObject().(*inventory.Device)
-	duplicate.Name, duplicate.UID, duplicate.ResourceVersion = "other", "", ""
-	if err := actor.Create(ctx, duplicate); !apierrors.IsForbidden(err) {
-		t.Fatalf("alias bypass: %v", err)
-	}
-	denied.Store(true)
-	request := registrationRequest(t, device, "denied")
-	var rejected metal.MachineCapacity
-	_ = json.Unmarshal(request.Object.Raw, &rejected)
-	rejected.UID = ""
-	if err := actor.Create(ctx, &rejected); !apierrors.IsForbidden(err) {
-		t.Fatalf("revoked authorization bypass: %v", err)
-	}
-	denied.Store(false)
-	pendingDevice := device.DeepCopyObject().(*inventory.Device)
-	pendingDevice.Name, pendingDevice.UID, pendingDevice.ResourceVersion = "pending-hardware", "", ""
-	pendingDevice.Spec.Identity.Serial = "pending-serial"
-	pendingDevice.Spec.Identity.SystemUUID = "22222222-2222-2222-2222-222222222222"
-	if err := actor.Create(ctx, pendingDevice); err != nil {
-		t.Fatal(err)
-	}
-	pendingRequest := registrationRequest(t, pendingDevice, "admitted-never-persisted")
-	var pendingCapacity metal.MachineCapacity
-	_ = json.Unmarshal(pendingRequest.Object.Raw, &pendingCapacity)
-	completed := make(chan error, 1)
-	go func() { completed <- actor.Create(ctx, &pendingCapacity) }()
-	select {
-	case <-lateAdmission:
-	case <-time.After(10 * time.Second):
-		t.Fatal("admission did not reach pause")
-	}
-	if err := handler.ApplyControl(ctx, controlFor(t, handler, privateKey, "expand")); err != nil {
-		close(release)
-		t.Fatal(err)
-	}
-	close(release)
-	if err := <-completed; !apierrors.IsForbidden(err) {
-		t.Fatal("expected later admission failure", err)
-	}
-	if err := handler.Recover(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, retained, err := handler.Store.Read(ctx)
-	if err != nil || len(retained.Entries) != 2 {
-		t.Fatal("lost pending public create", err)
-	}
-	for _, entry := range retained.Entries {
-		if entry.Name == pendingCapacity.Name && entry.Outcome != "Unknown" {
-			t.Fatal("absent object became free or recorded")
 		}
-	}
-	duplicateRequest := registrationRequest(t, pendingDevice, "after-expansion")
-	var duplicateCapacity metal.MachineCapacity
-	_ = json.Unmarshal(duplicateRequest.Object.Raw, &duplicateCapacity)
-	if err := actor.Create(ctx, &duplicateCapacity); !apierrors.IsForbidden(err) {
-		t.Fatal("expansion orphaned aliases", err)
-	}
-	_, route, err := handler.Store.root(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	segment := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: route.Segments[0].Name, Namespace: "fleet-system-private"}}
-	if err := api.Delete(ctx, segment); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
-		t.Fatal("segment deletion bypass", err)
-	}
-	if err := private.Delete(ctx, segment); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
-		t.Fatal("service segment deletion bypass", err)
-	}
-	downgrade, _, err := handler.Store.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	delete(downgrade.Data, "routing.json")
-	if err := private.Update(ctx, downgrade); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
-		t.Fatal("v2 format downgrade bypass", err)
-	}
-	for _, name := range []string{"arbitrary-credential", LedgerName, SegmentPrefix + "mutable"} {
-		probe := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "fleet-system-private", Name: name}}
-		if err := private.Create(ctx, probe); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
-			t.Fatal("service create boundary bypass", name, err)
+		if wins != 1 {
+			t.Fatalf("wanted exactly one persisted registration, got %d", wins)
 		}
+	})
+	t.Run("a second capacity for the same Device is refused", func(t *testing.T) {
+		// Admission sees the existing capacity first; if two creates race past
+		// it, the derived name makes the API server reject the second.
+		if err := operator.Create(ctx, api.registration(server)); !apierrors.IsAlreadyExists(err) && (!apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "already backs capacity")) {
+			t.Fatalf("second capacity under the derived name: %v", err)
+		}
+		var capacities metal.MachineCapacityList
+		if err := api.admin.List(ctx, &capacities); err != nil {
+			t.Fatal(err)
+		}
+		bound := 0
+		for _, capacity := range capacities.Items {
+			if capacity.Spec.DeviceRef.Name == server.Name {
+				bound++
+			}
+		}
+		if bound != 1 {
+			t.Fatalf("Device backs %d capacities", bound)
+		}
+	})
+	t.Run("without the component Device DELETE is allowed and its capacity stays Disabled", func(t *testing.T) {
+		registered := api.registration(server)
+		if err := api.admin.Get(ctx, client.ObjectKeyFromObject(registered), registered); err != nil {
+			t.Fatal(err)
+		}
+		if err := api.admin.Delete(ctx, server); err != nil {
+			t.Fatalf("Device deletion without the component: %v", err)
+		}
+		if api.exists(server) {
+			t.Fatal("Device survived deletion without the component")
+		}
+		if err := api.admin.Get(ctx, client.ObjectKeyFromObject(registered), registered); err != nil || registered.Spec.AllocationPolicy != "Disabled" {
+			t.Fatalf("orphaned capacity is not Disabled: %v", err)
+		}
+		registered.Spec.AllocationPolicy = "Enabled"
+		registered.Spec.CleaningPolicyRef.Name = "invented-policy"
+		if err := operator.Update(ctx, registered); !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "mutation and deletion are disabled") {
+			t.Fatalf("orphaned capacity was enabled: %v", err)
+		}
+		if err := operator.Delete(ctx, registered); !apierrors.IsForbidden(err) {
+			t.Fatalf("orphaned capacity was deleted: %v", err)
+		}
+		replacement := api.device("server", "default", "replacement-serial", "66666666-6666-6666-6666-666666666666")
+		requireDenied(t, operator.Create(ctx, api.registration(replacement)), "already backs capacity")
+	})
+
+	cascade := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cascade"}}
+	if err := api.admin.Create(ctx, cascade); err != nil {
+		t.Fatal(err)
 	}
+	cascaded := api.device("cascaded", "cascade", "cascade-serial", "77777777-7777-7777-7777-777777777777")
+	sibling := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "sibling", Namespace: "cascade"}}
+	if err := api.admin.Create(ctx, sibling); err != nil {
+		t.Fatal(err)
+	}
+	api.installDeletionProtection(duplicateA)
+
+	t.Run("installed component denies Device DELETE for every caller", func(t *testing.T) {
+		for _, caller := range []client.Client{api.admin, operator} {
+			if err := caller.Delete(ctx, duplicateA); !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "cannot be deleted") {
+				t.Fatalf("Device deletion: %v", err)
+			}
+		}
+		if !api.exists(duplicateA) {
+			t.Fatal("Device removed despite deletion protection")
+		}
+	})
+	t.Run("deletecollection is denied per Device", func(t *testing.T) {
+		if err := api.admin.DeleteAllOf(ctx, &inventory.Device{}, client.InNamespace("default")); !apierrors.IsForbidden(err) {
+			t.Fatalf("deletecollection: %v", err)
+		}
+		for _, device := range []*inventory.Device{duplicateA, duplicateB, legacyBacked, limitedTarget} {
+			if !api.exists(device) {
+				t.Fatalf("deletecollection removed %s", device.Name)
+			}
+		}
+	})
+	t.Run("namespace deletion stays Terminating with its Devices", func(t *testing.T) {
+		if err := api.admin.Delete(ctx, cascade); err != nil {
+			t.Fatal(err)
+		}
+		// envtest runs no namespace controller. Issue the same content
+		// deletions the controller would: deletecollection, then per item.
+		if err := api.admin.DeleteAllOf(ctx, &corev1.ConfigMap{}, client.InNamespace("cascade")); err != nil {
+			t.Fatal(err)
+		}
+		if err := api.admin.DeleteAllOf(ctx, &inventory.Device{}, client.InNamespace("cascade")); !apierrors.IsForbidden(err) {
+			t.Fatalf("namespace cascade deletecollection: %v", err)
+		}
+		if err := api.admin.Delete(ctx, cascaded); !apierrors.IsForbidden(err) {
+			t.Fatalf("namespace cascade item deletion: %v", err)
+		}
+		if !api.exists(cascaded) || api.exists(sibling) {
+			t.Fatal("cascade must stop at Devices while other content drains")
+		}
+		if !api.exists(cascade) || cascade.DeletionTimestamp.IsZero() {
+			t.Fatal("namespace must remain Terminating")
+		}
+	})
+	t.Run("webhook outage blocks only capacity writes", func(t *testing.T) {
+		webhook.Close()
+		other := api.device("outage-device", "default", "outage-serial", "88888888-8888-8888-8888-888888888888")
+		other.Labels = map[string]string{"edited": "true"}
+		if err := api.admin.Update(ctx, other); err != nil {
+			t.Fatalf("Device update during outage: %v", err)
+		}
+		capacity := api.registration(other)
+		if err := operator.Create(ctx, capacity); err == nil {
+			t.Fatal("capacity registration admitted without the webhook")
+		}
+		if api.exists(capacity) {
+			t.Fatal("capacity persisted during outage")
+		}
+	})
 }

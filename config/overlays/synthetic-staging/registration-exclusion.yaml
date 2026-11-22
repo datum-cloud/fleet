@@ -1,3 +1,5 @@
+# The synthetic Milo root (config/milo-synthetic) installs no registration
+# webhook, so the registration workload has nothing to serve here.
 $patch: delete
 apiVersion: apps/v1
 kind: Deployment
@@ -18,41 +20,3 @@ kind: ServiceAccount
 metadata:
   name: fleet-registration
   namespace: fleet-system
----
-$patch: delete
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: fleet-registration-ledger
-  namespace: fleet-system-private
----
-$patch: delete
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: fleet-registration-ledger
-  namespace: fleet-system-private
----
-$patch: delete
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: fleet-registration-ledger-protection
----
-$patch: delete
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: fleet-registration-ledger-protection
----
-$patch: delete
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: fleet-registration-namespace-protection
----
-$patch: delete
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: fleet-registration-namespace-protection
