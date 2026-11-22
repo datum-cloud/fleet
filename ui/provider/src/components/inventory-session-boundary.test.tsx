@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InventorySessionBoundary, SessionQueries } from './inventory-session-boundary';
 import { InventoryOperationContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
 
-function mountHost(loader: () => unknown, content: React.ReactNode) {
+async function mountHost(loader: () => unknown, content: React.ReactNode) {
   const router = createMemoryRouter([{
     id: 'layouts/milo.layout',
     path: '/',
@@ -14,7 +14,9 @@ function mountHost(loader: () => unknown, content: React.ReactNode) {
     element: <Outlet />,
     children: [{ index: true, element: <InventorySessionBoundary>{content}</InventorySessionBoundary> }],
   }]);
-  render(<RouterProvider router={router} />);
+  await act(async () => { render(<RouterProvider router={router} />); });
+  expect(router.state.initialized).toBe(true);
+  expect(router.state.revalidation).toBe('idle');
   return router;
 }
 
@@ -30,7 +32,7 @@ describe('host inventory session isolation', () => {
       const query = useQuery({ queryKey: ['inventory'], queryFn: inventoryRead, staleTime: Infinity });
       return <p>{query.data ?? 'Empty inventory cache'}</p>;
     }
-    mountHost(async () => {
+    await mountHost(async () => {
       if (++reads > 1) await new Promise<void>(resolve => { release = resolve; });
       return { user: { metadata: { uid: 'staff-a' } } };
     }, <Records />);
@@ -73,7 +75,7 @@ describe('host inventory session isolation', () => {
       const query = useQuery({ queryKey: ['inventory'], queryFn: read, staleTime: Infinity });
       return <p>{query.data}</p>;
     }
-    const router = mountHost(() => ({ user: { metadata: { uid: principal } } }), <Records />);
+    const router = await mountHost(() => ({ user: { metadata: { uid: principal } } }), <Records />);
     await screen.findByText('staff-a inventory 1');
     const originalClient = client;
     await act(async () => {
@@ -133,14 +135,16 @@ describe('host inventory session isolation', () => {
   });
 
   it('keeps failed focus verification masked until the next verification succeeds', async () => {
-    const router = mountHost(() => ({ user: { metadata: { uid: 'staff-a' } } }), 'Private inventory');
+    const router = await mountHost(() => ({ user: { metadata: { uid: 'staff-a' } } }), 'Private inventory');
     await screen.findByText('Private inventory');
     let release!: () => void;
-    vi.spyOn(router, 'revalidate').mockRejectedValueOnce(new Error('verification failed')).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
-    fireEvent(window, new Event('focus'));
+    const revalidate = vi.spyOn(router, 'revalidate').mockRejectedValueOnce(new Error('verification failed')).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    await act(async () => { fireEvent(window, new Event('focus')); });
+    expect(revalidate).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.queryByText('Private inventory')).not.toBeInTheDocument());
     fireEvent(window, new Event('focus'));
     await waitFor(() => expect(release).toBeDefined());
+    expect(revalidate).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();
     await act(async () => release());
     await screen.findByText('Private inventory');
@@ -149,7 +153,7 @@ describe('host inventory session isolation', () => {
 
   it.each(['logout', 'failure'])('clears visible data when focus verification observes %s', async outcome => {
     let expired = false;
-    mountHost(() => {
+    await mountHost(() => {
       if (expired && outcome === 'failure') throw new Response('Synthetic failure', { status: 503 });
       if (expired) return { user: null };
       return { user: { metadata: { uid: 'staff-a' } } };
@@ -170,7 +174,7 @@ describe('host inventory session isolation', () => {
       const query = useQuery({ queryKey: ['inventory'], queryFn: inventoryRead, staleTime: Infinity });
       return <p>{query.data}</p>;
     }
-    mountHost(async () => {
+    await mountHost(async () => {
       if (++reads > 1) await new Promise<void>(resolve => { release = resolve; });
       return { user: { metadata: { uid: 'staff-a' } } };
     }, <Records />);
@@ -193,7 +197,7 @@ describe('host inventory session isolation', () => {
   });
 
   it('does not read inventory without an authenticated loader identity', async () => {
-    mountHost(() => ({ user: null }), 'Restricted inventory');
+    await mountHost(() => ({ user: null }), 'Restricted inventory');
     await screen.findByText('Your session has expired');
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();
   });
@@ -206,7 +210,7 @@ describe('host inventory session isolation', () => {
       const query = useQuery({ queryKey: ['inventory'], queryFn: read });
       return <p>{query.data}</p>;
     }
-    const router = mountHost(async () => {
+    const router = await mountHost(async () => {
       if (principal === 'staff-b') await new Promise<void>(resolve => { release = resolve; });
       return { user: { metadata: { uid: principal } } };
     }, <Records />);
@@ -223,7 +227,7 @@ describe('host inventory session isolation', () => {
 
   it('hides background data and revalidates the actual host loader before restoring it', async () => {
     const loader = vi.fn(() => ({ user: { metadata: { uid: 'staff-a' } } }));
-    mountHost(loader, 'Restricted inventory');
+    await mountHost(loader, 'Restricted inventory');
     await screen.findByText('Restricted inventory');
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     fireEvent(document, new Event('visibilitychange'));
@@ -239,7 +243,7 @@ describe('host inventory session isolation', () => {
   it('only restores the newest foreground generation after successive pagehide and focus events', async () => {
     const releases: (() => void)[] = [];
     let reads = 0;
-    mountHost(async () => {
+    await mountHost(async () => {
       if (++reads > 1) await new Promise<void>(resolve => releases.push(resolve));
       return { user: { metadata: { uid: 'staff-a' } } };
     }, 'Private inventory');
