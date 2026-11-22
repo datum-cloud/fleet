@@ -22,8 +22,7 @@ describe('toInventory', () => {
   it('does not infer active hardware from the most recently edited record', () => {
     const replacement = {
       ...fixtureDevices[0],
-      metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002' },
-      spec: { ...fixtureDevices[0].spec, provenance: { ...fixtureDevices[0].spec.provenance, recordedAt: '2026-02-01T00:00:00Z' } },
+      metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002', creationTimestamp: '2026-02-01T00:00:00Z' },
     };
     const inventory = toInventory(fixtureDeviceClaims, [replacement, fixtureDevices[0]]);
     const u12 = inventory.slots.find((s) => s.claim.metadata.name === 'rack-01-u12')!;

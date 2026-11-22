@@ -29,7 +29,7 @@ export function useInventoryPermission(kind: ManagedKind, namespace: string, ver
 
 export function canEditInventoryLabel(record: ManagedRecord): boolean {
   const { metadata, spec } = record;
-  return ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp && !spec.provenance.source && spec.provenance.method === 'Manual' &&
+  return ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp &&
     !Object.keys({ ...metadata.labels, ...metadata.annotations }).some(key => /fluxcd\.io|argocd|inventory.*owner/i.test(key)) &&
     !!metadata.managedFields?.length && metadata.managedFields.every(field => field.manager === INVENTORY_FIELD_MANAGER && !field.subresource);
 }
@@ -38,21 +38,18 @@ export interface InventoryFormValues extends HardwareFields {
   name: string;
   namespace: string;
   displayName: string;
-  recordedBy: string;
-  reference: string;
   facility: string;
   height: string;
 }
 
-export function inventoryPayload(kind: 'Facility' | 'Rack', values: InventoryFormValues, now = new Date().toISOString()): PhysicalRecord & { apiVersion: string } {
+export function inventoryPayload(kind: 'Facility' | 'Rack', values: InventoryFormValues): PhysicalRecord & { apiVersion: string } {
   const resourceName = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
   if (!resourceName.test(values.name) || values.name.length > 253 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(values.namespace) || values.namespace.length > 63) throw new ApiError(422, 'Enter a valid record name and namespace.');
-  if (!values.displayName.trim() || values.displayName.trim().length > 253 || !values.recordedBy.trim() || values.recordedBy.trim().length > 253) throw new ApiError(422, 'Display name and recorder are required (at most 253 characters each).');
-  if (values.reference.trim().length > 1024) throw new ApiError(422, 'The change reference is too long.');
+  if (!values.displayName.trim() || values.displayName.trim().length > 253) throw new ApiError(422, 'A display name is required (at most 253 characters).');
   if (kind === 'Rack' && !resourceName.test(values.facility)) throw new ApiError(422, 'Choose a facility in this namespace.');
   if (kind === 'Rack' && values.height && (!/^\d+$/.test(values.height) || Number(values.height) < 1 || Number(values.height) > 100)) throw new ApiError(422, 'Rack height must be a whole number from 1 to 100, or left blank when unknown.');
   return { apiVersion: 'fleet.datumapis.com/v1alpha1', kind, metadata: { name: values.name, namespace: values.namespace }, spec: {
-    displayName: values.displayName.trim(), provenance: { method: 'Manual', recordedBy: values.recordedBy.trim(), recordedAt: now, ...(values.reference.trim() && { reference: values.reference.trim() }) },
+    displayName: values.displayName.trim(),
     ...(kind === 'Rack' && { facilityRef: { name: values.facility }, ...(values.height && { heightUnits: Number(values.height) }) }),
   } };
 }
@@ -92,15 +89,12 @@ export async function editInventoryLabel(original: ManagedRecord, values: Invent
   const current = await readInventoryReference<ManagedRecord>(kind, namespace, original.metadata.name, operation);
   operation.assertCurrent();
   if (!current || current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canEditInventoryLabel(current)) throw new ApiError(409, 'The record or its ownership changed. Reload it before editing.');
-  const now = new Date().toISOString();
-  if (now <= current.spec.provenance.recordedAt) throw new ApiError(409, 'The recorded timestamp is not earlier than this clock. Review the record before editing.');
-  const validated = inventoryPayload('Facility', { ...values, name: original.metadata.name, namespace }, now);
+  const validated = inventoryPayload('Facility', { ...values, name: original.metadata.name, namespace });
   operation.dispatch();
   const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${path}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'PATCH', contentType: 'application/json-patch+json', body: [
     { op: 'test', path: '/metadata/uid', value: current.metadata.uid },
     { op: 'test', path: '/metadata/resourceVersion', value: current.metadata.resourceVersion },
     { op: current.spec.displayName === undefined ? 'add' : 'replace', path: '/spec/displayName', value: validated.spec.displayName },
-    { op: 'replace', path: '/spec/provenance', value: validated.spec.provenance },
   ] }).catch(error => { operation.assertCurrent(); throw error; });
   operation.assertCurrent();
   if (!record?.metadata?.uid) throw new Error('Save outcome could not be confirmed.');

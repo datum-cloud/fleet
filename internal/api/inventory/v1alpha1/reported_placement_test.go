@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,12 +15,11 @@ func TestPlacementJSONPatchPreconditionsBeforeAdmission(t *testing.T) {
 	baseline := reportedDevice()
 	baseline.UID = "device-uid"
 	baseline.ResourceVersion = "7"
-	report := &ReportedPlacement{Revision: 2, Method: "Manual", ObservedAt: later(time.Minute), Reason: "Correct record", Reference: "ticket/example"}
+	report := &ReportedPlacement{Revision: 2, ObservedAt: later(time.Minute), Reason: "Correct record", Reference: "ticket/example"}
 	request, err := json.Marshal([]map[string]any{
 		{"op": "test", "path": "/metadata/uid", "value": string(baseline.UID)},
 		{"op": "test", "path": "/metadata/resourceVersion", "value": baseline.ResourceVersion},
 		{"op": "add", "path": "/spec/reportedPlacement", "value": report},
-		{"op": "replace", "path": "/spec/provenance/recordedAt", "value": later(time.Hour)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +64,7 @@ func TestPlacementJSONPatchPreconditionsBeforeAdmission(t *testing.T) {
 			}
 			beforeSpec := object(t, baseline)["spec"].(map[string]any)
 			afterSpec := object(t, changed)["spec"].(map[string]any)
-			if !reflect.DeepEqual(afterSpec["provenance"].(map[string]any)["source"], beforeSpec["provenance"].(map[string]any)["source"]) || !reflect.DeepEqual(afterSpec["identity"], beforeSpec["identity"]) || changed.Spec.ClaimRef != baseline.Spec.ClaimRef {
+			if !reflect.DeepEqual(afterSpec["identity"], beforeSpec["identity"]) || changed.Spec.ClaimRef != baseline.Spec.ClaimRef {
 				t.Fatal("changed protected fields")
 			}
 		})
@@ -75,11 +73,7 @@ func TestPlacementJSONPatchPreconditionsBeforeAdmission(t *testing.T) {
 
 func reportedDevice() Device {
 	device := syntheticDevice()
-	source := ExternalReference{System: "example-netbox", Type: "dcim/devices", ID: "1"}
-	device.Spec.Identity.SourceIdentity = &source
-	device.Spec.Provenance.Method = "NetBoxImport"
-	device.Spec.Provenance.Source = &SourceReference{ExternalReference: source, SnapshotDigest: "sha256:" + strings.Repeat("a", 64), MappingRevision: "example-1", ObservedAt: metav1.NewTime(recordedAt)}
-	device.Spec.ReportedPlacement = &ReportedPlacement{Revision: 1, ObservedAt: metav1.NewTime(recordedAt), SnapshotDigest: device.Spec.Provenance.Source.SnapshotDigest, RackRef: &LocalReference{Name: "rack-a"}}
+	device.Spec.ReportedPlacement = &ReportedPlacement{Revision: 1, ObservedAt: metav1.NewTime(baseTime), Reason: "Initial report", Reference: "ticket/initial", RackRef: &LocalReference{Name: "rack-a"}}
 	return device
 }
 
@@ -119,12 +113,9 @@ func TestReportedPlacementAdmission(t *testing.T) {
 			device.Spec.ReportedPlacement.Mount = "side"
 			device.Spec.ReportedPlacement.Face = "front"
 		},
-		"snapshot": func(device *Device) {
-			device.Spec.ReportedPlacement.SnapshotDigest = "sha256:" + strings.Repeat("b", 64)
-		},
-		"time":     func(device *Device) { device.Spec.ReportedPlacement.ObservedAt = later(time.Hour) },
-		"revision": func(device *Device) { device.Spec.ReportedPlacement.Revision = 2 },
-		"manual":   func(device *Device) { device.Spec.Provenance.Method = "Manual" },
+		"missing reason":    func(device *Device) { device.Spec.ReportedPlacement.Reason = "" },
+		"missing reference": func(device *Device) { device.Spec.ReportedPlacement.Reference = "" },
+		"revision":          func(device *Device) { device.Spec.ReportedPlacement.Revision = 2 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			device := reportedDevice()
@@ -143,18 +134,12 @@ func TestPlacementCorrectionProtectsIdentityAndRevision(t *testing.T) {
 		"removal":                   func(device *Device) { device.Spec.ReportedPlacement = nil },
 		"rebinding":                 func(device *Device) { device.Spec.ClaimRef.Name = "other" },
 		"identity":                  func(device *Device) { device.Spec.Identity.Serial = "other" },
-		"source": func(device *Device) {
-			device.Spec.Provenance.Source.ID = "other"
-			device.Spec.Identity.SourceIdentity.ID = "other"
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			old := reportedDevice()
 			device := old.DeepCopyObject().(*Device)
 			mutate(device)
 			device.Spec.DisplayName = "bundled edit"
-			device.Spec.Provenance.RecordedAt = later(time.Hour)
-			device.Spec.Provenance.RecordedBy = "forged-administrator"
 			device.Labels = map[string]string{"owner": "operator", "audit-approved": "true"}
 			device.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "fleet-staff-inventory-ui", Operation: metav1.ManagedFieldsOperationUpdate}}
 			if errs := admit(t, "Device", object(t, device), object(t, old)); len(errs) == 0 {
@@ -165,87 +150,52 @@ func TestPlacementCorrectionProtectsIdentityAndRevision(t *testing.T) {
 	device := reportedDevice()
 	old := device.DeepCopyObject().(*Device)
 	old.Spec.ReportedPlacement = nil
-	device.Spec.Provenance.RecordedAt = later(time.Hour)
 	if errs := admit(t, "Device", object(t, device), object(t, old)); len(errs) != 0 {
 		t.Fatal(errs)
 	}
 	old = device.DeepCopyObject().(*Device)
 	device.Spec.DisplayName = "unrelated recordkeeping"
-	device.Spec.Provenance.RecordedAt = later(2 * time.Hour)
 	if errs := admit(t, "Device", object(t, device), object(t, old)); len(errs) != 0 {
 		t.Fatal(errs)
 	}
 }
 
-func TestManualPlacementCorrections(t *testing.T) {
-	for _, imported := range []bool{false, true} {
-		for _, existing := range []bool{false, true} {
-			old := syntheticDevice()
-			if imported {
-				old = reportedDevice()
-			}
-			if existing && !imported {
-				old.Spec.ReportedPlacement = &ReportedPlacement{Revision: 1, Method: "Manual", ObservedAt: metav1.NewTime(recordedAt), Reason: "Initial report", Reference: "ticket/initial"}
-			}
-			if !existing {
-				old.Spec.ReportedPlacement = nil
-			}
-			device := old.DeepCopyObject().(*Device)
-			revision := int32(1)
-			if old.Spec.ReportedPlacement != nil {
-				revision++
-			}
-			device.Spec.ReportedPlacement = &ReportedPlacement{Revision: revision, Method: "Manual", ObservedAt: later(time.Minute), Reason: "Correct record", Reference: "ticket/example", RackRef: &LocalReference{Name: "other-rack"}}
-			device.Spec.Provenance.RecordedAt = later(time.Hour)
-			if errs := admit(t, "Device", object(t, device), object(t, old)); len(errs) != 0 {
-				t.Fatal(errs)
-			}
-			for name, mutate := range map[string]func(*Device){
-				"missing reason":   func(record *Device) { record.Spec.ReportedPlacement.Reason = "" },
-				"blank reason":     func(record *Device) { record.Spec.ReportedPlacement.Reason = "  " },
-				"missing evidence": func(record *Device) { record.Spec.ReportedPlacement.Reference = "" },
-				"false snapshot attribution": func(record *Device) {
-					record.Spec.ReportedPlacement.SnapshotDigest = "sha256:" + strings.Repeat("a", 64)
-				},
-				"skipped revision": func(record *Device) { record.Spec.ReportedPlacement.Revision += 2 },
-				"claim binding":    func(record *Device) { record.Spec.ClaimRef.Name = "other" },
-				"identity":         func(record *Device) { record.Spec.Identity.Serial = "other" },
-			} {
-				t.Run(name, func(t *testing.T) {
-					invalid := device.DeepCopyObject().(*Device)
-					mutate(invalid)
-					if errs := admit(t, "Device", object(t, invalid), object(t, old)); len(errs) == 0 {
-						t.Fatal("accepted invalid correction")
-					}
-				})
-			}
-			if imported {
-				for _, field := range []string{"method", "system", "type", "id", "removal"} {
-					invalid := device.DeepCopyObject().(*Device)
-					switch field {
-					case "method":
-						invalid.Spec.Provenance.Method = "Manual"
-					case "system":
-						invalid.Spec.Provenance.Source.System = "other"
-					case "type":
-						invalid.Spec.Provenance.Source.Type = "other"
-					case "id":
-						invalid.Spec.Provenance.Source.ID = "other"
-					case "removal":
-						invalid.Spec.Provenance.Source = nil
-					}
-					if errs := admit(t, "Device", object(t, invalid), object(t, old)); len(errs) == 0 {
-						t.Fatalf("accepted changed import %s", field)
-					}
+func TestPlacementCorrections(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		old := reportedDevice()
+		if !existing {
+			old.Spec.ReportedPlacement = nil
+		}
+		device := old.DeepCopyObject().(*Device)
+		revision := int32(1)
+		if old.Spec.ReportedPlacement != nil {
+			revision++
+		}
+		device.Spec.ReportedPlacement = &ReportedPlacement{Revision: revision, ObservedAt: later(time.Minute), Reason: "Correct record", Reference: "ticket/example", RackRef: &LocalReference{Name: "other-rack"}}
+		if errs := admit(t, "Device", object(t, device), object(t, old)); len(errs) != 0 {
+			t.Fatal(errs)
+		}
+		for name, mutate := range map[string]func(*Device){
+			"missing reason":   func(record *Device) { record.Spec.ReportedPlacement.Reason = "" },
+			"blank reason":     func(record *Device) { record.Spec.ReportedPlacement.Reason = "  " },
+			"missing evidence": func(record *Device) { record.Spec.ReportedPlacement.Reference = "" },
+			"skipped revision": func(record *Device) { record.Spec.ReportedPlacement.Revision += 2 },
+			"claim binding":    func(record *Device) { record.Spec.ClaimRef.Name = "other" },
+			"identity":         func(record *Device) { record.Spec.Identity.Serial = "other" },
+		} {
+			t.Run(name, func(t *testing.T) {
+				invalid := device.DeepCopyObject().(*Device)
+				mutate(invalid)
+				if errs := admit(t, "Device", object(t, invalid), object(t, old)); len(errs) == 0 {
+					t.Fatal("accepted invalid correction")
 				}
-			}
-			unknown := device.DeepCopyObject().(*Device)
-			unknown.Spec.ReportedPlacement.RackRef = nil
-			unknown.Spec.ReportedPlacement.Revision++
-			unknown.Spec.Provenance.RecordedAt = later(2 * time.Hour)
-			if errs := admit(t, "Device", object(t, unknown), object(t, device)); len(errs) != 0 {
-				t.Fatal(errs)
-			}
+			})
+		}
+		unknown := device.DeepCopyObject().(*Device)
+		unknown.Spec.ReportedPlacement.RackRef = nil
+		unknown.Spec.ReportedPlacement.Revision++
+		if errs := admit(t, "Device", object(t, unknown), object(t, device)); len(errs) != 0 {
+			t.Fatal(errs)
 		}
 	}
 }

@@ -120,15 +120,15 @@ describe('DeviceClaimDetail', () => {
     expect(screen.queryByTestId('fleet-plugin-claim')).not.toBeInTheDocument();
   });
 
-  it('shows placement, ports, binding, identity, BMC endpoint, unmapped MACs and provenance', () => {
+  it('shows placement, ports, binding, identity, BMC endpoint, unmapped MACs and created time', () => {
     mockInventory({ data: inventory });
     renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');
     const claim = screen.getByTestId('fleet-plugin-claim');
     expect(within(claim).getByText('example-facility · rack-01 · U12 front')).toBeInTheDocument();
     expect(within(claim).getByText(/eth0 \(25gbase-x-sfp28, 25000 Mb\/s\) → switch-01 Ethernet1\/12/)).toBeInTheDocument();
-    expect(within(claim).getByText('planner@example.com')).toBeInTheDocument();
+    expect(within(claim).getByText('2026-01-02T03:04:05Z')).toBeInTheDocument();
     const device = screen.getByTestId('fleet-plugin-device-rack-01-u12-synthetic-0001');
-    for (const text of ['SYNTHETIC-0001', '00000000-0000-4000-8000-000000000001', 'https://192.0.2.100:443', 'rack-01-u12', 'registrar@example.com', 'BMC inventory read during rack turn-up']) {
+    for (const text of ['SYNTHETIC-0001', '00000000-0000-4000-8000-000000000001', 'https://192.0.2.100:443', 'rack-01-u12', '2026-01-09T10:00:00Z']) {
       expect(within(device).getByText(text)).toBeInTheDocument();
     }
     const macs = within(device).getByTestId('fleet-plugin-unmapped-macs');
@@ -151,8 +151,7 @@ describe('DeviceClaimDetail', () => {
   it('preserves history without guessing an active replacement', () => {
     const replacement = {
       ...fixtureDevices[0],
-      metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002' },
-      spec: { ...fixtureDevices[0].spec, provenance: { ...fixtureDevices[0].spec.provenance, recordedAt: '2026-02-01T00:00:00Z' } },
+      metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002', creationTimestamp: '2026-02-01T00:00:00Z' },
     };
     mockInventory({ data: toInventory(fixtureDeviceClaims, [fixtureDevices[0], replacement]) });
     renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');

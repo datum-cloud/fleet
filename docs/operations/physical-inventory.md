@@ -1,6 +1,6 @@
 # Planning and registering physical devices
 
-For source reports and authorized, concurrency-safe location record corrections, see
+For reported locations and authorized, concurrency-safe location record corrections, see
 [Device-reported placement](../development/device-reported-placement.md).
 
 [Operations guide](README.md) · [Architecture](../architecture/README.md) ·
@@ -18,16 +18,17 @@ It has six physical kinds plus the observational operational `Site` kind in
 [Site–Facility relationship](../development/site-facility-relationship.md) for
 stable membership references, provider premises identifiers and rollout gates.
 The primary workflow is **manual entry, operator review, and explicit record
-ownership**. Authorized direct API creation is supported for new/imported records;
+ownership**. Authorized direct API creation is supported for new records;
 legacy Flux-owned records require a reviewed ownership transition before edits
-by another writer. NetBox, bulk conversion, and a source reconciliation service are not
-required. The [optional NetBox comparison guide](netbox-physical-import.md)
-describes a separately invoked review aid, not an automated migration.
+by another writer. Fleet does not read or reconcile any external inventory
+source. A separate writer may copy records in from another system; it writes
+ordinary records through the same API and validation, and keeps any record of
+where facts came from on its own labels and annotations.
 
 | Kind | What it is | Writer |
 | --- | --- | --- |
 | `DeviceClaim` | An observational installation plan with expected model and known placement. New records use typed placement and Cable references; existing long-lived slots retain their legacy representation. | Installation planner, through the record's explicitly assigned writer |
-| `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, the model, an optional BMC endpoint, interfaces, and provenance. | The registrar (an operator, for now) |
+| `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, the model, an optional BMC endpoint, and interfaces. | The registrar (an operator, for now) |
 | `Facility` / `Rack` | Explicit premises and rack definitions; membership is not free-capacity evidence. | Inventory operator through the environment's existing writer |
 | `Cable` / `PowerFeed` | Typed termination/lane topology and physical supply dependencies. | Inventory operator through the environment's existing writer |
 
@@ -38,8 +39,8 @@ describes a separately invoked review aid, not an automated migration.
 | CRDs and Go types | Implemented in `config/components/inventory` and `internal/api/inventory/v1alpha1`. |
 | Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and three IAM roles. Management and synthetic-staging overlays install none of them. |
 | Staff portal | Six-kind hardware directory in the Bare Metal provider plugin (`ui/provider`), with permission-aware browsing and limited authorized Facility/Rack creation and portal-owned name edits. See [implementation scope](../development/staff-inventory-ui.md). |
-| Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds and synthetic importer output. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
-| Controllers | None for inventory. Staff browsing is read-only; no reconciler accepts plans, verifies hardware, discovers or synchronizes NetBox, or publishes eligibility. Flux applies only operator-reviewed Git records. |
+| Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds, including pruning of retired fields. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
+| Controllers | None for inventory. Staff browsing is read-only; no reconciler accepts plans, verifies hardware, discovers or synchronizes external inventory, or publishes eligibility. Flux applies only operator-reviewed Git records. |
 | Hardware qualification | None. Records hold operator-entered facts, not verified hardware state. |
 
 ## What registration does and does not do
@@ -119,9 +120,9 @@ in the provider project. The plugin never writes.
 
 | Rule | Kind | Why |
 | --- | --- | --- |
-| `provenance` is optional and deprecated; when present it is still validated. Spec changes no longer need a later `provenance.recordedAt` | All six | Transitional: provenance is being removed. Resource audit logs record who changed a record and `metadata.creationTimestamp` records when it was created. |
+| Records carry no attribution fields | All six | Resource audit logs record who changed a record and `metadata.creationTimestamp` records when it was created. A writer that needs to remember where facts came from uses its own labels and annotations. |
 | `claimRef` is required and immutable | Device | A Device binds to exactly one claim, and moving hardware to another slot is not an edit. |
-| `identity` is immutable, including adding missing fields; requires serial, system UUID, or an import source identity matching provenance | Device | Source identity does not prove chassis identity. Legacy bindings are preserved; hardware handover is not automated. |
+| `identity` is immutable, including adding missing fields; requires a serial or system UUID | Device | Neither proves chassis identity. Legacy bindings are preserved; hardware handover is not automated. |
 | Serial is optional | DeviceClaim | It is usually unknown at plan time. |
 | Port and interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
@@ -142,12 +143,12 @@ authenticated, complete NIC mapping before any network path depends on it.
    their writers. The legacy staging `fleet-provider-inventory` reconciles
    `apps/fleet-system/staging/provider-inventory` with `prune: false` and
    `deletionPolicy: Orphan`. Flux remains the sole writer of those legacy records
-   until an explicit ownership transition. Do not run a competing apply/import
-   against them. New and separately imported inventory can be direct
+   until an explicit ownership transition. Do not run a competing apply
+   against them. New and separately created inventory can be direct
    API/operator-managed; GitOps is not required. Establish the authorized writer
-   per record before making changes; import provenance is not Flux ownership.
-2. Enter the Facility and Rack facts you actually know. Record the operator and
-   time with `provenance.method: Manual`. Leave unknown dimensions absent. Rack
+   per record before making changes.
+2. Enter the Facility and Rack facts you actually know. Leave unknown
+   dimensions absent. Rack
    membership is not a reserved footprint or evidence of available space.
 3. For a new installation, set `DeviceClaim.spec.lifecycle: Installation` and
    typed placement. Use `Facility` when only the premises are known,
@@ -174,7 +175,7 @@ authenticated, complete NIC mapping before any network path depends on it.
    documented in the [staff UI scope](../development/staff-inventory-ui.md).
 
 The [complete synthetic six-record example](../../hack/testdata/physical/manual.yaml)
-shows this workflow without NetBox or credentials. It includes a partial rack
+shows this workflow without external sources or credentials. It includes a partial rack
 placement, typed network and power components, and one Cable from a PowerFeed to
 the Device. It is a test fixture, not an automatically installed overlay. Copy
 its shape into private configuration and replace synthetic facts only after
@@ -209,11 +210,6 @@ metadata:
   name: rack-01-u12
   namespace: fleet-system
 spec:
-  provenance:
-    method: Manual
-    recordedBy: planner@example.com
-    recordedAt: "2026-01-02T03:04:05Z"
-    reference: rack plan 1234
   expectedIdentity:
     manufacturer: Example Vendor
     model: Example 1U
@@ -240,11 +236,6 @@ metadata:
 spec:
   claimRef:
     name: rack-01-u12
-  provenance:
-    method: Manual
-    recordedBy: registrar@example.com
-    recordedAt: "2026-01-09T10:00:00Z"
-    reference: BMC inventory read during rack turn-up
   identity:
     manufacturer: Example Vendor
     model: Example 1U
@@ -305,14 +296,13 @@ records if adopted.
 **Compatibility decision:** legacy slots retain all historical bindings. New
 typed records use a distinct `Installation` lifecycle, but no automatic move or
 replacement handover exists. Device identity and its original claimRef remain
-immutable. The [migration decisions](netbox-physical-import.md#compatibility-and-migration-decisions)
-explain why imports cannot delete/recreate or relabel legacy records to bypass this.
+immutable. No writer may delete/recreate or relabel legacy records to bypass this.
 
 ## Applying the records
 
 `config/milo` installs the CRDs, ProtectedResources, and roles into Milo. Apply
 operator-reviewed records through their approved writer after those are established,
-claims before the Devices that name them. New or imported records may be created
+claims before the Devices that name them. New records may be created
 directly through the provider API with authorization and ownership safeguards.
 Existing Flux-owned records remain with Flux until a reviewed transition stops
 reconciliation for those exact records. Do not overwrite or adopt them implicitly.
@@ -324,3 +314,26 @@ not in this repository.
 applied them to the management cluster before Milo became their home. Once that
 environment has moved its records into Milo and stopped reconciling the root, it
 will be removed. New environments must not use it.
+
+## Compatibility
+
+Earlier `v1alpha1` schemas required `spec.provenance` (method, recorder,
+recording time, optional reference and import source) on every kind, required
+each spec change to advance `provenance.recordedAt`, and accepted Device
+`identity.sourceIdentity`, component `sourceRef`, and
+`reportedPlacement.method`/`snapshotDigest`. These fields are gone. The served
+and stored version remains `v1alpha1`; this is an alpha breaking change.
+
+No migration is needed. Each schema is structural and does not preserve unknown
+fields, so the API server prunes the removed fields from stored objects when it
+reads them and drops them from requests; they leave storage on the next write.
+A client that still sends them is not rejected unless it asks for strict field
+validation: by default the server drops the fields and returns an unknown-field
+warning, while strict validation (the `kubectl` default) returns an error.
+Remove the fields from GitOps sources and other writers. An old reported
+placement that lacks `reason` or `reference` must gain both the next time its
+report changes.
+
+Retirement happened in two steps so that GitOps-applied records could drop the
+fields first: provenance became optional and stopped gating edits, then the
+fields were removed.

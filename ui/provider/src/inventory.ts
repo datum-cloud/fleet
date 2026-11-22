@@ -29,8 +29,8 @@ export function slotKey(namespace: string | undefined, name: string): string {
   return `${namespace ?? ''}/${name}`;
 }
 
-function byRecordedAt(a: RawDevice, b: RawDevice): number {
-  return a.spec.provenance.recordedAt.localeCompare(b.spec.provenance.recordedAt);
+function byCreationTimestamp(a: RawDevice, b: RawDevice): number {
+  return (a.metadata.creationTimestamp ?? '').localeCompare(b.metadata.creationTimestamp ?? '');
 }
 
 export function toInventory(claims: RawDeviceClaim[], devices: RawDevice[], physical: PhysicalRecord[] = []): Inventory {
@@ -45,7 +45,7 @@ export function toInventory(claims: RawDeviceClaim[], devices: RawDevice[], phys
     if (slot) slot.devices.push(device);
     else unboundDevices.push(device);
   }
-  for (const slot of slots.values()) slot.devices.sort(byRecordedAt);
+  for (const slot of slots.values()) slot.devices.sort(byCreationTimestamp);
   return {
     physical,
     slots: [...slots.values()].sort((a, b) => a.key.localeCompare(b.key)),

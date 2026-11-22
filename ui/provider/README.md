@@ -26,9 +26,9 @@ Operations in the navigation. The page has four tabs:
   links retain the kind, namespace, and record name without adding host routes.
   Facilities lead to racks and installation plans; claims lead to all registered
   devices; cable endpoints lead to devices or feeds. Identity, typed components,
-  internal paths, external service references, legacy peers, and provenance remain
-  visible. Missing claims do not hide hardware, and historical registrations do
-  not establish an active device. The original `inventory/:namespace/:claim`
+  internal paths, external service references, legacy peers, and creation times
+  remain visible. Missing claims do not hide hardware, and historical
+  registrations do not establish an active device. The original `inventory/:namespace/:claim`
   route remains available for existing links. Authorized manual management uses
   the existing guarded forms; Site membership and premises identifiers remain
   direct API operations. Records are not managed through Git. See the
@@ -93,18 +93,17 @@ to that array instead.
 The Inventory tab loads all six physical inventory collections with API pagination.
 Counts describe loaded records, not capacity or verified equipment. Unknown
 occupancy, power budgets, and ambiguous bindings stay unknown. Contextual help
-explains these boundaries; there is no report picker, automatic import, sync, or
-hardware action. Reads require the provider-scoped inventory viewer role, not a
-consumer Metal role. Management separately checks backend create/patch permission
-in the provider project: Facility/Rack/Installation-plan/Device/Cable creation
+explains these boundaries; there is no report picker, sync, or hardware action.
+Reads require the provider-scoped inventory viewer role, not a consumer Metal
+role. Management separately checks backend create/patch permission in the
+provider project: Facility/Rack/Installation-plan/Device/Cable creation
 and portal-owned display-name editing. The existing
 `fleet.datumapis.com-inventory-manager` role and separate
 `physical-inventory-managers` group binding are not deployed by this UI phase.
-Group names/staff membership never enable controls. Flux/imported/unknown-writer
-records remain read-only pending ownership review; import provenance does not
-mean Git ownership. New inventory is direct API/operator-managed. Namespace choice is not an
-authorization boundary. Denied collections and detail links show access guidance,
-not empty inventory; readable sections remain available.
+Group names/staff membership never enable controls. Flux-managed and unknown-writer
+records remain read-only pending ownership review. New inventory is direct
+API/operator-managed. Namespace choice is not an authorization boundary. Denied
+collections and detail links show access guidance, not empty inventory; readable sections remain available.
 See [hardware directory scope and design gaps](../../docs/development/staff-inventory-ui.md).
 
 The standalone harness imports `src/preview.css`, compiling the installed Datum UI

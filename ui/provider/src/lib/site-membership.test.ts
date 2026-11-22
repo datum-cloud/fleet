@@ -4,9 +4,8 @@ import { toInventory } from '../inventory';
 import { redactInventory } from './inventory-read-access';
 import { facilityIdentifiers, facilitySites, siteFacilities } from './site-membership';
 
-const provenance = { method: 'Manual' as const, recordedBy: 'synthetic', recordedAt: '2026-01-01T00:00:00Z' };
-const facility: PhysicalRecord = { kind: 'Facility', metadata: { name: 'premises-stable', namespace: 'inventory', uid: 'premises-uid' }, spec: { displayName: 'Physical premises', provenance, identifiers: [{ provider: 'example-a', type: 'PremisesCode', value: 'EX1' }, { provider: 'example-b', type: 'PremisesCode', value: 'EX1' }] } };
-const site: PhysicalRecord = { kind: 'Site', metadata: { name: 'site-stable', namespace: 'inventory', uid: 'site-uid' }, spec: { displayName: 'Operational identity', code: 'EX3', provenance, facilityRefs: [{ name: facility.metadata.name }] } };
+const facility: PhysicalRecord = { kind: 'Facility', metadata: { name: 'premises-stable', namespace: 'inventory', uid: 'premises-uid' }, spec: { displayName: 'Physical premises', identifiers: [{ provider: 'example-a', type: 'PremisesCode', value: 'EX1' }, { provider: 'example-b', type: 'PremisesCode', value: 'EX1' }] } };
+const site: PhysicalRecord = { kind: 'Site', metadata: { name: 'site-stable', namespace: 'inventory', uid: 'site-uid' }, spec: { displayName: 'Operational identity', code: 'EX3', facilityRefs: [{ name: facility.metadata.name }] } };
 
 describe('observational Site membership', () => {
   it('keeps legacy Facilities explicitly unmapped and provider codes qualified', () => {
