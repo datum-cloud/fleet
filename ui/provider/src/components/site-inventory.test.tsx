@@ -39,7 +39,7 @@ describe('Site and premises directory', () => {
 
   it('redacts denied Facility identifiers and links from Site details', () => {
     render(view('?kind=Site&record=site-stable&namespace=default', { ...inventory, issues: { Facility: { status: 403 } } }));
-    expect(screen.getByText('Facility details unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/Facility details unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/EX1/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Physical premises' })).not.toBeInTheDocument();
   });

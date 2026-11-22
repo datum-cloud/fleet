@@ -495,3 +495,49 @@ before staging merge or deployment. Its implementation authorization includes a
 signed commit and a PR against `feat/manual-inventory-records`, not a merge,
 deployment or live mutation. Authenticated staging integration, including host
 principal changes and proxy enforcement, remains a release acceptance check.
+
+## Operational Site overview (implemented)
+
+Site detail now leads with linked Facilities, equipment recorded at those premises,
+and installation plans. Facility links use `Site.spec.facilityRefs` in the same
+namespace, never display names or provider codes. Shared/duplicate Facility links
+and device/rack records are deduplicated; equipment is **at linked facilities**,
+not assigned to the Site. Counts grant no eligibility, capacity or readiness.
+
+Devices follow the existing reported-placement projection, with explicitly labeled
+claim-derived fallback only when no report exists. Rack-only references resolve
+through readable, non-deleting Rack records. Every matching device registration
+is counted; none is selected as the active device. Plans use their own typed
+placement and `lifecycle: Installation`; legacy claims remain available through
+Claims & registrations. The implemented API has no execution-status fields, so
+plans say recorded and execution status not recorded, never ready or complete.
+Facility premises identifiers and an existing geographic Location reference are
+shown when recorded. Operator, address and region are absent from the implemented
+Facility schema and are not invented from provider identifiers or display names.
+
+Missing/deleting Facility references remain unresolved. Denied collections redact
+names and links and provide access guidance; unavailable collections offer refresh.
+Readable subsets remain useful with incomplete counts where dependencies are
+unavailable or unresolved. Zero matching records describes the loaded snapshot,
+not absence of physical equipment. Unmapped Sites ask for an operator to record
+Facility references. Record name, UID, internal code and name-reuse semantics move
+to collapsed Technical details; the redundant default namespace label and empty
+Related records section are omitted on Site detail.
+
+This is presentation over the existing authorized default-only inventory snapshot.
+No new queries, forms, mutations, cache policy or session/operation guards are
+introduced. Same-principal cache reuse, observed denial redaction, actual session
+fencing, inert visible blur/focus and exact mutation preconditions are unchanged.
+
+Validation uses provider component/regression tests, typecheck and production build,
+plus documentation link and whitespace checks. Tests cover Site → Facility → Rack
+→ claim/device paths, direct reports, legacy claims, duplicates/shared premises,
+missing/deleting/foreign references, denied collections and partial reads. No
+browser or authenticated host acceptance, live inventory reads/writes, deployment,
+or operational readiness is claimed. Responsive behavior uses the existing scoped
+layout and scrollable Datum tables; visual layout remains unverified in a browser.
+
+Local validation on 2026-11-22: all 41 provider test files / 678 tests passed;
+provider `pnpm typecheck`, `pnpm build`, `bash hack/validate-doc-links.sh` and
+`git diff --check` passed. Consumer/shared API code is unchanged; consumer checks
+were not required for this provider-only presentation change.
