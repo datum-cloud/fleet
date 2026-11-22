@@ -143,6 +143,7 @@ in the provider project. The plugin never writes.
 | Port and interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
 | `bmc.endpoint` is an `https` URL without credentials | Device | Credentials never live in inventory records. |
+| `lifecycle` is `Active` (default), `Decommissioning` or `Retired`; `Active` and `Decommissioning` move between each other, only `Decommissioning` moves to `Retired`, and `Retired` is terminal | Device | Retirement is deliberate and one-way. Only an Active Device can be registered as capacity. See [Device lifecycle](../development/inventory-capacity-registration.md#device-lifecycle). |
 | `status` is a separate subresource that declares no fields | All six | Reserved for future collectors and verifiers to report drift and mismatch. Status never carries identity, and nothing writes it yet. |
 
 The CRDs cannot check that `claimRef` names an existing DeviceClaim, because
@@ -328,10 +329,13 @@ spec:
 ```
 
 To replace the hardware, create a new Device with its own name and identity
-that names the same claim. Leave the old Device in place until its retirement
-is settled. This package does not model retirement. Environments with
+that names the same claim. Leave the old Device in place and move its
+`spec.lifecycle` from `Active` to `Decommissioning`, then to `Retired`; see
+[Device lifecycle](../development/inventory-capacity-registration.md#device-lifecycle).
+Retired is terminal and still counts in the duplicate-identity check while the
+Device exists. Environments with
 [Device deletion protection](../development/inventory-capacity-registration.md#device-deletion-protection)
-never delete a Device.
+delete a Device only once it is Retired, or with its namespace.
 
 ## Relationship to the inventory proposal
 
@@ -354,8 +358,8 @@ Still deferred to #63:
   adjudication and duplicate detection; and the protected ledger.
 - Trust roots, qualification profiles, enrollment challenges, technician and
   collector attestation, and evidence freshness.
-- Component incarnations and lineage, maintenance, moves, retirement, and
-  adopted custody.
+- Component incarnations and lineage, maintenance, moves, a retirement
+  workflow beyond the recorded Device lifecycle, and adopted custody.
 - The `Accepted`, `Bound`, `IdentityVerified`, `PlacementVerified`,
   `NetworkPathVerified`, and `PowerPathVerified` predicates and any eligibility
   publication.
@@ -416,8 +420,8 @@ Two kinds of stored record no longer validate once pruned:
   serial or system UUID. Because `identity` is immutable, delete it and create
   a new Device with a serial or system UUID. Where
   [Device deletion protection](../development/inventory-capacity-registration.md#device-deletion-protection)
-  is installed the record cannot be deleted; leave it in place and create the
-  new Device alongside it.
+  is installed, retire it (`Decommissioning`, then `Retired`) before deleting
+  it, or leave it in place and create the new Device alongside it.
 - A Device whose `reportedPlacement` lacks `reason` or `reference` must gain
   both the next time its report changes.
 

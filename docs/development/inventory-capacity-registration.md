@@ -18,8 +18,11 @@ a mutable tail with sealed segments, signed expansion and activation, epochs
 and growth limits. The user decided this was overengineering and replaced it
 with the following:
 
-1. **Devices are not deleted.** An optional ValidatingAdmissionPolicy denies
-   every Device `DELETE`. An environment decides whether to install it; see
+1. **In-service Devices are not deleted.** A reusable ValidatingAdmissionPolicy
+   component denies a Device `DELETE` unless the Device is `Retired` or its
+   namespace is being deleted. No root in this repository includes it;
+   deploying repositories opt in. See
+   [Device lifecycle](#device-lifecycle) and
    [Device deletion protection](#device-deletion-protection).
 2. **No signed activation.** The bootstrap/activation gate, `/activationz`,
    `/status`, the operator control key and ConfigMap,
@@ -30,11 +33,12 @@ with the following:
    checks the live Device and capacities through the API server on every
    request.
 
-Rationale: when Devices are never deleted, the live Device list already holds
-every identity the ledger used to remember, so a second store adds failure
-modes without adding information. Environments that need to delete Devices,
-such as test and synthetic environments, do not hold real machines and do not
-need permanent identity retention.
+Rationale: when in-service Devices are never deleted, the live Device list
+already holds every identity the ledger used to remember, so a second store
+adds failure modes without adding information. A Device leaves the list only
+after someone has retired it on purpose, or deleted its namespace. Environments
+that do not include the component, such as test and synthetic environments, do
+not hold real machines and do not need identity retention.
 
 ## Public contract and authority
 
@@ -68,7 +72,9 @@ operation ID is no longer used for deduplication.
 An empty cleaning-policy name explicitly means **unconfigured**, not a policy
 named `default`, synthetic cleaning, or authorization to prepare. The CRD
 permits it only while Disabled. The webhook rejects *all* capacity updates,
-status updates and deletes. Real policy resolution and policy-use authorization
+status updates and deletes. An update that would move capacity out of
+`Disabled` while its Device is `Decommissioning` or `Retired` is denied for
+that reason; the webhook first checks that the caller can read the Device. Real policy resolution and policy-use authorization
 are future prerequisites for a separately designed transition; there is no
 stage-1 preparation endpoint.
 
@@ -85,7 +91,8 @@ stage-1 preparation endpoint.
    happens before the Device is read, so an unauthorized caller cannot learn
    whether a Device exists;
 5. reads the Device uncached. A missing Device is denied. Its UID and
-   resourceVersion must equal the annotations, and it must not be deleting;
+   resourceVersion must equal the annotations, it must not be deleting, and
+   its [lifecycle](#device-lifecycle) must be `Active`;
 6. requires both a non-placeholder serial and a canonical system UUID, and a
    complete provider host reference when one is present;
 7. lists Devices and capacities in **all namespaces of every configured
@@ -154,71 +161,119 @@ both fail, because each sees the other Device. Device status has no writer
 today, so there is no server-side eligibility condition to set; reporting
 conflicts through Device status is a follow-up.
 
+## Device lifecycle
+
+`Device.spec.lifecycle` records whether the asset is in service. It is part of
+spec, so the inventory editor role, which can update Devices, can set it; no
+extra RBAC exists.
+
+| Value | Meaning |
+| --- | --- |
+| `Active` | In service. The CRD default when the field is unset. |
+| `Decommissioning` | Leaving service. Can return to `Active`. |
+| `Retired` | Out of service. Terminal. |
+
+The CRD enforces transitions with transition rules (`oldSelf`) on `spec`:
+
+- `Active` to `Decommissioning`, `Decommissioning` to `Active`, and
+  `Decommissioning` to `Retired` are allowed. Leaving the value unchanged is
+  always allowed.
+- `Active` to `Retired` is rejected: move the Device to `Decommissioning`
+  first.
+- Nothing leaves `Retired`. Removing the field defaults it to `Active`, so
+  that is rejected too.
+
+The rules apply to updates only; a Device may be created in any lifecycle, for
+example to record hardware that is already out of service. Other spec edits to
+a Retired Device are still subject only to the existing rules.
+
+Registration semantics, enforced by the registration webhook:
+
+- Only an `Active` Device can get new capacity.
+- Capacity whose Device is `Decommissioning` or `Retired` cannot leave
+  `Disabled`. Stage 1 already denies every capacity update, so this states the
+  rule a future enabling transition must keep.
+- A Retired Device still takes part in the duplicate-identity check for as
+  long as it exists. Deleting it removes its identity from that check.
+
+Lifecycle is a record, not an effect. Moving a Device changes no capacity,
+allocation, provider or network state.
+
 ## Device deletion protection
 
-`config/components/device-deletion-protection` is a Kustomize component with a
-ValidatingAdmissionPolicy and binding named `fleet-device-deletion-protection`.
-It denies every `DELETE` on `devices.fleet.datumapis.com` (all versions, all
-namespaces) with `failurePolicy: Fail` and reason `Forbidden`.
+`config/components/device-deletion-protection` is a reusable Kustomize
+component with a ValidatingAdmissionPolicy and binding named
+`fleet-device-deletion-protection`. It matches every `DELETE` on
+`devices.fleet.datumapis.com` (all versions, all namespaces) and admits it only
+when:
 
-- **Where it is installed.** Devices are stored and admitted by the Milo
-  control plane: `config/components/inventory` registers the CRD there, and
-  records live in provider projects. The component therefore belongs with the
-  Milo root, not the management-cluster host overlays, which have no Device
-  CRD. Like the registration webhook, it is installed at the Milo root and
-  relies on Milo running its root admission policies for project-routed
-  requests (pinned Milo `v0.36.9` enables the `ValidatingAdmissionPolicy`
-  plugin). Confirm this on the deployed Milo before relying on it.
-- **Which roots include it.** `config/milo-production` is `config/milo` plus
-  the component, and is the production-style root. `config/milo` (consumed by
-  staging and test control planes that need Device deletion),
-  `config/milo-synthetic`, `config/inventory`, `config/standalone` and every
-  host overlay leave it out. `hack/validate-overlay-isolation.sh` fails if a
-  production-style root lacks it, or if any other root renders it.
-- **No exemptions.** No user, group or service account is exempt, including
-  cluster administrators. The escape hatch is an environment not installing
-  the component. Anyone able to delete the binding is outside the guarantee.
-- **deletecollection.** The API server admits each object of a collection
-  delete individually as a `DELETE`, so a collection delete that includes a
-  Device fails and leaves Devices in place. Other objects in the same call may
-  already be gone.
-- **Garbage collection and finalizers.** Owner-reference cascades issue the
-  same `DELETE` and are denied. Because the `DELETE` is denied, a Device never
-  gets a deletion timestamp, so finalizers never run.
-- **Namespace and project deletion (fail-closed: stays stuck).** A policy
-  cannot see what a namespace contains, so it does not block the namespace
-  `DELETE`. The namespace becomes `Terminating`, the namespace controller
-  deletes the other contents, and its Device deletions are denied. The
-  namespace stays `Terminating` with its Devices intact and readable; it
-  accepts no new objects. Milo keeps `default` undeletable, and Milo's project
-  purge drains `default` in place and reports remaining Devices as blockers on
-  the Project. So deleting a provider project stops with its Devices in place.
-  Other inventory in that namespace or project (for example DeviceClaims) is
-  still deleted before the cascade stops. Capacity is not, because the
-  registration webhook denies capacity deletes. Do not delete namespaces or
-  projects that hold Devices.
-- **Remediation for a stuck namespace or project.** Kubernetes cannot cancel
-  a namespace deletion. Either leave it `Terminating`, which keeps every
-  Device, or have the environment owner deliberately decide to give up those
-  identities: remove the binding, let the cascade finish, and reinstall the
-  component. The second option loses the Device records and their duplicate
-  protection, so it is an explicit ownership decision, not routine repair.
-- **Retirement.** A machine leaving service keeps its Device. Its capacity is
-  already `Disabled` and cannot be changed, which is the only retirement state
-  stage 1 has. Devices have no lifecycle or retirement field (see
-  [Planning and registering physical devices](../operations/physical-inventory.md)).
-  A Device retirement state is a follow-up.
+1. the Device's namespace is being deleted: the policy's `namespaceObject`
+   has `metadata.deletionTimestamp` set. A missing namespace object does not
+   match; or
+2. the Device being deleted (`oldObject`) has `spec.lifecycle: Retired`.
 
-### Deleting a Device where deletion is allowed
+Every other `DELETE` is denied with reason `Forbidden` and a message to move
+the Device to `Decommissioning`, then `Retired`, first. The policy uses
+`failurePolicy: Fail` and the binding `validationActions: [Deny]`, so an
+evaluation error also denies.
 
-Without the component, deleting a Device that backs capacity leaves the
-capacity in place, still `Disabled`. The webhook denies every update and
-delete of it, so it cannot become available. No owner reference links the two:
-the webhook rejects owner references on registration, and garbage collection
-would be denied anyway because capacity deletes are fenced. The orphaned
-capacity keeps its Device UID annotation and name, which also prevents a
-replacement Device with the same name from registering. Clean it up only in
-environments where capacity writes are not fenced, such as synthetic ones.
+- **Who includes it.** No root in this repository renders the policy.
+  Production-specific configuration lives in the deploying repository, which
+  adds the component to the root it applies to the Milo control plane. Devices
+  are stored and admitted there: `config/components/inventory` registers the
+  CRD in Milo, and records live in provider projects. Management-cluster host
+  overlays have no Device CRD. Like the registration webhook, the policy relies
+  on Milo running its root admission policies for project-routed requests
+  (pinned Milo `v0.36.9` enables the `ValidatingAdmissionPolicy` plugin).
+  Confirm this on the deployed Milo before relying on it.
+- **Validation.** `hack/validate-overlay-isolation.sh` renders the component
+  on its own and fails unless it is exactly this policy: the same name,
+  expression, `failurePolicy: Fail`, `Deny` only, and no match conditions,
+  selectors, exclusions, variables or parameters. It also fails if any root in
+  this repository renders the policy, under its own name or another, and if
+  the inventory component exists without this component.
+- **No exemptions.** The policy does not look at the request's user, group or
+  service account. Cluster administrators are held to the same rule. Anyone
+  able to delete the binding is outside the guarantee.
+- **deletecollection, garbage collection and finalizers.** The API server
+  admits each object of a collection delete individually as a `DELETE`, so a
+  collection delete that reaches a Device that is not Retired is denied and
+  leaves that Device in place. Retired Devices and other objects it reached
+  first may already be gone; it may also stop before reaching every Retired
+  Device, so repeat the delete per Device. Owner-reference cascades issue
+  the same `DELETE`. A denied Device gets no deletion timestamp, so its
+  finalizers never run.
+- **Namespace deletion is the escape hatch.** Deleting a namespace is a
+  privileged act. Once the namespace has a deletion timestamp, the namespace
+  controller's Device deletions are admitted, so the namespace finishes
+  terminating and takes its Devices with it, whatever their lifecycle. Their
+  identities leave the duplicate check. The policy reads the namespace from the
+  API server's namespace cache, which observes the deletion mark shortly after
+  it is set.
+- **Project deletion.** In pinned Milo `v0.36.9`, project purge first issues a
+  collection delete for every namespaced resource in every namespace, and only
+  then deletes the namespaces. It never deletes `default`, which it drains in
+  place. In that first phase no namespace is marked yet, so a Device that is
+  not Retired stops the purge's collection delete. Registered Devices live in
+  `default`, which is never marked. A project that holds Devices that are not
+  Retired therefore does not finish purging while the component is installed:
+  retire its Devices first. This is from reading the pinned Milo source, not a
+  live test.
+- **Capacity is not deleted with its Device.** The registration webhook denies
+  capacity deletes, so a namespace or project teardown that removes Devices
+  still stops at their capacity; see the next section.
+
+### Deleting a Device
+
+Deleting a Device that backs capacity, whether it is Retired, its namespace is
+being deleted, or the component is not installed, leaves the capacity in
+place, still `Disabled`. The webhook denies every update and delete of it, so
+it cannot become available. No owner reference links the two: the webhook
+rejects owner references on registration, and garbage collection would be
+denied anyway because capacity deletes are fenced. The orphaned capacity keeps
+its Device UID annotation and name, which also prevents a replacement Device
+with the same name from registering. Clean it up only in environments where
+capacity writes are not fenced, such as synthetic ones.
 
 ## Production packaging and rollout
 
@@ -228,7 +283,9 @@ environments where capacity writes are not fenced, such as synthetic ones.
   selectors or match conditions. An unreachable service blocks capacity
   writes globally and nothing else: Device, namespace and Project writes do
   not pass through the registration webhook.
-- `config/milo-production` adds Device deletion protection.
+- No root in this repository includes Device deletion protection. A
+  deploying repository adds `config/components/device-deletion-protection` to
+  the root it applies to Milo when it must keep in-service Devices.
 - `config/overlays/management-plane` includes a separate two-replica
   registration Deployment and TLS Service. The pod does not mount a service
   account token and has no host RBAC. It does not enable production lifecycle
@@ -259,11 +316,13 @@ Environment-owned inputs, none of which this repository supplies:
    API-server client certificate signed by that CA, patch the webhook URL for
    reachability, and set `clientConfig.caBundle` to the serving CA.
 3. Keep `--provider-projects` equal to the complete provider scope.
-4. Choose the Milo root: `config/milo-production` to forbid Device deletion,
-   or `config/milo` to allow it.
+4. Decide whether the Milo root you apply includes
+   `config/components/device-deletion-protection`. With it, only Retired
+   Devices and Devices in a deleting namespace can be deleted; without it,
+   any authorized caller can delete a Device.
 5. Before rolling out the UI, verify caller-preserving project routing, named
    Device read denial, registration denial, capacity mutation denial, TLS
-   rejection, Device deletion denial where installed, and duplicate handling
+   rejection, Device deletion denial where installed, lifecycle transitions, and duplicate handling
    in the target environment. This change performs **no live writes or
    deployment**, so it does not claim those checks.
 
@@ -276,8 +335,10 @@ those objects until its owner removes them; the new service ignores them.
 
 The Datum dialog uses the existing host-session boundary and isolated read
 cache. It shows the derived capacity name instead of a name field. Missing
-host authority, denied registration, unavailable Devices, partial identity and
-conflicting identities have explicit explanations. Selecting a Device
+host authority, denied registration, unavailable Devices, Devices that are not
+Active, partial identity and conflicting identities, including a conflict with
+a Retired Device, have explicit explanations. The inventory detail panel shows
+a Device's lifecycle; the UI does not edit it. Selecting a Device
 snapshots its baseline; neither refetch nor browser blur/focus changes it. A
 named current read immediately precedes dispatch. Session changes fence
 pending work. After dispatch, an uncertain result keeps the selection, disables
@@ -309,19 +370,35 @@ packaged webhook against a real API server and checks that:
 - without the component, Device `DELETE` succeeds and the backing capacity
   stays `Disabled` and cannot be updated, deleted or re-registered by a
   same-name replacement;
-- with the component applied from its manifest, Device `DELETE` is denied for
-  every caller, `deletecollection` is denied, and namespace deletion stays
-  `Terminating` with its Devices while other content drains. envtest has no
-  namespace controller, so the test issues the controller's content deletions
-  itself;
+- a Decommissioning or Retired Device cannot be registered, a Retired Device
+  still blocks a duplicate, and capacity cannot leave `Disabled` once its
+  Device is Decommissioning or Retired;
 - a webhook outage blocks capacity writes but not Device writes.
+
+`internal/registration/deletion_envtest_test.go` applies the component from
+its manifest and checks that:
+
+- the CRD transition rules accept `Active`/`Decommissioning` moves and
+  `Decommissioning` to `Retired`, and reject `Active` to `Retired` and every
+  move out of `Retired`;
+- deleting an Active or Decommissioning Device is denied for every caller,
+  and deleting a Retired Device is allowed;
+- `deletecollection` over mixed Devices denies those that are not Retired;
+- after the namespace is deleted, its Devices can be deleted. envtest has no
+  namespace controller, so the test issues the controller's deletions itself
+  and they are admitted because `namespaceObject` has a deletion timestamp;
+- Devices in other namespaces stay protected.
 
 Unit tests cover the remaining negative cases, normalization, cross-project
 duplicates, project lifetime and the packaged webhook shape.
 `cmd/fleet-registration` tests reject unauthenticated and untrusted webhook
-transport. The overlay isolation tests cover where the deletion component may
-and must appear. Frontend tests cover the derived name and conflict marking
-with mocked transport. None of this is a live Milo deployment or an independent
+transport. `internal/api/inventory/v1alpha1/lifecycle_test.go` runs the
+lifecycle default and transition rules through the CRD schema offline. The
+overlay isolation tests fail when a root includes the deletion component and
+when the component's policy is renamed, made audit-only, fail-open, scoped,
+exempted or given a weaker expression. Frontend tests cover the derived name,
+conflict marking including Retired Devices, and refusal of Devices that are not
+Active, with mocked transport. None of this is a live Milo deployment or an independent
 security review.
 
 The publishing workflow applies the server build tag to

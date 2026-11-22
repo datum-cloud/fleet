@@ -21,8 +21,10 @@ public project API. Production caller-preserving allocation
 admission, replayable Milo event adapters, and production provider integration are not implemented.
 Inert [inventory-backed capacity registration](inventory-capacity-registration.md)
 now has a stateless caller-preserving admission service that checks live
-Devices, one capacity per Device through a Device-derived name, optional Device
-deletion protection, and a session-fenced default-namespace Device picker. It admits only Disabled/Retain records with cleaning explicitly
+Devices, one capacity per Device through a Device-derived name, a Device
+lifecycle (`Active`, `Decommissioning`, terminal `Retired`), an opt-in Device
+deletion protection component that admits deletes only for Retired Devices or
+a deleting namespace, and a session-fenced default-namespace Device picker. It admits only Disabled/Retain records with cleaning explicitly
 unconfigured; deployment trust inputs and live Milo acceptance remain required.
 An opt-in [local KVM installation harness](../operations/local-vm.md) implements
 a bounded libvirt executor and guest installer using the same lifecycle library.

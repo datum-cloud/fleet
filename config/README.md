@@ -15,18 +15,16 @@ target different API servers and must be reconciled independently.
 | Root | Destination | Contents |
 | --- | --- | --- |
 | `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, and the mandatory capacity-registration webhook. Devices can be deleted. |
-| `config/milo-production` | Milo root control plane (production-style) | `config/milo` plus Device deletion protection |
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
-`config/components/device-deletion-protection` is an optional component: a
-ValidatingAdmissionPolicy and binding that deny every Device `DELETE`, with no
-exemptions. Each environment chooses whether to install it. Production-style
-Milo control planes use `config/milo-production`; test, staging and synthetic
-control planes that need Device deletions use `config/milo` or
-`config/milo-synthetic`. `hack/validate-overlay-isolation.sh` rejects any other
-root that renders the policy. Namespace and project deletions that reach a
-protected Device stay stuck rather than deleting it; see
+`config/components/device-deletion-protection` is a reusable component: a
+ValidatingAdmissionPolicy and binding that deny a Device `DELETE` unless the
+Device is `Retired` or its namespace is being deleted, with no exemptions.
+Production-specific configuration lives in the deploying repository, which
+opts in by adding the component to the root it applies to Milo. No root in this
+repository includes it, and `hack/validate-overlay-isolation.sh` fails if one
+does or if the component's policy is weakened. See
 [Device deletion protection](../docs/development/inventory-capacity-registration.md#device-deletion-protection).
 
 The synthetic staging overlay excludes the inert-registration service. Pair it
@@ -121,11 +119,10 @@ synthetic claim before treating persistent-state recovery as verified in staging
 Do not delete the PVC as a recovery shortcut.
 
 
-Render both production roots before publishing the Kustomize bundle:
+Render the Milo and management-cluster roots before publishing the Kustomize bundle:
 
 ```sh
 kustomize build config/milo >/dev/null
-kustomize build config/milo-production >/dev/null
 kustomize build config/milo-synthetic >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
 kustomize build config/overlays/synthetic-staging >/dev/null
