@@ -289,6 +289,13 @@ evaluation error also denies.
 
 ### Cleanup identity
 
+The cleanup identity is a stopgap. Milo's project cleanup deletes namespaced
+resources before it marks any namespace for deletion, and it never deletes
+`default`, so the namespace exception cannot cover project teardown. Milo
+should mark every namespace it purges, `default` included, before deleting
+its contents. The policy can then rely on that namespace signal and drop the
+subject exemption.
+
 The binding ships without a `paramRef`. The policy then evaluates with
 `params == null`, the third exception is off, and only the namespace and
 Retired exceptions apply. A policy that declares `paramKind` does not need a
