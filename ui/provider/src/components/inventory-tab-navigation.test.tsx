@@ -26,7 +26,7 @@ function host(query = '', management = false) {
     if (init.method !== 'GET') writes();
     collections();
     if (denied) return Response.json({ error: 'Denied' }, { status: 403 });
-    const kind = url.includes('/facilities') ? 'Facility' : url.includes('/racks') ? 'Rack' : url.includes('/cables') ? 'Cable' : url.includes('/powerfeeds') ? 'PowerFeed' : 'Site';
+    const kind = url.includes('/manufacturers') ? 'Manufacturer' : url.includes('/devicetypes') ? 'DeviceType' : url.includes('/facilities') ? 'Facility' : url.includes('/racks') ? 'Rack' : url.includes('/cables') ? 'Cable' : url.includes('/powerfeeds') ? 'PowerFeed' : 'Site';
     const items = url.includes('/devices') ? fixturePhysicalDevices : url.includes('/deviceclaims') ? fixturePhysicalClaims : fixturePhysicalRecords.filter(record => record.kind === kind);
     return Response.json({ data: { items } });
   }));
@@ -49,7 +49,7 @@ function host(query = '', management = false) {
 it('keeps actual tab DOM through host checks, reuses collections, and preserves detail/back/forward URLs', async () => {
   const view = host();
   await screen.findByRole('searchbox', { name: 'Search devices' });
-  expect(view.collections).toHaveBeenCalledTimes(7);
+  expect(view.collections).toHaveBeenCalledTimes(9);
   const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
   const facilities = within(navigation).getByRole('link', { name: 'Facilities' });
   view.hold();
@@ -73,8 +73,26 @@ it('keeps actual tab DOM through host checks, reuses collections, and preserves 
   await act(async () => { await view.router.navigate(1); });
   await screen.findByRole('searchbox', { name: 'Search facilities' });
   expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
-  expect(view.collections).toHaveBeenCalledTimes(7);
+  expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.loader).toHaveBeenCalledTimes(6);
+  expect(view.writes).not.toHaveBeenCalled();
+  view.router.dispose();
+});
+
+it.each([['Manufacturers', 'Search manufacturers'], ['Device types', 'Search device types']])('keeps the %s catalog tab mounted and reuses authorized collections', async (title, search) => {
+  const view = host();
+  await screen.findByRole('searchbox', { name: 'Search devices' });
+  const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
+  const tab = within(navigation).getByRole('link', { name: title });
+  view.hold();
+  fireEvent.click(tab);
+  await screen.findByText('Checking inventory access…');
+  expect(within(navigation).getByRole('link', { name: title })).toBe(tab);
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  await view.release();
+  await screen.findByRole('searchbox', { name: search });
+  expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
+  expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });
@@ -91,7 +109,7 @@ it('fences an in-flight create across a cached tab transition without carrying i
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: 'Devices' }));
   await screen.findByRole('searchbox', { name: 'Search devices' });
   await view.releaseReview();
-  expect(view.collections).toHaveBeenCalledTimes(7);
+  expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: 'Facilities' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Create facility' }));
@@ -103,7 +121,7 @@ it('fences an in-flight create across a cached tab transition without carrying i
 it('loads a direct namespaced link without requiring a previous directory visit', async () => {
   const view = host('?kind=Facility&record=example-facility&namespace=default');
   await screen.findByRole('heading', { name: 'Example facility' });
-  expect(view.collections).toHaveBeenCalledTimes(7);
+  expect(view.collections).toHaveBeenCalledTimes(9);
   expect(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: 'Facilities' })).toHaveAttribute('aria-current', 'page');
   view.router.dispose();
 });
@@ -117,7 +135,7 @@ it('restarts management authority after immediate same-principal host navigation
     });
     await waitFor(() => expect(screen.getByRole('button', { name: action })).toBeEnabled());
   }
-  expect(view.collections).toHaveBeenCalledTimes(7);
+  expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });
@@ -152,14 +170,14 @@ it.each(['principal', 'logout', 'denial', 'hidden', 'pagehide', 'revalidation', 
   await view.release();
   if (transition === 'logout') {
     await screen.findByText('Your session has expired');
-    expect(view.collections).toHaveBeenCalledTimes(7);
+    expect(view.collections).toHaveBeenCalledTimes(9);
   } else if (transition === 'denial') {
     await screen.findByRole('heading', { name: 'Inventory access needed' });
     expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-    expect(view.collections).toHaveBeenCalledTimes(14);
+    expect(view.collections).toHaveBeenCalledTimes(18);
   } else {
     await screen.findByRole('searchbox');
-    expect(view.collections).toHaveBeenCalledTimes(14);
+    expect(view.collections).toHaveBeenCalledTimes(18);
   }
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();

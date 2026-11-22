@@ -9,10 +9,11 @@ mount/test synchronization and the PR106 contract removal incorporated through
 `5b60656759033b61674ee202a9ad94f4d49f4a64`. Provenance, Device sourceIdentity,
 component sourceRef, placement method/snapshotDigest and NetBox importer tooling
 remain removed. Visible blur/focus remains a complete no-op; actual hidden,
-logout and stale-generation fences remain in force. PR107's unmerged catalog
-work is not included. It is a stacked change targeting
-`t3/preserve-inventory-controls-on-blur`; retarget to the default branch only
-after PR104 merges and review the resulting diff.
+logout and stale-generation fences remain in force. PR107 integrates the landed
+PR109 feature-branch merge `ff1902cf24ed43e2756eff20fc0073b6e809b2d7`.
+Manufacturer and DeviceType categories share the stable navigation shell and
+Datum table/form components. The catalog selector uses Datum Label with a native
+select, retaining unavailable-selection and authorization protections.
 
 Design inputs are the [Fleet architecture](../architecture/design.md), the
 [pinned inventory proposal](../proposals/fleet-management/inventory.md), and the
@@ -100,7 +101,7 @@ blur/focus still performs no request, remount, disabling or baseline reset.
 
 This intentionally trades seamless private-content continuity for a short localized
 access-check message while the host is pending. It does not promise zero host
-loader requests. Same-session presentation changes avoid redundant seven-collection
+loader requests. Same-session presentation changes avoid redundant nine-collection
 inventory reads; explicit refresh and real authority changes fetch again. Snapshot
 reuse is not a live freshness or newly granted permission claim.
 
@@ -114,8 +115,9 @@ reuse is not a live freshness or newly granted permission claim.
 - Native details/summary, fieldsets/legends, semantic definition lists, responsive
   form grids and bespoke rack geometry remain. Rack overlap and occupancy meaning
   are unchanged. The source-defined muted palette is used, not a new palette.
-- PR107's catalog views are not integrated or covered. Audit them after that work
-  merges; this is not catalog UX parity.
+- Catalog navigation tests cover stable tabs and reuse of all nine authorized
+  collection reads. This is local integration coverage, not authenticated catalog
+  UX acceptance.
 - No authenticated staff-portal/Safari acceptance, deployed Module Federation
   compatibility, production operation, or live API write is claimed. The parent
   must review and run its deployment/host gates separately.

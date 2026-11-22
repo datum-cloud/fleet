@@ -57,8 +57,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestInventoryCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-	if len(crds) != 7 || crds["Site"] == nil || crds["DeviceClaim"] == nil || crds["Device"] == nil {
-		t.Fatalf("got %d CRDs, want six physical kinds and Site", len(crds))
+	if len(crds) != 9 || crds["Manufacturer"] == nil || crds["DeviceType"] == nil || crds["Site"] == nil || crds["DeviceClaim"] == nil || crds["Device"] == nil {
+		t.Fatalf("got %d CRDs, want six physical kinds, Site and two catalog kinds", len(crds))
 	}
 	for kind, crd := range crds {
 		if crd.Spec.Group != GroupVersion.Group || crd.Name != crd.Spec.Names.Plural+"."+GroupVersion.Group || crd.Spec.Scope != extensionsv1.NamespaceScoped {
@@ -323,7 +323,7 @@ func TestRetiredFieldsArePruned(t *testing.T) {
 	if errs := admit(t, "Device", legacy, nil); len(errs) > 0 {
 		t.Fatalf("pruned legacy device rejected: %v", errs)
 	}
-	for _, kind := range []string{"DeviceClaim", "Facility", "Site", "Rack", "Cable", "PowerFeed"} {
+	for _, kind := range []string{"DeviceClaim", "Facility", "Site", "Rack", "Cable", "PowerFeed", "Manufacturer", "DeviceType"} {
 		var schema apiextensions.JSONSchemaProps
 		if err := extensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(loadCRDs(t)[kind].Spec.Versions[0].Schema.OpenAPIV3Schema, &schema, nil); err != nil {
 			t.Fatal(err)

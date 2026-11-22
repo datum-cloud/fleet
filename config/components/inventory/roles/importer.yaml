@@ -10,6 +10,8 @@ spec:
   inheritedRoles:
     - name: fleet.datumapis.com-inventory-viewer
   includedPermissions:
+    - fleet.datumapis.com/manufacturers.create
+    - fleet.datumapis.com/devicetypes.create
     - fleet.datumapis.com/sites.create
     - fleet.datumapis.com/deviceclaims.create
     - fleet.datumapis.com/devices.create

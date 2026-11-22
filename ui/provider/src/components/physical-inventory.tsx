@@ -26,8 +26,9 @@ import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '
 import { FacilityOverview, RackOverview, inventoryHref as href } from './inventory-location';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
 import { facilityIdentifiers, facilitySites, siteFacilities } from '../lib/site-membership';
+import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 
-type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed';
+type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
 
 
@@ -176,11 +177,13 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
     return 'Not recorded';
   };
   const summary = (entry: RecordEntry): string => {
-    if (entry.kind === 'Device') return modelLabel((entry.record as RawDevice).spec.identity);
+    if (entry.kind === 'Device') return deviceModelLabel(entry.record as RawDevice, inventory);
     if (entry.kind === 'DeviceClaim')
       return modelLabel((entry.record as RawDeviceClaim).spec.expectedIdentity);
     const record = entry.record as PhysicalRecord;
     if (entry.kind === 'Site') return `Operational Site · ${record.spec.code}`;
+    if (entry.kind === 'Manufacturer') return [record.spec.canonicalName, ...(record.spec.aliases ?? [])].join(' · ');
+    if (entry.kind === 'DeviceType') return `Model key: ${record.spec.model} · reference template`;
     if (entry.kind === 'Facility') return facilityIdentifiers(record);
     if (entry.kind === 'Rack')
       return record.spec.heightUnits ? `${record.spec.heightUnits}U rack` : 'Height not recorded';
@@ -206,7 +209,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
     const facilityName = claim?.spec.placement.facilityRef?.name ?? (entry.record as PhysicalRecord).spec.facilityRef?.name ?? rack?.spec.facilityRef?.name;
     return facilityName ? slotKey(entry.record.metadata.namespace, facilityName) : '';
   };
-  const modelKey = (entry: RecordEntry) => entry.kind === 'Device' ? (entry.record as RawDevice).spec.identity.model : entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.medium ?? '' : '';
+  const modelKey = (entry: RecordEntry) => entry.kind === 'Device' ? deviceCatalog(entry.record as RawDevice, inventory)?.model.spec.model ?? (entry.record as RawDevice).spec.identity.model : entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.medium ?? '' : '';
   const filterOptions = [...new Set(records.map(modelKey).filter(Boolean))].sort();
   const searchText = (entry: RecordEntry) => {
     const device = entry.kind === 'Device' ? entry.record as RawDevice : undefined;
@@ -253,6 +256,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
     const { record, kind } = entry;
     const namespace = record.metadata.namespace;
     const device = kind === 'Device' ? (record as RawDevice) : undefined;
+    const catalog = device && deviceCatalog(device, inventory);
     const claim = kind === 'DeviceClaim' ? (record as RawDeviceClaim) : undefined;
     const physical = !device && !claim ? (record as PhysicalRecord) : undefined;
     const slot = device
@@ -309,6 +313,17 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
         {kind === 'Facility' && <FacilityOverview facility={record as PhysicalRecord} inventory={inventory} />}
         {kind === 'Rack' && <RackOverview rack={record as PhysicalRecord} inventory={inventory} />}
         <dl className="inventory-fields">
+          {kind === 'Manufacturer' && <>
+            <Field label="Canonical name">{physical?.spec.canonicalName}</Field>
+            <Field label="Descriptive aliases">{physical?.spec.aliases?.join(' · ')}</Field>
+          </>}
+          {kind === 'DeviceType' && <>
+            <Field label="Manufacturer">{physical?.spec.manufacturerRef && reference('Manufacturer', namespace, physical.spec.manufacturerRef.name)}</Field>
+            <Field label="Normalized model identity">{physical?.spec.model}</Field>
+            <Field label="Nominal shape">{physical?.spec.modelShape ? `${physical.spec.modelShape.heightUnits ?? 'Unknown'}U · ${physical.spec.modelShape.fullDepth === undefined ? 'Depth unknown' : physical.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}` : 'Unknown'}</Field>
+            <Field label="Component templates">{physical?.spec.componentTemplates?.map(template => <div key={template.id}>{template.name} · {template.type} · {template.connector ?? 'Connector unknown'} · {template.positions ?? 1} position(s)</div>) ?? 'Not recorded'}</Field>
+            <Field label="Template semantics">Reference defaults only. No installed assets, measured geometry, observed occupancy, or automatic materialization.</Field>
+          </>}
           {kind === 'Site' && <>
             <Field label="Internal Site code">{(record as PhysicalRecord).spec.code}</Field>
             <Field label="Physical premises">{siteFacilities(record as PhysicalRecord, inventory).map((membership, index) => <div key={index}>{membership.facility ? <>{reference('Facility', namespace, membership.facility.metadata.name)} · {facilityIdentifiers(membership.facility)}</> : membership.state}</div>)}{!inventory.issues?.Facility && !(record as PhysicalRecord).spec.facilityRefs?.length && 'Unmapped · no Facilities recorded'}</Field>
@@ -324,7 +339,10 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           <Field label="Namespace">{namespace || 'Not recorded'}</Field>
           {device && (
             <>
-              <Field label="Manufacturer / model">{modelLabel(device.spec.identity)}</Field>
+              <Field label="Manufacturer / model">{deviceModelLabel(device, inventory)}</Field>
+              <Field label="Recorded hardware observation">{modelLabel(device.spec.identity)}</Field>
+              <Field label="Shared catalog">{catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'Not assigned · showing recorded observation'}</Field>
+              <Field label="Catalog nominal height">{catalog?.model.spec.modelShape?.heightUnits === undefined ? 'Unknown' : `${catalog.model.spec.modelShape.heightUnits}U · not measured or used for occupancy`}</Field>
               <Field label="Serial number">{device.spec.identity.serial}</Field>
               <Field label="Asset tag">{device.spec.assetTag}</Field>
               <Field label="System UUID">{device.spec.identity.systemUUID}</Field>
@@ -336,7 +354,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
               {device.spec.reportedPlacement?.facilityRef && <Field label="Reported facility">{reference('Facility', namespace, device.spec.reportedPlacement.facilityRef.name)}</Field>}
               {device.spec.reportedPlacement && <Field label="Placement report">Revision {device.spec.reportedPlacement.revision} · {device.spec.reportedPlacement.observedAt}, not physically verified · Reason: {device.spec.reportedPlacement.reason} · Evidence: {device.spec.reportedPlacement.reference}</Field>}
               <Field label="Placement corrections">Recordkeeping is not a physical move or a capacity reservation.</Field>
-              <Field label="Dimensions">
+              <Field label="Recorded nominal dimensions">
                 {device.spec.modelShape
                   ? `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'Depth not recorded' : device.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}`
                   : undefined}
@@ -567,6 +585,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       claims={inventory.slots.map(slot => slot.claim)}
       devices={entries.filter(entry => entry.kind === 'Device').map(entry => entry.record as RawDevice)}
       feeds={inventory.physical.filter(record => record.kind === 'PowerFeed')}
+      catalog={inventory.physical.filter(record => record.kind === 'Manufacturer' || record.kind === 'DeviceType')}
     /> : null;
   const placementEditor = selected?.kind === 'Device' && !inventory.issues?.Device ? <DevicePlacementEdit key={`${selectedNamespace}/${selectedName}`} device={selected.record as RawDevice} locations={inventory.physical} issues={inventory.issues} /> : null;
   if (Object.values(inventory.issues ?? {}).some(issue => issue?.status === 401)) return <InventoryAccessState status={401} />;

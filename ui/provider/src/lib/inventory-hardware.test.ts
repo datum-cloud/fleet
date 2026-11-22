@@ -14,6 +14,60 @@ const device = { ...hardwarePayload('Device', values, common), metadata: { name:
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 afterEach(() => vi.unstubAllGlobals());
 
+describe('catalog selection for new devices', () => {
+  const selection = { namespace: 'default', name: 'model-stable', uid: 'model-uid', resourceVersion: '3', manufacturer: { name: 'vendor-stable', uid: 'vendor-uid', resourceVersion: '4' } };
+  const model = { metadata: { namespace: 'default', name: 'model-stable', uid: 'model-uid', resourceVersion: '3' }, spec: { manufacturerRef: { name: 'vendor-stable' }, componentTemplates: [{ id: 'not-installed' }], modelShape: { heightUnits: 8 } } };
+  const manufacturer = { metadata: { namespace: 'default', name: 'vendor-stable', uid: 'vendor-uid', resourceVersion: '4' } };
+
+  it('rechecks catalog identities and revisions, sending only name references under strict validation', async () => {
+    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(claim)).mockResolvedValueOnce(response(model)).mockResolvedValueOnce(response(manufacturer)).mockResolvedValueOnce(response({ metadata: { uid: 'new-device' } }));
+    vi.stubGlobal('fetch', requests);
+    await createInventoryRecord('Device', { ...values, catalog: selection }, new InventoryOperationScope().begin());
+    const payload = JSON.parse(requests.mock.calls[4][1].body);
+    expect(requests.mock.calls[4][0]).toContain('fieldValidation=Strict');
+    expect(payload.spec.deviceTypeRef).toEqual({ name: 'model-stable' });
+    expect(payload.spec.identity.model).toBe(values.model);
+    expect(payload.spec.components).toEqual(values.components);
+    expect(payload.spec.modelShape).toBeUndefined();
+    expect(payload.spec.reportedPlacement).toBeUndefined();
+    expect(payload.spec.provenance).toBeUndefined();
+    expect(payload.spec.identity.sourceIdentity).toBeUndefined();
+    expect(JSON.stringify(payload.spec)).not.toContain('uid');
+  });
+
+  it.each(['uid', 'resourceVersion', 'namespace', 'name', 'deletionTimestamp'])('rejects changed catalog %s before registration', async field => {
+    const changed = { ...model, metadata: { ...model.metadata, [field]: 'changed' } };
+    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(claim)).mockResolvedValueOnce(response(changed));
+    vi.stubGlobal('fetch', requests);
+    await expect(createInventoryRecord('Device', { ...values, catalog: selection }, new InventoryOperationScope().begin())).rejects.toMatchObject({ status: 409 });
+    expect(requests).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([401, 403, 404, 503])('does not register after catalog denial/unavailability %s', async status => {
+    for (const target of ['model', 'manufacturer']) {
+      const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(claim));
+      if (target === 'manufacturer') requests.mockResolvedValueOnce(response(model));
+      requests.mockResolvedValueOnce(response(undefined, status));
+      vi.stubGlobal('fetch', requests);
+      await expect(createInventoryRecord('Device', { ...values, catalog: selection }, new InventoryOperationScope().begin())).rejects.toMatchObject({ status });
+      expect(requests).toHaveBeenCalledTimes(target === 'model' ? 3 : 4);
+    }
+  });
+
+  it('fences a late catalog read after session revocation', async () => {
+    const scope = new InventoryOperationScope();
+    let release: ((value: unknown) => void) | undefined;
+    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(claim)).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    vi.stubGlobal('fetch', requests);
+    const outcome = createInventoryRecord('Device', { ...values, catalog: selection }, scope.begin()).catch(error => error);
+    await waitFor(() => expect(release).toBeDefined());
+    scope.invalidate();
+    release!(response(model));
+    expect(await outcome).toMatchObject({ dispatched: false });
+    expect(requests).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe('physical record creation', () => {
   it.each(['Facility', 'Rack'] as const)('creates a new observational plan at a %s without inventing geometry', async kind => {
     const planValues = { ...values, planLocation: { kind, name: 'location', uid: 'location-uid', resourceVersion: '1' } };

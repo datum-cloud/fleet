@@ -19,6 +19,7 @@ export function readFailureIssues(error: InventoryReferenceReadError): Inventory
 
 export function redactInventory(source: Inventory, issues: Inventory['issues']): Inventory {
   const combined = { ...source.issues, ...issues };
+  if (combined.Manufacturer) combined.DeviceType = combined.Manufacturer;
   return {
     issues: combined,
     slots: combined.DeviceClaim ? [] : source.slots.map(slot => ({ ...slot, devices: combined.Device ? [] : slot.devices })),

@@ -29,14 +29,14 @@ describe('physical inventory reads', () => {
     await expect(fetchInventoryCollection('racks')).rejects.toThrow('completeness Unknown');
   });
 
-  it('reads six physical collections and Sites and retains per-kind denial without fake inventory', async () => {
+  it('reads six physical collections, Sites and two catalog collections and retains per-kind denial', async () => {
     const fetch = vi.fn().mockResolvedValue(response({ items: [] }));
     vi.stubGlobal('fetch', fetch);
     expect((await fetchInventory()).physical).toEqual([]);
-    expect(fetch).toHaveBeenCalledTimes(7);
+    expect(fetch).toHaveBeenCalledTimes(9);
     fetch.mockResolvedValue(response(undefined, 403));
     const inventory = await fetchInventory();
-    expect(Object.values(inventory.issues ?? {})).toEqual(Array.from({ length: 7 }, () => ({ status: 403 })));
+    expect(Object.values(inventory.issues ?? {})).toEqual(Array.from({ length: 9 }, () => ({ status: 403 })));
     expect(inventory.physical).toEqual([]);
   });
 

@@ -85,6 +85,7 @@ type Device struct {
 }
 
 type DeviceSpec struct {
+	DeviceTypeRef       *LocalReference      `json:"deviceTypeRef,omitempty"`
 	ReportedPlacement   *ReportedPlacement   `json:"reportedPlacement,omitempty"`
 	DisplayName         string               `json:"displayName,omitempty"`
 	ModelShape          *ModelShape          `json:"modelShape,omitempty"`
@@ -161,6 +162,7 @@ type DeviceList struct {
 }
 
 func addKnown(s *runtime.Scheme) error {
+	s.AddKnownTypes(GroupVersion, &Manufacturer{}, &ManufacturerList{}, &DeviceType{}, &DeviceTypeList{})
 	s.AddKnownTypes(GroupVersion, &Site{}, &SiteList{}, &DeviceClaim{}, &DeviceClaimList{}, &Device{}, &DeviceList{}, &Facility{}, &FacilityList{}, &Rack{}, &RackList{}, &Cable{}, &CableList{}, &PowerFeed{}, &PowerFeedList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
