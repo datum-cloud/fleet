@@ -264,6 +264,14 @@ func TestProvenanceIsOptional(t *testing.T) {
 	if errs := admit(t, "Device", object(t, without), withProvenance); len(errs) > 0 {
 		t.Fatalf("dropping provenance rejected: %v", errs)
 	}
+	// identity is immutable, so an imported Device keeps its sourceIdentity and
+	// must still be able to stop sending provenance.
+	imported := reportedDevice()
+	importedWithout := reportedDevice()
+	importedWithout.Spec.Provenance = nil
+	if errs := admit(t, "Device", object(t, importedWithout), object(t, imported)); len(errs) > 0 {
+		t.Fatalf("dropping provenance from an imported device rejected: %v", errs)
+	}
 	claim := syntheticClaim()
 	claim.Spec.Provenance = nil
 	if errs := admit(t, "DeviceClaim", object(t, claim), object(t, syntheticClaim())); len(errs) > 0 {

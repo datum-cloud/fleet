@@ -314,13 +314,13 @@ spec:
             - rule: '!has(self.reportedPlacement) || (oldSelf.hasValue() && has(oldSelf.value().reportedPlacement) ? (self.reportedPlacement == oldSelf.value().reportedPlacement || self.reportedPlacement.revision == oldSelf.value().reportedPlacement.revision + 1) : self.reportedPlacement.revision == 1)'
               optionalOldSelf: true
               message: first report revision must be 1; every changed report must increment revision exactly once
-            - rule: '!has(self.reportedPlacement) || (has(self.reportedPlacement.method) && self.reportedPlacement.method == "Manual") || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && has(self.reportedPlacement.snapshotDigest) && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
+            - rule: '!has(self.reportedPlacement) || !has(self.provenance) || (has(self.reportedPlacement.method) && self.reportedPlacement.method == "Manual") || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && has(self.reportedPlacement.snapshotDigest) && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
               message: reported placement must retain the imported source snapshot and observation time
             - rule: '!has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) || (self.interfaces.filter(b,
                 has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 && (!has(self.unmappedMACAddresses)
                 || !(a.macAddress in self.unmappedMACAddresses))))'
               message: a MAC address may be recorded only once
-            - rule: '!has(self.identity.sourceIdentity) || self.provenance.method == "NetBoxImport"'
+            - rule: '!has(self.identity.sourceIdentity) || !has(self.provenance) || self.provenance.method == "NetBoxImport"'
               message: source identity is for observational imports only
             - rule: '!has(self.topologyAuthority) || !has(self.interfaces) || self.interfaces.all(p, !has(p.peer))'
               message: Cable topology excludes inline peers
@@ -334,7 +334,7 @@ spec:
             - rule: '!has(self.internalMappings) || self.internalMappings.all(m, self.internalMappings.filter(n,
                 n.from == m.from).size() == 1)'
               message: each internal source position maps once
-            - rule: '!has(self.identity.sourceIdentity) || (has(self.provenance.source) && self.identity.sourceIdentity.system
+            - rule: '!has(self.identity.sourceIdentity) || !has(self.provenance) || (has(self.provenance.source) && self.identity.sourceIdentity.system
                 == self.provenance.source.system && self.identity.sourceIdentity.type == self.provenance.source.type
                 && self.identity.sourceIdentity.id == self.provenance.source.id)'
               message: observational identity must match provenance source identity
