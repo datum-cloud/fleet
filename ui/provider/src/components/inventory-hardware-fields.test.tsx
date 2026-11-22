@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, expect, it, vi } from 'vitest';
 import { InventoryManagement } from './inventory-management';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
+import { buttonVariants } from '@datum-cloud/datum-ui/button';
+import { cn } from '@datum-cloud/datum-ui/utils';
 
 const claim = { ...fixturePhysicalClaims[0], metadata: { ...fixturePhysicalClaims[0].metadata, uid: 'plan-uid', resourceVersion: '1' }, spec: { ...fixturePhysicalClaims[0].spec, lifecycle: 'Installation' as const } };
 const device = { ...fixturePhysicalDevices[0], metadata: { ...fixturePhysicalDevices[0].metadata, uid: 'device-uid', resourceVersion: '1' } };
@@ -25,6 +27,15 @@ it('registers hardware through the real form without changing claim identity', a
     writes.push(JSON.parse(init.body as string)); return response({ metadata: { uid: 'new-uid' } });
   }));
   renderForm('Device'); await open('Device');
+  const model = screen.getByLabelText('Model');
+  expect(model).toHaveAttribute('data-slot', 'input');
+  expect(model.closest('label')).toHaveAttribute('data-slot', 'label');
+  expect(model).toBeRequired();
+  expect(screen.getByLabelText('Management namespace')).toHaveAttribute('data-slot', 'input');
+  expect(screen.getByLabelText('Management namespace')).toBeDisabled();
+  const addComponent = screen.getByRole('button', { name: 'Add component' });
+  expect(addComponent).toHaveClass(...cn(buttonVariants({ type: 'secondary', theme: 'outline', size: 'small' })).split(' '));
+  expect(addComponent).toHaveAttribute('type', 'button');
   fireEvent.change(screen.getByLabelText('Installation plan'), { target: { value: 'plan-uid' } });
   fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'Recorded model' } });
   fireEvent.change(screen.getByLabelText('Serial number'), { target: { value: 'SYNTHETIC-NEW' } });

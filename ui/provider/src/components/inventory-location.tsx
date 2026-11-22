@@ -1,3 +1,6 @@
+import { Button } from '@datum-cloud/datum-ui/button';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@datum-cloud/datum-ui/table';
+import { Title } from '@datum-cloud/datum-ui/typography';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { slotKey, type Inventory, type InventorySlot } from '../inventory';
@@ -15,9 +18,9 @@ export function rackGeometry(slot: InventorySlot, rack: PhysicalRecord) {
 }
 
 function Equipment({ slots, devicesDenied, inventory }: { slots: EquipmentPlacement[]; devicesDenied: boolean; inventory: Inventory }) {
-  return <div className="inventory-scroll"><table aria-label="Recorded equipment"><thead><tr><th>Equipment</th><th>Claim / registration history</th><th>Location / Reported placement</th></tr></thead><tbody>
-    {slots.map(slot => <tr key={slot.key}><td>{devicesDenied ? 'Device details unavailable' : slot.devices.length ? slot.devices.map(device => <div key={device.metadata.name}><Link to={inventoryHref('Device', device.metadata.namespace, device.metadata.name)}>{device.spec.displayName || device.metadata.name}</Link></div>) : 'No device registration recorded'}{slot.devices.length > 1 && <small>Multiple registrations · active device unknown</small>}</td><td>{slot.claim ? <Link to={inventoryHref('DeviceClaim', slot.claim.metadata.namespace, slot.claim.metadata.name)}>{slot.claim.spec.displayName || slot.claim.metadata.name}</Link> : 'Claim details unavailable'}</td><td>{reportedPlacementLabel(slot, inventory)}</td></tr>)}
-  </tbody></table></div>;
+  return <div className="inventory-scroll"><Table aria-label="Recorded equipment"><TableHeader><TableRow><TableHead>Equipment</TableHead><TableHead>Claim / registration history</TableHead><TableHead>Location / Reported placement</TableHead></TableRow></TableHeader><TableBody>
+    {slots.map(slot => <TableRow key={slot.key}><TableCell>{devicesDenied ? 'Device details unavailable' : slot.devices.length ? slot.devices.map(device => <div key={device.metadata.name}><Link to={inventoryHref('Device', device.metadata.namespace, device.metadata.name)}>{device.spec.displayName || device.metadata.name}</Link></div>) : 'No device registration recorded'}{slot.devices.length > 1 && <small>Multiple registrations · active device unknown</small>}</TableCell><TableCell>{slot.claim ? <Link to={inventoryHref('DeviceClaim', slot.claim.metadata.namespace, slot.claim.metadata.name)}>{slot.claim.spec.displayName || slot.claim.metadata.name}</Link> : 'Claim details unavailable'}</TableCell><TableCell>{reportedPlacementLabel(slot, inventory)}</TableCell></TableRow>)}
+  </TableBody></Table></div>;
 }
 
 function RackFace({ rack, slots, side }: { rack: PhysicalRecord; slots: EquipmentPlacement[]; side: 'front' | 'rear' }) {
@@ -63,13 +66,13 @@ export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; invent
   const height = rack.spec.heightUnits;
   return <section className="inventory-rack-layout" aria-label="Rack layout">
     <aside className="inventory-elevation">
-      <div className="inventory-list-heading"><h3>Rack elevation</h3><span>{height ? `${height}U` : 'Height unknown'}</span></div>
-      <div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <button key={value} type="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</button>)}</div>
+      <div className="inventory-list-heading"><Title as="h3" level={5}>Rack elevation</Title><span>{height ? `${height}U` : 'Height unknown'}</span></div>
+      <div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type="secondary" theme={face === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</div>
       <p className="inventory-muted">Reported placements and explicitly labelled claim-derived fallback, not verified occupancy. Blank units are not available space. ! indicates overlapping placements requiring review. Unknown depth does not establish clearance on the opposite face.</p>
       {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} rack={rack} slots={positioned} side={side} />)}</div>}
     </aside>
     <div className="inventory-equipment-sections">
-      <h3>Equipment & registration history</h3>
+      <Title as="h3" level={5}>Equipment & registration history</Title>
       {(inventory.issues?.Device || inventory.issues?.DeviceClaim) && <p>Some records are unavailable; equipment counts are incomplete.</p>}
       {denied ? <p>Installation details unavailable. This is not an empty rack.</p> : <>
         <section><h4>Positioned equipment <span className="inventory-count">{positioned.length}</span></h4>{positioned.length ? <Equipment slots={positioned} devicesDenied={devicesDenied} inventory={inventory} /> : <p className="inventory-muted">No complete in-range unit positions recorded.</p>}</section>
@@ -85,7 +88,7 @@ export function FacilityOverview({ facility, inventory }: { facility: PhysicalRe
   const racks = inventory.physical.filter(record => record.kind === 'Rack' && record.metadata.namespace === facility.metadata.namespace && record.spec.facilityRef?.name === facility.metadata.name);
   const equipment = equipmentPlacements(inventory);
   const facilityOnly = equipment.filter(slot => slot.record.metadata.namespace === facility.metadata.namespace && !slot.placement.rackRef && slot.placement.facilityRef?.name === facility.metadata.name);
-  return <section className="inventory-equipment-sections" aria-label="Facility contents"><h3>Racks</h3>{inventory.issues?.Rack ? <p>Rack details unavailable. The facility's rack count is unknown.</p> : racks.length ? <div className="inventory-scroll"><table aria-label="Facility racks"><thead><tr><th>Rack</th><th>Recorded height</th><th>Equipment reports / claim fallback</th><th>Available space</th></tr></thead><tbody>{racks.map(rack => <tr key={slotKey(rack.metadata.namespace, rack.metadata.name)}><td><Link to={inventoryHref('Rack', rack.metadata.namespace, rack.metadata.name)}>{rack.spec.displayName || rack.metadata.name}</Link></td><td>{rack.spec.heightUnits ? `${rack.spec.heightUnits}U` : 'Not recorded'}</td><td>{inventory.issues?.DeviceClaim || inventory.issues?.Device ? 'Incomplete' : equipment.filter(slot => slot.record.metadata.namespace === rack.metadata.namespace && slot.placement.rackRef?.name === rack.metadata.name).length}</td><td>Not verified</td></tr>)}</tbody></table></div> : <p className="inventory-muted">No racks recorded in this facility.</p>}
-    <h3>Equipment without a recorded rack</h3>{facilityOnly.length ? <Equipment slots={facilityOnly} devicesDenied={!!inventory.issues?.Device} inventory={inventory} /> : inventory.issues?.DeviceClaim || inventory.issues?.Device ? <p>Equipment details unavailable.</p> : <p className="inventory-muted">No facility-only reports or claims recorded.</p>}
+  return <section className="inventory-equipment-sections" aria-label="Facility contents"><Title as="h3" level={5}>Racks</Title>{inventory.issues?.Rack ? <p>Rack details unavailable. The facility's rack count is unknown.</p> : racks.length ? <div className="inventory-scroll"><Table aria-label="Facility racks"><TableHeader><TableRow><TableHead>Rack</TableHead><TableHead>Recorded height</TableHead><TableHead>Equipment reports / claim fallback</TableHead><TableHead>Available space</TableHead></TableRow></TableHeader><TableBody>{racks.map(rack => <TableRow key={slotKey(rack.metadata.namespace, rack.metadata.name)}><TableCell><Link to={inventoryHref('Rack', rack.metadata.namespace, rack.metadata.name)}>{rack.spec.displayName || rack.metadata.name}</Link></TableCell><TableCell>{rack.spec.heightUnits ? `${rack.spec.heightUnits}U` : 'Not recorded'}</TableCell><TableCell>{inventory.issues?.DeviceClaim || inventory.issues?.Device ? 'Incomplete' : equipment.filter(slot => slot.record.metadata.namespace === rack.metadata.namespace && slot.placement.rackRef?.name === rack.metadata.name).length}</TableCell><TableCell>Not verified</TableCell></TableRow>)}</TableBody></Table></div> : <p className="inventory-muted">No racks recorded in this facility.</p>}
+    <Title as="h3" level={5}>Equipment without a recorded rack</Title>{facilityOnly.length ? <Equipment slots={facilityOnly} devicesDenied={!!inventory.issues?.Device} inventory={inventory} /> : inventory.issues?.DeviceClaim || inventory.issues?.Device ? <p>Equipment details unavailable.</p> : <p className="inventory-muted">No facility-only reports or claims recorded.</p>}
   </section>;
 }

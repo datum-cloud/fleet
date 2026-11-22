@@ -1,3 +1,7 @@
+import { Input } from '@datum-cloud/datum-ui/input';
+import { Label } from '@datum-cloud/datum-ui/label';
+import { Button } from '@datum-cloud/datum-ui/button';
+import { Title } from '@datum-cloud/datum-ui/typography';
 import { useContext, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
@@ -85,11 +89,11 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     } finally { setPending(false); }
   }
   return <section className="inventory-management" aria-label="Correct reported location">
-    <h3>Reported location</h3>
+    <Title as="h3" level={5}>Reported location</Title>
     <p>Correct a record, not a physical move, installation handover, or reservation. Identity and claim binding stay unchanged. Blank geometry means unknown; model and claim dimensions are not copied.</p>
     {!editable ? <p>Legacy GitOps-managed or unavailable Devices are outside this editor.</p> : !permitted && <p>Device management permission must be confirmed before correcting location.</p>}
     <p role="status" className="inventory-management-status">{message || (!ready || permission.isFetching ? 'Management: verification pending.' : open && blocked ? 'Management: close and reopen this form to continue.' : allowed ? 'Management: access checked.' : 'Management: unavailable.')}</p>
-    {permitted && !open && !needsRefresh && <button type="button" disabled={!allowed} onClick={() => {
+    {permitted && !open && !needsRefresh && <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={() => {
       if (!allowed) return;
       scope.current = new InventoryOperationScope();
       setOpen(true);
@@ -98,24 +102,24 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
       if (unavailable.Facility) next.facility = '';
       if (unavailable.Rack) next.rack = '';
       setFields(next); setBlocked(false); setMessage('');
-    }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</button>}
+    }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</Button>}
     {open && permitted && <form className="inventory-form" onSubmit={save}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <p>Authenticated actor history uses existing resource audit logs.</p>
-      <label>Actual facility (optional)<select value={fields.facility} disabled={!!unavailable.Facility} onChange={event => field('facility', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Facility').map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></label>
-      <label>Actual rack (optional)<select value={fields.rack} disabled={!!unavailable.Rack} onChange={event => field('rack', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></label>
-      <label>Reported position (U)<input type="number" min="1" max="100" step="any" value={fields.position} onChange={event => field('position', event.target.value)} /></label>
-      <label>Reported height (U)<input type="number" min="0" max="100" step="any" value={fields.height} onChange={event => field('height', event.target.value)} /></label>
-      <label>Reported face<select value={fields.face} onChange={event => field('face', event.target.value)}><option value="">Unknown</option><option value="front">Front</option><option value="rear">Rear</option></select></label>
-      <label>Reported depth<select value={fields.fullDepth} onChange={event => field('fullDepth', event.target.value)}><option value="">Unknown</option><option value="true">Full depth</option><option value="false">Partial depth</option></select></label>
-      <label>Non-unit mount (optional)<input value={fields.mount} maxLength={253} onChange={event => field('mount', event.target.value)} /></label>
-      <label>Observation time (ISO 8601)<input required value={fields.observedAt} onChange={event => field('observedAt', event.target.value)} /></label>
-      <label>Correction reason<input required maxLength={1024} value={fields.reason} onChange={event => field('reason', event.target.value)} /></label>
-      <label>Evidence reference<input required maxLength={1024} value={fields.reference} onChange={event => field('reference', event.target.value)} /></label>
+      <Label>Actual facility (optional)<select value={fields.facility} disabled={!!unavailable.Facility} onChange={event => field('facility', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Facility').map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
+      <Label>Actual rack (optional)<select value={fields.rack} disabled={!!unavailable.Rack} onChange={event => field('rack', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
+      <Label>Reported position (U)<Input type="number" min="1" max="100" step="any" value={fields.position} onChange={event => field('position', event.target.value)} /></Label>
+      <Label>Reported height (U)<Input type="number" min="0" max="100" step="any" value={fields.height} onChange={event => field('height', event.target.value)} /></Label>
+      <Label>Reported face<select value={fields.face} onChange={event => field('face', event.target.value)}><option value="">Unknown</option><option value="front">Front</option><option value="rear">Rear</option></select></Label>
+      <Label>Reported depth<select value={fields.fullDepth} onChange={event => field('fullDepth', event.target.value)}><option value="">Unknown</option><option value="true">Full depth</option><option value="false">Partial depth</option></select></Label>
+      <Label>Non-unit mount (optional)<Input value={fields.mount} maxLength={253} onChange={event => field('mount', event.target.value)} /></Label>
+      <Label>Observation time (ISO 8601)<Input required value={fields.observedAt} onChange={event => field('observedAt', event.target.value)} /></Label>
+      <Label>Correction reason<Input required maxLength={1024} value={fields.reason} onChange={event => field('reason', event.target.value)} /></Label>
+      <Label>Evidence reference<Input required maxLength={1024} value={fields.reference} onChange={event => field('reference', event.target.value)} /></Label>
       <p>Do not include credentials or secrets in evidence.</p>
       </fieldset>
-      <button type="submit" disabled={!allowed || pending || blocked}>{pending ? 'Saving location…' : 'Save reported location'}</button>
-      <button type="button" disabled={!ready || pending} onClick={() => { scope.current.invalidate(); setBaseline(undefined); setOpen(false); }}>Close location form</button>
+      <Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || pending || blocked}>{pending ? 'Saving location…' : 'Save reported location'}</Button>
+      <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!ready || pending} onClick={() => { scope.current.invalidate(); setBaseline(undefined); setOpen(false); }}>Close location form</Button>
     </form>}
   </section>;
 }
