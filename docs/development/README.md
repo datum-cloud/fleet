@@ -59,6 +59,11 @@ stored allocations or establish live acceptance.
 
 ## Allocation API migration
 
+Real inventory-backed MachineCapacity registration is
+[blocked on server authority and policy contracts](inventory-capacity-registration.md).
+The staff UI no longer offers the obsolete synthetic creation form; this is not
+an API-level registration or duplicate-prevention guarantee.
+
 The implemented alpha surface follows the current machine-allocation proposal:
 
 - consumer projects create `Machine` objects with required

@@ -1,9 +1,8 @@
 import CapacityList from './capacity-list';
-import { capacityTargets, toRawCapacity } from '../components/create-capacity-dialog';
 import * as api from '../lib/api';
 import { ApiError } from '../lib/api';
-import { FIXTURE_CAPACITIES, fixtureClasses } from '../lib/fixtures';
-import { toMachineCapacity, toMachineClass } from '../types';
+import { FIXTURE_CAPACITIES } from '../lib/fixtures';
+import { toMachineCapacity } from '../types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -11,12 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof api>('../lib/api');
-  return { ...actual, useMachineCapacities: vi.fn(), useMachineClasses: vi.fn(), useCreateMachineCapacity: vi.fn(), useDeleteMachineCapacity: vi.fn() };
+  return { ...actual, useMachineCapacities: vi.fn(), useDeleteMachineCapacity: vi.fn() };
 });
 
 const useCapacitiesMock = vi.mocked(api.useMachineCapacities);
-const mutate = vi.fn();
-const CLASSES = fixtureClasses.list().map(toMachineClass);
 
 const remove = vi.fn();
 
@@ -72,16 +69,8 @@ function row(table: HTMLElement, name: string): HTMLElement {
 
 beforeEach(() => {
   useCapacitiesMock.mockReset();
-  mutate.mockReset();
   remove.mockReset();
   mockDelete(api.useDeleteMachineCapacity);
-  vi.mocked(api.useMachineClasses).mockReturnValue({ data: CLASSES } as never);
-  vi.mocked(api.useCreateMachineCapacity).mockReturnValue({
-    mutate,
-    reset: vi.fn(),
-    error: null,
-    isPending: false,
-  } as never);
 });
 
 describe('CapacityList', () => {
@@ -141,45 +130,23 @@ describe('CapacityList', () => {
     expect(within(enrolled).getAllByText('—').length).toBeGreaterThan(0); // nothing observed
   });
 
-  it('creates capacity in the namespace and pool of the chosen class', async () => {
-    mockResult({ data: [] });
+  it.each([
+    { data: [] },
+    { data: FIXTURE_CAPACITIES.map(toMachineCapacity) },
+    { isLoading: true },
+    { error: new ApiError(403, 'forbidden') },
+    { error: new ApiError(503, 'unavailable') },
+  ])('does not offer registration or allocation while blocked: %j', (result) => {
+    mockResult(result);
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /Create capacity/ }));
-    const form = await screen.findByTestId('fleet-plugin-create-capacity-form');
-    const input = (name: string) => form.querySelector(`[name="${name}"]`) as HTMLInputElement;
-    fireEvent.change(input('name'), { target: { value: 'central1-baremetal-04' } });
-    // Radix renders a hidden native select alongside its combobox.
-    fireEvent.change(form.querySelector('select') as HTMLSelectElement, {
-      target: { value: 'standard-metal' },
-    });
-    expect(await within(form).findByTestId('fleet-plugin-capacity-placement')).toHaveTextContent(
-      'Created in namespace fleet-provider with capacity pool central-metal.'
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(mutate).toHaveBeenCalled());
-    expect(mutate.mock.calls[0][0]).toEqual({
-      metadata: {
-        name: 'central1-baremetal-04',
-        namespace: 'fleet-provider',
-        labels: { 'fleet.datumapis.com/capacity-pool': 'central-metal' },
-      },
-      spec: {
-        deviceRef: { name: 'central1-baremetal-04' },
-        allocationPolicy: 'Disabled',
-        cleaningPolicyRef: { name: 'synthetic-tenant-reuse-v1' },
-        reclaimPolicy: 'Retain',
-      },
-    });
-  });
-
-  it('asks for a class with a capacity pool when there is none', async () => {
-    vi.mocked(api.useMachineClasses).mockReturnValue({ data: [] } as never);
-    mockResult({ data: [] });
-    renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /Create capacity/ }));
-    const form = await screen.findByTestId('fleet-plugin-create-capacity-form');
-    expect(within(form).getByText(/No classes with a capacity pool yet/)).toBeInTheDocument();
+    const notice = screen.getByTestId('fleet-plugin-capacity-registration-blocked');
+    expect(notice).toHaveTextContent('server-side identity binding');
+    expect(notice).toHaveTextContent('duplicate-registration protection');
+    expect(notice).toHaveTextContent('synthetic cleaning policy is not a substitute');
+    expect(screen.queryByRole('button', { name: /Create capacity|Register capacity/ })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /Offer for allocation/ })).toBeNull();
+    expect(screen.queryByTestId('fleet-plugin-create-capacity-form')).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it('deletes capacity once its name is typed', async () => {
@@ -209,30 +176,5 @@ describe('CapacityList', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete central1-baremetal-03' }));
     const form = await screen.findByTestId('fleet-plugin-delete-form');
     expect(within(form).getByText('machinecapacities "x" is forbidden')).toBeInTheDocument();
-  });
-});
-
-describe('capacityTargets', () => {
-  it('skips published classes and classes without a capacity pool', () => {
-    const targets = capacityTargets([
-      ...CLASSES,
-      toMachineClass({ metadata: { name: 'no-pool' }, spec: {} }),
-      toMachineClass({
-        metadata: { name: 'published' },
-        spec: { source: { project: 'provider', name: 'standard-metal' } },
-      }),
-    ]);
-    expect(targets.map((t) => t.name)).toEqual(['standard-metal']);
-  });
-});
-
-describe('toRawCapacity', () => {
-  it('enables allocation only when asked', () => {
-    const [target] = capacityTargets(CLASSES);
-    const values = { name: 'm', machineClass: 'standard-metal' };
-    expect(toRawCapacity(values, target).spec.allocationPolicy).toBe('Disabled');
-    expect(toRawCapacity({ ...values, allocationEnabled: true }, target).spec.allocationPolicy).toBe(
-      'Enabled'
-    );
   });
 });

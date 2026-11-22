@@ -1,4 +1,4 @@
-import { CreateCapacityDialog } from '../components/create-capacity-dialog';
+import { CapacityRegistrationNotice } from '../components/capacity-registration-notice';
 import { DeleteDialog } from '../components/delete-dialog';
 import { FleetPage } from '../components/fleet-page';
 import { CapacityTable } from '../components/capacity-table';
@@ -22,7 +22,8 @@ export default function CapacityList() {
   );
 
   return (
-    <FleetPage testId="fleet-plugin-capacity-list" actions={<CreateCapacityDialog />}>
+    <FleetPage testId="fleet-plugin-capacity-list">
+      <CapacityRegistrationNotice />
       {isLoading && <LoadingState />}
 
       {!isLoading && error && (
@@ -37,7 +38,7 @@ export default function CapacityList() {
         <div data-testid="fleet-plugin-capacity-empty">
           <EmptyContent
             title="No machine capacity yet"
-            subtitle="Add machine capacity for a class to draw from."
+            subtitle="Inventory-backed registration is blocked until the required server integrations are available."
             className="w-full"
           />
         </div>

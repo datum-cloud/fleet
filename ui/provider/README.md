@@ -7,13 +7,13 @@ mounts its pages under `/plugins/<slug>/`, with a **Bare Metal** item under
 Operations in the navigation. The page has four tabs:
 
 - **Capacity** (the mount root, where the nav item points) lists the
-  provider's MachineCapacities in every namespace and creates new ones. The
-  form asks only for a name, a class, and whether to offer the capacity for
-  allocation (off by default). It goes in the class's namespace and capacity
-  pool, with a device reference named after the record (nothing checks that a
-  Device of that name exists) and the standalone fixtures' cleaning policy. The device
-  reference can't be changed later. Hardware and conditions stay empty until
-  Fleet's discovery reports them.
+  provider's MachineCapacities in every namespace. New registration is blocked:
+  Fleet has no production registration authority for exact Device binding,
+  duplicate prevention or real cleaning-policy resolution. The obsolete
+  synthetic creation form and allocation-enabling control are removed, including
+  in fixture builds. See the [stage1 blocker analysis](../../docs/development/inventory-capacity-registration.md).
+  Existing records and their displayed policy/conditions are unchanged. This UI
+  restriction is not server-side enforcement against direct API clients.
 - **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
   profile can't be changed after it is created, so there is no edit.
 - **Classes** (`classes`) lists MachineClasses and creates new ones: the
@@ -43,8 +43,8 @@ Operations in the navigation. The page has four tabs:
   direct API operations. Records are not managed through Git. See the
   [Site–Facility contract](../../docs/development/site-facility-relationship.md).
 
-The portal proxy forwards the staff member's own token, so creating capacity,
-profiles and classes needs a Bare Metal role with `machinecapacities.create`,
+The portal proxy forwards the staff member's own token, so creating
+profiles and classes needs a Bare Metal role with
 `machineprofiles.create` and `machineclasses.create` in the provider project,
 such as `metal.datumapis.com-provider`. The Inventory tab needs list access to
 the six physical kinds and observational Sites in `fleet.datumapis.com`, which
