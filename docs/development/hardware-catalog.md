@@ -74,7 +74,10 @@ observation remains available. Catalog fallback does not query aliases or leak
 denied reference names. Existing session, focus and late-response safety tests
 remain intact; only their collection cardinality increases from seven to nine.
 
-Inventory viewer gains catalog get/list/watch. Manager gains create/update/patch;
+Inventory viewer gains catalog get/list/watch. Importer inherits those reads and
+gains catalog create only, without update, patch, or delete permissions. The
+exact-role regression test checks these grants alongside every inventory kind.
+Manager gains create/update/patch;
 editor also has delete, consistent with the existing editor role. No status,
 wildcard, consumer, membership or operational permission is added. Deploying
 these definitions does not bind anyone to these roles.

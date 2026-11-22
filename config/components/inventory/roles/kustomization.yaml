@@ -4,3 +4,4 @@ resources:
   - viewer.yaml
   - editor.yaml
   - manager.yaml
+  - importer.yaml

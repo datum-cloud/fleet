@@ -104,12 +104,13 @@ func TestInventoryRolesSplitReadFromWrite(t *testing.T) {
 		roles[r.Metadata.Name] = r
 	}
 	wantVerbs := map[string][]string{
-		"fleet.datumapis.com-inventory-viewer":  {"get", "list", "watch"},
-		"fleet.datumapis.com-inventory-editor":  {"create", "update", "patch", "delete"},
-		"fleet.datumapis.com-inventory-manager": {"create", "update", "patch"},
+		"fleet.datumapis.com-inventory-viewer":   {"get", "list", "watch"},
+		"fleet.datumapis.com-inventory-editor":   {"create", "update", "patch", "delete"},
+		"fleet.datumapis.com-inventory-manager":  {"create", "update", "patch"},
+		"fleet.datumapis.com-inventory-importer": {"create"},
 	}
 	if len(roles) != len(wantVerbs) {
-		t.Fatalf("want exactly viewer, editor and manager roles, got %v", roles)
+		t.Fatalf("want exactly viewer, editor, manager and importer roles, got %v", roles)
 	}
 	for name, verbs := range wantVerbs {
 		t.Run(name, func(t *testing.T) {
@@ -139,7 +140,7 @@ func TestInventoryRolesSplitReadFromWrite(t *testing.T) {
 					t.Fatal("viewer must not inherit additional permissions")
 				}
 			} else if len(current.Spec.Inherited) != 1 || current.Spec.Inherited[0].Name != "fleet.datumapis.com-inventory-viewer" {
-				t.Fatal("editor and manager must inherit only the viewer role")
+				t.Fatal("editor, manager and importer must inherit only the viewer role")
 			}
 		})
 	}
