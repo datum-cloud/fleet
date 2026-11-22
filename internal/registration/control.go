@@ -129,7 +129,7 @@ func (handler *Handler) ApplyControl(ctx context.Context, control SignedControl)
 		route.Activation = &control
 	case "expand":
 		if len(route.Segments) >= MaxSegments {
-			return ErrGrowthStopped
+			return ErrSegmentsExhausted
 		}
 		route.Pending = &control
 	}

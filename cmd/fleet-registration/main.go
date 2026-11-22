@@ -92,7 +92,7 @@ func run(ctx context.Context, configFile, providers, namespace, cert, key, clien
 	if err != nil {
 		return err
 	}
-	handler := registration.NewHandler(registration.Store{Client: private, Namespace: namespace, Authority: config.AuthorityID, Projects: projects, ControlKey: publicKey, RequireActive: true}, root, template, scheme)
+	handler := registration.NewHandler(registration.Store{Client: private, Namespace: namespace, Authority: config.AuthorityID, Projects: projects, ControlKey: publicKey}, root, template, scheme)
 	tlsConfig, err := webhookTLS(clientCA)
 	if err != nil {
 		return err

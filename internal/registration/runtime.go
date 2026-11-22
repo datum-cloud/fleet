@@ -21,7 +21,7 @@ import (
 )
 
 func NewHandler(store Store, root client.Client, template *rest.Config, scheme *runtime.Scheme) *Handler {
-	store.RequireActive = true
+	store.AllowInactiveForTests = false
 	return &Handler{Store: store, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, root, store.Projects) }, Resolve: func(ctx context.Context, name string) (Project, error) {
 		identity, err := manager.ResolveProjectIdentity(ctx, root, store.Authority, name)
 		if err != nil {

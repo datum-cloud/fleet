@@ -94,7 +94,7 @@ func TestRealNoopRegistrationAndScopedTransportFailure(t *testing.T) {
 	if err := api.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: "default"}, Data: map[string][]byte{"ledger.json": encoded}}); err != nil {
 		t.Fatal(err)
 	}
-	handler := &Handler{Store: Store{Client: api, Namespace: "default", Authority: "milo", Projects: []string{"datum-cloud"}}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }, Resolve: func(context.Context, string) (Project, error) {
+	handler := &Handler{Store: Store{Client: api, Namespace: "default", Authority: "milo", Projects: []string{"datum-cloud"}, AllowInactiveForTests: true}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }, Resolve: func(context.Context, string) (Project, error) {
 		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api}, nil
 	}, Authorize: Authorize}
 	type gate struct {

@@ -54,12 +54,14 @@ type Ledger struct {
 }
 
 type Store struct {
-	Client        client.Client
-	Namespace     string
-	Authority     string
-	Projects      []string
-	ControlKey    ed25519.PublicKey
-	RequireActive bool
+	Client     client.Client
+	Namespace  string
+	Authority  string
+	Projects   []string
+	ControlKey ed25519.PublicKey
+	// AllowInactiveForTests skips the signed activation gate. The zero value
+	// is gated; production wiring forces it off.
+	AllowInactiveForTests bool
 }
 
 func (store Store) Read(ctx context.Context) (*corev1.Secret, Ledger, error) {
@@ -86,7 +88,7 @@ func (store Store) Write(ctx context.Context, secret *corev1.Secret, ledger Ledg
 		return err
 	}
 	if len(encoded) > TailBudget {
-		return errors.New("registration ledger is full; reservations were not released")
+		return errors.New("registration ledger is full; sign an expand control request to seal it losslessly, see docs/development/registration-storage-rollout.md; reservations were not released")
 	}
 	secret.Data["ledger.json"] = encoded
 	return store.Client.Update(ctx, secret)

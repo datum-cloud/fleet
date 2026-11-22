@@ -31,7 +31,7 @@ func controlFixture(t *testing.T, handler *Handler) ed25519.PrivateKey {
 		t.Fatal(err)
 	}
 	handler.Store.ControlKey = public
-	handler.Store.RequireActive = true
+	handler.Store.AllowInactiveForTests = false
 	handler.VerifyFence = func(context.Context) error { return nil }
 	handler.FenceDigest = func(context.Context) (string, error) { return "approved-fence", nil }
 	return private

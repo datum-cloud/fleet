@@ -25,6 +25,19 @@ const (
 
 var ErrGrowthStopped = errors.New("registration growth stopped; signed lossless expansion required, reservations remain retained")
 
+// ErrSegmentsExhausted is the terminal growth stop: every sealed segment is in
+// use, so expansion itself is refused. It still matches ErrGrowthStopped for
+// callers that only distinguish stopped growth.
+var ErrSegmentsExhausted error = segmentsExhausted{}
+
+type segmentsExhausted struct{}
+
+func (segmentsExhausted) Error() string {
+	return fmt.Sprintf("registration segments exhausted (%d of %d sealed); expansion is refused and a reviewed storage migration is required, see docs/development/registration-storage-rollout.md; reservations remain retained, do not raise caps or delete records", MaxSegments, MaxSegments)
+}
+
+func (segmentsExhausted) Is(target error) bool { return target == ErrGrowthStopped }
+
 type Segment struct {
 	Name   string    `json:"name"`
 	UID    types.UID `json:"uid"`
@@ -230,6 +243,9 @@ func (store Store) writeSnapshot(ctx context.Context, secret *corev1.Secret, cur
 		return err
 	}
 	if len(encoded) > TailBudget {
+		if len(route.Segments) >= MaxSegments {
+			return ErrSegmentsExhausted
+		}
 		return ErrGrowthStopped
 	}
 	updated := secret.DeepCopy()

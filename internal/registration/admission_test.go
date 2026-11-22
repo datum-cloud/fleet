@@ -37,7 +37,7 @@ func fixture(t *testing.T) (*Handler, *inventory.Device) {
 	api := fake.NewClientBuilder().WithScheme(scheme).WithObjects(device, namespace).Build()
 	encoded, _ := json.Marshal(Ledger{Authority: "milo", Projects: []string{"provider"}})
 	private := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: "private", UID: "ledger-1"}, Data: map[string][]byte{"ledger.json": encoded}}).Build()
-	return &Handler{Store: Store{Client: private, Namespace: "private", Authority: "milo", Projects: []string{"provider"}}, Resolve: func(context.Context, string) (Project, error) {
+	return &Handler{Store: Store{Client: private, Namespace: "private", Authority: "milo", Projects: []string{"provider"}, AllowInactiveForTests: true}, Resolve: func(context.Context, string) (Project, error) {
 		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "provider", UID: "project-1"}, Client: api}, nil
 	}, Authorize: func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error { return nil }}, device
 }
