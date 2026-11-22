@@ -15,6 +15,7 @@ import {
 } from '../inventory';
 import type { CableEndpoint, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import './physical-inventory.css';
+import { SiteOverview } from './site-overview';
 import { InventoryAccessState } from './inventory-access-state';
 import { InventoryManagement } from './inventory-management';
 import { DevicePlacementEdit } from './device-placement-edit';
@@ -22,7 +23,7 @@ import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { FacilityOverview, RackOverview, inventoryHref } from './inventory-location';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
-import { facilityIdentifiers, facilitySites, siteFacilities } from '../lib/site-membership';
+import { facilityIdentifiers, facilitySites } from '../lib/site-membership';
 import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { InventoryDirectoryHeading, InventoryToolbar } from './inventory-directory-heading';
@@ -262,6 +263,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
 
   function Detail({ entry }: { entry: RecordEntry }) {
     const { record, kind } = entry;
+    if (kind === 'Site') return <SiteOverview site={record as PhysicalRecord} inventory={inventory} />;
     const namespace = record.metadata.namespace;
     const device = kind === 'Device' ? (record as RawDevice) : undefined;
     const catalog = device && deviceCatalog(device, inventory);
@@ -332,18 +334,11 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
             <Field label="Component templates">{physical?.spec.componentTemplates?.map(template => <div key={template.id}>{template.name} · {template.type} · {template.connector ?? 'Connector unknown'} · {template.positions ?? 1} position(s)</div>) ?? 'Not recorded'}</Field>
             <Field label="Template semantics">Reference defaults only. No installed assets, measured geometry, observed occupancy, or automatic materialization.</Field>
           </>}
-          {kind === 'Site' && <>
-            <Field label="Internal Site code">{(record as PhysicalRecord).spec.code}</Field>
-            <Field label="Physical premises">{siteFacilities(record as PhysicalRecord, inventory).map((membership, index) => <div key={index}>{membership.facility ? <>{reference('Facility', namespace, membership.facility.metadata.name)} · {facilityIdentifiers(membership.facility)}</> : membership.state}</div>)}{!inventory.issues?.Facility && !(record as PhysicalRecord).spec.facilityRefs?.length && 'Unmapped · no Facilities recorded'}</Field>
-            <Field label="Authority">Membership grants no placement eligibility, capacity, or operational authority.</Field>
-            <Field label="Reference semantics">Facility references follow namespace/name. Recreating a name resolves to the replacement; this does not verify physical continuity.</Field>
-          </>}
           {kind === 'Facility' && <>
             <Field label="Provider premises identifiers">{facilityIdentifiers(record as PhysicalRecord)}</Field>
             <Field label="Operational sites">{facilitySites(record as PhysicalRecord, inventory)}</Field>
           </>}
           <Field label="Record name">{record.metadata.name}</Field>
-          {kind === 'Site' && <Field label="Resource UID">{record.metadata.uid}</Field>}
           <Field label="Namespace">{namespace || 'Not recorded'}</Field>
           {device && (
             <>
@@ -611,10 +606,10 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
               {placementEditor}
               {selected ? (
                 <>
-                  <p className="inventory-muted">
+                  {selected.kind !== 'Site' && <p className="inventory-muted">
                     {section.title} /{' '}
                     {selected.record.metadata.name}
-                  </p>
+                  </p>}
                   <Detail entry={selected} />
                 </>
               ) : (
