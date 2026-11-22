@@ -22,7 +22,7 @@ export default function CapacityList() {
   );
 
   return (
-    <FleetPage testId="fleet-plugin-capacity-list" actions={<CreateCapacityDialog />}>
+    <FleetPage testId="fleet-plugin-capacity-list" actions={<CreateCapacityDialog onRegistered={() => void refetch()} />}>
       {isLoading && <LoadingState />}
 
       {!isLoading && error && (
@@ -50,7 +50,7 @@ export default function CapacityList() {
       <DeleteDialog
         name={deleting?.name}
         resource="machine capacity"
-        warning={`The record is removed from ${deleting?.namespace ?? 'its namespace'} straight away. Fleet doesn't yet check whether a customer machine is using it.`}
+        warning={`Deletion in ${deleting?.namespace ?? 'its namespace'} is subject to server lifecycle fences. The production registration authority rejects deletion, including legacy records. Never use deletion to roll back an uncertain registration.`}
         pending={deletion.isPending}
         error={deletion.error}
         onConfirm={() =>

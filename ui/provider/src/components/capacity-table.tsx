@@ -94,7 +94,7 @@ export function CapacityTable({
         header: '',
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <DeleteButton name={row.original.name} onClick={() => onDelete(row.original)} />
+            {row.original.registrationProtected ? <Muted>Retained registration</Muted> : <DeleteButton name={row.original.name} onClick={() => onDelete(row.original)} />}
           </div>
         ),
       },

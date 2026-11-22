@@ -24,6 +24,7 @@ jobs:
     - run: go run ./test/acceptance/milo/cmd validate --root .
     - run: kustomize build config/base/crd >/dev/null
     - run: kustomize build config/milo >/dev/null
+    - run: kustomize build config/milo-synthetic >/dev/null
     - run: kustomize build config/overlays/management-plane >/dev/null
     - run: kustomize build config/overlays/synthetic-staging >/dev/null
     - run: kustomize build config/inventory >/dev/null

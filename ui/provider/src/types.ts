@@ -26,6 +26,7 @@ export interface ConditionSummary {
 
 export interface MachineCapacity {
   name: string;
+  registrationProtected?: boolean;
   namespace?: string;
   pool?: string;
   allocationPolicy: string;
@@ -54,6 +55,7 @@ export function toMachineCapacity(raw: RawMachineCapacity): MachineCapacity {
   const hw = raw.status?.hardware;
   return {
     name: raw.metadata.name,
+    ...(raw.metadata.annotations?.['fleet.datumapis.com/registration-operation'] && { registrationProtected: true }),
     namespace: raw.metadata.namespace,
     pool: raw.metadata.labels?.[CAPACITY_POOL_LABEL],
     allocationPolicy: raw.spec.allocationPolicy ?? 'Disabled',

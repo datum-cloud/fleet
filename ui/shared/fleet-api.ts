@@ -143,7 +143,7 @@ export type AllocationPolicy = 'Enabled' | 'Disabled';
 export interface MachineCapacity {
   metadata: ObjectMeta;
   spec: {
-    /** Immutable. Names the physical Device; nothing resolves it yet. */
+    /** Immutable authored name. Registration retains incarnation evidence privately. */
     deviceRef: LocalReference;
     /** Defaults to Disabled. */
     allocationPolicy: AllocationPolicy;

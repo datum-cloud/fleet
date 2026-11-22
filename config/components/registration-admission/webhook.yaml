@@ -1,0 +1,75 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: fleet-capacity-registration
+webhooks:
+  - name: registration.fleet.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 20
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-registration
+    rules:
+      - apiGroups: [metal.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [machinecapacities, machinecapacities/status]
+        scope: Namespaced
+  - name: inventory.registration.fleet.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 20
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-registration
+    matchConditions:
+      - name: provider-project-context
+        expression: >-
+          !(has(request.userInfo.extra) && "iam.miloapis.com/parent-type" in request.userInfo.extra && request.userInfo.extra["iam.miloapis.com/parent-type"] == ['Project'] && "iam.miloapis.com/parent-api-group" in request.userInfo.extra && request.userInfo.extra["iam.miloapis.com/parent-api-group"] == ['resourcemanager.miloapis.com'] && "iam.miloapis.com/parent-name" in request.userInfo.extra && size(request.userInfo.extra["iam.miloapis.com/parent-name"]) == 1 && request.userInfo.extra["iam.miloapis.com/parent-name"][0] != '') || request.userInfo.extra["iam.miloapis.com/parent-name"][0] in ["datum-cloud"]
+    rules:
+      - apiGroups: [fleet.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [devices, devices/status]
+        scope: Namespaced
+  - name: namespace.registration.fleet.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 20
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-registration
+    matchConditions:
+      - name: provider-project-context
+        expression: >-
+          !(has(request.userInfo.extra) && "iam.miloapis.com/parent-type" in request.userInfo.extra && request.userInfo.extra["iam.miloapis.com/parent-type"] == ['Project'] && "iam.miloapis.com/parent-api-group" in request.userInfo.extra && request.userInfo.extra["iam.miloapis.com/parent-api-group"] == ['resourcemanager.miloapis.com'] && "iam.miloapis.com/parent-name" in request.userInfo.extra && size(request.userInfo.extra["iam.miloapis.com/parent-name"]) == 1 && request.userInfo.extra["iam.miloapis.com/parent-name"][0] != '') || request.userInfo.extra["iam.miloapis.com/parent-name"][0] in ["datum-cloud"]
+      - name: inventory-namespace
+        expression: "!has(request.name) || request.name == '' || request.name == 'default'"
+    rules:
+      - apiGroups: ['']
+        apiVersions: [v1]
+        operations: [DELETE]
+        resources: [namespaces]
+        scope: Cluster
+  - name: project.registration.fleet.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 20
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-registration
+    matchConditions:
+      - name: provider-project-name
+        expression: >-
+          !has(request.name) || request.name == '' || request.name in ["datum-cloud"]
+    rules:
+      - apiGroups: [resourcemanager.miloapis.com]
+        apiVersions: [v1alpha1]
+        operations: [DELETE]
+        resources: [projects]
+        scope: Cluster
