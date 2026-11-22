@@ -69,13 +69,24 @@ and was removed afterwards. It was not reused as a registration identity.
 
 ## Release gate: no live exception granted
 
-The 750,000-byte ledger bounds storage, not the number of attempted or failed
-operations over time. Even unregistered Device creates/deletes permanently retain
-incarnations and aliases. A finite successful smoke test cannot establish safe
-ongoing operation. Neither PDBs nor a contention counter resolves this problem.
+The ledger is a 650,000-byte mutable tail plus at most 16 immutable sealed
+segments. Each operator-signed `expand` seals the current tail losslessly into
+one segment of up to 750,000 bytes and empties the tail; nothing is released or
+compacted. A full tail denies growing writes until expansion. Once all 16
+segments are sealed, expansion is refused and growth stops until a separately
+reviewed storage migration. The [storage runbook](registration-storage-rollout.md)
+has the exact budgets and alert thresholds.
 
-Shared staging rollout requires a separately reviewed retention/release or
-lossless migration implementation before activation. The decision must specify:
+That bounds storage, not the number of attempted or failed operations over time.
+Even unregistered Device creates/deletes permanently retain incarnations and
+aliases, so expansion postpones the stop rather than removing it. A finite
+successful smoke test cannot establish safe ongoing operation. Neither PDBs nor
+the ledger metrics resolve this problem; they only report how close the stop is.
+
+Bounded lossless expansion is now implemented (enforced tail stop, signed
+sealing, `/status` and metrics headroom). It does not implement release, and the
+items below still need a reviewed decision against that implementation before
+shared staging activation. The decision must specify:
 
 1. Which authority can reconcile each exact operation and lifetime, with current
    authorization, immutable evidence and an audited CAS transition.
@@ -117,10 +128,18 @@ Use these existing paths as the starting points, not a broad infra merge:
 
 The ordered installation must first prove serving SAN/CA, route reachability and
 dedicated client trust without enabling a new Fail webhook on occupied storage.
-Current startup verifies the installed fence before listening, so endpoint-first
-acceptance cannot be achieved by just reordering these bundles: prove it in the
-isolated authority first, then design an explicitly quiesced coordinated rollout
-or a separately reviewed non-admitting bootstrap mode. Do not weaken VerifyFence.
+Startup no longer verifies the fence before listening. The process loads its
+credentials, TLS material and operator public key, then listens in a
+non-admitting bootstrap that denies every admission. `/transportz` returns 204
+on the same mTLS listener without needing the ledger or an installed webhook, so
+endpoint trust can be proven first. Admission starts only after a signed
+`activate` pins the digest of the installed webhook fence; `/activationz` returns
+503 until that activation and the current dependencies verify, and every
+admission still runs full fence verification. Do not weaken VerifyFence.
+
+The pod readiness probe is TCP only, so a Ready pod may still be non-admitting.
+Gate UI activation on `/activationz` or `fleet_registration_activation_verified`,
+not on pod readiness. Prove the sequence in the isolated authority first.
 Bootstrap only with create after retention policies and their negative tests;
 abort on an existing ledger and validate it rather than replacing it.
 
@@ -133,18 +152,26 @@ or register real assets as smoke tests. UI deployment alone is not acceptance.
 
 ## Local safeguard validation
 
-The availability-only follow-up adds the exhaustion counter, mTLS-protected
-metrics, PDB, rolling-update limits and preferred node separation, while keeping
-all registration resources out of the synthetic overlay. The obsolete archived
-review fixture is removed; executable failure/race regressions remain.
+The availability follow-up adds the CAS-exhaustion counter, ledger gauges,
+PDB, rolling-update limits and preferred node separation, while keeping all
+registration resources out of the synthetic overlay. `/metrics` is served by
+the same `Transport()` mux as `/status`, so it has the same dedicated API-server
+mTLS boundary and no separate listener. The gauges are listed in the
+[storage runbook](registration-storage-rollout.md#enforced-budgets). The PDB and
+`maxUnavailable: 0` count TCP-ready pods, which may be non-admitting during
+bootstrap or after a fence change; they limit voluntary disruption only. The
+obsolete archived review fixture is removed; executable failure/race regressions
+remain.
 
 Validated locally with Kubernetes 1.37.0 envtest assets:
 
-- `go test -race ./internal/registration ./cmd/fleet-registration`, including
-  real Secret contention, metric deltas, TLS rejection and rendered availability
-  and synthetic-isolation assertions.
-- `go vet ./internal/registration ./cmd/fleet-registration` and
-  `go build ./cmd/fleet-registration`.
+- `go test -race -count=1 ./...`, including real Secret contention, metric
+  deltas, ledger gauges across bootstrap, activation, pending and completed
+  expansion, fence loss and an unreadable root, mTLS rejection of untrusted
+  metrics scrapes, and rendered availability and synthetic-isolation assertions.
+- `go vet ./...` and `go build ./...`.
+- `kustomize build` for `config/milo`, `config/overlays/management-plane` and
+  `config/overlays/synthetic-staging`.
 - `./hack/validate-overlay-isolation.sh`, `./hack/test-overlay-isolation.sh`,
   `./hack/validate-doc-links.sh` and `git diff --check`.
 

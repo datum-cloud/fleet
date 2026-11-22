@@ -91,8 +91,40 @@ it is not a throughput qualification. Pod memory is bounded at 512 MiB.
 
 The mTLS-only `/status` reports tail bytes, headroom, remaining segments, epoch,
 pending state, root UID/RV, scope and verified fence digest, without reservation
-contents or actor data. Parent monitoring must alert below 100,000 bytes headroom
-and before only two segments remain. Sign expansion before exhaustion. A full v1
+contents or actor data. `/metrics` on the same listener exports the same verified
+read as unlabeled gauges, plus the CAS-exhaustion counter:
+
+| Metric | Meaning |
+| --- | --- |
+| `fleet_registration_ledger_readable` | 1 when the root and every segment read and verified; 0 means unknown, and the other ledger gauges are omitted |
+| `fleet_registration_ledger_tail_bytes` | Encoded bytes in the mutable tail (the v1 `ledger.json` before first expansion) |
+| `fleet_registration_ledger_tail_headroom_bytes` | 650,000 minus tail bytes |
+| `fleet_registration_ledger_sealed_segments` | Sealed immutable segments, 0 to 16 |
+| `fleet_registration_ledger_remaining_segments` | 16 minus sealed segments; at 0 `expand` is refused |
+| `fleet_registration_ledger_epoch` | Routing epoch; advances once per completed expansion |
+| `fleet_registration_ledger_expansion_pending` | 1 while a retained signed expansion is incomplete; admission is fenced |
+| `fleet_registration_activation_verified` | 1 when the signed activation and installed fence verify; 0 is non-admitting |
+| `fleet_registration_cas_retries_exhausted_total` | Admissions denied after six CAS conflicts |
+
+Parent monitoring must alert when headroom falls below 100,000 bytes and before
+only two segments remain. Every replica reads the same root, so aggregate with
+`min` across replicas:
+
+- `min(fleet_registration_ledger_tail_headroom_bytes) < 100000`: sign `expand`.
+- `min(fleet_registration_ledger_remaining_segments) <= 3`: fires while three
+  remain, before only two do. Escalate for the reviewed storage migration.
+- `max(fleet_registration_ledger_readable) == 0`, or the series is absent: the
+  ledger state is unknown. Do not read missing gauges as headroom.
+- `fleet_registration_ledger_expansion_pending == 1` for more than a few check
+  intervals: inspect `/status`, the key and segment state.
+- `fleet_registration_activation_verified == 0` after activation: registration
+  is non-admitting; check the fence before signing anything.
+
+Each scrape performs the full verified read, including every segment and fence
+verification against the root API, so use a modest scrape interval. Scraping
+needs a client certificate trusted by the dedicated API-server client CA. That
+certificate can also call admission, so give it only to a restricted scraper,
+never to general monitoring. Sign expansion before exhaustion. A full v1
 ledger reports `registration ledger is full; sign an expand control request`;
 a full v2 tail with segments left reports `registration growth stopped`. Both
 mean sign `expand` as in step 7 below. Once all 16 segments are sealed, writes

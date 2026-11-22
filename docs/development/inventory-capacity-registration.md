@@ -201,7 +201,10 @@ count, without actor credentials or ledger contents. It also increments
 not per conflict or authorization denial. The counter has no identity labels;
 `/metrics` uses the same dedicated API-server mTLS boundary as admission, with
 no additional listener or anonymous metrics access. Monitoring integration must
-not distribute admission-capable client credentials to general scrapers.
+not distribute admission-capable client credentials to general scrapers. The
+same endpoint exports unlabeled tail, headroom, segment, epoch, pending-expansion
+and activation gauges; the [storage runbook](registration-storage-rollout.md#enforced-budgets)
+lists them with the required alert thresholds.
 Lost or corrupt
 ledger state, scope changes, uncertain operations and full ledgers require
 operator-led reconciliation/migration; deleting or recreating the ledger is not
@@ -227,8 +230,10 @@ fences or restore arbitrary storage remain outside the guarantee.
   policies. A PodDisruptionBudget retains at least one replica during voluntary
   eviction; rolling updates use zero unavailable replicas and one surge replica.
   Soft hostname anti-affinity prefers separate nodes without making a small
-  staging cluster unschedulable. These mitigate disruption, not shared-node loss,
-  TLS failure or ledger exhaustion. They do not enable production lifecycle handlers.
+  staging cluster unschedulable. Readiness is a TCP probe, so these count
+  listening replicas, which may be non-admitting in bootstrap. They mitigate
+  disruption, not shared-node loss, TLS failure, lost activation or ledger
+  exhaustion. They do not enable production lifecycle handlers.
 - The webhook consumes parent context from Milo's standard admission extras.
   The API server evaluates the inventory/lifetime CEL match conditions **before
   webhook transport**. An unreachable service or incomplete certificate rollout

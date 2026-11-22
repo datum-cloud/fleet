@@ -55,6 +55,9 @@ func (handler *Handler) Transport() http.Handler {
 		}
 		writer.WriteHeader(http.StatusNoContent)
 	})
+	// /metrics shares this listener, so it inherits the dedicated API-server
+	// client mTLS boundary; there is no separate or anonymous metrics port.
+	mux.Handle("/metrics", handler.metricsHandler())
 	mux.HandleFunc("/status", func(writer http.ResponseWriter, request *http.Request) {
 		ctx, cancel := context.WithTimeout(request.Context(), 5*time.Second)
 		defer cancel()
