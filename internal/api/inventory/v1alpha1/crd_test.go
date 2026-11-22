@@ -282,7 +282,7 @@ func TestEditsDoNotNeedARecordingTimestamp(t *testing.T) {
 // TestRetiredFieldsArePruned shows that objects stored with the retired
 // provenance, source identity, component source and report import fields
 // lose them when read or written through the structural schema, and that
-// what remains is admitted. No migration is needed.
+// what remains is admitted when it still has a serial or system UUID.
 func TestRetiredFieldsArePruned(t *testing.T) {
 	legacy := object(t, reportedDevice())
 	spec := legacy["spec"].(map[string]any)
@@ -335,6 +335,31 @@ func TestRetiredFieldsArePruned(t *testing.T) {
 		if _, ok := structural.Properties["spec"].Properties["provenance"]; ok || structural.Properties["spec"].XPreserveUnknownFields {
 			t.Fatalf("%s spec must not declare or preserve provenance", kind)
 		}
+	}
+}
+
+// TestSourceOnlyIdentityDoesNotSurvivePruning pins the case that does need
+// action: a Device whose only identity was sourceIdentity prunes to an
+// identity without a serial or system UUID, which is no longer valid. Because
+// identity is immutable, such a Device has to be deleted and recreated.
+func TestSourceOnlyIdentityDoesNotSurvivePruning(t *testing.T) {
+	legacy := object(t, syntheticDevice())
+	spec := legacy["spec"].(map[string]any)
+	identity := spec["identity"].(map[string]any)
+	delete(identity, "serial")
+	delete(identity, "systemUUID")
+	identity["sourceIdentity"] = map[string]any{"system": "example", "type": "device", "id": "1"}
+	var schema apiextensions.JSONSchemaProps
+	if err := extensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(loadCRDs(t)["Device"].Spec.Versions[0].Schema.OpenAPIV3Schema, &schema, nil); err != nil {
+		t.Fatal(err)
+	}
+	structural, err := structuralschema.NewStructural(&schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pruning.Prune(legacy, structural, true)
+	if errs := admit(t, "Device", legacy, nil); len(errs) == 0 {
+		t.Fatal("a Device with only a pruned source identity was admitted")
 	}
 }
 
