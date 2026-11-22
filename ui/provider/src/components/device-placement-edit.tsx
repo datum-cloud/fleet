@@ -38,12 +38,10 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
   useLayoutEffect(() => {
     const invalidate = () => { scope.current.invalidate(); setBlocked(true); setBaseline(undefined); };
     const visibility = () => { if (document.visibilityState === 'hidden') invalidate(); };
-    window.addEventListener('blur', invalidate);
     window.addEventListener('pagehide', invalidate);
     document.addEventListener('visibilitychange', visibility);
     return () => {
       scope.current.invalidate();
-      window.removeEventListener('blur', invalidate);
       window.removeEventListener('pagehide', invalidate);
       document.removeEventListener('visibilitychange', visibility);
     };

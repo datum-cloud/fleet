@@ -20,51 +20,40 @@ function mountHost(loader: () => unknown, content: React.ReactNode) {
 
 describe('host inventory session isolation', () => {
   afterEach(() => vi.restoreAllMocks());
-  it('keeps visible inventory through browser-chrome blur/focus while fencing old and pending authority', async () => {
+  it('leaves visible inventory and operation authority unchanged on browser-chrome blur/focus', async () => {
     let scope: InventoryOperationScope | undefined;
-    let release: (() => void) | undefined;
-    let reads = 0;
     const inventoryRead = vi.fn(async () => 'Visible inventory');
     function Records() {
       scope = useContext(InventoryOperationContext);
       const query = useQuery({ queryKey: ['inventory'], queryFn: inventoryRead, staleTime: Infinity });
       return <p>{query.data ?? 'Empty inventory cache'}</p>;
     }
-    mountHost(async () => {
-      if (++reads > 1) await new Promise<void>(resolve => { release = resolve; });
-      return { user: { metadata: { uid: 'staff-a' } } };
-    }, <Records />);
+    const loader = vi.fn(() => ({ user: { metadata: { uid: 'staff-a' } } }));
+    mountHost(loader, <Records />);
     await screen.findByText('Visible inventory');
     const before = scope!.begin();
     const dispatched = scope!.begin();
     dispatched.dispatch();
     fireEvent(window, new Event('blur'));
     expect(screen.getByText('Visible inventory')).toBeInTheDocument();
-    expect(() => before.assertCurrent()).toThrow(InventoryOperationInvalidated);
-    expect(() => dispatched.assertCurrent()).toThrow(/outcome is unknown/);
+    expect(() => before.assertCurrent()).not.toThrow();
+    expect(() => dispatched.assertCurrent()).not.toThrow();
     fireEvent(window, new Event('focus'));
-    await waitFor(() => expect(release).toBeDefined());
-    expect(screen.getByText('Visible inventory')).toBeInTheDocument();
     const during = scope!.begin();
-    expect(() => during.assertCurrent()).toThrow(InventoryOperationInvalidated);
+    expect(() => during.assertCurrent()).not.toThrow();
     fireEvent(window, new Event('blur'));
-    await act(async () => release!());
-    expect(screen.getByText('Visible inventory')).toBeInTheDocument();
-    expect(() => scope!.begin().assertCurrent()).toThrow(InventoryOperationInvalidated);
-    expect(inventoryRead).toHaveBeenCalledTimes(1);
-    release = undefined;
     fireEvent(window, new Event('focus'));
-    await waitFor(() => expect(release).toBeDefined());
-    await act(async () => release!());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(screen.getByText('Visible inventory')).toBeInTheDocument();
-    expect(inventoryRead).toHaveBeenCalledTimes(2);
+    expect(inventoryRead).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(1);
     expect(() => scope!.begin().assertCurrent()).not.toThrow();
-    expect(() => before.assertCurrent()).toThrow(InventoryOperationInvalidated);
-    expect(() => during.assertCurrent()).toThrow(InventoryOperationInvalidated);
-    expect(() => dispatched.assertCurrent()).toThrow(/outcome is unknown/);
+    expect(() => before.assertCurrent()).not.toThrow();
+    expect(() => during.assertCurrent()).not.toThrow();
+    expect(() => dispatched.assertCurrent()).not.toThrow();
   });
 
-  it('replaces caches on visible focus principal changes including batched A to B to A', async () => {
+  it('replaces caches on actual host principal changes including batched A to B to A', async () => {
     let client: QueryClient | undefined;
     let principal = 'staff-a';
     let revision = 1;
@@ -79,7 +68,6 @@ describe('host inventory session isolation', () => {
     const originalClient = client;
     await act(async () => {
       principal = 'staff-b';
-      fireEvent(window, new Event('focus'));
       await router.revalidate();
       principal = 'staff-a';
       revision++;
@@ -133,14 +121,16 @@ describe('host inventory session isolation', () => {
     router.dispose();
   });
 
-  it('keeps failed focus verification masked until the next verification succeeds', async () => {
+  it('keeps failed foreground restoration masked until the next restoration succeeds', async () => {
     const router = mountHost(() => ({ user: { metadata: { uid: 'staff-a' } } }), 'Private inventory');
     await screen.findByText('Private inventory');
     let release!: () => void;
     vi.spyOn(router, 'revalidate').mockRejectedValueOnce(new Error('verification failed')).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
-    fireEvent(window, new Event('focus'));
+    fireEvent(window, new Event('pagehide'));
+    fireEvent(window, new Event('pageshow'));
     await waitFor(() => expect(screen.queryByText('Private inventory')).not.toBeInTheDocument());
-    fireEvent(window, new Event('focus'));
+    fireEvent(window, new Event('pagehide'));
+    fireEvent(window, new Event('pageshow'));
     await waitFor(() => expect(release).toBeDefined());
     expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();
     await act(async () => release());
@@ -148,7 +138,7 @@ describe('host inventory session isolation', () => {
     router.dispose();
   });
 
-  it.each(['logout', 'failure'])('clears visible data when focus verification observes %s', async outcome => {
+  it.each(['logout', 'failure'])('clears private data when foreground restoration observes %s', async outcome => {
     let expired = false;
     mountHost(() => {
       if (expired && outcome === 'failure') throw new Response('Synthetic failure', { status: 503 });
@@ -157,8 +147,8 @@ describe('host inventory session isolation', () => {
     }, 'Visible inventory');
     await screen.findByText('Visible inventory');
     expired = true;
-    fireEvent(window, new Event('blur'));
-    fireEvent(window, new Event('focus'));
+    fireEvent(window, new Event('pagehide'));
+    fireEvent(window, new Event('pageshow'));
     await waitFor(() => expect(screen.queryByText('Visible inventory')).not.toBeInTheDocument());
   });
 
@@ -231,13 +221,13 @@ describe('host inventory session isolation', () => {
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();
     loader.mockReturnValue({ user: null } as never);
     visibility.mockReturnValue('visible');
-    fireEvent(window, new Event('focus'));
+    fireEvent(document, new Event('visibilitychange'));
     await screen.findByText('Your session has expired');
     expect(loader).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();
   });
 
-  it('only restores the newest foreground generation after successive pagehide and focus events', async () => {
+  it('only restores the newest foreground generation after successive pagehide and pageshow events', async () => {
     const releases: (() => void)[] = [];
     let reads = 0;
     mountHost(async () => {
@@ -246,10 +236,10 @@ describe('host inventory session isolation', () => {
     }, 'Private inventory');
     await screen.findByText('Private inventory');
     fireEvent(window, new Event('pagehide'));
-    fireEvent(window, new Event('focus'));
+    fireEvent(window, new Event('pageshow'));
     await waitFor(() => expect(releases).toHaveLength(1));
     fireEvent(window, new Event('pagehide'));
-    fireEvent(window, new Event('focus'));
+    fireEvent(window, new Event('pageshow'));
     await waitFor(() => expect(releases).toHaveLength(2));
     await act(async () => releases[0]());
     expect(screen.queryByText('Private inventory')).not.toBeInTheDocument();

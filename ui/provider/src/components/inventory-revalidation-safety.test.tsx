@@ -9,7 +9,7 @@ import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-mana
 const values = { name: 'fresh-test', namespace: 'default', displayName: 'Fresh record', recordedBy: 'reviewer', reference: '', facility: 'fresh-test', height: '' };
 const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function open(editing: boolean, rack = false) {
   fireEvent.click(await screen.findByRole('button', { name: editing ? 'Edit display name' : rack ? 'Create rack' : 'Create facility' }));
@@ -19,7 +19,7 @@ async function open(editing: boolean, rack = false) {
   if (rack) fireEvent.change(screen.getByLabelText('Facility'), { target: { value: values.name } });
 }
 
-it.each(['same-url', 'replace', 'back-forward', 'revalidate', 'focus', 'visible', 'pageshow'].flatMap(navigation => [false, true].flatMap(editing => [false, true].map(strict => ({ navigation, editing, strict })))) )('fresh authority after $navigation edit=$editing strict=$strict', async ({ navigation, editing, strict }) => {
+it.each(['same-url', 'replace', 'back-forward', 'revalidate', 'hidden-return', 'pagehide-return'].flatMap(navigation => [false, true].flatMap(editing => [false, true].map(strict => ({ navigation, editing, strict })))) )('fresh authority after $navigation edit=$editing strict=$strict', async ({ navigation, editing, strict }) => {
   const writes: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     if (url.includes('selfsubjectaccessreviews')) return response({ status: { allowed: true } });
@@ -31,9 +31,16 @@ it.each(['same-url', 'replace', 'back-forward', 'revalidate', 'focus', 'visible'
   await screen.findByRole('button', { name: editing ? 'Edit display name' : 'Create facility' });
   await act(async () => {
     if (navigation === 'revalidate') await router.revalidate();
-    else if (navigation === 'focus') window.dispatchEvent(new Event('focus'));
-    else if (navigation === 'visible') document.dispatchEvent(new Event('visibilitychange'));
-    else if (navigation === 'pageshow') window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    else if (navigation === 'hidden-return') {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+      visibility.mockReturnValue('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+    }
+    else if (navigation === 'pagehide-return') {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    }
     else if (navigation === 'back-forward') { await router.navigate('/?kind=Facility'); await router.navigate(-1); await router.navigate(1); }
     else await router.navigate('/', { replace: navigation === 'replace' });
   });

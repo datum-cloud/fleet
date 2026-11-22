@@ -32,12 +32,10 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
     scope.current = current;
     const invalidate = () => { scope.current.invalidate(); setBaseline(undefined); setBlocked(true); };
     const visibility = () => { if (document.visibilityState === 'hidden') invalidate(); };
-    window.addEventListener('blur', invalidate);
     window.addEventListener('pagehide', invalidate);
     document.addEventListener('visibilitychange', visibility);
     return () => {
       invalidate();
-      window.removeEventListener('blur', invalidate);
       window.removeEventListener('pagehide', invalidate);
       document.removeEventListener('visibilitychange', visibility);
     };

@@ -9,7 +9,7 @@ const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(['create-blur', 'create-unmount', 'edit-blur', 'edit-unmount', 'create-dispatched-blur', 'edit-dispatched-blur'])('revokes pending authority on %s', async mode => {
+it.each(['create-pagehide', 'create-unmount', 'edit-pagehide', 'edit-unmount', 'create-dispatched-pagehide', 'edit-dispatched-pagehide'])('revokes pending authority on %s', async mode => {
   let release: ((value: unknown) => void) | undefined;
   let reviews = 0;
   const writes: string[] = [];
@@ -35,10 +35,10 @@ it.each(['create-blur', 'create-unmount', 'edit-blur', 'edit-unmount', 'create-d
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
   await waitFor(() => expect(release).toBeDefined());
   if (mode.endsWith('unmount')) mounted.unmount();
-  else fireEvent(window, new Event('blur'));
+  else fireEvent(window, new Event('pagehide'));
   await act(async () => { release!(response(mode.includes('dispatched') ? original : { status: { allowed: true } })); });
   expect(writes).toEqual(mode.includes('dispatched') ? [editing ? 'PATCH' : 'POST'] : []);
-  if (mode.endsWith('blur')) {
+  if (mode.endsWith('pagehide')) {
     expect(screen.getByRole('status')).toHaveTextContent(mode.includes('dispatched') ? 'outcome is unknown' : 'No write was dispatched');
     expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Display name')).toHaveValue('Retained safe input');

@@ -10,7 +10,7 @@ import DeviceInventoryList from '../pages/device-inventory-list';
 const values = { name: 'exact-review', namespace: 'default', displayName: 'Original', recordedBy: 'synthetic', reference: '', facility: '', height: '' };
 const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function open(editing: boolean, label: string) {
   await waitFor(() => expect(screen.getByRole('button', { name: editing ? 'Edit display name' : 'Create facility' })).toBeEnabled());
@@ -20,7 +20,8 @@ async function open(editing: boolean, label: string) {
   fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'synthetic' } });
 }
 
-it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['review', 'dispatch-ok', 'dispatch-error'].flatMap(stage => ['fast-repeat', 'principal-repeat', 'slow', 'overlap', 'cancel-navigation', 'focus-blur', 'focus-pagehide'].map(transition => ({ strict, editing, stage, transition }))))))('independent $transition $stage edit=$editing strict=$strict', async ({ strict, editing, stage, transition }) => {
+it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['review', 'dispatch-ok', 'dispatch-error'].flatMap(stage => ['fast-repeat', 'principal-repeat', 'slow', 'overlap', 'cancel-navigation', 'restore-hidden', 'restore-pagehide'].map(transition => ({ strict, editing, stage, transition }))))))('independent $transition $stage edit=$editing strict=$strict', async ({ strict, editing, stage, transition }) => {
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   let principal = 'same-user';
   let submitting = false;
   let intercepted = false;
@@ -44,7 +45,6 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
   }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
   render(strict ? <StrictMode><RouterProvider router={router} /></StrictMode> : <RouterProvider router={router} />);
   await open(editing, 'Old input');
-  const oldInput = screen.getByLabelText('Display name');
   const submit = editing ? 'Save display name' : 'Create facility record';
   submitting = true;
   fireEvent.click(screen.getByRole('button', { name: submit }));
@@ -55,22 +55,20 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
     await act(async () => { await router.revalidate(); await router.revalidate(); await router.revalidate(); });
   } else {
     holdLoader = true;
-    act(() => { if (transition.startsWith('focus-')) window.dispatchEvent(new Event('focus')); else if (transition === 'cancel-navigation') void router.navigate('/?kind=Rack'); else void router.revalidate(); });
+    act(() => { if (transition.startsWith('restore-')) { window.dispatchEvent(new Event('pagehide')); window.dispatchEvent(new Event('pageshow')); } else if (transition === 'cancel-navigation') void router.navigate('/?kind=Rack'); else void router.revalidate(); });
     await waitFor(() => expect(loaders).toHaveLength(1));
-    if (transition.startsWith('focus-')) {
-      expect(screen.getByLabelText('Display name')).toBe(oldInput);
-      expect(oldInput).toBeDisabled();
-    } else expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
-    if (transition.startsWith('focus-')) {
-      fireEvent(window, new Event(transition === 'focus-blur' ? 'blur' : 'pagehide'));
+    expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
+    if (transition.startsWith('restore-')) {
+      if (transition === 'restore-hidden') {
+        visibility.mockReturnValue('hidden');
+        fireEvent(document, new Event('visibilitychange'));
+      } else fireEvent(window, new Event('pagehide'));
       await act(async () => loaders[0]());
-      if (transition === 'focus-blur') {
-        expect(screen.getByLabelText('Display name')).toBe(oldInput);
-        expect(oldInput).toBeDisabled();
-      } else expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
       holdLoader = false;
-      await act(async () => window.dispatchEvent(new Event('focus')));
+      visibility.mockReturnValue('visible');
+      await act(async () => window.dispatchEvent(new Event('pageshow')));
     } else if (transition === 'overlap' || transition === 'cancel-navigation') {
       act(() => { if (transition === 'cancel-navigation') void router.navigate('/?kind=Facility'); else void router.revalidate(); });
       await waitFor(() => expect(loaders).toHaveLength(2));
@@ -81,15 +79,6 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
       await act(async () => loaders[0]());
       holdLoader = false;
     }
-  }
-  if (transition === 'focus-blur') {
-    await act(async () => releaseOperation!(response(stage === 'review' ? { status: { allowed: true } } : original, stage === 'dispatch-error' ? 503 : 200)));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Close form' })).toBeEnabled());
-    expect(screen.getByRole('status')).toHaveTextContent(stage === 'review' ? 'No write was dispatched' : 'outcome is unknown');
-    expect(oldInput).toBeDisabled();
-    fireEvent.submit(oldInput.closest('form')!);
-    expect(writes).toHaveLength(stage === 'review' ? 0 : 1);
-    fireEvent.click(screen.getByRole('button', { name: 'Close form' }));
   }
   await open(editing, 'Fresh input');
   await act(async () => releaseOperation!(response(stage === 'review' ? { status: { allowed: true } } : original, stage === 'dispatch-error' ? 503 : 200)));
@@ -102,7 +91,7 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
   router.dispose();
 });
 
-it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => ['revalidate', 'focus'].map(transition => ({ strict, status, transition })))))('late previous cache never overrides new denial $status strict=$strict via=$transition', async ({ strict, status, transition }) => {
+it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => ['revalidate', 'restore'].map(transition => ({ strict, status, transition })))))('late previous cache never overrides new denial $status strict=$strict via=$transition', async ({ strict, status, transition }) => {
   let phase = 'initial';
   const releases: (() => void)[] = [];
   const freshRequests: string[] = [];
@@ -126,7 +115,7 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => [
   await waitFor(() => expect(releases).toHaveLength(7));
   phase = 'denied';
   await act(async () => {
-    if (transition === 'focus') { fireEvent(window, new Event('blur')); fireEvent(window, new Event('focus')); }
+    if (transition === 'restore') { fireEvent(window, new Event('pagehide')); fireEvent(window, new Event('pageshow')); }
     else { await router.revalidate(); await router.revalidate(); }
   });
   const title = status === 401 ? 'Your session has expired' : status === 403 ? 'Inventory access needed' : status === 404 ? 'Inventory section unavailable' : 'Inventory is temporarily unavailable';

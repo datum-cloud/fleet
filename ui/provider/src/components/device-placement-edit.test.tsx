@@ -24,7 +24,7 @@ function openAndFill(existing = false) {
   fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/example' } });
 }
 beforeEach(() => { vi.clearAllMocks(); permission.mockReturnValue({ data: true, isFetching: false, error: null } as never); });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('reported location editor', () => {
   it.each([false, true])('adds/edits an imported Device and refreshes projections: %s', async existing => {
@@ -67,14 +67,17 @@ describe('reported location editor', () => {
     expect(screen.queryByDisplayValue('rack')).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(3);
   });
-  it.each(['session', 'blur', 'unmount', 'revalidation'])('revokes a delayed permission read on %s', async event => {
+  it.each(['session', 'hidden', 'unmount', 'revalidation'])('revokes a delayed permission read on %s', async event => {
     let resolve!: (value: unknown) => void;
     const fetch = vi.fn().mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
     const view = setup(); openAndFill(); fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
     await waitFor(() => expect(resolve).toBeDefined());
     if (event === 'session') view.session.invalidate();
-    if (event === 'blur') fireEvent(window, new Event('blur'));
+    if (event === 'hidden') {
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      fireEvent(document, new Event('visibilitychange'));
+    }
     if (event === 'unmount') view.unmount();
     if (event === 'revalidation') {
       permission.mockReturnValue({ data: true, isFetching: true, error: null } as never);
@@ -92,7 +95,7 @@ describe('reported location editor', () => {
     expect(screen.getByRole('button', { name: 'Save reported location' })).toBeDisabled();
     expect(fetch).not.toHaveBeenCalled();
   });
-  it.each(['session', 'navigation', 'blur/focus'])('revokes a delayed reference read across %s', async event => {
+  it.each(['session', 'navigation', 'pagehide/pageshow'])('revokes a delayed reference read across %s', async event => {
     let resolve!: (value: unknown) => void;
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
@@ -102,7 +105,7 @@ describe('reported location editor', () => {
     await waitFor(() => expect(resolve).toBeDefined());
     if (event === 'session') view.session.invalidate();
     if (event === 'navigation') view.unmount();
-    if (event === 'blur/focus') { fireEvent(window, new Event('blur')); fireEvent(window, new Event('focus')); }
+    if (event === 'pagehide/pageshow') { fireEvent(window, new Event('pagehide')); fireEvent(window, new Event('pageshow')); }
     resolve(response(rack));
     if (event !== 'navigation') await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('No write was dispatched'));
     else await new Promise(done => setTimeout(done, 0));
