@@ -19,8 +19,9 @@ and growth limits. The user decided this was overengineering and replaced it
 with the following:
 
 1. **In-service Devices are not deleted.** A reusable ValidatingAdmissionPolicy
-   component denies a Device `DELETE` unless the Device is `Retired` or its
-   namespace is being deleted. No root in this repository includes it;
+   component denies a Device `DELETE` unless the Device is `Retired`, its
+   namespace is being deleted, or the caller is a cleanup identity that the
+   deploying repository lists. No root in this repository includes it;
    deploying repositories opt in. See
    [Device lifecycle](#device-lifecycle) and
    [Device deletion protection](#device-deletion-protection).
@@ -36,7 +37,8 @@ with the following:
 Rationale: when in-service Devices are never deleted, the live Device list
 already holds every identity the ledger used to remember, so a second store
 adds failure modes without adding information. A Device leaves the list only
-after someone has retired it on purpose, or deleted its namespace. Environments
+after someone has retired it on purpose, deleted its namespace, or deleted its
+project through a configured cleanup identity. Environments
 that do not include the component, such as test and synthetic environments, do
 not hold real machines and do not need identity retention.
 
@@ -209,11 +211,16 @@ when:
 
 1. the Device's namespace is being deleted: the policy's `namespaceObject`
    has `metadata.deletionTimestamp` set. A missing namespace object does not
-   match; or
-2. the Device being deleted (`oldObject`) has `spec.lifecycle: Retired`.
+   match;
+2. the Device being deleted (`oldObject`) has `spec.lifecycle: Retired`; or
+3. the request's `userInfo.username` is listed exactly in the
+   `cleanupUsernames` key of the binding's parameter ConfigMap. The policy's
+   `paramKind` is core `v1` `ConfigMap`. This exception is off as shipped; see
+   [Cleanup identity](#cleanup-identity).
 
-Every other `DELETE` is denied with reason `Forbidden` and a message to move
-the Device to `Decommissioning`, then `Retired`, first. The policy uses
+Every other `DELETE` is denied with reason `Forbidden` (HTTP 403). The message
+lists the three ways a delete is allowed and says to move the Device to
+`Decommissioning`, then `Retired`, first. The policy uses
 `failurePolicy: Fail` and the binding `validationActions: [Deny]`, so an
 evaluation error also denies.
 
@@ -228,13 +235,22 @@ evaluation error also denies.
   Confirm this on the deployed Milo before relying on it.
 - **Validation.** `hack/validate-overlay-isolation.sh` renders the component
   on its own and fails unless it is exactly this policy: the same name,
-  expression, `failurePolicy: Fail`, `Deny` only, and no match conditions,
-  selectors, exclusions, variables or parameters. It also fails if any root in
-  this repository renders the policy, under its own name or another, and if
-  the inventory component exists without this component.
-- **No exemptions.** The policy does not look at the request's user, group or
-  service account. Cluster administrators are held to the same rule. Anyone
-  able to delete the binding is outside the guarantee.
+  expression, a `paramKind` of exactly core `v1` `ConfigMap`,
+  `failurePolicy: Fail`, `Deny` only, no `paramRef` on the binding, and no
+  match conditions, selectors, exclusions or variables. Because the expression
+  is compared exactly, the validator rejects wildcard or prefix username
+  matching, a group-based exemption, a null `params` treated as allow-all, a
+  dropped empty-username guard and an always-true clause. It also rejects a
+  `paramRef` in the component, including one with
+  `parameterNotFoundAction: Allow`: deploying repositories add the `paramRef`.
+  It fails if any root in this repository renders the policy, under its own
+  name or another, and if the inventory component exists without this
+  component.
+- **The cleanup identity is the only subject exemption.** Apart from exact
+  usernames in the deploying repository's ConfigMap, the policy does not look
+  at the request's user, group or service account. Cluster administrators are
+  held to the same rule. Anyone able to delete or edit the binding, or to write
+  the parameter ConfigMap, is outside the guarantee.
 - **deletecollection, garbage collection and finalizers.** The API server
   admits each object of a collection delete individually as a `DELETE`, so a
   collection delete that reaches a Device that is not Retired is denied and
@@ -250,18 +266,107 @@ evaluation error also denies.
   identities leave the duplicate check. The policy reads the namespace from the
   API server's namespace cache, which observes the deletion mark shortly after
   it is set.
-- **Project deletion.** In pinned Milo `v0.36.9`, project purge first issues a
-  collection delete for every namespaced resource in every namespace, and only
+- **Project deletion.** In pinned Milo `v0.36.9`, project purge
+  (`internal/controllers/projectpurge`) first issues a collection delete for
+  every namespaced resource in every namespace, `default` included, and only
   then deletes the namespaces. It never deletes `default`, which it drains in
-  place. In that first phase no namespace is marked yet, so a Device that is
-  not Retired stops the purge's collection delete. Registered Devices live in
-  `default`, which is never marked. A project that holds Devices that are not
-  Retired therefore does not finish purging while the component is installed:
-  retire its Devices first. This is from reading the pinned Milo source, not a
-  live test.
+  place. In that first phase no namespace is marked yet, so the
+  deleting-namespace exception never applies, and a denied collection delete
+  aborts the purge before it deletes any namespace. The purge runs as the Milo
+  controller-manager's own identity against the project's control plane.
+  - With the [cleanup identity](#cleanup-identity) configured to list that
+    username, the purge's collection deletes are admitted whatever the
+    Devices' lifecycle, and project teardown completes.
+  - Without it, a project that holds a Device that is not Retired does not
+    finish purging while the component is installed. Retire every Device
+    first.
+
+  This comes from reading the pinned Milo source and from the envtest
+  simulation below, not from a live Milo test.
 - **Capacity is not deleted with its Device.** The registration webhook denies
   capacity deletes, so a namespace or project teardown that removes Devices
   still stops at their capacity; see the next section.
+
+### Cleanup identity
+
+The binding ships without a `paramRef`. The policy then evaluates with
+`params == null`, the third exception is off, and only the namespace and
+Retired exceptions apply. A policy that declares `paramKind` does not need a
+`paramRef` on its binding: Kubernetes evaluates such a binding with a null
+`params` and no error. The envtest suite confirms this on Kubernetes 1.37.0.
+
+A deploying repository turns the exception on in the root it applies to Milo:
+
+1. Add a ConfigMap with a `cleanupUsernames` key that lists the usernames, one
+   per line or separated by commas. Entries are trimmed and empty entries are
+   ignored. Matching is exact and case-sensitive. Groups, prefixes and
+   wildcards never match, and an empty username never matches. List only the
+   identity that runs project cleanup: in pinned Milo, the controller-manager's
+   base identity.
+2. Patch the binding with a `paramRef` that names that ConfigMap, sets its
+   `namespace` explicitly, and sets `parameterNotFoundAction: Deny`. Without
+   an explicit namespace, the API server looks for the ConfigMap in the
+   Device's own namespace.
+
+A synthetic example, rendered with `kustomize build`:
+
+```yaml
+# kustomization.yaml in the deploying repository's Milo root. The component
+# path stands in for however that repository vendors or references Fleet.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+components:
+  - ../fleet/config/components/device-deletion-protection
+resources:
+  - device-cleanup-identity.yaml
+patches:
+  - target:
+      group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicyBinding
+      name: fleet-device-deletion-protection
+    patch: |-
+      - op: add
+        path: /spec/paramRef
+        value:
+          name: fleet-device-cleanup
+          namespace: example-system
+          parameterNotFoundAction: Deny
+---
+# device-cleanup-identity.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-device-cleanup
+  namespace: example-system
+data:
+  cleanupUsernames: |
+    system:serviceaccount:example-system:example-controller-manager
+```
+
+Consequences to plan for:
+
+- **A missing ConfigMap denies every Device delete.** With
+  `parameterNotFoundAction: Deny`, a `paramRef` whose ConfigMap does not exist
+  denies every Device `DELETE`. That includes a Retired Device, a Device in a
+  deleting namespace and the listed identity's deletes, so namespace and
+  project teardown stop until the ConfigMap exists. This is the fail-closed
+  behaviour: an absent or deleted ConfigMap never widens who may delete. The
+  API server reports it as `422 Invalid` with the message ``no params found
+  for policy binding with `Deny` parameterNotFoundAction``, not as the
+  policy's 403. Apply the ConfigMap with the patch, or before it. Never use
+  `parameterNotFoundAction: Allow`: a missing ConfigMap would then skip the
+  policy and admit every Device `DELETE`.
+- **Impersonation grants the exemption.** Anyone allowed to impersonate a
+  listed username is admitted as that username and can delete any Device.
+  Ordinary RBAC on `impersonate` applies. List only the cleanup controller's
+  identity, and restrict impersonation of it, and writes to the ConfigMap and
+  the binding, as tightly as the controller itself.
+- **Where the ConfigMap lives in Milo.** The admission plugin reads the
+  ConfigMap through its informers. In pinned Milo `v0.36.9` those informers
+  run against the root control plane, not a project, so the ConfigMap belongs
+  in the root. This is inferred from the Milo source, as is the policy's use of
+  Milo's root admission for project-routed requests. Confirm on the deployed
+  Milo that the cleanup identity admits a project purge before relying on it.
 
 ### Deleting a Device
 
@@ -317,9 +422,12 @@ Environment-owned inputs, none of which this repository supplies:
    reachability, and set `clientConfig.caBundle` to the serving CA.
 3. Keep `--provider-projects` equal to the complete provider scope.
 4. Decide whether the Milo root you apply includes
-   `config/components/device-deletion-protection`. With it, only Retired
-   Devices and Devices in a deleting namespace can be deleted; without it,
-   any authorized caller can delete a Device.
+   `config/components/device-deletion-protection`. With it, the only Device
+   deletes admitted are of Retired Devices, of Devices in a deleting namespace,
+   and by a configured [cleanup identity](#cleanup-identity); without it, any
+   authorized caller can delete a Device. If you include it, configure the
+   cleanup identity, or project deletion stays blocked until every Device in
+   the project is Retired.
 5. Before rolling out the UI, verify caller-preserving project routing, named
    Device read denial, registration denial, capacity mutation denial, TLS
    rejection, Device deletion denial where installed, lifecycle transitions, and duplicate handling
@@ -383,11 +491,29 @@ its manifest and checks that:
   move out of `Retired`;
 - deleting an Active or Decommissioning Device is denied for every caller,
   and deleting a Retired Device is allowed;
+- with the shipped binding, which has no `paramRef`, the policy evaluates with
+  a null `params` and no error, and a would-be cleanup username is denied;
 - `deletecollection` over mixed Devices denies those that are not Retired;
 - after the namespace is deleted, its Devices can be deleted. envtest has no
   namespace controller, so the test issues the controller's deletions itself
   and they are admitted because `namespaceObject` has a deletion timestamp;
-- Devices in other namespaces stay protected.
+- Devices in other namespaces stay protected;
+- with the ConfigMap and a `paramRef` set as a deploying repository sets them,
+  a listed username deletes Active and Decommissioning Devices and a mixed
+  collection. The admin, an unlisted user, and usernames that are a prefix,
+  superset, embedding, suffix or different case of a listed name are denied,
+  as is a user who holds a listed name only as a group. The Retired and
+  deleting-namespace exceptions still admit unlisted callers;
+- a Milo-style purge, the listed user's collection delete in `default` and in
+  another namespace with mixed lifecycles, removes every Device;
+- a `paramRef` to a missing ConfigMap under `parameterNotFoundAction: Deny`
+  denies every delete with `422 Invalid`, including a Retired Device, the
+  listed user, a Device in a deleting namespace and the purge.
+
+`internal/registration/deletion_policy_test.go` evaluates the component's
+expression offline with the API server's admission CEL compiler, for cases
+envtest cannot produce, such as an empty username: it never matches empty
+entries, and padded, CRLF-separated entries match only exactly.
 
 Unit tests cover the remaining negative cases, normalization, cross-project
 duplicates, project lifetime and the packaged webhook shape.
@@ -396,7 +522,11 @@ transport. `internal/api/inventory/v1alpha1/lifecycle_test.go` runs the
 lifecycle default and transition rules through the CRD schema offline. The
 overlay isolation tests fail when a root includes the deletion component and
 when the component's policy is renamed, made audit-only, fail-open, scoped,
-exempted or given a weaker expression. Frontend tests cover the derived name,
+exempted or given a weaker expression. The weaker expressions include
+wildcard, prefix, group-based, null-params-allows-all, empty-username and
+always-true cleanup clauses. The tests also fail on a different or missing
+`paramKind`, and on a `paramRef` in the component with either
+`parameterNotFoundAction`. Frontend tests cover the derived name,
 conflict marking including Retired Devices, and refusal of Devices that are not
 Active, with mocked transport. None of this is a live Milo deployment or an independent
 security review.

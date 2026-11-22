@@ -335,7 +335,12 @@ that names the same claim. Leave the old Device in place and move its
 Retired is terminal and still counts in the duplicate-identity check while the
 Device exists. Environments with
 [Device deletion protection](../development/inventory-capacity-registration.md#device-deletion-protection)
-delete a Device only once it is Retired, or with its namespace.
+delete a Device only once it is Retired, or with its namespace. The one other
+path is project teardown: when the deploying repository configures the
+[cleanup identity](../development/inventory-capacity-registration.md#cleanup-identity),
+that identity, and anyone allowed to impersonate it, can delete Devices
+whatever their lifecycle, so a project purge completes. Without it, a project
+that holds a Device that is not Retired cannot finish deleting.
 
 ## Relationship to the inventory proposal
 
