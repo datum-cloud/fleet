@@ -35,11 +35,13 @@ shape pinning, physical qualification, reservations, or component reconciliation
   presence, and must match NetBoxImport provenance. A catalog edit changes no
   Device, claim, installed component, source observation, or reported placement.
 - Device gains an optional `deviceTypeRef: {name}` outside immutable `identity`.
-  A first explicit attachment must advance existing provenance; once attached,
+  Device provenance is optional under the physical-inventory API contract; an
+  explicit attachment does not require a synthetic receipt or timestamp advance. Once attached,
   the reference cannot be removed or rebound. Existing inline manufacturer/model,
   serial, sourceIdentity and claimRef remain unchanged and immutable. Imported
-  Devices retain their original NetBoxImport source evidence when an authorized
-  writer records an attachment; catalog edits never overwrite source observations.
+  Devices retain their immutable source identity when an authorized writer records
+  an attachment; catalog edits never overwrite source observations. Catalog
+  Manufacturer and DeviceType records still require their own provenance.
 
 ## Scope, guarantees, and reader safety
 

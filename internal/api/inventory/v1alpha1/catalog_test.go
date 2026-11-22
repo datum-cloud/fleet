@@ -145,20 +145,17 @@ func TestCatalogUpdatesAndDeviceCompatibility(t *testing.T) {
 	if errs := admit(t, "DeviceType", object(t, changed), object(t, model)); len(errs) == 0 {
 		t.Fatal("accepted model identity mutation")
 	}
-	for _, baseline := range []Device{syntheticDevice(), reportedDevice()} {
+	withoutProvenance := syntheticDevice()
+	withoutProvenance.Spec.Provenance = nil
+	for _, baseline := range []Device{syntheticDevice(), reportedDevice(), withoutProvenance} {
 		attached := baseline.DeepCopyObject().(*Device)
 		attached.Spec.DeviceTypeRef = &LocalReference{Name: model.Name}
-		if errs := admit(t, "Device", object(t, attached), object(t, baseline)); len(errs) == 0 {
-			t.Fatal("attachment did not require provenance")
-		}
-		attached.Spec.Provenance.RecordedAt = later(time.Hour)
 		if errs := admit(t, "Device", object(t, attached), object(t, baseline)); len(errs) != 0 {
 			t.Fatal(errs)
 		}
 		for _, reference := range []*LocalReference{nil, {Name: "another-model"}} {
 			rebound := attached.DeepCopyObject().(*Device)
 			rebound.Spec.DeviceTypeRef = reference
-			rebound.Spec.Provenance.RecordedAt = later(2 * time.Hour)
 			if errs := admit(t, "Device", object(t, rebound), object(t, attached)); len(errs) == 0 {
 				t.Fatal("accepted catalog removal or rebind")
 			}
