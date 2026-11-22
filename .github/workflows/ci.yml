@@ -22,6 +22,7 @@ jobs:
     - run: go test -race ./...
     - run: go vet ./...
     - run: python3 -m unittest discover -s hack -p test_netbox_inventory.py
+    - run: python3 -m unittest discover -s hack -p test_netbox_catalog.py
     - run: go run ./test/acceptance/milo/cmd validate --root .
     - run: kustomize build config/base/crd >/dev/null
     - run: kustomize build config/milo >/dev/null

@@ -1,0 +1,12 @@
+{
+  "target": {
+    "project": "example-provider",
+    "namespace": "inventory",
+    "writer": "DirectAPI"
+  },
+  "collections": [
+    "Manufacturer",
+    "DeviceType"
+  ],
+  "items": []
+}

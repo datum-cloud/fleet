@@ -43,6 +43,11 @@ Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
 ## API group naming
 
+The additive [shared hardware catalog](hardware-catalog.md) implements
+Manufacturer/DeviceType records, denial-aware staff readers, and an optional
+offline create-only catalog handoff. New registrations can select catalog models;
+existing-device migration is deferred. Templates never modify installed assets.
+
 The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the
 Bare Metal service as `metal`; entitlement and location-availability readers use
 that reference. Physical Device references use `fleet.datumapis.com`; that group

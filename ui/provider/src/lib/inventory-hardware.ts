@@ -13,6 +13,7 @@ export interface ReferencedEndpoint {
   position: number;
 }
 export interface HardwareFields {
+  catalog?: { namespace: string; name: string; uid: string; resourceVersion: string; manufacturer: { name: string; uid: string; resourceVersion: string } };
   planLocation?: { kind: 'Facility' | 'Rack'; name: string; uid: string; resourceVersion: string };
   claim?: { name: string; uid: string; resourceVersion: string };
   manufacturer?: string;
@@ -37,12 +38,13 @@ export function hardwarePayload(kind: 'Device' | 'Cable' | 'DeviceClaim', values
     return { ...common, kind, spec: { displayName: values.displayName.trim(), provenance: common.spec.provenance, lifecycle: 'Installation', expectedIdentity: { model: values.model.trim(), ...(values.manufacturer?.trim() && { manufacturer: values.manufacturer.trim() }), ...(values.serial?.trim() && { serial: values.serial.trim() }) }, placement: location.kind === 'Facility' ? { scope: 'Facility', facilityRef: { name: location.name } } : { scope: 'RackMembership', rackRef: { name: location.name } } } };
   }
   if (kind === 'Device') {
+    if (values.catalog && (values.catalog.namespace !== values.namespace || !values.catalog.uid || !values.catalog.resourceVersion || !values.catalog.manufacturer?.uid || !values.catalog.manufacturer.resourceVersion || !namePattern.test(values.catalog.name) || !namePattern.test(values.catalog.manufacturer.name))) throw new ApiError(422, 'Choose a readable catalog model in this namespace.');
     if (!values.claim?.uid || !values.claim.resourceVersion || !namePattern.test(values.claim.name) || !values.model?.trim() || (!values.serial?.trim() && !values.systemUUID)) throw new ApiError(422, 'Choose an installation plan and enter a model and a serial or system UUID.');
     if (values.systemUUID && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(values.systemUUID)) throw new ApiError(422, 'Enter a valid lowercase system UUID.');
     if ([values.manufacturer, values.model, values.serial, values.assetTag].some(value => (value?.length ?? 0) > 253)) throw new ApiError(422, 'Hardware fields must be at most 253 characters.');
     const components = values.components ?? [];
     if (components.length > 256 || new Set(components.map(component => component.id)).size !== components.length || components.some(component => !component.id.trim() || component.id.length > 63 || !component.name.trim() || component.name.length > 253 || !componentTypes.includes(component.type) || (component.connector?.length ?? 0) > 253 || !Number.isInteger(component.positions) || component.positions! < 1 || component.positions! > 256)) throw new ApiError(422, 'Review component IDs, names, types, and positions.');
-    return { ...common, kind, spec: { displayName: values.displayName.trim(), provenance: common.spec.provenance, claimRef: { name: values.claim.name }, identity: { model: values.model.trim(), ...(values.manufacturer?.trim() && { manufacturer: values.manufacturer.trim() }), ...(values.serial?.trim() && { serial: values.serial.trim() }), ...(values.systemUUID && { systemUUID: values.systemUUID }) }, ...(values.assetTag?.trim() && { assetTag: values.assetTag.trim() }), topologyAuthority: 'Cable', components } };
+    return { ...common, kind, spec: { displayName: values.displayName.trim(), provenance: common.spec.provenance, claimRef: { name: values.claim.name }, ...(values.catalog && { deviceTypeRef: { name: values.catalog.name } }), identity: { model: values.model.trim(), ...(values.manufacturer?.trim() && { manufacturer: values.manufacturer.trim() }), ...(values.serial?.trim() && { serial: values.serial.trim() }), ...(values.systemUUID && { systemUUID: values.systemUUID }) }, ...(values.assetTag?.trim() && { assetTag: values.assetTag.trim() }), topologyAuthority: 'Cable', components } };
   }
   const lanes = values.cableLanes ?? [];
   if (!cableMedia.includes(values.medium ?? '') || !lanes.length || lanes.length > 64 || new Set(lanes.map(lane => lane.id)).size !== lanes.length) throw new ApiError(422, 'Choose a medium and one or more uniquely named lanes.');
@@ -68,6 +70,15 @@ export async function validateHardwareReferences(kind: 'Device' | 'Cable' | 'Dev
     const claim = await readInventoryReference<DeviceClaim>('DeviceClaim', values.namespace, snapshot.name, operation);
     operation.assertCurrent();
     if (!claim || claim.metadata.uid !== snapshot.uid || claim.metadata.resourceVersion !== snapshot.resourceVersion || claim.metadata.deletionTimestamp || claim.spec.lifecycle !== 'Installation') throw new ApiError(409, 'The installation plan changed or is a legacy binding. Review it before registration.');
+    if (values.catalog) {
+      const selected = values.catalog;
+      const model = await readInventoryReference<PhysicalRecord>('DeviceType', values.namespace, selected.name, operation);
+      operation.assertCurrent();
+      if (selected.namespace !== values.namespace || model.metadata.namespace !== values.namespace || model.metadata.name !== selected.name || model.metadata.uid !== selected.uid || model.metadata.resourceVersion !== selected.resourceVersion || model.metadata.deletionTimestamp || model.spec.manufacturerRef?.name !== selected.manufacturer.name) throw new ApiError(409, 'The catalog changed. Refresh and review the selection.');
+      const manufacturer = await readInventoryReference<PhysicalRecord>('Manufacturer', values.namespace, selected.manufacturer.name, operation);
+      operation.assertCurrent();
+      if (manufacturer.metadata.namespace !== values.namespace || manufacturer.metadata.name !== selected.manufacturer.name || manufacturer.metadata.uid !== selected.manufacturer.uid || manufacturer.metadata.resourceVersion !== selected.manufacturer.resourceVersion || manufacturer.metadata.deletionTimestamp) throw new ApiError(409, 'The catalog changed. Refresh and review the selection.');
+    }
     return;
   }
   for (const lane of values.cableLanes ?? []) for (const endpoint of [lane.a!, lane.b!]) {

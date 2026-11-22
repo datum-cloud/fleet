@@ -14,7 +14,7 @@ function browse(query = '', data = inventory) {
 
 describe('hardware directory', () => {
   it('does not turn no-read permission into empty inventory or zero counts', () => {
-    browse('', { ...inventory, issues: { Site: { status: 403 }, Device: { status: 403 }, DeviceClaim: { status: 403 }, Facility: { status: 403 }, Rack: { status: 403 }, Cable: { status: 403 }, PowerFeed: { status: 403 } } });
+    browse('', { ...inventory, issues: { Manufacturer: { status: 403 }, DeviceType: { status: 403 }, Site: { status: 403 }, Device: { status: 403 }, DeviceClaim: { status: 403 }, Facility: { status: 403 }, Rack: { status: 403 }, Cable: { status: 403 }, PowerFeed: { status: 403 } } });
     expect(screen.getByRole('heading', { name: 'Inventory access needed' })).toBeInTheDocument();
     expect(screen.queryByText('No devices recorded')).not.toBeInTheDocument();
     expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();

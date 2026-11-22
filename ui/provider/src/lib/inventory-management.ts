@@ -75,7 +75,7 @@ export async function createInventoryRecord(kind: ManagedKind, values: Inventory
     if (!facility?.metadata?.uid || facility.metadata.deletionTimestamp) throw new ApiError(409, 'Facility is not available. Refresh inventory before continuing.');
   }
   operation.dispatch();
-  const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath(kind, values.namespace)}?fieldManager=${INVENTORY_FIELD_MANAGER}`, { method: 'POST', body: payload }).catch(error => { operation.assertCurrent(); throw error; });
+  const record = await proxyFetch<PhysicalRecord>(PROVIDER_PROJECT, `${resourcePath(kind, values.namespace)}?fieldManager=${INVENTORY_FIELD_MANAGER}${kind === 'Device' && values.catalog ? '&fieldValidation=Strict' : ''}`, { method: 'POST', body: payload }).catch(error => { operation.assertCurrent(); throw error; });
   operation.assertCurrent();
   if (!record?.metadata?.uid) throw new Error('Save outcome could not be confirmed.');
   return record;

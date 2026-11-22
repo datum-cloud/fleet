@@ -1,0 +1,76 @@
+{
+  "target": {
+    "project": "example-provider",
+    "namespace": "inventory",
+    "writer": "DirectAPI"
+  },
+  "items": [
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "Manufacturer",
+      "metadata": {
+        "name": "vendor-stable",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "sourceIdentity": {
+          "system": "example-netbox",
+          "type": "dcim/manufacturers",
+          "id": "1"
+        },
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedBy": "synthetic-operator",
+          "recordedAt": "2026-11-21T01:00:00Z",
+          "source": {
+            "system": "example-netbox",
+            "type": "dcim/manufacturers",
+            "id": "1",
+            "snapshotDigest": "sha256:0486ee8b35c860b5e615acb20a0189321112a97472f6a0c59ad8c10cd9ad55c1",
+            "mappingRevision": "reviewed-1",
+            "observedAt": "2026-11-21T00:00:00Z"
+          }
+        },
+        "displayName": "Example Vendor",
+        "canonicalName": "Example Vendor",
+        "aliases": [
+          "Old Vendor"
+        ]
+      }
+    },
+    {
+      "apiVersion": "fleet.datumapis.com/v1alpha1",
+      "kind": "DeviceType",
+      "metadata": {
+        "name": "type-stable",
+        "namespace": "inventory"
+      },
+      "spec": {
+        "sourceIdentity": {
+          "system": "example-netbox",
+          "type": "dcim/device-types",
+          "id": "2"
+        },
+        "provenance": {
+          "method": "NetBoxImport",
+          "recordedBy": "synthetic-operator",
+          "recordedAt": "2026-11-21T01:00:00Z",
+          "source": {
+            "system": "example-netbox",
+            "type": "dcim/device-types",
+            "id": "2",
+            "snapshotDigest": "sha256:0486ee8b35c860b5e615acb20a0189321112a97472f6a0c59ad8c10cd9ad55c1",
+            "mappingRevision": "reviewed-1",
+            "observedAt": "2026-11-21T00:00:00Z"
+          }
+        },
+        "displayName": "Example 1U",
+        "manufacturerRef": {
+          "name": "vendor-stable"
+        },
+        "model": "example-1u"
+      }
+    }
+  ],
+  "report": "Create-only candidates; no device migration, synchronization, GitOps or live effects. Re-read target before individual creates; reject existing names."
+}

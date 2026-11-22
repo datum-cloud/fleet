@@ -55,8 +55,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestInventoryCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-if len(crds) != 7 || crds["Site"] == nil || crds["DeviceClaim"] == nil || crds["Device"] == nil {
-t.Fatalf("got %d CRDs, want six physical kinds and Site", len(crds))
+	if len(crds) != 9 || crds["Manufacturer"] == nil || crds["DeviceType"] == nil || crds["Site"] == nil || crds["DeviceClaim"] == nil || crds["Device"] == nil {
+		t.Fatalf("got %d CRDs, want six physical kinds, Site and two catalog kinds", len(crds))
 	}
 	for kind, crd := range crds {
 		if crd.Spec.Group != GroupVersion.Group || crd.Name != crd.Spec.Names.Plural+"."+GroupVersion.Group || crd.Spec.Scope != extensionsv1.NamespaceScoped {

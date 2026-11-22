@@ -49,13 +49,13 @@ it.each([false, true])('keeps real table mounted on visible focus and refreshes 
   expect(loadingStates).not.toContain(true);
 });
 
-it('renders calm denied access with exactly seven list attempts and no permission reviews or writes', async () => {
+it('renders calm denied access with exactly nine list attempts and no permission reviews or writes', async () => {
   const requests = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ error: 'DO NOT DISPLAY internal authorization diagnostic' }) }));
   vi.stubGlobal('fetch', requests);
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'denied-staff' } } }), element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }]);
   render(<RouterProvider router={router} />);
   await screen.findByRole('heading', { name: 'Inventory access needed' });
-  expect(requests).toHaveBeenCalledTimes(7);
+  expect(requests).toHaveBeenCalledTimes(9);
   for (const [, init] of requests.mock.calls as unknown as [string, RequestInit][]) expect(init.method).toBe('GET');
   expect(screen.queryByText(/DO NOT DISPLAY/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Create facility/)).not.toBeInTheDocument();

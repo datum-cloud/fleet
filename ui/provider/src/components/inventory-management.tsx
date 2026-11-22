@@ -15,7 +15,7 @@ export function InventoryManagement(props: ComponentProps<typeof InventoryManage
   return ready ? <InventoryManagementForm key={generation} {...props} /> : null;
 }
 
-function InventoryManagementForm({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], compact = false, issues: sourceIssues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
+function InventoryManagementForm({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], catalog: sourceCatalog = [], compact = false, issues: sourceIssues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; catalog?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
   const client = useQueryClient();
   const onReadFailure = useContext(InventoryReadAccessContext);
   const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
@@ -25,6 +25,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   const devices = issues.Device ? [] : sourceDevices;
   const feeds = issues.PowerFeed ? [] : sourceFeeds;
   const racks = issues.Rack ? [] : sourceRacks;
+  const catalog = issues.Manufacturer || issues.DeviceType ? [] : sourceCatalog;
   const sessionScope = useContext(InventoryOperationContext);
   const scope = useRef(new InventoryOperationScope());
   useLayoutEffect(() => {
@@ -58,6 +59,10 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!allowed || pending || blocked) return;
+    if (!record && values.catalog && (issues.DeviceType || issues.Manufacturer || !catalog.some(item => item.kind === 'DeviceType' && item.metadata.uid === values.catalog?.uid && item.metadata.namespace === namespace))) {
+      setMessage('Selected catalog unavailable. Clear the selection or refresh before registration.');
+      return;
+    }
     setPending(true); setMessage('');
     const operation = scope.current.begin(sessionScope);
     try {
@@ -77,6 +82,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
         setValues(previous => ({ ...previous,
           facility: denied?.Facility ? '' : previous.facility,
           claim: denied?.DeviceClaim ? undefined : previous.claim,
+          catalog: denied?.DeviceType || denied?.Manufacturer ? undefined : previous.catalog,
           planLocation: previous.planLocation && denied?.[previous.planLocation.kind] ? undefined : previous.planLocation,
           cableLanes: previous.cableLanes?.map(lane => ({ ...lane,
             a: lane.a && denied?.[lane.a.kind] ? undefined : lane.a,
@@ -121,7 +127,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       <p>{record ? 'Only the display name and recording details change. Identity, placement, geometry, connections, and history remain untouched.' : 'Create a physical record only. This does not verify equipment, reserve space, or provision hardware.'}</p>
       {!record && <label>Record name<input required maxLength={253} value={values.name} onChange={event => field('name', event.target.value)} /></label>}
       <label>Display name<input required maxLength={253} value={values.displayName} onChange={event => field('displayName', event.target.value)} /></label>
-      {!record && (kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim') && <InventoryHardwareFields kind={kind} values={values} onChange={setValues} namespace={namespace} claims={claims} devices={devices} feeds={feeds} locations={[...facilities, ...racks]} />}
+      {!record && (kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim') && <InventoryHardwareFields kind={kind} values={values} onChange={setValues} namespace={namespace} claims={claims} devices={devices} feeds={feeds} locations={[...facilities, ...racks]} catalog={catalog} />}
     {!record && kind === 'Cable' && (issues?.Device || issues?.PowerFeed) && <p>Some endpoint records are unavailable. Only readable equipment and power feeds are offered; missing choices do not mean those records are absent.</p>}
     {!record && kind === 'DeviceClaim' && (issues?.Facility || issues?.Rack) && <p>Some location records are unavailable. Only readable facilities and racks are offered; missing choices do not mean those records are absent.</p>}
       {!record && kind === 'Rack' && <>

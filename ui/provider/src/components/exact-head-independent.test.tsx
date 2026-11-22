@@ -103,7 +103,7 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => [
   await screen.findByRole('button', { name: 'Create facility' });
   phase = 'pending';
   fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
-  await waitFor(() => expect(releases).toHaveLength(7));
+  await waitFor(() => expect(releases).toHaveLength(9));
   phase = 'denied';
   await act(async () => {
     if (transition === 'focus') { fireEvent(window, new Event('blur')); fireEvent(window, new Event('focus')); }
@@ -115,7 +115,7 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => [
   expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
   expect(screen.queryByText('Private facility label')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
-  expect(freshRequests.length).toBeGreaterThanOrEqual(7);
+  expect(freshRequests.length).toBeGreaterThanOrEqual(9);
   expect(freshRequests.every(method => method === 'GET')).toBe(true);
   router.dispose();
 });
