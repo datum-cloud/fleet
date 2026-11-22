@@ -122,11 +122,11 @@ describe('reported location editor', () => {
     expect(screen.getByRole('button', { name: 'Save reported location' })).toBeDisabled();
     expect(fetch).toHaveBeenCalledTimes(3);
     fireEvent.click(screen.getByRole('button', { name: 'Close location form' }));
-    expect(screen.queryByRole('button', { name: 'Add reported location' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add reported location' })).toBeDisabled();
   });
-  it('hides editing for denied permission and legacy Flux', () => {
+  it('disables editing for denied permission and legacy Flux', () => {
     permission.mockReturnValue({ data: false, isFetching: false, error: null } as never);
     setup({ ...device, metadata: { ...device.metadata, managedFields: [{ manager: 'kustomize-controller' }] } });
-    expect(screen.queryByRole('button', { name: 'Add reported location' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add reported location' })).toBeDisabled();
   });
 });

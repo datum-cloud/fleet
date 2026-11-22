@@ -56,7 +56,7 @@ describe('hardware directory', () => {
     browse('?kind=Device&record=private-device&namespace=private', { ...inventory, issues: { Device: { status: 403 } } });
     expect(screen.getByText('Inventory access needed')).toBeInTheDocument();
     expect(screen.queryByText(/private-device/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Devices/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Devices' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Facilities' }));
     expect(screen.getByRole('link', { name: 'Example facility' })).toBeInTheDocument();
   });
@@ -82,7 +82,8 @@ describe('hardware directory', () => {
     const { container } = browse();
     const navigation = within(screen.getByRole('navigation', { name: 'Inventory categories' }));
     for (const name of ['Devices', 'Operational sites', 'Facilities', 'Racks', 'Claims & registrations', 'Cables', 'Power feeds']) expect(navigation.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /create|edit|delete|apply|sync|import/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /edit|delete|apply|sync|import/i })).not.toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
     expect(screen.queryByText(/GitOps|Flux/)).not.toBeInTheDocument();
   });
@@ -145,14 +146,14 @@ describe('hardware directory', () => {
     expect(screen.getByRole('heading', { name: 'Record not found' })).toBeInTheDocument();
   });
 
-  it('keeps same-named assets in different namespaces independently navigable', () => {
+  it('excludes same-named assets in other namespaces from the directory', () => {
     const original = fixturePhysicalDevices[0];
     const other = { ...original, metadata: { ...original.metadata, namespace: 'other' }, spec: { ...original.spec, displayName: 'Other namespace server', identity: { ...original.spec.identity, serial: 'OTHER-SYNTHETIC-001' } } };
     browse('?kind=Device', toInventory(fixturePhysicalClaims, [original, other]));
-    fireEvent.click(screen.getByRole('link', { name: 'Other namespace server' }));
-    expect(screen.getByText('OTHER-SYNTHETIC-001')).toBeInTheDocument();
-    expect(screen.queryByText('SYNTHETIC-0001')).not.toBeInTheDocument();
-    expect(screen.getByText('Claim record not found')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Other namespace server' })).not.toBeInTheDocument();
+    expect(screen.queryByText('OTHER-SYNTHETIC-001')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: 'Example compute server' }));
+    expect(screen.getByText('SYNTHETIC-0001')).toBeInTheDocument();
   });
 
   it('does not fabricate a rack relationship from legacy location text', () => {

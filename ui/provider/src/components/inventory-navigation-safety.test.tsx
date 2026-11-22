@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -37,7 +38,7 @@ it.each([false, true])('same-principal query navigation retains usable managemen
   }));
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
-  await screen.findByRole('button', { name: editing ? 'Edit display name' : 'Create facility' });
+  await findEnabledButton({ name: editing ? 'Edit display name' : 'Create facility' });
   await act(async () => { await router.navigate('/?kind=Facility'); });
   await open(editing);
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
@@ -76,7 +77,7 @@ it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(tran
 });
 
 async function open(editing: boolean) {
-  const opener = await screen.findByRole('button', { name: editing ? 'Edit display name' : 'Create facility' });
+  const opener = await findEnabledButton({ name: editing ? 'Edit display name' : 'Create facility' });
   fireEvent.click(opener);
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Independent safe input' } });

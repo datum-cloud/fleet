@@ -3,6 +3,7 @@ import { ApiError, PROVIDER_PROJECT, proxyFetch } from './api';
 import { inventoryPermission, INVENTORY_FIELD_MANAGER } from './inventory-management';
 import type { InventoryOperation } from './inventory-operation';
 import { readInventoryReference } from './inventory-read-access';
+import { inInventoryNamespace } from './inventory-namespace';
 
 export interface PlacementFields {
   facility: string;
@@ -18,7 +19,7 @@ export interface PlacementFields {
 }
 
 export function canCorrectPlacement(device: Device): boolean {
-  return !!device.metadata.uid && !!device.metadata.resourceVersion && !device.metadata.deletionTimestamp &&
+  return inInventoryNamespace(device) && !!device.metadata.uid && !!device.metadata.resourceVersion && !device.metadata.deletionTimestamp &&
     !Object.keys({ ...device.metadata.labels, ...device.metadata.annotations }).some(key => /fluxcd\.io|argocd/i.test(key)) &&
     !(device.metadata.managedFields ?? []).some(field => /flux|kustomize-controller|helm-controller|argocd/i.test(field.manager ?? ''));
 }

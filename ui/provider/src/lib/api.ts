@@ -1,6 +1,7 @@
 import { fixtureClasses, fixtureCapacities, fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords, fixtureProfiles } from './fixtures';
 import { toInventory, inventoryResources, type InventoryKind, type Inventory, type RawDeviceClaimList, type RawDeviceList } from '../inventory';
 import { useInventoryRead } from './inventory-read';
+import { INVENTORY_NAMESPACE, inInventoryNamespace } from './inventory-namespace';
 import type { List, PhysicalRecord } from '../../../shared/fleet-api';
 import {
   toMachineCapacity,
@@ -256,13 +257,12 @@ export function useDeleteMachineClass(): UseMutationResult<void, ApiError, strin
   });
 }
 
-// DeviceClaims and Devices are namespaced provider inventory, read across every
-// namespace of the provider project. Staff need a role with
+// DeviceClaims and Devices are namespaced provider inventory. Staff need a role with
 // fleet.datumapis.com/deviceclaims.list and devices.list there, such as
 // fleet.datumapis.com-inventory-viewer.
 
 export async function fetchInventory(): Promise<Inventory> {
-  if (USE_FIXTURES) return toInventory(fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords);
+  if (USE_FIXTURES) return toInventory(fixturePhysicalClaims.filter(inInventoryNamespace), fixturePhysicalDevices.filter(inInventoryNamespace), fixturePhysicalRecords.filter(inInventoryNamespace));
   const issues: Inventory['issues'] = {};
   const results = await Promise.all(Object.entries(inventoryResources).map(async ([kind, plural]) => {
     try { return { kind, records: await fetchInventoryCollection<PhysicalRecord>(plural) }; }
@@ -277,13 +277,14 @@ export async function fetchInventory(): Promise<Inventory> {
   return { ...toInventory(claims, devices, results.filter(result => result.kind !== 'Device' && result.kind !== 'DeviceClaim').flatMap(result => result.records)), issues };
 }
 
-export async function fetchInventoryCollection<T>(plural: string): Promise<T[]> {
+export async function fetchInventoryCollection<T extends { metadata?: { namespace?: string } }>(plural: string): Promise<T[]> {
+  if (!Object.values(inventoryResources).includes(plural)) throw new ApiError(422, 'Unknown inventory collection.');
   const items: T[] = [];
   const seen = new Set<string>();
   let continuation = '';
   do {
-    const page = await proxyFetch<List<T> & { metadata?: { continue?: string } }>(PROVIDER_PROJECT, `${INVENTORY_API}/${plural}?limit=500${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
-    items.push(...(page.items ?? []));
+    const page = await proxyFetch<List<T> & { metadata?: { continue?: string } }>(PROVIDER_PROJECT, `${INVENTORY_API}/namespaces/${INVENTORY_NAMESPACE}/${plural}?limit=500${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
+    items.push(...(page.items ?? []).filter(inInventoryNamespace));
     continuation = page.metadata?.continue ?? '';
     if (continuation && seen.has(continuation)) throw new ApiError(502, 'Inventory pagination repeated; completeness Unknown');
     seen.add(continuation);
@@ -294,7 +295,7 @@ export async function fetchInventoryCollection<T>(plural: string): Promise<T[]> 
 export function useInventory(): UseQueryResult<Inventory, ApiError> {
   const read = useInventoryRead(fetchInventory);
   return useQuery({
-    queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT],
+    queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT, INVENTORY_NAMESPACE],
     queryFn: read,
     refetchInterval: false,
     refetchOnWindowFocus: false,

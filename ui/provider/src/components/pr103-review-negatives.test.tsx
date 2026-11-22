@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -52,7 +53,7 @@ it.each(['revalidate', 'overlap', 'hidden', 'denied'])('renews management only a
     return { user: { metadata: { uid: 'staff-a' } } };
   }, element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }], { initialEntries: ['/?kind=Facility'] });
   render(<RouterProvider router={router} />);
-  await screen.findByRole('button', { name: 'Create facility' });
+  await findEnabledButton({ name: 'Create facility' });
   const table = screen.getByRole('table');
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Abandoned old form' } });
@@ -70,13 +71,13 @@ it.each(['revalidate', 'overlap', 'hidden', 'denied'])('renews management only a
     act(() => { void router.revalidate(); });
     await waitFor(() => expect(releases).toHaveLength(2));
     await act(async () => releases[0]());
-    expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create facility' })).toBeDisabled();
   }
   denied = scenario === 'denied';
   await act(async () => releases.at(-1)!());
   if (denied) {
     await screen.findByRole('heading', { name: 'Inventory access needed' });
-    expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create facility' })).toBeDisabled();
     denied = false;
     holding = false;
     act(() => { void router.revalidate(); });

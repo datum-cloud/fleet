@@ -6,6 +6,7 @@ import { hardwarePayload, validateHardwareReferences, type HardwareFields } from
 import { inventoryResources } from '../inventory';
 import { readInventoryReference } from './inventory-read-access';
 import { useInventoryRead } from './inventory-read';
+import { INVENTORY_NAMESPACE, inInventoryNamespace } from './inventory-namespace';
 
 export type ManagedKind = 'Facility' | 'Rack' | 'Device' | 'Cable' | 'DeviceClaim';
 export type ManagedRecord = PhysicalRecord | Device | DeviceClaim;
@@ -15,7 +16,7 @@ const fixtures = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const resourcePath = (kind: ManagedKind, namespace: string) => `/apis/fleet.datumapis.com/v1alpha1/namespaces/${encodeURIComponent(namespace)}/${resources[kind]}`;
 
 export async function inventoryPermission(kind: ManagedKind, namespace: string, verb: 'create' | 'patch', name?: string): Promise<boolean> {
-  if (!namespace || fixtures) return false;
+  if (namespace !== INVENTORY_NAMESPACE || fixtures) return false;
   const review = await proxyFetch<{ status?: { allowed?: boolean; denied?: boolean; evaluationError?: string } }>(PROVIDER_PROJECT, '/apis/authorization.k8s.io/v1/selfsubjectaccessreviews', {
     method: 'POST', body: { apiVersion: 'authorization.k8s.io/v1', kind: 'SelfSubjectAccessReview', spec: { resourceAttributes: { group: 'fleet.datumapis.com', version: 'v1alpha1', resource: resources[kind], namespace, verb, ...(name && { name }) } } },
   });
@@ -29,7 +30,7 @@ export function useInventoryPermission(kind: ManagedKind, namespace: string, ver
 
 export function canEditInventoryLabel(record: ManagedRecord): boolean {
   const { metadata } = record;
-  return ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp &&
+  return inInventoryNamespace(record) && ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp &&
     !Object.keys({ ...metadata.labels, ...metadata.annotations }).some(key => /fluxcd\.io|argocd|inventory.*owner/i.test(key)) &&
     !!metadata.managedFields?.length && metadata.managedFields.every(field => field.manager === INVENTORY_FIELD_MANAGER && !field.subresource);
 }
@@ -43,6 +44,7 @@ export interface InventoryFormValues extends HardwareFields {
 }
 
 export function inventoryPayload(kind: 'Facility' | 'Rack', values: InventoryFormValues): PhysicalRecord & { apiVersion: string } {
+  if (values.namespace !== INVENTORY_NAMESPACE) throw new ApiError(422, 'This inventory UI only manages the default namespace.');
   const resourceName = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
   if (!resourceName.test(values.name) || values.name.length > 253 || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(values.namespace) || values.namespace.length > 63) throw new ApiError(422, 'Enter a valid record name and namespace.');
   if (!values.displayName.trim() || values.displayName.trim().length > 253) throw new ApiError(422, 'A display name is required (at most 253 characters).');

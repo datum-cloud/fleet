@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -77,7 +78,7 @@ it('invalidates authority synchronously before React commits the session transit
   }));
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: principal } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" facilities={[]} /></InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
-  await screen.findByRole('button', { name: 'Create facility' });
+  await findEnabledButton({ name: 'Create facility' });
   fireEvent.click(screen.getByText('Manage facilities'));
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
@@ -105,7 +106,7 @@ it('must not send a create after the initiating authenticated principal unmounts
   }));
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: principal } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" facilities={[]} /></InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
-  await screen.findByRole('button', { name: 'Create facility' });
+  await findEnabledButton({ name: 'Create facility' });
   fireEvent.click(screen.getByText('Manage facilities'));
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
@@ -129,7 +130,7 @@ it('must not silently advance an open edit form to a refreshed resourceVersion',
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const content = () => <QueryClientProvider client={client}><InventoryManagement kind="Facility" record={current} facilities={[]} /></QueryClientProvider>;
   const mounted = render(content());
-  await screen.findByRole('button', { name: 'Edit display name' });
+  await findEnabledButton({ name: 'Edit display name' });
   fireEvent.click(screen.getByText('Manage this record'));
   fireEvent.click(screen.getByRole('button', { name: 'Edit display name' }));
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'My unsaved label' } });

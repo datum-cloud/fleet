@@ -9,7 +9,7 @@ const endpoint: ReferencedEndpoint = { kind: 'Device', name: 'synthetic-device',
 const cableValues: InventoryFormValues = { ...values, medium: 'Copper', cableLanes: [{ id: 'lane-1', a: endpoint, b: { ...endpoint, name: 'other', uid: 'other-uid' } }] };
 const planValues: InventoryFormValues = { ...values, planLocation: { kind: 'Rack', name: 'rack', uid: 'rack-uid', resourceVersion: '1' } };
 const common = inventoryPayload('Facility', values);
-const claim = { metadata: { name: 'plan', uid: 'plan-uid', resourceVersion: '1' }, spec: { lifecycle: 'Installation' } };
+const claim = { metadata: { namespace: 'default', name: 'plan', uid: 'plan-uid', resourceVersion: '1' }, spec: { lifecycle: 'Installation' } };
 const device = { ...hardwarePayload('Device', values, common), metadata: { name: 'synthetic-device', namespace: 'default', uid: 'device-uid', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 afterEach(() => vi.unstubAllGlobals());
@@ -20,7 +20,7 @@ describe('catalog selection for new devices', () => {
   const manufacturer = { metadata: { namespace: 'default', name: 'vendor-stable', uid: 'vendor-uid', resourceVersion: '4' } };
 
   it('rechecks catalog identities and revisions, sending only name references under strict validation', async () => {
-    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(claim)).mockResolvedValueOnce(response(model)).mockResolvedValueOnce(response(manufacturer)).mockResolvedValueOnce(response({ metadata: { uid: 'new-device' } }));
+    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(claim)).mockResolvedValueOnce(response(model)).mockResolvedValueOnce(response(manufacturer)).mockResolvedValueOnce(response({ metadata: { namespace: 'default', uid: 'new-device' } }));
     vi.stubGlobal('fetch', requests);
     await createInventoryRecord('Device', { ...values, catalog: selection }, new InventoryOperationScope().begin());
     const payload = JSON.parse(requests.mock.calls[4][1].body);
@@ -71,7 +71,7 @@ describe('catalog selection for new devices', () => {
 describe('physical record creation', () => {
   it.each(['Facility', 'Rack'] as const)('creates a new observational plan at a %s without inventing geometry', async kind => {
     const planValues = { ...values, planLocation: { kind, name: 'location', uid: 'location-uid', resourceVersion: '1' } };
-    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response({ metadata: { uid: 'location-uid', resourceVersion: '1' } })).mockResolvedValueOnce(response({ metadata: { uid: 'plan-uid' } }));
+    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response({ metadata: { namespace: 'default', uid: 'location-uid', resourceVersion: '1' } })).mockResolvedValueOnce(response({ metadata: { namespace: 'default', uid: 'plan-uid' } }));
     vi.stubGlobal('fetch', requests);
     await createInventoryRecord('DeviceClaim', planValues, new InventoryOperationScope().begin());
     const payload = JSON.parse(requests.mock.calls[2][1].body);
@@ -102,7 +102,7 @@ describe('physical record creation', () => {
     expect(requests).toHaveBeenCalledTimes(2);
   });
   it('creates typed cable lanes only after re-reading endpoint identities and positions', async () => {
-    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({ ...device, metadata: { ...device.metadata, uid: 'other-uid' } })).mockResolvedValueOnce(response({ metadata: { uid: 'cable-uid' } }));
+    const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({ ...device, metadata: { ...device.metadata, uid: 'other-uid' } })).mockResolvedValueOnce(response({ metadata: { namespace: 'default', uid: 'cable-uid' } }));
     vi.stubGlobal('fetch', requests);
     await createInventoryRecord('Cable', cableValues, new InventoryOperationScope().begin());
     const payload = JSON.parse(requests.mock.calls[3][1].body);

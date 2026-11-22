@@ -107,11 +107,23 @@ describe('DeviceInventoryList', () => {
   it('offers no write actions', () => {
     mockInventory({ data: inventory });
     renderAt('/plugins/metal-datumapis-com/inventory');
-    expect(screen.queryByRole('button', { name: /create|delete|edit/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /delete|edit/i })).not.toBeInTheDocument();
   });
 });
 
 describe('DeviceClaimDetail', () => {
+  it('refuses a foreign legacy route even with supplied same-named records', () => {
+    const foreignClaims = fixtureDeviceClaims.map(claim => ({ ...claim, metadata: { ...claim.metadata, namespace: 'other' }, spec: { ...claim.spec, displayName: 'Private foreign claim' } }));
+    const foreignDevices = fixtureDevices.map(device => ({ ...device, metadata: { ...device.metadata, namespace: 'other' } }));
+    mockInventory({ data: toInventory([...fixtureDeviceClaims, ...foreignClaims], [...fixtureDevices, ...foreignDevices]) });
+    renderAt('/plugins/metal-datumapis-com/inventory/other/rack-01-u12');
+    expect(screen.getByText(/only supports the default namespace/)).toBeInTheDocument();
+    expect(screen.queryByText('Private foreign claim')).not.toBeInTheDocument();
+    expect(screen.queryByText('SYNTHETIC-0001')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('fleet-plugin-claim')).not.toBeInTheDocument();
+  });
+
   it('denies old direct links without leaking cached claims or devices', () => {
     mockInventory({ data: inventory, error: new ApiError(403, 'Secret error') });
     renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');

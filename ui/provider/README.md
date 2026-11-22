@@ -21,15 +21,18 @@ Operations in the navigation. The page has four tabs:
   MachineCapacities that serve it, and whether consumers get power control. Custom
   profiles and console access stay off.
 - **Inventory** (`inventory`) is a hardware directory, starting with
-  Devices rather than installation claims. Seven searchable categories cover
-  Devices, Operational sites, Facilities, Racks, Claims, Cables, and Power feeds. Query-string detail
-  links retain the kind, namespace, and record name without adding host routes.
+  Devices rather than installation claims. Nine static searchable categories cover
+  Devices, Operational sites, Facilities, Racks, Claims, Cables, Power feeds,
+  Manufacturers, and Device types. Inventory reads and writes use only `default`.
+  Query-string detail links retain the kind and record name (and accept the existing
+  explicit `namespace=default`) without adding host routes. Foreign namespace
+  links never resolve records or change request scope.
   Facilities lead to racks and installation plans; claims lead to all registered
   devices; cable endpoints lead to devices or feeds. Identity, typed components,
   internal paths, external service references, legacy peers, and creation times
   remain visible. Missing claims do not hide hardware, and historical
   registrations do not establish an active device. The original `inventory/:namespace/:claim`
-  route remains available for existing links. Authorized manual management uses
+  route remains available for existing `default` links. Authorized manual management uses
   the existing guarded forms; Site membership and premises identifiers remain
   direct API operations. Records are not managed through Git. See the
   [Site–Facility contract](../../docs/development/site-facility-relationship.md).
@@ -102,7 +105,9 @@ and portal-owned display-name editing. The existing
 `physical-inventory-managers` group binding are not deployed by this UI phase.
 Group names/staff membership never enable controls. Flux-managed and unknown-writer
 records remain read-only pending ownership review. New inventory is direct
-API/operator-managed. Namespace choice is not an authorization boundary. Denied
+API/operator-managed. There is no namespace selector or namespace/access disclosure.
+Default-only UI scope is not a backend authorization boundary; namespaced APIs and
+existing IAM remain unchanged. Denied
 collections and detail links show access guidance, not empty inventory; readable sections remain available.
 See [hardware directory scope and design gaps](../../docs/development/staff-inventory-ui.md).
 

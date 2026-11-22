@@ -17,9 +17,9 @@ describe('inventory management authority', () => {
   it('reviews the exact provider-project, namespace, resource, verb and name', async () => {
     const fetch = vi.fn().mockResolvedValue(response({ status: { allowed: true } }));
     vi.stubGlobal('fetch', fetch);
-    expect(await inventoryPermission('Rack', 'operator-space', 'patch', 'rack-01')).toBe(true);
+    expect(await inventoryPermission('Rack', 'default', 'patch', 'rack-01')).toBe(true);
     expect(fetch.mock.calls[0][0]).toContain('/projects/datum-cloud/control-plane/apis/authorization.k8s.io/v1/selfsubjectaccessreviews');
-    expect(JSON.parse(fetch.mock.calls[0][1].body).spec.resourceAttributes).toEqual({ namespace: 'operator-space', name: 'rack-01', resource: 'racks', group: 'fleet.datumapis.com', version: 'v1alpha1', verb: 'patch' });
+    expect(JSON.parse(fetch.mock.calls[0][1].body).spec.resourceAttributes).toEqual({ namespace: 'default', name: 'rack-01', resource: 'racks', group: 'fleet.datumapis.com', version: 'v1alpha1', verb: 'patch' });
   });
 
   it('cannot write when permission is revoked at submit', async () => {

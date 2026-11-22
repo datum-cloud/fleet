@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { StrictMode, useContext, type ReactNode } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -103,7 +104,7 @@ it.each(cases.flatMap(test => [false, true].flatMap(strict => [false, true].map(
 
 it.each(['denied', 'principal', 'hidden', 'pagehide'])('removes retained private drafts on confirmed %s', async transition => {
   const view = host(<InventoryManagement compact kind="Facility" facilities={[]} />);
-  fireEvent.click(await screen.findByRole('button', { name: 'Create facility' }));
+  fireEvent.click(await findEnabledButton({ name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Private draft' } });
   view.hold();
   fireEvent(window, new Event('blur'));

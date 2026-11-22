@@ -2,6 +2,7 @@ import { createContext } from 'react';
 import { ApiError, PROVIDER_PROJECT, proxyFetch } from './api';
 import { inventoryResources, type Inventory, type InventoryKind } from '../inventory';
 import type { InventoryOperation } from './inventory-operation';
+import { INVENTORY_NAMESPACE, inInventoryNamespace } from './inventory-namespace';
 
 export class InventoryReferenceReadError extends ApiError {
   constructor(readonly kind: InventoryKind, readonly namespace: string, status: number) {
@@ -22,17 +23,19 @@ export function redactInventory(source: Inventory, issues: Inventory['issues']):
   if (combined.Manufacturer) combined.DeviceType = combined.Manufacturer;
   return {
     issues: combined,
-    slots: combined.DeviceClaim ? [] : source.slots.map(slot => ({ ...slot, devices: combined.Device ? [] : slot.devices })),
-    unboundDevices: combined.Device ? [] : [...source.unboundDevices, ...(combined.DeviceClaim ? source.slots.flatMap(slot => slot.devices) : [])],
-    physical: source.physical.filter(record => !combined[record.kind]),
+    slots: combined.DeviceClaim ? [] : source.slots.filter(slot => inInventoryNamespace(slot.claim)).map(slot => ({ ...slot, devices: combined.Device ? [] : slot.devices.filter(inInventoryNamespace) })),
+    unboundDevices: combined.Device ? [] : [...source.unboundDevices, ...(combined.DeviceClaim ? source.slots.flatMap(slot => slot.devices) : [])].filter(inInventoryNamespace),
+    physical: source.physical.filter(record => inInventoryNamespace(record) && !combined[record.kind]),
   };
 }
 
 export async function readInventoryReference<T>(kind: InventoryKind, namespace: string, name: string, operation: InventoryOperation): Promise<T> {
   operation.assertCurrent();
+  if (namespace !== INVENTORY_NAMESPACE) throw new InventoryReferenceReadError(kind, namespace, 422);
   try {
     const record = await proxyFetch<T>(PROVIDER_PROJECT, `/apis/fleet.datumapis.com/v1alpha1/namespaces/${encodeURIComponent(namespace)}/${inventoryResources[kind]}/${encodeURIComponent(name)}`);
     operation.assertCurrent();
+    if (!inInventoryNamespace(record as { metadata?: { namespace?: string } })) throw new ApiError(409, 'Unexpected inventory namespace.');
     return record;
   } catch (error) {
     operation.assertCurrent();

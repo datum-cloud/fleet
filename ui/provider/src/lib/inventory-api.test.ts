@@ -9,16 +9,16 @@ function response(data: unknown, status = 200) {
 
 describe('physical inventory reads', () => {
   it('preserves legacy physical inventory while the Site API is not installed', async () => {
-    const facility = { kind: 'Facility', metadata: { name: 'legacy', namespace: 'inventory' }, spec: { displayName: 'Legacy premises' } };
+    const facility = { kind: 'Facility', metadata: { name: 'legacy', namespace: 'default' }, spec: { displayName: 'Legacy premises' } };
     vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.includes('/sites?') ? response(undefined, 404) : response({ items: url.includes('/facilities?') ? [facility] : [] }))));
     const inventory = await fetchInventory();
     expect(inventory.physical).toEqual([facility]);
     expect(inventory.issues).toEqual({ Site: { status: 404 } });
   });
   it('reads every page with the project proxy and only GET', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(response({ items: [{ id: 1 }], metadata: { continue: 'opaque+/=' } })).mockResolvedValueOnce(response({ items: [{ id: 2 }] }));
+    const fetch = vi.fn().mockResolvedValueOnce(response({ items: [{ id: 1, metadata: { namespace: 'default' } }], metadata: { continue: 'opaque+/=' } })).mockResolvedValueOnce(response({ items: [{ id: 2, metadata: { namespace: 'default' } }] }));
     vi.stubGlobal('fetch', fetch);
-    expect(await fetchInventoryCollection('racks')).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(await fetchInventoryCollection('racks')).toEqual([{ id: 1, metadata: { namespace: 'default' } }, { id: 2, metadata: { namespace: 'default' } }]);
     expect(fetch.mock.calls[1][0]).toContain('continue=opaque%2B%2F%3D');
     expect(fetch.mock.calls[0][0]).toContain('/projects/datum-cloud/control-plane/');
     expect(fetch.mock.calls.every((call) => call[1].method === 'GET')).toBe(true);
@@ -41,7 +41,7 @@ describe('physical inventory reads', () => {
   });
 
   it('preserves accessible collections when another kind is denied', async () => {
-    const facility = { kind: 'Facility', metadata: { name: 'example' }, spec: { displayName: 'Example' } };
+    const facility = { kind: 'Facility', metadata: { name: 'example', namespace: 'default' }, spec: { displayName: 'Example' } };
     vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.includes('/facilities?') ? response({ items: [facility] }) : response(undefined, 403))));
     const inventory = await fetchInventory();
     expect(inventory.physical).toEqual([facility]);

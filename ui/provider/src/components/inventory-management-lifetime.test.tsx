@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -26,7 +27,7 @@ it.each(['create-pagehide', 'create-unmount', 'edit-pagehide', 'edit-unmount', '
   }));
   const editing = mode.startsWith('edit');
   const mounted = render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></QueryClientProvider>);
-  await screen.findByRole('button', { name: editing ? 'Edit display name' : 'Create facility' });
+  await findEnabledButton({ name: editing ? 'Edit display name' : 'Create facility' });
   fireEvent.click(screen.getByText(editing ? 'Manage this record' : 'Manage facilities'));
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Edit display name' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });

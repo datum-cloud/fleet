@@ -4,6 +4,7 @@ import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-ta
 import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Link } from 'react-router';
+import { inInventoryNamespace } from '../lib/inventory-namespace';
 
 type SlotColumn = ColumnDef<DataTableFeatures, InventorySlot, unknown>;
 
@@ -70,7 +71,7 @@ export function InventoryTable({ slots, base }: { slots: InventorySlot[]; base: 
 
   return (
     <DataTable.Client
-      data={slots}
+      data={slots.filter(slot => inInventoryNamespace(slot.claim)).map(slot => ({ ...slot, devices: slot.devices.filter(inInventoryNamespace) }))}
       columns={columns}
       getRowId={(slot) => slot.key}
       defaultSort={[{ id: 'name', desc: false }]}

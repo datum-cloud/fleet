@@ -16,13 +16,13 @@ describe('management affordances', () => {
     permission.mockReturnValue({ data: undefined, isFetching: false, error: new ApiError(401, 'private upstream error') } as never);
     renderManagement();
     expect(screen.getByText(/Your session expired/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create facility', hidden: true })).toBeDisabled();
     expect(screen.queryByText(/private upstream error/)).not.toBeInTheDocument();
   });
-  it('hides create from viewers, denied users and unresolved reviews', () => {
+  it('disables create for viewers, denied users and unresolved reviews', () => {
     permission.mockReturnValue({ data: false, isFetching: false, error: null } as never);
     renderManagement();
-    expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create facility', hidden: true })).toBeDisabled();
     expect(create).not.toHaveBeenCalled();
   });
   it('permits an authorized manager to create and confirms only an acknowledged result', async () => {

@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -30,7 +31,7 @@ it.each([false, true])('removes denied prerequisite choices and cached records, 
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/?kind=Device']}>
     {integrated ? <PhysicalInventory inventory={inventory} /> : <InventoryManagement kind="Device" compact facilities={[]} claims={[claim]} />}
   </MemoryRouter></QueryClientProvider>);
-  fireEvent.click(await screen.findByRole('button', { name: 'Create device' }));
+  fireEvent.click(await findEnabledButton({ name: 'Create device' }));
   for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Safe unsaved name'], ['Model', 'Example'], ['Serial number', 'SYNTHETIC-NEW'], ['Installation plan', 'plan-uid']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
   fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
   await screen.findByText(/Restricted choices were removed/);
@@ -69,7 +70,7 @@ it.each(['Device', 'PowerFeed'] as const)('does not search denied %s cable endpo
 it.each(['Facility', 'Rack', 'DeviceClaim', 'Device', 'PowerFeed'] as const)('retains the failed %s read scope separately from write denial', async kind => {
   vi.stubGlobal('fetch', vi.fn(async () => response(undefined, 403)));
   const operation = new InventoryOperationScope().begin();
-  const failure = await readInventoryReference(kind, 'synthetic-namespace', 'synthetic-record', operation).catch(error => error);
+  const failure = await readInventoryReference(kind, 'default', 'synthetic-record', operation).catch(error => error);
   expect(failure).toBeInstanceOf(InventoryReferenceReadError);
-  expect(failure).toMatchObject({ kind, namespace: 'synthetic-namespace', status: 403 });
+  expect(failure).toMatchObject({ kind, namespace: 'default', status: 403 });
 });

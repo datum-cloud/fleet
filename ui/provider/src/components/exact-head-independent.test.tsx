@@ -1,3 +1,4 @@
+import { findEnabledButton } from '../test/enabled-button';
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -14,7 +15,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function open(editing: boolean, label: string) {
   await waitFor(() => expect(screen.getByRole('button', { name: editing ? 'Edit display name' : 'Create facility' })).toBeEnabled());
-  fireEvent.click(await screen.findByRole('button', { name: editing ? 'Edit display name' : 'Create facility' }));
+  fireEvent.click(await findEnabledButton({ name: editing ? 'Edit display name' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: label } });
 }
@@ -108,7 +109,7 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => [
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'same-user' } } }), element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }], { initialEntries: ['/?kind=Facility'] });
   render(strict ? <StrictMode><RouterProvider router={router} /></StrictMode> : <RouterProvider router={router} />);
   await screen.findByRole('link', { name: /Private facility label/ });
-  await screen.findByRole('button', { name: 'Create facility' });
+  await findEnabledButton({ name: 'Create facility' });
   phase = 'pending';
   fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
   await waitFor(() => expect(releases).toHaveLength(9));
@@ -122,7 +123,7 @@ it.each([false, true].flatMap(strict => [401, 403, 404, 503].flatMap(status => [
   await act(async () => releases.forEach(release => release()));
   expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
   expect(screen.queryByText('Private facility label')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Create facility' })).toBeDisabled();
   expect(freshRequests.length).toBeGreaterThanOrEqual(9);
   expect(freshRequests.every(method => method === 'GET')).toBe(true);
   router.dispose();
