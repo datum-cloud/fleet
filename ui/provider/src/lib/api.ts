@@ -10,7 +10,6 @@ import {
   type MachineCapacity,
   type MachineClass,
   type MachineProfile,
-  type RawMachineCapacity,
   type RawMachineClass,
   type RawMachineClassList,
   type RawMachineCapacityList,
@@ -94,24 +93,6 @@ export function useMachineCapacities(): UseQueryResult<MachineCapacity[], ApiErr
     queryFn: fetchMachineCapacities,
     refetchInterval: REFETCH_INTERVAL_MS,
     retry: false,
-  });
-}
-
-export async function createMachineCapacity(capacity: RawMachineCapacity): Promise<RawMachineCapacity> {
-  if (USE_FIXTURES) return fixtureCapacities.create(capacity);
-  const namespace = encodeURIComponent(capacity.metadata.namespace ?? '');
-  return proxyFetch<RawMachineCapacity>(PROVIDER_PROJECT, `${METAL_API}/namespaces/${namespace}/machinecapacities`, {
-    method: 'POST',
-    body: { apiVersion: 'metal.datumapis.com/v1alpha1', kind: 'MachineCapacity', ...capacity },
-  });
-}
-
-export function useCreateMachineCapacity(): UseMutationResult<RawMachineCapacity, ApiError, RawMachineCapacity> {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: createMachineCapacity,
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: [PLUGIN_ID, 'machinecapacities', PROVIDER_PROJECT] }),
   });
 }
 
