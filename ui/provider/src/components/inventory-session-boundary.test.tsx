@@ -140,16 +140,28 @@ describe('host inventory session isolation', () => {
 
   it.each(['logout', 'failure'])('clears private data when foreground restoration observes %s', async outcome => {
     let expired = false;
-    mountHost(() => {
+    const loader = vi.fn(() => {
       if (expired && outcome === 'failure') throw new Response('Synthetic failure', { status: 503 });
       if (expired) return { user: null };
       return { user: { metadata: { uid: 'staff-a' } } };
-    }, 'Visible inventory');
-    await screen.findByText('Visible inventory');
+    });
+    let router!: ReturnType<typeof mountHost>;
+    await act(async () => { router = mountHost(loader, 'Visible inventory'); });
+    expect(screen.getByText('Visible inventory')).toBeInTheDocument();
+    expect(loader).toHaveBeenCalledTimes(1);
     expired = true;
-    fireEvent(window, new Event('pagehide'));
-    fireEvent(window, new Event('pageshow'));
-    await waitFor(() => expect(screen.queryByText('Visible inventory')).not.toBeInTheDocument());
+    await act(async () => {
+      fireEvent(window, new Event('pagehide'));
+      fireEvent(window, new Event('pageshow'));
+    });
+    await waitFor(() => {
+      expect(loader).toHaveBeenCalledTimes(2);
+      expect(router.state.revalidation).toBe('idle');
+      if (outcome === 'logout') expect(router.state.loaderData['layouts/milo.layout']).toEqual({ user: null });
+      else expect(router.state.errors).not.toBeNull();
+      expect(screen.queryByText('Visible inventory')).not.toBeInTheDocument();
+    });
+    router.dispose();
   });
 
   it('discards genuine hidden data and waits for visible verification before a fresh read', async () => {
