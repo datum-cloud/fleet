@@ -1,7 +1,7 @@
 import { findEnabledButton } from '../test/enabled-button';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Routes, Route } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import { InventoryManagement } from './inventory-management';
 import { PhysicalInventory } from './physical-inventory';
@@ -29,17 +29,18 @@ it.each([false, true])('removes denied prerequisite choices and cached records, 
     writes.push(init); return response({});
   }));
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/?kind=Device']}>
-    {integrated ? <PhysicalInventory inventory={inventory} /> : <InventoryManagement kind="Device" compact facilities={[]} claims={[claim]} />}
+    {integrated ? <Routes><Route path="/" element={<PhysicalInventory inventory={inventory} />} /><Route path="/inventory/create/device" element={<InventoryManagement task kind="Device" facilities={[]} claims={[claim]} />} /></Routes> : <InventoryManagement kind="Device" compact facilities={[]} claims={[claim]} />}
   </MemoryRouter></QueryClientProvider>);
   fireEvent.click(await findEnabledButton({ name: 'Create device' }));
+  await screen.findByLabelText('Record name');
   for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Safe unsaved name'], ['Model', 'Example'], ['Serial number', 'SYNTHETIC-NEW'], ['Installation plan', 'plan-uid']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
-  fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await screen.findByText(/Restricted choices were removed/);
   expect(writes).toEqual([]);
   expect(screen.queryByText('Restricted plan label')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Installation plan')).toHaveValue('');
   expect(screen.getByLabelText('Display name')).toHaveValue('Safe unsaved name');
-  expect(screen.getByRole('button', { name: 'Create device record' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Create record' })).toBeDisabled();
   await waitFor(() => expect(client.getQueryData<Inventory>(queryKey)?.slots).toEqual([]));
   expect(client.getQueryData<Inventory>(queryKey)?.issues?.DeviceClaim?.status).toBe(403);
 });
@@ -53,6 +54,7 @@ it.each(['Facility', 'Rack'] as const)('redacts denied %s references in PowerFee
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=PowerFeed']}><PhysicalInventory inventory={inventory} /></MemoryRouter></QueryClientProvider>);
   expect(screen.queryByText('restricted-location')).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'restricted-location' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
   expect(screen.queryByRole('link', { name: feed.spec.displayName })).not.toBeInTheDocument();
 });
 
@@ -62,8 +64,10 @@ it.each(['Device', 'PowerFeed'] as const)('does not search denied %s cable endpo
   const inventory = { ...toInventory([], [], [cable]), issues: { [kind]: { status: 403 } } };
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Cable']}><PhysicalInventory inventory={inventory} /></MemoryRouter></QueryClientProvider>);
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'restricted-endpoint' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
   expect(screen.queryByRole('link', { name: cable.spec.displayName })).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: cable.spec.displayName! } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
   expect(screen.getByRole('link', { name: cable.spec.displayName })).toBeInTheDocument();
 });
 

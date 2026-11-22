@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import { fixturePhysicalDevices } from '../lib/fixtures';
 import { DevicePlacementEdit } from './device-placement-edit';
@@ -24,6 +24,8 @@ function openAndFill(existing = false) {
   fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/example' } });
 }
 beforeEach(() => { vi.clearAllMocks(); permission.mockReturnValue({ data: true, isFetching: false, error: null } as never); });
+beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
+
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('reported location editor', () => {
@@ -39,7 +41,7 @@ describe('reported location editor', () => {
     const { client } = setup(record);
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     openAndFill(existing);
-    fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Reported location saved'));
     expect(invalidate).toHaveBeenCalled();
     const patch = JSON.parse(fetch.mock.calls.find(([, request]) => request.method === 'PATCH')![1].body as string);
@@ -50,10 +52,10 @@ describe('reported location editor', () => {
   it.each([401, 403, 404, 409, 422, 503])('does not retry failed dispatch %s', async status => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({}, status));
     vi.stubGlobal('fetch', fetch); setup(); openAndFill();
-    fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/no longer valid|changed or disappeared|unknown/));
     expect(screen.getByRole('status')).not.toHaveTextContent('saved');
-    expect(screen.getByRole('button', { name: 'Save reported location' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
     expect(fetch).toHaveBeenCalledTimes(3);
     if (status === 503) expect(screen.getByRole('status')).toHaveTextContent('unknown');
   });
@@ -61,7 +63,7 @@ describe('reported location editor', () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({}, status));
     vi.stubGlobal('fetch', fetch); setup(); openAndFill();
     fireEvent.change(screen.getByLabelText('Actual rack (optional)'), { target: { value: 'rack' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Restricted names and choices were removed'));
     expect(screen.queryByText('Restricted rack name')).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue('rack')).not.toBeInTheDocument();
@@ -71,7 +73,7 @@ describe('reported location editor', () => {
     let resolve!: (value: unknown) => void;
     const fetch = vi.fn().mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
-    const view = setup(); openAndFill(); fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
+    const view = setup(); openAndFill(); fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(resolve).toBeDefined());
     if (event === 'session') view.session.invalidate();
     if (event === 'hidden') {
@@ -92,7 +94,7 @@ describe('reported location editor', () => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
     const view = setup(); openAndFill();
     view.rerender(<InventoryOperationContext.Provider value={view.session}><QueryClientProvider client={view.client}><DevicePlacementEdit device={{ ...device, metadata: { ...device.metadata, resourceVersion: '8' } }} locations={[rack]} /></QueryClientProvider></InventoryOperationContext.Provider>);
-    expect(screen.getByRole('button', { name: 'Save reported location' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
     expect(fetch).not.toHaveBeenCalled();
   });
   it.each(['session', 'navigation', 'pagehide/pageshow'])('revokes a delayed reference read across %s', async event => {
@@ -101,7 +103,7 @@ describe('reported location editor', () => {
     vi.stubGlobal('fetch', fetch);
     const view = setup(); openAndFill();
     fireEvent.change(screen.getByLabelText('Actual rack (optional)'), { target: { value: 'rack' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(resolve).toBeDefined());
     if (event === 'session') view.session.invalidate();
     if (event === 'navigation') view.unmount();
@@ -115,13 +117,13 @@ describe('reported location editor', () => {
     let resolve!: (value: unknown) => void;
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
-    const view = setup(); openAndFill(); fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
+    const view = setup(); openAndFill(); fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(resolve).toBeDefined());
     view.session.invalidate(); resolve(response(device));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('outcome is unknown'));
-    expect(screen.getByRole('button', { name: 'Save reported location' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
     expect(fetch).toHaveBeenCalledTimes(3);
-    fireEvent.click(screen.getByRole('button', { name: 'Close location form' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave form' }));
     expect(screen.getByRole('button', { name: 'Add reported location' })).toBeDisabled();
   });
   it('disables editing for denied permission and legacy Flux', () => {

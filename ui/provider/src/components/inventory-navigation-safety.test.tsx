@@ -2,7 +2,7 @@ import { findEnabledButton } from '../test/enabled-button';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { InventoryManagement } from './inventory-management';
 import { InventorySessionBoundary } from './inventory-session-boundary';
 import DeviceInventoryList from '../pages/device-inventory-list';
@@ -11,6 +11,8 @@ import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-mana
 const values = { name: 'independent-review', namespace: 'default', displayName: 'Original', facility: '', height: '' };
 const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic-only', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data, error: 'PRIVATE DIAGNOSTIC' }) });
+beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
+
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('real directory category Link followed by fresh create remains usable', async () => {
@@ -24,7 +26,7 @@ it('real directory category Link followed by fresh create remains usable', async
   render(<RouterProvider router={router} />);
   fireEvent.click(await screen.findByRole('link', { name: /Facilities/ }));
   await open(false);
-  fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   expect(await screen.findByRole('status')).not.toHaveTextContent('No write was dispatched');
   expect(writes).toEqual(['POST']);
 });
@@ -41,7 +43,7 @@ it.each([false, true])('same-principal query navigation retains usable managemen
   await findEnabledButton({ name: editing ? 'Edit display name' : 'Create facility' });
   await act(async () => { await router.navigate('/?kind=Facility'); });
   await open(editing);
-  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await screen.findByRole('status');
   expect(writes).toEqual([editing ? 'PATCH' : 'POST']);
 });
@@ -61,7 +63,7 @@ it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(tran
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
   await open(editing);
-  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await waitFor(() => expect(release).toBeDefined());
   await act(async () => {
     if (transition === 'revalidation') await router.revalidate();
@@ -71,7 +73,7 @@ it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(tran
   await act(async () => release!(response({ status: { allowed: true } })));
   expect(writes).toEqual([]);
   expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await screen.findByText(editing ? 'Display name saved.' : 'Facility record created.');
   expect(writes).toEqual([editing ? 'PATCH' : 'POST']);
 });
@@ -104,9 +106,9 @@ it.each(['create-review', 'edit-review', 'edit-get', 'create-dispatch', 'edit-di
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: principal } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
   await open(editing);
-  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await waitFor(() => expect(release).toBeDefined());
-  expect(screen.getByRole('button', { name: 'Close form' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
   principal = 'staff-b';
   await act(async () => { await router.revalidate(); });
   principal = 'staff-a';
@@ -116,7 +118,7 @@ it.each(['create-review', 'edit-review', 'edit-get', 'create-dispatch', 'edit-di
   expect(writes).toEqual(mode.endsWith('dispatch') ? ['staff-a'] : []);
   expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Display name')).toHaveValue('Independent safe input');
-  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await screen.findByText(editing ? 'Display name saved.' : 'Facility record created.');
   expect(writes).toHaveLength(mode.endsWith('dispatch') ? 2 : 1);
 });
@@ -135,14 +137,14 @@ it('closing a conflicted edit and reopening explicitly takes the new baseline', 
   await open(true);
   current = { ...original, metadata: { ...original.metadata, resourceVersion: '2' }, spec: { ...original.spec, displayName: 'Other operator' } };
   mounted.rerender(content());
-  fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByText(/already exists, changed/);
   expect(patches).toEqual([]);
-  fireEvent.click(screen.getByRole('button', { name: 'Close form' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   fireEvent.click(screen.getByRole('button', { name: 'Edit display name' }));
   expect(screen.getByLabelText('Display name')).toHaveValue('Other operator');
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Reviewed replacement' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByText('Display name saved.');
   expect(patches[0].find(operation => operation.path === '/metadata/resourceVersion')?.value).toBe('2');
 });
@@ -158,11 +160,11 @@ it.each([401, 403, 404, 503])('submit-time SSAR HTTP %s fails closed for both cr
     }));
     render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></QueryClientProvider>);
     await open(editing);
-    fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+    fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
     await screen.findByRole('status');
     expect(writes).toEqual([]);
     expect(screen.getByLabelText('Display name')).toHaveValue('Independent safe input');
-    expect(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' })).toBeDisabled();
     expect(screen.queryByText('PRIVATE DIAGNOSTIC')).not.toBeInTheDocument();
     cleanup();
   }

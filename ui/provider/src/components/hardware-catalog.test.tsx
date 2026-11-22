@@ -42,19 +42,18 @@ describe('hardware catalog readers', () => {
       return response({ metadata: { uid: 'new-device' } });
     }));
     render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} claims={[claim]} catalog={[manufacturer, model]} /></QueryClientProvider>);
-    fireEvent.click(screen.getByText('Manage devices'));
     fireEvent.click(await findEnabledButton({ name: 'Create device' }));
     for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Shared catalog model (optional)', 'model-uid']]) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
     await screen.findByText(/Related inventory is no longer readable/);
     expect(screen.getByLabelText('Shared catalog model (optional)')).toHaveValue('unavailable');
     expect(screen.getByRole('option', { name: /Selected catalog unavailable/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Model')).toHaveValue('Observed model');
     expect(screen.queryByText(/Private canonical vendor/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Create device record' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
+    expect(screen.getByRole('button', { name: 'Create record' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
     expect(writes).toEqual([]);
   });
 
@@ -108,6 +107,7 @@ describe('hardware catalog readers', () => {
     const result = show(inventory);
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor|private-normalized/);
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Private model label' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
     expect(screen.queryByRole('link', { name: device.spec.displayName })).not.toBeInTheDocument();
   });
 
@@ -126,6 +126,7 @@ describe('hardware catalog readers', () => {
     const { inventory, model } = fixture();
     show(inventory, '?kind=Manufacturer');
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'private old vendor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
     expect(screen.getByRole('link', { name: 'Private vendor label' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: /Device types/ }));
     fireEvent.click(screen.getByRole('link', { name: model.spec.displayName }));

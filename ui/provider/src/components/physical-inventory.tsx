@@ -1,8 +1,8 @@
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableCaption } from '@datum-cloud/datum-ui/table';
-import { Title, titleVariants } from '@datum-cloud/datum-ui/typography';
+import { Title } from '@datum-cloud/datum-ui/typography';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { InventoryNavigation, sections } from './inventory-navigation';
 import {
   modelLabel,
@@ -20,12 +20,13 @@ import { InventoryManagement } from './inventory-management';
 import { DevicePlacementEdit } from './device-placement-edit';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
-import { FacilityOverview, RackOverview, inventoryHref as href } from './inventory-location';
+import { FacilityOverview, RackOverview, inventoryHref } from './inventory-location';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
 import { facilityIdentifiers, facilitySites, siteFacilities } from '../lib/site-membership';
 import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { InventoryDirectoryHeading, InventoryToolbar } from './inventory-directory-heading';
+import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
 
 type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -89,12 +90,22 @@ function Components({ components }: { components: PhysicalComponent[] }) {
 export function PhysicalInventory({ inventory: source, onRetry, showNavigation = true }: { inventory: Inventory; onRetry?: () => void; showNavigation?: boolean }) {
   const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
   const inventory = redactInventory(source, readIssues);
-  const [params] = useSearchParams();
-  const [search, setSearch] = useState('');
-  const [locationFilter, setLocationFilter] = useState('');
-  const [modelFilter, setModelFilter] = useState('');
-  const heading = useRef<HTMLHeadingElement>(null);
+  const [params, setParams] = useSearchParams();
+  const { pathname } = useLocation();
+  const search = params.get('q') ?? '';
+  const [searchDraft, setSearchDraft] = useState(search);
+  const locationFilter = params.get('location') ?? '';
+  const modelFilter = params.get('model') ?? '';
+  const setFilter = (key: string, value: string) => setParams(previous => { const next = new URLSearchParams(previous); if (value) next.set(key, value); else next.delete(key); return next; }, { replace: true });
+  const setLocationFilter = (value: string) => setFilter('location', value);
+  const setModelFilter = (value: string) => setFilter('model', value);
+  const heading = useRef<HTMLDivElement>(null);
   const section = sections.find((item) => item.kind === params.get('kind')) ?? sections[0];
+  const href = (kind: string, namespace?: string, name?: string) => {
+    const next = new URLSearchParams(inventoryHref(kind, namespace, name));
+    if (kind === section.kind) for (const key of ['q', 'location', 'model']) { const value = params.get(key); if (value) next.set(key, value); }
+    return `?${next}`;
+  };
   const entries: RecordEntry[] = [
     ...inventory.slots.flatMap((slot) => slot.devices.map((record) => ({ kind: 'Device' as const, record }))),
     ...inventory.unboundDevices.map((record) => ({ kind: 'Device' as const, record })),
@@ -102,6 +113,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
     ...inventory.physical.map((record) => ({ kind: record.kind, record })),
   ];
   const selectedName = params.get('record');
+  useEffect(() => { setSearchDraft(search); }, [search, section.kind, selectedName]);
   const selectedNamespace = params.get('namespace') ?? INVENTORY_NAMESPACE;
   const selected = entries.find(
     (entry) =>
@@ -110,9 +122,6 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       (entry.record.metadata.namespace ?? '') === selectedNamespace,
   );
   useEffect(() => {
-    setSearch('');
-    setLocationFilter('');
-    setModelFilter('');
     if (selectedName !== null) heading.current?.focus();
   }, [section.kind, selectedName, selectedNamespace]);
   const find = (kind: Kind, namespace: string | undefined, name: string) =>
@@ -578,6 +587,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       compact
       key={`${section.kind}/${selectedNamespace}/${selectedName ?? ''}`}
       kind={section.kind as ManagedKind}
+      createHref={selectedName === null && ['Device', 'Cable', 'DeviceClaim'].includes(section.kind) ? `${inventoryDirectoryPath(pathname)}/create/${section.kind === 'DeviceClaim' ? 'installation-plan' : section.kind.toLowerCase()}${inventoryReturnSearch(params.toString(), section.kind)}` : undefined}
       issues={inventory.issues}
       record={selected ? { ...selected.record, kind: selected.kind } as ManagedRecord : undefined}
       facilities={inventory.physical.filter(record => record.kind === 'Facility')}
@@ -597,9 +607,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           {inventory.issues?.[section.kind] ? <><InventoryDirectoryHeading section={section} onRetry={onRetry} management={management} /><InventoryToolbar section={section} /><InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /></> : selectedName !== null ? (
             <>
               <div className="inventory-list-heading"><Link to={href(section.kind)}>← Back to {section.title.toLowerCase()}</Link>{onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>}</div>
-              <div className="inventory-topline"><h2 className={titleVariants({ level: 4 })} ref={heading} tabIndex={-1}>
-                {selected ? recordName(selected) : 'Record not found'}
-              </h2>{management}</div>
+              <div ref={heading} tabIndex={-1}><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} directory={href(section.kind)} actions={management} /></div>
               {placementEditor}
               {selected ? (
                 <>
@@ -618,7 +626,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           ) : (
             <>
               <InventoryDirectoryHeading section={section} onRetry={onRetry} management={management} count={`${matching.length} of ${records.length} records`} />
-              <InventoryToolbar section={section} search={search} onSearch={setSearch} location={locationFilter} onLocation={inventory.issues?.Facility ? undefined : setLocationFilter} facilities={inventory.physical.filter(record => record.kind === 'Facility').map(record => ({ value: slotKey(record.metadata.namespace, record.metadata.name), label: record.spec.displayName || record.metadata.name }))} model={modelFilter} onModel={setModelFilter} models={filterOptions} />
+              <InventoryToolbar section={section} search={searchDraft} onSearch={setSearchDraft} onApplySearch={() => setFilter('q', searchDraft)} location={locationFilter} onLocation={inventory.issues?.Facility ? undefined : setLocationFilter} facilities={inventory.physical.filter(record => record.kind === 'Facility').map(record => ({ value: slotKey(record.metadata.namespace, record.metadata.name), label: record.spec.displayName || record.metadata.name }))} model={modelFilter} onModel={setModelFilter} models={filterOptions} onClear={() => setParams(previous => { const next = new URLSearchParams(previous); next.delete('location'); next.delete('model'); return next; }, { replace: true })} />
               {matching.length ? (
                 <div className="inventory-scroll" tabIndex={0} role="region" aria-label={`${section.title} table scroll area`}>
                   <Table aria-label={section.title} data-testid="fleet-plugin-inventory-table">
@@ -684,7 +692,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
                       : `This inventory has no ${section.title.toLowerCase()} records yet. Other categories may still contain hardware or plans.`}
                   </p>
                   {search && (
-                    <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={() => setSearch('')}>
+                    <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={() => setFilter('q', '')}>
                       Clear search
                     </Button>
                   )}

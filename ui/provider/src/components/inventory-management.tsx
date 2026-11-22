@@ -11,12 +11,19 @@ import { InventoryHardwareFields } from './inventory-hardware-fields';
 import type { Inventory } from '../inventory';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { INVENTORY_NAMESPACE, inInventoryNamespace } from '../lib/inventory-namespace';
+import { useNavigate } from 'react-router';
+import { confirmInventoryDismissal, InventoryDraftGuard, InventoryForm, InventoryFormSurface } from './inventory-form-surface';
 
 export function InventoryManagement(props: ComponentProps<typeof InventoryManagementForm>) {
   return <InventoryManagementForm {...props} />;
 }
 
-function InventoryManagementForm({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], catalog: sourceCatalog = [], compact = false, issues: sourceIssues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; catalog?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
+function CreateTaskButton({ href, allowed, label }: { href: string; allowed: boolean; label: string }) {
+  const navigate = useNavigate();
+  return <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={() => { if (allowed) void navigate(href); }}>Create {label}</Button>;
+}
+
+function InventoryManagementForm({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], catalog: sourceCatalog = [], compact = false, issues: sourceIssues, createHref, task = false, onDone }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; catalog?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues']; createHref?: string; task?: boolean; onDone?: () => void }) {
   const client = useQueryClient();
   const onReadFailure = useContext(InventoryReadAccessContext);
   const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
@@ -40,6 +47,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
     document.addEventListener('visibilitychange', visibility);
     return () => {
       invalidate();
+      started.current = false;
       window.removeEventListener('pagehide', invalidate);
       document.removeEventListener('visibilitychange', visibility);
     };
@@ -55,12 +63,33 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   const [pending, setPending] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [message, setMessage] = useState('');
+  const [uncertain, setUncertain] = useState(false);
+  const [initial, setInitial] = useState('');
+  const started = useRef(false);
   const [values, setValues] = useState<InventoryFormValues>({ name: record?.metadata.name ?? '', namespace, displayName: record?.spec.displayName ?? '', facility: '', height: '' });
   useLayoutEffect(() => {
     scope.current.invalidate(); setBaseline(undefined); setBlocked(true);
   }, [ready, generation, permission.isFetching, visible]);
   const field = (name: keyof InventoryFormValues, value: string) => setValues(previous => ({ ...previous, [name]: value }));
   const kindLabel = kind === 'DeviceClaim' ? 'installation plan' : kind.toLowerCase();
+  function begin() {
+    if (!allowed) return;
+    scope.current = new InventoryOperationScope();
+    const next = { name: record?.metadata.name ?? '', namespace, displayName: record?.spec.displayName ?? '', facility: '', height: '' };
+    if (record) setBaseline(structuredClone(record));
+    setValues(next); setInitial(JSON.stringify(next));
+    setOpen(true); setMessage(''); setBlocked(false); setUncertain(false);
+  }
+  useLayoutEffect(() => {
+    if (task && allowed && !started.current) { started.current = true; begin(); }
+  }, [task, allowed]);
+  const dirty = open && JSON.stringify(values) !== initial;
+  function dismiss() {
+    if (task) { if (!pending) onDone?.(); return; }
+    if (!confirmInventoryDismissal(dirty, pending, uncertain)) return;
+    scope.current.invalidate(); setBaseline(undefined); setOpen(false);
+    setValues({ name: '', namespace, displayName: '', facility: '', height: '' });
+  }
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!allowed || pending || blocked) return;
@@ -79,7 +108,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       setMessage(record ? 'Display name saved.' : `${kind} record created.`); setOpen(false);
       await client.invalidateQueries({ queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT] });
     } catch (error) {
-      if (error instanceof InventoryOperationInvalidated) { setMessage(error.message); setBlocked(true); }
+      if (error instanceof InventoryOperationInvalidated) { setMessage(error.message); setBlocked(true); setUncertain(error.dispatched); }
       else if (error instanceof InventoryReferenceReadError) {
         const denied = readFailureIssues(error);
         setReadIssues(previous => ({ ...previous, ...denied }));
@@ -105,29 +134,18 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       else if (error instanceof ApiError && error.status === 409) { setMessage('The record already exists, changed, or has another writer. Your input is kept here. Refresh and review the record before continuing.'); setBlocked(true); }
       else if (error instanceof ApiError && error.status === 404) { setMessage('A referenced record is no longer available. Your input is kept here. Refresh inventory and review the references before continuing.'); setBlocked(true); }
       else if (error instanceof ApiError && error.status === 422) setMessage('The API could not accept these values. Review the fields and try again.');
-      else { setMessage('The save outcome is unknown. Your input is kept here. Check inventory before attempting another save; do not assume the change failed.'); setBlocked(true); }
+      else { setMessage('The save outcome is unknown. Your input is kept here. Check inventory before attempting another save; do not assume the change failed.'); setBlocked(true); setUncertain(true); }
     } finally { setPending(false); }
   }
-  const Container = compact ? 'section' : 'details';
-  return <Container className={`inventory-management ${compact ? 'inventory-management-compact' : ''}`}>
-    {!compact && <summary>Manage {record ? 'this record' : `${kind === 'Facility' ? 'facilities' : `${kindLabel}s`}`}</summary>}
-    <div className="inventory-management-controls">
-    <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed || open} onClick={() => {
-      if (!allowed) return;
-      scope.current = new InventoryOperationScope();
-      if (record) {
-        const snapshot = structuredClone(record);
-        setBaseline(snapshot);
-        setValues(previous => ({ ...previous, name: snapshot.metadata.name, displayName: snapshot.spec.displayName ?? '', namespace: snapshot.metadata.namespace ?? '' }));
-      }
-      setOpen(true); setMessage(''); setBlocked(false);
-    }}> {record ? 'Edit display name' : `Create ${kindLabel}`} </Button>
-    </div>
-    <p role="status" className="inventory-management-status">{message || (!editable ? 'Display-name editing requires a portal-owned record. Other records need ownership review.' : !ready || permission.isFetching ? 'Checking management access…' : dependenciesUnavailable ? 'Related records are unavailable, not empty. Creation requires viewing access to its references.' : permission.error instanceof ApiError && permission.error.status === 401 ? 'Your session expired. Sign in again through the staff portal.' : open && blocked ? 'Close and reopen this form to continue.' : !visible ? 'Viewing and management access are separate. Ask your administrator for physical-inventory management access, or retry after a temporary failure.' : '')}</p>
-    {open && permission.data === true && !permission.error && !issues[kind] && <form onSubmit={save} className="inventory-form">
+  const status = <p role="status" className="inventory-management-status">{message || (!editable ? 'Display-name editing requires a portal-owned record. Other records need ownership review.' : !ready || permission.isFetching ? 'Checking management access…' : dependenciesUnavailable ? 'Related records are unavailable, not empty. Creation requires viewing access to its references.' : permission.error instanceof ApiError && permission.error.status === 401 ? 'Your session expired. Sign in again through the staff portal.' : open && blocked ? 'Close and reopen this form to continue.' : !visible ? 'Viewing and management access are separate. Ask your administrator for physical-inventory management access, or retry after a temporary failure.' : '')}</p>;
+  if (createHref && !record) return <section className="inventory-management inventory-management-compact"><div className="inventory-management-controls"><CreateTaskButton href={createHref} allowed={allowed} label={kindLabel} /></div>{status}</section>;
+  return <section className={`inventory-management ${compact ? 'inventory-management-compact' : ''}`}>
+    {open && <InventoryDraftGuard dirty={dirty} pending={pending} uncertain={uncertain} />}
+    <InventoryFormSurface open={open && permission.data === true && !permission.error && !issues[kind]} task={task} title={record ? 'Edit display name' : `Create ${kindLabel}`} status={status} onDismiss={dismiss} trigger={<Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={begin}>{record ? 'Edit display name' : `Create ${kindLabel}`}</Button>}>
+    <InventoryForm onSubmit={save} message={message}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <p>{record ? 'Only the display name changes. Identity, placement, geometry, connections, and history remain untouched.' : 'Create a physical record only. This does not verify equipment, reserve space, or provision hardware.'}</p>
-      {!record && <Label>Record name<Input required maxLength={253} value={values.name} onChange={event => field('name', event.target.value)} /></Label>}
+      {!record && <Label>Record name<Input required pattern="[a-z0-9]([a-z0-9.-]*[a-z0-9])?" maxLength={253} value={values.name} onChange={event => field('name', event.target.value)} /></Label>}
       <Label>Display name<Input required maxLength={253} value={values.displayName} onChange={event => field('displayName', event.target.value)} /></Label>
       {!record && (kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim') && <InventoryHardwareFields kind={kind} values={values} onChange={setValues} namespace={namespace} claims={claims} devices={devices} feeds={feeds} locations={[...facilities, ...racks]} catalog={catalog} />}
     {!record && kind === 'Cable' && (issues?.Device || issues?.PowerFeed) && <p>Some endpoint records are unavailable. Only readable equipment and power feeds are offered; missing choices do not mean those records are absent.</p>}
@@ -137,7 +155,9 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
         <Label>Rack height (U, optional)<Input type="number" min={1} max={100} step={1} value={values.height} onChange={event => field('height', event.target.value)} /></Label><p className="inventory-muted">Leave height blank if unknown. A rack record does not establish free space.</p>
       </>}
       </fieldset>
-      <div className="flex flex-wrap gap-3"><Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || blocked || pending}>{pending ? 'Saving…' : record ? 'Save display name' : `Create ${kindLabel} record`}</Button><Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!ready || pending} onClick={() => setOpen(false)}>Close form</Button></div>
-    </form>}
-  </Container>;
+      <div className="inventory-form-actions"><Button type="secondary" theme="outline" size="small" htmlType="button" disabled={pending} onClick={dismiss}>{uncertain ? 'Leave form' : 'Cancel'}</Button><Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || blocked || pending}>{pending ? 'Saving…' : record ? 'Save changes' : 'Create record'}</Button></div>
+    </InventoryForm>
+    </InventoryFormSurface>
+    {task && !open && <Button type="secondary" theme="outline" htmlType="button" onClick={onDone}>Back to inventory</Button>}
+  </section>;
 }

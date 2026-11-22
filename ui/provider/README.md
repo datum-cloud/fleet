@@ -33,7 +33,13 @@ Operations in the navigation. The page has four tabs:
   remain visible. Missing claims do not hide hardware, and historical
   registrations do not establish an active device. The original `inventory/:namespace/:claim`
   route remains available for existing `default` links. Authorized manual management uses
-  the existing guarded forms; Site membership and premises identifiers remain
+  focused Datum dialogs for Facility/Rack creation, display-name editing, and
+  separate reported-location correction. Device/Cable/installation-plan creation
+  uses `inventory/create/device`, `inventory/create/cable`, and
+  `inventory/create/installation-plan` task pages, with explicit back/cancel and
+  URL-preserved list filters. Dirty dismissal requires confirmation; pending and
+  unknown writes never imply cancellation or success. All existing guarded write
+  handlers and default-only scope remain. Site membership and premises identifiers remain
   direct API operations. Records are not managed through Git. See the
   [Site–Facility contract](../../docs/development/site-facility-relationship.md).
 

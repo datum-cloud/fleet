@@ -28,7 +28,8 @@ access-dependent navigation descriptions in the historical phase notes below.
   until usable; successful authorization adds no “access checked” clutter.
   Explanations for ownership restrictions, denied access, unavailable references,
   expired sessions, and uncertain saves remain visible. Long failure explanations
-  may wrap rather than being clipped. Forms expand only after an explicit action.
+  may wrap rather than being clipped. The composition follow-up below replaces
+  expanding forms with focused dialogs and child task pages.
 - Existing immutable edit baselines, submit-time authorization, read/write
   generation guards, principal/logout and hidden/pagehide fences are retained.
   Visible window blur/focus remains a complete no-op, including draft, DOM,
@@ -47,7 +48,12 @@ mutation guards. DOM/CSS structure checks do not prove pixel geometry in the
 authenticated staff portal. No browser login manipulation, live writes, deployment,
 or authenticated visual acceptance was performed for this update.
 
-### Platform composition follow-up (not implemented)
+### Platform composition follow-up (implemented)
+
+Implemented from PR129's exact head
+`0644a207f1f7200c6df90e54ad00c92b2455a15c`; PR129 subsequently merged into
+`feat/manual-inventory-records` as `387397be709be2518bb74e264d575c6b8475f82a`.
+This follow-up changes presentation and navigation, not domain APIs or authority.
 
 The platform audit confirms that the mismatch is page/form composition, not a
 missing Datum primitive library. Source exemplars reviewed from the supplied audit
@@ -59,27 +65,63 @@ archives (these are source observations, not authenticated visual acceptance):
 | [Cloud portal domain form](https://github.com/datum-cloud/cloud-portal/blob/7456e469a8589d03afe13623b15992e712563d0f/app/features/edge/domain/domain-form-dialog.tsx) | Focused controlled `Form.Dialog`, closing after an acknowledged successful mutation | Separate focused display-name and reported-location dialogs; compact Facility/Rack create dialogs |
 | [Infra configurator part form](https://github.com/datum-cloud/infra-configurator/blob/25e5dc7d26ba892643f7dd7dadbc8711e4b1abe8/src/components/catalog/part-form-dialog.tsx) | Controlled Datum Dialog with an explicit viewport height cap and overflow scrolling | Bound dialog scrolling and keep explicit Cancel / Create record / Save changes actions accessible |
 
-Device, Cable, and installation-plan creation should move to dedicated child task
-routes rather than expanding the directory. Inline forms intentionally remain in
-this namespace/layout PR: migrating their mount points and navigation lifecycle
-at the same time would change the operation fences and immutable edit baselines
-this change must preserve. This PR does **not** claim whole-platform parity or
-completion of the user's non-expanding-form experience.
+- Directory, details, and task pages use a local composition of Datum Breadcrumb
+  and PageTitle, with explicit accessible headings and stable action/status slots.
+  Existing line-style Bare Metal tabs and nine inventory categories remain; no
+  new global navigation or unsupported Activity/audit surface is added.
+- Facility/Rack creation and portal-owned Facility/Rack/Device/Cable display-name
+  edits use controlled Datum Dialog. Reported-location correction is a separate
+  dialog: correcting an observation never means a physical move or reservation.
+  These surfaces no longer expand the directory or detail page.
+- Device, Cable, and installation-plan creation use
+  `inventory/create/device`, `inventory/create/cable`, and
+  `inventory/create/installation-plan`. The manifest and federation exposure
+  register the child routes alongside the unchanged legacy claim route. Unsupported
+  task kinds and foreign namespace URLs fail closed before reads or writes.
+- `q`, `location`, and `model` directory filters are URL-backed. Task/back links
+  retain only those filters and the relevant kind, not arbitrary redirect targets
+  or foreign scope. Same-category record/back links preserve filters. Back/forward
+  and direct task URLs work without storing drafts in browser storage or URLs.
+  Search applies on Enter or **Apply search**; keystrokes remain local so host
+  loader revalidation cannot interrupt typing or weaken session fences.
+- Dialogs provide focus trapping/restoration through Datum's Radix-backed primitive,
+  viewport-bounded scrolling, and explicit Cancel / Create record / Save changes.
+  Native field errors have an accessible summary, field descriptions, and focus
+  links; failed saves focus a summary while sanitized status stays visible.
+- Dirty dismissal (Cancel, Escape, outside click, and router navigation) requests
+  browser confirmation. Reload/close uses `beforeunload`. Pending dialog dismissal
+  is disabled. Explicit navigation during a pending write requires a separate
+  warning that leaving does not cancel the write. Unknown results keep the form
+  open and disabled, with **Leave form**, not Cancel; leaving requires an explicit
+  unknown-outcome warning. No retry or success is inferred from dismissal.
+- Existing exact scopes, captured UID/resourceVersion baselines, after-await
+  checks, denied-reference redaction, real hidden/logout/principal fences, and
+  inert visible blur/focus remain. Session boundaries still discard private drafts;
+  the router guard does not intercept explicit logout routes. Verification Unknown remains visible.
 
-That follow-up must add dirty-dismissal protection, dialog focus trap and return,
-bounded scrolling, and explicit dismissal coverage. Cancel after dispatch must
-not imply cancellation of a write; unknown results must neither auto-close as
-success nor encourage an automatic retry. Retain separate label/location writes,
-all after-await guards, real hidden/logout/denial fences, and no-op visible focus.
-Keep verification Unknown visible; do not invent an Activity/history API.
+The inspected [staff-portal federation host](https://github.com/datum-cloud/staff-portal/blob/a0c4cd3e4bd9e0343ffe3310caaa25b160073b41/app/modules/plugins/client/federation-host.ts)
+shares only Datum badge, button, card, icons, and skeleton, alongside React,
+React DOM, router, and query singletons. Dialog, Breadcrumb, PageTitle, and the
+existing field primitives are bundled from Fleet's installed Datum UI; no new
+dependency or shared-module declaration is added. Controlled Dialog wraps the
+existing guarded form handlers instead of adopting a new submission owner.
+Portal `Table.Client` and `useTableUrlAdapter` remain application-local and are
+not imported. The host's nested plugin Routes accept the additive task exposure.
 
-The current Fleet federation configuration shares only Datum badge, button, card,
-icons, and skeleton subpaths. This PR adds no shared module or dependency.
-Before the follow-up imports Form/Dialog/PageTitle/Breadcrumb, verify the actual
-current staff-portal host contract and decide which subpaths must be bundled;
-`Form` cannot be assumed shared. Portal `Table.Client` and `useTableUrlAdapter`
-are application-local and must not be imported into this remote. No second writer
-or host navigation surface is introduced.
+Validation: provider and consumer suites/typechecks/builds, inventory Go race tests
+with local disposable Kubernetes 1.37.0 envtest assets,
+documentation links, and whitespace. Regression coverage includes all five create
+kinds, all four supported label edits, separate location correction, native field
+validation/focus, dirty dismissal, pending/unknown results, child routes/history,
+default-only crafted URLs, StrictMode task activation, permission changes, and session transitions. Existing
+real-handler tests continue to cover exact write bodies and operation fencing.
+Local Chromium checks use only a temporary synthetic fetch harness: desktop and
+390px mobile layout, dialog focus/dirty Escape/restoration, task routing, no page
+overflow, and a scrollable location dialog capped at 90dvh. The harness is not
+shipped. These are synthetic UI/accessibility checks, **not authenticated staff
+portal acceptance**. No login manipulation, live mutation, deployment, or IAM
+change occurred. Full authenticated/federated acceptance, catalog editing,
+backend namespace restriction, and operational provisioning remain outside scope.
 
 ## Historical implementation phases
 

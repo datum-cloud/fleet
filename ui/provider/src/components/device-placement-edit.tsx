@@ -11,6 +11,7 @@ import { canCorrectPlacement, correctDevicePlacement, placementFields, type Plac
 import { useInventoryPermission } from '../lib/inventory-management';
 import { InventoryOperationContext, InventoryOperationGenerationContext, InventoryOperationReadyContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
+import { confirmInventoryDismissal, InventoryDraftGuard, InventoryForm, InventoryFormSurface } from './inventory-form-surface';
 
 export function DevicePlacementEdit(props: ComponentProps<typeof DevicePlacementForm>) {
   return <DevicePlacementForm {...props} />;
@@ -30,6 +31,8 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
   const [blocked, setBlocked] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [message, setMessage] = useState('');
+  const [uncertain, setUncertain] = useState(false);
+  const [initial, setInitial] = useState('');
   const [denied, setDenied] = useState<Inventory['issues']>({});
   const unavailable = { ...issues, ...denied };
   const namespace = device.metadata.namespace ?? '';
@@ -73,7 +76,7 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     } catch (error) {
       setBlocked(true);
       setNeedsRefresh(true);
-      if (error instanceof InventoryOperationInvalidated) setMessage(error.message);
+      if (error instanceof InventoryOperationInvalidated) { setMessage(error.message); setUncertain(error.dispatched); }
       else if (error instanceof InventoryReferenceReadError) {
         const failures = readFailureIssues(error);
         setDenied(previous => ({ ...previous, ...failures }));
@@ -85,14 +88,20 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
       } else if (error instanceof ApiError && error.status === 422) { setBlocked(false); setNeedsRefresh(false); setMessage('Review the location, geometry, observation time, reason, and evidence. The API did not accept these values.'); }
       else if (error instanceof ApiError && [401, 403].includes(error.status)) setMessage('Session or management access is no longer valid. Reopen inventory after access is restored.');
       else if (error instanceof ApiError && [404, 409].includes(error.status)) setMessage('The Device or a reference changed or disappeared. Refresh and reopen the form; do not retry this baseline.');
-      else setMessage('The save outcome is unknown. Check the Device before another attempt; do not retry blindly.');
+      else { setMessage('The save outcome is unknown. Check the Device before another attempt; do not retry blindly.'); setUncertain(true); }
     } finally { setPending(false); }
   }
+  const dirty = open && JSON.stringify(fields) !== initial;
+  function dismiss() {
+    if (!confirmInventoryDismissal(dirty, pending, uncertain)) return;
+    scope.current.invalidate(); setBaseline(undefined); setOpen(false); setFields(placementFields());
+  }
+  const status = <p role="status" className="inventory-management-status">{message || (!editable ? 'Legacy GitOps-managed or unavailable Devices are outside this editor.' : !ready || permission.isFetching ? 'Checking management access…' : open && blocked ? 'Close and reopen this form to continue.' : !permitted ? 'Device management permission must be confirmed before correcting location.' : '')}</p>;
   return <section className="inventory-management" aria-label="Correct reported location">
     <Title as="h3" level={5}>Reported location</Title>
     <p>Correct a record, not a physical move, installation handover, or reservation. Identity and claim binding stay unchanged. Blank geometry means unknown; model and claim dimensions are not copied.</p>
-    <p role="status" className="inventory-management-status">{message || (!editable ? 'Legacy GitOps-managed or unavailable Devices are outside this editor.' : !ready || permission.isFetching ? 'Checking management access…' : open && blocked ? 'Close and reopen this form to continue.' : !permitted ? 'Device management permission must be confirmed before correcting location.' : '')}</p>
-    <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed || open || needsRefresh} onClick={() => {
+    {open && <InventoryDraftGuard dirty={dirty} pending={pending} uncertain={uncertain} />}
+    <InventoryFormSurface open={open && !!permitted} title="Correct reported location" status={status} onDismiss={dismiss} trigger={<Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed || needsRefresh} onClick={() => {
       if (!allowed) return;
       scope.current = new InventoryOperationScope();
       setOpen(true);
@@ -100,11 +109,11 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
       const next = placementFields(device.spec.reportedPlacement);
       if (unavailable.Facility) next.facility = '';
       if (unavailable.Rack) next.rack = '';
-      setFields(next); setBlocked(false); setMessage('');
-    }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</Button>
-    {open && permitted && <form className="inventory-form" onSubmit={save}>
+      setFields(next); setInitial(JSON.stringify(next)); setBlocked(false); setMessage(''); setUncertain(false);
+    }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</Button>}>
+    <InventoryForm onSubmit={save} message={message}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
-      <p>Authenticated actor history uses existing resource audit logs.</p>
+      <p>Record an observation, not a physical move or reservation. Verification remains separate.</p>
       <Label>Actual facility (optional)<select value={fields.facility} disabled={!!unavailable.Facility} onChange={event => field('facility', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Facility').map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
       <Label>Actual rack (optional)<select value={fields.rack} disabled={!!unavailable.Rack} onChange={event => field('rack', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
       <Label>Reported position (U)<Input type="number" min="1" max="100" step="any" value={fields.position} onChange={event => field('position', event.target.value)} /></Label>
@@ -117,8 +126,8 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
       <Label>Evidence reference<Input required maxLength={1024} value={fields.reference} onChange={event => field('reference', event.target.value)} /></Label>
       <p>Do not include credentials or secrets in evidence.</p>
       </fieldset>
-      <Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || pending || blocked}>{pending ? 'Saving location…' : 'Save reported location'}</Button>
-      <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!ready || pending} onClick={() => { scope.current.invalidate(); setBaseline(undefined); setOpen(false); }}>Close location form</Button>
-    </form>}
+      <div className="inventory-form-actions"><Button type="secondary" theme="outline" size="small" htmlType="button" disabled={pending} onClick={dismiss}>{uncertain ? 'Leave form' : 'Cancel'}</Button><Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || pending || blocked}>{pending ? 'Saving location…' : 'Save changes'}</Button></div>
+    </InventoryForm>
+    </InventoryFormSurface>
   </section>;
 }

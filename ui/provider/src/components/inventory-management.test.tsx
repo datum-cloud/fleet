@@ -28,24 +28,22 @@ describe('management affordances', () => {
   it('permits an authorized manager to create and confirms only an acknowledged result', async () => {
     create.mockResolvedValue({ metadata: { name: 'example', uid: 'synthetic' } } as never);
     renderManagement();
-    fireEvent.click(screen.getByText('Manage facilities'));
     fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
     fireEvent.change(screen.getByLabelText('Record name'), { target: { value: 'example' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Example' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Facility record created.'));
   });
   it.each([401, 403, 500])('retains safe input without false success on submit failure %s', async status => {
     create.mockRejectedValue(new ApiError(status, 'Raw server error with private information'));
     renderManagement();
-    fireEvent.click(screen.getByText('Manage facilities'));
     fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
     fireEvent.change(screen.getByLabelText('Record name'), { target: { value: 'example' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Unsaved facility' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('input is kept here'));
     expect(screen.getByLabelText('Display name')).toHaveValue('Unsaved facility');
-    expect(screen.getByRole('button', { name: 'Create facility record' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create record' })).toBeDisabled();
     expect(screen.queryByText(/Raw server error|record created/)).not.toBeInTheDocument();
   });
 });

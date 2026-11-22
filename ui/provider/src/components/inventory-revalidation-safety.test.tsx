@@ -2,7 +2,7 @@ import { findEnabledButton } from '../test/enabled-button';
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { InventoryManagement } from './inventory-management';
 import { InventorySessionBoundary } from './inventory-session-boundary';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
@@ -10,6 +10,8 @@ import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-mana
 const values = { name: 'fresh-test', namespace: 'default', displayName: 'Fresh record', facility: 'fresh-test', height: '' };
 const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
+beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
+
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function open(editing: boolean, rack = false) {
@@ -45,7 +47,7 @@ it.each(['same-url', 'replace', 'back-forward', 'revalidate', 'hidden-return', '
     else await router.navigate('/', { replace: navigation === 'replace' });
   });
   await open(editing);
-  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await waitFor(() => expect(writes).toEqual([editing ? 'PATCH' : 'POST']));
   await screen.findByText(editing ? 'Display name saved.' : 'Facility record created.');
 });
@@ -71,7 +73,7 @@ it.each(['create-review', 'rack-get', 'edit-review', 'edit-get', 'create-dispatc
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind={rack ? 'Rack' : 'Facility'} record={editing ? original : undefined} facilities={[original]} /></InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
   await open(editing, rack);
-  const submit = editing ? 'Save display name' : rack ? 'Create rack record' : 'Create facility record';
+  const submit = editing ? 'Save changes' : rack ? 'Create record' : 'Create record';
   fireEvent.click(screen.getByRole('button', { name: submit }));
   await waitFor(() => expect(release).toBeDefined());
   await act(async () => { await router.navigate('/'); });
