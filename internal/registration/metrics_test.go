@@ -204,3 +204,47 @@ func TestTransportExposesLedgerMetrics(t *testing.T) {
 		}
 	}
 }
+
+type blockingGetClient struct {
+	client.Client
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (blocking *blockingGetClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	select {
+	case blocking.entered <- struct{}{}:
+		<-blocking.release
+	default:
+	}
+	return blocking.Client.Get(ctx, key, object, options...)
+}
+
+func TestMetricsRefuseConcurrentScrape(t *testing.T) {
+	handler, _ := fixture(t)
+	controlFixture(t, handler)
+	blocking := &blockingGetClient{Client: handler.Store.Client, entered: make(chan struct{}), release: make(chan struct{})}
+	handler.Store.Client = blocking
+	metrics := handler.Transport()
+	first := make(chan int, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		metrics.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+		first <- recorder.Code
+	}()
+	<-blocking.entered
+	second := httptest.NewRecorder()
+	metrics.ServeHTTP(second, httptest.NewRequest("GET", "/metrics", nil))
+	if second.Code != 503 {
+		t.Fatalf("concurrent scrape: got %d, want 503", second.Code)
+	}
+	close(blocking.release)
+	if code := <-first; code != 200 {
+		t.Fatalf("first scrape: got %d, want 200", code)
+	}
+	third := httptest.NewRecorder()
+	metrics.ServeHTTP(third, httptest.NewRequest("GET", "/metrics", nil))
+	if third.Code != 200 {
+		t.Fatalf("scrape after release: got %d, want 200", third.Code)
+	}
+}

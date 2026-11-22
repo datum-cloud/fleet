@@ -113,15 +113,17 @@ only two segments remain. Every replica reads the same root, so aggregate with
 - `min(fleet_registration_ledger_tail_headroom_bytes) < 100000`: sign `expand`.
 - `min(fleet_registration_ledger_remaining_segments) <= 3`: fires while three
   remain, before only two do. Escalate for the reviewed storage migration.
-- `max(fleet_registration_ledger_readable) == 0`, or the series is absent: the
-  ledger state is unknown. Do not read missing gauges as headroom.
+- `min(fleet_registration_ledger_readable) == 0`, or the series is absent: at
+  least one replica cannot verify the ledger. Do not read missing gauges as
+  headroom.
 - `fleet_registration_ledger_expansion_pending == 1` for more than a few check
   intervals: inspect `/status`, the key and segment state.
 - `fleet_registration_activation_verified == 0` after activation: registration
   is non-admitting; check the fence before signing anything.
 
 Each scrape performs the full verified read, including every segment and fence
-verification against the root API, so use a modest scrape interval. Scraping
+verification against the root API, so use a modest scrape interval. Each
+replica serves one scrape at a time and answers a concurrent scrape with 503. Scraping
 needs a client certificate trusted by the dedicated API-server client CA. That
 certificate can also call admission, so give it only to a restricted scraper,
 never to general monitoring. Sign expansion before exhaustion. A full v1

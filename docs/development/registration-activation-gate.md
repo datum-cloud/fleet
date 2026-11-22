@@ -98,4 +98,7 @@ listener. The gauges are listed in the
 [storage runbook](registration-storage-rollout.md#enforced-budgets). The PDB and
 `maxUnavailable: 0` count TCP-ready pods, which may be non-admitting during
 bootstrap or after a fence change, so they limit voluntary disruption only.
+During a rollout, confirm `fleet_registration_activation_verified` is 1 on each
+new pod before letting old pods drain; the kubelet cannot check it because the
+endpoint needs a client certificate.
 Passing local tests does not satisfy the acceptance gates above.

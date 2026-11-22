@@ -49,10 +49,23 @@ func MetricsHandler(collectors ...prometheus.Collector) http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 }
 
+// maxConcurrentScrapes bounds full verified ledger reads from scrapes so a
+// scraper cannot compete with admission for root API quota.
+const maxConcurrentScrapes = 1
+
 // metricsHandler reads the ledger once per scrape, bound to the scrape's own
-// request context, using the same verified read as /status.
+// request context, using the same verified read as /status. Scrapes beyond
+// maxConcurrentScrapes are refused with 503 rather than queued.
 func (handler *Handler) metricsHandler() http.Handler {
+	inFlight := make(chan struct{}, maxConcurrentScrapes)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		select {
+		case inFlight <- struct{}{}:
+			defer func() { <-inFlight }()
+		default:
+			http.Error(writer, "registration metrics scrape already in progress", http.StatusServiceUnavailable)
+			return
+		}
 		MetricsHandler(ledgerCollector{handler: handler, ctx: request.Context()}).ServeHTTP(writer, request)
 	})
 }
