@@ -6,14 +6,40 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	metavalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestCatalogNamespaceBoundaries(t *testing.T) {
+	for _, namespace := range []string{"a", strings.Repeat("a", 63), "has.dot", strings.Repeat("a", 64)} {
+		t.Run(namespace, func(t *testing.T) {
+			manufacturer, model := catalogRecords()
+			for _, record := range []client.Object{manufacturer, model} {
+				record.SetNamespace(namespace)
+				metadata := metav1.ObjectMeta{Name: record.GetName(), Namespace: namespace}
+				errors := metavalidation.ValidateObjectMeta(&metadata, true, metavalidation.NameIsDNSSubdomain, field.NewPath("metadata"))
+				valid := namespace == "a" || namespace == strings.Repeat("a", 63)
+				if (len(errors) == 0) != valid {
+					t.Fatalf("unexpected metadata validation: %v", errors)
+				}
+				if valid {
+					candidate := object(t, record)
+					if errors := admit(t, candidate["kind"].(string), candidate, nil); len(errors) != 0 {
+						t.Fatal(errors)
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestImportedCatalogCandidatesPassAdmission(t *testing.T) {
 	data, err := os.ReadFile("../../../../hack/testdata/catalog/candidates.json")

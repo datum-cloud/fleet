@@ -108,7 +108,10 @@ def plan(snapshot, mapping, existing, recorded_by, recorded_at):
     fields(mapping, ("revision", "target", "manufacturers", "deviceTypes"))
     target = mapping["target"]
     fields(target, ("project", "namespace", "writer"))
-    if target["writer"] != "DirectAPI" or not name_ok(target["project"]) or not name_ok(target["namespace"]):
+    namespace = target["namespace"]
+    if not isinstance(namespace, str) or not 1 <= len(namespace) <= 63 or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", namespace):
+        raise ValueError("target namespace requires a DNS label of at most 63 characters")
+    if target["writer"] != "DirectAPI" or not name_ok(target["project"]):
         raise ValueError("catalog requires an explicit operator-managed DirectAPI target")
     revision = text(mapping["revision"])
     text(recorded_by)

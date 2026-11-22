@@ -25,6 +25,35 @@ def plan(snapshot, mapping, existing):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_namespace_boundaries(self):
+        for namespace in ("a", "a" * 63, "has.dot", "a" * 64, "", "-a", "a-", "A", None, False):
+            snapshot, mapping, existing = fixture()
+            mapping["target"]["namespace"] = namespace
+            existing["target"]["namespace"] = namespace
+            valid = namespace in ("a", "a" * 63)
+            with self.subTest(namespace=namespace):
+                if valid:
+                    result = plan(snapshot, mapping, existing)
+                    self.assertEqual(2, len(result["items"]))
+                    self.assertTrue(all(item["metadata"]["namespace"] == namespace for item in result["items"]))
+                else:
+                    with self.assertRaises(ValueError):
+                        plan(snapshot, mapping, existing)
+                with tempfile.TemporaryDirectory() as directory:
+                    files = []
+                    for index, value in enumerate((snapshot, mapping, existing)):
+                        path = Path(directory) / f"{index}.json"
+                        path.write_text(json.dumps(value))
+                        files.append(str(path))
+                    result = subprocess.run(["python3", str(Path(catalog.__file__)), "--snapshot", files[0], "--mapping", files[1], "--existing", files[2], "--recorded-by", "synthetic", "--recorded-at", "2026-11-21T01:00:00Z"], capture_output=True, text=True)
+                    self.assertEqual(0 if valid else 1, result.returncode)
+                    report = json.loads(result.stdout)
+                    if valid:
+                        self.assertEqual(2, len(report["items"]))
+                    else:
+                        self.assertTrue(report["quarantined"])
+                        self.assertEqual([], report["items"])
+
     def test_source_id_length_boundaries(self):
         for convert in (str, int):
             for size in (1, 253, 254):

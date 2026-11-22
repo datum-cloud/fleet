@@ -98,6 +98,7 @@ python3 hack/netbox_catalog.py --snapshot /private/netbox.json \
 
 The synthetic [mapping fixture](../../hack/testdata/catalog/mapping.json) shows
 the format. `target` requires `project`, `namespace`, and `writer: DirectAPI`.
+Namespaces must be DNS labels of 1–63 characters, not dotted resource names.
 The Fleet snapshot must attest `collections: [Manufacturer, DeviceType]`, contain
 that same target, and include both complete collections, including empty ones.
 Manufacturer `sourceID` and DeviceType `sourceID`/`manufacturerSourceID` are
@@ -142,8 +143,9 @@ assignment correction/rebinding and accepted-plan revision pinning need follow-u
 
 An explicit direct-API attachment must use the Device's current owner, require
 fresh authorized reads of both same-namespace targets, retain exact inputs, and
-test metadata UID and resourceVersion before adding the reference and advancing
-provenance. UIDs are request preconditions, never spec references. Use Strict
+test metadata UID and resourceVersion before adding the reference. Device
+provenance is optional; attachment does not require advancing or inventing it.
+UIDs are request preconditions, never spec references. Use Strict
 field validation. A failed or uncertain request requires readback, not a blind
 retry. No live attachment is performed here. Correcting an already attached
 reference requires a reviewed compatibility contract; do not weaken identity
