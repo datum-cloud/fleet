@@ -34,7 +34,11 @@ Legacy multiple-version groups are sealed without reinterpretation. Existing
 authoritative update/coalescing rules alone supersede pending versions. The writer
 also rejects dropping registrations, aliases, tombstones or known lifetime identity.
 New Device fences retain Project UID, namespace name/UID and Device name; missing
-legacy fields are not backfilled or proof of safe release.
+legacy fields are not backfilled or proof of safe release. Creates and edits
+require a live namespace. Deletes and finalizer-only updates do not, so a
+terminating provider namespace can drain its Devices. They bind the terminating
+namespace's UID, or the UID already recorded once the namespace is gone, and
+still write a permanent tombstone. Registered Devices remain undeletable.
 
 An operator signs `expand`, binding exact root UID, resourceVersion, epoch,
 authority, sorted provider scope, change ID and reason. The service:
@@ -74,7 +78,7 @@ policies or restore arbitrary storage remain outside the guarantee.
 | Root data including routing/control | 850,000 bytes, below the 1 MiB Secret data limit |
 | Sealed segments | 16 plus the mutable tail; expansion is operator-authorized, not infinite |
 | Signed payload / mounted envelope | 8,192 / 16,384 bytes |
-| Activation audit | Current activation plus seven previous signed activations, never pruned |
+| Activation audit | Current activation plus seven previous signed activations, never pruned; the ninth activation fails (lifetime limit) |
 
 The ordinary stop leaves 100 KB relative to the former ledger cap for safe sealing;
 the root budget additionally accommodates routing/control. A segment is at most
@@ -88,9 +92,14 @@ it is not a throughput qualification. Pod memory is bounded at 512 MiB.
 The mTLS-only `/status` reports tail bytes, headroom, remaining segments, epoch,
 pending state, root UID/RV, scope and verified fence digest, without reservation
 contents or actor data. Parent monitoring must alert below 100,000 bytes headroom
-and before only two segments remain. Sign expansion before exhaustion. At the
-terminal bound, stop protected growth and escalate for a separately reviewed
-storage migration; never increase caps or delete/reset/release records manually.
+and before only two segments remain. Sign expansion before exhaustion. A full v1
+ledger reports `registration ledger is full; sign an expand control request`;
+a full v2 tail with segments left reports `registration growth stopped`. Both
+mean sign `expand` as in step 7 below. Once all 16 segments are sealed, writes
+and `expand` report `registration segments exhausted`: expansion is refused, so
+re-signing it cannot help. At that terminal bound, stop protected growth and
+escalate for a separately reviewed storage migration; never increase caps or
+delete/reset/release records manually.
 Public inventory reads remain unaffected. Denied/timed-out private writes deny
 admission even if reads succeed; uncertain commits stay retained.
 
@@ -114,6 +123,39 @@ Approved trust changes require another exact signed activation; prior signatures
 remain in bounded root audit history. The configured signing key is an operator
 trust boundary, not caller authority; coordinate changes with pending signatures.
 Global capacity fencing and privileged/root-context limitations are unchanged.
+
+### Activation budget is a lifetime limit
+
+The root keeps the current activation plus seven previous ones. The ninth
+activation of a root fails with `activation audit budget exhausted`. Nothing
+prunes or compacts this history, so the limit applies to the root's whole life
+until a separately reviewed compaction migration exists. Every change to the
+pinned fence digest needs a new activation and uses one slot. That includes
+webhook CA rotation (the `caBundle` is part of the digest) and API-server drift
+in defaulted webhook fields after an upgrade. Batch planned trust changes into
+one activation where possible, and count the remaining slots before each one.
+At the cap, admission stays on its current activation while that activation's
+fence still verifies. If the fence has already changed, registration stays
+non-admitting. Do not delete or edit `routing.json`, and do not create a new
+root to reset the count. Escalate for the reviewed compaction migration.
+
+### Rotating the operator signing key
+
+The public key is read once at process startup from `public.pem`, and every
+signature is verified against the key the process currently holds. A pending
+expansion cannot be cancelled, and `ResumeExpansion` re-verifies the pending
+signature against the current key. If the key rotates while an expansion is
+pending, the expansion cannot complete and the root stays fenced. Rotate in
+this order:
+
+1. Fetch `/status` and confirm no expansion is pending. If one is, let it
+   complete under the current key and confirm the epoch advanced. Do not sign
+   a new `expand` until the rotation is finished.
+2. Replace `public.pem` in `fleet-registration-control`, then restart every
+   registration replica, because a running process keeps the key it loaded.
+3. The retained activation was signed by the old key, so the restarted
+   processes stay non-admitting. Sign a fresh `activate` with the new key
+   (step 7 below). This uses one activation slot.
 
 ## Exact staged parent infrastructure contract
 
