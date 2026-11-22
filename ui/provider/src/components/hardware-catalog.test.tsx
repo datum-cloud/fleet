@@ -81,7 +81,7 @@ describe('hardware catalog readers', () => {
   it('prefers available same-namespace catalog without mutating recorded observations or instances', () => {
     const { device, model, inventory } = fixture();
     const before = structuredClone(device);
-    expect(deviceModelLabel(device, inventory)).toBe('Private canonical vendor Private model label');
+    expect(deviceModelLabel(device, inventory)).toBe('Private vendor label Private model label');
     model.spec.displayName = 'Changed model label';
     model.spec.componentTemplates!.push({ id: 'new-port', name: 'New reference port', type: 'NetworkPort' });
     expect(deviceModelLabel(device, inventory)).toContain('Changed model label');
