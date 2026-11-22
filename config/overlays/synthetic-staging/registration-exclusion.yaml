@@ -1,4 +1,11 @@
 $patch: delete
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fleet-registration
+  namespace: fleet-system
+---
+$patch: delete
 apiVersion: apps/v1
 kind: Deployment
 metadata:

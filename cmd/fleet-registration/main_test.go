@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"go.datum.net/fleet/internal/registration"
 )
 
 func TestWebhookRequiresTrustedAPIServerClient(t *testing.T) {
@@ -41,7 +43,10 @@ func TestWebhookRequiresTrustedAPIServerClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) }))
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", registration.MetricsHandler())
+	mux.HandleFunc("/", func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) })
+	server := httptest.NewUnstartedServer(mux)
 	server.TLS = config
 	server.Config.ErrorLog = log.New(io.Discard, "", 0)
 	server.StartTLS()
@@ -60,6 +65,18 @@ func TestWebhookRequiresTrustedAPIServerClient(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
 		t.Fatal("trusted API-server client failed")
+	}
+	if response, err := server.Client().Get(server.URL + "/metrics"); err == nil {
+		response.Body.Close()
+		t.Fatal("unauthenticated metrics transport was accepted")
+	}
+	response, err = trusted.Get(server.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatal("trusted metrics request failed")
 	}
 	untrustedTransport := server.Client().Transport.(*http.Transport).Clone()
 	untrustedTransport.TLSClientConfig.Certificates = server.TLS.Certificates

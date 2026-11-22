@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -86,6 +88,64 @@ func TestPublishedBundlePinsRegistrationImage(t *testing.T) {
 		}
 		if found != (overlay == "management-plane") {
 			t.Fatalf("%s registration deployment presence violates isolation: %v", overlay, found)
+		}
+	}
+}
+
+func TestRegistrationAvailabilityPackaging(t *testing.T) {
+	kustomize, err := exec.LookPath("kustomize")
+	if err != nil {
+		t.Skip("kustomize required")
+	}
+	for _, overlay := range []string{"management-plane", "synthetic-staging"} {
+		output, err := exec.Command(kustomize, "build", filepath.Join("..", "..", "config", "overlays", overlay)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("render %s: %v\n%s", overlay, err, output)
+		}
+		foundBudget, foundDeployment := false, false
+		for _, document := range strings.Split(string(output), "\n---\n") {
+			var object struct {
+				Kind     string
+				Metadata struct{ Name string }
+			}
+			if err := yaml.Unmarshal([]byte(document), &object); err != nil {
+				t.Fatal(err)
+			}
+			if object.Metadata.Name != "fleet-registration" {
+				continue
+			}
+			switch object.Kind {
+			case "PodDisruptionBudget":
+				foundBudget = true
+				var budget policyv1.PodDisruptionBudget
+				if err := yaml.Unmarshal([]byte(document), &budget); err != nil {
+					t.Fatal(err)
+				}
+				if budget.Spec.MinAvailable == nil || budget.Spec.MinAvailable.IntValue() != 1 || budget.Spec.Selector.MatchLabels["app.kubernetes.io/name"] != "fleet-registration" {
+					t.Fatal("registration disruption budget must retain one replica")
+				}
+			case "Deployment":
+				foundDeployment = true
+				var deployment appsv1.Deployment
+				if err := yaml.Unmarshal([]byte(document), &deployment); err != nil {
+					t.Fatal(err)
+				}
+				rolling := deployment.Spec.Strategy.RollingUpdate
+				if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 2 || rolling == nil || rolling.MaxUnavailable == nil || rolling.MaxUnavailable.IntValue() != 0 || rolling.MaxSurge == nil || rolling.MaxSurge.IntValue() != 1 {
+					t.Fatal("registration rollout must retain both existing replicas")
+				}
+				affinity := deployment.Spec.Template.Spec.Affinity
+				if affinity == nil || affinity.PodAntiAffinity == nil || len(affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution) != 1 {
+					t.Fatal("registration replicas must prefer separate hosts")
+				}
+				term := affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm
+				if term.TopologyKey != "kubernetes.io/hostname" || term.LabelSelector.MatchLabels["app.kubernetes.io/name"] != "fleet-registration" {
+					t.Fatal("anti-affinity must target registration replicas by host")
+				}
+			}
+		}
+		if foundBudget != (overlay == "management-plane") || foundDeployment != foundBudget {
+			t.Fatalf("%s registration availability objects violate isolation", overlay)
 		}
 	}
 }

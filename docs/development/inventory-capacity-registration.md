@@ -196,7 +196,13 @@ existing v1 tails up to 750,000 bytes can migrate losslessly. This is bounded gr
 not unlimited capacity, alias expiry, or permission to increase caps.
 Admission makes at most six CAS attempts with complete reevaluation after conflicts;
 exhaustion emits a structured error with project, operation identity and attempt
-count, without actor credentials or ledger contents. Lost or corrupt
+count, without actor credentials or ledger contents. It also increments
+`fleet_registration_cas_retries_exhausted_total` once per exhausted admission,
+not per conflict or authorization denial. The counter has no identity labels;
+`/metrics` uses the same dedicated API-server mTLS boundary as admission, with
+no additional listener or anonymous metrics access. Monitoring integration must
+not distribute admission-capable client credentials to general scrapers.
+Lost or corrupt
 ledger state, scope changes, uncertain operations and full ledgers require
 operator-led reconciliation/migration; deleting or recreating the ledger is not
 a repair. Ledger update protection and private-namespace deletion protection
@@ -218,7 +224,11 @@ fences or restore arbitrary storage remain outside the guarantee.
   exact name instead. No object-label opt-in or opt-out exists.
 - `config/overlays/management-plane` includes a separate two-replica registration
   Deployment, TLS Service, narrowly scoped host RBAC, and private retention
-  policies. It does not enable production lifecycle handlers.
+  policies. A PodDisruptionBudget retains at least one replica during voluntary
+  eviction; rolling updates use zero unavailable replicas and one surge replica.
+  Soft hostname anti-affinity prefers separate nodes without making a small
+  staging cluster unschedulable. These mitigate disruption, not shared-node loss,
+  TLS failure or ledger exhaustion. They do not enable production lifecycle handlers.
 - The webhook consumes parent context from Milo's standard admission extras.
   The API server evaluates the inventory/lifetime CEL match conditions **before
   webhook transport**. An unreachable service or incomplete certificate rollout
@@ -260,6 +270,11 @@ fences or restore arbitrary storage remain outside the guarantee.
 
 Environment-owned inputs are required, just as for the existing manager. No
 real credentials or certificates are supplied by this repository:
+
+The [staging integration assessment](registration-staging-integration.md) records
+the observed mixed deployment and outstanding release gate. A green Flux
+reconciliation is not registration acceptance. Do not proceed with the steps
+below until that gate and the environment isolation decision are approved.
 
 1. Preserve the existing `fleet-manager-config` authority and discovery paths.
    Supply separate `fleet-registration-milo-kubeconfig` and
@@ -314,11 +329,9 @@ Regression coverage also includes real successful unchanged updates retaining
 their RV followed by `Recorded` registration, genuine-edit/stale-selection
 controls, preservation of pending real-update fences, and transport-outage
 isolation for Device writes and namespace/Project deletion. The original reviewer
-reproduction is retained byte-for-byte in
-`internal/registration/testdata/review_adversarial_test.go.txt`; it is evidence,
-not an executable regression because it asserts the former outage failure and
-assumes the no-op registration failed before its same-asset control. Derived
-regressions use separate assets and assert the corrected behavior.
+reproduction remains in PR141 history, rather than an archived non-executable
+fixture asserting the former failure. Executable regressions use separate assets
+and assert the corrected behavior.
 Envtest exercises the production authorization function against real SARs,
 the packaged validating webhook, and the host retention policies against a
 disposable API server. The outage regression uses a minimal Project CRD solely
@@ -370,6 +383,6 @@ trust/credential configuration. No published bundle or live deployment was teste
   standalone/synthetic render checks, documentation links and whitespace pass.
 - The bounded-fencing rework adds real delayed-update and Secret-contention races,
   exact-size/dry-run guards, repeated status-write bounds, and rendered publishing
-  image-transform checks. The original reviewer reproduction remains byte-identical.
+  image-transform checks. At that review, the original reproduction was byte-identical.
 - These are local checks, not live Milo acceptance or independent re-review.
   No deployment, merge, live resource mutation, or ledger migration was performed.

@@ -93,6 +93,7 @@ func TestRealLedgerCASRetryBudget(t *testing.T) {
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 			defer slog.SetDefault(previous)
+			before := exhaustedCount(t)
 			response := handler.Handle(ctx, registrationRequest(t, device, "contended"))
 			if response.Allowed != (conflicts == 5) || contender.attempts != 6 || contender.conflicts != conflicts {
 				t.Fatalf("real CAS retry budget: allowed=%v attempts=%d conflicts=%d result=%v", response.Allowed, contender.attempts, contender.conflicts, response.Result)
@@ -106,6 +107,13 @@ func TestRealLedgerCASRetryBudget(t *testing.T) {
 			}
 			if conflicts == 6 && (len(ledger.Entries) != 0 || !strings.Contains(logs.String(), "CAS retries exhausted") || !strings.Contains(logs.String(), `"attempts":6`)) {
 				t.Fatalf("exhaustion was not observable or wrote reservation: %s", logs.String())
+			}
+			expected := float64(0)
+			if conflicts == 6 {
+				expected = 1
+			}
+			if exhaustedCount(t)-before != expected {
+				t.Fatal("real Secret conflicts did not report exactly one counter increment on exhaustion")
 			}
 		})
 	}

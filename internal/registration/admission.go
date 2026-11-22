@@ -129,6 +129,7 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 	}
 	if err != nil {
 		if apierrors.IsConflict(err) {
+			casRetriesExhausted.Inc()
 			slog.ErrorContext(ctx, "registration ledger CAS retries exhausted", "attempts", 6, "project", name, "operation", request.UID)
 		}
 		return admission.Denied(err.Error())
