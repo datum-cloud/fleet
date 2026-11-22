@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"slices"
@@ -121,6 +122,9 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 		}
 	}
 	if err != nil {
+		if apierrors.IsConflict(err) {
+			slog.ErrorContext(ctx, "registration ledger CAS retries exhausted", "attempts", 6, "project", name, "operation", request.UID)
+		}
 		return admission.Denied(err.Error())
 	}
 	return admission.Allowed("inert inventory registration only; no availability or preparation authority")
@@ -355,6 +359,13 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	}
 	fence := DeviceFence{Project: project.Identity.RouteName, UID: device.UID, Deleted: request.Operation == admissionv1.Delete}
 	if request.Operation == admissionv1.Update {
+		current := &inventory.Device{}
+		if err := project.Client.Get(ctx, client.ObjectKeyFromObject(&old), current); err != nil {
+			return err
+		}
+		if current.UID != old.UID || current.ResourceVersion != old.ResourceVersion || device.ResourceVersion != old.ResourceVersion || !current.DeletionTimestamp.IsZero() {
+			return errors.New("Device update baseline is no longer current")
+		}
 		fence.Version = old.ResourceVersion
 	}
 	if request.Operation == admissionv1.Create {
@@ -365,12 +376,27 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 			}
 		}
 	}
+	coalesced := make([]DeviceFence, 0, len(ledger.DeviceFences)+1)
 	for _, retained := range ledger.DeviceFences {
-		if reflect.DeepEqual(retained, fence) {
-			return nil
+		if retained.Project != fence.Project || retained.UID != fence.UID {
+			coalesced = append(coalesced, retained)
+			continue
+		}
+		if (retained.Deleted && !fence.Deleted) || (request.Operation == admissionv1.Create && !reflect.DeepEqual(retained, fence)) {
+			return ErrConflict
+		}
+		for _, alias := range retained.Aliases {
+			if !slices.Contains(fence.Aliases, alias) {
+				fence.Aliases = append(fence.Aliases, alias)
+			}
 		}
 	}
-	ledger.DeviceFences = append(ledger.DeviceFences, fence)
+	slices.Sort(fence.Aliases)
+	coalesced = append(coalesced, fence)
+	if reflect.DeepEqual(ledger.DeviceFences, coalesced) {
+		return nil
+	}
+	ledger.DeviceFences = coalesced
 	return handler.Store.Write(ctx, secret, ledger)
 }
 

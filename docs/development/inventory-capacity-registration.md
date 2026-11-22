@@ -139,9 +139,28 @@ and registered-spec checks. Any differing field still takes the conservative
 fencing path. An uncertain potentially changing update can therefore leave its
 old version ineligible even if storage ultimately made no change. Failed Device
 creates can likewise retain an alias reservation.
-The fix does not erase fences retained by older builds: those cannot be safely
-distinguished from unfinished real updates. Recovery still requires a genuine
-persisted change and explicit new selection, not automatic ledger cleanup.
+Update fences are coalesced to one record per provider Project and Device UID,
+not one per observation. Before replacing a retained version, admission reads
+the Device directly through the uncached project client and requires the current
+UID and resourceVersion to equal both incoming update incarnations/baselines.
+It rejects stale admissions rather than replacing a newer pending fence. The
+ledger snapshot precedes that authoritative read; a competing ledger write
+forces a full CAS retry and another Device read. All concurrent updates at the
+same baseline share its fence. Once the API server has persisted a newer version,
+optimistic concurrency prevents an older-baseline write from subsequently
+committing; an API-server storage retry must re-enter admission at its new
+baseline. Thus superseded fences can be compacted without allowing an unfinished
+current-baseline update to race registration. ResourceVersions are compared only
+for equality, never ordered numerically.
+
+Coalescing unions creation aliases and never clears a deletion tombstone.
+A deletion replaces update history with a permanent all-version tombstone;
+later changing updates for that UID are rejected. Older-build multiple-version
+records are compacted only when this same authoritative update check succeeds,
+or when deletion installs a stronger permanent tombstone. Unrelated incarnations
+are untouched. An unknown/rejected write at the still-current version stays
+fenced, including after restart and no-op updates. Recovery still requires a
+genuine persisted change and explicit new selection, not automatic ledger cleanup.
 The selected Device's own successful creation reservation is not a conflict.
 Identity/provider-alias changes are forbidden; registered Device specs are
 frozen, and its deletion and same-name replacement are forbidden. The default
@@ -157,7 +176,22 @@ CAS conflicts leave evidence retained for a later observation. Repeating POST
 is not the recovery mechanism: inspect the original name and retained operation.
 
 Reservations and tombstones have no automatic expiry or release path in stage 1.
-The bounded ledger refuses growth past 750,000 encoded bytes. Lost or corrupt
+This deliberately includes create attempts that never persisted and deleted
+Devices that were never registered: their known hardware aliases remain reserved,
+and recreating that hardware under a new UID fails closed. Stage 1 has no safe
+operator release command. Future reconciliation must prove the original outcome,
+all competing operations and lifetime ownership before designing a fenced release;
+neither manual Secret editing nor speculative expiry is an accepted workaround.
+
+Routine updates to an incarnation use one record with at most one pending
+resourceVersion, retained aliases and a deletion bit. This bounds growth by
+distinct incarnations/aliases and registration operations, **not** by elapsed
+collector observations. It is not an unlimited-inventory or universal deduplication
+guarantee: retained incarnations and reservations can still fill the pilot ledger.
+The ledger refuses growth past 750,000 encoded bytes (the boundary itself fits).
+Admission makes at most six CAS attempts with complete reevaluation after conflicts;
+exhaustion emits a structured error with project, operation identity and attempt
+count, without actor credentials or ledger contents. Lost or corrupt
 ledger state, scope changes, uncertain operations and full ledgers require
 operator-led reconciliation/migration; deleting or recreating the ledger is not
 a repair. Ledger update protection and private-namespace deletion protection
@@ -295,6 +329,31 @@ components and mocked transport. Run the existing Go/envtest, race, vet,
 provider/consumer test/typecheck/build, manifest-isolation and documentation
 checks described in the [development guide](README.md#build-test-and-run).
 
+Boundedness regressions perform 120 successive persisted collector observations
+and 120 metadata updates through the packaged webhook, assert one incarnation
+fence and stable ledger size, then register the current selection and recover it
+to `Recorded`. The disposable Device CRD adds a test-only integer status observation
+because the current production `DeviceStatus` is empty; this exercises real
+`/status` storage and admission without inventing a production collector API.
+Deterministic interleavings retain a newer pending fence while stale admission
+retries, and keep unknown/rejected baselines fenced across restart/no-op requests.
+An envtest race pauses two admitted updates at successive resourceVersions: after
+coalescing, the older in-flight update conflicts at actual API-server storage,
+the newer pending version remains unregistrable, and only its persisted successor
+can be explicitly selected and recorded.
+Real API-server Secret conflicts exercise success after five conflicts and six-conflict
+exhaustion/logging. Separate tests assert the exact size boundary and effect-free
+dry-run denial.
+
+The publishing workflow applies the server build tag to `config/base/registration`,
+as it does to the manager. A regression reads the workflow's image transforms,
+applies them to a temporary config tree, and renders the management-plane bundle
+to assert that `/fleet-registration` uses the published server image tag rather
+than `latest`. It also verifies registration remains absent from synthetic staging.
+Raw source manifests still contain template `latest` references: direct deployment
+must supply equivalent immutable build-tag or digest transforms, plus the required
+trust/credential configuration. No published bundle or live deployment was tested.
+
 ### Review-fix validation, November 22, 2026
 
 - Full `go test -race ./...` with Kubernetes 1.37.0 envtest assets, `go vet ./...`,
@@ -304,5 +363,8 @@ checks described in the [development guide](README.md#build-test-and-run).
   passed on a full rerun without modifying UI code or reviewer tests.
 - Production and synthetic manifest renders, overlay isolation tests,
   standalone/synthetic render checks, documentation links and whitespace pass.
+- The bounded-fencing rework adds real delayed-update and Secret-contention races,
+  exact-size/dry-run guards, repeated status-write bounds, and rendered publishing
+  image-transform checks. The original reviewer reproduction remains byte-identical.
 - These are local checks, not live Milo acceptance or independent re-review.
   No deployment, merge, live resource mutation, or ledger migration was performed.

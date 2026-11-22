@@ -3,10 +3,12 @@ package registration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,12 +17,14 @@ import (
 	"go.datum.net/fleet/internal/controller"
 	iam "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	resourcemanager "go.miloapis.com/milo/pkg/apis/resourcemanager/v1alpha1"
+	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	extensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -56,9 +60,22 @@ func TestRealNoopRegistrationAndScopedTransportFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := extensions.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	deviceCRD := &extensions.CustomResourceDefinition{}
+	if err := api.Get(ctx, client.ObjectKey{Name: "devices.fleet.datumapis.com"}, deviceCRD); err != nil {
+		t.Fatal(err)
+	}
+	deviceCRD.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["status"] = extensions.JSONSchemaProps{Type: "object", Properties: map[string]extensions.JSONSchemaProps{"observation": {Type: "integer"}}}
+	if err := api.Update(ctx, deviceCRD); err != nil {
+		t.Fatal(err)
+	}
 	devices := []*inventory.Device{
 		{ObjectMeta: metav1.ObjectMeta{Name: "noop-hardware", Namespace: "default"}, Spec: inventory.DeviceSpec{ClaimRef: inventory.LocalReference{Name: "installation"}, Identity: inventory.DeviceIdentity{Model: "test", Serial: "noop-serial", SystemUUID: "11111111-1111-1111-1111-111111111111"}}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "real-edit-hardware", Namespace: "default"}, Spec: inventory.DeviceSpec{ClaimRef: inventory.LocalReference{Name: "installation"}, Identity: inventory.DeviceIdentity{Model: "test", Serial: "edit-serial", SystemUUID: "22222222-2222-2222-2222-222222222222"}}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "collector-hardware", Namespace: "default"}, Spec: inventory.DeviceSpec{ClaimRef: inventory.LocalReference{Name: "installation"}, Identity: inventory.DeviceIdentity{Model: "test", Serial: "collector-serial", SystemUUID: "33333333-3333-3333-3333-333333333333"}}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "concurrent-hardware", Namespace: "default"}, Spec: inventory.DeviceSpec{ClaimRef: inventory.LocalReference{Name: "installation"}, Identity: inventory.DeviceIdentity{Model: "test", Serial: "concurrent-serial", SystemUUID: "44444444-4444-4444-4444-444444444444"}}},
 	}
 	for _, device := range devices {
 		if err := api.Create(ctx, device, client.FieldOwner("review")); err != nil {
@@ -80,7 +97,32 @@ func TestRealNoopRegistrationAndScopedTransportFailure(t *testing.T) {
 	handler := &Handler{Store: Store{Client: api, Namespace: "default", Authority: "milo", Projects: []string{"datum-cloud"}}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }, Resolve: func(context.Context, string) (Project, error) {
 		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api}, nil
 	}, Authorize: Authorize}
-	server := httptest.NewTLSServer(&admission.Webhook{Handler: handler})
+	type gate struct {
+		entered, release chan struct{}
+		once             sync.Once
+	}
+	gates := map[string]*gate{
+		"first":  {entered: make(chan struct{}), release: make(chan struct{})},
+		"second": {entered: make(chan struct{}), release: make(chan struct{})},
+	}
+	server := httptest.NewTLSServer(&admission.Webhook{Handler: admission.HandlerFunc(func(ctx context.Context, request admission.Request) admission.Response {
+		response := handler.Handle(ctx, request)
+		if response.Allowed && request.Operation == admissionv1.Update && request.Resource.Resource == "devices" && request.Name == "concurrent-hardware" {
+			var device inventory.Device
+			if json.Unmarshal(request.Object.Raw, &device) == nil {
+				if pending := gates[device.Labels["admission-delay"]]; pending != nil {
+					pending.once.Do(func() {
+						close(pending.entered)
+						select {
+						case <-pending.release:
+						case <-ctx.Done():
+						}
+					})
+				}
+			}
+		}
+		return response
+	})})
 	t.Cleanup(server.Close)
 	data, err := os.ReadFile("../../config/components/registration-admission/webhook.yaml")
 	if err != nil {
@@ -176,12 +218,133 @@ func TestRealNoopRegistrationAndScopedTransportFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("repeated-status-and-metadata-writes-remain-bounded", func(t *testing.T) {
+		device := devices[2]
+		var initialSize int
+		for observation := 1; observation <= 120; observation++ {
+			if err := actor.Get(ctx, client.ObjectKeyFromObject(device), device); err != nil {
+				t.Fatal(err)
+			}
+			device.Labels = map[string]string{"observation": fmt.Sprint(observation)}
+			if err := actor.Update(ctx, device); err != nil {
+				t.Fatal(err)
+			}
+			current := &unstructured.Unstructured{}
+			current.SetAPIVersion("fleet.datumapis.com/v1alpha1")
+			current.SetKind("Device")
+			if err := actor.Get(ctx, client.ObjectKeyFromObject(device), current); err != nil {
+				t.Fatal(err)
+			}
+			before := current.GetResourceVersion()
+			current.Object["status"] = map[string]any{"observation": int64(observation)}
+			if err := actor.Status().Update(ctx, current, client.FieldOwner("inventory-collector")); err != nil {
+				t.Fatal(err)
+			}
+			if before == current.GetResourceVersion() {
+				t.Fatal("status observation did not persist")
+			}
+			secret, ledger, err := handler.Store.Read(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for _, fence := range ledger.DeviceFences {
+				if fence.UID == device.UID {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("%d fences after %d observations", count, observation)
+			}
+			if observation == 1 {
+				initialSize = len(secret.Data["ledger.json"])
+			}
+			if len(secret.Data["ledger.json"]) > initialSize+20 {
+				t.Fatal("ledger grows with routine observations")
+			}
+		}
+		if err := actor.Get(ctx, client.ObjectKeyFromObject(device), device); err != nil {
+			t.Fatal(err)
+		}
+		if err := register(t, device, "after-collector"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("delayed-old-write-cannot-commit-after-coalescing", func(t *testing.T) {
+		firstRelease := sync.OnceFunc(func() { close(gates["first"].release) })
+		secondRelease := sync.OnceFunc(func() { close(gates["second"].release) })
+		defer firstRelease()
+		defer secondRelease()
+		wait := func(pending *gate) {
+			t.Helper()
+			select {
+			case <-pending.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("pending update did not enter admission")
+			}
+		}
+		device := devices[3]
+		first := device.DeepCopyObject().(*inventory.Device)
+		first.Labels = map[string]string{"admission-delay": "first"}
+		firstDone := make(chan error, 1)
+		go func() { firstDone <- actor.Update(ctx, first) }()
+		wait(gates["first"])
+		device.Labels = map[string]string{"competing": "persisted"}
+		if err := actor.Update(ctx, device); err != nil {
+			t.Fatal(err)
+		}
+		currentVersion := device.ResourceVersion
+		second := device.DeepCopyObject().(*inventory.Device)
+		second.Labels = map[string]string{"admission-delay": "second"}
+		secondDone := make(chan error, 1)
+		go func() { secondDone <- actor.Update(ctx, second) }()
+		wait(gates["second"])
+		firstRelease()
+		if err := <-firstDone; !apierrors.IsConflict(err) {
+			t.Fatalf("old in-flight baseline must conflict at storage: %v", err)
+		}
+		if err := actor.Get(ctx, client.ObjectKeyFromObject(device), device); err != nil {
+			t.Fatal(err)
+		}
+		if device.ResourceVersion != currentVersion {
+			t.Fatal("old in-flight write changed current version")
+		}
+		if err := register(t, device, "during-second-pending"); !apierrors.IsForbidden(err) {
+			t.Fatalf("coalescing lost current pending fence: %v", err)
+		}
+		_, ledger, err := handler.Store.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, fence := range ledger.DeviceFences {
+			if fence.UID == device.UID {
+				count++
+				if fence.Version != currentVersion {
+					t.Fatal("retained wrong pending version")
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("concurrent versions created %d fences", count)
+		}
+		secondRelease()
+		if err := <-secondDone; err != nil {
+			t.Fatal(err)
+		}
+		if err := actor.Get(ctx, client.ObjectKeyFromObject(device), device); err != nil {
+			t.Fatal(err)
+		}
+		if err := register(t, device, "after-concurrent-writes"); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if err := handler.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
 	_, ledger, err := handler.Store.Read(ctx)
-	if err != nil || len(ledger.Entries) != 2 {
-		t.Fatalf("expected both registrations: %+v %v", ledger, err)
+	if err != nil || len(ledger.Entries) != 4 {
+		t.Fatalf("expected all registrations: %+v %v", ledger, err)
 	}
 	for _, entry := range ledger.Entries {
 		if entry.Outcome != "Recorded" || entry.CapacityUID == "" {
