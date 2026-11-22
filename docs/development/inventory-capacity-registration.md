@@ -61,7 +61,7 @@ not the caller's registration authority.
 The webhook accepts only mutually authenticated TLS from a dedicated API-server
 client CA. Do not use a broad tenant/client CA: an AdmissionReview received from
 an untrusted client is not evidence of an authenticated actor. The server also
-checks the installed root webhook configuration at startup and before admission:
+checks the installed root webhook configuration at signed activation and before admission:
 the exact write rules, explicit serving CA, Fail policy, common authority
 endpoint, and the restricted match conditions described below. Label selectors,
 missing fences, expanded rules, and conditions differing from the configured
@@ -105,8 +105,10 @@ ownership. Production allocation remains disabled independently.
 ## Serialization and recovery
 
 `fleet-capacity-registration-v1` is a separate host-cluster Secret in
-`fleet-system-private`; it is **not** allocation custody. The service has only
-get/update permission on that single Secret. Its JSON retains the actor, exact
+`fleet-system-private`; it is **not** allocation custody. The service updates only
+that root and can create/read immutable retained segments under the host policy.
+The [storage and bootstrap protocol](registration-storage-rollout.md) adds signed
+lossless expansion and deny-only transport startup. Its JSON retains the actor, exact
 API-normalized create object, admission request UID, client operation ID,
 Project/namespace lifetimes, Device UID/resourceVersion, aliases, canonical key,
 and API-assigned capacity UID **before allowing the public create**. Kubernetes
@@ -188,7 +190,10 @@ resourceVersion, retained aliases and a deletion bit. This bounds growth by
 distinct incarnations/aliases and registration operations, **not** by elapsed
 collector observations. It is not an unlimited-inventory or universal deduplication
 guarantee: retained incarnations and reservations can still fill the pilot ledger.
-The ledger refuses growth past 750,000 encoded bytes (the boundary itself fits).
+The mutable tail refuses growth past 650,000 encoded bytes (the boundary fits),
+leaving sealing headroom. Signed expansion seals up to sixteen immutable segments;
+existing v1 tails up to 750,000 bytes can migrate losslessly. This is bounded growth,
+not unlimited capacity, alias expiry, or permission to increase caps.
 Admission makes at most six CAS attempts with complete reevaluation after conflicts;
 exhaustion emits a structured error with project, operation identity and attempt
 count, without actor credentials or ledger contents. Lost or corrupt

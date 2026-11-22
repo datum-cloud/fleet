@@ -21,6 +21,7 @@ import (
 )
 
 func NewHandler(store Store, root client.Client, template *rest.Config, scheme *runtime.Scheme) *Handler {
+	store.AllowInactiveForTests = false
 	return &Handler{Store: store, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, root, store.Projects) }, Resolve: func(ctx context.Context, name string) (Project, error) {
 		identity, err := manager.ResolveProjectIdentity(ctx, root, store.Authority, name)
 		if err != nil {
@@ -32,7 +33,9 @@ func NewHandler(store Store, root client.Client, template *rest.Config, scheme *
 		}
 		api, err := client.New(config, client.Options{Scheme: scheme})
 		return Project{Identity: identity, Client: api}, err
-	}, Authorize: Authorize}
+	}, Authorize: Authorize, FenceDigest: func(ctx context.Context) (string, error) {
+		return VerifiedFenceDigest(ctx, root, store.Projects)
+	}}
 }
 
 func Authorize(ctx context.Context, project Project, actor authenticationv1.UserInfo, group, resource, name string) error {

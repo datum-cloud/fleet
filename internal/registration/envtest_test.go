@@ -130,7 +130,29 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		}
 		return Authorize(ctx, project, actor, group, resource, name)
 	}}
-	server := httptest.NewTLSServer(&admission.Webhook{Handler: handler})
+	privateKey := controlFixture(t, handler)
+	handler.VerifyFence = func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }
+	handler.FenceDigest = func(ctx context.Context) (string, error) {
+		var current admissionregistrationv1.ValidatingWebhookConfiguration
+		if err := api.Get(ctx, client.ObjectKey{Name: "fleet-capacity-registration"}, &current); err != nil {
+			return "", err
+		}
+		encoded, err := json.Marshal(current.Webhooks)
+		return digest(encoded), err
+	}
+	lateAdmission, release := make(chan struct{}), make(chan struct{})
+	server := httptest.NewTLSServer(&admission.Webhook{Handler: admission.HandlerFunc(func(ctx context.Context, request admission.Request) admission.Response {
+		response := handler.Handle(ctx, request)
+		if response.Allowed && request.Resource.Resource == "machinecapacities" && request.Name == "admitted-never-persisted" {
+			close(lateAdmission)
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return admission.Denied("synthetic later admission/storage failure")
+		}
+		return response
+	})})
 	t.Cleanup(server.Close)
 	url := server.URL
 	data, err := os.ReadFile("../../config/components/registration-admission/webhook.yaml")
@@ -145,6 +167,14 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		webhooks.Webhooks[index].ClientConfig = admissionregistrationv1.WebhookClientConfig{URL: &url, CABundle: pemCertificate(server.Certificate().Raw)}
 	}
 	if err := api.Create(ctx, webhooks); err != nil {
+		t.Fatal(err)
+	}
+	activation := controlFor(t, handler, privateKey, "activate").Request
+	activation.FenceDigest, err = handler.FenceDigest(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.ApplyControl(ctx, SignControl(activation, privateKey)); err != nil {
 		t.Fatal(err)
 	}
 	actorConfig := rest.CopyConfig(config)
@@ -256,5 +286,74 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 	rejected.UID = ""
 	if err := actor.Create(ctx, &rejected); !apierrors.IsForbidden(err) {
 		t.Fatalf("revoked authorization bypass: %v", err)
+	}
+	denied.Store(false)
+	pendingDevice := device.DeepCopyObject().(*inventory.Device)
+	pendingDevice.Name, pendingDevice.UID, pendingDevice.ResourceVersion = "pending-hardware", "", ""
+	pendingDevice.Spec.Identity.Serial = "pending-serial"
+	pendingDevice.Spec.Identity.SystemUUID = "22222222-2222-2222-2222-222222222222"
+	if err := actor.Create(ctx, pendingDevice); err != nil {
+		t.Fatal(err)
+	}
+	pendingRequest := registrationRequest(t, pendingDevice, "admitted-never-persisted")
+	var pendingCapacity metal.MachineCapacity
+	_ = json.Unmarshal(pendingRequest.Object.Raw, &pendingCapacity)
+	completed := make(chan error, 1)
+	go func() { completed <- actor.Create(ctx, &pendingCapacity) }()
+	select {
+	case <-lateAdmission:
+	case <-time.After(10 * time.Second):
+		t.Fatal("admission did not reach pause")
+	}
+	if err := handler.ApplyControl(ctx, controlFor(t, handler, privateKey, "expand")); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-completed; !apierrors.IsForbidden(err) {
+		t.Fatal("expected later admission failure", err)
+	}
+	if err := handler.Recover(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, retained, err := handler.Store.Read(ctx)
+	if err != nil || len(retained.Entries) != 2 {
+		t.Fatal("lost pending public create", err)
+	}
+	for _, entry := range retained.Entries {
+		if entry.Name == pendingCapacity.Name && entry.Outcome != "Unknown" {
+			t.Fatal("absent object became free or recorded")
+		}
+	}
+	duplicateRequest := registrationRequest(t, pendingDevice, "after-expansion")
+	var duplicateCapacity metal.MachineCapacity
+	_ = json.Unmarshal(duplicateRequest.Object.Raw, &duplicateCapacity)
+	if err := actor.Create(ctx, &duplicateCapacity); !apierrors.IsForbidden(err) {
+		t.Fatal("expansion orphaned aliases", err)
+	}
+	_, route, err := handler.Store.root(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segment := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: route.Segments[0].Name, Namespace: "fleet-system-private"}}
+	if err := api.Delete(ctx, segment); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
+		t.Fatal("segment deletion bypass", err)
+	}
+	if err := private.Delete(ctx, segment); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
+		t.Fatal("service segment deletion bypass", err)
+	}
+	downgrade, _, err := handler.Store.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(downgrade.Data, "routing.json")
+	if err := private.Update(ctx, downgrade); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
+		t.Fatal("v2 format downgrade bypass", err)
+	}
+	for _, name := range []string{"arbitrary-credential", LedgerName, SegmentPrefix + "mutable"} {
+		probe := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "fleet-system-private", Name: name}}
+		if err := private.Create(ctx, probe); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
+			t.Fatal("service create boundary bypass", name, err)
+		}
 	}
 }

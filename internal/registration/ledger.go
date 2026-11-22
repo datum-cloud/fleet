@@ -2,6 +2,7 @@ package registration
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -34,11 +35,15 @@ type Entry struct {
 }
 
 type DeviceFence struct {
-	Project string    `json:"project"`
-	UID     types.UID `json:"uid"`
-	Aliases []string  `json:"aliases,omitempty"`
-	Deleted bool      `json:"deleted,omitempty"`
-	Version string    `json:"version,omitempty"`
+	Project      string    `json:"project"`
+	ProjectUID   types.UID `json:"projectUID,omitempty"`
+	Namespace    string    `json:"namespace,omitempty"`
+	NamespaceUID types.UID `json:"namespaceUID,omitempty"`
+	Name         string    `json:"name,omitempty"`
+	UID          types.UID `json:"uid"`
+	Aliases      []string  `json:"aliases,omitempty"`
+	Deleted      bool      `json:"deleted,omitempty"`
+	Version      string    `json:"version,omitempty"`
 }
 
 type Ledger struct {
@@ -49,10 +54,14 @@ type Ledger struct {
 }
 
 type Store struct {
-	Client    client.Client
-	Namespace string
-	Authority string
-	Projects  []string
+	Client     client.Client
+	Namespace  string
+	Authority  string
+	Projects   []string
+	ControlKey ed25519.PublicKey
+	// AllowInactiveForTests skips the signed activation gate. The zero value
+	// is gated; production wiring forces it off.
+	AllowInactiveForTests bool
 }
 
 func (store Store) Read(ctx context.Context) (*corev1.Secret, Ledger, error) {
@@ -60,8 +69,8 @@ func (store Store) Read(ctx context.Context) (*corev1.Secret, Ledger, error) {
 	if err := store.Client.Get(ctx, client.ObjectKey{Namespace: store.Namespace, Name: LedgerName}, secret); err != nil {
 		return nil, Ledger{}, err
 	}
-	var ledger Ledger
-	if err := json.Unmarshal(secret.Data["ledger.json"], &ledger); err != nil {
+	ledger, _, err := store.readSnapshot(ctx, secret)
+	if err != nil {
 		return nil, Ledger{}, err
 	}
 	if secret.UID == "" || !secret.DeletionTimestamp.IsZero() || ledger.Authority != store.Authority || !reflect.DeepEqual(ledger.Projects, store.Projects) {
@@ -71,12 +80,15 @@ func (store Store) Read(ctx context.Context) (*corev1.Secret, Ledger, error) {
 }
 
 func (store Store) Write(ctx context.Context, secret *corev1.Secret, ledger Ledger) error {
+	if _, exists := secret.Data["routing.json"]; exists {
+		return store.writeSnapshot(ctx, secret, ledger)
+	}
 	encoded, err := json.Marshal(ledger)
 	if err != nil {
 		return err
 	}
-	if len(encoded) > 750000 {
-		return errors.New("registration ledger is full; reservations were not released")
+	if len(encoded) > TailBudget {
+		return errors.New("registration ledger is full; sign an expand control request to seal it losslessly, see docs/development/registration-storage-rollout.md; reservations were not released")
 	}
 	secret.Data["ledger.json"] = encoded
 	return store.Client.Update(ctx, secret)

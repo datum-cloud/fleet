@@ -24,25 +24,26 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 func main() {
-	var configFile, providers, privateNamespace, cert, key, clientCA string
+	var configFile, providers, privateNamespace, cert, key, clientCA, controlKey, controlRequest string
 	flag.StringVar(&configFile, "config", "", "Fleet manager discovery configuration")
 	flag.StringVar(&providers, "provider-projects", "", "complete comma-separated provider identity scope, fixed in the private ledger")
 	flag.StringVar(&privateNamespace, "private-namespace", "fleet-system-private", "private registration ledger namespace")
 	flag.StringVar(&cert, "tls-cert", "/etc/fleet/registration/tls.crt", "serving certificate")
 	flag.StringVar(&key, "tls-key", "/etc/fleet/registration/tls.key", "serving key")
 	flag.StringVar(&clientCA, "client-ca", "/etc/fleet/registration/client-ca.crt", "CA dedicated to trusted API-server webhook clients")
+	flag.StringVar(&controlKey, "control-key", "/etc/fleet/registration-control/public.pem", "operator Ed25519 public key; never a private key")
+	flag.StringVar(&controlRequest, "control-request", "/etc/fleet/registration-control/request.json", "optional signed activation or expansion request")
 	flag.Parse()
-	if err := run(ctrl.SetupSignalHandler(), configFile, providers, privateNamespace, cert, key, clientCA); err != nil {
+	if err := run(ctrl.SetupSignalHandler(), configFile, providers, privateNamespace, cert, key, clientCA, controlKey, controlRequest); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, configFile, providers, namespace, cert, key, clientCA string) error {
+func run(ctx context.Context, configFile, providers, namespace, cert, key, clientCA, controlKey, controlRequest string) error {
 	config, err := projectdiscovery.LoadConfig(configFile)
 	if err != nil {
 		return err
@@ -83,21 +84,20 @@ func run(ctx context.Context, configFile, providers, namespace, cert, key, clien
 			return err
 		}
 	}
-	handler := registration.NewHandler(registration.Store{Client: private, Namespace: namespace, Authority: config.AuthorityID, Projects: projects}, root, template, scheme)
-	if err := handler.VerifyFence(ctx); err != nil {
+	keyBytes, err := os.ReadFile(controlKey)
+	if err != nil {
 		return err
 	}
-	if _, _, err := handler.Store.Read(ctx); err != nil {
+	publicKey, err := registration.ParseControlKey(keyBytes)
+	if err != nil {
 		return err
 	}
+	handler := registration.NewHandler(registration.Store{Client: private, Namespace: namespace, Authority: config.AuthorityID, Projects: projects, ControlKey: publicKey}, root, template, scheme)
 	tlsConfig, err := webhookTLS(clientCA)
 	if err != nil {
 		return err
 	}
-	webhook := &admission.Webhook{Handler: handler}
-	mux := http.NewServeMux()
-	mux.Handle("/validate-registration", webhook)
-	server := &http.Server{Addr: ":9443", Handler: http.MaxBytesHandler(mux, 2<<20), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, TLSConfig: tlsConfig}
+	server := &http.Server{Addr: ":9443", Handler: http.MaxBytesHandler(handler.Transport(), 2<<20), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, TLSConfig: tlsConfig}
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -109,9 +109,25 @@ func run(ctx context.Context, configFile, providers, namespace, cert, key, clien
 				_ = server.Shutdown(shutdown)
 				return
 			case <-ticker.C:
-				if err := handler.Recover(ctx); err != nil {
+				operation, cancel := context.WithTimeout(ctx, 20*time.Second)
+				if err := handler.Store.ResumeExpansion(operation); err != nil {
+					fmt.Fprintln(os.Stderr, "registration expansion remains fenced:", err)
+				}
+				if encoded, err := os.ReadFile(controlRequest); err == nil {
+					control, err := registration.ParseControl(encoded)
+					if err == nil {
+						err = handler.ApplyControl(operation, control)
+					}
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "registration control not applied:", err)
+					}
+				} else if !os.IsNotExist(err) {
+					fmt.Fprintln(os.Stderr, "registration control unavailable:", err)
+				}
+				if err := handler.Recover(operation); err != nil {
 					fmt.Fprintln(os.Stderr, "registration recovery remains unknown:", err)
 				}
+				cancel()
 			}
 		}
 	}()

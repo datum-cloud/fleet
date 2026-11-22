@@ -42,6 +42,7 @@ type Project struct {
 type Handler struct {
 	Store       Store
 	VerifyFence func(context.Context) error
+	FenceDigest func(context.Context) (string, error)
 	Resolve     func(context.Context, string) (Project, error)
 	Authorize   func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error
 }
@@ -87,6 +88,11 @@ func projectName(actor authenticationv1.UserInfo) (string, error) {
 }
 
 func (handler *Handler) Handle(ctx context.Context, request admission.Request) admission.Response {
+	if !handler.Store.AllowInactiveForTests {
+		if err := handler.Ready(ctx); err != nil {
+			return admission.Denied(err.Error())
+		}
+	}
 	if request.Operation == admissionv1.Delete && request.Name == "" && ((request.Resource.Group == "" && request.Resource.Resource == "namespaces") || (request.Resource.Group == "resourcemanager.miloapis.com" && request.Resource.Resource == "projects")) {
 		return admission.Denied("lifetime deletion requires an exact resource name; collection deletion cannot prove exclusion of retained lifetimes")
 	}
@@ -139,6 +145,15 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 	secret, ledger, err := handler.Store.Read(ctx)
 	if err != nil {
 		return fmt.Errorf("registration unavailable: %w", err)
+	}
+	if _, exists := secret.Data["routing.json"]; exists {
+		route, err := decodeRouting(secret)
+		if err != nil {
+			return err
+		}
+		if route.Pending != nil {
+			return errors.New("registration expansion is fenced")
+		}
 	}
 	project, err := handler.Resolve(ctx, name)
 	if err != nil {
@@ -224,6 +239,9 @@ func (handler *Handler) evaluate(ctx context.Context, name string, request admis
 	}
 	for _, fence := range ledger.DeviceFences {
 		if fence.Project == name && fence.UID == device.UID {
+			if (fence.ProjectUID != "" && fence.ProjectUID != entry.ProjectUID) || (fence.NamespaceUID != "" && fence.NamespaceUID != entry.NamespaceUID) || (fence.Name != "" && (fence.Name != device.Name || fence.Namespace != device.Namespace)) {
+				return ErrConflict
+			}
 			if fence.Deleted || (fence.Version != "" && fence.Version == device.ResourceVersion) {
 				return ErrConflict
 			}
@@ -357,16 +375,26 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	if request.Operation == admissionv1.Update && identicalObjects(request.OldObject.Raw, request.Object.Raw) {
 		return nil
 	}
-	fence := DeviceFence{Project: project.Identity.RouteName, UID: device.UID, Deleted: request.Operation == admissionv1.Delete}
+	// Deletes and finalizer removals are how a terminating namespace drains its
+	// Devices, so they must not depend on the namespace still being live.
+	releasing := request.Operation == admissionv1.Delete || (request.Operation == admissionv1.Update && finalizerRemoval(request.OldObject.Raw, request.Object.Raw))
+	deleting := request.Operation == admissionv1.Delete || (releasing && !old.DeletionTimestamp.IsZero())
+	namespaceUID, err := deviceNamespace(ctx, project, device, ledger, releasing)
+	if err != nil {
+		return err
+	}
+	fence := DeviceFence{Project: project.Identity.RouteName, ProjectUID: project.Identity.UID, Namespace: device.Namespace, NamespaceUID: namespaceUID, Name: device.Name, UID: device.UID, Deleted: deleting}
 	if request.Operation == admissionv1.Update {
 		current := &inventory.Device{}
 		if err := project.Client.Get(ctx, client.ObjectKeyFromObject(&old), current); err != nil {
 			return err
 		}
-		if current.UID != old.UID || current.ResourceVersion != old.ResourceVersion || device.ResourceVersion != old.ResourceVersion || !current.DeletionTimestamp.IsZero() {
+		if current.UID != old.UID || current.ResourceVersion != old.ResourceVersion || device.ResourceVersion != old.ResourceVersion || (!current.DeletionTimestamp.IsZero() && !deleting) {
 			return errors.New("Device update baseline is no longer current")
 		}
-		fence.Version = old.ResourceVersion
+		if !deleting {
+			fence.Version = old.ResourceVersion
+		}
 	}
 	if request.Operation == admissionv1.Create {
 		fence.Aliases = aliases(&device)
@@ -385,6 +413,9 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 		if (retained.Deleted && !fence.Deleted) || (request.Operation == admissionv1.Create && !reflect.DeepEqual(retained, fence)) {
 			return ErrConflict
 		}
+		if (retained.ProjectUID != "" && retained.ProjectUID != fence.ProjectUID) || (retained.NamespaceUID != "" && retained.NamespaceUID != fence.NamespaceUID) || (retained.Name != "" && (retained.Name != fence.Name || retained.Namespace != fence.Namespace)) {
+			return ErrConflict
+		}
 		for _, alias := range retained.Aliases {
 			if !slices.Contains(fence.Aliases, alias) {
 				fence.Aliases = append(fence.Aliases, alias)
@@ -398,6 +429,77 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	}
 	ledger.DeviceFences = coalesced
 	return handler.Store.Write(ctx, secret, ledger)
+}
+
+// deviceNamespace returns the namespace lifetime to bind into the Device fence.
+// Ordinary writes require a live namespace. Releasing writes accept a
+// terminating namespace, and once the namespace is gone they fall back to the
+// lifetime already recorded for this Device so the tombstone never loses it.
+func deviceNamespace(ctx context.Context, project Project, device inventory.Device, ledger Ledger, releasing bool) (types.UID, error) {
+	var namespace corev1.Namespace
+	err := project.Client.Get(ctx, client.ObjectKey{Name: device.Namespace}, &namespace)
+	if err != nil && (!releasing || !apierrors.IsNotFound(err)) {
+		return "", err
+	}
+	if err == nil {
+		if namespace.UID == "" || (!releasing && !namespace.DeletionTimestamp.IsZero()) {
+			return "", errors.New("Device namespace lifetime unavailable")
+		}
+		return namespace.UID, nil
+	}
+	for _, retained := range ledger.DeviceFences {
+		if retained.Project == project.Identity.RouteName && retained.UID == device.UID && retained.NamespaceUID != "" {
+			return retained.NamespaceUID, nil
+		}
+	}
+	// A legacy fence never recorded the namespace; the tombstone stays
+	// legacy-shaped rather than inventing a lifetime or denying the delete.
+	return "", nil
+}
+
+// finalizerRemoval reports whether an update only removes finalizers. Server
+// managed field bookkeeping is ignored; any other change is a real edit.
+func finalizerRemoval(old, current []byte) bool {
+	decode := func(raw []byte) (map[string]any, []string, bool) {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var object map[string]any
+		if err := decoder.Decode(&object); err != nil || object == nil || decoder.Decode(new(any)) != io.EOF {
+			return nil, nil, false
+		}
+		metadata, _ := object["metadata"].(map[string]any)
+		if metadata == nil {
+			return nil, nil, false
+		}
+		var finalizers []string
+		if values, exists := metadata["finalizers"]; exists {
+			list, ok := values.([]any)
+			if !ok {
+				return nil, nil, false
+			}
+			for _, value := range list {
+				name, ok := value.(string)
+				if !ok {
+					return nil, nil, false
+				}
+				finalizers = append(finalizers, name)
+			}
+		}
+		delete(metadata, "finalizers")
+		delete(metadata, "managedFields")
+		return object, finalizers, true
+	}
+	before, beforeFinalizers, beforeOK := decode(old)
+	after, afterFinalizers, afterOK := decode(current)
+	if !beforeOK || !afterOK || len(afterFinalizers) >= len(beforeFinalizers) || !reflect.DeepEqual(before, after) {
+		return false
+	}
+	for _, name := range afterFinalizers {
+		if !slices.Contains(beforeFinalizers, name) {
+			return false
+		}
+	}
+	return true
 }
 
 func identicalObjects(old, current []byte) bool {
