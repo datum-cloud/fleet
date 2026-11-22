@@ -25,6 +25,21 @@ def plan(snapshot, mapping, existing):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_source_id_length_boundaries(self):
+        for convert in (str, int):
+            for size in (1, 253, 254):
+                snapshot, mapping, existing = fixture()
+                value = convert("9" * size)
+                snapshot["objects"]["dcim/device-types"][0]["id"] = value
+                mapping["deviceTypes"][0]["sourceID"] = value
+                with self.subTest(conversion=convert.__name__, size=size):
+                    if size > 253:
+                        with self.assertRaises(ValueError):
+                            plan(snapshot, mapping, existing)
+                    else:
+                        result = plan(snapshot, mapping, existing)
+                        self.assertEqual(str(value), result["items"][1]["spec"]["sourceIdentity"]["id"])
+
     def test_snapshot_envelope_types(self):
         for value in (True, 1.0, "1", None):
             snapshot, mapping, existing = fixture()
@@ -202,7 +217,7 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual([], json.loads(result.stdout)["items"])
 
     def test_cli_quarantines_invalid_existing_evidence_without_partial_candidates(self):
-        for mutation in ("missing-provenance", "source-mismatch", "collections", "timestamp"):
+        for mutation in ("missing-provenance", "source-mismatch", "collections", "timestamp", "long-string", "long-integer"):
             snapshot, mapping, existing = fixture()
             existing["items"] = plan(snapshot, mapping, existing)["items"][:1]
             if mutation == "missing-provenance":
@@ -211,8 +226,12 @@ class CatalogTests(unittest.TestCase):
                 existing["items"][0]["spec"]["provenance"]["source"]["id"] = "999"
             elif mutation == "collections":
                 existing["collections"] = {"Manufacturer": False, "DeviceType": False}
-            else:
+            elif mutation == "timestamp":
                 snapshot["observedAt"] = "20261121T000000+0000"
+            else:
+                value = "9" * 254 if mutation == "long-string" else int("9" * 254)
+                snapshot["objects"]["dcim/device-types"][0]["id"] = value
+                mapping["deviceTypes"][0]["sourceID"] = value
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 files = []
                 for index, value in enumerate((snapshot, mapping, existing)):

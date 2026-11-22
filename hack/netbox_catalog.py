@@ -43,8 +43,8 @@ def model_key(value):
 
 def source_id(value):
     if type(value) is int and value > 0:
-        return str(value)
-    if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value):
+        value = str(value)
+    if isinstance(value, str) and len(value) <= 253 and re.fullmatch(r"[1-9][0-9]*", value):
         return value
     raise ValueError("invalid explicit NetBox source ID")
 
