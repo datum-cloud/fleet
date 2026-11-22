@@ -6,25 +6,23 @@ import { InventoryManagement } from './inventory-management';
 import { InventorySessionBoundary } from './inventory-session-boundary';
 import DeviceInventoryList from '../pages/device-inventory-list';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
+import { focusManager } from '@tanstack/react-query';
 
 const values = { name: 'review-facility', namespace: 'default', displayName: 'Original label', facility: '', height: '' };
 const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic-only', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); focusManager.setFocused(undefined); });
 
-it.each([false, true])('keeps real table mounted on visible focus and refreshes read authorization denied=%s', async denied => {
+it.each([false, true])('visible focus never refreshes real inventory; explicit refresh observes denial=%s', async denied => {
   let rechecking = false;
-  let release: (() => void) | undefined;
   const requests = vi.fn(async (url: string) => {
     if (url.includes('selfsubjectaccessreviews')) return response({ status: { allowed: false } });
     if (rechecking && denied) return { ok: false, status: 403, json: async () => ({ error: 'Private diagnostic' }) };
     return response({ items: url.includes('/facilities?') ? [original] : [] });
   });
   vi.stubGlobal('fetch', requests);
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => {
-    if (rechecking) await new Promise<void>(resolve => { release = resolve; });
-    return { user: { metadata: { uid: 'staff-a' } } };
-  }, element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }], { initialEntries: ['/?kind=Facility'] });
+  const loader = vi.fn(() => ({ user: { metadata: { uid: 'staff-a' } } }));
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }], { initialEntries: ['/?kind=Facility'] });
   render(<RouterProvider router={router} />);
   await screen.findByRole('link', { name: /Original label/ });
   const table = screen.getByRole('table');
@@ -32,12 +30,15 @@ it.each([false, true])('keeps real table mounted on visible focus and refreshes 
   const observer = new MutationObserver(() => loadingStates.push(!!screen.queryByTestId('fleet-plugin-loading')));
   observer.observe(document.body, { childList: true, subtree: true });
   rechecking = true;
+  const before = requests.mock.calls.length;
   fireEvent(window, new Event('blur'));
   expect(screen.getByRole('table')).toBe(table);
   fireEvent(window, new Event('focus'));
-  await waitFor(() => expect(release).toBeDefined());
+  await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); await new Promise(resolve => setTimeout(resolve, 0)); });
   expect(screen.getByRole('table')).toBe(table);
-  await act(async () => release!());
+  expect(requests).toHaveBeenCalledTimes(before);
+  expect(loader).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
   if (denied) {
     await screen.findByRole('heading', { name: 'Inventory access needed' });
     expect(screen.queryByText(/Original label|Private diagnostic/)).not.toBeInTheDocument();
@@ -139,14 +140,14 @@ it('must not silently advance an open edit form to a refreshed resourceVersion',
   expect(patches).toEqual([]);
 });
 
-it('must keep inventory concealed if focus verification finishes after pagehide', async () => {
+it('must keep inventory concealed if foreground verification finishes after another pagehide', async () => {
   let release: (() => void) | undefined;
   let count = 0;
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => { if (++count === 2) await new Promise<void>(resolve => { release = resolve; }); return { user: { metadata: { uid: 'staff-a' } } }; }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary>Private inventory label</InventorySessionBoundary> }] }]);
   render(<RouterProvider router={router} />);
   await screen.findByText('Private inventory label');
   fireEvent(window, new Event('pagehide'));
-  fireEvent(window, new Event('focus'));
+  fireEvent(window, new Event('pageshow'));
   await waitFor(() => expect(release).toBeDefined());
   fireEvent(window, new Event('pagehide'));
   await act(async () => { release!(); });

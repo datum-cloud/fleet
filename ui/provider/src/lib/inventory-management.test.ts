@@ -49,6 +49,8 @@ describe('inventory management authority', () => {
 
   it('rejects Flux-owned, deleting and unknown-writer records', () => {
     expect(canEditInventoryLabel(owned)).toBe(true);
+    expect(canEditInventoryLabel({ ...owned, metadata: { ...owned.metadata, uid: undefined } })).toBe(false);
+    expect(canEditInventoryLabel({ ...owned, metadata: { ...owned.metadata, resourceVersion: undefined } })).toBe(false);
     for (const metadata of [{ ...owned.metadata, managedFields: undefined }, { ...owned.metadata, managedFields: [{ manager: 'kustomize-controller' }] }, { ...owned.metadata, deletionTimestamp: '2026-01-01T00:00:00Z' }, { ...owned.metadata, labels: { 'kustomize.toolkit.fluxcd.io/name': 'inventory' } }]) expect(canEditInventoryLabel({ ...owned, metadata })).toBe(false);
   });
 

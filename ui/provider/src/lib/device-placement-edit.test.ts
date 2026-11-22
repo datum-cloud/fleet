@@ -14,6 +14,15 @@ const saved = (request: RequestInit) => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('direct placement correction', () => {
+  it('corrects a record without adding fields outside the placement contract', async () => {
+    const baseline = structuredClone(original);
+    const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(baseline)).mockImplementationOnce((_url, request) => response({ ...baseline, metadata: { ...baseline.metadata, resourceVersion: '8' }, spec: { ...baseline.spec, reportedPlacement: JSON.parse(request.body).at(-1).value } }));
+    vi.stubGlobal('fetch', fetch);
+    const result = await correctDevicePlacement(baseline, fields, new InventoryOperationScope().begin());
+    const patch = JSON.parse(fetch.mock.calls[2][1].body);
+    expect(patch.map((entry: { path: string }) => entry.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/reportedPlacement']);
+    expect(result.spec).toEqual({ ...baseline.spec, reportedPlacement: patch[2].value });
+  });
   it.each([false, true])('adds/updates the reported location with only UID/resourceVersion preconditions: %s', async existing => {
     const baseline = structuredClone(original);
     if (existing) baseline.spec.reportedPlacement = { revision: 1, observedAt: fields.observedAt, reason: 'Synthetic survey', reference: 'ticket/synthetic' };

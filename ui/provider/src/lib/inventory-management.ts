@@ -28,7 +28,7 @@ export function useInventoryPermission(kind: ManagedKind, namespace: string, ver
 }
 
 export function canEditInventoryLabel(record: ManagedRecord): boolean {
-  const { metadata, spec } = record;
+  const { metadata } = record;
   return ['Facility', 'Rack', 'Device', 'Cable'].includes(record.kind ?? '') && !!metadata.uid && !!metadata.resourceVersion && !metadata.deletionTimestamp &&
     !Object.keys({ ...metadata.labels, ...metadata.annotations }).some(key => /fluxcd\.io|argocd|inventory.*owner/i.test(key)) &&
     !!metadata.managedFields?.length && metadata.managedFields.every(field => field.manager === INVENTORY_FIELD_MANAGER && !field.subresource);

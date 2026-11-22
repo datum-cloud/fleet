@@ -7,7 +7,7 @@ import { StrictMode } from 'react';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
-it.each([false, true])('does not publish new-principal reads while focus identity is unresolved strict=%s', async strict => {
+it.each([false, true])('does not publish new-principal reads while explicit host identity is unresolved strict=%s', async strict => {
   let principal = 'staff-a';
   let release: (() => void) | undefined;
   const requests = vi.fn(async (url: string) => {
@@ -22,18 +22,20 @@ it.each([false, true])('does not publish new-principal reads while focus identit
   }, element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }], { initialEntries: ['/?kind=Facility'] });
   render(strict ? <StrictMode><RouterProvider router={router} /></StrictMode> : <RouterProvider router={router} />);
   await screen.findByRole('link', { name: /Private staff-a/ });
+  const refresh = screen.getByRole('button', { name: 'Refresh inventory' });
+  const before = requests.mock.calls.length;
   principal = 'staff-b';
-  fireEvent(window, new Event('blur'));
-  fireEvent(window, new Event('focus'));
+  act(() => { void router.revalidate(); });
   await waitFor(() => expect(release).toBeDefined());
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
+  fireEvent.click(refresh);
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
   expect(router.state.loaderData['layouts/milo.layout'].user.metadata.uid).toBe('staff-a');
   expect(screen.queryByRole('link', { name: /Private staff-b/ })).not.toBeInTheDocument();
+  expect(requests).toHaveBeenCalledTimes(before);
   router.dispose();
 });
 
-it.each(['visible', 'overlap', 'hidden', 'denied'])('renews management only after a fresh successful read: %s', async scenario => {
+it.each(['revalidate', 'overlap', 'hidden', 'denied'])('renews management only after a genuine boundary and fresh successful read: %s', async scenario => {
   let holding = false;
   let denied = false;
   const releases: (() => void)[] = [];
@@ -60,12 +62,12 @@ it.each(['visible', 'overlap', 'hidden', 'denied'])('renews management only afte
     fireEvent(document, new Event('visibilitychange'));
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     visibility.mockReturnValue('visible');
-  } else fireEvent(window, new Event('blur'));
-  fireEvent(window, new Event('focus'));
+    fireEvent(document, new Event('visibilitychange'));
+  } else act(() => { void router.revalidate(); });
   await waitFor(() => expect(releases).toHaveLength(1));
   expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
   if (scenario === 'overlap') {
-    fireEvent(window, new Event('focus'));
+    act(() => { void router.revalidate(); });
     await waitFor(() => expect(releases).toHaveLength(2));
     await act(async () => releases[0]());
     expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
@@ -77,10 +79,10 @@ it.each(['visible', 'overlap', 'hidden', 'denied'])('renews management only afte
     expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
     denied = false;
     holding = false;
-    fireEvent(window, new Event('focus'));
+    act(() => { void router.revalidate(); });
   }
-  await screen.findByRole('button', { name: 'Create facility' });
-  if (scenario === 'visible' || scenario === 'overlap') expect(screen.getByRole('table')).toBe(table);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Create facility' })).toBeEnabled());
+  expect(screen.getByRole('table')).not.toBe(table);
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
   expect(screen.getByLabelText('Display name')).toHaveValue('');
   router.dispose();

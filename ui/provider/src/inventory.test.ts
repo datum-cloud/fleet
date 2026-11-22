@@ -3,9 +3,10 @@ import { fixtureDeviceClaims, fixtureDevices } from './lib/fixtures';
 import { describe, expect, it } from 'vitest';
 
 describe('toInventory', () => {
-  it('keeps provenance-free claim members visible without inferring a current device', () => {
+  it('keeps claim members without creation timestamps visible without inferring a current device', () => {
     const devices = structuredClone(fixtureDevices);
     devices.push({ ...structuredClone(devices[0]), metadata: { ...devices[0].metadata, name: 'another-device' } });
+    for (const device of devices) delete device.metadata.creationTimestamp;
     const inventory = toInventory(fixtureDeviceClaims, devices);
     const slot = inventory.slots.find(item => item.claim.metadata.name === devices[0].spec.claimRef.name)!;
     expect(slot.devices).toHaveLength(2);

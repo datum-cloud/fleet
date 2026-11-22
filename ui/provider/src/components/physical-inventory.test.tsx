@@ -13,8 +13,9 @@ function browse(query = '', data = inventory) {
 }
 
 describe('hardware directory', () => {
-  it.each(inventory.physical)('renders $kind details without provenance', record => {
+  it.each(inventory.physical)('renders $kind details without creation metadata', record => {
     const data = structuredClone(inventory);
+    for (const item of data.physical) delete item.metadata.creationTimestamp;
     browse(`?kind=${record.kind}&record=${record.metadata.name}&namespace=${record.metadata.namespace}`, data);
     expect(screen.getByText('Record history & verification')).toBeInTheDocument();
     expect(screen.queryByText(/Unexpected Application Error/)).not.toBeInTheDocument();
