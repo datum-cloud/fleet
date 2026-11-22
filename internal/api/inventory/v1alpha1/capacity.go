@@ -12,10 +12,9 @@ var (
 )
 
 // CapacityBackingError reports why a Device cannot back a MachineCapacity, or
-// nil when it may. Nothing resolves MachineCapacity.spec.deviceRef yet; any
-// resolver that does must call this and treat a non-nil result as ineligible.
-// It checks only recorded identity, which is matching evidence: a nil result
-// is not verification or allocator eligibility.
+// nil when this basic identity check passes. Registration applies additional
+// paired-identity, alias, incarnation and authorization checks. Recorded identity
+// is matching evidence: a nil result is not verification or allocator eligibility.
 func CapacityBackingError(device *Device) error {
 	if device == nil {
 		return ErrDeviceIdentityMissing

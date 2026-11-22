@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-registration
+  namespace: fleet-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-registration
+  namespace: fleet-system
+spec:
+  selector:
+    app.kubernetes.io/name: fleet-registration
+  ports:
+    - name: https
+      port: 9443
+      targetPort: https
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-registration
+  namespace: fleet-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-registration
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-registration
+    spec:
+      serviceAccountName: fleet-registration
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: registration
+          image: ghcr.io/datum-cloud/fleet:latest
+          command: [/fleet-registration]
+          args:
+            - --config=/etc/fleet/manager/config.yaml
+            - --provider-projects=datum-cloud
+          ports:
+            - name: https
+              containerPort: 9443
+          readinessProbe:
+            tcpSocket:
+              port: https
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: config, mountPath: /etc/fleet/manager, readOnly: true}
+            - {name: root, mountPath: /var/run/fleet/milo, readOnly: true}
+            - {name: projects, mountPath: /var/run/fleet/projects, readOnly: true}
+            - {name: tls, mountPath: /etc/fleet/registration, readOnly: true}
+      volumes:
+        - name: config
+          configMap:
+            name: fleet-manager-config
+        - name: root
+          secret:
+            secretName: fleet-registration-milo-kubeconfig
+            defaultMode: 0440
+            items: [{key: value, path: kubeconfig}]
+        - name: projects
+          secret:
+            secretName: fleet-registration-project-kubeconfig
+            defaultMode: 0440
+            items: [{key: value, path: kubeconfig}]
+        - name: tls
+          secret:
+            secretName: fleet-registration-tls
+            defaultMode: 0440

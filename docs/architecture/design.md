@@ -18,6 +18,12 @@ proposal plus the extension. The [combined proposal](../proposals/fleet-manageme
 examples, and diagrams now live in this repository. The [migration record](../proposals/fleet-management/MIGRATION.md)
 preserves provenance and outstanding review points; the original discussions remain in `infra`.
 
+The implemented [stage-1 registration decision](../development/inventory-capacity-registration.md)
+allows explicitly unconfigured cleaning only for inert Disabled/Retain records.
+It uses a separate private CAS ledger and project-plane admission, not allocation
+custody or provider enrollment. Enabling and preparation remain forbidden until
+their policy resolution and authorization contracts are implemented.
+
 ## Problem and intended outcome
 
 Operators currently repeat infrastructure facts across inventory, provisioning,

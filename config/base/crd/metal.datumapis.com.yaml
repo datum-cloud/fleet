@@ -146,6 +146,8 @@ spec:
             - rule: >-
                 self.deviceRef == oldSelf.deviceRef
               message: physical-device identity is immutable
+            - rule: self.cleaningPolicyRef.name != '' || self.allocationPolicy == 'Disabled'
+              message: unconfigured cleaning policy is permitted only for Disabled records
             properties:
               deviceRef:
                 type: object
@@ -155,7 +157,7 @@ spec:
               cleaningPolicyRef:
                 type: object
                 required: [name]
-                properties: {name: {type: string, minLength: 1}}
+                properties: {name: {type: string}}
               reclaimPolicy: {type: string, enum: [Retain]}
           status:
             type: object

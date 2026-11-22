@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - ../../base/crd
   - ../../base/manager
+  - ../../base/registration
   - ../../components/admission
 components:
   - ../../components/consumer-ui-plugin

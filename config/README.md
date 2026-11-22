@@ -14,12 +14,28 @@ API servers and must be reconciled independently.
 
 | Root | Destination | Contents |
 | --- | --- | --- |
-| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service registration, and machine quota registration |
-| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
+| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, and the mandatory capacity-registration webhook |
+| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
+
+The synthetic staging overlay explicitly excludes the inert-registration
+service and its retention policies. Pair it with `config/milo-synthetic` in a
+**separate non-production Milo control plane**, not production `config/milo`.
+That root preserves the pre-registration synthetic API contract. There is no
+request field, actor exemption, or runtime switch that bypasses production
+registration admission. Never point synthetic lifecycle handlers at the
+production registration authority or its private ledger.
 
 The one `fleet-manager` Deployment serves every Milo project that consumes the
 `metal` service; see [project discovery](#project-discovery).
+
+The separate `fleet-registration` Deployment serves inert inventory-backed
+capacity admission only. Its TLS trust, read/SAR credentials, webhook serving CA
+and one-time private ledger bootstrap are environment-owned. Read the
+[registration rollout contract](../docs/development/inventory-capacity-registration.md#production-packaging-and-rollout)
+before applying either root: an unavailable or incompletely configured authority
+blocks writes, and the ledger must never be reset by GitOps. This does not enable
+production allocation or provisioning.
 
 `config/components/service-catalog-staging` is a Kustomize component with
 staging's Bare Metal prices: committed servers and server setup, which
@@ -29,7 +45,8 @@ A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
 
 `config/components/inventory` registers the operator-written `DeviceClaim` and
 `Device` kinds of `fleet.datumapis.com` in Milo: their CRDs, ProtectedResources,
-and inventory viewer and editor roles. Only `config/milo` includes it; records
+and inventory viewer and editor roles. The production `config/milo` and isolated
+non-production `config/milo-synthetic` roots include it; records
 live in the provider project. `config/inventory` renders the CRDs alone for a
 legacy management-cluster install and will be removed. See
 [Planning and registering physical devices](../docs/operations/physical-inventory.md).
@@ -96,6 +113,7 @@ Render both production roots before publishing the Kustomize bundle:
 
 ```sh
 kustomize build config/milo >/dev/null
+kustomize build config/milo-synthetic >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
 kustomize build config/overlays/synthetic-staging >/dev/null
 ```

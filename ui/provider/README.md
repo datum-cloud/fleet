@@ -7,13 +7,14 @@ mounts its pages under `/plugins/<slug>/`, with a **Bare Metal** item under
 Operations in the navigation. The page has four tabs:
 
 - **Capacity** (the mount root, where the nav item points) lists the
-  provider's MachineCapacities in every namespace and creates new ones. The
-  form asks only for a name, a class, and whether to offer the capacity for
-  allocation (off by default). It goes in the class's namespace and capacity
-  pool, with a device reference named after the record (nothing checks that a
-  Device of that name exists) and the standalone fixtures' cleaning policy. The device
-  reference can't be changed later. Hardware and conditions stay empty until
-  Fleet's discovery reports them.
+  provider's MachineCapacities in every namespace. A verified host session can
+  register an existing `default` Device under an independently authored name.
+  Selection retains the exact Device UID/resourceVersion; the named reference
+  is immutable. Registration is Disabled/Retain with cleaning explicitly
+  unconfigured, without class assignment, allocation, preparation or positive
+  readiness. The server enforces permissions, physical-alias reservations and
+  lifetime fences. Unknown completion blocks retries and never deletes capacity
+  to roll back. See the [registration contract](../../docs/development/inventory-capacity-registration.md).
 - **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
   profile can't be changed after it is created, so there is no edit.
 - **Classes** (`classes`) lists MachineClasses and creates new ones: the
@@ -49,7 +50,8 @@ profiles and classes needs a Bare Metal role with `machinecapacities.create`,
 such as `metal.datumapis.com-provider`. The Inventory tab needs list access to
 the six physical kinds and observational Sites in `fleet.datumapis.com`, which
 `fleet.datumapis.com-inventory-viewer` grants; metal roles grant no inventory
-access. Errors show inside the create dialog,
+access. Capacity registration additionally requires current named Device read
+permission. Fixture builds cannot register capacity. Errors show inside the create dialog,
 because staff-portal does not share its toast module with plugins.
 
 This started as the MVP from [#17](https://github.com/datum-cloud/fleet/issues/17).

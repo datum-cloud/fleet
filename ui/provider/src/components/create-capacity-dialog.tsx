@@ -1,164 +1,76 @@
-import { CAPACITY_POOL_LABEL, type MachineClass, type RawMachineCapacity } from '../types';
-import { useCreateMachineCapacity, useMachineClasses } from '../lib/api';
-import { Alert, AlertDescription } from '@datum-cloud/datum-ui/alert';
 import { Button } from '@datum-cloud/datum-ui/button';
-import { Form } from '@datum-cloud/datum-ui/form';
-import { ConformAdapter } from '@datum-cloud/datum-ui/form/adapters/conform';
-import { Icon } from '@datum-cloud/datum-ui/icons';
-import { Text } from '@datum-cloud/datum-ui/typography';
-import { PlusIcon } from 'lucide-react';
-import { useState } from 'react';
-import { z } from 'zod';
+import { Input } from '@datum-cloud/datum-ui/input';
+import { Label } from '@datum-cloud/datum-ui/label';
+import { useQuery } from '@tanstack/react-query';
+import { useContext, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import type { Device } from '../../../shared/fleet-api';
+import { ineligibleReason, registerCapacity, registrationDevices, registrationPermission, RegistrationUnknown } from '../lib/capacity-registration';
+import { InventoryOperationContext, InventoryOperationReadyContext, InventoryOperationScope, type InventoryOperation } from '../lib/inventory-operation';
+import { useInventoryRead } from '../lib/inventory-read';
+import { confirmInventoryDismissal, InventoryDraftGuard, InventoryForm, InventoryFormSurface } from './inventory-form-surface';
+import { InventorySessionBoundary } from './inventory-session-boundary';
 
-const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
-const NAME_MESSAGE =
-  'Lowercase letters, numbers, and hyphens only. Must start and end with a letter or number.';
-
-const resourceName = (label: string) =>
-  z.string({ error: `${label} is required.` }).max(63, 'At most 63 characters.').regex(NAME_PATTERN, NAME_MESSAGE);
-
-// A class that draws from a namespace and capacity pool; only these can
-// place new capacity where the class will find it.
-export type CapacityTarget = MachineClass & { capacityNamespace: string; capacityPool: string };
-
-export function capacityTargets(classes: MachineClass[] | undefined): CapacityTarget[] {
-  return (classes ?? []).filter(
-    (c): c is CapacityTarget => !c.source && !!c.capacityNamespace && !!c.capacityPool
-  );
+export function CreateCapacityDialog({ onRegistered }: { onRegistered?: () => void }) {
+  return <InventorySessionBoundary pending={<p>Checking registration session…</p>} unavailable={() => <p>Registration unavailable: a verified staff session is required.</p>}><CapacityRegistrationForm onRegistered={onRegistered} /></InventorySessionBoundary>;
 }
 
-// The form fills in the rest of the spec. Fleet has no Device inventory yet,
-// so the device reference is named after the capacity; it can't be changed
-// later. The cleaning policy is the name Fleet's standalone fixtures use;
-// nothing defines cleaning policies yet. Allocation stays off unless asked.
-export const SYNTHETIC_CLEANING_POLICY = 'synthetic-tenant-reuse-v1';
-
-export const capacityFormSchema = z.object({
-  name: resourceName('Name'),
-  machineClass: z.string({ error: 'Choose a class.' }).min(1, 'Choose a class.'),
-  allocationEnabled: z.boolean().optional(),
-});
-
-export type CapacityFormValues = z.infer<typeof capacityFormSchema>;
-
-export function toRawCapacity(values: CapacityFormValues, target: CapacityTarget): RawMachineCapacity {
-  return {
-    metadata: {
-      name: values.name,
-      namespace: target.capacityNamespace,
-      labels: { [CAPACITY_POOL_LABEL]: target.capacityPool },
-    },
-    spec: {
-      deviceRef: { name: values.name },
-      allocationPolicy: values.allocationEnabled ? 'Enabled' : 'Disabled',
-      cleaningPolicyRef: { name: SYNTHETIC_CLEANING_POLICY },
-      reclaimPolicy: 'Retain',
-    },
-  };
-}
-
-function Placement({ targets }: { targets: CapacityTarget[] }) {
-  const selected = Form.useWatch<string>('machineClass');
-  const target = targets.find((t) => t.name === selected);
-  if (!target) return null;
-  return (
-    <Text as="p" textColor="muted" data-testid="fleet-plugin-capacity-placement">
-      Created in namespace{' '}
-      <Text textColor="default" weight="medium">
-        {target.capacityNamespace}
-      </Text>{' '}
-      with capacity pool{' '}
-      <Text textColor="default" weight="medium">
-        {target.capacityPool}
-      </Text>
-      .
-    </Text>
-  );
-}
-
-// Errors render in the dialog because staff-portal does not share its toast
-// module with plugins.
-export function CreateCapacityDialog() {
+export function CapacityRegistrationForm({ onRegistered }: { onRegistered?: () => void }) {
+  const parent = useContext(InventoryOperationContext);
+  const ready = useContext(InventoryOperationReadyContext);
+  const [scope] = useState(() => new InventoryOperationScope());
+  const operation = useRef<InventoryOperation | undefined>(undefined);
+  const operationID = useRef('');
   const [open, setOpen] = useState(false);
-  const mutation = useCreateMachineCapacity();
-  const { data: classes } = useMachineClasses();
-  const targets = capacityTargets(classes);
-
-  const setOpenAndReset = (next: boolean) => {
-    if (next) mutation.reset();
-    setOpen(next);
+  const [name, setName] = useState('');
+  const [selected, setSelected] = useState<Device>();
+  const [pending, setPending] = useState(false);
+  const [unknown, setUnknown] = useState(false);
+  const [message, setMessage] = useState('');
+  const readPermission = useInventoryRead(registrationPermission);
+  const permission = useQuery({ queryKey: ['capacity-registration-permission'], queryFn: readPermission, retry: false, refetchOnWindowFocus: false });
+  const readDevices = useInventoryRead(registrationDevices);
+  const devices = useQuery({ queryKey: ['capacity-registration-devices'], queryFn: readDevices, enabled: open && permission.data === true, retry: false, refetchOnWindowFocus: false });
+  useLayoutEffect(() => { scope.startLifecycle(); return () => scope.invalidate(); }, [scope]);
+  const available = ready && !!parent && permission.data === true;
+  const dismiss = () => {
+    if (confirmInventoryDismissal(!!name || !!selected, pending, unknown)) { scope.invalidate(); setOpen(false); }
   };
-
-  const handleSubmit = (values: CapacityFormValues) => {
-    const target = targets.find((t) => t.name === values.machineClass);
-    if (!target) return;
-    mutation.mutate(toRawCapacity(values, target), { onSuccess: () => setOpen(false) });
-  };
-
-  return (
-    <>
-      <Button
-        type="primary"
-        theme="solid"
-        size="small"
-        htmlType="button"
-        className="w-full sm:w-auto"
-        onClick={() => setOpenAndReset(true)}>
-        <Icon icon={PlusIcon} className="size-4" />
-        Create capacity
-      </Button>
-      <ConformAdapter>
-        <Form.Dialog
-          open={open}
-          onOpenChange={setOpenAndReset}
-          title="Create machine capacity"
-          description="Registers a synthetic machine for a class to draw from. Fleet fills in its hardware and health once discovery reports them."
-          schema={capacityFormSchema}
-          defaultValues={{ allocationEnabled: false }}
-          onSubmit={handleSubmit}
-          loading={mutation.isPending}
-          submitText="Create"
-          submitTextLoading="Creating..."
-          // The dialog caps its height, but the form inside doesn't shrink,
-          // so a long form pushes the footer out of view. A flex column lets
-          // the body scroll instead.
-          formClassName="flex min-h-0 flex-col"
-          className="w-full focus:ring-0 focus:outline-none sm:max-w-lg">
-          <div className="space-y-4 px-5" data-testid="fleet-plugin-create-capacity-form">
-            {mutation.error && (
-              <Alert variant="destructive">
-                <AlertDescription>{mutation.error.message}</AlertDescription>
-              </Alert>
-            )}
-            <Form.Field name="name" label="Name" required>
-              <Form.Input autoFocus placeholder="e.g. central1-baremetal-04" />
-            </Form.Field>
-            <Form.Field
-              name="machineClass"
-              label="Class"
-              description="It goes in this class's namespace and capacity pool."
-              required>
-              {targets.length > 0 ? (
-                <Form.Select placeholder="Choose a class">
-                  {targets.map((t) => (
-                    <Form.SelectItem key={t.name} value={t.name}>
-                      {t.name}
-                    </Form.SelectItem>
-                  ))}
-                </Form.Select>
-              ) : (
-                <Text as="p" textColor="muted">
-                  No classes with a capacity pool yet. Create one on the Classes tab first.
-                </Text>
-              )}
-            </Form.Field>
-            <Placement targets={targets} />
-            <Form.Field name="allocationEnabled">
-              <Form.Checkbox label="Offer for allocation" />
-            </Form.Field>
-          </div>
-        </Form.Dialog>
-      </ConformAdapter>
-    </>
-  );
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!available || pending || unknown || !selected || !operation.current) return;
+    setPending(true); setMessage('');
+    try {
+      await registerCapacity(name, selected, operationID.current, operation.current);
+      setMessage(`Registered ${name} as Disabled/Retain. Cleaning is unconfigured; readiness and availability remain unknown.`);
+      setName(''); setSelected(undefined); setOpen(false); onRegistered?.();
+    } catch (error) {
+      setUnknown(error instanceof RegistrationUnknown);
+      setMessage(error instanceof Error ? error.message : 'Registration unavailable.');
+    } finally { setPending(false); }
+  }
+  const status = <>{message && <p role="alert">{message}</p>}{!available && <p>{permission.isPending ? 'Checking registration permission…' : permission.error ? 'Registration unavailable: authorization could not be checked.' : 'Registration denied or unavailable for this session. Synthetic previews cannot register capacity.'}</p>}</>;
+  return <>
+    <InventoryDraftGuard dirty={open && (!!name || !!selected)} pending={pending} uncertain={unknown} />
+    <InventoryFormSurface open={open} title="Register inventory-backed capacity" status={status} onDismiss={dismiss} trigger={<Button type="primary" size="small" disabled={!available} onClick={() => {
+      scope.startLifecycle(); operation.current = scope.begin(parent); operationID.current = crypto.randomUUID();
+      setName(''); setSelected(undefined); setUnknown(false); setMessage(''); setOpen(true);
+    }}>Register capacity</Button>}>
+      <InventoryForm onSubmit={event => void submit(event)} message={message}>
+        <p>Choose a Device in default. This creates an inert Disabled/Retain record, not usable capacity. Cleaning remains explicitly unconfigured. No hardware is prepared or changed.</p>
+        <fieldset disabled={pending || unknown || !available}>
+          <Label>Capacity name<Input required maxLength={63} pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" value={name} onChange={event => setName(event.target.value)} /></Label>
+          <Label>Device<select required value={selected?.metadata.uid ?? ''} onChange={event => {
+            const device = devices.data?.find(item => item.metadata.uid === event.target.value);
+            setSelected(device ? structuredClone(device) : undefined);
+          }}><option value="">Choose an existing Device</option>{devices.data?.map(device => <option key={device.metadata.uid ?? device.metadata.name} value={device.metadata.uid ?? ''} disabled={!!ineligibleReason(device)}>{device.metadata.name}{ineligibleReason(device) ? ` — ${ineligibleReason(device)}` : ''}</option>)}</select></Label>
+          {devices.isPending && <p>Loading Devices…</p>}
+          {devices.error && <p role="alert">Devices are unavailable or access is denied. Registration is blocked.</p>}
+          {devices.data?.length === 0 && <p>No Devices are available in default.</p>}
+          {selected && <p>The authored Device reference {selected.metadata.name} is immutable. This selection retains its exact incarnation and version; it is never silently refreshed.</p>}
+          <Button htmlType="submit" disabled={!selected || !!devices.error || pending || unknown}>Register Disabled capacity</Button>
+        </fieldset>
+        <Button htmlType="button" onClick={dismiss} disabled={pending}>Close</Button>
+      </InventoryForm>
+    </InventoryFormSurface>
+  </>;
 }
