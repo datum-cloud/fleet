@@ -5,10 +5,6 @@ metadata:
   namespace: default
 spec:
   displayName: Example premises
-  provenance:
-    method: Manual
-    recordedBy: operator@example.com
-    recordedAt: "2026-11-20T12:00:00Z"
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Rack
@@ -18,10 +14,6 @@ metadata:
 spec:
   displayName: Example rack
   facilityRef: {name: example-facility}
-  provenance:
-    method: Manual
-    recordedBy: operator@example.com
-    recordedAt: "2026-11-20T12:00:00Z"
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceClaim
@@ -35,10 +27,6 @@ spec:
     scope: RackMembership
     rackRef: {name: example-rack}
   cableRefs: [{name: example-power-cable}]
-  provenance:
-    method: Manual
-    recordedBy: planner@example.com
-    recordedAt: "2026-11-20T12:00:00Z"
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Device
@@ -55,10 +43,6 @@ spec:
   components:
     - {id: psu-a, name: PSU A input, type: PowerInlet}
     - {id: eth0, name: Ethernet 0, type: NetworkPort}
-  provenance:
-    method: Manual
-    recordedBy: registrar@example.com
-    recordedAt: "2026-11-20T12:00:00Z"
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: PowerFeed
@@ -71,10 +55,6 @@ spec:
   rackRef: {name: example-rack}
   terminations:
     - {id: outlet-a, name: Outlet A, type: PowerOutlet}
-  provenance:
-    method: Manual
-    recordedBy: operator@example.com
-    recordedAt: "2026-11-20T12:00:00Z"
 ---
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: Cable
@@ -88,7 +68,3 @@ spec:
     - id: power
       a: {powerFeedRef: {name: example-feed}, componentID: outlet-a, position: 1}
       b: {deviceRef: {name: example-server}, componentID: psu-a, position: 1}
-  provenance:
-    method: Manual
-    recordedBy: operator@example.com
-    recordedAt: "2026-11-20T12:00:00Z"

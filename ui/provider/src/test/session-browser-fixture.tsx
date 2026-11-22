@@ -26,7 +26,6 @@ window.fetch = async (input, init) => {
   const items = url.includes('/devices') ? fixturePhysicalDevices : url.includes('/deviceclaims') ? fixturePhysicalClaims : fixturePhysicalRecords.filter(record => record.kind === kind);
   return Response.json({ data: { items: items.map(record => ({ ...record,
     metadata: { ...record.metadata, uid: `synthetic-${record.metadata.name}`, resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] },
-    spec: { ...record.spec, provenance: { ...record.spec.provenance, method: 'Manual', source: undefined } },
   })) } });
 };
 

@@ -8,7 +8,7 @@ latest-milestone: "v0.1"
 
 Technical detail supporting the [Fleet inventory product proposal](inventory.md).
 Start there for operator needs, the proposed experience and open decisions.
-This appendix keeps field definitions, synthetic examples, source findings,
+This appendix keeps field definitions, synthetic examples,
 migration steps and test requirements together for implementers and reviewers.
 It is part of the same enhancement, not a separate design.
 
@@ -35,7 +35,6 @@ rebinds the relationship; observed resource UIDs do not belong in desired-state 
   - [Circuit boundary](#circuit-demarcations-and-external-ownership)
   - [Lifecycle transitions](#moves-replacements-and-retirement)
 - [Existing records and migration](#existing-records-and-migration)
-- [Source evidence and limits](#source-evidence-and-limits)
 - [Validation and qualification matrix](#validation-and-qualification-matrix)
 
 ## Contract details
@@ -56,14 +55,14 @@ photo, model, approval, or verification run.
 | Management endpoints and access | Provider management authority | Restricted references/projections only; inventory does not allocate OOB addresses, issue credentials, or authorize BMC actions. |
 | Provider host IDs, service/circuit identifiers and commercial facts | Respective provider/service authority | Inventory retains sourced identifiers and physical associations, not orders, invoices, pricing, or routing intent. |
 
-All kinds need a human-readable label, optional description, provenance, and
-restricted external references. Names and labels are not durable asset identity.
-For each imported fact retain source system, source object type and ID, source
-revision or snapshot digest when available, observation time, importer identity
-and mapping revision. Keep claimed source authors separate from the authenticated
-submitter. Conflicting sources require adjudication; last import wins is not a
-trust rule. Absence, undisclosed information, a mismatch, and policy-approved
-inapplicability are distinct states, never encoded as invented values or zero.
+All kinds need a human-readable label, optional description, and restricted
+external references. Names and labels are not durable asset identity. Records do
+not carry their own attribution: resource audit logs record who changed a record
+and `metadata.creationTimestamp` records when it was created. A writer that copies
+facts from another system keeps any record of where they came from on its own
+labels and annotations; Fleet does not interpret them. Absence, undisclosed
+information, a mismatch, and policy-approved inapplicability are distinct states,
+never encoded as invented values or zero.
 
 Typed references identify the allowed kind/group, administrative scope, and name.
 A kind-specific field such as `rackRef` fixes kind/group; examples omit scope only
@@ -71,7 +70,7 @@ for same-scope references. Cross-scope references require explicit scope and
 authorization; they never resolve by a global name search. Acceptance pins the
 resolved local incarnation and relevant revision privately. Name reuse, dangling
 references, unauthorized targets, and wrong-kind targets cannot inherit evidence.
-Foreign source IDs are provenance, not directly resolvable Fleet references.
+Identifiers from other systems are not directly resolvable Fleet references.
 
 `documentRefs` refer to photos, as-built sheets, installation attestations, LOAs,
 or contracts in their existing document system. Retain document ID, category,
@@ -94,10 +93,10 @@ must preserve evidence needed by active reservations and consumer obligations.
 | Kind | Proposed minimum and optional physical metadata | Validation and lifecycle |
 | --- | --- | --- |
 | Facility | Stable identity, display name, geographic `locationRef`, and physical-premises description. Optional structured postal address, building/room labels, coordinates with source/precision, operator identity reference, external facility-code mappings and document references. Sensitive access instructions stay external. | A metro code alone is insufficient to establish premises. Operator approval establishes or corrects a premises mapping. Closing a Facility blocks new plans; it neither relocates equipment nor releases occupancy. Preserve historical references. |
-| Rack | Immutable `facilityRef` after accepted use, local rack label, optional room/row, mounting geometry and capacity, supported faces, depth/width limits, optional load limit with units, 0U mounting locations, and document references. Unknown dimensions remain absent with provenance. | Rack labels are unique within an agreed Facility scope, not globally. Known rack-unit numbering has a documented origin/direction; position denotes the lowest occupied unit. Reject out-of-range footprints, face/depth conflicts, and incompatible mounts. Do not infer usable space from omitted geometry. |
+| Rack | Immutable `facilityRef` after accepted use, local rack label, optional room/row, mounting geometry and capacity, supported faces, depth/width limits, optional load limit with units, 0U mounting locations, and document references. Unknown dimensions remain absent. | Rack labels are unique within an agreed Facility scope, not globally. Known rack-unit numbering has a documented origin/direction; position denotes the lowest occupied unit. Reject out-of-range footprints, face/depth conflicts, and incompatible mounts. Do not infer usable space from omitted geometry. |
 
 A Facility is not a provider account, provider metro grouping, or Fleet policy
-Site. One physical premises may have several provider codes; one imported metro
+Site. One physical premises may have several provider codes; one provider metro
 grouping may refer to several premises. Mapping records retain both directions
 and unresolved candidates without creating a false one-to-one relationship.
 Site policy selects eligible Facilities as described in
@@ -136,7 +135,7 @@ models and VM flavors cannot establish chassis geometry. Qualification must
 compare the shape to actual hardware variants.
 
 Each canonical component entry has a Device-local stable ID, a discriminated
-type, physical label, optional parent/slot, relevant capabilities, provenance,
+type, physical label, optional parent/slot, relevant capabilities,
 and retained incarnation/revision evidence. The registrar owns the canonical
 entry; mutable observations and OS aliases are separate. Reject duplicate IDs,
 parent cycles, incompatible fields, and references to removed incarnations.
@@ -184,7 +183,7 @@ remain the only declarations connecting different assets.
 
 The DeviceClaim contract retains role, expected identity constraints, placement
 scope, declared attachment points, required Cable references, verification
-profile/checks, provenance and approval revision. Where power is reserved, the
+profile/checks and approval revision. Where power is reserved, the
 plan also pins a maximum load budget with units and the required failure scenario
 per supply path. Missing load assumptions block power-capacity acceptance; the
 number of PSUs does not supply them. Model-shape references and predecessor/asset
@@ -353,12 +352,12 @@ terminations/power, but makes **no rack-unit reservation**. An unresolved
 footprint prevents declaring the rack's unaccounted space free: block new exact
 unit reservations in that rack until occupancy is reconciled, unless a qualified
 operator-approved exclusion boundary proves a disjoint area safe. Do not guess
-the exclusion boundary. Facility-only imports likewise cannot establish free
+the exclusion boundary. Facility-only records likewise cannot establish free
 rack capacity. A plan requiring exact placement remains Pending until an exact
 footprint is approved and reserved. `PlacementVerified` reports Facility,
 RackMembership, or exact mount scope; RackMembership readiness cannot satisfy a
-RackUnits prerequisite. Imported invented positions never satisfy any placement
-check merely because they appear in a source DCIM object.
+RackUnits prerequisite. Invented positions copied from another system never
+satisfy any placement check.
 
 ### Reserve physical resources
 
@@ -575,10 +574,7 @@ not an independently editable peer list on Devices.
 A Cable connects typed physical terminations. Pass-through components on patch
 panels retain explicit internal front/rear mappings. Breakout cables require
 explicit position/lane mappings. Trace the complete supporting path; reject an
-unsupported mapping rather than assuming a direct connection. NetBox's
-[physical cable model](https://netboxlabs.com/docs/netbox/models/dcim/cable/) provides an
-established physical-path precedent. It is not a requirement to use NetBox's
-schema or implementation.
+unsupported mapping rather than assuming a direct connection.
 
 A PDU is a Device. Its component model maps each outlet to the input that
 supplies it. Power cables connect feeds to PDU inputs and outlets to device
@@ -588,9 +584,7 @@ PowerFeed records include rated/usable capacity and known upstream
 sources; unknown dependencies remain explicit. Reservation calculations must
 account for the declared redundancy/failure scenario, not assume that each of
 two feeds supplies half the load. Two differently named PDUs can share the same
-UPS or upstream circuit. See the
-[power feed model](https://netboxlabs.com/docs/netbox/models/dcim/powerfeed/) and
-[power outlet model](https://netboxlabs.com/docs/netbox/models/dcim/poweroutlet/) precedents.
+UPS or upstream circuit.
 
 PowerFeed is the physical supply boundary, not a utility bill or a substitute
 for a PDU Device. Its proposed contract includes Facility reference, operator
@@ -602,7 +596,7 @@ and measured draw remain separate; a low instantaneous draw cannot free a
 reserved budget.
 
 Upstream dependencies identify other PowerFeeds or scoped external electrical
-source identities with provenance. Equal external identities mean a shared
+source identities. Equal external identities mean a shared
 dependency; different labels without evidence do not prove independence.
 Unresolved dependencies remain Unknown, and cycles are invalid. An electrical
 panel/circuit label is distinct from a network service circuit identifier.
@@ -776,11 +770,11 @@ any of the conditions proposed here.
 
 | Reviewed implementation | Proposed target and migration constraint |
 | --- | --- |
-| DeviceClaim describes a long-lived slot; a replacement Device names the same claim. Device identity and `claimRef` are immutable. | Retain this proposal's per-installation claim identity: each move/replacement has a successor claim. Keep a stable slot label or provenance association for operator navigation, not a second binding authority or new Slot kind. This is a proposed resolution, not a schema change already approved in #90. |
-| Placement requires string `facility`/`rack`, numeric position, height and face. | Resolve approved Facility/Rack references with source mapping. Convert to explicit placement scope; do not treat strings as global IDs or retain fabricated positions as authoritative. |
+| DeviceClaim describes a long-lived slot; a replacement Device names the same claim. Device identity and `claimRef` are immutable. | Retain this proposal's per-installation claim identity: each move/replacement has a successor claim. Keep a stable slot label for operator navigation, not a second binding authority or new Slot kind. This is a proposed resolution, not a schema change already approved in #90. |
+| Placement requires string `facility`/`rack`, numeric position, height and face. | Resolve approved Facility/Rack references. Convert to explicit placement scope; do not treat strings as global IDs or retain fabricated positions as authoritative. |
 | Claimed ports have name/type/speed and embedded `expectedPeer`; Device interfaces may contain `peer`. | Convert approved expected connections into Cable plans once; preserve actual peer reports as sourced observations. Reconcile reciprocal/contradictory entries before creating a single Cable authority. Keep old inline fields read-only during cutover, then remove/deprecate through a versioned migration. |
-| Device carries model, serial/system UUID, interfaces and unmapped MACs. | Preserve original values and provenance; adjudicate canonical physical identity and component mappings. Do not coerce provider IDs into chassis serials, or turn interface names/MAC lists into trusted component identity. |
-| Optional BMC endpoint and manual provenance live on restricted provider-project objects in Milo. | Preserve access restrictions. Endpoint discovery does not authorize access. Transfer endpoint configuration authority explicitly to the provider management surface before exposing only references/read projections; never run two writable copies. |
+| Device carries model, serial/system UUID, interfaces and unmapped MACs. | Preserve original values; adjudicate canonical physical identity and component mappings. Do not coerce provider IDs into chassis serials, or turn interface names/MAC lists into trusted component identity. |
+| Optional BMC endpoint lives on restricted provider-project objects in Milo. | Preserve access restrictions. Endpoint discovery does not authorize access. Transfer endpoint configuration authority explicitly to the provider management surface before exposing only references/read projections; never run two writable copies. |
 | No controller checks binding exclusivity, evidence or `MachineCapacity.deviceRef` resolution. | Resolve duplicate/multiple bindings and protect existing occupancy before enabling automation. Do not infer Accepted, Bound, Ready or allocator eligibility from schema admission. |
 
 **Claim-lifetime decision gate.** The target remains one committed Device binding
@@ -812,26 +806,13 @@ bindings/evidence; they are not independently writable asset catalogs. Qualify
 cross-project reads, status writers, reference authorization and consumer redaction
 before broadening access or adding cross-scope relationships.
 
-### NetBox and provider imports
+### Moving records from another inventory system
 
-Import is observational until an explicit ownership transition. These rules are
-derived from the pinned source workflows, not from a live NetBox database audit:
-
-| Source convention or gap | Required treatment |
-| --- | --- |
-| Loader Sites group provider metros and can union several provider facility codes. | Preserve source Site ID and provider-code mapping. Do not map NetBox Site one-to-one to Fleet Site or Facility. Unresolved premises stay unresolved and block prerequisites needing a physical Facility. |
-| Loaders store provider host IDs in NetBox `serial`. | Retain them as owner-qualified external host IDs with the original field provenance. Never claim a verified chassis serial without independent physical evidence. |
-| NetActuate VMs are DCIM Devices. | Classify virtual supply through provider/MachineCapacity contracts. Do not create Fleet physical Devices, ports or racks merely because NetBox uses DCIM. |
-| servers.com assigns lowest-free 1U positions because physical positions are undisclosed. | Retain those source values only as synthetic display history. Import known rack association as RackMembership, subject to approved premises mapping; neither reserve nor verify invented units, faces or heights. |
-| Commissioning uses asset tags, cable labels, circuit IDs, power feeds, photos and as-built records. | Preserve those distinct identifiers and restricted evidence references; do not flatten everything into serial or a free-form note. Address plans remain IPAM-owned. |
-| Provisioning joins serial/model/OOB endpoint with networking data. | Preserve authorized consumer projections and explicit joins, not a duplicate networking API. Imported joins authorize no hardware actions, adoption, capacity eligibility or release. |
-| Source lifecycle says active, decommissioning, vanished or decommissioned. | Retain as source observations. None proves physical verification, ownership transfer, secure cleanup, released consumer allocations or a free rack/termination. |
-
-Import batches retain source snapshot identity, mapping decisions, per-record
-outcomes and conflicts for repeatable dry runs. The same source object/revision
-must not create duplicate assets after a retry. Missing source observations do
-not delete records or release occupancy. Never copy local provider tokens, BMC
-password custom fields, kubeconfigs or secret-bearing generated configuration.
+A writer that copies records from another system into Fleet writes ordinary
+records through the same API and admission as any other writer, and is
+observational until an explicit ownership transition. Fleet does not model
+where those records came from. Never copy local provider tokens, BMC password
+fields, kubeconfigs or secret-bearing generated configuration.
 
 Use a staged, reversible handoff rather than destructive in-place normalization:
 
@@ -839,39 +820,22 @@ Use a staged, reversible handoff rather than destructive in-place normalization:
    virtual supply, identifier semantics, known occupancy and placement certainty.
    Produce a read-only mapping/conflict report with no hardware effects.
 2. Approve Facility mappings, model/component shapes and per-installation history.
-   Create proposed plans without treating imported occupancy as free. Preserve
+   Create proposed plans without treating copied occupancy as free. Preserve
    current allocator reservations and consumer obligations under their owners.
 3. Reconcile expected peer pairs into Cable plans and electrical dependencies into
    PowerFeeds. Resolve contradictions and unsupported paths explicitly. Validate
    partial placement and scoped external circuit associations without inventing
    absent endpoints or upstream sources.
 4. Shadow-read and compare authorized provisioning inputs (identity, model,
-   restricted OOB endpoint and network-owned joins). Establish source parity for
-   the selected cohort, not an assertion of exhaustive NetBox equivalence.
+   restricted OOB endpoint and network-owned joins). Establish parity for
+   the selected cohort, not an assertion of exhaustive equivalence.
 5. Transfer one writable surface at a time with an explicit cutover revision and
    predecessor preconditions. Disable its previous writer before enabling the
-   replacement. Keep compatibility projections read-only and retain source history.
+   replacement. Keep compatibility projections read-only.
 6. Qualify current evidence and separately authorize custody/adoption and consumer
    integrations. Never seed Ready from an old active flag. Recovery/rollback uses
    retained cutover state; it cannot reactivate a stale writer, erase new history,
    or release a reservation whose physical state is uncertain.
-
-## Source evidence and limits
-
-This amendment reviewed repository sources and read-only snapshots of infra
-`main` at `d9198940a499be4e744ee0564cf3dc0b3bfcee34`. No live NetBox database audit,
-provider call, electrical inspection, or hardware qualification was performed.
-The sources motivate contract and migration requirements, not verified fleet-wide
-data quality or proof that every production consumer has been found.
-
-| Pinned source | Evidence used |
-| --- | --- |
-| [Inventory sync guide][sync-guide], [NetActuate loader][na-loader], [servers.com loader][sc-loader] | Metro/provider mappings, host-ID serial semantics, virtual DCIM records, synthetic rack positions, and provider lifecycle observations. |
-| [NetBox server guide][netbox-guide] | Operator inventory and provisioning inputs; existing networking/IPAM associations. |
-| [Site commissioning][site-build], [rack work][rack-build], [network hardware][network-build], [compute hardware][compute-build] | Racks, serials, asset tags, labels, feeds, circuit IDs, address plans and external photos/LOAs/as-built artifacts. |
-| [Out-of-band access commissioning][oob-build], [transit circuit commissioning][transit-build], [transport circuit commissioning][transport-build] | Physical delivery/demarcation and circuit identifiers distinct from service/routing readiness. |
-| [Provisioning joins][provisioning-joins], [IPAM validation][ipam-validation] | Serial/model/OOB and network joins; address/routing validation stays with its current owner. |
-| [Fleet manual types][manual-types], [Fleet manual operations][manual-guide] | The implemented manual subset and explicit slot-lifetime/storage divergences at the reviewed PR #90 revision. |
 
 The [infrastructure provider responsibilities](bare-metal-hardware.md#infrastructure-providers),
 [capacity readiness reporting](bare-metal-hardware.md#status), and
@@ -889,13 +853,13 @@ change**. Offline schema tests cannot establish physical truth.
 | --- | --- | --- |
 | References and scope | Wrong kind, missing scope, cross-project denial, dangling reference, name recreation, stale revision | Reject unauthorized/ambiguous resolution; no inherited binding or evidence. |
 | Facility and Rack | Multi-premises provider Site, unknown dimensions, conflicting faces/depth, 0U mount, known rack/unknown position | Preserve uncertainty; no invented geometry or false free-space assertion; exact reservations require accounted occupancy. |
-| Identity and components | Duplicate serials, provider ID in serial, VM in DCIM, swapped asset tag, OS rename, replaced NIC/PSU/disk in the same slot | Adjudicate identity; retain source history; invalidate affected mappings without changing asset identity on ordinary repairs. |
+| Identity and components | Duplicate serials, provider ID in serial, VM in DCIM, swapped asset tag, OS rename, replaced NIC/PSU/disk in the same slot | Adjudicate identity; retain history; invalidate affected mappings without changing asset identity on ordinary repairs. |
 | Binding and reservations | Concurrent claims, claim versus direct-Device cable endpoints, lost registration response, crash during handover, restored reservation database | One active placement and exclusive termination/footprint ownership; recover exact committed inputs; uncertainty keeps holds. |
 | Cable topology | Copper/optical mismatch, console direction, unresolved demarcation, patch-panel polarity, breakout lane collision, repatch/replacement | Reject unsupported paths; verify each required segment and invalidate changed dependencies, not just end-to-end link state. |
 | Power | Shared UPS behind distinct PDUs, unknown rating, mixed units, feed cycles, failover overbudget, stale upstream evidence | No false redundancy or capacity; independent sources and full failover budget proven under a qualified electrical model. |
 | Evidence and authority | Forged submitter, copied BMC location, stale scan, inaccessible document, unknown external circuit owner, attempted collector spec write | Fail closed for required checks; no self-attestation from copied intent, no status forgery or automatic exemption. |
 | Lifecycle | Occupied-slot replacement, move with active allocation, component removal, retirement with active references, cancelled partially installed plan | Retain history and consumer obligations; no premature physical release, destructive side effect or second active claim. |
-| Import/cutover | Duplicate batch, conflicting inline peers, invented rack positions, source disappearance, rollback after new writes | Idempotent mapping, single writer, no Ready backfill or free-capacity window; keep unresolved facts unknown. |
+| Migration/cutover | Duplicate batch, conflicting inline peers, invented rack positions, disappearing records, rollback after new writes | Idempotent mapping, single writer, no Ready backfill or free-capacity window; keep unresolved facts unknown. |
 | Access/projections | Inventory roles versus consumer roles, OOB/console endpoint reads, document ACLs, secret-bearing source fields | Restricted management details remain restricted; credentials never enter inventory projections or repository fixtures. |
 
 Before a facility cohort becomes eligible, record the qualified model variants,
@@ -907,16 +871,3 @@ registration alone does not satisfy this gate.
 
 [manual-types]: https://github.com/datum-cloud/fleet/blob/08d6dde8563b7c999ecf839565db2bd37b4dda7e/internal/api/inventory/v1alpha1/types.go
 [manual-guide]: https://github.com/datum-cloud/fleet/blob/08d6dde8563b7c999ecf839565db2bd37b4dda7e/docs/operations/physical-inventory.md
-[sync-guide]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/docs/guides/sync-inventory.md
-[na-loader]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/bin/sync-netactuate-inventory
-[sc-loader]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/bin/sync-serversdotcom-inventory
-[netbox-guide]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/docs/guides/netbox-server.md
-[site-build]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/.claude/skills/site-builds/phases/00-site.md
-[oob-build]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/.claude/skills/site-builds/phases/04-oob.md
-[transit-build]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/.claude/skills/site-builds/phases/05-transit.md
-[transport-build]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/.claude/skills/site-builds/phases/06-transport.md
-[network-build]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/.claude/skills/site-builds/phases/07-nethw.md
-[compute-build]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/.claude/skills/site-builds/phases/08-computehw.md
-[rack-build]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/.claude/skills/site-builds/phases/09-rack.md
-[provisioning-joins]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/provisioning/baremetal/lib/common.sh
-[ipam-validation]: https://github.com/datum-cloud/infra/blob/d9198940a499be4e744ee0564cf3dc0b3bfcee34/bin/validate-netbox-ipam

@@ -105,7 +105,7 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</Button>}
     {open && permitted && <form className="inventory-form" onSubmit={save}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
-      <p>Source: manual observation/correction. Original import provenance is retained. Authenticated actor history uses existing resource audit logs, not this form's attribution.</p>
+      <p>Authenticated actor history uses existing resource audit logs.</p>
       <Label>Actual facility (optional)<select value={fields.facility} disabled={!!unavailable.Facility} onChange={event => field('facility', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Facility').map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
       <Label>Actual rack (optional)<select value={fields.rack} disabled={!!unavailable.Rack} onChange={event => field('rack', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
       <Label>Reported position (U)<Input type="number" min="1" max="100" step="any" value={fields.position} onChange={event => field('position', event.target.value)} /></Label>

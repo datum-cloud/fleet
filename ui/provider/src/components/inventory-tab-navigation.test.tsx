@@ -82,7 +82,9 @@ it('keeps actual tab DOM through host checks, reuses collections, and preserves 
 it('fences an in-flight create across a cached tab transition without carrying its draft', async () => {
   const view = host('?kind=Facility', true);
   fireEvent.click(await screen.findByRole('button', { name: 'Create facility' }));
-  for (const [label, value] of [['Record name', 'synthetic'], ['Display name', 'Private pending draft'], ['Recorded by', 'synthetic-operator']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  expect(screen.queryByLabelText('Recorded by')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Change reference')).not.toBeInTheDocument();
+  for (const [label, value] of [['Record name', 'synthetic'], ['Display name', 'Private pending draft']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
   view.holdReview();
   fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
   await screen.findByRole('button', { name: 'Saving…' });

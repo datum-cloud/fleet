@@ -7,7 +7,7 @@ import { InventorySessionBoundary } from './inventory-session-boundary';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 import { fixturePhysicalDevices } from '../lib/fixtures';
 
-const values = { name: 'synthetic', namespace: 'default', displayName: 'Original', recordedBy: 'synthetic', reference: '', facility: '', height: '' };
+const values = { name: 'synthetic', namespace: 'default', displayName: 'Original', facility: '', height: '' };
 const metadata = { name: 'synthetic', namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] };
 const facility = { ...inventoryPayload('Facility', values), metadata };
 const device = { ...fixturePhysicalDevices[0], metadata, spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: undefined } };
@@ -47,7 +47,6 @@ it.each(['create', 'label', 'location'].flatMap(mode => ['review', 'read', 'disp
   } else {
     if (mode === 'create') fireEvent.change(screen.getByLabelText('Record name'), { target: { value: 'synthetic' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New label' } });
-    fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'synthetic' } });
   }
   fireEvent.click(screen.getByRole('button', { name: mode === 'location' ? 'Save reported location' : mode === 'label' ? 'Save display name' : 'Create facility record' }));
   await waitFor(() => expect(release).toBeDefined());

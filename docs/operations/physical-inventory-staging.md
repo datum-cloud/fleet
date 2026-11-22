@@ -1,11 +1,10 @@
 # Evaluate manual physical inventory in staging
 
-[Manual entry and review](physical-inventory.md#manually-record-a-small-installation) ·
-[Optional source comparison](netbox-physical-import.md)
+[Manual entry and review](physical-inventory.md#manually-record-a-small-installation)
 
 This checklist is for an explicitly approved staging evaluation after independent
 adversarial review. It is not approval to deploy or evidence of physical readiness.
-No live imports, deployment, source-tag changes, hardware actions, or inventory
+No deployment, source-tag changes, hardware actions, or inventory
 writes were performed during the implementation checks below.
 
 ## Read-only baseline observed on November 20, 2026
@@ -57,8 +56,8 @@ acceptance step. No production project context was used as a substitute.
    budgets, verification and readiness must remain Unknown. Do not register an
    asset without a genuine identity or manufacture a serial from a provider ID.
 5. Review and merge individual records into the private provider-inventory Git
-   source; let Flux be the only API writer. No NetBox access, bulk conversion,
-   discovery, sync, or scheduled import is needed. No capacity, billing, IPAM,
+   source; let Flux be the only API writer. No external inventory access, bulk conversion,
+   discovery, or sync is needed. No capacity, billing, IPAM,
    routing, provisioning, hardware, customer-release or status changes are allowed.
 6. Verify authorized staff can browse all six kinds, typed components, relationships,
    partial placement and historical bindings. Confirm consumer identities cannot
@@ -121,7 +120,6 @@ go test -race ./...
 go vet ./...
 go test -race ./internal/manager -run 'TestProject(Reengagement|Departure)|TestConcurrentProjectReengagement|TestDisengageWithActiveCustody' -count=50
 go test -race ./internal/manager -run '^(TestManagerEndToEndAgainstSyntheticMilo|TestConsumerDiscoveryIgnoresOtherServicesAndBacksOff)$' -count=1 -v
-python3 -m unittest discover -s hack -p test_netbox_inventory.py
 pnpm --dir ui/provider typecheck
 pnpm --dir ui/provider test
 pnpm --dir ui/provider build
@@ -131,6 +129,4 @@ bash hack/validate-doc-links.sh
 git diff --check
 ```
 
-There is no live NetBox parity claim. Optional snapshots and candidate conversion
-remain solely to help an operator compare a source when separately requested;
-they never apply records or change Git. Their synthetic tests are not a source audit.
+There is no claim of parity with any external inventory source.

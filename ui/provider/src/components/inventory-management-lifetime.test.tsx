@@ -4,8 +4,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { InventoryManagement } from './inventory-management';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 
-const values = { name: 'synthetic-only', namespace: 'default', displayName: 'Original', recordedBy: 'operator', reference: '', facility: '', height: '' };
-const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
+const values = { name: 'synthetic-only', namespace: 'default', displayName: 'Original', facility: '', height: '' };
+const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -31,7 +31,6 @@ it.each(['create-pagehide', 'create-unmount', 'edit-pagehide', 'edit-unmount', '
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Edit display name' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Retained safe input' } });
-  fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: values.recordedBy } });
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
   await waitFor(() => expect(release).toBeDefined());
   if (mode.endsWith('unmount')) mounted.unmount();

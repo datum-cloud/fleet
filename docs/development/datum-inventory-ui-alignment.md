@@ -2,11 +2,15 @@
 
 ## Scope and sources
 
-This change starts at PR104 commit
-`4810fbf8b75fe50731a988326dd057f56e6b16cb`, including its visible blur/focus
-no-op and optional-provenance behavior. It does not merge PR104's subsequent
-test-synchronization commit `318695ba30873230926ba8b7bfc26432f90dcdb0` or PR107's
-unmerged catalog work. It is a stacked change targeting
+This change originally started at PR104 commit
+`4810fbf8b75fe50731a988326dd057f56e6b16cb` and now merges the exact stack base
+`54ea22234decf841c01d17641b5686e558e4976d`, including settled asynchronous host
+mount/test synchronization and the PR106 contract removal incorporated through
+`5b60656759033b61674ee202a9ad94f4d49f4a64`. Provenance, Device sourceIdentity,
+component sourceRef, placement method/snapshotDigest and NetBox importer tooling
+remain removed. Visible blur/focus remains a complete no-op; actual hidden,
+logout and stale-generation fences remain in force. PR107's unmerged catalog
+work is not included. It is a stacked change targeting
 `t3/preserve-inventory-controls-on-blur`; retarget to the default branch only
 after PR104 merges and review the resulting diff.
 
@@ -118,7 +122,8 @@ reuse is not a live freshness or newly granted permission claim.
 
 ## Validation
 
-- Provider: `pnpm --dir ui/provider test` — 34 files, 516 tests; typecheck and
+- Provider after exact-base merge: `pnpm --dir ui/provider test` — 35 files,
+  539 tests; typecheck and
   production build pass. Coverage asserts actual library slots/variants, field
   and button semantics, visible blur/focus node identity, permissions, immutable
   baselines, unknown outcomes and existing read/write fences.
@@ -130,12 +135,22 @@ reuse is not a live freshness or newly granted permission claim.
   query changes. These do not mock Datum components.
 - Consumer: `pnpm --dir ui/consumer test` — 3 files, 44 tests; typecheck and
   production build pass. Consumer implementation is untouched.
+- Seven focused session-boundary, tab-navigation, exact-staging, stable-control,
+  visible-focus-save, navigation-safety and revalidation-safety files pass three
+  consecutive runs (150 tests each). The inherited settled async `mountHost`
+  synchronization remains unchanged. The cached-create navigation test now
+  asserts the removed recorder/reference controls are absent rather than filling
+  obsolete fields; it still checks draft clearing and zero stale writes.
 - Documentation: `bash hack/validate-doc-links.sh`; whitespace: `git diff --check`.
+- Merged API contract: `go test ./internal/api/inventory/v1alpha1` passes.
+  Both UI builds retain the existing Module Federation warning about differing
+  transitive `undici` versions; dependencies and lockfiles are not changed.
 - Synthetic rendering: the existing `session-fixture.html` uses in-memory API
   responses and never writes a live API. The test Vite config now includes the
   existing Tailwind plugin so this harness compiles the same Datum tokens and
   component utilities instead of inspecting unprocessed CSS.
-- Local headless Brave/Chromium 146 checks at 1280px and 390px inspected directory,
+- Before the exact-base merge, local headless Brave/Chromium 146 checks at 1280px
+  and 390px inspected directory,
   create, display-name edit, reported-location edit and rack rendering, light/dark
   tokens, horizontal overflow, keyboard rack-face activation, exact visible
   blur/focus markup/counters, stable tab nodes during held host loading and denied
@@ -143,6 +158,7 @@ reuse is not a live freshness or newly granted permission claim.
   fourteen after an explicit denied refresh; zero writes and no page errors.
   Shared preview snapshots timed out, so these checks used a fresh local headless
   browser profile, not an authenticated browser session.
+  These are prior rendering evidence, not a new browser acceptance of this merge.
 
 To inspect the same synthetic harness locally:
 

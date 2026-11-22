@@ -3,10 +3,10 @@ import { fixtureDeviceClaims, fixtureDevices } from './lib/fixtures';
 import { describe, expect, it } from 'vitest';
 
 describe('toInventory', () => {
-  it('keeps provenance-free claim members visible without inferring a current device', () => {
+  it('keeps claim members without creation timestamps visible without inferring a current device', () => {
     const devices = structuredClone(fixtureDevices);
     devices.push({ ...structuredClone(devices[0]), metadata: { ...devices[0].metadata, name: 'another-device' } });
-    for (const device of devices) delete device.spec.provenance;
+    for (const device of devices) delete device.metadata.creationTimestamp;
     const inventory = toInventory(fixtureDeviceClaims, devices);
     const slot = inventory.slots.find(item => item.claim.metadata.name === devices[0].spec.claimRef.name)!;
     expect(slot.devices).toHaveLength(2);
@@ -31,8 +31,7 @@ describe('toInventory', () => {
   it('does not infer active hardware from the most recently edited record', () => {
     const replacement = {
       ...fixtureDevices[0],
-      metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002' },
-      spec: { ...fixtureDevices[0].spec, provenance: { ...fixtureDevices[0].spec.provenance!, recordedAt: '2026-02-01T00:00:00Z' } },
+      metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002', creationTimestamp: '2026-02-01T00:00:00Z' },
     };
     const inventory = toInventory(fixtureDeviceClaims, [replacement, fixtureDevices[0]]);
     const u12 = inventory.slots.find((s) => s.claim.metadata.name === 'rack-01-u12')!;

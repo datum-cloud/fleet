@@ -9,7 +9,7 @@ import { inventoryPayload, INVENTORY_FIELD_MANAGER, type ManagedKind } from '../
 import { fixturePhysicalDevices } from '../lib/fixtures';
 import { InventoryOperationContext, type InventoryOperationScope } from '../lib/inventory-operation';
 
-const values = { name: 'synthetic', namespace: 'default', displayName: 'Original', recordedBy: 'synthetic', reference: '', facility: '', height: '' };
+const values = { name: 'synthetic', namespace: 'default', displayName: 'Original', facility: '', height: '' };
 const record = { ...inventoryPayload('Facility', values), metadata: { name: 'synthetic', namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const device = { ...fixturePhysicalDevices[0], metadata: { ...record.metadata }, kind: 'Device' as const };
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
