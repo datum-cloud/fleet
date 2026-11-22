@@ -5,8 +5,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PhysicalInventory } from './physical-inventory';
 import { toInventory } from '../inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
-import { buttonVariants } from '@datum-cloud/datum-ui/button';
-import { cn } from '@datum-cloud/datum-ui/utils';
 
 const inventory = toInventory(fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords);
 
@@ -15,18 +13,20 @@ function browse(query = '', data = inventory) {
 }
 
 describe('hardware directory', () => {
-  it('uses Datum inputs, link buttons and table slots without nesting interactive controls', () => {
+  it('uses Datum inputs, underline route tabs and table slots without nesting interactive controls', () => {
     browse();
     expect(screen.getByRole('searchbox', { name: 'Search devices' })).toHaveAttribute('data-slot', 'input');
     const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
-    const devices = within(navigation).getByRole('link', { name: /^Devices/ });
-    expect(devices).toHaveClass(...cn(buttonVariants({ type: 'secondary', theme: 'light', size: 'small' })).split(' '));
+    const devices = within(navigation).getByRole('tab', { name: /^Devices/ });
+    expect(devices.closest('[role="tablist"]')).toHaveAttribute('data-variant', 'line');
+    expect(devices.querySelector('[data-slot="tabs-indicator"]')).not.toBeNull();
     expect(devices).toHaveAttribute('aria-current', 'page');
     expect(navigation.querySelector('button')).toBeNull();
     const table = screen.getByRole('table');
     expect(table).toHaveAttribute('data-slot', 'table');
     expect(within(table).getAllByRole('columnheader')[0]).toHaveAttribute('data-slot', 'table-head');
-    fireEvent.click(within(navigation).getByRole('link', { name: /^Facilities/ }));
+    fireEvent.click(within(navigation).getByRole('tab', { name: 'Locations' }));
+    fireEvent.click(within(navigation).getByRole('tab', { name: 'Facilities' }));
     expect(screen.getByRole('searchbox', { name: 'Search facilities' })).toHaveValue('');
   });
 
@@ -56,8 +56,9 @@ describe('hardware directory', () => {
     browse('?kind=Device&record=private-device&namespace=private', { ...inventory, issues: { Device: { status: 403 } } });
     expect(screen.getByText('Inventory access needed')).toBeInTheDocument();
     expect(screen.queryByText(/private-device/)).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Devices' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('link', { name: 'Facilities' }));
+    expect(screen.getByRole('tab', { name: 'Devices' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Facilities' }));
     expect(screen.getByRole('link', { name: 'Example facility' })).toBeInTheDocument();
   });
 
@@ -81,7 +82,8 @@ describe('hardware directory', () => {
   it('offers physical kinds and operational Sites without writes or a report upload', () => {
     const { container } = browse();
     const navigation = within(screen.getByRole('navigation', { name: 'Inventory categories' }));
-    for (const name of ['Devices', 'Operational sites', 'Facilities', 'Racks', 'Claims & registrations', 'Cables', 'Power feeds']) expect(navigation.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
+    for (const name of ['Equipment', 'Locations', 'Installation plans', 'Hardware catalog', 'Devices', 'Cables', 'Power feeds']) expect(navigation.getByRole('tab', { name })).toBeInTheDocument();
+    expect(navigation.queryByRole('tab', { name: 'Facilities' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create/i })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /edit|delete|apply(?! search)|sync|import/i })).not.toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
@@ -98,7 +100,8 @@ describe('hardware directory', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
     expect(screen.getByText('No matching records')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
-    fireEvent.click(screen.getByRole('link', { name: 'Facilities' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Facilities' }));
     expect(screen.getByRole('searchbox')).toHaveValue('');
     expect(screen.getByRole('link', { name: 'Example facility' })).toBeInTheDocument();
   });

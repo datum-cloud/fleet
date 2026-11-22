@@ -22,9 +22,10 @@ it('real directory category Link followed by fresh create remains usable', async
     if (init.method !== 'GET') { writes.push(init.method!); return response(original); }
     return response({ items: [] });
   }));
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ index: true, element: <DeviceInventoryList /> }] }]);
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ path: 'inventory', element: <DeviceInventoryList /> }] }], { initialEntries: ['/inventory'] });
   render(<RouterProvider router={router} />);
-  fireEvent.click(await screen.findByRole('link', { name: /Facilities/ }));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Locations' }));
+  fireEvent.click(await screen.findByRole('tab', { name: 'Facilities' }));
   await open(false);
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   expect(await screen.findByRole('status')).not.toHaveTextContent('No write was dispatched');

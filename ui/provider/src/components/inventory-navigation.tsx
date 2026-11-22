@@ -1,8 +1,11 @@
-import { Link, useSearchParams } from 'react-router';
-import { LinkButton } from '@datum-cloud/datum-ui/button';
+import { Link, useLocation, useSearchParams } from 'react-router';
+import { Tabs, TabsLinkTrigger, TabsList } from '@datum-cloud/datum-ui/tabs';
 import { Building2, Cable, ClipboardList, HardDrive, Server, Zap } from 'lucide-react';
 import type { Inventory } from '../inventory';
-import { inventoryHref } from './inventory-location';
+import { inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
+import { inventoryGroup, inventoryGroups } from './inventory-groups';
+import type { MouseEvent } from 'react';
+import './physical-inventory.css';
 
 export const sections = [
   {
@@ -51,15 +54,42 @@ export const sections = [
   { kind: 'DeviceType', title: 'Device types', icon: Server, description: 'Reference-only model shapes and component templates, not installed equipment or occupancy.' },
 ] as const;
 
-export function InventoryNavigation(_props: { inventory?: Inventory }) {
+export function InventoryNavigation({ kind, ..._props }: { inventory?: Inventory; kind?: string }) {
   const [params] = useSearchParams();
-  const active = sections.find(item => item.kind === params.get('kind')) ?? sections[0];
+  const { pathname, search } = useLocation();
+  const active = sections.find(item => item.kind === (kind ?? params.get('kind'))) ?? sections[0];
+  const group = inventoryGroup(active.kind);
+  const href = (next: string) => `${inventoryDirectoryPath(pathname)}${inventoryReturnSearch(next === active.kind ? search : '', next)}`;
+  const subcategories = sections.filter(item => group.kinds.some(kind => kind === item.kind));
+  const stayOnCurrentPage = (event: MouseEvent<HTMLElement>, target: string) => {
+    if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && target === `${pathname}${search}`) event.preventDefault();
+  };
+  const trigger = (value: string, title: string, selected: boolean) => <TabsLinkTrigger
+    key={value} value={value} href={href(value)} linkComponent={Link}
+    onClick={event => stayOnCurrentPage(event, href(value))}
+    aria-current={selected ? 'page' : undefined} aria-controls={undefined}
+    onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}>
+    {title}
+  </TabsLinkTrigger>;
   return <nav className="inventory-sections" aria-label="Inventory categories">
-    {sections.map(item => <LinkButton
-      key={item.kind} as={Link} href={inventoryHref(item.kind)} type="secondary"
-      theme={active.kind === item.kind ? 'light' : 'borderless'} size="small"
-      aria-current={active.kind === item.kind ? 'page' : undefined}>
-      <item.icon size={18} aria-hidden="true" /><span>{item.title}</span>
-    </LinkButton>)}
+    <Tabs value={group.title} activationMode="manual" className="inventory-tab-row">
+      <TabsList variant="line" aria-label="Inventory groups">
+        {inventoryGroups.map(item => <TabsLinkTrigger key={item.title} value={item.title}
+          href={href(item === group ? active.kind : item.kinds[0])} linkComponent={Link}
+          onClick={event => stayOnCurrentPage(event, href(item === group ? active.kind : item.kinds[0]))}
+          aria-current={item === group ? 'page' : undefined} aria-controls={undefined}
+          onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}>
+          {item.title}
+        </TabsLinkTrigger>)}
+      </TabsList>
+    </Tabs>
+    <div className="inventory-subcategories">
+      {subcategories.length > 1 && <Tabs value={active.kind} activationMode="manual" className="inventory-tab-row">
+        <TabsList variant="line" aria-label={`${group.title} categories`}>
+          {subcategories.map(item => trigger(item.kind, item.title, item.kind === active.kind))}
+        </TabsList>
+      </Tabs>}
+    </div>
+    <p className="inventory-group-description">{group.description}</p>
   </nav>;
 }

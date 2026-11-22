@@ -13,6 +13,8 @@ import type { ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { redactInventory } from '../lib/inventory-read-access';
+import { InventoryNavigation, sections } from '../components/inventory-navigation';
+import { InventoryPageTitle } from '../components/inventory-page-title';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -84,7 +86,7 @@ function DeviceSection({ device, current, inventory }: { device: RawDevice; curr
 }
 
 export default function DeviceClaimDetail() {
-  return <InventorySessionBoundary><ClaimDetailContent /></InventorySessionBoundary>;
+  return <FleetPage testId="fleet-plugin-claim-detail"><InventoryNavigation kind="DeviceClaim" /><InventorySessionBoundary><ClaimDetailContent /></InventorySessionBoundary></FleetPage>;
 }
 
 function ClaimDetailContent() {
@@ -96,8 +98,8 @@ function ClaimDetailContent() {
   const current = slot && !data?.issues?.Device && currentDevice(slot);
 
   return (
-    <FleetPage testId="fleet-plugin-claim-detail">
-      <Link to={`/plugins/${slug}/inventory`} className="text-sm underline-offset-4 hover:underline">
+    <>
+      <Link to={`/plugins/${slug}/inventory?kind=DeviceClaim`} className="text-sm underline-offset-4 hover:underline">
         ← All claims
       </Link>
 
@@ -113,6 +115,7 @@ function ClaimDetailContent() {
 
       {slot && (
         <>
+          <InventoryPageTitle title={slot.claim.spec.displayName ?? slot.claim.metadata.name} category={sections.find(section => section.kind === 'DeviceClaim')} directory="?kind=DeviceClaim" />
           <Section title={`DeviceClaim ${slot.claim.metadata.name}`} testId="fleet-plugin-claim">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field label="Claim placement (intent / history)">{placementLabel(slot.claim, data?.issues)}</Field>
@@ -146,6 +149,6 @@ function ClaimDetailContent() {
           </Section>
         </>
       )}
-    </FleetPage>
+    </>
   );
 }

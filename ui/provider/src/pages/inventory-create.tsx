@@ -6,6 +6,7 @@ import { InventoryManagement } from '../components/inventory-management';
 import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } from '../components/inventory-page-title';
 import { useInventory } from '../lib/api';
 import type { ManagedKind } from '../lib/inventory-management';
+import { InventoryNavigation, sections } from '../components/inventory-navigation';
 
 const taskKinds = new Map<string, ManagedKind>([['device', 'Device'], ['cable', 'Cable'], ['installation-plan', 'DeviceClaim']]);
 
@@ -18,7 +19,8 @@ export default function InventoryCreatePage() {
   const title = kind ? `Create ${kind === 'DeviceClaim' ? 'installation plan' : kind.toLowerCase()}` : 'Unknown inventory task';
   const unsupportedNamespace = new URLSearchParams(search).has('namespace') && new URLSearchParams(search).get('namespace') !== 'default';
   return <FleetPage testId="fleet-plugin-inventory-create">
-    <InventoryPageTitle focusTitle title={title} directory={directory} description="Create a record only. This does not verify, reserve, or provision equipment." actions={<Link to={back}>Back to inventory</Link>} />
+    <InventoryNavigation kind={kind} />
+    <InventoryPageTitle focusTitle title={title} category={sections.find(section => section.kind === kind)} directory={directory} description="Create a record only. This does not verify, reserve, or provision equipment." actions={<Link to={back}>Back to inventory</Link>} />
     {!kind || unsupportedNamespace ? <p>This task only supports default-namespace Device, Cable, and installation-plan records.</p> : <InventorySessionBoundary pending={<p role="status">Checking inventory access…</p>} unavailable={status => <InventoryAccessState status={status} />}>
       <CreateContent key={kind} kind={kind} back={back} />
     </InventorySessionBoundary>}
