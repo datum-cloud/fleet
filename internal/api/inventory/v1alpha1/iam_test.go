@@ -107,7 +107,7 @@ func TestInventoryRolesSplitReadFromWrite(t *testing.T) {
 		"fleet.datumapis.com-inventory-viewer":   {"get", "list", "watch"},
 		"fleet.datumapis.com-inventory-editor":   {"create", "update", "patch", "delete"},
 		"fleet.datumapis.com-inventory-manager":  {"create", "update", "patch"},
-		"fleet.datumapis.com-inventory-importer": {"create"},
+		"fleet.datumapis.com-inventory-importer": {"create", "patch"},
 	}
 	if len(roles) != len(wantVerbs) {
 		t.Fatalf("want exactly viewer, editor, manager and importer roles, got %v", roles)

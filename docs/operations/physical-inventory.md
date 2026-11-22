@@ -76,7 +76,7 @@ project control plane serves the kinds. Access is what keeps consumers out:
 | `fleet.datumapis.com-inventory-viewer` | `get`, `list`, `watch` on all six physical kinds |
 | `fleet.datumapis.com-inventory-editor` | The viewer role plus `create`, `update`, `patch`, `delete` |
 | `fleet.datumapis.com-inventory-manager` | The viewer role plus `create`, `update`, `patch`; no deletion or status writes |
-| `fleet.datumapis.com-inventory-importer` | The viewer role plus `create`; no updates, deletion or status writes |
+| `fleet.datumapis.com-inventory-importer` | The viewer role plus `create` and `patch`, for server-side apply; no `update`, deletion or status writes |
 
 No `metal.datumapis.com` role includes or inherits any inventory role. The consumer,
 claimant, and viewer roles that reach customer projects therefore grant no
@@ -94,11 +94,17 @@ role does not bind it or add members in any environment.
 
 The importer is the role for an external importer's identity. It can read
 every physical kind, to detect existing records and identity collisions, and
-create new ones. It cannot change or delete any record, including ones it
-created, so an importer cannot take over records another writer owns. Which
-kinds an importer creates is the importer's decision; Fleet does not encode
-any source system in the role. Binding it, scoped to the provider project, is
-the explicit opt-in for that identity to write.
+write records with server-side apply, which needs `create` and `patch`. It
+cannot delete any record, replace one with `update`, or write status.
+
+The API server can't restrict `patch` to server-side apply, so the role alone
+does not stop an importer from changing records another writer owns. Importers
+must apply under their own field manager, never force ownership, and leave
+records they did not create alone. That way the managed fields show which
+writer owns each field. Which kinds an importer writes is the importer's
+decision; Fleet does not encode any source system in the role. Binding it,
+scoped to the provider project, is the explicit opt-in for that identity to
+write.
 
 A Project resource selector is project-wide, not a namespace filter. These
 ProtectedResources have Project parents, and a binding's `metadata.namespace`

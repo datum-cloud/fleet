@@ -4,18 +4,27 @@ metadata:
   name: fleet.datumapis.com-inventory-importer
   annotations:
     kubernetes.io/display-name: Fleet Inventory Importer
-    kubernetes.io/description: Create physical inventory records from an external source without changing or deleting existing ones
+    kubernetes.io/description: Create and server-side apply physical inventory records from an external source without deleting them or writing status
 spec:
   launchStage: Alpha
   inheritedRoles:
     - name: fleet.datumapis.com-inventory-viewer
   includedPermissions:
     - fleet.datumapis.com/manufacturers.create
+    - fleet.datumapis.com/manufacturers.patch
     - fleet.datumapis.com/devicetypes.create
+    - fleet.datumapis.com/devicetypes.patch
     - fleet.datumapis.com/sites.create
+    - fleet.datumapis.com/sites.patch
     - fleet.datumapis.com/deviceclaims.create
+    - fleet.datumapis.com/deviceclaims.patch
     - fleet.datumapis.com/devices.create
+    - fleet.datumapis.com/devices.patch
     - fleet.datumapis.com/facilities.create
+    - fleet.datumapis.com/facilities.patch
     - fleet.datumapis.com/racks.create
+    - fleet.datumapis.com/racks.patch
     - fleet.datumapis.com/cables.create
+    - fleet.datumapis.com/cables.patch
     - fleet.datumapis.com/powerfeeds.create
+    - fleet.datumapis.com/powerfeeds.patch
