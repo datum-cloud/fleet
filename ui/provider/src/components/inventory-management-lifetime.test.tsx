@@ -28,11 +28,10 @@ it.each(['create-pagehide', 'create-unmount', 'edit-pagehide', 'edit-unmount', '
   const editing = mode.startsWith('edit');
   const mounted = render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></QueryClientProvider>);
   await findEnabledButton({ name: editing ? 'Edit display name' : 'Create facility' });
-  fireEvent.click(screen.getByText(editing ? 'Manage this record' : 'Manage facilities'));
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Edit display name' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Retained safe input' } });
-  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await waitFor(() => expect(release).toBeDefined());
   if (mode.endsWith('unmount')) mounted.unmount();
   else fireEvent(window, new Event('pagehide'));
@@ -42,6 +41,6 @@ it.each(['create-pagehide', 'create-unmount', 'edit-pagehide', 'edit-unmount', '
     expect(screen.getByRole('status')).toHaveTextContent(mode.includes('dispatched') ? 'outcome is unknown' : 'No write was dispatched');
     expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Display name')).toHaveValue('Retained safe input');
-    expect(screen.getByRole('button', { name: editing ? 'Save display name' : 'Create facility record' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' })).toBeDisabled();
   }
 });

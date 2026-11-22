@@ -83,7 +83,7 @@ describe('hardware directory', () => {
     const navigation = within(screen.getByRole('navigation', { name: 'Inventory categories' }));
     for (const name of ['Devices', 'Operational sites', 'Facilities', 'Racks', 'Claims & registrations', 'Cables', 'Power feeds']) expect(navigation.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create/i })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: /edit|delete|apply|sync|import/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit|delete|apply(?! search)|sync|import/i })).not.toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
     expect(screen.queryByText(/GitOps|Flux/)).not.toBeInTheDocument();
   });
@@ -91,9 +91,11 @@ describe('hardware directory', () => {
   it('searches identity and resets the filter when navigating categories', () => {
     browse();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'EXAMPLE-001' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
     expect(screen.getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'orphan-synthetic-0009' })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'no-such-serial' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
     expect(screen.getByText('No matching records')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
     fireEvent.click(screen.getByRole('link', { name: 'Facilities' }));

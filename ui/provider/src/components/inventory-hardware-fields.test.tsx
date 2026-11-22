@@ -16,7 +16,6 @@ function renderForm(kind: 'Device' | 'Cable') {
   return render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind={kind} facilities={[]} claims={[claim]} devices={[device]} feeds={[feed]} /></QueryClientProvider>);
 }
 async function open(kind: 'Device' | 'Cable') {
-  fireEvent.click(screen.getByText(`Manage ${kind.toLowerCase()}s`));
   fireEvent.click(await findEnabledButton({ name: `Create ${kind.toLowerCase()}` }));
   for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
@@ -42,7 +41,7 @@ it('registers hardware through the real form without changing claim identity', a
   fireEvent.click(screen.getByRole('button', { name: 'Add component' }));
   fireEvent.change(screen.getByLabelText('Component 1 id'), { target: { value: 'nic-1' } });
   fireEvent.change(screen.getByLabelText('Component 1 name'), { target: { value: 'NIC port 1' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await screen.findByText('Device record created.');
   expect(writes).toHaveLength(1);
   expect(writes[0]).toMatchObject({ kind: 'Device', spec: { claimRef: { name: claim.metadata.name }, identity: { serial: 'SYNTHETIC-NEW' }, components: [{ id: 'nic-1', type: 'NetworkPort' }] } });
@@ -58,10 +57,10 @@ it('uses typed feed and device endpoints and retains input on submit denial', as
   fireEvent.change(screen.getByLabelText('Cable medium'), { target: { value: 'Power' } });
   const select = (label: string, contains: string) => { const control = screen.getByLabelText(label) as HTMLSelectElement; const option = [...control.options].find(item => item.text.includes(contains))!; fireEvent.change(control, { target: { value: option.value } }); };
   select('Lane 1 end A', 'Feed A'); select('Lane 1 end B', 'Power supply 1');
-  fireEvent.click(screen.getByRole('button', { name: 'Create cable record' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await screen.findByText(/Your management permission changed/);
   expect(screen.getByLabelText('Display name')).toHaveValue('Synthetic record');
-  expect(screen.getByRole('button', { name: 'Create cable record' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Create record' })).toBeDisabled();
   expect(writes).toEqual([]);
 });
 it('does not offer unknown or inaccessible endpoint positions', async () => {
@@ -73,7 +72,6 @@ it('does not offer unknown or inaccessible endpoint positions', async () => {
 it('does not present an unreadable installation collection as an empty device prerequisite', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ status: { allowed: true } })));
   render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} issues={{ DeviceClaim: { status: 403 } }} /></QueryClientProvider>);
-  fireEvent.click(screen.getByText('Manage devices'));
   await waitFor(() => expect(screen.queryByText('Checking management access…')).not.toBeInTheDocument());
   expect(screen.getByText(/Related records are unavailable, not empty/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Create device' })).toBeDisabled();
@@ -100,7 +98,7 @@ it('revokes a pending cable form on unmount before delayed endpoint validation c
     const select = screen.getByLabelText(label) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: [...select.options].find(option => option.text.includes(text))!.value } });
   }
-  fireEvent.click(screen.getByRole('button', { name: 'Create cable record' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await waitFor(() => expect(release).toBeDefined()); mounted.unmount();
   await act(async () => { release!(response(feed)); });
   expect(writes).toEqual([]);

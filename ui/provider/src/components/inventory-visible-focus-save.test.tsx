@@ -49,7 +49,7 @@ it.each(['create', 'label', 'location'].flatMap(mode => ['review', 'read', 'disp
     if (mode === 'create') fireEvent.change(screen.getByLabelText('Record name'), { target: { value: 'synthetic' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New label' } });
   }
-  fireEvent.click(screen.getByRole('button', { name: mode === 'location' ? 'Save reported location' : mode === 'label' ? 'Save display name' : 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: mode === 'location' ? 'Save changes' : mode === 'label' ? 'Save changes' : 'Create record' }));
   await waitFor(() => expect(release).toBeDefined());
   if (transition !== 'focus') {
     if (transition === 'hidden') {

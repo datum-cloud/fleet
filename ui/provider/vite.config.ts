@@ -40,6 +40,7 @@ export default defineConfig({
         './MachineProfileList': './src/pages/machine-profile-list.tsx',
         './MachineClassList': './src/pages/machine-class-list.tsx',
         './DeviceInventoryList': './src/pages/device-inventory-list.tsx',
+        './InventoryCreatePage': './src/pages/inventory-create.tsx',
         './DeviceClaimDetail': './src/pages/device-claim-detail.tsx',
       },
       // requiredVersion:false everywhere: the host's copy always wins, so a

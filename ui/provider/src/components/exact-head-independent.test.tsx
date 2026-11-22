@@ -2,7 +2,7 @@ import { findEnabledButton } from '../test/enabled-button';
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { InventoryManagement } from './inventory-management';
 import { InventorySessionBoundary } from './inventory-session-boundary';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
@@ -11,6 +11,8 @@ import DeviceInventoryList from '../pages/device-inventory-list';
 const values = { name: 'exact-review', namespace: 'default', displayName: 'Original', facility: '', height: '' };
 const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
+beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
+
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function open(editing: boolean, label: string) {
@@ -45,7 +47,7 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
   }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
   render(strict ? <StrictMode><RouterProvider router={router} /></StrictMode> : <RouterProvider router={router} />);
   await open(editing, 'Old input');
-  const submit = editing ? 'Save display name' : 'Create facility record';
+  const submit = editing ? 'Save changes' : 'Create record';
   submitting = true;
   fireEvent.click(screen.getByRole('button', { name: submit }));
   await waitFor(() => expect(releaseOperation).toBeDefined());

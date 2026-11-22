@@ -1,9 +1,11 @@
 import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
-import { afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import DeviceInventoryList from '../pages/device-inventory-list';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
+
+beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -105,9 +107,9 @@ it('fences an in-flight create across a cached tab transition without carrying i
   expect(screen.queryByLabelText('Change reference')).not.toBeInTheDocument();
   for (const [label, value] of [['Record name', 'synthetic'], ['Display name', 'Private pending draft']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
   view.holdReview();
-  fireEvent.click(screen.getByRole('button', { name: 'Create facility record' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await screen.findByRole('button', { name: 'Saving…' });
-  fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: 'Devices' }));
+  await act(async () => { await view.router.navigate('/plugins/metal/inventory?kind=Device'); });
   await screen.findByRole('searchbox', { name: 'Search devices' });
   await view.releaseReview();
   expect(view.collections).toHaveBeenCalledTimes(9);
@@ -124,6 +126,22 @@ it('loads a direct namespaced link without requiring a previous directory visit'
   await screen.findByRole('heading', { name: 'Example facility' });
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('link', { name: 'Facilities' })).toHaveAttribute('aria-current', 'page');
+  view.router.dispose();
+});
+
+it('keeps typing local and focused, then persists the applied search in the URL', async () => {
+  const view = host();
+  await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
+  const search = screen.getByRole('searchbox');
+  search.focus();
+  const loads = view.loader.mock.calls.length;
+  for (const value of ['E', 'EX', 'EXAMPLE']) fireEvent.change(search, { target: { value } });
+  expect(search).toHaveFocus();
+  expect(view.loader).toHaveBeenCalledTimes(loads);
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+  await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('q')).toBe('EXAMPLE'));
+  await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue('EXAMPLE'));
   view.router.dispose();
 });
 

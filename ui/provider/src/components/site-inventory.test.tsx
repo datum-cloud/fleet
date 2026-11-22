@@ -32,6 +32,7 @@ describe('Site and premises directory', () => {
   it('redacts denied Site identity from Facility search', () => {
     render(view('?kind=Facility', { ...inventory, issues: { Site: { status: 403 } } }));
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'EX3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
     expect(screen.queryByText('Physical premises')).not.toBeInTheDocument();
     expect(screen.queryByText(/EX3 · Operational identity/)).not.toBeInTheDocument();
   });

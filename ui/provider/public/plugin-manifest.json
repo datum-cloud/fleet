@@ -8,6 +8,7 @@
     "MachineProfileList": "./src/pages/machine-profile-list.tsx",
     "MachineClassList": "./src/pages/machine-class-list.tsx",
     "DeviceInventoryList": "./src/pages/device-inventory-list.tsx",
+    "InventoryCreatePage": "./src/pages/inventory-create.tsx",
     "DeviceClaimDetail": "./src/pages/device-claim-detail.tsx"
   },
   "extensions": [
@@ -46,6 +47,13 @@
       "properties": {
         "path": "inventory",
         "component": { "$codeRef": "DeviceInventoryList" }
+      }
+    },
+    {
+      "type": "portal.page/platform",
+      "properties": {
+        "path": "inventory/create/:kind",
+        "component": { "$codeRef": "InventoryCreatePage" }
       }
     },
     {

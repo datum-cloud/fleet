@@ -66,7 +66,7 @@ it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].
     fireEvent.change(screen.getByLabelText('Observation time (ISO 8601)'), { target: { value: '2026-01-02T00:00:00Z' } });
     fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/synthetic' } });
   }
-  fireEvent.click(screen.getByRole('button', { name: mode === 'location' ? 'Save reported location' : 'Save display name' }));
+  fireEvent.click(screen.getByRole('button', { name: mode === 'location' ? 'Save changes' : 'Save changes' }));
   await waitFor(() => expect(rejectWrite).toBeDefined());
   const markup = document.body.innerHTML;
   const requestCount = fetch.mock.calls.length;
@@ -82,7 +82,7 @@ it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].
   await act(async () => rejectWrite!());
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/no longer valid|changed|disappeared|unknown|could not accept|session expired|no longer available/));
   expect(screen.getByRole('status')).not.toHaveTextContent(/saved\./i);
-  const save = screen.getByRole('button', { name: mode === 'location' ? 'Save reported location' : 'Save display name' });
+  const save = screen.getByRole('button', { name: mode === 'location' ? 'Save changes' : 'Save changes' });
   if (mode === 'label' && status === 422) expect(save).toBeEnabled();
   else expect(save).toBeDisabled();
   if (status === 503 || status === 0) expect(screen.getByRole('status')).toHaveTextContent('outcome is unknown');
