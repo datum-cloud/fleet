@@ -13,13 +13,15 @@ const response = (data: unknown, status = 200) => ({ ok: status < 400, status, j
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 async function open(editing: boolean, label: string) {
+  await waitFor(() => expect(screen.getByRole('button', { name: editing ? 'Edit display name' : 'Create facility' })).toBeEnabled());
   fireEvent.click(await screen.findByRole('button', { name: editing ? 'Edit display name' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: label } });
   fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'synthetic' } });
 }
 
-it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['review', 'dispatch-ok', 'dispatch-error'].flatMap(stage => ['fast-repeat', 'slow', 'overlap', 'cancel-navigation', 'focus-blur', 'focus-pagehide'].map(transition => ({ strict, editing, stage, transition }))))))('independent $transition $stage edit=$editing strict=$strict', async ({ strict, editing, stage, transition }) => {
+it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['review', 'dispatch-ok', 'dispatch-error'].flatMap(stage => ['fast-repeat', 'principal-repeat', 'slow', 'overlap', 'cancel-navigation', 'focus-blur', 'focus-pagehide'].map(transition => ({ strict, editing, stage, transition }))))))('independent $transition $stage edit=$editing strict=$strict', async ({ strict, editing, stage, transition }) => {
+  let principal = 'same-user';
   let submitting = false;
   let intercepted = false;
   let releaseOperation: ((value: unknown) => void) | undefined;
@@ -38,25 +40,34 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
   }));
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => {
     if (holdLoader) await new Promise<void>(resolve => loaders.push(resolve));
-    return { user: { metadata: { uid: 'same-user' } } };
+    return { user: { metadata: { uid: principal } } };
   }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></InventorySessionBoundary> }] }]);
   render(strict ? <StrictMode><RouterProvider router={router} /></StrictMode> : <RouterProvider router={router} />);
   await open(editing, 'Old input');
+  const oldInput = screen.getByLabelText('Display name');
   const submit = editing ? 'Save display name' : 'Create facility record';
   submitting = true;
   fireEvent.click(screen.getByRole('button', { name: submit }));
   await waitFor(() => expect(releaseOperation).toBeDefined());
-  if (transition === 'fast-repeat') {
+  if (transition === 'principal-repeat') {
+    await act(async () => { principal = 'other-user'; await router.revalidate(); principal = 'same-user'; await router.revalidate(); });
+  } else if (transition === 'fast-repeat') {
     await act(async () => { await router.revalidate(); await router.revalidate(); await router.revalidate(); });
   } else {
     holdLoader = true;
     act(() => { if (transition.startsWith('focus-')) window.dispatchEvent(new Event('focus')); else if (transition === 'cancel-navigation') void router.navigate('/?kind=Rack'); else void router.revalidate(); });
     await waitFor(() => expect(loaders).toHaveLength(1));
-    expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
+    if (transition.startsWith('focus-')) {
+      expect(screen.getByLabelText('Display name')).toBe(oldInput);
+      expect(oldInput).toBeDisabled();
+    } else expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
     if (transition.startsWith('focus-')) {
       fireEvent(window, new Event(transition === 'focus-blur' ? 'blur' : 'pagehide'));
       await act(async () => loaders[0]());
-      expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
+      if (transition === 'focus-blur') {
+        expect(screen.getByLabelText('Display name')).toBe(oldInput);
+        expect(oldInput).toBeDisabled();
+      } else expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Create facility' })).not.toBeInTheDocument();
       holdLoader = false;
       await act(async () => window.dispatchEvent(new Event('focus')));
@@ -70,6 +81,15 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
       await act(async () => loaders[0]());
       holdLoader = false;
     }
+  }
+  if (transition === 'focus-blur') {
+    await act(async () => releaseOperation!(response(stage === 'review' ? { status: { allowed: true } } : original, stage === 'dispatch-error' ? 503 : 200)));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close form' })).toBeEnabled());
+    expect(screen.getByRole('status')).toHaveTextContent(stage === 'review' ? 'No write was dispatched' : 'outcome is unknown');
+    expect(oldInput).toBeDisabled();
+    fireEvent.submit(oldInput.closest('form')!);
+    expect(writes).toHaveLength(stage === 'review' ? 0 : 1);
+    fireEvent.click(screen.getByRole('button', { name: 'Close form' }));
   }
   await open(editing, 'Fresh input');
   await act(async () => releaseOperation!(response(stage === 'review' ? { status: { allowed: true } } : original, stage === 'dispatch-error' ? 503 : 200)));

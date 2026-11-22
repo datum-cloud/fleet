@@ -54,6 +54,7 @@ it.each(['visible', 'overlap', 'hidden', 'denied'])('renews management only afte
   const table = screen.getByRole('table');
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Abandoned old form' } });
+  const input = screen.getByLabelText('Display name');
   holding = true;
   if (scenario === 'hidden') {
     visibility.mockReturnValue('hidden');
@@ -63,7 +64,11 @@ it.each(['visible', 'overlap', 'hidden', 'denied'])('renews management only afte
   } else fireEvent(window, new Event('blur'));
   fireEvent(window, new Event('focus'));
   await waitFor(() => expect(releases).toHaveLength(1));
-  expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
+  if (scenario === 'hidden') expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
+  else {
+    expect(screen.getByLabelText('Display name')).toBe(input);
+    expect(input).toBeDisabled();
+  }
   if (scenario === 'overlap') {
     fireEvent(window, new Event('focus'));
     await waitFor(() => expect(releases).toHaveLength(2));
@@ -79,10 +84,17 @@ it.each(['visible', 'overlap', 'hidden', 'denied'])('renews management only afte
     holding = false;
     fireEvent(window, new Event('focus'));
   }
-  await screen.findByRole('button', { name: 'Create facility' });
-  if (scenario === 'visible' || scenario === 'overlap') expect(screen.getByRole('table')).toBe(table);
+  if (scenario === 'visible' || scenario === 'overlap') {
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close form' })).toBeEnabled());
+    expect(screen.getByRole('table')).toBe(table);
+    expect(screen.getByLabelText('Display name')).toBe(input);
+    expect(input).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Create facility record' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Close form' }));
+  }
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Create facility' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Create facility' }));
-  expect(screen.getByLabelText('Display name')).toHaveValue('');
+  expect(screen.getByLabelText('Display name')).toHaveValue(scenario === 'visible' || scenario === 'overlap' ? 'Abandoned old form' : '');
   router.dispose();
   visibility.mockRestore();
 });

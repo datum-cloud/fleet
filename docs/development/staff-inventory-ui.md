@@ -129,16 +129,24 @@ Writes remain conservatively fenced synchronously on every blur, pagehide,
 hidden visibility transition, router revalidation/navigation, and principal
 change. Returning focus verifies the real host loader. During that verification,
 the existing same-principal read view stays mounted but operation authority
-remains invalid and management forms are unmounted. Old operations never regain authority, including SSAR/reference
+remains invalid. Management views now stay mounted, with disabled controls and
+an accessible verification-pending status; cached permission is only evidence
+for retaining the view, never current approval to write. Old operations never regain authority, including SSAR/reference
 reads completing after an await; dispatched writes retain unknown outcomes.
-After verification, forms get a fresh generation (and must be reopened), without
-remounting the inventory table or changing its view-specific query key. Immutable
-edit baselines are never transferred to the new forms. Existing per-form blur
-fences remain unchanged.
+After verification, an open form remains disabled until explicitly closed and
+reopened. Namespace/access disclosure state and safe draft input survive visible
+blur; create drafts survive reopening, while edits capture a new baseline and
+reset to the refreshed record. Neither operative authority nor an immutable edit
+baseline crosses the generation. Closing never submits or revives pending intent.
+In-flight operations must settle before closing; a dispatched stale result is
+unknown, never success. The inventory table and its view-specific query key stay
+unchanged. Native disabled fieldsets cover nested hardware controls as well as
+inputs; submit handlers independently enforce readiness and revocation.
 
 Successful same-principal focus checks cancel older query work and refresh reads
-in the isolated client before remounting management forms, which renew their
-permissions. A failed or wholly unavailable inventory read keeps forms suspended
+in the isolated client before explicitly refreshing management permissions.
+Refresh starts only after host authority is verified, not on a host completion
+while still blurred or while the verification promise is pending. A failed or wholly unavailable inventory read keeps forms suspended
 until the next successful focus verification or reopened inventory. The cache's
 settled read result, not a potentially delayed React observer, gates this renewal:
 no SSAR is sent for stale forms while the new read result denies all inventory.
@@ -160,6 +168,50 @@ now exercises both visible focus/blur and focus/pagehide (create/edit,
 pending SSAR, dispatched success/error, and StrictMode). Actual inventory-table
 tests assert DOM identity through visible focus and verify refreshed denials;
 operation-generation tests retain stale-completion and A→B→A protection.
+Confirmed permission denial/error removes management actions and retained form
+contents, rather than treating a cached grant as current. Related-read denials
+still redact choices while preserving unrelated safe input. Genuine background,
+principal changes and failed host verification still clear private content.
+
+### Stable management controls follow-up
+
+Implemented against PR103's merged staging base
+`f190d28397fc6110e02c9c83e6819a3a584258d0`, not the earlier documentation branch.
+The generation-keyed ready/null wrappers caused the reported Namespace & access
+and create/edit sections to disappear on URL-bar focus. The replacement separates
+view lifetime from authority lifetime for all five create kinds, display-name
+editing, and reported-location editing. A reserved status area avoids adding a
+new row only when verification starts. This is implemented behavior, not a new
+inventory, ownership, or IAM contract.
+
+The stable-controls suite checks identical DOM nodes, disabled controls, retained
+disclosures/input, held host and permission verification, explicit baseline
+renewal, denied permission and hard masking, with StrictMode variants. Earlier
+review tests intentionally change only visible-blur removal expectations to
+same-node/disabled assertions; hidden/pagehide assertions remain. Pending-write
+tests retain zero pre-dispatch writes and unknown post-dispatch outcomes, and
+include observed A→B→A. The changed tests are regression evidence, not independent
+review signoff.
+
+Follow-up local validation (2026-11-21): provider 475 tests in 31 files and
+consumer 44 tests in 3 files pass, as do both TypeScript checks and production
+builds, `go test ./internal/api/inventory/...`, relative documentation links, and
+`git diff --check`. Temporary mutations restoring ready/null unmounting or
+removing readiness from the management gate each fail 24 of the 32 stable-view
+tests; both mutations were reverted before final validation.
+
+Synthetic browser DOM/geometry checks retain identical control, form and table
+nodes and bounding rectangles through blur and held focus verification. Checks
+cover all five create kinds with collapsed/expanded access at 390px, Device
+creation at 1280px, and display-name/location editors at 390px. No page-wide
+mobile overflow was observed. Retained forms stay disabled after verification
+until explicit reopening. Keyboard Tab/Enter and native disabled-focus checks
+dispatch zero writes; pagehide removes private content and forms. The harness
+supplies synthetic UIDs, resource versions and manual writer metadata for these
+edit checks; no real ownership or server data changes. Preview screenshots timed
+out, so this follow-up's browser evidence is DOM identity, geometry and event
+checks, not screenshot or screen-reader acceptance. The real staging URL again
+redirected to sign-in; authenticated Safari URL-bar acceptance remains unverified.
 
 For a synthetic browser check, run from `ui/provider`:
 
@@ -249,14 +301,14 @@ go test ./internal/api/inventory/...
 git diff --check
 ```
 
-Final local results: 278 tests in 20 files, TypeScript check, production build,
+Prior UI phase results: 278 tests in 20 files, TypeScript check, production build,
 and the Go inventory package tests pass. Build warnings concern the existing
 transitive undici share and Zod annotation handling; they do not fail the build.
-Documentation relative links and whitespace are checked. The 68 independent
-tests remain byte-for-byte identical to the supplied review suite.
+Documentation relative links and whitespace were checked. At that phase, the 68
+independent tests remained byte-for-byte identical to the supplied review suite.
 
-The final independent suite from the previously reviewed `239dd312` head is
-copied unchanged into `exact-head-independent.test.tsx` (68 cases), alongside
+The independent suite from the previously reviewed `239dd312` head was
+originally copied unchanged into `exact-head-independent.test.tsx` (68 cases), alongside
 the original adversarial regressions. New tests cover geometry, unknown height,
 non-unit mounts, real filters, hardware payloads, typed references, permission
 denial, input retention, unavailable prerequisites, and unmount during delayed
@@ -292,7 +344,8 @@ synthetic 403 removed the restricted device name while retaining other categorie
 Mobile lists, forms and rack views had no page-wide horizontal overflow. These
 checks do not replace screen-reader testing or authenticated host acceptance.
 
-The tested local diff requires a **new independent adversarial review** before
-publication. No commit, push, PR, merge, deployment or live mutation is authorized
-in this implementation phase. Authenticated staging integration, including host
+The stable-controls follow-up requires a **new independent adversarial review**
+before staging merge or deployment. Its implementation authorization includes a
+signed commit and a PR against `feat/manual-inventory-records`, not a merge,
+deployment or live mutation. Authenticated staging integration, including host
 principal changes and proxy enforcement, remains a release acceptance check.

@@ -44,7 +44,7 @@ export function SessionQueries({ children, principal, authority, generation }: {
     };
   }, [host, principal, scope, ready, generation, authority, reads, client]);
   useEffect(() => {
-    if (readGeneration.current === generation) return;
+    if (!authority || readGeneration.current === generation) return;
     readGeneration.current = generation;
     let active = true;
     void client.cancelQueries().then(async () => {
@@ -55,10 +55,13 @@ export function SessionQueries({ children, principal, authority, generation }: {
         const inventory = query.state.data as Inventory | undefined;
         return query.state.status === 'success' && query.state.fetchStatus === 'idle' && !Object.keys(inventoryResources).every(kind => inventory?.issues?.[kind as InventoryKind]);
       });
-      if (active && readable) setReadyGeneration(generation);
+      if (active && readable) {
+        await client.invalidateQueries({ predicate: query => query.queryKey[1] === 'inventory-permission' });
+        if (active) setReadyGeneration(generation);
+      }
     });
     return () => { active = false; };
-  }, [client, generation]);
+  }, [client, generation, authority]);
   useEffect(() => () => client.clear(), [client]);
   return <InventoryReadContext.Provider value={reads}><InventoryOperationContext.Provider value={scope}><InventoryOperationGenerationContext.Provider value={generation}><InventoryOperationReadyContext.Provider value={ready}><QueryClientProvider client={client}>{children}</QueryClientProvider></InventoryOperationReadyContext.Provider></InventoryOperationGenerationContext.Provider></InventoryOperationContext.Provider></InventoryReadContext.Provider>;
 }

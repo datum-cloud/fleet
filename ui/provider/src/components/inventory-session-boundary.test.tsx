@@ -51,12 +51,13 @@ describe('host inventory session isolation', () => {
     await act(async () => release!());
     expect(screen.getByText('Visible inventory')).toBeInTheDocument();
     expect(() => scope!.begin().assertCurrent()).toThrow(InventoryOperationInvalidated);
+    expect(inventoryRead).toHaveBeenCalledTimes(1);
     release = undefined;
     fireEvent(window, new Event('focus'));
     await waitFor(() => expect(release).toBeDefined());
     await act(async () => release!());
     expect(screen.getByText('Visible inventory')).toBeInTheDocument();
-    expect(inventoryRead).toHaveBeenCalledTimes(3);
+    expect(inventoryRead).toHaveBeenCalledTimes(2);
     expect(() => scope!.begin().assertCurrent()).not.toThrow();
     expect(() => before.assertCurrent()).toThrow(InventoryOperationInvalidated);
     expect(() => during.assertCurrent()).toThrow(InventoryOperationInvalidated);

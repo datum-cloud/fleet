@@ -10,9 +10,7 @@ import type { Inventory } from '../inventory';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 
 export function InventoryManagement(props: ComponentProps<typeof InventoryManagementForm>) {
-  const generation = useContext(InventoryOperationGenerationContext);
-  const ready = useContext(InventoryOperationReadyContext);
-  return ready ? <InventoryManagementForm key={generation} {...props} /> : null;
+  return <InventoryManagementForm {...props} />;
 }
 
 function InventoryManagementForm({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], compact = false, issues: sourceIssues }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues'] }) {
@@ -26,11 +24,13 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   const feeds = issues.PowerFeed ? [] : sourceFeeds;
   const racks = issues.Rack ? [] : sourceRacks;
   const sessionScope = useContext(InventoryOperationContext);
+  const ready = useContext(InventoryOperationReadyContext);
+  const generation = useContext(InventoryOperationGenerationContext);
   const scope = useRef(new InventoryOperationScope());
   useLayoutEffect(() => {
     const current = new InventoryOperationScope();
     scope.current = current;
-    const invalidate = () => current.invalidate();
+    const invalidate = () => { scope.current.invalidate(); setBaseline(undefined); setBlocked(true); };
     const visibility = () => { if (document.visibilityState === 'hidden') invalidate(); };
     window.addEventListener('blur', invalidate);
     window.addEventListener('pagehide', invalidate);
@@ -47,12 +47,16 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   const editable = !record || canEditInventoryLabel(record);
   const permission = useInventoryPermission(kind, editable ? namespace : '', record ? 'patch' : 'create', record?.metadata.name);
   const dependenciesUnavailable = !record && ((kind === 'Device' && !!issues?.DeviceClaim) || (kind === 'Rack' && !!issues?.Facility) || (kind === 'DeviceClaim' && !!issues?.Facility && !!issues?.Rack) || (kind === 'Cable' && !!issues?.Device && !!issues?.PowerFeed));
-  const allowed = permission.data === true && !permission.isFetching && !permission.error && editable && !dependenciesUnavailable && !issues[kind];
+  const visible = permission.data === true && !permission.error && editable && !dependenciesUnavailable && !issues[kind];
+  const allowed = ready && visible && !permission.isFetching;
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [message, setMessage] = useState('');
   const [values, setValues] = useState<InventoryFormValues>({ name: record?.metadata.name ?? '', namespace, displayName: record?.spec.displayName ?? '', recordedBy: '', reference: '', facility: '', height: '' });
+  useLayoutEffect(() => {
+    scope.current.invalidate(); setBaseline(undefined); setBlocked(true);
+  }, [ready, generation, permission.isFetching, visible]);
   const field = (name: keyof InventoryFormValues, value: string) => setValues(previous => ({ ...previous, [name]: value }));
   const kindLabel = kind === 'DeviceClaim' ? 'installation plan' : kind.toLowerCase();
   async function save(event: FormEvent) {
@@ -104,11 +108,13 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
     {!compact && <summary>Manage {record ? 'this record' : `${kind === 'Facility' ? 'facilities' : `${kindLabel}s`}`}</summary>}
     <div className="inventory-management-controls"><Access className="inventory-management-access">
     {compact && <summary>{record ? 'Editing access' : 'Namespace & access'}</summary>}
-    {!record && <label>Namespace<input aria-label="Management namespace" value={namespace} disabled={open || pending} onChange={event => setNamespace(event.target.value)} /></label>}
+    {!record && <label>Namespace<input aria-label="Management namespace" value={namespace} disabled={!ready || open || pending} onChange={event => setNamespace(event.target.value)} /></label>}
     {dependenciesUnavailable && <p>Related records are unavailable, not empty. Creation needs readable location, installation, or endpoint records. Ask your administrator about viewing access, or try again after a temporary failure.</p>}
-    {!editable ? <p>Display-name editing uses a narrower portal writer policy and is unavailable for this record. Import provenance is history, not Git ownership or server authorization. Device location correction, when separately available, uses ordinary management access and does not perform an ownership handover.</p> : permission.isFetching ? <p role="status">Checking management access…</p> : permission.error instanceof ApiError && permission.error.status === 401 ? <p>Your session expired. Sign in again through the staff portal before continuing. Unsaved input remains here.</p> : !allowed && <p>Viewing and management access are separate. Ask your administrator about physical-inventory management access. A permission check must succeed before changes are available.</p>}
+    {!editable ? <p>Display-name editing uses a narrower portal writer policy and is unavailable for this record. Import provenance is history, not Git ownership or server authorization. Device location correction, when separately available, uses ordinary management access and does not perform an ownership handover.</p> : permission.error instanceof ApiError && permission.error.status === 401 ? <p>Your session expired. Sign in again through the staff portal before continuing. Unsaved input remains here.</p> : !visible && <p>Viewing and management access are separate. Ask your administrator about physical-inventory management access. A permission check must succeed before changes are available.</p>}
     </Access>
-    {allowed && !open && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={() => {
+    {visible && !open && <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={() => {
+      if (!allowed) return;
+      scope.current = new InventoryOperationScope();
       if (record) {
         const snapshot = structuredClone(record);
         setBaseline(snapshot);
@@ -117,7 +123,9 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       setOpen(true); setMessage(''); setBlocked(false);
     }}> {record ? 'Edit display name' : `Create ${kindLabel}`} </Button>}
     </div>
-    {open && <form onSubmit={save} className="inventory-form">
+    <p role="status" className="inventory-management-status">{message || (!ready || permission.isFetching ? 'Management: verification pending.' : open && blocked ? 'Management: close and reopen this form to continue.' : allowed ? 'Management: access checked.' : 'Management: unavailable.')}</p>
+    {open && permission.data === true && !permission.error && !issues[kind] && <form onSubmit={save} className="inventory-form">
+      <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <p>{record ? 'Only the display name and recording details change. Identity, placement, geometry, connections, and history remain untouched.' : 'Create a physical record only. This does not verify equipment, reserve space, or provision hardware.'}</p>
       {!record && <label>Record name<input required maxLength={253} value={values.name} onChange={event => field('name', event.target.value)} /></label>}
       <label>Display name<input required maxLength={253} value={values.displayName} onChange={event => field('displayName', event.target.value)} /></label>
@@ -131,8 +139,8 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       <label>Recorded by<input required maxLength={253} value={values.recordedBy} onChange={event => field('recordedBy', event.target.value)} /></label>
       <p className="inventory-muted">The recorder is an attributed observation, not a replacement for the API audit identity of your signed-in account.</p>
       <label>Change reference<input value={values.reference} maxLength={1024} onChange={event => field('reference', event.target.value)} /></label>
-      <div className="flex flex-wrap gap-3"><Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || blocked || pending}>{pending ? 'Saving…' : record ? 'Save display name' : `Create ${kindLabel} record`}</Button><Button type="secondary" theme="outline" size="small" htmlType="button" disabled={pending} onClick={() => setOpen(false)}>Close form</Button></div>
+      </fieldset>
+      <div className="flex flex-wrap gap-3"><Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || blocked || pending}>{pending ? 'Saving…' : record ? 'Save display name' : `Create ${kindLabel} record`}</Button><Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!ready || pending} onClick={() => setOpen(false)}>Close form</Button></div>
     </form>}
-    {message && <p role="status">{message}</p>}
   </Container>;
 }
