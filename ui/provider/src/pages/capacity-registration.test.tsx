@@ -21,7 +21,6 @@ async function openForm() {
   const trigger = await screen.findByRole('button', { name: 'Register capacity' });
   await waitFor(() => expect(trigger).toBeEnabled()); fireEvent.click(trigger);
   await screen.findByRole('option', { name: 'server-a' });
-  fireEvent.change(screen.getByLabelText('Capacity name'), { target: { value: 'authored-record' } });
   fireEvent.change(screen.getByLabelText('Device'), { target: { value: 'device-1' } });
   return router;
 }
@@ -29,7 +28,7 @@ async function openForm() {
 it('registers the selected incarnation through a real host session fence', async () => {
   await openForm();
   fireEvent.click(screen.getByRole('button', { name: 'Register Disabled capacity' }));
-  expect(await screen.findByText(/Registered authored-record as Disabled\/Retain/)).toBeInTheDocument();
+  expect(await screen.findByText(/Registered device-device-1 as Disabled\/Retain/)).toBeInTheDocument();
   expect(fetcher.mock.calls.filter(([url, init]) => String(url).includes('machinecapacities?') && init?.method === 'POST')).toHaveLength(1);
   expect(screen.queryByRole('checkbox')).toBeNull();
 });
@@ -38,7 +37,7 @@ it('visible blur/focus is a no-op for the selected baseline and draft', async ()
   await openForm();
   const before = fetcher.mock.calls.length;
   fireEvent(window, new Event('blur')); fireEvent(window, new Event('focus'));
-  expect(screen.getByLabelText('Capacity name')).toHaveValue('authored-record');
+  expect(screen.getByText('device-device-1')).toBeInTheDocument();
   expect(screen.getByLabelText('Device')).toHaveValue('device-1');
   expect(fetcher.mock.calls).toHaveLength(before);
 });
@@ -51,8 +50,8 @@ it('keeps unknown completion in the form and prevents retry and rollback', async
     return Response.json({ data: device });
   });
   fireEvent.click(screen.getByRole('button', { name: 'Register Disabled capacity' }));
-  expect(await screen.findByText(/Reservations may be retained/)).toBeInTheDocument();
+  expect(await screen.findByText(/Check whether capacity device-device-1 exists/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Register Disabled capacity' })).toBeDisabled();
-  expect(screen.getByLabelText('Capacity name')).toHaveValue('authored-record');
+  expect(screen.getByLabelText('Device')).toHaveValue('device-1');
   expect(fetcher.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
 });

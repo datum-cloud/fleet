@@ -143,7 +143,7 @@ export type AllocationPolicy = 'Enabled' | 'Disabled';
 export interface MachineCapacity {
   metadata: ObjectMeta;
   spec: {
-    /** Immutable authored name. Registration retains incarnation evidence privately. */
+    /** Immutable Device name. Registration records the Device UID and version in annotations. */
     deviceRef: LocalReference;
     /** Defaults to Disabled. */
     allocationPolicy: AllocationPolicy;

@@ -8,10 +8,33 @@ export const REGISTRATION_OPERATION = 'fleet.datumapis.com/registration-operatio
 const devicesPath = '/apis/fleet.datumapis.com/v1alpha1/namespaces/default/devices';
 const capacitiesPath = '/apis/metal.datumapis.com/v1alpha1/namespaces/default/machinecapacities';
 
-export function ineligibleReason(device: Device): string | undefined {
+// capacityNameFor mirrors the admission contract: one capacity per Device,
+// named from the Device UID, so the API server rejects a second one.
+export function capacityNameFor(device: Device): string {
+  return `device-${device.metadata.uid ?? ''}`;
+}
+
+// aliases mirrors the server's normalization of serial, system UUID and
+// provider host reference.
+function aliases(device: Device): string[] {
+  const normalize = (value?: string) => (value ?? '').trim().toLowerCase();
+  const result: string[] = [];
+  if (normalize(device.spec.identity.serial)) result.push(`serial:${normalize(device.spec.identity.serial)}`);
+  if (normalize(device.spec.identity.systemUUID)) result.push(`uuid:${normalize(device.spec.identity.systemUUID)}`);
+  const host = device.spec.providerHostRef;
+  if (host) result.push(`provider:${JSON.stringify([normalize(host.system), normalize(host.type), normalize(host.id)])}`);
+  return result;
+}
+
+// ineligibleReason explains why a Device cannot be registered. Passing the
+// listed Devices also marks every Device that shares a hardware alias with
+// another one as conflicting until a person resolves the duplicate.
+export function ineligibleReason(device: Device, listed: Device[] = []): string | undefined {
   if (device.metadata.namespace !== 'default' || !device.metadata.uid || !device.metadata.resourceVersion || device.metadata.deletionTimestamp) return 'Device incarnation is unavailable or deleting';
   if (device.spec.identity.unidentified || !device.spec.identity.serial?.trim() || !device.spec.identity.systemUUID) return 'Both serial and system UUID are required; partial identity is ambiguous';
   if (['unknown', 'none', 'n/a', 'default string', 'to be filled by o.e.m.'].includes(device.spec.identity.serial.trim().toLowerCase()) || ['00000000-0000-0000-0000-000000000000', 'ffffffff-ffff-ffff-ffff-ffffffffffff'].includes(device.spec.identity.systemUUID)) return 'Placeholder identity is ineligible';
+  const own = aliases(device);
+  if (listed.some(other => other.metadata.uid !== device.metadata.uid && aliases(other).some(alias => own.includes(alias)))) return 'Conflicting: another Device shares this hardware identity; resolve the duplicate first';
   return undefined;
 }
 
@@ -31,13 +54,14 @@ export async function registrationDevices(): Promise<Device[]> {
 
 export class RegistrationUnknown extends Error {
   constructor(name: string, readonly operationID: string, detail: string) {
-    super(`Registration of ${name} is not confirmed. ${detail} Reservations may be retained. Do not retry under another name or delete capacity to roll back; ask an operator to reconcile operation ${operationID}.`);
+    super(`Registration of ${name} is not confirmed. ${detail} Check whether capacity ${name} exists before registering again; its name is derived from the Device, so a repeat cannot create a second record. Do not delete capacity to roll back. Client operation ${operationID}.`);
   }
 }
 
-export async function registerCapacity(name: string, selected: Device, operationID: string, operation: InventoryOperation): Promise<MachineCapacity> {
+export async function registerCapacity(selected: Device, operationID: string, operation: InventoryOperation): Promise<MachineCapacity> {
   operation.assertCurrent();
-  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name) || name.length > 63 || !operationID) throw new Error('Enter a valid authored capacity name.');
+  const name = capacityNameFor(selected);
+  if (!selected.metadata.uid || !operationID) throw new Error('The selected Device has no incarnation to register.');
   if (ineligibleReason(selected)) throw new Error(ineligibleReason(selected));
   if (!await registrationPermission()) throw new ApiError(403, 'Capacity registration permission is denied or unavailable.');
   operation.assertCurrent();

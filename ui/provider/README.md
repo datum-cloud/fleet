@@ -8,13 +8,15 @@ Operations in the navigation. The page has four tabs:
 
 - **Capacity** (the mount root, where the nav item points) lists the
   provider's MachineCapacities in every namespace. A verified host session can
-  register an existing `default` Device under an independently authored name.
+  register an existing `default` Device as `device-<Device UID>` capacity.
   Selection retains the exact Device UID/resourceVersion; the named reference
   is immutable. Registration is Disabled/Retain with cleaning explicitly
   unconfigured, without class assignment, allocation, preparation or positive
-  readiness. The server enforces permissions, physical-alias reservations and
-  lifetime fences. Unknown completion blocks retries and never deletes capacity
-  to roll back. See the [registration contract](../../docs/development/inventory-capacity-registration.md).
+  readiness. The capacity name is derived from the Device UID, so a Device
+  backs at most one capacity. Devices sharing a hardware alias are marked
+  Conflicting. The server enforces permissions and checks live Devices for
+  duplicates. Unknown completion blocks retries in the form and never deletes
+  capacity to roll back. See the [registration contract](../../docs/development/inventory-capacity-registration.md).
 - **Profiles** (`profiles`) lists MachineProfiles and creates new ones. A
   profile can't be changed after it is created, so there is no edit.
 - **Classes** (`classes`) lists MachineClasses and creates new ones: the
