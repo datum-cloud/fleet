@@ -1,3 +1,5 @@
+import { Input } from '@datum-cloud/datum-ui/input';
+import { Label } from '@datum-cloud/datum-ui/label';
 import { useContext, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@datum-cloud/datum-ui/button';
@@ -106,7 +108,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
     {!compact && <summary>Manage {record ? 'this record' : `${kind === 'Facility' ? 'facilities' : `${kindLabel}s`}`}</summary>}
     <div className="inventory-management-controls"><Access className="inventory-management-access">
     {compact && <summary>{record ? 'Editing access' : 'Namespace & access'}</summary>}
-    {!record && <label>Namespace<input aria-label="Management namespace" value={namespace} disabled={!ready || open || pending} onChange={event => setNamespace(event.target.value)} /></label>}
+    {!record && <Label>Namespace<Input aria-label="Management namespace" value={namespace} disabled={!ready || open || pending} onChange={event => setNamespace(event.target.value)} /></Label>}
     {dependenciesUnavailable && <p>Related records are unavailable, not empty. Creation needs readable location, installation, or endpoint records. Ask your administrator about viewing access, or try again after a temporary failure.</p>}
     {!editable ? <p>Display-name editing uses a narrower portal writer policy and is unavailable for this record. Device location correction, when separately available, uses ordinary management access and does not perform an ownership handover.</p> : permission.error instanceof ApiError && permission.error.status === 401 ? <p>Your session expired. Sign in again through the staff portal before continuing. Unsaved input remains here.</p> : !visible && <p>Viewing and management access are separate. Ask your administrator about physical-inventory management access. A permission check must succeed before changes are available.</p>}
     </Access>
@@ -124,15 +126,15 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
     <p role="status" className="inventory-management-status">{message || (!ready || permission.isFetching ? 'Management: verification pending.' : open && blocked ? 'Management: close and reopen this form to continue.' : allowed ? 'Management: access checked.' : 'Management: unavailable.')}</p>
     {open && permission.data === true && !permission.error && !issues[kind] && <form onSubmit={save} className="inventory-form">
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
-      <p>{record ? 'Only the display name and recording details change. Identity, placement, geometry, connections, and history remain untouched.' : 'Create a physical record only. This does not verify equipment, reserve space, or provision hardware.'}</p>
-      {!record && <label>Record name<input required maxLength={253} value={values.name} onChange={event => field('name', event.target.value)} /></label>}
-      <label>Display name<input required maxLength={253} value={values.displayName} onChange={event => field('displayName', event.target.value)} /></label>
+      <p>{record ? 'Only the display name changes. Identity, placement, geometry, connections, and history remain untouched.' : 'Create a physical record only. This does not verify equipment, reserve space, or provision hardware.'}</p>
+      {!record && <Label>Record name<Input required maxLength={253} value={values.name} onChange={event => field('name', event.target.value)} /></Label>}
+      <Label>Display name<Input required maxLength={253} value={values.displayName} onChange={event => field('displayName', event.target.value)} /></Label>
       {!record && (kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim') && <InventoryHardwareFields kind={kind} values={values} onChange={setValues} namespace={namespace} claims={claims} devices={devices} feeds={feeds} locations={[...facilities, ...racks]} />}
     {!record && kind === 'Cable' && (issues?.Device || issues?.PowerFeed) && <p>Some endpoint records are unavailable. Only readable equipment and power feeds are offered; missing choices do not mean those records are absent.</p>}
     {!record && kind === 'DeviceClaim' && (issues?.Facility || issues?.Rack) && <p>Some location records are unavailable. Only readable facilities and racks are offered; missing choices do not mean those records are absent.</p>}
       {!record && kind === 'Rack' && <>
-        <label>Facility<select required value={values.facility} onChange={event => field('facility', event.target.value)}><option value="">Choose a facility</option>{facilities.filter(facility => facility.metadata.namespace === namespace && !facility.metadata.deletionTimestamp).map(facility => <option key={facility.metadata.name} value={facility.metadata.name}>{facility.spec.displayName} ({facility.metadata.name})</option>)}</select></label>
-        <label>Rack height (U, optional)<input type="number" min={1} max={100} step={1} value={values.height} onChange={event => field('height', event.target.value)} /></label><p className="inventory-muted">Leave height blank if unknown. A rack record does not establish free space.</p>
+        <Label>Facility<select required value={values.facility} onChange={event => field('facility', event.target.value)}><option value="">Choose a facility</option>{facilities.filter(facility => facility.metadata.namespace === namespace && !facility.metadata.deletionTimestamp).map(facility => <option key={facility.metadata.name} value={facility.metadata.name}>{facility.spec.displayName} ({facility.metadata.name})</option>)}</select></Label>
+        <Label>Rack height (U, optional)<Input type="number" min={1} max={100} step={1} value={values.height} onChange={event => field('height', event.target.value)} /></Label><p className="inventory-muted">Leave height blank if unknown. A rack record does not establish free space.</p>
       </>}
       </fieldset>
       <div className="flex flex-wrap gap-3"><Button type="primary" theme="solid" size="small" htmlType="submit" disabled={!allowed || blocked || pending}>{pending ? 'Saving…' : record ? 'Save display name' : `Create ${kindLabel} record`}</Button><Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!ready || pending} onClick={() => setOpen(false)}>Close form</Button></div>

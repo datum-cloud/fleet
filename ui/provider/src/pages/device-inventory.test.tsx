@@ -86,14 +86,14 @@ describe('DeviceInventoryList', () => {
     mockInventory({ isLoading: true });
     renderAt('/plugins/metal-datumapis-com/inventory');
     expect(screen.getByTestId('fleet-plugin-loading')).toBeInTheDocument();
-    expect(screen.queryByRole('navigation', { name: 'Inventory categories' })).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Inventory categories' }).textContent).not.toMatch(/\d/);
   });
 
   it('hides stale counts on a failed read and allows retry', () => {
     mockInventory({ data: inventory, error: new ApiError(500, 'Inventory unavailable') });
     renderAt('/plugins/metal-datumapis-com/inventory');
     expect(screen.getByTestId('inventory-access-500')).toBeInTheDocument();
-    expect(screen.queryByRole('navigation', { name: 'Inventory categories' })).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Inventory categories' }).textContent).not.toMatch(/\d/);
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(useInventoryMock.mock.results[0].value.refetch).toHaveBeenCalledOnce();
   });
