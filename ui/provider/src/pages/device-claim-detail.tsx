@@ -32,7 +32,8 @@ function Section({ title, testId, children }: { title: string; testId: string; c
   );
 }
 
-function ProvenanceFields({ provenance }: { provenance: Provenance }) {
+function ProvenanceFields({ provenance }: { provenance?: Provenance }) {
+  if (!provenance) return <Field label="Record history">Not recorded</Field>;
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
       <Field label="Recorded by">{provenance.recordedBy}</Field>

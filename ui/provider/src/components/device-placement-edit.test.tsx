@@ -9,7 +9,7 @@ import { InventoryOperationContext, InventoryOperationScope } from '../lib/inven
 
 vi.mock('../lib/inventory-management', async () => ({ ...await vi.importActual('../lib/inventory-management'), useInventoryPermission: vi.fn() }));
 const permission = vi.mocked(useInventoryPermission);
-const device: Device = { ...fixturePhysicalDevices[0], metadata: { name: 'example', namespace: 'default', uid: 'uid', resourceVersion: '7' }, spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: undefined, provenance: { ...fixturePhysicalDevices[0].spec.provenance, method: 'NetBoxImport', recordedAt: '2026-01-01T00:00:00Z' } } };
+const device: Device = { ...fixturePhysicalDevices[0], metadata: { name: 'example', namespace: 'default', uid: 'uid', resourceVersion: '7' }, spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: undefined, provenance: { ...fixturePhysicalDevices[0].spec.provenance!, method: 'NetBoxImport', recordedAt: '2026-01-01T00:00:00Z' } } };
 const rack: PhysicalRecord = { kind: 'Rack', metadata: { name: 'rack', namespace: 'default', uid: 'rack-uid' }, spec: { displayName: 'Restricted rack name', heightUnits: 42, provenance: device.spec.provenance } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 function setup(record = device, session = new InventoryOperationScope()) {
@@ -51,7 +51,7 @@ describe('reported location editor', () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({}, status));
     vi.stubGlobal('fetch', fetch); setup(); openAndFill();
     fireEvent.click(screen.getByRole('button', { name: 'Save reported location' }));
-    await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/no longer valid|changed or disappeared|unknown/));
     expect(screen.getByRole('status')).not.toHaveTextContent('saved');
     expect(screen.getByRole('button', { name: 'Save reported location' })).toBeDisabled();
     expect(fetch).toHaveBeenCalledTimes(3);

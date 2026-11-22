@@ -614,11 +614,11 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
           <summary>Record history & verification</summary>
           <dl className="inventory-fields">
             <Field label="Verification">Unknown — no verification evidence is available.</Field>
-            <Field label="Recorded by">{provenance.recordedBy}</Field>
-            <Field label="Recorded at">{provenance.recordedAt}</Field>
-            <Field label="Recording method">{provenance.method}</Field>
-            <Field label="Reference">{provenance.reference}</Field>
-            {provenance.source && (
+            <Field label="Recorded by">{provenance?.recordedBy}</Field>
+            <Field label="Recorded at">{provenance?.recordedAt}</Field>
+            <Field label="Recording method">{provenance?.method}</Field>
+            <Field label="Reference">{provenance?.reference}</Field>
+            {provenance?.source && (
               <>
                 <Field label="Source object">
                   {provenance.source.system}/{provenance.source.type}/{provenance.source.id}

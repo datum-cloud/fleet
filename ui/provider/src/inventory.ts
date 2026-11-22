@@ -31,7 +31,7 @@ export function slotKey(namespace: string | undefined, name: string): string {
 }
 
 function byRecordedAt(a: RawDevice, b: RawDevice): number {
-  return a.spec.provenance.recordedAt.localeCompare(b.spec.provenance.recordedAt);
+  return (a.spec.provenance?.recordedAt ?? '').localeCompare(b.spec.provenance?.recordedAt ?? '') || slotKey(a.metadata.namespace, a.metadata.name).localeCompare(slotKey(b.metadata.namespace, b.metadata.name));
 }
 
 export function toInventory(claims: RawDeviceClaim[], devices: RawDevice[], physical: PhysicalRecord[] = []): Inventory {

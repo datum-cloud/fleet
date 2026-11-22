@@ -14,6 +14,16 @@ const saved = (request: RequestInit) => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('direct placement correction', () => {
+  it('corrects provenance-free records without inventing a receipt', async () => {
+    const baseline = structuredClone(original);
+    delete baseline.spec.provenance;
+    const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(baseline)).mockImplementationOnce((_url, request) => response({ ...baseline, metadata: { ...baseline.metadata, resourceVersion: '8' }, spec: { ...baseline.spec, reportedPlacement: JSON.parse(request.body).at(-1).value } }));
+    vi.stubGlobal('fetch', fetch);
+    const result = await correctDevicePlacement(baseline, fields, new InventoryOperationScope().begin());
+    const patch = JSON.parse(fetch.mock.calls[2][1].body);
+    expect(patch.map((entry: { path: string }) => entry.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/reportedPlacement']);
+    expect(result.spec.provenance).toBeUndefined();
+  });
   it.each([false, true])('adds/updates imported records without altering import provenance: %s', async existing => {
     const baseline = structuredClone(original);
     if (existing) baseline.spec.reportedPlacement = { revision: 1, observedAt: fields.observedAt, snapshotDigest: `sha256:${'a'.repeat(64)}` };

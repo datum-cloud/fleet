@@ -1,5 +1,11 @@
 # Planning and registering physical devices
 
+Portal readers accept records without provenance. Missing history is displayed as
+unknown, not inferred ownership. The portal's narrower display-name editor still
+requires its existing manual-record ownership evidence. Authorized location
+corrections retain UID/resourceVersion preconditions and do not fabricate
+provenance when none is present.
+
 For source reports and authorized, concurrency-safe location record corrections, see
 [Device-reported placement](../development/device-reported-placement.md).
 
