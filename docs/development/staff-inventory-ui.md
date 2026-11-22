@@ -100,90 +100,106 @@ not silently adopt a refreshed baseline. No automatic write retries occur.
 Existing session protections are retained: principal-isolated QueryClients,
 authority invalidation at session/revalidation/navigation/background/unmount
 boundaries, fresh authority generations even for React-batched revalidation,
-and generation-guarded focus checks. Already-dispatched uncertain outcomes stay
-unknown rather than becoming cancelled-success.
+and generation-guarded background-return checks. Already-dispatched uncertain
+outcomes stay unknown rather than becoming cancelled-success.
 
-### Visible browser blur versus session authority
+### Browser focus is not a session boundary
 
-Visible blur also suspends new inventory/permission query dispatch and publication
-and cancels outstanding queries without removing their previously authorized data.
-Manual refresh cannot publish responses during unresolved host identity checks.
-Read generations reject late successes and errors, even after authority resumes;
-only the verified principal's fresh reads can renew management controls.
-Rejected focus verification keeps the view masked during subsequent attempts;
-only a successful attempt removes that mask. Regression tests directly check
-cache replacement for batched principal changes and reject operation lifecycle
-renewal when the host principal differs from the mounted principal.
+Implemented against PR103's merged staging base
+`f190d28397fc6110e02c9c83e6819a3a584258d0`. Ordinary visible window blur/focus
+is deliberately ignored. Opening the URL bar does not change the session:
+it does not suspend reads or writes, reset edit baselines, close or disable forms,
+change Namespace & access disclosures, or start host/permission/inventory requests.
+Both the session boundary and individual management/location forms have no
+blur/focus listeners. QueryClient defaults and inventory queries disable window
+focus refetch. Drafts and frozen baselines remain usable without reopening.
 
-The visible-blur correction separates read visibility from write authority.
-Previously, opening Safari's URL bar called the same hide path as backgrounding
-the document, unmounting inventory and showing LoadingState. A visible window
-blur is not evidence of logout, account switching, or document backgrounding.
-It can also mean focus moved to another visible window. Intentionally, already
-authorized inventory remains on screen in all these visible-blur cases; this
-is not a screen-privacy curtain for unfocused windows.
+Actual document hidden/pagehide events still synchronously invalidate operation
+and read scopes, cancel queries and mask private children. Visibility restoration
+or pageshow revalidates the host only after an observed hidden/pagehide boundary.
+Overlapping background events advance a generation so an older verification
+cannot restore authority. Failed verification remains masked. Explicit host
+revalidation/navigation and observed principal changes also fence operations and
+replace the private query cache, including fast batched A→B→A transitions.
+Cached permission is never substituted for a confirmed denial; denied references
+are redacted. Genuine session boundaries do not transfer drafts, immutable edit
+baselines or pending intents into a new authority generation.
 
-Writes remain conservatively fenced synchronously on every blur, pagehide,
-hidden visibility transition, router revalidation/navigation, and principal
-change. Returning focus verifies the real host loader. During that verification,
-the existing same-principal read view stays mounted but operation authority
-remains invalid and management forms are unmounted. Old operations never regain authority, including SSAR/reference
-reads completing after an await; dispatched writes retain unknown outcomes.
-After verification, forms get a fresh generation (and must be reopened), without
-remounting the inventory table or changing its view-specific query key. Immutable
-edit baselines are never transferred to the new forms. Existing per-form blur
-fences remain unchanged.
+The original PR104 disable-on-blur/reopen design was superseded by this simpler
+trigger model before review/merge. Stable wrappers and native disabled controls
+remain useful for actual permission refreshes, but browser chrome focus alone
+never activates those states. This is not a new inventory or IAM contract.
 
-Successful same-principal focus checks cancel older query work and refresh reads
-in the isolated client before remounting management forms, which renew their
-permissions. A failed or wholly unavailable inventory read keeps forms suspended
-until the next successful focus verification or reopened inventory. The cache's
-settled read result, not a potentially delayed React observer, gates this renewal:
-no SSAR is sent for stale forms while the new read result denies all inventory.
-An observed read denial still redacts records; revalidation is not removed. Hidden documents and pagehide immediately
-unmount and clear the client; foreground restoration waits for verification.
-Explicit host revalidation/navigation also retains its masking/cache-reset
-policy. Principal transitions reset the client, including observed A→B→A
-transitions batched into one React render. Missing identities and host failures
-remove private content. A focus check completing after a newer blur cannot
-restore write authority; after a newer hidden/pagehide event it cannot restore
-read visibility either. The host completion generation is still observed via
-the synchronous router subscription, not only React's possibly batched loading
-state. The soft-read policy remains latched until the next router cycle so a
-promise completion preceding React's idle render cannot momentarily unmount it.
+Backend per-request authentication/authorization, submit-time exact permission
+checks, after-await operation checks, and atomic UID/resourceVersion JSON Patch
+tests remain required. A cookie/account change not yet observed by the host
+cannot be detected atomically by this UI. Focus is not authentication, and this
+change does not claim protection against an unobserved cookie transition between
+requests. Observed host boundaries revoke pending work; backend checks protect
+each dispatched request. Unknown dispatched outcomes are not reported as success.
 
-This intentionally replaces tests that treated visible blur as a privacy mask.
-Equivalent pagehide/hidden coverage is retained, and the adversarial write matrix
-now exercises both visible focus/blur and focus/pagehide (create/edit,
-pending SSAR, dispatched success/error, and StrictMode). Actual inventory-table
-tests assert DOM identity through visible focus and verify refreshed denials;
-operation-generation tests retain stale-completion and A→B→A protection.
+### Regression evidence and acceptance limits
 
-For a synthetic browser check, run from `ui/provider`:
+PR104's integration with feature-target revision
+`5b60656759033b61674ee202a9ad94f4d49f4a64` retains PR106's removal of provenance,
+Device source identity, component source references, reported-placement method
+and snapshot digest, and the built-in NetBox importer/planner. The portal does not
+restore those fields as compatibility inputs or infer writer ownership from them.
+Display-name edits retain managed-field ownership checks; both label and location
+patches retain exact UID/resourceVersion guards. Creation metadata is display
+history only, never evidence of a current Device or verified placement.
+The visible-focus no-op and actual host/background authority fences are unchanged.
+
+The actual-component stable-controls matrix covers all five create kinds,
+display-name and location editing, collapsed/expanded access, and StrictMode.
+Repeated visible blur/focus preserves exact markup, DOM nodes, enabled controls,
+drafts, disclosures and captured operation authority with no added requests.
+Hosted pending-save tests cover delayed permission, baseline reads and dispatch;
+saves continue across visible focus with the original UID/resourceVersion tests.
+The same hosted cases revoke pending work across true hidden/visible and principal
+changes; already-dispatched results never publish success into the new view.
+Inventory-page tests also drive the query focus manager and assert no added
+requests. Previous blur-revocation cases now use real hidden/pagehide or explicit
+host boundaries, retaining delayed-operation, A→B→A, denied-read and unknown-write
+coverage. These tests are local regression evidence, not independent signoff.
+
+Earlier synthetic browser geometry/keyboard checks at PR104 head `4a30bb7`
+exercised the now-superseded disabled-view behavior; they are not acceptance
+evidence for this revision. The real staging URL redirected to sign-in and no
+login was manipulated. Authenticated Safari URL-bar acceptance remains unverified.
+Independent review, CI and authenticated staging/Safari acceptance remain release
+gates; this work does not merge, deploy or change live inventory/IAM/NetBox data.
+
+Revised local validation (2026-11-21): provider 495 tests in 32 files and consumer
+44 tests in 3 files pass, along with both TypeScript checks/production builds,
+`go test ./internal/api/inventory/...`, documentation links and whitespace.
+Temporarily restoring the management form's blur invalidation fails 29 of 56
+focused stable-controls/pending-save tests; the mutation was removed before the
+full passing run. This is sensitivity evidence, not independent review.
+
+Revised synthetic browser checks at 390px retain identical markup, form/control
+nodes, bounding rectangles and request counters across visible blur/focus for
+all five create kinds with collapsed/expanded access, plus display-name and
+location editors. Native Tab advances to an enabled form input; subsequent
+synthetic blur/focus retains that focus and markup without requests. Pagehide
+removes forms, held pageshow verification keeps them absent, and release restores
+fresh data without old drafts. No writes occurred. These are synthetic Chromium
+DOM/geometry/event checks, not real browser-chrome or Safari acceptance. The owned
+tab and fixture server were closed after checking.
+
+For an optional synthetic browser check, run from `ui/provider`:
 
 ```sh
 pnpm exec vite --config vitest.config.ts --host 127.0.0.1 --port 7793
 ```
 
 Open `/session-fixture.html`. This mounts the actual inventory page and boundary
-under a synthetic host loader, not the preview bypass. All API calls are handled
-in memory; writes return a synthetic failure and never reach an API. The browser
-console's `inventorySessionFixture` exposes `hold(boolean)`, `release()`,
-`principal(string|null)`, `denied(boolean)`, and `stats()` for controlled loader
-completion, account transitions, and read denial. Dispatch window blur/focus or
-pagehide to inspect transitions. This harness is not a production build entry.
-
-Local browser evidence on 2026-11-21 uses synthetic events and data. Visible
-blur/focus retained the identical table DOM node with no observed LoadingState;
-collection reads renewed from seven to fourteen. Pagehide removed the table and
-kept LoadingState through the held return-focus check; release restored a fresh
-read view. A subsequent synthetic 403 replaced it with access guidance and no
-private table. No fixture writes were dispatched. The real
-staging URL redirected to sign-in; no login was manipulated. That evidence and
-the supplied Safari screenshot do not prove authenticated Safari URL-bar
-acceptance. Independent adversarial signoff, CI, and authenticated staging/Safari
-acceptance remain deployment gates; no inventory or IAM data is changed
-by this correction.
+under a synthetic host loader, not the preview bypass. API calls are handled in
+memory; writes return a synthetic failure and never reach an API. The console's
+`inventorySessionFixture` exposes `hold(boolean)`, `release()`,
+`principal(string|null)`, `denied(boolean)`, and `stats()`. Blur/focus should do
+nothing; pagehide followed by pageshow exercises held restoration. This harness
+is not a production build entry and is not evidence of real Safari acceptance.
 
 Read-only users browse without enabled writes. No-read and direct-link denials
 show calm access guidance, not empty/zero inventory. Partial collection failures
@@ -247,14 +263,14 @@ go test ./internal/api/inventory/...
 git diff --check
 ```
 
-Final local results: 278 tests in 20 files, TypeScript check, production build,
+Prior UI phase results: 278 tests in 20 files, TypeScript check, production build,
 and the Go inventory package tests pass. Build warnings concern the existing
 transitive undici share and Zod annotation handling; they do not fail the build.
-Documentation relative links and whitespace are checked. The 68 independent
-tests remain byte-for-byte identical to the supplied review suite.
+Documentation relative links and whitespace were checked. At that phase, the 68
+independent tests remained byte-for-byte identical to the supplied review suite.
 
-The final independent suite from the previously reviewed `239dd312` head is
-copied unchanged into `exact-head-independent.test.tsx` (68 cases), alongside
+The independent suite from the previously reviewed `239dd312` head was
+originally copied unchanged into `exact-head-independent.test.tsx` (68 cases), alongside
 the original adversarial regressions. New tests cover geometry, unknown height,
 non-unit mounts, real filters, hardware payloads, typed references, permission
 denial, input retention, unavailable prerequisites, and unmount during delayed
@@ -290,7 +306,8 @@ synthetic 403 removed the restricted device name while retaining other categorie
 Mobile lists, forms and rack views had no page-wide horizontal overflow. These
 checks do not replace screen-reader testing or authenticated host acceptance.
 
-The tested local diff requires a **new independent adversarial review** before
-publication. No commit, push, PR, merge, deployment or live mutation is authorized
-in this implementation phase. Authenticated staging integration, including host
+The stable-controls follow-up requires a **new independent adversarial review**
+before staging merge or deployment. Its implementation authorization includes a
+signed commit and a PR against `feat/manual-inventory-records`, not a merge,
+deployment or live mutation. Authenticated staging integration, including host
 principal changes and proxy enforcement, remains a release acceptance check.

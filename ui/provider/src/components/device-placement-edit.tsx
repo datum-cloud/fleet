@@ -9,17 +9,18 @@ import { InventoryOperationContext, InventoryOperationGenerationContext, Invento
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 
 export function DevicePlacementEdit(props: ComponentProps<typeof DevicePlacementForm>) {
-  const generation = useContext(InventoryOperationGenerationContext);
-  const ready = useContext(InventoryOperationReadyContext);
-  return ready ? <DevicePlacementForm key={generation} {...props} /> : null;
+  return <DevicePlacementForm {...props} />;
 }
 
 function DevicePlacementForm({ device, locations, issues }: { device: Device; locations: PhysicalRecord[]; issues?: Inventory['issues'] }) {
   const client = useQueryClient();
   const session = useContext(InventoryOperationContext);
+  const ready = useContext(InventoryOperationReadyContext);
+  const generation = useContext(InventoryOperationGenerationContext);
   const readFailure = useContext(InventoryReadAccessContext);
   const scope = useRef(new InventoryOperationScope());
   const [baseline, setBaseline] = useState<Device>();
+  const [open, setOpen] = useState(false);
   const [fields, setFields] = useState<PlacementFields>(() => placementFields());
   const [pending, setPending] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -30,30 +31,29 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
   const namespace = device.metadata.namespace ?? '';
   const editable = canCorrectPlacement(device);
   const permission = useInventoryPermission('Device', editable ? namespace : '', 'patch', device.metadata.name);
-  const allowed = editable && permission.data === true && !permission.isFetching && !permission.error && !unavailable.Device && !(device.spec.reportedPlacement?.facilityRef && unavailable.Facility) && !(device.spec.reportedPlacement?.rackRef && unavailable.Rack);
+  const permitted = editable && permission.data === true && !permission.error && !unavailable.Device && !(device.spec.reportedPlacement?.facilityRef && unavailable.Facility) && !(device.spec.reportedPlacement?.rackRef && unavailable.Rack);
+  const allowed = ready && permitted && !permission.isFetching;
   const visible = locations.filter(record => !unavailable[record.kind] && record.metadata.namespace === namespace && !record.metadata.deletionTimestamp);
   const field = (key: keyof PlacementFields, value: string) => setFields(previous => ({ ...previous, [key]: value }));
   useLayoutEffect(() => {
-    const invalidate = () => { scope.current.invalidate(); setBlocked(true); };
+    const invalidate = () => { scope.current.invalidate(); setBlocked(true); setBaseline(undefined); };
     const visibility = () => { if (document.visibilityState === 'hidden') invalidate(); };
-    window.addEventListener('blur', invalidate);
     window.addEventListener('pagehide', invalidate);
     document.addEventListener('visibilitychange', visibility);
     return () => {
       scope.current.invalidate();
-      window.removeEventListener('blur', invalidate);
       window.removeEventListener('pagehide', invalidate);
       document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
   useLayoutEffect(() => {
     scope.current.invalidate();
-    setBlocked(true);
-  }, [device.metadata.uid, device.metadata.resourceVersion, allowed, permission.isFetching, session]);
+    setBlocked(true); setBaseline(undefined);
+  }, [device.metadata.uid, device.metadata.resourceVersion, allowed, permission.isFetching, session, generation]);
   useLayoutEffect(() => { setNeedsRefresh(false); }, [device.metadata.uid, device.metadata.resourceVersion]);
   useLayoutEffect(() => {
     if (!issues?.Facility && !issues?.Rack && !issues?.Device) return;
-    scope.current.invalidate(); setBlocked(true); setBaseline(undefined);
+    scope.current.invalidate(); setBlocked(true); setBaseline(undefined); setOpen(false);
     setFields(placementFields());
   }, [issues?.Facility, issues?.Rack, issues?.Device]);
   async function save(event: FormEvent) {
@@ -64,7 +64,7 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     try {
       await correctDevicePlacement(baseline, fields, operation);
       operation.assertCurrent();
-      setBaseline(undefined); setMessage('Reported location saved. No physical move or reservation was performed.');
+      setBaseline(undefined); setOpen(false); setMessage('Reported location saved. No physical move or reservation was performed.');
       await client.invalidateQueries({ queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT] });
     } catch (error) {
       setBlocked(true);
@@ -73,7 +73,7 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
       else if (error instanceof InventoryReferenceReadError) {
         const failures = readFailureIssues(error);
         setDenied(previous => ({ ...previous, ...failures }));
-        setBaseline(undefined); setFields(placementFields()); readFailure(error);
+        setBaseline(undefined); setOpen(false); setFields(placementFields()); readFailure(error);
         setMessage('Related inventory is unavailable. Restricted names and choices were removed. Reopen inventory after access is restored. No write was dispatched.');
         const queryKey = [PLUGIN_ID, 'inventory', PROVIDER_PROJECT];
         await client.cancelQueries({ queryKey });
@@ -87,16 +87,20 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
   return <section className="inventory-management" aria-label="Correct reported location">
     <h3>Reported location</h3>
     <p>Correct a record, not a physical move, installation handover, or reservation. Identity and claim binding stay unchanged. Blank geometry means unknown; model and claim dimensions are not copied.</p>
-    {!editable ? <p>Legacy GitOps-managed or unavailable Devices are outside this editor.</p> : !allowed && <p>Device management permission must be confirmed before correcting location.</p>}
-    {allowed && !baseline && !needsRefresh && <button type="button" onClick={() => {
+    {!editable ? <p>Legacy GitOps-managed or unavailable Devices are outside this editor.</p> : !permitted && <p>Device management permission must be confirmed before correcting location.</p>}
+    <p role="status" className="inventory-management-status">{message || (!ready || permission.isFetching ? 'Management: verification pending.' : open && blocked ? 'Management: close and reopen this form to continue.' : allowed ? 'Management: access checked.' : 'Management: unavailable.')}</p>
+    {permitted && !open && !needsRefresh && <button type="button" disabled={!allowed} onClick={() => {
+      if (!allowed) return;
       scope.current = new InventoryOperationScope();
+      setOpen(true);
       setBaseline(structuredClone(device));
       const next = placementFields(device.spec.reportedPlacement);
       if (unavailable.Facility) next.facility = '';
       if (unavailable.Rack) next.rack = '';
       setFields(next); setBlocked(false); setMessage('');
     }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</button>}
-    {baseline && <form className="inventory-form" onSubmit={save}>
+    {open && permitted && <form className="inventory-form" onSubmit={save}>
+      <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <p>Authenticated actor history uses existing resource audit logs.</p>
       <label>Actual facility (optional)<select value={fields.facility} disabled={!!unavailable.Facility} onChange={event => field('facility', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Facility').map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></label>
       <label>Actual rack (optional)<select value={fields.rack} disabled={!!unavailable.Rack} onChange={event => field('rack', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></label>
@@ -109,10 +113,9 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
       <label>Correction reason<input required maxLength={1024} value={fields.reason} onChange={event => field('reason', event.target.value)} /></label>
       <label>Evidence reference<input required maxLength={1024} value={fields.reference} onChange={event => field('reference', event.target.value)} /></label>
       <p>Do not include credentials or secrets in evidence.</p>
+      </fieldset>
       <button type="submit" disabled={!allowed || pending || blocked}>{pending ? 'Saving location…' : 'Save reported location'}</button>
-      <button type="button" disabled={pending} onClick={() => { scope.current.invalidate(); setBaseline(undefined); }}>Close location form</button>
-      {blocked && <p>This form is no longer authorized to save. Refresh inventory and reopen it.</p>}
+      <button type="button" disabled={!ready || pending} onClick={() => { scope.current.invalidate(); setBaseline(undefined); setOpen(false); }}>Close location form</button>
     </form>}
-    {message && <p role="status">{message}</p>}
   </section>;
 }

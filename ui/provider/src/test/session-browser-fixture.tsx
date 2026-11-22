@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import DeviceInventoryList from '../pages/device-inventory-list';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
+import { INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 import '../preview.css';
 
 let principal: string | null = 'synthetic-staff-a';
@@ -23,7 +24,9 @@ window.fetch = async (input, init) => {
   if (denied) return Response.json({ error: 'Synthetic read denial' }, { status: 403 });
   const kind = url.includes('/facilities') ? 'Facility' : url.includes('/racks') ? 'Rack' : url.includes('/cables') ? 'Cable' : url.includes('/powerfeeds') ? 'PowerFeed' : 'Site';
   const items = url.includes('/devices') ? fixturePhysicalDevices : url.includes('/deviceclaims') ? fixturePhysicalClaims : fixturePhysicalRecords.filter(record => record.kind === kind);
-  return Response.json({ data: { items } });
+  return Response.json({ data: { items: items.map(record => ({ ...record,
+    metadata: { ...record.metadata, uid: `synthetic-${record.metadata.name}`, resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] },
+  })) } });
 };
 
 const router = createMemoryRouter([{

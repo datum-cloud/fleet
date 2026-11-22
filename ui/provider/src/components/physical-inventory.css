@@ -44,6 +44,9 @@
 .inventory-empty { display:flex; flex-direction:column; align-items:center; gap:12px; padding:48px 20px; text-align:center; color:var(--muted-foreground,#667571); }
 .inventory-empty button { cursor:pointer; padding:8px 16px; border:1px solid var(--border,#dce3df); border-radius:6px; color:var(--foreground,#182b2a); }
 .inventory-management { display:block; }
+.inventory-management-status { min-height:3em; font-size:12px; }
+.inventory-form > fieldset.inventory-form-gate { display:contents; }
+.inventory-form-gate > p,.inventory-form-gate > div,.inventory-form-gate > fieldset { grid-column:1/-1; }
 .inventory-management > [role="status"] { margin-top:16px; }
 .inventory-management label { display:flex; flex-direction:column; gap:6px; margin:12px 0; }
 .inventory-management input,.inventory-management select { padding:9px 12px; background:var(--card,#fff); color:var(--foreground,#182b2a); border:1px solid var(--border,#dce3df); border-radius:6px; }

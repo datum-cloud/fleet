@@ -299,7 +299,7 @@ export function useInventory(): UseQueryResult<Inventory, ApiError> {
     queryKey: [PLUGIN_ID, 'inventory', PROVIDER_PROJECT, view],
     queryFn: read,
     refetchInterval: false,
-    refetchOnWindowFocus: 'always',
+    refetchOnWindowFocus: false,
     gcTime: 0,
     retry: false,
   });
