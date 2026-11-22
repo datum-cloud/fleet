@@ -219,6 +219,9 @@ spec:
     - name: Serial
       type: string
       jsonPath: .spec.identity.serial
+    - name: Lifecycle
+      type: string
+      jsonPath: .spec.lifecycle
     - name: System UUID
       type: string
       priority: 1
@@ -289,7 +292,17 @@ spec:
             - rule: '!has(self.serviceAssociations) || (has(self.components) && self.serviceAssociations.all(a,
                 self.components.exists(c, c.id == a.componentID)))'
               message: service associations must reference present components
+            - rule: '!has(oldSelf.lifecycle) || oldSelf.lifecycle != ''Retired'' || (has(self.lifecycle) && self.lifecycle
+                == ''Retired'')'
+              message: Retired is terminal; a Retired Device cannot change lifecycle
+            - rule: '!has(self.lifecycle) || self.lifecycle != ''Retired'' || (has(oldSelf.lifecycle) && oldSelf.lifecycle
+                in [''Decommissioning'', ''Retired''])'
+              message: move an Active Device to Decommissioning before Retired
             properties:
+              lifecycle:
+                type: string
+                enum: [Active, Decommissioning, Retired]
+                default: Active
               deviceTypeRef:
                 type: object
                 required:

@@ -102,6 +102,29 @@ type DeviceSpec struct {
 	// UnmappedMACAddresses are MACs detected on the asset that the registrar
 	// could not attribute to a named interface.
 	UnmappedMACAddresses []string `json:"unmappedMACAddresses,omitempty"`
+	// Lifecycle is the asset's service state. The CRD defaults it to Active and
+	// allows Active and Decommissioning to move between each other and
+	// Decommissioning to move to Retired, which is terminal. Only an Active
+	// Device can back new capacity.
+	Lifecycle DeviceLifecycle `json:"lifecycle,omitempty"`
+}
+
+// DeviceLifecycle is the service state of a Device.
+type DeviceLifecycle string
+
+const (
+	DeviceActive          DeviceLifecycle = "Active"
+	DeviceDecommissioning DeviceLifecycle = "Decommissioning"
+	DeviceRetired         DeviceLifecycle = "Retired"
+)
+
+// LifecycleOf returns the Device's lifecycle, treating an unset value as
+// Active, which is the CRD default.
+func LifecycleOf(device *Device) DeviceLifecycle {
+	if device.Spec.Lifecycle == "" {
+		return DeviceActive
+	}
+	return device.Spec.Lifecycle
 }
 
 type ReportedPlacement struct {
