@@ -8,8 +8,8 @@ import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-mana
 import { fixturePhysicalDevices } from '../lib/fixtures';
 
 const metadata = { name: 'review-only', namespace: 'default', uid: 'synthetic-review', resourceVersion: '7', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] };
-const facility = { ...inventoryPayload('Facility', { name: 'review-only', namespace: 'default', displayName: 'Original', recordedBy: 'synthetic', reference: '', facility: '', height: '' }), metadata };
-const device = { ...fixturePhysicalDevices[0], metadata, spec: { ...fixturePhysicalDevices[0].spec, provenance: undefined, reportedPlacement: undefined } };
+const facility = { ...inventoryPayload('Facility', { name: 'review-only', namespace: 'default', displayName: 'Original', facility: '', height: '' }), metadata };
+const device = { ...fixturePhysicalDevices[0], metadata, spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: undefined } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -64,7 +64,7 @@ it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].
   if (mode === 'location') {
     fireEvent.change(screen.getByLabelText('Observation time (ISO 8601)'), { target: { value: '2026-01-02T00:00:00Z' } });
     fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/synthetic' } });
-  } else fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'synthetic' } });
+  }
   fireEvent.click(screen.getByRole('button', { name: mode === 'location' ? 'Save reported location' : 'Save display name' }));
   await waitFor(() => expect(rejectWrite).toBeDefined());
   const markup = document.body.innerHTML;

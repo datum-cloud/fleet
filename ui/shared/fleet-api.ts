@@ -237,14 +237,6 @@ export const MACHINE_FINALIZER = 'fleet.datumapis.com/machine-protection';
 export const INVENTORY_API_GROUP = 'fleet.datumapis.com';
 export const INVENTORY_API_VERSION = 'v1alpha1';
 
-export interface Provenance {
-  method: 'Manual' | 'NetBoxImport';
-  recordedBy: string;
-  recordedAt: string;
-  reference?: string;
-  source?: ExternalReference & { snapshotDigest: string; mappingRevision: string; observedAt: string };
-}
-
 export interface PortPeer {
   device: string;
   port: string;
@@ -255,7 +247,6 @@ export interface DeviceClaim {
   kind?: string;
   metadata: ObjectMeta;
   spec: {
-    provenance?: Provenance;
     expectedIdentity: { manufacturer?: string; model: string; serial?: string };
     lifecycle?: 'Installation';
     displayName?: string;
@@ -272,8 +263,7 @@ export interface Device {
   spec: {
     reportedPlacement?: ReportedPlacement;
     claimRef: LocalReference;
-    provenance?: Provenance;
-    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string; sourceIdentity?: ExternalReference };
+    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string };
     assetTag?: string;
     displayName?: string;
     modelShape?: { heightUnits?: number; fullDepth?: boolean };
@@ -291,10 +281,8 @@ export interface Device {
 export interface ReportedPlacement {
   revision: number;
   observedAt: string;
-  snapshotDigest?: string;
-  method?: 'Manual' | 'NetBoxImport';
-  reason?: string;
-  reference?: string;
+  reason: string;
+  reference: string;
   facilityRef?: LocalReference;
   rackRef?: LocalReference;
   position?: number;
@@ -314,7 +302,6 @@ export interface PhysicalComponent {
   positions?: number;
   serial?: string;
   assetTag?: string;
-  sourceRef?: ExternalReference;
 }
 export interface CableEndpoint extends ComponentPosition {
   deviceRef?: LocalReference;
@@ -325,7 +312,6 @@ export interface PhysicalRecord {
   kind: 'Site' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed';
   spec: {
     displayName: string;
-    provenance?: Provenance;
     code?: string;
     facilityRefs?: LocalReference[];
     identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];

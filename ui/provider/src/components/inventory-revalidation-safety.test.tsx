@@ -6,8 +6,8 @@ import { InventoryManagement } from './inventory-management';
 import { InventorySessionBoundary } from './inventory-session-boundary';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 
-const values = { name: 'fresh-test', namespace: 'default', displayName: 'Fresh record', recordedBy: 'reviewer', reference: '', facility: 'fresh-test', height: '' };
-const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
+const values = { name: 'fresh-test', namespace: 'default', displayName: 'Fresh record', facility: 'fresh-test', height: '' };
+const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -15,7 +15,6 @@ async function open(editing: boolean, rack = false) {
   fireEvent.click(await screen.findByRole('button', { name: editing ? 'Edit display name' : rack ? 'Create rack' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New input' } });
-  fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: 'reviewer' } });
   if (rack) fireEvent.change(screen.getByLabelText('Facility'), { target: { value: values.name } });
 }
 

@@ -33,8 +33,8 @@ export function placementPayload(original: Device, fields: PlacementFields, now 
   for (const value of [fields.facility, fields.rack]) if (value && (!name.test(value) || value.length > 253)) invalid('Choose a valid location record.');
   if (!fields.reason.trim() || !fields.reference.trim() || fields.reason.trim().length > 1024 || fields.reference.trim().length > 1024) invalid('Reason and evidence reference are required (at most 1024 characters).');
   const observed = Date.parse(fields.observedAt);
-  if (!Number.isFinite(observed) || observed > Date.parse(now)) invalid('Observation time must be valid and no later than recording time.');
-  const report: ReportedPlacement = { revision: (original.spec.reportedPlacement?.revision ?? 0) + 1, method: 'Manual', observedAt: new Date(observed).toISOString(), reason: fields.reason.trim(), reference: fields.reference.trim() };
+  if (!Number.isFinite(observed) || observed > Date.parse(now)) invalid('Observation time must be valid and no later than the current time.');
+  const report: ReportedPlacement = { revision: (original.spec.reportedPlacement?.revision ?? 0) + 1, observedAt: new Date(observed).toISOString(), reason: fields.reason.trim(), reference: fields.reference.trim() };
   if (fields.facility) report.facilityRef = { name: fields.facility };
   if (fields.rack) report.rackRef = { name: fields.rack };
   for (const field of ['position', 'height'] as const) {
@@ -73,9 +73,7 @@ export async function correctDevicePlacement(original: Device, fields: Placement
   const current = await readInventoryReference<Device>('Device', namespace, original.metadata.name, operation);
   operation.assertCurrent();
   if (current.metadata.uid !== original.metadata.uid || current.metadata.resourceVersion !== original.metadata.resourceVersion || !canCorrectPlacement(current)) throw new ApiError(409, 'The Device changed. Refresh and reopen the form.');
-  const now = new Date().toISOString();
-  if (current.spec.provenance && Date.parse(now) <= Date.parse(current.spec.provenance.recordedAt)) throw new ApiError(409, 'Recording time must advance.');
-  const report = placementPayload(original, fields, now);
+  const report = placementPayload(original, fields);
   if (report.facilityRef) {
     const facility = await readInventoryReference<PhysicalRecord>('Facility', namespace, report.facilityRef.name, operation);
     operation.assertCurrent();
@@ -93,7 +91,6 @@ export async function correctDevicePlacement(original: Device, fields: Placement
     { op: 'test', path: '/metadata/uid', value: original.metadata.uid },
     { op: 'test', path: '/metadata/resourceVersion', value: original.metadata.resourceVersion },
     { op: 'add', path: '/spec/reportedPlacement', value: report },
-    ...(current.spec.provenance ? [{ op: 'replace', path: '/spec/provenance/recordedAt', value: now }] : []),
   ];
   operation.dispatch();
   const saved = await proxyFetch<Device>(PROVIDER_PROJECT, path, { method: 'PATCH', contentType: 'application/json-patch+json', body: patch }).catch(error => {

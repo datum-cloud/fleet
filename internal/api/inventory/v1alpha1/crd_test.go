@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
+	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/pruning"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -55,8 +57,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestInventoryCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-if len(crds) != 7 || crds["Site"] == nil || crds["DeviceClaim"] == nil || crds["Device"] == nil {
-t.Fatalf("got %d CRDs, want six physical kinds and Site", len(crds))
+	if len(crds) != 7 || crds["Site"] == nil || crds["DeviceClaim"] == nil || crds["Device"] == nil {
+		t.Fatalf("got %d CRDs, want six physical kinds and Site", len(crds))
 	}
 	for kind, crd := range crds {
 		if crd.Spec.Group != GroupVersion.Group || crd.Name != crd.Spec.Names.Plural+"."+GroupVersion.Group || crd.Spec.Scope != extensionsv1.NamespaceScoped {
@@ -131,18 +133,13 @@ func object(t *testing.T, value any) map[string]any {
 	return out
 }
 
-var recordedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-
-func provenance(at time.Time) *Provenance {
-	return &Provenance{Method: ProvenanceManual, RecordedBy: "operator@example.com", RecordedAt: metav1.NewTime(at), Reference: "rack plan 1234"}
-}
+var baseTime = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
 func syntheticClaim() DeviceClaim {
 	return DeviceClaim{
 		TypeMeta:   metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "DeviceClaim"},
 		ObjectMeta: metav1.ObjectMeta{Name: "rack-01-u12", Namespace: "fleet-system"},
 		Spec: DeviceClaimSpec{
-			Provenance:       provenance(recordedAt),
 			ExpectedIdentity: ExpectedIdentity{Manufacturer: "Example Vendor", Model: "Example 1U"},
 			Placement:        Placement{Facility: "example-facility", Rack: "rack-01", Position: 12, Face: "front"},
 			Ports: []ExpectedPort{
@@ -158,10 +155,9 @@ func syntheticDevice() Device {
 		TypeMeta:   metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "Device"},
 		ObjectMeta: metav1.ObjectMeta{Name: "rack-01-u12-synthetic-0001", Namespace: "fleet-system"},
 		Spec: DeviceSpec{
-			ClaimRef:   LocalReference{Name: "rack-01-u12"},
-			Provenance: provenance(recordedAt),
-			Identity:   DeviceIdentity{Manufacturer: "Example Vendor", Model: "Example 1U", Serial: "SYNTHETIC-0001", SystemUUID: "00000000-0000-4000-8000-000000000001"},
-			BMC:        &BMC{Endpoint: "https://192.0.2.100:443"},
+			ClaimRef: LocalReference{Name: "rack-01-u12"},
+			Identity: DeviceIdentity{Manufacturer: "Example Vendor", Model: "Example 1U", Serial: "SYNTHETIC-0001", SystemUUID: "00000000-0000-4000-8000-000000000001"},
+			BMC:      &BMC{Endpoint: "https://192.0.2.100:443"},
 			Interfaces: []Interface{
 				{Name: "eth0", MACAddress: "00:00:5e:00:53:01", Peer: &PortPeer{Device: "switch-01", Port: "Ethernet1/1"}},
 				{Name: "bmc0", MACAddress: "00:00:5e:00:53:02"},
@@ -171,7 +167,7 @@ func syntheticDevice() Device {
 	}
 }
 
-func later(d time.Duration) metav1.Time { return metav1.NewTime(recordedAt.Add(d)) }
+func later(d time.Duration) metav1.Time { return metav1.NewTime(baseTime.Add(d)) }
 
 func TestValidRecordsAreAccepted(t *testing.T) {
 	if errs := admit(t, "DeviceClaim", object(t, syntheticClaim()), nil); len(errs) > 0 {
@@ -200,8 +196,6 @@ func TestClaimDoesNotRequireSerialOrInventHeight(t *testing.T) {
 
 func TestInvalidClaimsAreRejected(t *testing.T) {
 	for name, mutate := range map[string]func(*DeviceClaim){
-		"unknown method":   func(c *DeviceClaim) { c.Spec.Provenance.Method = "Discovered" },
-		"missing recorder": func(c *DeviceClaim) { c.Spec.Provenance.RecordedBy = "" },
 		"missing model":    func(c *DeviceClaim) { c.Spec.ExpectedIdentity.Model = "" },
 		"missing facility": func(c *DeviceClaim) { c.Spec.Placement.Facility = "" },
 		"zero position":    func(c *DeviceClaim) { c.Spec.Placement.Position = 0 },
@@ -252,35 +246,95 @@ func TestInvalidDevicesAreRejected(t *testing.T) {
 	}
 }
 
-// TestProvenanceIsOptional keeps records written before and after provenance
-// was retired admissible, including an update that drops it.
-func TestProvenanceIsOptional(t *testing.T) {
-	withProvenance := object(t, syntheticDevice())
-	without := syntheticDevice()
-	without.Spec.Provenance = nil
-	if errs := admit(t, "Device", object(t, without), nil); len(errs) > 0 {
-		t.Fatalf("device without provenance rejected: %v", errs)
+func TestDeviceIdentityNeedsSerialOrSystemUUID(t *testing.T) {
+	serialOnly := syntheticDevice()
+	serialOnly.Spec.Identity.SystemUUID = ""
+	serialOnly.Spec.BMC, serialOnly.Spec.Interfaces, serialOnly.Spec.UnmappedMACAddresses = nil, nil, nil
+	record := object(t, serialOnly)
+	if _, ok := record["spec"].(map[string]any)["provenance"]; ok {
+		t.Fatal("device fixture must not carry provenance")
 	}
-	if errs := admit(t, "Device", object(t, without), withProvenance); len(errs) > 0 {
-		t.Fatalf("dropping provenance rejected: %v", errs)
+	if errs := admit(t, "Device", record, nil); len(errs) > 0 {
+		t.Fatalf("device with only a serial rejected: %v", errs)
 	}
-	// identity is immutable, so an imported Device keeps its sourceIdentity and
-	// must still be able to stop sending provenance.
-	imported := reportedDevice()
-	importedWithout := reportedDevice()
-	importedWithout.Spec.Provenance = nil
-	if errs := admit(t, "Device", object(t, importedWithout), object(t, imported)); len(errs) > 0 {
-		t.Fatalf("dropping provenance from an imported device rejected: %v", errs)
+	neither := serialOnly
+	neither.Spec.Identity.Serial = ""
+	if errs := admit(t, "Device", object(t, neither), nil); len(errs) == 0 {
+		t.Fatal("device with neither serial nor system UUID accepted")
 	}
+}
+
+// TestEditsDoNotNeedARecordingTimestamp pins that spec changes carry no
+// attribution field; audit logs record who changed a record.
+func TestEditsDoNotNeedARecordingTimestamp(t *testing.T) {
 	claim := syntheticClaim()
-	claim.Spec.Provenance = nil
+	claim.Spec.Placement.Position = 14
 	if errs := admit(t, "DeviceClaim", object(t, claim), object(t, syntheticClaim())); len(errs) > 0 {
-		t.Fatalf("dropping claim provenance rejected: %v", errs)
+		t.Fatalf("claim edit rejected: %v", errs)
 	}
-	edited := syntheticClaim()
-	edited.Spec.Placement.Position = 14
-	if errs := admit(t, "DeviceClaim", object(t, edited), object(t, syntheticClaim())); len(errs) > 0 {
-		t.Fatalf("claim edit without a newer recordedAt rejected: %v", errs)
+	device := syntheticDevice()
+	device.Spec.BMC.Endpoint = "https://192.0.2.101"
+	if errs := admit(t, "Device", object(t, device), object(t, syntheticDevice())); len(errs) > 0 {
+		t.Fatalf("device edit rejected: %v", errs)
+	}
+}
+
+// TestRetiredFieldsArePruned shows that objects stored with the retired
+// provenance, source identity, component source and report import fields
+// lose them when read or written through the structural schema, and that
+// what remains is admitted. No migration is needed.
+func TestRetiredFieldsArePruned(t *testing.T) {
+	legacy := object(t, reportedDevice())
+	spec := legacy["spec"].(map[string]any)
+	spec["provenance"] = map[string]any{"method": "Manual", "recordedBy": "operator@example.com", "recordedAt": "2026-01-02T03:04:05Z", "reference": "rack plan 1234"}
+	spec["identity"].(map[string]any)["sourceIdentity"] = map[string]any{"system": "example", "type": "device", "id": "1"}
+	report := spec["reportedPlacement"].(map[string]any)
+	report["method"] = "Manual"
+	report["snapshotDigest"] = "sha256:" + strings.Repeat("a", 64)
+	spec["topologyAuthority"] = "Cable"
+	delete(spec, "interfaces")
+	spec["components"] = []any{map[string]any{"id": "front", "name": "front", "type": "FrontPort", "sourceRef": map[string]any{"system": "example", "type": "port", "id": "1"}}}
+	var schema apiextensions.JSONSchemaProps
+	if err := extensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(loadCRDs(t)["Device"].Spec.Versions[0].Schema.OpenAPIV3Schema, &schema, nil); err != nil {
+		t.Fatal(err)
+	}
+	structural, err := structuralschema.NewStructural(&schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pruning.Prune(legacy, structural, true)
+	spec = legacy["spec"].(map[string]any)
+	if _, ok := spec["provenance"]; ok {
+		t.Fatal("provenance survived pruning")
+	}
+	if _, ok := spec["identity"].(map[string]any)["sourceIdentity"]; ok {
+		t.Fatal("sourceIdentity survived pruning")
+	}
+	if _, ok := spec["components"].([]any)[0].(map[string]any)["sourceRef"]; ok {
+		t.Fatal("component sourceRef survived pruning")
+	}
+	report = spec["reportedPlacement"].(map[string]any)
+	if _, ok := report["method"]; ok {
+		t.Fatal("report method survived pruning")
+	}
+	if _, ok := report["snapshotDigest"]; ok {
+		t.Fatal("report snapshotDigest survived pruning")
+	}
+	if errs := admit(t, "Device", legacy, nil); len(errs) > 0 {
+		t.Fatalf("pruned legacy device rejected: %v", errs)
+	}
+	for _, kind := range []string{"DeviceClaim", "Facility", "Site", "Rack", "Cable", "PowerFeed"} {
+		var schema apiextensions.JSONSchemaProps
+		if err := extensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(loadCRDs(t)[kind].Spec.Versions[0].Schema.OpenAPIV3Schema, &schema, nil); err != nil {
+			t.Fatal(err)
+		}
+		structural, err := structuralschema.NewStructural(&schema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := structural.Properties["spec"].Properties["provenance"]; ok || structural.Properties["spec"].XPreserveUnknownFields {
+			t.Fatalf("%s spec must not declare or preserve provenance", kind)
+		}
 	}
 }
 
@@ -295,7 +349,6 @@ func TestClaimBindingAndIdentityAreImmutable(t *testing.T) {
 	} {
 		device := syntheticDevice()
 		mutate(&device)
-		device.Spec.Provenance.RecordedAt = later(time.Hour)
 		if errs := admit(t, "Device", object(t, device), old); len(errs) == 0 {
 			t.Errorf("%s accepted", name)
 		}
@@ -303,7 +356,6 @@ func TestClaimBindingAndIdentityAreImmutable(t *testing.T) {
 	unserialed := syntheticDevice()
 	unserialed.Spec.Identity.Serial = ""
 	added := syntheticDevice()
-	added.Spec.Provenance.RecordedAt = later(time.Hour)
 	if errs := admit(t, "Device", object(t, added), object(t, unserialed)); len(errs) == 0 {
 		t.Error("adding a serial to a registered device accepted; a new identity needs a new Device")
 	}
@@ -314,7 +366,6 @@ func TestReplacementBindsANewDeviceToTheSameClaim(t *testing.T) {
 	replacement.Name = "rack-01-u12-synthetic-0002"
 	replacement.Spec.Identity.Serial = "SYNTHETIC-0002"
 	replacement.Spec.Identity.SystemUUID = "00000000-0000-4000-8000-000000000002"
-	replacement.Spec.Provenance.RecordedAt = later(24 * time.Hour)
 	if errs := admit(t, "Device", object(t, replacement), nil); len(errs) > 0 {
 		t.Fatalf("replacement device for the same claim rejected: %v", errs)
 	}

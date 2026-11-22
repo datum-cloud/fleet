@@ -13,7 +13,6 @@
 /kubeconfig
 /kubeconfig.*
 /talosconfig
-/netbox.txt
 /servers.com.txt
 
 # Local outputs and scratch work

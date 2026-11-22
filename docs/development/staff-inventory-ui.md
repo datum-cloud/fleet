@@ -6,7 +6,7 @@ Its identity/membership fields are managed by direct API, not new UI forms.
 
 Local, uncommitted implementation on `0b6c8977227157575d388a42aac127769258f998`
 (PR95 merged into `feat/manual-inventory-records`). This phase does not publish,
-deploy, import records, change IAM membership, or change inventory ownership.
+deploy, change IAM membership, or change inventory ownership.
 The [provider plugin](../../ui/provider/README.md) remains the existing staff-portal
 Module Federation remote. The implemented six-kind API, not the broader
 [inventory proposal](../proposals/fleet-management/inventory.md), bounds the UI.
@@ -61,20 +61,19 @@ pixel identity or completed authenticated staging acceptance.
   Device/PowerFeed components with recorded positions. No guessed ports, cable
   lengths or live connectivity. Reference owner UID/resourceVersion is retained
   and checked before creation; the API still cannot atomically reserve endpoints.
-- Edit display name and recording details only for records with established
+- Edit display name only for records with established
   portal ownership. No device identity, claim binding, components, topology,
   placement, lifecycle, status or operational changes are exposed through edit.
 - Correct Device-reported location in a separate form, including the first report
-  on an existing imported Device. Manual source/evidence/reason and explicit
+  on an existing Device. Evidence reference, reason and explicit
   unknown geometry are retained without changing identity or claim binding.
 
 ## Authorization, ownership and concurrency
 
-Device source reports and labelled claim fallback now share a placement
+Device-reported locations and labelled claim fallback now share a placement
 projection. See [Device-reported placement](device-reported-placement.md) for the
 additive contract and ordinary authorized corrections, including first reports
-on existing imported Devices. Original import provenance and immutable identity
-remain intact; manual corrections do not claim NetBox authorship.
+on existing Devices. Immutable identity and claim binding remain intact.
 
 The existing `fleet.datumapis.com-inventory-manager` role inherits the viewer and
 adds create/update/patch for six kinds, project-wide. The UI uses exact-resource
@@ -82,12 +81,11 @@ SelfSubjectAccessReviews and the signed-in principal's API request, never group
 names or staff membership. Role/binding deployment and membership are separate
 work; nothing here asserts their live state. There are no delete/status grants.
 
-Inventory is direct API/operator-managed, not GitOps-only. Import provenance is
-history, **not evidence of Flux ownership**. Legacy Flux-managed records keep
-their writer until an explicit safe transition. This UI's deliberately narrow
-display-name edit policy still requires Manual provenance and exclusively
-`fleet-staff-inventory-ui` managed fields, with no import/deletion/other-owner
-markers. The separate reported-location editor permits imported operator-managed
+Inventory is direct API/operator-managed, not GitOps-only. Legacy Flux-managed
+records keep their writer until an explicit safe transition. This UI's
+deliberately narrow display-name edit policy still requires exclusively
+`fleet-staff-inventory-ui` managed fields, with no deletion/other-owner
+markers. The separate reported-location editor permits operator-managed
 Devices under normal manager authorization, excluding legacy Flux markers from
 its UI. These markers are not server authorization or owner isolation. Location
 record correction is not a handover or installation move.
@@ -141,6 +139,16 @@ requests. Observed host boundaries revoke pending work; backend checks protect
 each dispatched request. Unknown dispatched outcomes are not reported as success.
 
 ### Regression evidence and acceptance limits
+
+PR104's integration with feature-target revision
+`5b60656759033b61674ee202a9ad94f4d49f4a64` retains PR106's removal of provenance,
+Device source identity, component source references, reported-placement method
+and snapshot digest, and the built-in NetBox importer/planner. The portal does not
+restore those fields as compatibility inputs or infer writer ownership from them.
+Display-name edits retain managed-field ownership checks; both label and location
+patches retain exact UID/resourceVersion guards. Creation metadata is display
+history only, never evidence of a current Device or verified placement.
+The visible-focus no-op and actual host/background authority fences are unchanged.
 
 The actual-component stable-controls matrix covers all five create kinds,
 display-name and location editing, collapsed/expanded access, and StrictMode.
@@ -234,7 +242,7 @@ deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 
 | Interaction | Remaining boundary |
 | --- | --- |
-| Imported/other-writer edits | Reported-location correction is available to managers, including imported Devices; legacy Flux remains outside the UI. Other edit forms retain their existing restrictions |
+| Other-writer edits | Reported-location correction is available to managers for operator-managed Devices; legacy Flux remains outside the UI. Other edit forms retain their existing restrictions |
 | Rack position entry, move/assign equipment | Reported-location correction supports unknown or explicit geometry; physical moves, installation/binding changes and handovers still require separate workflows |
 | PowerFeed creation; component or endpoint edits | API kinds exist, but these forms are not implemented. Existing records remain browsable; no dead action buttons |
 | Online/active/connected badges, occupancy/free units, power utilization | No verified evidence projection; never infer health/readiness from inventory |

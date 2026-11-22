@@ -18,7 +18,7 @@ func syntheticSite() *Site {
 	return &Site{
 		TypeMeta:   metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "Site"},
 		ObjectMeta: metav1.ObjectMeta{Name: "site-stable", Namespace: "inventory", UID: "site-uid"},
-		Spec:       SiteSpec{PhysicalMetadata: PhysicalMetadata{DisplayName: "Example operational site", Provenance: &Provenance{Method: "Manual", RecordedBy: "synthetic", RecordedAt: metav1.NewTime(recordedAt)}}, Code: "EX3", FacilityRefs: []LocalReference{{Name: "facility-stable"}}},
+		Spec:       SiteSpec{PhysicalMetadata: PhysicalMetadata{DisplayName: "Example operational site"}, Code: "EX3", FacilityRefs: []LocalReference{{Name: "facility-stable"}}},
 	}
 }
 
@@ -173,7 +173,7 @@ func TestSiteNameReuseResolvesReplacementWithoutChangingDesiredState(t *testing.
 	if !reflect.DeepEqual(object(t, site)["spec"], object(t, before)["spec"]) {
 		t.Fatal("reader changed desired state")
 	}
-	replacement.DeletionTimestamp = &metav1.Time{Time: recordedAt}
+	replacement.DeletionTimestamp = &metav1.Time{Time: baseTime}
 	replacement.Finalizers = []string{"test.example/retain"}
 	deleting := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
 	if records, err := ReadSiteFacilities(context.Background(), deleting, site); err == nil || records != nil {

@@ -31,7 +31,7 @@ it.each([false, true])('removes denied prerequisite choices and cached records, 
     {integrated ? <PhysicalInventory inventory={inventory} /> : <InventoryManagement kind="Device" compact facilities={[]} claims={[claim]} />}
   </MemoryRouter></QueryClientProvider>);
   fireEvent.click(await screen.findByRole('button', { name: 'Create device' }));
-  for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Safe unsaved name'], ['Recorded by', 'operator'], ['Model', 'Example'], ['Serial number', 'SYNTHETIC-NEW'], ['Installation plan', 'plan-uid']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Safe unsaved name'], ['Model', 'Example'], ['Serial number', 'SYNTHETIC-NEW'], ['Installation plan', 'plan-uid']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
   fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
   await screen.findByText(/Restricted choices were removed/);
   expect(writes).toEqual([]);

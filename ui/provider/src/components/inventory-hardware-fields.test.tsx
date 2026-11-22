@@ -15,7 +15,7 @@ function renderForm(kind: 'Device' | 'Cable') {
 async function open(kind: 'Device' | 'Cable') {
   fireEvent.click(screen.getByText(`Manage ${kind.toLowerCase()}s`));
   fireEvent.click(await screen.findByRole('button', { name: `Create ${kind.toLowerCase()}` }));
-  for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Recorded by', 'synthetic-operator']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 it('registers hardware through the real form without changing claim identity', async () => {
   const writes: unknown[] = [];

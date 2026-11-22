@@ -6,7 +6,7 @@ import { StatusBadge } from '../components/status-badge';
 import { useInventory } from '../lib/api';
 import { currentDevice, endpointLabel, legacyPeerLabel, modelLabel, placementLabel, slotKey, type Inventory, type RawDevice } from '../inventory';
 import { devicePlacement, reportedPlacementLabel } from '../lib/device-placement';
-import type { Provenance } from '../../../shared/fleet-api';
+import type { ObjectMeta } from '../../../shared/fleet-api';
 import { Card, CardContent } from '@datum-cloud/datum-ui/card';
 import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ReactNode } from 'react';
@@ -32,21 +32,8 @@ function Section({ title, testId, children }: { title: string; testId: string; c
   );
 }
 
-function ProvenanceFields({ provenance }: { provenance?: Provenance }) {
-  if (!provenance) return <Field label="Record history">Not recorded</Field>;
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      <Field label="Recorded by">{provenance.recordedBy}</Field>
-      <Field label="Recorded at">{provenance.recordedAt}</Field>
-      <Field label="Method">{provenance.method}</Field>
-      {provenance.source && <Field label="Import reconciliation">{provenance.source.system}/{provenance.source.type}/{provenance.source.id} · mapping {provenance.source.mappingRevision} · observed {provenance.source.observedAt} · verification Unknown</Field>}
-      {provenance.reference && (
-        <div className="sm:col-span-3">
-          <Field label="Reference">{provenance.reference}</Field>
-        </div>
-      )}
-    </div>
-  );
+function CreatedField({ metadata }: { metadata: ObjectMeta }) {
+  return <Field label="Created">{metadata.creationTimestamp ?? 'Not recorded'}</Field>;
 }
 
 function DeviceSection({ device, current, inventory }: { device: RawDevice; current: boolean; inventory: Inventory }) {
@@ -89,7 +76,7 @@ function DeviceSection({ device, current, inventory }: { device: RawDevice; curr
           unmappedMACAddresses.map((mac) => <Text key={mac}>{mac}</Text>)
         )}
       </div>
-      <ProvenanceFields provenance={device.spec.provenance} />
+      <CreatedField metadata={device.metadata} />
     </Section>
   );
 }
@@ -145,7 +132,7 @@ function ClaimDetailContent() {
                 ))}
               </div>
             )}
-            <ProvenanceFields provenance={slot.claim.spec.provenance} />
+            <CreatedField metadata={slot.claim.metadata} />
           </Section>
           {data?.issues?.Device && <InventoryAccessState status={data.issues.Device.status} />}
           {(!data?.issues?.Device ? [...slot.devices].reverse() : []).map((device) => (
