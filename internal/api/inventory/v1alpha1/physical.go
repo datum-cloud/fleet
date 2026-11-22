@@ -16,16 +16,8 @@ type ModelShape struct {
 	FullDepth   *bool    `json:"fullDepth,omitempty"`
 }
 
-type SourceReference struct {
-	ExternalReference `json:",inline"`
-	SnapshotDigest    string      `json:"snapshotDigest"`
-	MappingRevision   string      `json:"mappingRevision"`
-	ObservedAt        metav1.Time `json:"observedAt"`
-}
-
 type PhysicalMetadata struct {
-	DisplayName string      `json:"displayName"`
-	Provenance  *Provenance `json:"provenance,omitempty"`
+	DisplayName string `json:"displayName"`
 }
 
 type FacilitySpec struct {
@@ -77,14 +69,13 @@ type RackSpec struct {
 }
 
 type Component struct {
-	ID        string             `json:"id"`
-	Name      string             `json:"name"`
-	Type      string             `json:"type"`
-	Connector string             `json:"connector,omitempty"`
-	Positions int32              `json:"positions,omitempty"`
-	Serial    string             `json:"serial,omitempty"`
-	AssetTag  string             `json:"assetTag,omitempty"`
-	SourceRef *ExternalReference `json:"sourceRef,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Connector string `json:"connector,omitempty"`
+	Positions int32  `json:"positions,omitempty"`
+	Serial    string `json:"serial,omitempty"`
+	AssetTag  string `json:"assetTag,omitempty"`
 }
 
 type ComponentPosition struct {

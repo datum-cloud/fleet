@@ -1,20 +1,23 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PhysicalRecord } from '../../../shared/fleet-api';
 import { PhysicalInventory } from './physical-inventory';
 import { toInventory, type Inventory } from '../inventory';
 import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
-import { fixturePhysicalDevices } from '../lib/fixtures';
+import { fixturePhysicalClaims, fixturePhysicalDevices } from '../lib/fixtures';
 import { InventoryHardwareFields } from './inventory-hardware-fields';
 import type { InventoryFormValues } from '../lib/inventory-management';
+import { InventoryManagement } from './inventory-management';
+
+afterEach(() => vi.unstubAllGlobals());
 
 function fixture() {
   const device = structuredClone(fixturePhysicalDevices[0]);
   device.spec.deviceTypeRef = { name: 'private-model-key' };
-  const manufacturer: PhysicalRecord = { kind: 'Manufacturer', metadata: { name: 'private-vendor-key', namespace: device.metadata.namespace }, spec: { displayName: 'Private vendor label', canonicalName: 'Private canonical vendor', aliases: ['Private old vendor'], provenance: device.spec.provenance } };
-  const model: PhysicalRecord = { kind: 'DeviceType', metadata: { name: 'private-model-key', namespace: device.metadata.namespace }, spec: { displayName: 'Private model label', model: 'private-normalized-model', manufacturerRef: { name: manufacturer.metadata.name }, modelShape: { heightUnits: 8 }, componentTemplates: [{ id: 'template-only', name: 'Template-only port', type: 'NetworkPort' }], provenance: device.spec.provenance } };
+  const manufacturer: PhysicalRecord = { kind: 'Manufacturer', metadata: { name: 'private-vendor-key', namespace: device.metadata.namespace }, spec: { displayName: 'Private vendor label', canonicalName: 'Private canonical vendor', aliases: ['Private old vendor'] } };
+  const model: PhysicalRecord = { kind: 'DeviceType', metadata: { name: 'private-model-key', namespace: device.metadata.namespace }, spec: { displayName: 'Private model label', model: 'private-normalized-model', manufacturerRef: { name: manufacturer.metadata.name }, modelShape: { heightUnits: 8 }, componentTemplates: [{ id: 'template-only', name: 'Template-only port', type: 'NetworkPort' }] } };
   return { device, manufacturer, model, inventory: toInventory([], [device], [manufacturer, model]) };
 }
 
@@ -23,12 +26,43 @@ function show(inventory: Inventory, query = '?kind=Device') {
 }
 
 describe('hardware catalog readers', () => {
+  it.each(['devicetypes', 'manufacturers'])('retains an unavailable selection after %s read denial without silently registering an unassigned device', async denied => {
+    const { manufacturer, model } = fixture();
+    manufacturer.metadata = { ...manufacturer.metadata, uid: 'vendor-uid', resourceVersion: '1' };
+    model.metadata = { ...model.metadata, uid: 'model-uid', resourceVersion: '2' };
+    const claim = { ...fixturePhysicalClaims[0], metadata: { ...fixturePhysicalClaims[0].metadata, uid: 'plan-uid', resourceVersion: '1' }, spec: { ...fixturePhysicalClaims[0].spec, lifecycle: 'Installation' as const } };
+    const writes: unknown[] = [];
+    const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('selfsubjectaccessreviews')) return response({ status: { allowed: true } });
+      if (url.includes(`/${denied}/`)) return response(undefined, 403);
+      if (init.method === 'GET') return response(url.includes('/devicetypes/') ? model : claim);
+      writes.push(JSON.parse(init.body as string));
+      return response({ metadata: { uid: 'new-device' } });
+    }));
+    render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} claims={[claim]} catalog={[manufacturer, model]} /></QueryClientProvider>);
+    fireEvent.click(screen.getByText('Manage devices'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Create device' }));
+    for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Shared catalog model (optional)', 'model-uid']]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
+    await screen.findByText(/Related inventory is no longer readable/);
+    expect(screen.getByLabelText('Shared catalog model (optional)')).toHaveValue('unavailable');
+    expect(screen.getByRole('option', { name: /Selected catalog unavailable/ })).toBeInTheDocument();
+    expect(screen.getByLabelText('Model')).toHaveValue('Observed model');
+    expect(screen.queryByText(/Private canonical vendor/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create device record' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Create device record' }));
+    expect(writes).toEqual([]);
+  });
+
   it('selects only readable same-namespace records without populating observed hardware', () => {
     const { manufacturer, model } = fixture();
     manufacturer.metadata = { ...manufacturer.metadata, uid: 'vendor-uid', resourceVersion: '1' };
     model.metadata = { ...model.metadata, uid: 'model-uid', resourceVersion: '2' };
     const other = { ...model, metadata: { ...model.metadata, uid: 'other-uid', namespace: 'another' }, spec: { ...model.spec, displayName: 'Other namespace model' } };
-    const values: InventoryFormValues = { name: 'new-device', namespace: 'default', displayName: 'New hardware', recordedBy: 'synthetic', reference: '', height: '', facility: '', manufacturer: 'Observed vendor', model: 'Observed model', components: [] };
+    const values: InventoryFormValues = { name: 'new-device', namespace: 'default', displayName: 'New hardware', height: '', facility: '', manufacturer: 'Observed vendor', model: 'Observed model', components: [] };
     const change = vi.fn();
     const form = (current: InventoryFormValues, catalog: PhysicalRecord[]) => <InventoryHardwareFields kind="Device" values={current} namespace="default" claims={[]} devices={[]} feeds={[]} locations={[]} catalog={catalog} onChange={change} />;
     const result = render(form(values, [manufacturer, model, other]));
@@ -44,7 +78,7 @@ describe('hardware catalog readers', () => {
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor/);
   });
 
-  it('prefers available same-namespace catalog without mutating source observations or instances', () => {
+  it('prefers available same-namespace catalog without mutating recorded observations or instances', () => {
     const { device, model, inventory } = fixture();
     const before = structuredClone(device);
     expect(deviceModelLabel(device, inventory)).toBe('Private canonical vendor Private model label');
@@ -84,7 +118,7 @@ describe('hardware catalog readers', () => {
     expect(result.container.textContent).toContain('Private model label');
     result.rerender(view({ ...inventory, issues: { Manufacturer: { status: 403 } } }));
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor/);
-    expect(screen.getByText('Catalog unavailable · showing source observation')).toBeInTheDocument();
+    expect(screen.getByText('Catalog unavailable · showing recorded observation')).toBeInTheDocument();
   });
 
   it('browses aliases and nominal templates without inventing installed components', () => {

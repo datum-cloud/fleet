@@ -7,8 +7,8 @@ import { InventorySessionBoundary } from './inventory-session-boundary';
 import DeviceInventoryList from '../pages/device-inventory-list';
 import { inventoryPayload, INVENTORY_FIELD_MANAGER } from '../lib/inventory-management';
 
-const values = { name: 'independent-review', namespace: 'default', displayName: 'Original', recordedBy: 'synthetic-reviewer', reference: '', facility: '', height: '' };
-const original = { ...inventoryPayload('Facility', values, '2026-01-01T00:00:00Z'), metadata: { name: values.name, namespace: 'default', uid: 'synthetic-only', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
+const values = { name: 'independent-review', namespace: 'default', displayName: 'Original', facility: '', height: '' };
+const original = { ...inventoryPayload('Facility', values), metadata: { name: values.name, namespace: 'default', uid: 'synthetic-only', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data, error: 'PRIVATE DIAGNOSTIC' }) });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -80,7 +80,6 @@ async function open(editing: boolean) {
   fireEvent.click(opener);
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Independent safe input' } });
-  fireEvent.change(screen.getByLabelText('Recorded by'), { target: { value: values.recordedBy } });
 }
 
 it.each(['create-review', 'edit-review', 'edit-get', 'create-dispatch', 'edit-dispatch'])('A-B-A session transitions fence old %s while new form remains usable', async mode => {

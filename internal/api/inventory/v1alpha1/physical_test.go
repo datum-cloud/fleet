@@ -2,13 +2,10 @@ package v1alpha1
 
 import (
 	"bytes"
-	"encoding/json"
 	"flag"
 	"io"
 	"os"
-	"strings"
 	"testing"
-	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -45,9 +42,8 @@ func TestManualInventoryRecordsPassAdmission(t *testing.T) {
 		seen[kind] = true
 		if *inventoryRecords == manualInventoryExample {
 			spec := record["spec"].(map[string]any)
-			provenance := spec["provenance"].(map[string]any)
-			if provenance["method"] != "Manual" || provenance["source"] != nil || record["status"] != nil {
-				t.Fatal("manual example must have no source dependency or status assertion")
+			if spec["provenance"] != nil || record["status"] != nil {
+				t.Fatal("manual example must carry no provenance or status assertion")
 			}
 			if kind == "DeviceClaim" && spec["lifecycle"] != "Installation" || kind == "Device" && spec["topologyAuthority"] != "Cable" {
 				t.Fatal("new manual records must use typed installation and Cable topology")
@@ -69,29 +65,6 @@ func TestManualInventoryRecordsPassAdmission(t *testing.T) {
 	t.Logf("validated %d records for create and unchanged update; no API writes", count)
 }
 
-func TestSyntheticNetBoxHandoffPassesAdmission(t *testing.T) {
-	data, err := os.ReadFile("../../../../hack/testdata/netbox/candidates.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var list struct {
-		Items []json.RawMessage `json:"items"`
-	}
-	if err := json.Unmarshal(data, &list); err != nil {
-		t.Fatal(err)
-	}
-	for _, raw := range list.Items {
-		var record map[string]any
-		if err := json.Unmarshal(raw, &record); err != nil {
-			t.Fatal(err)
-		}
-		kind := record["kind"].(string)
-		if errs := admit(t, kind, object(t, record), nil); len(errs) != 0 {
-			t.Fatalf("%s: %v", kind, errs)
-		}
-	}
-}
-
 func TestTypedPlacementAndLegacyBinding(t *testing.T) {
 	claim := syntheticClaim()
 	claim.Spec.Lifecycle = "Installation"
@@ -110,7 +83,6 @@ func TestTypedPlacementAndLegacyBinding(t *testing.T) {
 		if errs := admit(t, "DeviceClaim", object(t, candidate), nil); len(errs) != 0 {
 			t.Fatal(errs)
 		}
-		candidate.Spec.Provenance.RecordedAt = later(time.Hour)
 		if errs := admit(t, "DeviceClaim", object(t, candidate), object(t, claim)); len(errs) == 0 {
 			t.Fatal("moved an installation by editing placement")
 		}
@@ -121,7 +93,6 @@ func TestTypedPlacementAndLegacyBinding(t *testing.T) {
 		t.Fatal("accepted synthetic units on rack membership")
 	}
 	candidate = claim
-	candidate.Spec.Provenance.RecordedAt = later(time.Hour)
 	if errs := admit(t, "DeviceClaim", object(t, candidate), object(t, syntheticClaim())); len(errs) == 0 {
 		t.Fatal("converted a legacy slot in place")
 	}
@@ -136,7 +107,7 @@ func TestPhysicalKindsSchemeAndAdmission(t *testing.T) {
 	if err := AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	common := PhysicalMetadata{DisplayName: "Example", Provenance: provenance(recordedAt)}
+	common := PhysicalMetadata{DisplayName: "Example"}
 	metadata := metav1.ObjectMeta{Name: "example", Namespace: "inventory"}
 	records := []runtime.Object{
 		&Facility{ObjectMeta: metadata, Spec: FacilitySpec{PhysicalMetadata: common}},
@@ -167,15 +138,10 @@ func TestPhysicalKindsSchemeAndAdmission(t *testing.T) {
 	}
 }
 
-func TestObservationalIdentityAndComponentSafety(t *testing.T) {
+func TestComponentSafety(t *testing.T) {
 	device := syntheticDevice()
 	device.Spec.Interfaces = nil
 	device.Spec.TopologyAuthority = "Cable"
-	device.Spec.Identity.Serial, device.Spec.Identity.SystemUUID = "", ""
-	source := ExternalReference{System: "example-netbox", Type: "dcim/devices", ID: "1"}
-	device.Spec.Identity.SourceIdentity = &source
-	device.Spec.Provenance.Method = "NetBoxImport"
-	device.Spec.Provenance.Source = &SourceReference{ExternalReference: source, SnapshotDigest: "sha256:" + strings.Repeat("a", 64), MappingRevision: "example-1", ObservedAt: metav1.NewTime(recordedAt)}
 	device.Spec.Components = []Component{{ID: "front", Name: "front", Type: "FrontPort"}, {ID: "rear", Name: "rear", Type: "RearPort", Positions: 2}}
 	device.Spec.InternalMappings = []InternalMapping{{From: ComponentPosition{ComponentID: "front", Position: 1}, To: ComponentPosition{ComponentID: "rear", Position: 2}}}
 	if errs := admit(t, "Device", object(t, device), nil); len(errs) != 0 {
@@ -195,12 +161,6 @@ func TestObservationalIdentityAndComponentSafety(t *testing.T) {
 	candidate.Spec.Components[1].Type = "NetworkPort"
 	if errs := admit(t, "Device", object(t, candidate), nil); len(errs) == 0 {
 		t.Fatal("accepted incompatible pass-through component types")
-	}
-	candidate = device.DeepCopyObject().(*Device)
-	candidate.Spec.Provenance.Source.ID = "2"
-	candidate.Spec.Provenance.RecordedAt = later(time.Hour)
-	if errs := admit(t, "Device", object(t, candidate), object(t, device)); len(errs) == 0 {
-		t.Fatal("accepted source identity takeover")
 	}
 	candidate = device.DeepCopyObject().(*Device)
 	candidate.Spec.Interfaces = syntheticDevice().Spec.Interfaces

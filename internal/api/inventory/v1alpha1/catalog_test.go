@@ -2,13 +2,10 @@ package v1alpha1
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	metavalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,33 +38,8 @@ func TestCatalogNamespaceBoundaries(t *testing.T) {
 	}
 }
 
-func TestImportedCatalogCandidatesPassAdmission(t *testing.T) {
-	data, err := os.ReadFile("../../../../hack/testdata/catalog/candidates.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var candidates struct {
-		Items []json.RawMessage `json:"items"`
-	}
-	if err := json.Unmarshal(data, &candidates); err != nil {
-		t.Fatal(err)
-	}
-	if len(candidates.Items) != 2 {
-		t.Fatal("expected both catalog kinds")
-	}
-	for _, raw := range candidates.Items {
-		candidate := object(t, raw)
-		kind := candidate["kind"].(string)
-		for _, old := range []map[string]any{nil, candidate} {
-			if errs := admit(t, kind, candidate, old); len(errs) != 0 {
-				t.Fatal(errs)
-			}
-		}
-	}
-}
-
 func catalogRecords() (*Manufacturer, *DeviceType) {
-	metadata := PhysicalMetadata{DisplayName: "Example", Provenance: provenance(recordedAt)}
+	metadata := PhysicalMetadata{DisplayName: "Example"}
 	manufacturer := &Manufacturer{TypeMeta: metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "Manufacturer"}, ObjectMeta: metav1.ObjectMeta{Name: "vendor-stable", Namespace: "fleet-system"}, Spec: ManufacturerSpec{PhysicalMetadata: metadata, CanonicalName: "Example Vendor", Aliases: []string{"Old Vendor"}}}
 	model := &DeviceType{TypeMeta: metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "DeviceType"}, ObjectMeta: metav1.ObjectMeta{Name: "model-stable", Namespace: "fleet-system"}, Spec: DeviceTypeSpec{PhysicalMetadata: metadata, ManufacturerRef: LocalReference{Name: manufacturer.Name}, Model: "example-1u", ComponentTemplates: []ComponentTemplate{{ID: "port-1", Name: "Port 1", Type: "NetworkPort"}}}}
 	return manufacturer, model
@@ -117,7 +89,7 @@ func TestCatalogAdmission(t *testing.T) {
 	}
 }
 
-func TestCatalogSourceIdentityAndScheme(t *testing.T) {
+func TestCatalogScheme(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -127,32 +99,6 @@ func TestCatalogSourceIdentityAndScheme(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	manufacturer, _ := catalogRecords()
-	source := ExternalReference{System: "synthetic-netbox", Type: "dcim/manufacturers", ID: "1"}
-	manufacturer.Spec.SourceIdentity = &source
-	manufacturer.Spec.Provenance.Method = "NetBoxImport"
-	manufacturer.Spec.Provenance.Source = &SourceReference{ExternalReference: source, SnapshotDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", MappingRevision: "reviewed-1", ObservedAt: later(-time.Hour)}
-	if errs := admit(t, "Manufacturer", object(t, manufacturer), nil); len(errs) != 0 {
-		t.Fatal(errs)
-	}
-	for _, mode := range []string{"rebind", "remove", "provenance-mismatch"} {
-		changed := manufacturer.DeepCopyObject().(*Manufacturer)
-		changed.Spec.Provenance.RecordedAt = later(time.Hour)
-		switch mode {
-		case "rebind":
-			changed.Spec.SourceIdentity.ID = "2"
-			changed.Spec.Provenance.Source.ID = "2"
-		case "remove":
-			changed.Spec.SourceIdentity = nil
-			changed.Spec.Provenance.Source = nil
-			changed.Spec.Provenance.Method = "Manual"
-		default:
-			changed.Spec.Provenance.Source.ID = "2"
-		}
-		if errs := admit(t, "Manufacturer", object(t, changed), object(t, manufacturer)); len(errs) == 0 {
-			t.Fatal("accepted imported catalog identity mutation", mode)
-		}
-	}
 }
 
 func TestCatalogUpdatesAndDeviceCompatibility(t *testing.T) {
@@ -160,10 +106,6 @@ func TestCatalogUpdatesAndDeviceCompatibility(t *testing.T) {
 	changed := model.DeepCopyObject().(*DeviceType)
 	changed.Spec.DisplayName = "New human label"
 	changed.Spec.ComponentTemplates[0].Name = "Renamed template only"
-	if errs := admit(t, "DeviceType", object(t, changed), object(t, model)); len(errs) == 0 {
-		t.Fatal("accepted edit without provenance advance")
-	}
-	changed.Spec.Provenance.RecordedAt = later(time.Second)
 	if errs := admit(t, "DeviceType", object(t, changed), object(t, model)); len(errs) != 0 {
 		t.Fatal(errs)
 	}
@@ -171,9 +113,12 @@ func TestCatalogUpdatesAndDeviceCompatibility(t *testing.T) {
 	if errs := admit(t, "DeviceType", object(t, changed), object(t, model)); len(errs) == 0 {
 		t.Fatal("accepted model identity mutation")
 	}
-	withoutProvenance := syntheticDevice()
-	withoutProvenance.Spec.Provenance = nil
-	for _, baseline := range []Device{syntheticDevice(), reportedDevice(), withoutProvenance} {
+	changed = model.DeepCopyObject().(*DeviceType)
+	changed.Spec.ManufacturerRef.Name = "different-manufacturer"
+	if errs := admit(t, "DeviceType", object(t, changed), object(t, model)); len(errs) == 0 {
+		t.Fatal("accepted manufacturer reference mutation")
+	}
+	for _, baseline := range []Device{syntheticDevice(), reportedDevice()} {
 		attached := baseline.DeepCopyObject().(*Device)
 		attached.Spec.DeviceTypeRef = &LocalReference{Name: model.Name}
 		if errs := admit(t, "Device", object(t, attached), object(t, baseline)); len(errs) != 0 {
@@ -187,7 +132,6 @@ func TestCatalogUpdatesAndDeviceCompatibility(t *testing.T) {
 			}
 		}
 		attached.Spec.DeviceTypeRef = nil
-		attached.Spec.Provenance = baseline.Spec.Provenance
 		if !reflect.DeepEqual(object(t, attached.Spec), object(t, baseline.Spec)) {
 			t.Fatal("catalog attachment changed an observation or physical identity")
 		}

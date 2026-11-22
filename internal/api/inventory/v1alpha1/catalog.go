@@ -11,9 +11,8 @@ import (
 
 type ManufacturerSpec struct {
 	PhysicalMetadata `json:",inline"`
-	CanonicalName    string             `json:"canonicalName"`
-	Aliases          []string           `json:"aliases,omitempty"`
-	SourceIdentity   *ExternalReference `json:"sourceIdentity,omitempty"`
+	CanonicalName    string   `json:"canonicalName"`
+	Aliases          []string `json:"aliases,omitempty"`
 }
 
 type ComponentTemplate struct {
@@ -30,7 +29,6 @@ type DeviceTypeSpec struct {
 	Model              string              `json:"model"`
 	ModelShape         *ModelShape         `json:"modelShape,omitempty"`
 	ComponentTemplates []ComponentTemplate `json:"componentTemplates,omitempty"`
-	SourceIdentity     *ExternalReference  `json:"sourceIdentity,omitempty"`
 }
 
 type Manufacturer struct {

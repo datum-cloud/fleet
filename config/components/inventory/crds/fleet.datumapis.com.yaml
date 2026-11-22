@@ -31,9 +31,9 @@ spec:
     - name: Model
       type: string
       jsonPath: .spec.expectedIdentity.model
-    - name: Recorded At
+    - name: Age
       type: date
-      jsonPath: .spec.provenance.recordedAt
+      jsonPath: .metadata.creationTimestamp
     schema:
       openAPIV3Schema:
         type: object
@@ -61,67 +61,6 @@ spec:
             - rule: has(self.lifecycle) == has(self.placement.scope)
               message: typed placement requires an installation lifecycle; legacy slots keep their text placement
             properties:
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
-                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
               expectedIdentity:
                 type: object
                 required:
@@ -284,9 +223,9 @@ spec:
       type: string
       priority: 1
       jsonPath: .spec.identity.systemUUID
-    - name: Recorded At
+    - name: Age
       type: date
-      jsonPath: .spec.provenance.recordedAt
+      jsonPath: .metadata.creationTimestamp
     schema:
       openAPIV3Schema:
         type: object
@@ -316,14 +255,10 @@ spec:
             - rule: '!has(self.reportedPlacement) || (oldSelf.hasValue() && has(oldSelf.value().reportedPlacement) ? (self.reportedPlacement == oldSelf.value().reportedPlacement || self.reportedPlacement.revision == oldSelf.value().reportedPlacement.revision + 1) : self.reportedPlacement.revision == 1)'
               optionalOldSelf: true
               message: first report revision must be 1; every changed report must increment revision exactly once
-            - rule: '!has(self.reportedPlacement) || !has(self.provenance) || (has(self.reportedPlacement.method) && self.reportedPlacement.method == "Manual") || (has(self.identity.sourceIdentity) && has(self.provenance.source) && self.provenance.method == "NetBoxImport" && has(self.reportedPlacement.snapshotDigest) && self.reportedPlacement.observedAt == self.provenance.source.observedAt && self.reportedPlacement.snapshotDigest == self.provenance.source.snapshotDigest)'
-              message: reported placement must retain the imported source snapshot and observation time
             - rule: '!has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) || (self.interfaces.filter(b,
                 has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 && (!has(self.unmappedMACAddresses)
                 || !(a.macAddress in self.unmappedMACAddresses))))'
               message: a MAC address may be recorded only once
-            - rule: '!has(self.identity.sourceIdentity) || !has(self.provenance) || self.provenance.method == "NetBoxImport"'
-              message: source identity is for observational imports only
             - rule: '!has(self.topologyAuthority) || !has(self.interfaces) || self.interfaces.all(p, !has(p.peer))'
               message: Cable topology excludes inline peers
             - rule: '!has(self.components) || has(self.topologyAuthority)'
@@ -336,10 +271,6 @@ spec:
             - rule: '!has(self.internalMappings) || self.internalMappings.all(m, self.internalMappings.filter(n,
                 n.from == m.from).size() == 1)'
               message: each internal source position maps once
-            - rule: '!has(self.identity.sourceIdentity) || !has(self.provenance) || (has(self.provenance.source) && self.identity.sourceIdentity.system
-                == self.provenance.source.system && self.identity.sourceIdentity.type == self.provenance.source.type
-                && self.identity.sourceIdentity.id == self.provenance.source.id)'
-              message: observational identity must match provenance source identity
             - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, self.components.exists(c,
                 c.id == m.from.componentID && c.type == ''FrontPort'') ? self.components.exists(c, c.id == m.to.componentID
                 && c.type == ''RearPort'') : (self.components.exists(c, c.id == m.from.componentID && c.type ==
@@ -365,10 +296,8 @@ spec:
                     pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
               reportedPlacement:
                 type: object
-                required: [revision, observedAt]
+                required: [revision, observedAt, reason, reference]
                 x-kubernetes-validations:
-                - rule: 'has(self.method) && self.method == "Manual" ? (has(self.reason) && has(self.reference) && !has(self.snapshotDigest)) : has(self.snapshotDigest)'
-                  message: manual reports require reason and evidence reference, not an imported snapshot digest
                 - rule: '(!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth) && !has(self.mount)) || has(self.rackRef)'
                   message: rack geometry requires a reported rack
                 - rule: '!has(self.mount) || (!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth))'
@@ -380,9 +309,6 @@ spec:
                     type: integer
                     minimum: 1
                     maximum: 2147483647
-                  method:
-                    type: string
-                    enum: [Manual, NetBoxImport]
                   reason:
                     type: string
                     minLength: 1
@@ -396,9 +322,6 @@ spec:
                   observedAt:
                     type: string
                     format: date-time
-                  snapshotDigest:
-                    type: string
-                    pattern: ^sha256:[a-f0-9]{64}$
                   facilityRef:
                     type: object
                     required: [name]
@@ -442,74 +365,13 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
-                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
               identity:
                 type: object
                 required:
                 - model
                 x-kubernetes-validations:
-                - rule: has(self.serial) || has(self.systemUUID) || has(self.sourceIdentity)
-                  message: a device needs serial, UUID, or an observational source identity
+                - rule: has(self.serial) || has(self.systemUUID)
+                  message: a device needs a serial or system UUID
                 properties:
                   manufacturer:
                     type: string
@@ -525,25 +387,6 @@ spec:
                   systemUUID:
                     type: string
                     pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
-                  sourceIdentity: &id001
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                    required:
-                    - system
-                    - type
-                    - id
               bmc:
                 type: object
                 required:
@@ -601,7 +444,25 @@ spec:
                 type: string
                 minLength: 1
                 maxLength: 253
-              providerHostRef: *id001
+              providerHostRef:
+                type: object
+                properties:
+                  system:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  type:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                required:
+                - system
+                - type
+                - id
               components:
                 type: array
                 maxItems: 256
@@ -645,7 +506,6 @@ spec:
                       type: string
                       minLength: 1
                       maxLength: 253
-                    sourceRef: *id001
                   required:
                   - id
                   - name
@@ -683,7 +543,25 @@ spec:
                 items:
                   type: object
                   properties:
-                    serviceRef: *id001
+                    serviceRef:
+                      type: object
+                      properties:
+                        system:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        type:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                      required:
+                      - system
+                      - type
+                      - id
                     componentID:
                       type: string
                       minLength: 1
@@ -748,67 +626,6 @@ spec:
                 type: string
                 minLength: 1
                 maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
-                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
               identifiers:
                 type: array
                 maxItems: 64
@@ -883,67 +700,6 @@ spec:
                 type: string
                 minLength: 1
                 maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
-                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
               code:
                 type: string
                 minLength: 1
@@ -1006,67 +762,6 @@ spec:
                 type: string
                 minLength: 1
                 maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
-                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
               facilityRef:
                 type: object
                 properties:
@@ -1125,67 +820,6 @@ spec:
                 type: string
                 minLength: 1
                 maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
-                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
               medium:
                 type: string
                 enum:
@@ -1305,67 +939,6 @@ spec:
                 type: string
                 minLength: 1
                 maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source) || (self.source.system ==
-                    oldSelf.source.system && self.source.type == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
               facilityRef: &id001
                 type: object
                 properties:
@@ -1444,25 +1017,6 @@ spec:
                       type: string
                       minLength: 1
                       maxLength: 253
-                    sourceRef: &id002
-                      type: object
-                      properties:
-                        system:
-                          type: string
-                          minLength: 1
-                          maxLength: 253
-                        type:
-                          type: string
-                          minLength: 1
-                          maxLength: 253
-                        id:
-                          type: string
-                          minLength: 1
-                          maxLength: 253
-                      required:
-                      - system
-                      - type
-                      - id
                   required:
                   - id
                   - name
@@ -1474,7 +1028,25 @@ spec:
               upstreamSources:
                 type: array
                 maxItems: 64
-                items: *id002
+                items:
+                  type: object
+                  properties:
+                    system:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    type:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                  required:
+                  - system
+                  - type
+                  - id
             required:
             - displayName
             - facilityRef
@@ -1523,94 +1095,12 @@ spec:
             type: object
             required:
             - displayName
-            - provenance
             - canonicalName
             properties:
               displayName:
                 type: string
                 minLength: 1
                 maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source)
-                    || (self.source.system == oldSelf.source.system && self.source.type
-                    == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
-              sourceIdentity:
-                type: object
-                properties:
-                  system:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  type:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  id:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                required:
-                - system
-                - type
-                - id
               canonicalName: &id001
                 type: string
                 minLength: 1
@@ -1622,18 +1112,6 @@ spec:
                 x-kubernetes-list-type: set
                 items: *id001
             x-kubernetes-validations:
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every spec change must advance provenance.recordedAt
-            - rule: has(self.sourceIdentity) == has(oldSelf.sourceIdentity) && (!has(self.sourceIdentity)
-                || self.sourceIdentity == oldSelf.sourceIdentity)
-              message: source identity is immutable including its presence
-            - rule: '!has(self.sourceIdentity) || (self.provenance.method == "NetBoxImport"
-                && has(self.provenance.source) && self.sourceIdentity.system == self.provenance.source.system
-                && self.sourceIdentity.type == self.provenance.source.type && self.sourceIdentity.id
-                == self.provenance.source.id)'
-              message: imported identity must match provenance
-            - rule: self.provenance.method != "NetBoxImport" || has(self.sourceIdentity)
-              message: imported catalog entries require explicit source identity
             - rule: '!has(self.aliases) || self.aliases.all(a, a.lowerAscii() != self.canonicalName.lowerAscii()
                 && self.aliases.filter(b, a.lowerAscii() == b.lowerAscii()).size()
                 == 1)'
@@ -1678,7 +1156,6 @@ spec:
             type: object
             required:
             - displayName
-            - provenance
             - manufacturerRef
             - model
             properties:
@@ -1686,87 +1163,6 @@ spec:
                 type: string
                 minLength: 1
                 maxLength: 253
-              provenance:
-                type: object
-                required:
-                - method
-                - recordedBy
-                - recordedAt
-                properties:
-                  method:
-                    type: string
-                    enum:
-                    - Manual
-                    - NetBoxImport
-                  recordedBy:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  recordedAt:
-                    type: string
-                    format: date-time
-                  reference:
-                    type: string
-                    minLength: 1
-                    maxLength: 1024
-                  source:
-                    type: object
-                    properties:
-                      system:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      type:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      id:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      snapshotDigest:
-                        type: string
-                        pattern: ^sha256:[a-f0-9]{64}$
-                      mappingRevision:
-                        type: string
-                        minLength: 1
-                        maxLength: 253
-                      observedAt:
-                        type: string
-                        format: date-time
-                    required:
-                    - system
-                    - type
-                    - id
-                    - snapshotDigest
-                    - mappingRevision
-                    - observedAt
-                x-kubernetes-validations:
-                - rule: self.method != 'NetBoxImport' || has(self.source)
-                  message: NetBox imports require source provenance
-                - rule: has(self.source) == has(oldSelf.source) && (!has(self.source)
-                    || (self.source.system == oldSelf.source.system && self.source.type
-                    == oldSelf.source.type && self.source.id == oldSelf.source.id))
-                  message: source identity is immutable
-              sourceIdentity:
-                type: object
-                properties:
-                  system:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  type:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  id:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                required:
-                - system
-                - type
-                - id
               manufacturerRef:
                 type: object
                 required:
@@ -1834,18 +1230,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - id
             x-kubernetes-validations:
-            - rule: self == oldSelf || self.provenance.recordedAt > oldSelf.provenance.recordedAt
-              message: every spec change must advance provenance.recordedAt
-            - rule: has(self.sourceIdentity) == has(oldSelf.sourceIdentity) && (!has(self.sourceIdentity)
-                || self.sourceIdentity == oldSelf.sourceIdentity)
-              message: source identity is immutable including its presence
-            - rule: '!has(self.sourceIdentity) || (self.provenance.method == "NetBoxImport"
-                && has(self.provenance.source) && self.sourceIdentity.system == self.provenance.source.system
-                && self.sourceIdentity.type == self.provenance.source.type && self.sourceIdentity.id
-                == self.provenance.source.id)'
-              message: imported identity must match provenance
-            - rule: self.provenance.method != "NetBoxImport" || has(self.sourceIdentity)
-              message: imported catalog entries require explicit source identity
             - rule: self.manufacturerRef == oldSelf.manufacturerRef && self.model
                 == oldSelf.model
               message: manufacturer and normalized model identity are immutable; displayName

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -55,22 +54,18 @@ func TestCatalogAPIConcurrencyAndStrictFields(t *testing.T) {
 	}
 	stale := device.DeepCopyObject().(*Device)
 	device.Spec.DeviceTypeRef = &LocalReference{Name: model.Name}
-	device.Spec.Provenance.RecordedAt = later(time.Hour)
 	if err := api.Update(ctx, &device); err != nil {
 		t.Fatal(err)
 	}
 	stale.Spec.DeviceTypeRef = &LocalReference{Name: "different"}
-	stale.Spec.Provenance.RecordedAt = later(2 * time.Hour)
 	if err := api.Update(ctx, stale); !apierrors.IsConflict(err) {
 		t.Fatalf("stale writer did not conflict: %v", err)
 	}
 	device.Spec.DeviceTypeRef = nil
-	device.Spec.Provenance.RecordedAt = later(2 * time.Hour)
 	if err := api.Update(ctx, &device); !apierrors.IsInvalid(err) {
 		t.Fatalf("reference removal accepted: %v", err)
 	}
 	model.Spec.DisplayName = "Edited catalog only"
-	model.Spec.Provenance.RecordedAt = later(time.Hour)
 	if err := api.Update(ctx, model); err != nil {
 		t.Fatal(err)
 	}
@@ -95,5 +90,33 @@ func TestCatalogAPIConcurrencyAndStrictFields(t *testing.T) {
 	err = core.RESTClient().Post().AbsPath("/apis/fleet.datumapis.com/v1alpha1/namespaces/fleet-system/devices").Param("fieldValidation", "Strict").Body(body).Do(ctx).Error()
 	if !apierrors.IsBadRequest(err) {
 		t.Fatalf("strict API did not reject unknown reference fields: %v", err)
+	}
+	for _, entry := range []struct {
+		resource string
+		record   any
+	}{
+		{"manufacturers", manufacturer},
+		{"devicetypes", model},
+		{"devices", syntheticDevice()},
+	} {
+		for _, retired := range []string{"provenance", "sourceIdentity"} {
+			t.Run(entry.resource+"/"+retired, func(t *testing.T) {
+				candidate := object(t, entry.record)
+				candidate["metadata"] = map[string]any{"name": "retired-field", "namespace": "fleet-system"}
+				spec := candidate["spec"].(map[string]any)
+				if entry.resource == "devices" && retired == "sourceIdentity" {
+					spec = spec["identity"].(map[string]any)
+				}
+				spec[retired] = map[string]any{"system": "synthetic", "id": "1"}
+				body, err := json.Marshal(candidate)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = core.RESTClient().Post().AbsPath("/apis/fleet.datumapis.com/v1alpha1/namespaces/fleet-system/"+entry.resource).Param("fieldValidation", "Strict").Body(body).Do(ctx).Error()
+				if !apierrors.IsBadRequest(err) {
+					t.Fatalf("strict API accepted retired field: %v", err)
+				}
+			})
+		}
 	}
 }

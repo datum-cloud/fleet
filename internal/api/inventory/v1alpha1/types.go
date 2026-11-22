@@ -18,21 +18,6 @@ import (
 
 var GroupVersion = schema.GroupVersion{Group: "fleet.datumapis.com", Version: "v1alpha1"}
 
-// ProvenanceManual marks a record an operator entered by hand.
-const ProvenanceManual = "Manual"
-
-// Provenance optionally says how, by whom, and when a record's spec was
-// written. It is deprecated and no longer required.
-type Provenance struct {
-	Method     string      `json:"method"`
-	RecordedBy string      `json:"recordedBy"`
-	RecordedAt metav1.Time `json:"recordedAt"`
-	// Reference is an optional, opaque pointer to where the facts came from.
-	// Fleet does not interpret it.
-	Reference string           `json:"reference,omitempty"`
-	Source    *SourceReference `json:"source,omitempty"`
-}
-
 // DeviceClaim retains legacy slot plans and typed observational installations.
 type DeviceClaim struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -45,7 +30,6 @@ type DeviceClaimSpec struct {
 	DisplayName      string           `json:"displayName,omitempty"`
 	Lifecycle        string           `json:"lifecycle,omitempty"`
 	CableRefs        []LocalReference `json:"cableRefs,omitempty"`
-	Provenance       *Provenance      `json:"provenance,omitempty"`
 	ExpectedIdentity ExpectedIdentity `json:"expectedIdentity"`
 	Placement        Placement        `json:"placement"`
 	Ports            []ExpectedPort   `json:"ports,omitempty"`
@@ -112,7 +96,6 @@ type DeviceSpec struct {
 	ServiceAssociations []ServiceAssociation `json:"serviceAssociations,omitempty"`
 	TopologyAuthority   string               `json:"topologyAuthority,omitempty"`
 	ClaimRef            LocalReference       `json:"claimRef"`
-	Provenance          *Provenance          `json:"provenance,omitempty"`
 	Identity            DeviceIdentity       `json:"identity"`
 	BMC                 *BMC                 `json:"bmc,omitempty"`
 	Interfaces          []Interface          `json:"interfaces,omitempty"`
@@ -122,19 +105,18 @@ type DeviceSpec struct {
 }
 
 type ReportedPlacement struct {
-	Revision       int32           `json:"revision"`
-	ObservedAt     metav1.Time     `json:"observedAt"`
-	SnapshotDigest string          `json:"snapshotDigest,omitempty"`
-	Method         string          `json:"method,omitempty"`
-	Reason         string          `json:"reason,omitempty"`
-	Reference      string          `json:"reference,omitempty"`
-	FacilityRef    *LocalReference `json:"facilityRef,omitempty"`
-	RackRef        *LocalReference `json:"rackRef,omitempty"`
-	Position       *float64        `json:"position,omitempty"`
-	Height         *float64        `json:"height,omitempty"`
-	Face           string          `json:"face,omitempty"`
-	FullDepth      *bool           `json:"fullDepth,omitempty"`
-	Mount          string          `json:"mount,omitempty"`
+	Revision   int32       `json:"revision"`
+	ObservedAt metav1.Time `json:"observedAt"`
+	// Reason and Reference explain and evidence the report. Both are required.
+	Reason      string          `json:"reason"`
+	Reference   string          `json:"reference"`
+	FacilityRef *LocalReference `json:"facilityRef,omitempty"`
+	RackRef     *LocalReference `json:"rackRef,omitempty"`
+	Position    *float64        `json:"position,omitempty"`
+	Height      *float64        `json:"height,omitempty"`
+	Face        string          `json:"face,omitempty"`
+	FullDepth   *bool           `json:"fullDepth,omitempty"`
+	Mount       string          `json:"mount,omitempty"`
 }
 
 type LocalReference struct {
@@ -142,12 +124,11 @@ type LocalReference struct {
 }
 
 // DeviceIdentity is the detected chassis identity. Serial and SystemUUID are
-// matching evidence, not authenticators. Imports can instead retain source identity.
+// matching evidence, not authenticators; at least one is required.
 type DeviceIdentity struct {
-	SourceIdentity *ExternalReference `json:"sourceIdentity,omitempty"`
-	Manufacturer   string             `json:"manufacturer,omitempty"`
-	Model          string             `json:"model"`
-	Serial         string             `json:"serial,omitempty"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Model        string `json:"model"`
+	Serial       string `json:"serial,omitempty"`
 	// SystemUUID is the SMBIOS system UUID in lowercase canonical form.
 	SystemUUID string `json:"systemUUID,omitempty"`
 }

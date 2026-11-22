@@ -164,9 +164,8 @@ const INVENTORY_NAMESPACE = 'default';
 
 function claim(name: string, position: number): RawDeviceClaim {
   return {
-    metadata: { name, namespace: INVENTORY_NAMESPACE },
+    metadata: { name, namespace: INVENTORY_NAMESPACE, creationTimestamp: '2026-01-02T03:04:05Z' },
     spec: {
-      provenance: { method: 'Manual', recordedBy: 'planner@example.com', recordedAt: '2026-01-02T03:04:05Z', reference: 'rack plan 1234' },
       expectedIdentity: { manufacturer: 'Example Vendor', model: 'Example 1U' },
       placement: { facility: 'example-facility', rack: 'rack-01', position, height: 1, face: 'front' },
       ports: [
@@ -181,33 +180,29 @@ export const fixtureDeviceClaims: RawDeviceClaim[] = [claim('rack-01-u12', 12), 
 
 export const fixtureDevices: RawDevice[] = [
   {
-    metadata: { name: 'rack-01-u12-synthetic-0001', namespace: INVENTORY_NAMESPACE },
+    metadata: { name: 'rack-01-u12-synthetic-0001', namespace: INVENTORY_NAMESPACE, creationTimestamp: '2026-01-09T10:00:00Z' },
     spec: {
       claimRef: { name: 'rack-01-u12' },
-      provenance: { method: 'Manual', recordedBy: 'registrar@example.com', recordedAt: '2026-01-09T10:00:00Z', reference: 'BMC inventory read during rack turn-up' },
       identity: { manufacturer: 'Example Vendor', model: 'Example 1U', serial: 'SYNTHETIC-0001', systemUUID: '00000000-0000-4000-8000-000000000001' },
       bmc: { endpoint: 'https://192.0.2.100:443' },
       unmappedMACAddresses: ['00:00:5e:00:53:01', '00:00:5e:00:53:02'],
     },
   },
   {
-    metadata: { name: 'orphan-synthetic-0009', namespace: INVENTORY_NAMESPACE },
+    metadata: { name: 'orphan-synthetic-0009', namespace: INVENTORY_NAMESPACE, creationTimestamp: '2026-01-10T10:00:00Z' },
     spec: {
       claimRef: { name: 'rack-02-u01' },
-      provenance: { method: 'Manual', recordedBy: 'registrar@example.com', recordedAt: '2026-01-10T10:00:00Z' },
       identity: { model: 'Example 2U', systemUUID: '00000000-0000-4000-8000-000000000009' },
     },
   },
 ];
 
-const inventoryProvenance = { method: 'Manual' as const, recordedBy: 'inventory@example.com', recordedAt: '2026-01-10T10:00:00Z' };
-
 export const fixturePhysicalRecords: PhysicalRecord[] = [
-  { kind: 'Facility', metadata: { name: 'example-facility', namespace: INVENTORY_NAMESPACE, uid: 'synthetic-facility-uid' }, spec: { displayName: 'Example facility', provenance: inventoryProvenance, locationRef: { name: 'example-region' }, identifiers: [{ provider: 'example-provider', type: 'PremisesCode', value: 'EX1' }] } },
-  { kind: 'Rack', metadata: { name: 'rack-01', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Rack 01', provenance: inventoryProvenance, facilityRef: { name: 'example-facility' }, heightUnits: 42 } },
-  { kind: 'PowerFeed', metadata: { name: 'feed-a', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Feed A', provenance: inventoryProvenance, facilityRef: { name: 'example-facility' }, rackRef: { name: 'rack-01' }, supply: { type: 'AC', voltageV: 208, currentA: 30, phase: 'Single' }, terminations: [{ id: 'outlet-1', name: 'Outlet 1', type: 'PowerOutlet', connector: 'IEC C13', positions: 1 }], upstreamSources: [{ system: 'example-provider', type: 'Supply', id: 'synthetic-supply-a' }] } },
-  { kind: 'Cable', metadata: { name: 'power-01', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Server power cable', provenance: inventoryProvenance, medium: 'Power', lanes: [{ id: 'power', a: { powerFeedRef: { name: 'feed-a' }, componentID: 'outlet-1', position: 1 }, b: { deviceRef: { name: 'rack-01-u12-synthetic-0001' }, componentID: 'psu-1', position: 1 } }] } },
-  { kind: 'Site', metadata: { name: 'example-site', namespace: INVENTORY_NAMESPACE, uid: 'synthetic-site-uid' }, spec: { displayName: 'Example operational site', code: 'EX3', provenance: inventoryProvenance, facilityRefs: [{ name: 'example-facility' }] } },
+  { kind: 'Facility', metadata: { name: 'example-facility', namespace: INVENTORY_NAMESPACE, uid: 'synthetic-facility-uid' }, spec: { displayName: 'Example facility', locationRef: { name: 'example-region' }, identifiers: [{ provider: 'example-provider', type: 'PremisesCode', value: 'EX1' }] } },
+  { kind: 'Rack', metadata: { name: 'rack-01', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Rack 01', facilityRef: { name: 'example-facility' }, heightUnits: 42 } },
+  { kind: 'PowerFeed', metadata: { name: 'feed-a', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Feed A', facilityRef: { name: 'example-facility' }, rackRef: { name: 'rack-01' }, supply: { type: 'AC', voltageV: 208, currentA: 30, phase: 'Single' }, terminations: [{ id: 'outlet-1', name: 'Outlet 1', type: 'PowerOutlet', connector: 'IEC C13', positions: 1 }], upstreamSources: [{ system: 'example-provider', type: 'Supply', id: 'synthetic-supply-a' }] } },
+  { kind: 'Cable', metadata: { name: 'power-01', namespace: INVENTORY_NAMESPACE }, spec: { displayName: 'Server power cable', medium: 'Power', lanes: [{ id: 'power', a: { powerFeedRef: { name: 'feed-a' }, componentID: 'outlet-1', position: 1 }, b: { deviceRef: { name: 'rack-01-u12-synthetic-0001' }, componentID: 'psu-1', position: 1 } }] } },
+  { kind: 'Site', metadata: { name: 'example-site', namespace: INVENTORY_NAMESPACE, uid: 'synthetic-site-uid' }, spec: { displayName: 'Example operational site', code: 'EX3', facilityRefs: [{ name: 'example-facility' }] } },
 ];
 
 export const fixturePhysicalClaims: RawDeviceClaim[] = fixtureDeviceClaims.map(record => ({ ...record, spec: { ...record.spec, displayName: `Server installation · U${record.spec.placement.position}`, placement: { scope: 'RackUnits', rackRef: { name: 'rack-01' }, position: record.spec.placement.position, height: 1, face: 'front' } } }));

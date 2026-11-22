@@ -12,7 +12,7 @@ it.each([false, true])('does not publish new-principal reads while focus identit
   let release: (() => void) | undefined;
   const requests = vi.fn(async (url: string) => {
     if (url.includes('selfsubjectaccessreviews')) return response({ status: { allowed: true } });
-    const record = inventoryPayload('Facility', { name: 'review-facility', namespace: 'default', displayName: `Private ${principal}`, recordedBy: 'synthetic', reference: '', facility: '', height: '' }, '2026-01-01T00:00:00Z');
+    const record = inventoryPayload('Facility', { name: 'review-facility', namespace: 'default', displayName: `Private ${principal}`, facility: '', height: '' });
     return response({ items: url.includes('/facilities?') ? [record] : [] });
   });
   vi.stubGlobal('fetch', requests);
@@ -38,7 +38,7 @@ it.each(['visible', 'overlap', 'hidden', 'denied'])('renews management only afte
   let denied = false;
   const releases: (() => void)[] = [];
   const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  const record = inventoryPayload('Facility', { name: 'fresh', namespace: 'default', displayName: 'Synthetic fresh facility', recordedBy: 'synthetic', reference: '', facility: '', height: '' }, '2026-01-01T00:00:00Z');
+  const record = inventoryPayload('Facility', { name: 'fresh', namespace: 'default', displayName: 'Synthetic fresh facility', facility: '', height: '' });
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.includes('selfsubjectaccessaccessreviews')) throw new Error('invalid endpoint');
     if (url.includes('selfsubjectaccessreviews')) return response({ status: { allowed: true } });

@@ -31,18 +31,25 @@ migration configuration remains in infra.
 
 ## Post-import amendments
 
-- 2026-11-20: Added the limited [observational physical inventory implementation](../../operations/netbox-physical-import.md)
+- 2026-11-21: Removed record provenance from the physical inventory API. Records
+  no longer carry `spec.provenance`, Device `identity.sourceIdentity`, component
+  `sourceRef`, or an import method on reported placement, and the offline import
+  tooling was deleted. Who changed a record comes from resource audit logs and
+  when it was created from `metadata.creationTimestamp`; writers that need to
+  remember where facts came from keep that on their own labels and annotations.
+  See [physical inventory](../../operations/physical-inventory.md#compatibility).
+
+- 2026-11-20: Added the limited [observational physical inventory implementation](../../operations/physical-inventory.md)
   on the staging-selected manual-inventory feature base. Six record kinds, typed
-  components, partial placement, read-only staff relationships and offline NetBox
-  handoff are implemented separately from this proposal's acceptance, reservations,
+  components, partial placement and read-only staff relationships are implemented separately from this proposal's acceptance, reservations,
   verification and lifecycle controllers. Legacy identities/bindings remain intact;
   no live source parity, deployed readiness or hardware qualification is asserted.
 
 - 2026-11-20: Expanded the existing [inventory proposal](inventory.md) with the
   six physical contracts, partial placement, typed components, circuit-boundary
   proposals, evidence and qualification requirements. Recorded the pinned
-  manual-record implementation's claim-lifetime and authority migration gates,
-  plus source-backed NetBox import constraints. These remain proposed contracts,
+  manual-record implementation's claim-lifetime and authority migration gates.
+  These remain proposed contracts,
   not implementation changes or proof of live-data parity. The proposal keeps
   the design narrative; field details, examples, migration evidence and test
   cases are retained in its [reference appendix](inventory-reference.md).

@@ -3,8 +3,10 @@
 [Implementation status](README.md) · [Physical inventory](../operations/physical-inventory.md)
 
 This implementation builds on staging branch `feat/manual-inventory-records` at
-`f190d28397fc6110e02c9c83e6819a3a584258d0`, including Site/Facility membership and
-Device reported placement. It does not replace those APIs or their writers.
+`5b60656759033b61674ee202a9ad94f4d49f4a64`, including PR106
+(`11778ec901812747ad7cb5e915f6c7658836bc04`), Site/Facility membership and
+Device reported placement. It preserves the target's provenance-free inventory
+contract and does not replace those APIs or their writers.
 The [pinned inventory proposal](../proposals/fleet-management/inventory-reference.md#asset-identity-and-typed-components)
 already describes a reusable model/port shape, initially a document rather than a
 public kind. This authorized implementation promotes that concept to Manufacturer
@@ -30,26 +32,23 @@ shape pinning, physical qualification, reservations, or component reconciliation
   observed occupancy. `componentTemplates` reuse the component type, connector,
   position, name and stable local-ID vocabulary, but have no serial, asset tag or
   source-instance identity. They do not create installed ports, topology or assets.
-- Both kinds retain normal provenance. Every changed spec must advance
-  `provenance.recordedAt`. Imported `sourceIdentity` is immutable, including its
-  presence, and must match NetBoxImport provenance. A catalog edit changes no
-  Device, claim, installed component, source observation, or reported placement.
+- Both kinds use `metadata.creationTimestamp` and resource audit logs, not
+  spec provenance, imported source identities, or synthetic timestamp advances.
+  A catalog edit changes no Device, claim, installed component, recorded hardware
+  observation, or reported placement.
 - Device gains an optional `deviceTypeRef: {name}` outside immutable `identity`.
-  Device provenance is optional under the physical-inventory API contract; an
-  explicit attachment does not require a synthetic receipt or timestamp advance. Once attached,
-  the reference cannot be removed or rebound. Existing inline manufacturer/model,
-  serial, sourceIdentity and claimRef remain unchanged and immutable. Imported
-  Devices retain their immutable source identity when an authorized writer records
-  an attachment; catalog edits never overwrite source observations. Catalog
-  Manufacturer and DeviceType records still require their own provenance.
+  Once attached, the reference cannot be removed or rebound. Existing inline
+  manufacturer/model, serial, system UUID and claimRef remain unchanged and
+  immutable. Catalog edits never overwrite recorded observations. Neither catalog
+  nor physical records accept the removed provenance/source-identity fields.
 
 ## Scope, guarantees, and reader safety
 
 References always resolve in the referring object's namespace and provider
 Project. No spec accepts a UID or an explicit cross-namespace reference. Ordinary
 Kubernetes unknown-field pruning is **not** rejection: clients must use
-`fieldValidation=Strict`; the offline importer rejects unknown mapping keys and
-UIDs. Disposable API tests exercise strict decoding as well as conflict handling.
+`fieldValidation=Strict`. Disposable API tests exercise strict decoding of
+references and removed fields as well as conflict handling.
 
 These are name references, not incarnation pins. Missing or deleting targets are
 unavailable; recreating a name resolves to the replacement object. This never
@@ -58,12 +57,12 @@ routine catalog maintenance. Preventing reuse requires a separately reviewed
 retention/tombstone policy, not a UID added to the spec.
 
 CRD admission validates **one object's** syntax, alias uniqueness, immutable
-fields and provenance. It cannot atomically enforce uniqueness of a normalized
+fields. It cannot atomically enforce uniqueness of a normalized
 model across objects within a manufacturer, canonical manufacturer names across
-objects, source IDs across objects, or the existence/authorization of references.
+objects, or the existence/authorization of references.
 Distinct resource names can still describe the same model. No webhook or global
-uniqueness reservation is claimed. Offline cohort checks detect known collisions,
-but a target snapshot is not a transaction and races remain possible.
+uniqueness reservation is claimed. Writers must adjudicate collisions; reads of
+existing records are not a transaction and races remain possible.
 
 The Go reader requires a caller-authorized `client.Reader`; do not substitute an
 unrestricted controller credential for a staff caller. It reads both targets and
@@ -71,10 +70,13 @@ returns no partial catalog/error detail when either is unavailable. UI collectio
 reads use existing provider proxy and session-generation fencing. Denial or
 unavailability of Manufacturers suppresses dependent DeviceTypes, including deep
 links, search and filters. Device labels use the catalog only when both references
-are readable; otherwise the Device's independently authorized legacy/source
+are readable; otherwise the Device's independently authorized recorded hardware
 observation remains available. Catalog fallback does not query aliases or leak
 denied reference names. Existing session, focus and late-response safety tests
 remain intact; only their collection cardinality increases from seven to nine.
+If a selected catalog becomes unreadable during registration, the form retains
+an unavailable selection without disclosing its label and blocks the write. It
+does not silently clear the attachment and create an unassigned Device instead.
 
 Inventory viewer gains catalog get/list/watch. Importer inherits those reads and
 gains catalog create only, without update, patch, or delete permissions. The
@@ -84,67 +86,42 @@ editor also has delete, consistent with the existing editor role. No status,
 wildcard, consumer, membership or operational permission is added. Deploying
 these definitions does not bind anyone to these roles.
 
-## Optional offline catalog handoff
+## Deferred external import
 
-`hack/netbox_catalog.py` consumes the existing version-1 NetBox snapshot format,
-an explicit mapping, and a complete namespace-local Manufacturer/DeviceType
-snapshot. It never calls NetBox or Fleet. Run, retaining output privately:
+PR106 deliberately removed the physical NetBox importer and placement planner.
+Integration with that target also removes this feature's newly introduced offline
+NetBox catalog importer, dependent fixtures/tests, and CI steps. No external
+catalog import or deduplication command is implemented in this slice. Restoring
+source identity, provenance receipts, or the old importer to enable catalog
+creation would contradict the current inventory contract.
 
-```sh
-python3 hack/netbox_catalog.py --snapshot /private/netbox.json \
-  --mapping /private/catalog-mapping.json --existing /private/fleet-catalog.json \
-  --recorded-by operator-identity --recorded-at 2026-11-21T01:00:00Z
-```
-
-The synthetic [mapping fixture](../../hack/testdata/catalog/mapping.json) shows
-the format. `target` requires `project`, `namespace`, and `writer: DirectAPI`.
-Namespaces must be DNS labels of 1–63 characters, not dotted resource names.
-The Fleet snapshot must attest `collections: [Manufacturer, DeviceType]`, contain
-that same target, and include both complete collections, including empty ones.
-Manufacturer `sourceID` and DeviceType `sourceID`/`manufacturerSourceID` are
-explicit positive NetBox IDs, never aliases, host IDs or chassis serials. Model
-normalization lowercases ASCII and collapses non-alphanumeric runs to a hyphen;
-the explicitly supplied key must match. Normalization collisions are quarantined,
-not silently deduplicated. Non-ASCII source models require adjudication.
-
-Deduplication uses `(source system, source collection, source ID)` and the exact
-stable target name. Repeated identical imports are no-ops; interrupted creates
-are handled by refreshing the snapshot. Conflicting existing records, alias or
-canonical-name collisions, duplicate normalized model pairs, missing references,
-malformed inputs, unknown mapping fields and duplicate JSON keys quarantine the
-**entire cohort** with no candidates. Source/catalog evidence stays private.
-Snapshot version must be an integer and collection attestations must be lists.
-Existing-record provenance and source identity must validate before deduplication
-ignores changing receipt fields. Observation and recording timestamps use strict
-RFC3339 date-times; broader Python ISO formats are rejected rather than emitted.
-
-Output is a review envelope, not an automatically applied Kubernetes List.
-The approved owner must re-read authorization, existing identities and conflicts
-immediately before individual create-only API requests. Reject existing names;
-never apply/overwrite, adopt a source, change its writer or claim, or treat an
-uncertain creation as success. Retain receipts and refresh after interruption.
-No GitOps inventory/catalog records, recurring sync, or live migration is added
-or authorized by this command. The older physical importer is not invoked.
+Authorized direct-API writers may create catalog records with ordinary Kubernetes
+metadata and the model fields documented here. External imports, source mappings,
+cohort collision handling, migration and recurring synchronization require a
+separately reviewed contract. Any external attribution belongs in writer-owned
+labels/annotations and audit logs; Fleet does not interpret it or acquire ownership
+from it. Creating catalog records remains observational, never a capacity or
+provisioning action.
 
 ## Explicitly deferred user-visible work
 
 Staff can browse Manufacturers/DeviceTypes and see catalog-backed Device labels,
-source observations and nominal template details. New manual Device registrations
+recorded observations and nominal template details. New manual Device registrations
 offer an optional same-namespace catalog selection, with fresh authorized reads
 and UID/resourceVersion checks of both targets immediately before create. Strict
 field validation prevents an older Device schema silently dropping the reference.
-Selection never copies labels, components or shape into source observations;
+Selection never copies labels, components or shape into recorded observations;
 inline observed model data remains required. These reads are not an atomic
 cross-object lock: a later recreation follows the documented name semantics.
 Catalog create/edit forms and attachment/correction forms for **existing** Devices
-are not implemented. Importing catalog records does not attach
+are not implemented. Creating catalog records does not attach
 existing or new Devices; shape/template import, legacy-source migration,
 assignment correction/rebinding and accepted-plan revision pinning need follow-up.
 
 An explicit direct-API attachment must use the Device's current owner, require
 fresh authorized reads of both same-namespace targets, retain exact inputs, and
-test metadata UID and resourceVersion before adding the reference. Device
-provenance is optional; attachment does not require advancing or inventing it.
+test metadata UID and resourceVersion before adding the reference. Attachment
+must not invent provenance or a recording timestamp.
 UIDs are request preconditions, never spec references. Use Strict
 field validation. A failed or uncertain request requires readback, not a blind
 retry. No live attachment is performed here. Correcting an already attached
@@ -157,7 +134,6 @@ immutability, delete/recreate the Device, or transfer its claim to work around i
 go test ./...
 go test -race ./...
 go vet ./...
-python3 -m unittest discover -s hack -p 'test_netbox*.py'
 pnpm --dir ui/provider typecheck && pnpm --dir ui/provider test && pnpm --dir ui/provider build
 pnpm --dir ui/consumer typecheck && pnpm --dir ui/consumer test && pnpm --dir ui/consumer build
 kustomize build config/milo >/dev/null
@@ -170,7 +146,17 @@ Set `KUBEBUILDER_ASSETS` to the repository's pinned envtest assets to include th
 disposable API checks; without it that test is explicitly skipped. These checks
 are not proof of real Milo authorization or live NetBox parity.
 
-The parent task owns independent adversarial review, CI and staging deployment.
+Validation of the PR106 integration passed the full Go suite, race suite and vet,
+with local Kubernetes 1.37.0 envtest assets including catalog concurrency and
+strict rejection of retired fields. Provider validation covers 459 tests;
+consumer validation covers 44 tests. Both typechecks and production builds pass.
+The five CI manifest roots, synthetic-staging render, overlay isolation and its
+regression tests, standalone render, Milo acceptance packaging, documentation
+links and whitespace checks also pass. These are local synthetic checks, not
+remote CI completion, live authorization verification, or deployment acceptance.
+
+The parent task owns CI and the feature-branch merge; further review is waived
+for this merge. No staging deployment or live mutation is part of this work.
 Roll out additive CRDs and least-privilege IAM definitions, then denial-aware
 readers, **before any writer**. Confirm existing Site/Facility/Device placement
 behavior and unreadable/missing catalog fallback on staging. Never roll back by

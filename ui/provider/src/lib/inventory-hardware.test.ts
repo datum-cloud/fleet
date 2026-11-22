@@ -4,11 +4,11 @@ import { createInventoryRecord, editInventoryLabel, INVENTORY_FIELD_MANAGER, inv
 import { hardwarePayload, type ReferencedEndpoint } from './inventory-hardware';
 import { InventoryOperationScope } from './inventory-operation';
 
-const values: InventoryFormValues = { name: 'synthetic', namespace: 'default', displayName: 'Synthetic hardware', recordedBy: 'operator', reference: '', height: '', facility: '', model: 'Example', serial: 'SYNTHETIC-1', claim: { name: 'plan', uid: 'plan-uid', resourceVersion: '1' }, components: [{ id: 'port', name: 'Port', type: 'NetworkPort', positions: 1 }] };
+const values: InventoryFormValues = { name: 'synthetic', namespace: 'default', displayName: 'Synthetic hardware', height: '', facility: '', model: 'Example', serial: 'SYNTHETIC-1', claim: { name: 'plan', uid: 'plan-uid', resourceVersion: '1' }, components: [{ id: 'port', name: 'Port', type: 'NetworkPort', positions: 1 }] };
 const endpoint: ReferencedEndpoint = { kind: 'Device', name: 'synthetic-device', uid: 'device-uid', resourceVersion: '1', componentID: 'port', position: 1 };
 const cableValues: InventoryFormValues = { ...values, medium: 'Copper', cableLanes: [{ id: 'lane-1', a: endpoint, b: { ...endpoint, name: 'other', uid: 'other-uid' } }] };
 const planValues: InventoryFormValues = { ...values, planLocation: { kind: 'Rack', name: 'rack', uid: 'rack-uid', resourceVersion: '1' } };
-const common = inventoryPayload('Facility', values, '2026-01-01T00:00:00Z');
+const common = inventoryPayload('Facility', values);
 const claim = { metadata: { name: 'plan', uid: 'plan-uid', resourceVersion: '1' }, spec: { lifecycle: 'Installation' } };
 const device = { ...hardwarePayload('Device', values, common), metadata: { name: 'synthetic-device', namespace: 'default', uid: 'device-uid', resourceVersion: '1', managedFields: [{ manager: INVENTORY_FIELD_MANAGER }] } };
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
@@ -30,6 +30,8 @@ describe('catalog selection for new devices', () => {
     expect(payload.spec.components).toEqual(values.components);
     expect(payload.spec.modelShape).toBeUndefined();
     expect(payload.spec.reportedPlacement).toBeUndefined();
+    expect(payload.spec.provenance).toBeUndefined();
+    expect(payload.spec.identity.sourceIdentity).toBeUndefined();
     expect(JSON.stringify(payload.spec)).not.toContain('uid');
   });
 
@@ -86,7 +88,7 @@ describe('physical record creation', () => {
     expect(body.spec.claimRef).toEqual({ name: 'plan' });
     expect(body.spec.identity).toEqual({ model: 'Example', serial: 'SYNTHETIC-1' });
     expect(body.spec.components[0].type).toBe('NetworkPort');
-    expect(Object.keys(body.spec).sort()).toEqual(['claimRef', 'components', 'displayName', 'identity', 'provenance', 'topologyAuthority'].sort());
+    expect(Object.keys(body.spec).sort()).toEqual(['claimRef', 'components', 'displayName', 'identity', 'topologyAuthority'].sort());
     expect(body.status).toBeUndefined();
   });
   it.each([{ serial: '', systemUUID: '' }, { model: '' }, { systemUUID: 'invented' }, { components: [{ id: 'a', name: 'A', type: 'NetworkPort', positions: 0 }] }, { components: [values.components![0], values.components![0]] }])('rejects incomplete or invalid hardware: %j', invalid => {
@@ -137,10 +139,10 @@ describe('physical record creation', () => {
       expect(requests).toHaveBeenCalledTimes(2);
     }
   });
-  it('limits device edits to labels/provenance, preserving identity and components', async () => {
+  it('limits device edits to the display name, preserving identity and components', async () => {
     const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response(device));
     vi.stubGlobal('fetch', requests);
     await editInventoryLabel(device, values, new InventoryOperationScope().begin());
-    expect(JSON.parse(requests.mock.calls[2][1].body).map((operation: { path: string }) => operation.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/displayName', '/spec/provenance']);
+    expect(JSON.parse(requests.mock.calls[2][1].body).map((operation: { path: string }) => operation.path)).toEqual(['/metadata/uid', '/metadata/resourceVersion', '/spec/displayName']);
   });
 });

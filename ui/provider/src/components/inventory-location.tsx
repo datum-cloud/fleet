@@ -65,7 +65,7 @@ export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; invent
     <aside className="inventory-elevation">
       <div className="inventory-list-heading"><h3>Rack elevation</h3><span>{height ? `${height}U` : 'Height unknown'}</span></div>
       <div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <button key={value} type="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</button>)}</div>
-      <p className="inventory-muted">Source reports and explicitly labelled claim-derived fallback, not verified occupancy. Blank units are not available space. ! indicates overlapping placements requiring review. Unknown depth does not establish clearance on the opposite face.</p>
+      <p className="inventory-muted">Reported placements and explicitly labelled claim-derived fallback, not verified occupancy. Blank units are not available space. ! indicates overlapping placements requiring review. Unknown depth does not establish clearance on the opposite face.</p>
       {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} rack={rack} slots={positioned} side={side} />)}</div>}
     </aside>
     <div className="inventory-equipment-sections">

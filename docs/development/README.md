@@ -44,9 +44,10 @@ Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 ## API group naming
 
 The additive [shared hardware catalog](hardware-catalog.md) implements
-Manufacturer/DeviceType records, denial-aware staff readers, and an optional
-offline create-only catalog handoff. New registrations can select catalog models;
-existing-device migration is deferred. Templates never modify installed assets.
+Manufacturer/DeviceType records and denial-aware staff readers under the
+provenance-free inventory contract. New registrations can select catalog models;
+external import and existing-device migration are deferred. Templates never modify
+installed assets.
 
 The allocation APIs now use `metal.datumapis.com/v1alpha1`. Milo registers the
 Bare Metal service as `metal`; entitlement and location-availability readers use
@@ -767,23 +768,20 @@ in the provider project in Milo. `config/components/inventory` holds their
 CRDs, ProtectedResources, and the `fleet.datumapis.com-inventory-viewer` and
 `-editor` roles. Only `config/milo` includes it.
 
-CEL requires `Manual` or source-attributed `NetBoxImport` provenance and every edit to
-advance `recordedAt`. It keeps a Device's `claimRef` and identity immutable,
+Records carry no attribution fields: resource audit logs record who changed a
+record and `metadata.creationTimestamp` records when it was created. CEL requires
+a Device serial or system UUID and keeps a Device's `claimRef` and identity immutable,
 rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
 BMC endpoints. Status is a reserved subresource with no fields and no writer.
 No metal role grants inventory access.
 
 The staff portal plugin's read-only Inventory tab pages through all six kinds,
-shows physical relationships and components, and can inspect a private import
-report locally. Multiple historical bindings remain ambiguous rather than being
+shows physical relationships and components. Multiple historical bindings remain ambiguous rather than being
 resolved by edit time. The primary workflow is [manual entry and review](../operations/physical-inventory.md#manually-record-a-small-installation)
-through the existing Flux writer, with no NetBox dependency. The optional,
-operator-invoked standard-library `hack/netbox_inventory.py` reads GET-only snapshots
-and generates offline review candidates; it never applies, schedules, synchronizes,
-deletes or changes Git. Unit tests run API-server validation offline,
-check IAM and exercise pagination, source conflicts, omissions and interrupted
-imports. See [safe NetBox evaluation](../operations/netbox-physical-import.md).
-No live source coverage, deployment of this physical extension, physical verification, concurrent
+through the existing Flux writer. Fleet reads no external inventory source; a
+separate writer that copies records in uses the same API and validation. Unit
+tests run API-server validation offline, including pruning of retired fields,
+and check IAM. No deployment of this physical extension, physical verification, concurrent
 reservation, deletion safety, adoption or new hardware-effect path is established.
 
 ## Build, test, and run

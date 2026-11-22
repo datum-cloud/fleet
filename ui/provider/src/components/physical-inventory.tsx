@@ -115,11 +115,6 @@ function Components({ components }: { components: PhysicalComponent[] }) {
                 <small>
                   {component.assetTag ? `Asset tag: ${component.assetTag}` : 'No asset tag recorded'}
                 </small>
-                {component.sourceRef && (
-                  <small>
-                    {component.sourceRef.system}/{component.sourceRef.type}/{component.sourceRef.id}
-                  </small>
-                )}
               </td>
             </tr>
           ))}
@@ -299,7 +294,6 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
   function Detail({ entry }: { entry: RecordEntry }) {
     const { record, kind } = entry;
     const namespace = record.metadata.namespace;
-    const provenance = record.spec.provenance;
     const device = kind === 'Device' ? (record as RawDevice) : undefined;
     const catalog = device && deviceCatalog(device, inventory);
     const claim = kind === 'DeviceClaim' ? (record as RawDeviceClaim) : undefined;
@@ -385,8 +379,8 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
           {device && (
             <>
               <Field label="Manufacturer / model">{deviceModelLabel(device, inventory)}</Field>
-              <Field label="Legacy / source hardware observation">{modelLabel(device.spec.identity)}</Field>
-              <Field label="Shared catalog">{catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : device.spec.deviceTypeRef ? 'Catalog unavailable · showing source observation' : 'Not assigned · showing source observation'}</Field>
+              <Field label="Recorded hardware observation">{modelLabel(device.spec.identity)}</Field>
+              <Field label="Shared catalog">{catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'Not assigned · showing recorded observation'}</Field>
               <Field label="Catalog nominal height">{catalog?.model.spec.modelShape?.heightUnits === undefined ? 'Unknown' : `${catalog.model.spec.modelShape.heightUnits}U · not measured or used for occupancy`}</Field>
               <Field label="Serial number">{device.spec.identity.serial}</Field>
               <Field label="Asset tag">{device.spec.assetTag}</Field>
@@ -397,7 +391,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
               <Field label="Location / Reported placement">{placement(entry)}</Field>
               {device.spec.reportedPlacement?.rackRef && <Field label="Reported rack">{reference('Rack', namespace, device.spec.reportedPlacement.rackRef.name)}</Field>}
               {device.spec.reportedPlacement?.facilityRef && <Field label="Reported facility">{reference('Facility', namespace, device.spec.reportedPlacement.facilityRef.name)}</Field>}
-              {device.spec.reportedPlacement && <Field label="Source report">Revision {device.spec.reportedPlacement.revision} · {device.spec.reportedPlacement.observedAt} · {device.spec.reportedPlacement.method === 'Manual' ? 'Manual observation/correction' : 'NetBox source report'}, not physically verified{device.spec.reportedPlacement.reason && ` · Reason: ${device.spec.reportedPlacement.reason}`}{device.spec.reportedPlacement.reference && ` · Evidence: ${device.spec.reportedPlacement.reference}`}</Field>}
+              {device.spec.reportedPlacement && <Field label="Placement report">Revision {device.spec.reportedPlacement.revision} · {device.spec.reportedPlacement.observedAt}, not physically verified · Reason: {device.spec.reportedPlacement.reason} · Evidence: {device.spec.reportedPlacement.reference}</Field>}
               <Field label="Placement corrections">Recordkeeping is not a physical move or a capacity reservation.</Field>
               <Field label="Recorded nominal dimensions">
                 {device.spec.modelShape
@@ -408,10 +402,6 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
               <Field label="Provider host reference">
                 {device.spec.providerHostRef &&
                   `${device.spec.providerHostRef.system}/${device.spec.providerHostRef.type}/${device.spec.providerHostRef.id}`}
-              </Field>
-              <Field label="Source identity">
-                {device.spec.identity.sourceIdentity &&
-                  `${device.spec.identity.sourceIdentity.system}/${device.spec.identity.sourceIdentity.type}/${device.spec.identity.sourceIdentity.id}`}
               </Field>
             </>
           )}
@@ -614,20 +604,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
           <summary>Record history & verification</summary>
           <dl className="inventory-fields">
             <Field label="Verification">Unknown — no verification evidence is available.</Field>
-            <Field label="Recorded by">{provenance?.recordedBy}</Field>
-            <Field label="Recorded at">{provenance?.recordedAt}</Field>
-            <Field label="Recording method">{provenance?.method}</Field>
-            <Field label="Reference">{provenance?.reference}</Field>
-            {provenance?.source && (
-              <>
-                <Field label="Source object">
-                  {provenance.source.system}/{provenance.source.type}/{provenance.source.id}
-                </Field>
-                <Field label="Mapping revision">{provenance.source.mappingRevision}</Field>
-                <Field label="Source observed at">{provenance.source.observedAt}</Field>
-                <Field label="Snapshot digest">{provenance.source.snapshotDigest}</Field>
-              </>
-            )}
+            <Field label="Created">{record.metadata.creationTimestamp}</Field>
           </dl>
         </details>
       </>
@@ -798,7 +775,7 @@ export function PhysicalInventory({ inventory: source, onRetry }: { inventory: I
       <details className="inventory-help">
         <summary>About this inventory</summary>
         <p>
-          These are source reports and registration / intent history, not live hardware status. A record does not
+          These are reported records and registration / intent history, not live hardware status. A record does not
           establish availability, verified placement, working connections, or permission to operate equipment.
         </p>
         <p>
