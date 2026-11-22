@@ -73,3 +73,13 @@ it('rejects partial and unidentified identity and non-default inventory', () => 
   expect(ineligibleReason({ ...device, spec: { ...device.spec, identity: { model: 'test', serial: 'only-serial' } } })).toContain('ambiguous');
   expect(ineligibleReason({ ...device, metadata: { ...device.metadata, namespace: 'other' } })).toContain('unavailable');
 });
+
+it('registers only Active Devices and still counts Retired ones as conflicts', async () => {
+  expect(ineligibleReason({ ...device, spec: { ...device.spec, lifecycle: 'Active' } })).toBeUndefined();
+  expect(ineligibleReason({ ...device, spec: { ...device.spec, lifecycle: 'Decommissioning' } })).toBe('Device is Decommissioning; only an Active Device can be registered');
+  expect(ineligibleReason({ ...device, spec: { ...device.spec, lifecycle: 'Retired' } })).toBe('Device is Retired; only an Active Device can be registered');
+  const retiredTwin: Device = { metadata: { name: 'retired-twin', namespace: 'default', uid: 'device-9', resourceVersion: '1' }, spec: { claimRef: { name: 'installation' }, lifecycle: 'Retired', identity: { model: 'test', serial: 'SERIAL-1', systemUUID: '99999999-9999-9999-9999-999999999999' } } };
+  expect(ineligibleReason(device, [device, retiredTwin])).toContain('Conflicting');
+  await expect(registerCapacity({ ...device, spec: { ...device.spec, lifecycle: 'Decommissioning' } }, 'operation', new InventoryOperationScope().begin())).rejects.toThrow('only an Active Device');
+  expect(transport).not.toHaveBeenCalled();
+});

@@ -26,11 +26,14 @@ function aliases(device: Device): string[] {
   return result;
 }
 
-// ineligibleReason explains why a Device cannot be registered. Passing the
-// listed Devices also marks every Device that shares a hardware alias with
-// another one as conflicting until a person resolves the duplicate.
+// ineligibleReason explains why a Device cannot be registered. Only an Active
+// Device can be. Passing the listed Devices also marks every Device that
+// shares a hardware alias with another one, including a Retired one, as
+// conflicting until a person resolves the duplicate.
 export function ineligibleReason(device: Device, listed: Device[] = []): string | undefined {
   if (device.metadata.namespace !== 'default' || !device.metadata.uid || !device.metadata.resourceVersion || device.metadata.deletionTimestamp) return 'Device incarnation is unavailable or deleting';
+  const lifecycle = device.spec.lifecycle ?? 'Active';
+  if (lifecycle !== 'Active') return `Device is ${lifecycle}; only an Active Device can be registered`;
   if (device.spec.identity.unidentified || !device.spec.identity.serial?.trim() || !device.spec.identity.systemUUID) return 'Both serial and system UUID are required; partial identity is ambiguous';
   if (['unknown', 'none', 'n/a', 'default string', 'to be filled by o.e.m.'].includes(device.spec.identity.serial.trim().toLowerCase()) || ['00000000-0000-0000-0000-000000000000', 'ffffffff-ffff-ffff-ffff-ffffffffffff'].includes(device.spec.identity.systemUUID)) return 'Placeholder identity is ineligible';
   const own = aliases(device);

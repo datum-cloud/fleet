@@ -278,8 +278,13 @@ export interface Device {
     bmc?: { endpoint: string };
     interfaces?: { name: string; macAddress?: string; peer?: PortPeer }[];
     unmappedMACAddresses?: string[];
+    // lifecycle defaults to Active. Active and Decommissioning move between
+    // each other, Decommissioning moves to Retired, and Retired is terminal.
+    lifecycle?: DeviceLifecycle;
   };
 }
+
+export type DeviceLifecycle = 'Active' | 'Decommissioning' | 'Retired';
 
 export interface ReportedPlacement {
   revision: number;

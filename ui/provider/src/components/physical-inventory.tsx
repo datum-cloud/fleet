@@ -345,6 +345,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
               <Field label="Recorded hardware observation">{modelLabel(device.spec.identity)}</Field>
               <Field label="Shared catalog">{catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'Not assigned · showing recorded observation'}</Field>
               <Field label="Catalog nominal height">{catalog?.model.spec.modelShape?.heightUnits === undefined ? 'Unknown' : `${catalog.model.spec.modelShape.heightUnits}U · not measured or used for occupancy`}</Field>
+              <Field label="Lifecycle">{device.spec.lifecycle ?? 'Active'}</Field>
               <Field label="Serial number">{device.spec.identity.serial}</Field>
               <Field label="Asset tag">{device.spec.assetTag}</Field>
               <Field label="System UUID">{device.spec.identity.systemUUID}</Field>
