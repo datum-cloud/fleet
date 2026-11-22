@@ -70,7 +70,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 	if err := api.Create(ctx, device); err != nil {
 		t.Fatal(err)
 	}
-	encoded, _ := json.Marshal(Ledger{Authority: "milo", Projects: []string{"provider"}})
+	encoded, _ := json.Marshal(Ledger{Authority: "milo", Projects: []string{"datum-cloud"}})
 	if err := api.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: "fleet-system-private"}, Data: map[string][]byte{"ledger.json": encoded}}); err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +122,8 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	var denied atomic.Bool
-	handler := &Handler{Store: Store{Client: private, Namespace: "fleet-system-private", Authority: "milo", Projects: []string{"provider"}}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api) }, Resolve: func(context.Context, string) (Project, error) {
-		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "provider", UID: "project-1"}, Client: api}, nil
+	handler := &Handler{Store: Store{Client: private, Namespace: "fleet-system-private", Authority: "milo", Projects: []string{"datum-cloud"}}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }, Resolve: func(context.Context, string) (Project, error) {
+		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api}, nil
 	}, Authorize: func(ctx context.Context, project Project, actor authenticationv1.UserInfo, group, resource, name string) error {
 		if denied.Load() {
 			return ErrConflict
@@ -141,12 +141,14 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 	if err := yaml.UnmarshalStrict(data, webhooks); err != nil {
 		t.Fatal(err)
 	}
-	webhooks.Webhooks[0].ClientConfig = admissionregistrationv1.WebhookClientConfig{URL: &url, CABundle: pemCertificate(server.Certificate().Raw)}
+	for index := range webhooks.Webhooks {
+		webhooks.Webhooks[index].ClientConfig = admissionregistrationv1.WebhookClientConfig{URL: &url, CABundle: pemCertificate(server.Certificate().Raw)}
+	}
 	if err := api.Create(ctx, webhooks); err != nil {
 		t.Fatal(err)
 	}
 	actorConfig := rest.CopyConfig(config)
-	actorConfig.Impersonate = rest.ImpersonationConfig{UserName: "operator", UID: "actor-1", Groups: []string{"system:masters"}, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {"provider"}}}
+	actorConfig.Impersonate = rest.ImpersonationConfig{UserName: "operator", UID: "actor-1", Groups: []string{"system:masters"}, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {"datum-cloud"}}}
 	actor, err := client.New(actorConfig, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)

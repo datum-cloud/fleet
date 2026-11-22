@@ -33,8 +33,12 @@ The separate `fleet-registration` Deployment serves inert inventory-backed
 capacity admission only. Its TLS trust, read/SAR credentials, webhook serving CA
 and one-time private ledger bootstrap are environment-owned. Read the
 [registration rollout contract](../docs/development/inventory-capacity-registration.md#production-packaging-and-rollout)
-before applying either root: an unavailable or incompletely configured authority
-blocks writes, and the ledger must never be reset by GitOps. This does not enable
+before applying either root: an unavailable authority blocks capacity writes
+globally, and fences Device writes and protected lifetime deletions in provider
+or ambiguous inventory contexts. Admission-time trusted-context conditions keep
+proven unrelated Project inventory independent of webhook availability. All four webhook
+entries require the same serving CA and endpoint; their scope must match the
+private ledger, which must never be reset by GitOps. This does not enable
 production allocation or provisioning.
 
 `config/components/service-catalog-staging` is a Kustomize component with

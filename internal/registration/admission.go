@@ -1,12 +1,14 @@
 package registration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"regexp"
 	"slices"
@@ -84,6 +86,9 @@ func projectName(actor authenticationv1.UserInfo) (string, error) {
 }
 
 func (handler *Handler) Handle(ctx context.Context, request admission.Request) admission.Response {
+	if request.Operation == admissionv1.Delete && request.Name == "" && ((request.Resource.Group == "" && request.Resource.Resource == "namespaces") || (request.Resource.Group == "resourcemanager.miloapis.com" && request.Resource.Resource == "projects")) {
+		return admission.Denied("lifetime deletion requires an exact resource name; collection deletion cannot prove exclusion of retained lifetimes")
+	}
 	if request.Resource.Group == "" && request.Resource.Resource == "namespaces" && request.Name != "default" {
 		return admission.Allowed("outside the retained inventory namespace")
 	}
@@ -345,6 +350,9 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	if device.UID == "" {
 		return errors.New("Device incarnation unavailable")
 	}
+	if request.Operation == admissionv1.Update && identicalObjects(request.OldObject.Raw, request.Object.Raw) {
+		return nil
+	}
 	fence := DeviceFence{Project: project.Identity.RouteName, UID: device.UID, Deleted: request.Operation == admissionv1.Delete}
 	if request.Operation == admissionv1.Update {
 		fence.Version = old.ResourceVersion
@@ -364,4 +372,22 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	}
 	ledger.DeviceFences = append(ledger.DeviceFences, fence)
 	return handler.Store.Write(ctx, secret, ledger)
+}
+
+func identicalObjects(old, current []byte) bool {
+	decode := func(raw []byte) (map[string]any, error) {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var object map[string]any
+		if err := decoder.Decode(&object); err != nil {
+			return nil, err
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return nil, errors.New("expected exactly one JSON object")
+		}
+		return object, nil
+	}
+	before, beforeErr := decode(old)
+	after, afterErr := decode(current)
+	return beforeErr == nil && afterErr == nil && before != nil && after != nil && reflect.DeepEqual(before, after)
 }

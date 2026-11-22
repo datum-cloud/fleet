@@ -62,8 +62,11 @@ The webhook accepts only mutually authenticated TLS from a dedicated API-server
 client CA. Do not use a broad tenant/client CA: an AdmissionReview received from
 an untrusted client is not evidence of an authenticated actor. The server also
 checks the installed root webhook configuration at startup and before admission:
-required write rules, explicit serving CA, Fail policy and no selectors or match
-conditions that allow a caller to skip the fence.
+the exact write rules, explicit serving CA, Fail policy, common authority
+endpoint, and the restricted match conditions described below. Label selectors,
+missing fences, expanded rules, and conditions differing from the configured
+provider scope are rejected. Scope changes require an operator-coordinated
+manifest and ledger migration, not caller-selected labels or annotations.
 
 ## Physical identity and bounded deduplication
 
@@ -120,12 +123,25 @@ the create. A failed CAS response may itself have committed: it is not released.
 Device creation also reserves its known aliases before admission completes.
 Device deletion retains a permanent UID tombstone before admission completes.
 Both use the same ledger CAS, closing the registration-versus-pending-create or
-delete race. Device updates retain their old resourceVersion before admission
-completes. Registration rejects a selected version with such an update fence;
+delete race. Potentially changing Device updates retain their old resourceVersion
+before admission completes. Registration rejects a selected version with such an update fence;
 only an explicitly selected newer persisted version can pass it. This serializes
 pending metadata/spec updates with registration without silently refreshing the
-selection. An update whose completion is unknown can leave its old version
-ineligible even if storage made no change. Failed Device creates can likewise retain an alias reservation.
+selection. The sole exception is a provably unchanged update: the complete old
+and new admission JSON objects are equal, including metadata, managed fields,
+status and any fields unknown to Fleet's typed Device. JSON key order and
+whitespace are immaterial; numbers are compared without floating-point rounding.
+An unchanged Kubernetes update can keep its existing resourceVersion, and must
+not permanently fence that still-current version. This exception adds no new
+reservation and **never removes an existing pending-update fence**. It does not
+infer success from a later read, refresh a selected version, or relax identity
+and registered-spec checks. Any differing field still takes the conservative
+fencing path. An uncertain potentially changing update can therefore leave its
+old version ineligible even if storage ultimately made no change. Failed Device
+creates can likewise retain an alias reservation.
+The fix does not erase fences retained by older builds: those cannot be safely
+distinguished from unfinished real updates. Recovery still requires a genuine
+persisted change and explicit new selection, not automatic ledger cleanup.
 The selected Device's own successful creation reservation is not a conflict.
 Identity/provider-alias changes are forbidden; registered Device specs are
 frozen, and its deletion and same-name replacement are forbidden. The default
@@ -151,15 +167,48 @@ fences or restore arbitrary storage remain outside the guarantee.
 ## Production packaging and rollout
 
 - `config/milo` includes the mandatory Fail-closed registration webhook on the
-  **actual project resource path**, not just a manager-side helper. It matches
-  capacity create/update/delete/status, Device create/update/delete/status,
-  namespace deletion, and root Project deletion. No object-label opt-in exists.
+  **actual project resource path**, not just a manager-side helper. Four separate
+  admission entries use the same endpoint. Capacity create/update/delete/status
+  remains globally fenced. Device create/update/delete/status excludes only
+  proven unrelated Project contexts (in **all namespaces**, because alias scans
+  cover all of them). Namespace deletion matches only `default` in protected or
+  ambiguous contexts. Project deletion matches only exact configured provider Project
+  names, including root requests without parent extras. Unnamed collection
+  deletion cannot prove exclusion of protected lifetimes and is explicitly
+  denied (including when transport is healthy); delete unrelated lifetimes by
+  exact name instead. No object-label opt-in or opt-out exists.
 - `config/overlays/management-plane` includes a separate two-replica registration
   Deployment, TLS Service, narrowly scoped host RBAC, and private retention
   policies. It does not enable production lifecycle handlers.
 - The webhook consumes parent context from Milo's standard admission extras.
-  The repository-pinned Milo module enables validating admission by default and
-  documents these extras in its cluster-aware webhook implementation.
+  The API server evaluates the inventory/lifetime CEL match conditions **before
+  webhook transport**. An unreachable service or incomplete certificate rollout
+  therefore cannot block unrelated consumers' Device writes, other namespaces,
+  or unrelated Project deletions through these entries. In-scope writes remain
+  Fail-closed during transport failure; capacity writes remain globally blocked.
+  Handler-side exemptions alone are not an outage-isolation boundary.
+- These conditions rely on **server-established routing context**, not arbitrary
+  identity-provider claims. In pinned Milo `v0.36.9`,
+  `ProjectRouterWithRequestInfo` establishes the project from the routed path;
+  `ProjectContextAuthorizationDecorator` overwrites all three parent extras
+  after authentication/impersonation and before authorization/admission
+  (`cmd/milo/apiserver/config.go`). The pinned filter regression verifies that
+  conflicting caller extras are overwritten while actor identity is preserved.
+  Only a singleton `Project` / `resourcemanager.miloapis.com` / nonempty name
+  outside the protected list proves that inventory is unrelated and skips the
+  webhook. Missing, malformed, root, Organization and User inventory contexts
+  remain fail-closed. This conservative fallback matters: pinned Milo's later
+  Organization/User decorators can obscure the Project extras for nested paths;
+  a non-Project context must not be mistaken for proof of unrelated storage.
+  Regression tests exercise those actual pinned decorators and the resulting
+  admission matching. Root Project deletion still uses only exact protected
+  names; other namespace names remain outside the namespace fence.
+  This scope is **not safe on a server that lets caller-supplied extras replace
+  its actual routing context**, or exposes an alternate provider-storage path
+  appearing as a different valid Project. Confirm these properties on the
+  deployed Milo path before enabling use. Unscoped/root Device writes are not
+  supported by this pilot; that is an explicit fail-closed limit, not universal
+  outage isolation for every possible inventory route.
 - Legacy capacity writes in configured production scope fail closed; legacy
   records remain readable and unchanged. Outside configured provider scope,
   ordinary inventory writes are unaffected, but new capacity writes are denied.
@@ -183,8 +232,9 @@ real credentials or certificates are supplied by this repository:
 2. Supply `fleet-registration-tls` with `tls.crt`, `tls.key`, and a dedicated
    `client-ca.crt`. Configure Milo's admission webhook client kubeconfig with an
    API-server client certificate signed by that CA. Patch the webhook URL for
-   actual cross-cluster reachability and set `clientConfig.caBundle` to the
-   serving CA. No empty or guessed trust defaults are accepted.
+   actual cross-cluster reachability and set every entry's
+   `clientConfig.caBundle` to the serving CA. All four entries must have the same
+   client configuration. No empty or guessed trust defaults are accepted.
 3. Install the host retention policies. Bootstrap the ledger **once**, using
    create, never apply/upsert, with environment-matching authority and sorted
    projects. Its initial JSON has `authority`, `projects`, `entries: []` and
@@ -194,7 +244,13 @@ real credentials or certificates are supplied by this repository:
 4. Quiesce provider inventory/capacity writes while installing the root webhook
    and service. Validate the complete provider scope and legacy inventory before
    reopening writes. Unavailable TLS, credentials, ledger or service leave
-   creates blocked. Readiness is process reachability, not asset eligibility.
+   in-scope writes blocked. The API server must support webhook CEL match
+   conditions; preserve the packaged conditions, including the exact sorted
+   provider-name lists matching `--provider-projects` and the private ledger.
+   Do not replace them with namespace/object label selectors. A missing or
+   mismatched fence also prevents registration startup/admission; this does not
+   authorize unquiesced partial installation or deletion of admission policy.
+   Readiness is process reachability, not asset eligibility.
 5. Before rolling out the UI, verify caller-preserving project routing, named
    Device read denial, registration denial, direct write/status/delete fences,
    TLS rejection, and duplicate concurrency in the target environment. This
@@ -215,10 +271,38 @@ Tests cover concurrent CAS, serial/UUID/provider aliases and provider projects,
 stale UID/RV, Device deletion fences, namespace/Project recreation, permission
 revocation, unknown commit and restart, copied-annotation incarnation conflicts,
 real API-assigned UID binding, direct mutation fences and no public effects.
+Regression coverage also includes real successful unchanged updates retaining
+their RV followed by `Recorded` registration, genuine-edit/stale-selection
+controls, preservation of pending real-update fences, and transport-outage
+isolation for Device writes and namespace/Project deletion. The original reviewer
+reproduction is retained byte-for-byte in
+`internal/registration/testdata/review_adversarial_test.go.txt`; it is evidence,
+not an executable regression because it asserts the former outage failure and
+assumes the no-op registration failed before its same-asset control. Derived
+regressions use separate assets and assert the corrected behavior.
 Envtest exercises the production authorization function against real SARs,
 the packaged validating webhook, and the host retention policies against a
-disposable API server. TLS tests reject unauthenticated webhook transport. It is not a live Milo
+disposable API server. The outage regression uses a minimal Project CRD solely
+to exercise root deletion admission and disables envtest's built-in
+NamespaceLifecycle plugin so its independent ban on deleting `default` cannot
+mask the webhook test. It uses dry-run deletion for shared `default`, and actual
+deletion for unrelated namespaces/Projects. This does not alter production
+admission plugins. The trust-boundary test imports the pinned Milo routing
+filters (their test-build transitive dependencies are now recorded in `go.mod`).
+TLS tests reject unauthenticated webhook transport. It is not a live Milo
 deployment or independent security review. Frontend tests use real session
 components and mocked transport. Run the existing Go/envtest, race, vet,
 provider/consumer test/typecheck/build, manifest-isolation and documentation
 checks described in the [development guide](README.md#build-test-and-run).
+
+### Review-fix validation, November 22, 2026
+
+- Full `go test -race ./...` with Kubernetes 1.37.0 envtest assets, `go vet ./...`,
+  and `go build ./cmd/...` pass locally.
+- Provider tests: 693 pass; consumer tests: 44 pass. Both typechecks and builds
+  pass. One initial provider timing failure under concurrent validation load
+  passed on a full rerun without modifying UI code or reviewer tests.
+- Production and synthetic manifest renders, overlay isolation tests,
+  standalone/synthetic render checks, documentation links and whitespace pass.
+- These are local checks, not live Milo acceptance or independent re-review.
+  No deployment, merge, live resource mutation, or ledger migration was performed.
