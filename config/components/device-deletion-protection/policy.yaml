@@ -1,0 +1,34 @@
+# Devices are never deleted where this component is installed. Retire a
+# machine through its capacity staying Disabled instead. The API server runs
+# admission once per object for deletecollection, garbage collection and
+# namespace or project cleanup, so every one of those paths is denied too.
+# There are no exemptions: an environment that needs Device deletion does not
+# install this component.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fleet-device-deletion-protection
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [fleet.datumapis.com]
+        apiVersions: ['*']
+        operations: [DELETE]
+        resources: [devices]
+  validations:
+    - expression: 'false'
+      reason: Forbidden
+      message: >-
+        Devices cannot be deleted in this environment. Their identity must stay
+        visible to duplicate-hardware checks. Leave the Device in place and
+        keep its capacity Disabled.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fleet-device-deletion-protection
+spec:
+  policyName: fleet-device-deletion-protection
+  validationActions: [Deny]

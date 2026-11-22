@@ -1,0 +1,9 @@
+# Production-style Milo root: config/milo plus Device deletion protection.
+# Environments that need Device deletions, such as test and staging control
+# planes, consume config/milo instead.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../milo
+components:
+  - ../components/device-deletion-protection

@@ -1,0 +1,7 @@
+# Optional: install wherever Device objects are admitted (the Milo control
+# plane) in environments that must never lose a Device. See
+# docs/development/inventory-capacity-registration.md#device-deletion-protection.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - policy.yaml

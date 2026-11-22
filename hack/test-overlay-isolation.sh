@@ -417,4 +417,42 @@ EOF
 expect_failure "intentional Kustomize build failure" "missing.yaml"
 rm -rf "$fixture_root/config/overlays/broken"
 
+# Device deletion protection is per environment: only production-style roots
+# may render it, and once the component exists they must.
+mkdir -p "$fixture_root/config/components/device-deletion-protection"
+cp "$repo_root/config/components/device-deletion-protection/kustomization.yaml" "$repo_root/config/components/device-deletion-protection/policy.yaml" "$fixture_root/config/components/device-deletion-protection/"
+expect_failure "deletion component without a production-style root" "production-style root milo-production must exist"
+mkdir -p "$fixture_root/config/milo-production"
+cat >"$fixture_root/config/milo-production/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../base/safe]
+EOF
+expect_failure "production-style root without deletion protection" "must install the Device deletion policy and its binding"
+cat >>"$fixture_root/config/milo-production/kustomization.yaml" <<'EOF'
+components: [../components/device-deletion-protection]
+EOF
+"$repo_root/hack/validate-overlay-isolation.sh" "$fixture_root/config" "$fixture_root/config/standalone"
+mkdir -p "$fixture_root/config/overlays/synthetic-with-protection"
+cat >"$fixture_root/config/overlays/synthetic-with-protection/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base/safe]
+components: [../../components/device-deletion-protection]
+EOF
+expect_failure "test or synthetic root installing deletion protection" "renders Device deletion protection"
+rm -rf "$fixture_root/config/overlays/synthetic-with-protection"
+mkdir -p "$fixture_root/config/overlays/renamed-protection"
+sed 's/name: fleet-device-deletion-protection/name: renamed-device-guard/; s/policyName: fleet-device-deletion-protection/policyName: renamed-device-guard/' "$repo_root/config/components/device-deletion-protection/policy.yaml" >"$fixture_root/config/overlays/renamed-protection/policy.yaml"
+cat >"$fixture_root/config/overlays/renamed-protection/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [policy.yaml]
+EOF
+expect_failure "renamed Device deletion policy outside production roots" "renders Device deletion protection"
+rm -rf "$fixture_root/config/overlays/renamed-protection"
+sed 's/validationActions: \[Deny\]/validationActions: [Audit]/' "$repo_root/config/components/device-deletion-protection/policy.yaml" >"$fixture_root/config/components/device-deletion-protection/policy.yaml"
+expect_failure "audit-only Device deletion binding" "must Deny in every namespace"
+cp "$repo_root/config/components/device-deletion-protection/policy.yaml" "$fixture_root/config/components/device-deletion-protection/policy.yaml"
+
 "$repo_root/hack/validate-overlay-isolation.sh" "$fixture_root/config" "$fixture_root/config/standalone"
