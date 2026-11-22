@@ -1,0 +1,9 @@
+# The registration ledger root and its sealed segments live alone in this
+# namespace. Only the registration service account is granted Secret access
+# here, and it has no Secret access in fleet-system-private.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-registration-ledger
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled

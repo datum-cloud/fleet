@@ -63,7 +63,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if err := api.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "fleet-system-private"}}); err != nil {
+	if err := api.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: LedgerNamespace}}); err != nil {
 		t.Fatal(err)
 	}
 	device := &inventory.Device{TypeMeta: metav1.TypeMeta{APIVersion: inventory.GroupVersion.String(), Kind: "Device"}, ObjectMeta: metav1.ObjectMeta{Name: "hardware", Namespace: "default"}, Spec: inventory.DeviceSpec{ClaimRef: inventory.LocalReference{Name: "installation"}, Identity: inventory.DeviceIdentity{Model: "test", Serial: "serial-1", SystemUUID: "11111111-1111-1111-1111-111111111111"}}}
@@ -71,7 +71,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(Ledger{Authority: "milo", Projects: []string{"datum-cloud"}})
-	if err := api.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: "fleet-system-private"}, Data: map[string][]byte{"ledger.json": encoded}}); err != nil {
+	if err := api.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: LedgerNamespace}, Data: map[string][]byte{"ledger.json": encoded}}); err != nil {
 		t.Fatal(err)
 	}
 	protection, err := os.ReadFile("../../config/base/registration/protection.yaml")
@@ -94,7 +94,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 	}
 	protectionDeadline := time.Now().Add(10 * time.Second)
 	for {
-		probe := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: "fleet-system-private"}}
+		probe := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: LedgerName, Namespace: LedgerNamespace}}
 		err := api.Delete(ctx, probe, client.DryRunAll)
 		if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
 			break
@@ -105,7 +105,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 	}
 	for {
-		probe := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "fleet-system-private"}}
+		probe := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: LedgerNamespace}}
 		err := api.Delete(ctx, probe, client.DryRunAll)
 		if apierrors.IsInvalid(err) || apierrors.IsForbidden(err) {
 			break
@@ -122,7 +122,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	var denied atomic.Bool
-	handler := &Handler{Store: Store{Client: private, Namespace: "fleet-system-private", Authority: "milo", Projects: []string{"datum-cloud"}}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }, Resolve: func(context.Context, string) (Project, error) {
+	handler := &Handler{Store: Store{Client: private, Namespace: LedgerNamespace, Authority: "milo", Projects: []string{"datum-cloud"}}, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, api, []string{"datum-cloud"}) }, Resolve: func(context.Context, string) (Project, error) {
 		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api}, nil
 	}, Authorize: func(ctx context.Context, project Project, actor authenticationv1.UserInfo, group, resource, name string) error {
 		if denied.Load() {
@@ -258,7 +258,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		t.Fatalf("inventory namespace deletion bypass: %v", err)
 	}
 	var privateNamespace corev1.Namespace
-	if err := api.Get(ctx, client.ObjectKey{Name: "fleet-system-private"}, &privateNamespace); err != nil {
+	if err := api.Get(ctx, client.ObjectKey{Name: LedgerNamespace}, &privateNamespace); err != nil {
 		t.Fatal(err)
 	}
 	if err := api.Delete(ctx, &privateNamespace); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
@@ -335,7 +335,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	segment := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: route.Segments[0].Name, Namespace: "fleet-system-private"}}
+	segment := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: route.Segments[0].Name, Namespace: LedgerNamespace}}
 	if err := api.Delete(ctx, segment); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
 		t.Fatal("segment deletion bypass", err)
 	}
@@ -351,7 +351,7 @@ func TestRealAPIServerAdmissionAndCAS(t *testing.T) {
 		t.Fatal("v2 format downgrade bypass", err)
 	}
 	for _, name := range []string{"arbitrary-credential", LedgerName, SegmentPrefix + "mutable"} {
-		probe := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "fleet-system-private", Name: name}}
+		probe := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: LedgerNamespace, Name: name}}
 		if err := private.Create(ctx, probe); !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
 			t.Fatal("service create boundary bypass", name, err)
 		}

@@ -87,9 +87,32 @@ func projectName(actor authenticationv1.UserInfo) (string, error) {
 	return values[0], nil
 }
 
-func (handler *Handler) Handle(ctx context.Context, request admission.Request) admission.Response {
+// admissionSnapshot reads the root once and derives both the activation
+// verdict and the ledger from that single read, so one admission attempt does
+// not download and merge the full ledger twice.
+func (handler *Handler) admissionSnapshot(ctx context.Context) (*corev1.Secret, Ledger, error) {
+	secret, route, err := handler.Store.root(ctx)
+	if err != nil {
+		return nil, Ledger{}, err
+	}
 	if !handler.Store.AllowInactiveForTests {
-		if err := handler.Ready(ctx); err != nil {
+		if err := handler.readyControls(ctx, secret, route); err != nil {
+			return nil, Ledger{}, err
+		}
+	}
+	ledger, err := handler.Store.ledgerFrom(ctx, secret)
+	if err != nil {
+		return nil, Ledger{}, fmt.Errorf("registration unavailable: %w", err)
+	}
+	return secret, ledger, nil
+}
+
+func (handler *Handler) Handle(ctx context.Context, request admission.Request) admission.Response {
+	var secret *corev1.Secret
+	var ledger Ledger
+	if !handler.Store.AllowInactiveForTests {
+		var err error
+		if secret, ledger, err = handler.admissionSnapshot(ctx); err != nil {
 			return admission.Denied(err.Error())
 		}
 	}
@@ -122,7 +145,16 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 		return admission.Denied("admission operation identity is required")
 	}
 	for attempt := 0; attempt < 6; attempt++ {
-		err = handler.evaluate(ctx, name, request)
+		// The first attempt reuses the root read that passed activation. A
+		// conflict means the root moved, so every retry rereads it and
+		// re-verifies activation against the new root.
+		if secret == nil {
+			secret, ledger, err = handler.admissionSnapshot(ctx)
+		}
+		if err == nil {
+			err = handler.evaluate(ctx, name, request, secret, ledger)
+		}
+		secret = nil
 		if !apierrors.IsConflict(err) {
 			break
 		}
@@ -136,15 +168,11 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 	return admission.Allowed("inert inventory registration only; no availability or preparation authority")
 }
 
-func (handler *Handler) evaluate(ctx context.Context, name string, request admission.Request) error {
+func (handler *Handler) evaluate(ctx context.Context, name string, request admission.Request, secret *corev1.Secret, ledger Ledger) error {
 	if handler.VerifyFence != nil {
 		if err := handler.VerifyFence(ctx); err != nil {
 			return err
 		}
-	}
-	secret, ledger, err := handler.Store.Read(ctx)
-	if err != nil {
-		return fmt.Errorf("registration unavailable: %w", err)
 	}
 	if _, exists := secret.Data["routing.json"]; exists {
 		route, err := decodeRouting(secret)
@@ -343,6 +371,7 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	} else {
 		device = old
 	}
+	removesFinalizer := request.Operation == admissionv1.Update && finalizerRemoval(request.OldObject.Raw, request.Object.Raw)
 	for _, entry := range ledger.Entries {
 		bound := entry.Project == project.Identity.RouteName && entry.DeviceUID == device.UID
 		if entry.Project == project.Identity.RouteName && device.Namespace == "default" && entry.DeviceName == device.Name && !bound {
@@ -350,6 +379,12 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 		}
 		if bound && (entry.ProjectUID != project.Identity.UID || request.Operation == admissionv1.Delete) {
 			return ErrConflict
+		}
+		// A finalizer removal lets a deleting Device complete its deletion and
+		// would tombstone it while a registration still binds it. Deny it
+		// whatever the deletion state, so the binding is never bypassed.
+		if bound && removesFinalizer {
+			return errors.New("registered Device finalizers are retained; the bound registration requires operator reconciliation")
 		}
 		if overlaps(entry.Aliases, aliases(&device)) && !bound {
 			return ErrConflict
@@ -375,11 +410,12 @@ func (handler *Handler) device(ctx context.Context, project Project, request adm
 	if request.Operation == admissionv1.Update && identicalObjects(request.OldObject.Raw, request.Object.Raw) {
 		return nil
 	}
-	// Deletes and finalizer removals are how a terminating namespace drains its
-	// Devices, so they must not depend on the namespace still being live.
-	releasing := request.Operation == admissionv1.Delete || (request.Operation == admissionv1.Update && finalizerRemoval(request.OldObject.Raw, request.Object.Raw))
-	deleting := request.Operation == admissionv1.Delete || (releasing && !old.DeletionTimestamp.IsZero())
-	namespaceUID, err := deviceNamespace(ctx, project, device, ledger, releasing)
+	// Deletes, and finalizer removals from an already-deleting Device, are how a
+	// terminating namespace drains its Devices, so they must not depend on the
+	// namespace still being live. Removing a finalizer from a Device that is not
+	// being deleted is an ordinary edit and still requires a live namespace.
+	deleting := request.Operation == admissionv1.Delete || (removesFinalizer && !old.DeletionTimestamp.IsZero())
+	namespaceUID, err := deviceNamespace(ctx, project, device, ledger, deleting)
 	if err != nil {
 		return err
 	}

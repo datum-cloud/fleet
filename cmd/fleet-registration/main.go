@@ -30,7 +30,7 @@ func main() {
 	var configFile, providers, privateNamespace, cert, key, clientCA, controlKey, controlRequest string
 	flag.StringVar(&configFile, "config", "", "Fleet manager discovery configuration")
 	flag.StringVar(&providers, "provider-projects", "", "complete comma-separated provider identity scope, fixed in the private ledger")
-	flag.StringVar(&privateNamespace, "private-namespace", "fleet-system-private", "private registration ledger namespace")
+	flag.StringVar(&privateNamespace, "private-namespace", registration.LedgerNamespace, "dedicated registration ledger namespace; never the manager private-record namespace")
 	flag.StringVar(&cert, "tls-cert", "/etc/fleet/registration/tls.crt", "serving certificate")
 	flag.StringVar(&key, "tls-key", "/etc/fleet/registration/tls.key", "serving key")
 	flag.StringVar(&clientCA, "client-ca", "/etc/fleet/registration/client-ca.crt", "CA dedicated to trusted API-server webhook clients")

@@ -12,7 +12,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -70,6 +69,9 @@ func decodeRouting(secret *corev1.Secret) (Routing, error) {
 	return route, nil
 }
 
+// readSnapshot returns the merged ledger and the sealed base for one root
+// read. Sealed segments come from the verified segment cache; any missing,
+// replaced or corrupt segment is an error, never an empty partition.
 func (store Store) readSnapshot(ctx context.Context, secret *corev1.Secret) (Ledger, Ledger, error) {
 	base := Ledger{Authority: store.Authority, Projects: store.Projects}
 	key := "ledger.json"
@@ -79,25 +81,8 @@ func (store Store) readSnapshot(ctx context.Context, secret *corev1.Secret) (Led
 			return Ledger{}, Ledger{}, err
 		}
 		key = "tail.json"
-		for index, reference := range route.Segments {
-			if reference.Name != segmentName(secret.UID, uint64(index)) || reference.UID == "" {
-				return Ledger{}, Ledger{}, errors.New("invalid segment identity")
-			}
-			segment := &corev1.Secret{}
-			if err := store.Client.Get(ctx, client.ObjectKey{Namespace: store.Namespace, Name: reference.Name}, segment); err != nil {
-				return Ledger{}, Ledger{}, err
-			}
-			if segment.UID != reference.UID || segment.Immutable == nil || !*segment.Immutable || !segment.DeletionTimestamp.IsZero() || digest(segment.Data["ledger.json"]) != reference.Digest {
-				return Ledger{}, Ledger{}, errors.New("segment lifetime or integrity unavailable")
-			}
-			var delta Ledger
-			if err := json.Unmarshal(segment.Data["ledger.json"], &delta); err != nil {
-				return Ledger{}, Ledger{}, err
-			}
-			if delta.Authority != store.Authority || !reflect.DeepEqual(delta.Projects, store.Projects) {
-				return Ledger{}, Ledger{}, errors.New("segment scope mismatch")
-			}
-			base = overlay(base, delta)
+		if base, err = store.sealed(ctx, secret, route); err != nil {
+			return Ledger{}, Ledger{}, err
 		}
 	}
 	var tail Ledger
@@ -110,15 +95,18 @@ func (store Store) readSnapshot(ctx context.Context, secret *corev1.Secret) (Led
 	return overlay(base, tail), base, nil
 }
 
-func fenceKey(fence DeviceFence) string {
-	encoded, _ := json.Marshal([]string{fence.Project, string(fence.UID)})
-	return string(encoded)
-}
-
 func overlay(base, tail Ledger) Ledger {
+	// Preallocated to avoid repeated growth at the full-ledger bound; empty
+	// results stay nil so encodings and comparisons are unchanged.
 	result := Ledger{Authority: base.Authority, Projects: base.Projects}
-	entries := map[types.UID]bool{}
-	fences := map[string]bool{}
+	if size := len(base.Entries) + len(tail.Entries); size > 0 {
+		result.Entries = make([]Entry, 0, size)
+	}
+	if size := len(base.DeviceFences) + len(tail.DeviceFences); size > 0 {
+		result.DeviceFences = make([]DeviceFence, 0, size)
+	}
+	entries := make(map[types.UID]bool, len(tail.Entries))
+	fences := make(map[string]bool, len(tail.DeviceFences))
 	for _, entry := range tail.Entries {
 		entries[entry.Operation] = true
 	}

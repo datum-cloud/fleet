@@ -1,4 +1,10 @@
 $patch: delete
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet-registration-ledger
+---
+$patch: delete
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,14 +30,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: fleet-registration-ledger
-  namespace: fleet-system-private
+  namespace: fleet-registration-ledger
 ---
 $patch: delete
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: fleet-registration-ledger
-  namespace: fleet-system-private
+  namespace: fleet-registration-ledger
 ---
 $patch: delete
 apiVersion: admissionregistration.k8s.io/v1

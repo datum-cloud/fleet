@@ -15,7 +15,7 @@ API servers and must be reconciled independently.
 | Root | Destination | Contents |
 | --- | --- | --- |
 | `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, and the mandatory capacity-registration webhook |
-| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, private-record namespaces, and admission fences |
+| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, private-record and registration-ledger namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
 The synthetic staging overlay explicitly excludes the inert-registration
@@ -35,7 +35,9 @@ gate, byte budgets and ordered parent infrastructure work. Pod TCP readiness is
 transport-only; it must not enable UI registration.
 
 The separate `fleet-registration` Deployment serves inert inventory-backed
-capacity admission only. Its TLS trust, read/SAR credentials, webhook serving CA
+capacity admission only. Its ledger lives in the dedicated
+`fleet-registration-ledger` namespace, and it has no Secret access in
+`fleet-system-private`. Its TLS trust, read/SAR credentials, webhook serving CA
 and one-time private ledger bootstrap are environment-owned. Read the
 [registration rollout contract](../docs/development/inventory-capacity-registration.md#production-packaging-and-rollout)
 before applying either root: an unavailable authority blocks capacity writes

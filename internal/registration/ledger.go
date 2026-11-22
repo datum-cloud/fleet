@@ -15,6 +15,12 @@ import (
 
 const LedgerName = "fleet-capacity-registration-v1"
 
+// LedgerNamespace holds only the registration root and its sealed segments.
+// It is separate from the manager's private records namespace because RBAC
+// cannot restrict Secret reads to a name prefix: any get grant in a shared
+// namespace would expose every other Secret there.
+const LedgerNamespace = "fleet-registration-ledger"
+
 var ErrConflict = errors.New("registration conflicts with retained identity or an unknown operation; operator reconciliation is required")
 
 type Entry struct {
@@ -59,6 +65,9 @@ type Store struct {
 	Authority  string
 	Projects   []string
 	ControlKey ed25519.PublicKey
+	// Cache holds digest-verified sealed segments. Nil uses a process-wide
+	// default; it never changes what a read accepts, only what it re-decodes.
+	Cache *SegmentCache
 	// AllowInactiveForTests skips the signed activation gate. The zero value
 	// is gated; production wiring forces it off.
 	AllowInactiveForTests bool
@@ -69,14 +78,24 @@ func (store Store) Read(ctx context.Context) (*corev1.Secret, Ledger, error) {
 	if err := store.Client.Get(ctx, client.ObjectKey{Namespace: store.Namespace, Name: LedgerName}, secret); err != nil {
 		return nil, Ledger{}, err
 	}
-	ledger, _, err := store.readSnapshot(ctx, secret)
+	ledger, err := store.ledgerFrom(ctx, secret)
 	if err != nil {
 		return nil, Ledger{}, err
 	}
-	if secret.UID == "" || !secret.DeletionTimestamp.IsZero() || ledger.Authority != store.Authority || !reflect.DeepEqual(ledger.Projects, store.Projects) {
-		return nil, Ledger{}, errors.New("registration ledger lifetime or configured scope is unavailable")
-	}
 	return secret, ledger, nil
+}
+
+// ledgerFrom merges the ledger for an already-read root and checks its
+// lifetime and configured scope.
+func (store Store) ledgerFrom(ctx context.Context, secret *corev1.Secret) (Ledger, error) {
+	ledger, _, err := store.readSnapshot(ctx, secret)
+	if err != nil {
+		return Ledger{}, err
+	}
+	if secret.UID == "" || !secret.DeletionTimestamp.IsZero() || ledger.Authority != store.Authority || !reflect.DeepEqual(ledger.Projects, store.Projects) {
+		return Ledger{}, errors.New("registration ledger lifetime or configured scope is unavailable")
+	}
+	return ledger, nil
 }
 
 func (store Store) Write(ctx context.Context, secret *corev1.Secret, ledger Ledger) error {

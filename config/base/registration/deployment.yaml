@@ -47,6 +47,7 @@ spec:
           args:
             - --config=/etc/fleet/manager/config.yaml
             - --provider-projects=datum-cloud
+            - --private-namespace=fleet-registration-ledger
           ports:
             - name: https
               containerPort: 9443

@@ -18,14 +18,50 @@ production Milo Fail webhook without caBundle) must not be repaired by relaxing
 admission or changing host overlays indiscriminately. Existing Enabled capacity
 and synthetic consumers are not disposable acceptance fixtures.
 
+## Dedicated ledger namespace
+
+The root and every segment live in `fleet-registration-ledger`, a namespace that
+holds nothing else. RBAC cannot restrict Secret `get` or `create` to the
+`fleet-registration-segment-` name prefix. A namespace-wide grant in
+`fleet-system-private` would therefore expose the manager's private records to
+the registration service. The `fleet-registration-ledger` Role grants the service
+`get` and `create` on Secrets in that namespace only, plus `update` on the root.
+It has no Secret access in `fleet-system-private` or anywhere else. The ledger
+protection policy covers every Secret in the namespace: only the root and
+immutable service-created segments may exist there, and nothing may be deleted.
+The namespace protection policy forbids deleting either `fleet-registration-ledger`
+or `fleet-system-private`. `--private-namespace` defaults to
+`fleet-registration-ledger`, and the Deployment passes it explicitly.
+
+**No data migration is needed.** This namespace was chosen before the first
+deployment. No environment has run the registration service, so no root or
+segment exists in `fleet-system-private` to move. Bootstrap the root directly in
+`fleet-registration-ledger` (step 5 below). If a root is ever found in
+`fleet-system-private`, stop: do not copy, recreate or delete it, and escalate
+for a separately reviewed migration, because copying a Secret gives it a new UID
+and orphans its segment names.
+
 ## Single-CAS storage protocol
 
 The original `fleet-capacity-registration-v1` Secret and UID remain the sole CAS
 root. Version 2 adds `routing.json` and `tail.json`. Immutable Secrets named
 `fleet-registration-segment-<root-UID-digest-prefix>-<epoch>` retain sealed tails.
-Every read verifies segment name, UID, immutability, deletion state, payload digest
-and authority/provider scope. Missing/replaced/corrupt/unreadable storage is never
-an empty partition. The same root still serializes all aliases and provider projects.
+Missing/replaced/corrupt/unreadable storage is never an empty partition. The same
+root still serializes all aliases and provider projects.
+
+The first read of a segment fetches it in full and verifies name, UID,
+immutability, deletion state, payload digest and authority/provider scope before
+decoding. The decoded segment is then cached, keyed by name, UID and the digest
+the root references. Later reads fetch only each segment's metadata and require
+the same UID and no deletion timestamp. Kubernetes cannot change an immutable
+Secret's data under an unchanged UID, and a replacement gets a new UID. A root
+that references a different UID or digest therefore misses the cache and is
+verified again. Any mismatch, corruption or unreadable segment denies admission,
+and recovery leaves the affected outcomes unchanged (`Unknown` stays `Unknown`).
+Cold loads are serialized, so concurrent admissions after a restart decode each
+segment once. Each admission attempt reads the root once and uses that read for
+both the activation check and the ledger. A CAS conflict rereads the root and
+checks activation again.
 
 Segments are ordered overlays, not independently admitting hash shards. Groups
 are keyed by admission operation UID for registrations and Project route/Device UID
@@ -35,10 +71,14 @@ authoritative update/coalescing rules alone supersede pending versions. The writ
 also rejects dropping registrations, aliases, tombstones or known lifetime identity.
 New Device fences retain Project UID, namespace name/UID and Device name; missing
 legacy fields are not backfilled or proof of safe release. Creates and edits
-require a live namespace. Deletes and finalizer-only updates do not, so a
-terminating provider namespace can drain its Devices. They bind the terminating
-namespace's UID, or the UID already recorded once the namespace is gone, and
-still write a permanent tombstone. Registered Devices remain undeletable.
+require a live namespace. Deletes, and finalizer-only updates on a Device that
+already has a deletion timestamp, do not, so a terminating provider namespace can
+drain its Devices. They bind the terminating namespace's UID, or the UID already
+recorded once the namespace is gone, and still write a permanent tombstone.
+Finalizer-only updates on a Device that is not being deleted are ordinary edits
+and still require a live namespace. Registered Devices remain undeletable, and
+their finalizers cannot be removed, so no tombstone is written while a
+registration still binds the Device.
 
 An operator signs `expand`, binding exact root UID, resourceVersion, epoch,
 authority, sorted provider scope, change ID and reason. The service:
@@ -87,7 +127,11 @@ incarnations and failed registrations consume budget. Oversized requests cannot
 consume transition reserve. Segment retries target one name, not orphan snapshots.
 Maximum ledger payload is 16 × 750,000 + 650,000 bytes plus bounded control metadata.
 This deliberately retains complete provider scans and the single-root bottleneck;
-it is not a throughput qualification. Pod memory is bounded at 512 MiB.
+it is not a throughput qualification. Pod memory is bounded at 512 MiB. Without the
+segment cache, four concurrent reads at this bound allocated over 800 MiB. A test
+holds four concurrent warm reads under 64 MiB at the bound and proves they fetch
+no sealed segment payloads. The cache keeps at most twice `MaxSegments` decoded
+segments and two merged prefixes.
 
 The mTLS-only `/status` reports tail bytes, headroom, remaining segments, epoch,
 pending state, root UID/RV, scope and verified fence digest, without reservation
@@ -166,9 +210,10 @@ These steps require a separately approved infra PR; none authorizes live executi
    conceal legacy capacity or reuse manager root grants. Capacity writes remain
    globally fenced, including outside `datum-cloud`.
 2. Install retention policies before bootstrap or broader RBAC. The service gets
-   get/create Secrets in the dedicated private namespace and update only on the
-   root. Fail host admission restricts its creates to immutable segment names;
-   it cannot create the root/arbitrary Secrets or update/delete segments. Prove
+   get/create Secrets in the dedicated `fleet-registration-ledger` namespace and
+   update only on the root. It gets no Secret access in `fleet-system-private`.
+   Fail host admission restricts its creates to immutable segment names; it
+   cannot create the root/arbitrary Secrets or update/delete segments. Prove
    negative cases and retain backups of **all** segments; never use GitOps to
    reconcile an empty root. Namespace/root deletion remains forbidden.
 3. Provision separate root/project read-and-SAR identities, serving SAN/CA,
@@ -181,8 +226,8 @@ These steps require a separately approved infra PR; none authorizes live executi
    Verify `/transportz` from the API-server route with trusted client TLS, and
    reject missing/untrusted clients. No public write is a health probe; never
    remove/relax the existing fence to test routing.
-5. Create the empty root once with exact authority and sorted projects in
-   `ledger.json`, after retention acceptance. Abort on AlreadyExists and inspect
+5. Create the empty root once in `fleet-registration-ledger` with exact
+   authority and sorted projects in `ledger.json`, after retention acceptance. Abort on AlreadyExists and inspect
    rather than replace. Existing v1 roots activate/migrate in place with the same UID.
 6. Wire Milo's dedicated webhook client and serving caBundle in environment-owned
    overlays. Verify complete Fail rules. Fetch `/status` over trusted transport
@@ -216,12 +261,24 @@ Five subprocess exits cover freeze, before/after segment persistence and
 before/after root switch, recovered by new processes. Missing/replaced segments
 fail closed. Existing identity, authorization, legacy and outage tests remain.
 
+The ledger protocol also runs as the impersonated registration service account
+with only the shipped Role, RoleBinding and policies, without `system:masters`.
+That test proves reads, writes, expansion and activation work, and that a `get`
+on a Secret in `fleet-system-private` is forbidden. Cache tests prove a changed
+UID, a changed digest, a deleted segment, a replacement segment and a mutable
+segment each deny, warm or cold. A load test at the sixteen-segment bound asserts
+the memory limit above. Other tests prove that a stale signed control is
+rejected by its signed resourceVersion before any root update, and that a
+registered Device cannot lose a finalizer. A non-deleting Device in a
+terminating namespace cannot lose one either.
+
 ```sh
 KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)" go test -race ./...
 go vet ./...
 go build ./...
 kustomize build config/milo >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
+kustomize build config/overlays/synthetic-staging >/dev/null
 ./hack/validate-overlay-isolation.sh
 ./hack/test-overlay-isolation.sh
 ./hack/validate-doc-links.sh

@@ -22,6 +22,9 @@ import (
 
 func NewHandler(store Store, root client.Client, template *rest.Config, scheme *runtime.Scheme) *Handler {
 	store.AllowInactiveForTests = false
+	if store.Cache == nil {
+		store.Cache = NewSegmentCache()
+	}
 	return &Handler{Store: store, VerifyFence: func(ctx context.Context) error { return VerifyFence(ctx, root, store.Projects) }, Resolve: func(ctx context.Context, name string) (Project, error) {
 		identity, err := manager.ResolveProjectIdentity(ctx, root, store.Authority, name)
 		if err != nil {

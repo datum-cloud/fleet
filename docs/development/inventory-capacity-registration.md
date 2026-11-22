@@ -104,9 +104,11 @@ ownership. Production allocation remains disabled independently.
 
 ## Serialization and recovery
 
-`fleet-capacity-registration-v1` is a separate host-cluster Secret in
-`fleet-system-private`; it is **not** allocation custody. The service updates only
-that root and can create/read immutable retained segments under the host policy.
+`fleet-capacity-registration-v1` is a separate host-cluster Secret in the
+dedicated `fleet-registration-ledger` namespace; it is **not** allocation custody
+and does not share `fleet-system-private` with the manager's private records.
+The service updates only that root and can create/read immutable retained
+segments under the host policy.
 The [storage and bootstrap protocol](registration-storage-rollout.md) adds signed
 lossless expansion and deny-only transport startup. Its JSON retains the actor, exact
 API-normalized create object, admission request UID, client operation ID,
@@ -278,7 +280,8 @@ real credentials or certificates are supplied by this repository:
    create, never apply/upsert, with environment-matching authority and sorted
    projects. Its initial JSON has `authority`, `projects`, `entries: []` and
    `deviceFences: []`. It is intentionally absent from GitOps resources so a
-   later reconcile cannot overwrite accumulated reservations. Do not label it
+   later reconcile cannot overwrite accumulated reservations. Create it in
+   `fleet-registration-ledger`, not `fleet-system-private`. Do not label it
    as legacy allocation custody (`fleet.datumapis.com/private-record`).
 4. Quiesce provider inventory/capacity writes while installing the root webhook
    and service. Validate the complete provider scope and legacy inventory before

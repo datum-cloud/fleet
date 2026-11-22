@@ -1,8 +1,11 @@
+# Secret get/create is namespace-wide because RBAC cannot express the segment
+# name prefix. That is safe only because this namespace holds nothing but the
+# ledger root and segments; never grant it in a shared namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: fleet-registration-ledger
-  namespace: fleet-system-private
+  namespace: fleet-registration-ledger
 rules:
   - apiGroups: ['']
     resources: [secrets]
@@ -16,7 +19,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: fleet-registration-ledger
-  namespace: fleet-system-private
+  namespace: fleet-registration-ledger
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

@@ -218,6 +218,16 @@ func (handler *Handler) Ready(ctx context.Context) error {
 }
 
 func (handler *Handler) readySnapshot(ctx context.Context, secret *corev1.Secret, route Routing) error {
+	if err := handler.readyControls(ctx, secret, route); err != nil {
+		return err
+	}
+	_, _, err := handler.Store.readSnapshot(ctx, secret)
+	return err
+}
+
+// readyControls verifies the retained activation and the installed fence for
+// one root read without merging the ledger.
+func (handler *Handler) readyControls(ctx context.Context, secret *corev1.Secret, route Routing) error {
 	if route.Pending != nil || route.Activation == nil {
 		return errors.New("registration is non-admitting: signed activation or expansion incomplete")
 	}
@@ -227,9 +237,5 @@ func (handler *Handler) readySnapshot(ctx context.Context, secret *corev1.Secret
 	if route.Activation.Request.Action != "activate" {
 		return errors.New("invalid activation action")
 	}
-	if err := handler.verifyActivation(ctx, *route.Activation); err != nil {
-		return err
-	}
-	_, _, err := handler.Store.readSnapshot(ctx, secret)
-	return err
+	return handler.verifyActivation(ctx, *route.Activation)
 }

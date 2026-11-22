@@ -12,7 +12,7 @@ spec:
         resources: [secrets]
   matchConditions:
     - name: registration-ledger
-      expression: request.namespace == 'fleet-system-private' && (request.name == 'fleet-capacity-registration-v1' || request.name.startsWith('fleet-registration-segment-') || request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-registration')
+      expression: request.namespace == 'fleet-registration-ledger'
   validations:
     - expression: >-
         (request.operation == 'CREATE' && request.name == 'fleet-capacity-registration-v1' && request.userInfo.username != 'system:serviceaccount:fleet-system:fleet-registration') ||
@@ -20,7 +20,7 @@ spec:
           (!has(oldObject.data) || !('routing.json' in oldObject.data) ||
             (has(object.data) && 'routing.json' in object.data && 'ledger.json' in object.data && object.data['ledger.json'] == oldObject.data['ledger.json']))) ||
         (request.operation == 'CREATE' && request.name.startsWith('fleet-registration-segment-') && request.userInfo.username == 'system:serviceaccount:fleet-system:fleet-registration' && has(object.immutable) && object.immutable)
-      message: Registration roots cannot be downgraded or deleted; only the service may update the root or create immutable retained segments.
+      message: The registration ledger namespace holds only the root and immutable segments; roots cannot be downgraded or deleted, and only the service may update the root or create retained segments.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -43,8 +43,8 @@ spec:
         operations: [DELETE]
         resources: [namespaces]
   validations:
-    - expression: request.name != 'fleet-system-private'
-      message: The private registration namespace contains permanent reservations and cannot be deleted.
+    - expression: "!(request.name in ['fleet-registration-ledger', 'fleet-system-private'])"
+      message: The registration ledger and private record namespaces contain permanent reservations and cannot be deleted.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
