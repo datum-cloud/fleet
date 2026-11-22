@@ -50,8 +50,8 @@ def source_id(value):
 
 
 def timestamp(value):
-    if not isinstance(value, str):
-        raise ValueError("invalid observation time")
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])", value):
+        raise ValueError("timestamp requires RFC3339 date-time")
     parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("timestamp requires timezone")
@@ -61,6 +61,35 @@ def timestamp(value):
 def identity(value):
     fields(value, ("system", "type", "id"))
     return tuple(text(value[key]) for key in ("system", "type", "id"))
+
+
+def validate_provenance(spec):
+    if not isinstance(spec, dict):
+        raise ValueError("invalid existing catalog spec")
+    provenance = spec.get("provenance")
+    fields(provenance, ("method", "recordedBy", "recordedAt"), ("reference", "source"))
+    if provenance["method"] not in ("Manual", "NetBoxImport"):
+        raise ValueError("invalid provenance method")
+    text(provenance["recordedBy"])
+    timestamp(provenance["recordedAt"])
+    if "reference" in provenance:
+        reference = provenance["reference"]
+        if not isinstance(reference, str) or not 1 <= len(reference) <= 1024:
+            raise ValueError("invalid provenance reference")
+    source = None
+    if "source" in provenance:
+        evidence = provenance["source"]
+        fields(evidence, ("system", "type", "id", "snapshotDigest", "mappingRevision", "observedAt"))
+        source = identity({key: evidence[key] for key in ("system", "type", "id")})
+        if not isinstance(evidence["snapshotDigest"], str) or not re.fullmatch(r"sha256:[a-f0-9]{64}", evidence["snapshotDigest"]):
+            raise ValueError("invalid provenance snapshot digest")
+        text(evidence["mappingRevision"])
+        timestamp(evidence["observedAt"])
+    if "sourceIdentity" in spec:
+        if provenance["method"] != "NetBoxImport" or identity(spec["sourceIdentity"]) != source:
+            raise ValueError("source identity contradicts provenance")
+    elif provenance["method"] == "NetBoxImport":
+        raise ValueError("imported catalog record requires source identity")
 
 
 def no_uid(value):
@@ -83,14 +112,15 @@ def plan(snapshot, mapping, existing, recorded_by, recorded_at):
         raise ValueError("catalog requires an explicit operator-managed DirectAPI target")
     revision = text(mapping["revision"])
     text(recorded_by)
-    if not isinstance(snapshot, dict) or snapshot.get("version") != 1 or snapshot.get("errors"):
+    if not isinstance(snapshot, dict) or type(snapshot.get("version")) is not int or snapshot["version"] != 1 or not isinstance(snapshot.get("errors"), dict) or snapshot["errors"]:
         raise ValueError("complete version-1 snapshot required")
     system = text(snapshot.get("source"))
     observed = snapshot.get("observedAt")
     if timestamp(recorded_at) < timestamp(observed):
         raise ValueError("recording predates observation")
     fields(existing, ("target", "collections", "items"))
-    if existing["target"] != target or sorted(existing["collections"]) != sorted(KINDS) or not isinstance(existing["items"], list):
+    collections = existing["collections"]
+    if existing["target"] != target or not isinstance(collections, list) or not all(isinstance(kind, str) for kind in collections) or sorted(collections) != sorted(KINDS) or not isinstance(existing["items"], list):
         raise ValueError("complete matching catalog snapshot required")
     objects = snapshot.get("objects")
     if not isinstance(objects, dict):
@@ -113,7 +143,8 @@ def plan(snapshot, mapping, existing, recorded_by, recorded_at):
             raise ValueError("invalid existing catalog record")
         meta, spec = record.get("metadata", {}), record.get("spec", {})
         no_uid(spec)
-        if meta.get("namespace") != target["namespace"] or not name_ok(meta.get("name")) or meta.get("deletionTimestamp"):
+        validate_provenance(spec)
+        if not isinstance(meta, dict) or meta.get("namespace") != target["namespace"] or not name_ok(meta.get("name")) or meta.get("deletionTimestamp"):
             raise ValueError("invalid or terminating existing target")
         key = (record["kind"], meta["name"])
         if key in records:

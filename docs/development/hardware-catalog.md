@@ -110,6 +110,10 @@ are handled by refreshing the snapshot. Conflicting existing records, alias or
 canonical-name collisions, duplicate normalized model pairs, missing references,
 malformed inputs, unknown mapping fields and duplicate JSON keys quarantine the
 **entire cohort** with no candidates. Source/catalog evidence stays private.
+Snapshot version must be an integer and collection attestations must be lists.
+Existing-record provenance and source identity must validate before deduplication
+ignores changing receipt fields. Observation and recording timestamps use strict
+RFC3339 date-times; broader Python ISO formats are rejected rather than emitted.
 
 Output is a review envelope, not an automatically applied Kubernetes List.
 The approved owner must re-read authorization, existing identities and conflicts

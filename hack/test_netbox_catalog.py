@@ -25,6 +25,69 @@ def plan(snapshot, mapping, existing):
 
 
 class CatalogTests(unittest.TestCase):
+    def test_snapshot_envelope_types(self):
+        for value in (True, 1.0, "1", None):
+            snapshot, mapping, existing = fixture()
+            snapshot["version"] = value
+            with self.subTest(version=value), self.assertRaises(ValueError):
+                plan(snapshot, mapping, existing)
+        for value in (None, False, [], ""):
+            snapshot, mapping, existing = fixture()
+            snapshot["errors"] = value
+            with self.subTest(errors=value), self.assertRaises(ValueError):
+                plan(snapshot, mapping, existing)
+        for value in ({"Manufacturer": False, "DeviceType": False}, None, [None, "DeviceType"], ["Manufacturer", "Manufacturer", "DeviceType"]):
+            snapshot, mapping, existing = fixture()
+            existing["collections"] = value
+            with self.subTest(collections=value), self.assertRaises(ValueError):
+                plan(snapshot, mapping, existing)
+
+    def test_provenance_validates_before_duplicate_comparison(self):
+        mutations = [
+            ("method", "Manual"), ("method", "Unknown"), ("recordedBy", ""),
+            ("recordedAt", "20261121T000000+0000"), ("source", None),
+            ("reference", ""), ("reference", "x" * 1025), ("extra", "field"),
+        ]
+        for key, value in mutations:
+            snapshot, mapping, existing = fixture()
+            existing["items"] = plan(snapshot, mapping, existing)["items"][:1]
+            existing["items"][0]["spec"]["provenance"][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                plan(snapshot, mapping, existing)
+        for key, value in (("system", "other"), ("type", "other"), ("id", "999"), ("snapshotDigest", "invalid"), ("mappingRevision", ""), ("observedAt", "20261121T000000+0000"), ("extra", "field")):
+            snapshot, mapping, existing = fixture()
+            existing["items"] = plan(snapshot, mapping, existing)["items"][:1]
+            existing["items"][0]["spec"]["provenance"]["source"][key] = value
+            with self.subTest(source_key=key), self.assertRaises(ValueError):
+                plan(snapshot, mapping, existing)
+
+    def test_valid_historical_receipt_is_not_replaced(self):
+        snapshot, mapping, existing = fixture()
+        existing["items"] = plan(snapshot, mapping, existing)["items"][:1]
+        provenance = existing["items"][0]["spec"]["provenance"]
+        provenance["recordedBy"] = "original-operator"
+        provenance["source"]["mappingRevision"] = "original-review"
+        provenance["source"]["snapshotDigest"] = "sha256:" + "0" * 64
+        retained = copy.deepcopy(existing)
+        self.assertEqual(["DeviceType"], [item["kind"] for item in plan(snapshot, mapping, existing)["items"]])
+        self.assertEqual(retained, existing)
+
+    def test_timestamp_syntax_for_observation_and_recording(self):
+        for value in ("20261121T000000+0000", "2026-11-21 00:00:00Z", "2026-11-21T00:00:00", "2026-11-21T00:00:00+00:99", "2026-11-21T00:00:00+24:00", "2026-02-30T00:00:00Z", True):
+            for field in ("observedAt", "recordedAt"):
+                snapshot, mapping, existing = fixture()
+                recorded = "2026-11-21T01:00:00Z"
+                if field == "observedAt":
+                    snapshot[field] = value
+                else:
+                    recorded = value
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    catalog.plan(snapshot, mapping, existing, "synthetic", recorded)
+        snapshot, mapping, existing = fixture()
+        snapshot["observedAt"] = "2026-11-21T00:00:00.123+00:00"
+        result = catalog.plan(snapshot, mapping, existing, "synthetic", "2026-11-20T20:00:00-05:00")
+        self.assertEqual(2, len(result["items"]))
+
     def test_punctuated_human_names_are_not_resource_names(self):
         snapshot, mapping, existing = fixture()
         snapshot["objects"]["dcim/manufacturers"][0]["name"] = "Example Vendor, Inc."
@@ -137,6 +200,30 @@ class CatalogTests(unittest.TestCase):
             result = subprocess.run(["python3", str(Path(catalog.__file__)), "--snapshot", files[0], "--mapping", files[1], "--existing", files[2], "--recorded-by", "synthetic", "--recorded-at", "2026-11-21T01:00:00Z"], capture_output=True, text=True)
             self.assertEqual(1, result.returncode)
             self.assertEqual([], json.loads(result.stdout)["items"])
+
+    def test_cli_quarantines_invalid_existing_evidence_without_partial_candidates(self):
+        for mutation in ("missing-provenance", "source-mismatch", "collections", "timestamp"):
+            snapshot, mapping, existing = fixture()
+            existing["items"] = plan(snapshot, mapping, existing)["items"][:1]
+            if mutation == "missing-provenance":
+                del existing["items"][0]["spec"]["provenance"]
+            elif mutation == "source-mismatch":
+                existing["items"][0]["spec"]["provenance"]["source"]["id"] = "999"
+            elif mutation == "collections":
+                existing["collections"] = {"Manufacturer": False, "DeviceType": False}
+            else:
+                snapshot["observedAt"] = "20261121T000000+0000"
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                files = []
+                for index, value in enumerate((snapshot, mapping, existing)):
+                    path = Path(directory) / f"{index}.json"
+                    path.write_text(json.dumps(value))
+                    files.append(str(path))
+                result = subprocess.run(["python3", str(Path(catalog.__file__)), "--snapshot", files[0], "--mapping", files[1], "--existing", files[2], "--recorded-by", "synthetic", "--recorded-at", "2026-11-21T01:00:00Z"], capture_output=True, text=True)
+                self.assertEqual(1, result.returncode)
+                report = json.loads(result.stdout)
+                self.assertTrue(report["quarantined"])
+                self.assertEqual([], report["items"])
 
 
 if __name__ == "__main__":
