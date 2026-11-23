@@ -32,8 +32,8 @@ export interface CapturePage {
   element?: string;
   /** Viewport names to capture; defaults to every viewport that is not opt-in. */
   viewports?: string[];
-  /** A selector to click (tap, on touch viewports) after `ready`, such as a port tile to open its card. */
-  click?: string;
+  /** Selectors to click (tap, on touch viewports) in order after `ready`, such as a port tile and then its card's More. */
+  click?: string | string[];
 }
 
 export const VIEWPORTS: Viewport[] = [
@@ -83,6 +83,8 @@ export const PAGES: CapturePage[] = [
   { name: 'ports-server', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-leaf', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-leaf-card', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', click: tile('swp49'), viewports: CONNECTION_VIEWPORTS },
+  // The same breakout card with More open: record names, connector and source.
+  { name: 'ports-leaf-card-more', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', click: [tile('swp49'), '.inventory-port-card-more > button'], viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-server-conflict-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('eth1'), viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-denied-peer-card', path: record('Device', 'example-srv-a01-01', '&fixture=power-feeds-denied'), ready: '.inventory-port-grid', click: tile('psu-2'), viewports: CONNECTION_VIEWPORTS },
   // The same shared faceplate in the rack side panel: the leaf's unlabelled tiles, and an open card.

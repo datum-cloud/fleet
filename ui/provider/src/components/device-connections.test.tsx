@@ -167,7 +167,9 @@ describe('DeviceConnections', () => {
     expect(within(card()).getByText('Health').nextElementSibling).toHaveTextContent('No health reported');
     expect(within(card()).getByRole('link', { name: 'pwr-01' })).toHaveAttribute('href', '/inventory?kind=Cable&record=pwr-01&namespace=default');
     expect(within(card()).getByRole('link', { name: 'Hidden feed · Outlet 7' })).toHaveAttribute('href', '/inventory?kind=PowerFeed&record=feed-hidden&namespace=default');
-    // Full resource names live only here.
+    // Full resource names live only behind the card's More.
+    expect(within(card()).queryByText('feed-hidden')).toBeNull();
+    fireEvent.click(within(card()).getByRole('button', { name: 'More' }));
     expect(within(card()).getByText('feed-hidden').tagName).toBe('CODE');
 
     fireEvent.keyDown(psu1, { key: 'ArrowRight' });
@@ -225,6 +227,11 @@ describe('DeviceConnections', () => {
     // Only the Cable is a link; the peer has no name, link or record name.
     expect(within(card()).getAllByRole('link').map(link => link.textContent)).toEqual(['pwr-01']);
     expect(within(card()).queryByText('Peer record')).toBeNull();
+    // More lists the Cable record but never the denied peer's.
+    fireEvent.click(within(card()).getByRole('button', { name: 'More' }));
+    expect(within(card()).getByText('Cable record')).toBeInTheDocument();
+    expect(within(card()).queryByText('Peer record')).toBeNull();
+    expect(card().textContent).not.toMatch(HIDDEN_FEED);
     for (const target of tiles()) { fireEvent.focus(target); fireEvent.click(target); }
     expect(view.container.textContent).not.toMatch(HIDDEN_FEED);
     expect(accessibleNames(view.container)).not.toMatch(HIDDEN_FEED);
@@ -256,10 +263,17 @@ describe('DeviceConnections', () => {
       'eth1: Cable recorded, to Unnamed device #b8a7 · eth0, via Copper cable #a1c0',
       'PSU1-A: Cable recorded, to pdu-a.rk105.yul3 · Outlet 1, via Power cable',
     ]);
-    // The resource names are in the pinned card only.
+    // The card leads with the answer; resource names are only behind More.
     fireEvent.click(tiles()[0]);
+    expect(card()).toHaveTextContent('● Cable recorded→ Unnamed device #7a96 · eth0 via Copper cable #295e');
+    expect(card().textContent).not.toMatch(/netbox-|Connector|Cable record(?!ed)|Peer record/);
+    const more = within(card()).getByRole('button', { name: 'More' });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(more);
+    expect(within(card()).getByRole('button', { name: 'Less' })).toHaveAttribute('aria-expanded', 'true');
     expect(within(card()).getByText('netbox-ca213d185ea9153b853f295e').tagName).toBe('CODE');
     expect(within(card()).getByText(hostA).tagName).toBe('CODE');
+    expect(card()).toHaveTextContent('Cable records, not live link state');
     fireEvent.click(within(card()).getByRole('button', { name: /^Close/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     expect(diagram()).toHaveTextContent('EX-9');

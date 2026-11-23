@@ -60,6 +60,25 @@ describe('DeviceFaceplate', () => {
     expect(screen.getByRole('dialog', { name: 'swp37 details' })).toHaveTextContent('No health reported');
   });
 
+  it('leads a breakout card with the answer and keeps record names behind More', () => {
+    const { inventory, device } = named(FIXTURE_NAMES.leaf);
+    render(<MemoryRouter><DeviceFaceplate device={device} inventory={inventory} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /^swp49:/ }));
+    const card = screen.getByRole('dialog', { name: 'swp49 details' });
+    // One shared Cable by display name, then one state and peer per lane.
+    expect(within(card).getByRole('link', { name: 'Breakout swp49' })).toBeInTheDocument();
+    expect(within(card).getAllByText(/^→/)).toHaveLength(4);
+    expect(card.textContent).not.toMatch(/example-|Peer record|Connector/);
+    expect(card.textContent!.indexOf('No health reported')).toBeLessThan(card.textContent!.indexOf('More'));
+    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
+    expect(within(card).getAllByText('Cable record')).toHaveLength(1);
+    expect(within(card).getByText('example-brk-swp49').tagName).toBe('CODE');
+    expect(within(card).getAllByText('Peer record')).toHaveLength(4);
+    expect(card).toHaveTextContent('QSFP28 · 4 positions');
+    // The shared Cable's medium, not one lane's.
+    expect(card.textContent).not.toMatch(/lane \d of 4/);
+  });
+
   it('keeps every state unknown, never "no cable", when Cables are denied', () => {
     const { inventory, device } = named(FIXTURE_NAMES.server, 'cables-denied');
     const plate = faceplate(device, inventory);

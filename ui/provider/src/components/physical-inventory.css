@@ -326,7 +326,9 @@
 .inventory-port-card[data-state="conflict"] { border-color:var(--destructive); }
 .inventory-port-card-title { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .fleet-inventory .inventory-port-card h5 { margin:0; font-size:13px; font-weight:600; }
-.fleet-inventory .inventory-port-card-meta,.fleet-inventory .inventory-port-card-meta small { margin:0; color:var(--muted-foreground); font-size:11px; }
+.fleet-inventory .inventory-port-card-answer { margin:0; }
+.inventory-port-card-more { border-top:1px solid var(--border); padding-top:2px; }
+.inventory-port-card-more > .inventory-link-button { min-height:24px; font-size:11px; }
 .inventory-port-card-links { display:grid; gap:8px; list-style:none; padding:0; margin:0; }
 .inventory-port-card-links > li + li { border-top:1px solid var(--border); padding-top:8px; }
 .fleet-inventory .inventory-port-card-fields { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 10px; margin:4px 0 0; }

@@ -6,7 +6,7 @@
 // kind reports link state or health.
 
 import { Button } from '@datum-cloud/datum-ui/button';
-import { useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { Link } from 'react-router';
 import type { Device } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
@@ -76,53 +76,42 @@ function numbering(tiles: PortTile[], labels: Map<string, string>) {
   return marks;
 }
 
-/** The pinned card for one port: what is recorded about it and its Cables. */
+/**
+ * The pinned card for one port. It leads with the answer: each position's
+ * record state, its peer and the Cable's display name, then health. Generated
+ * resource names, connector and template detail, media and traces sit behind
+ * a collapsed More, which is not rendered until it is opened. A denied peer's
+ * name and record name appear nowhere, in the answer or in More.
+ */
 export function PortCard({ tile, namespace, href, names, cablesDenied }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean }) {
+  const [more, setMore] = useState(false);
+  const moreID = useId();
   // A breakout's lanes share one Cable: name it once, then list each position's peer.
   const first = tile.links[0]?.cable;
   const shared = tile.links.length > 1 && first && tile.links.every(link => link.cable?.name === first.name) ? first : undefined;
   const component = tile.links[0]?.component;
   const internal = tile.links[0]?.internal;
+  const cables = [...new Map(tile.links.flatMap(link => link.cable ? [[link.cable.name, link] as const] : [])).values()];
+  const peers = tile.links.filter(link => link.peer && link.peer.access !== 'denied' && link.peer.name);
   return (
     <>
-      <p className="inventory-port-card-meta">{[tile.connector ?? 'Connector not recorded', tile.positions > 1 ? `${tile.positions} positions` : undefined].filter(Boolean).join(' · ')}</p>
-      {!component && <p className="inventory-port-card-meta">Catalog template only; this Device does not record it</p>}
-      {component && (component.serial || component.assetTag) && <p className="inventory-port-card-meta">{[component.serial, component.assetTag].filter(Boolean).join(' · ')}</p>}
-      {internal && <p className="inventory-port-card-meta">Internal path to {internal.componentName ?? internal.componentID}{internal.position > 1 ? ` · position ${internal.position}` : ''}</p>}
       {cablesDenied ? <p>Cable details unavailable. Connections are unknown, not free.</p> : <>
-        {shared && (
-          <dl className="inventory-port-card-fields">
-            <dt>Cable</dt>
-            <dd><Link to={href('Cable', namespace, shared.name)}>{names.cable(shared)}</Link>{shared.medium && <small>{shared.medium}</small>}</dd>
-            <dt>Cable record</dt><dd><code>{shared.name}</code></dd>
-          </dl>
-        )}
+        {shared && <p className="inventory-port-card-answer"><span className="inventory-muted">Cable</span> <Link to={href('Cable', namespace, shared.name)}>{names.cable(shared)}</Link></p>}
         <ul className="inventory-port-card-links">
           {tile.links.map(link => {
             const detail = peerDetail(link);
             return (
               <li key={link.key} data-state={link.state}>
                 <p><StateText state={link.state} />{tile.positions > 1 || link.position > 1 ? <span className="inventory-muted"> · position {link.position}</span> : null}</p>
-                {link.cable ? (
-                  <dl className="inventory-port-card-fields">
-                    {!shared && <><dt>Cable</dt><dd><Link to={href('Cable', namespace, link.cable.name)}>{names.cable(link.cable)}</Link>{mediumText(link) && <small>{mediumText(link)}</small>}</dd></>}
-                    <dt>Peer</dt>
-                    <dd>
-                      <PeerTarget peer={link.peer} namespace={namespace} href={href} names={names} />
-                      {detail && <small>{detail}</small>}
-                      <Trace hops={link.trace} namespace={namespace} href={href} names={names} />
-                    </dd>
-                    {link.reasons.length > 0 && <><dt>Why</dt><dd>{link.reasons.join(' ')}</dd></>}
-                    {link.checks.length > 0 && <><dt>Check</dt><dd className="inventory-connection-check">{link.checks.join(' ').replace(/^Check: /, '')}</dd></>}
-                    {!shared && <><dt>Cable record</dt><dd><code>{link.cable.name}</code></dd></>}
-                    {link.peer && link.peer.access !== 'denied' && link.peer.name && <><dt>Peer record</dt><dd><code>{link.peer.name}</code></dd></>}
-                  </dl>
-                ) : (
-                  <>
-                    {detail && <small>{detail}</small>}
-                    {link.reasons.length > 0 && <small>{link.reasons.join(' ')}</small>}
-                  </>
+                {link.cable && (
+                  <p className="inventory-port-card-answer">
+                    → <PeerTarget peer={link.peer} namespace={namespace} href={href} names={names} />
+                    {!shared && <> <span className="inventory-muted">via</span> <Link to={href('Cable', namespace, link.cable.name)}>{names.cable(link.cable)}</Link></>}
+                  </p>
                 )}
+                {detail && <small>{detail}</small>}
+                {link.reasons.length > 0 && <small>{link.reasons.join(' ')}</small>}
+                {link.checks.length > 0 && <small className="inventory-connection-check">{link.checks.join(' ')}</small>}
               </li>
             );
           })}
@@ -132,6 +121,25 @@ export function PortCard({ tile, namespace, href, names, cablesDenied }: { tile:
         <p className="inventory-port-card-heading">Health</p>
         {/* No inventory kind has observed status yet. Do not derive any. */}
         <p className="inventory-muted">No health reported</p>
+      </div>
+      <div className="inventory-port-card-more">
+        <button type="button" className="inventory-link-button" aria-expanded={more} aria-controls={more ? moreID : undefined} onClick={() => setMore(value => !value)}>{more ? 'Less' : 'More'}</button>
+        {more && (
+          <dl id={moreID} className="inventory-port-card-fields">
+            <dt>Connector</dt><dd>{[tile.connector ?? 'Not recorded', tile.positions > 1 ? `${tile.positions} positions` : undefined].filter(Boolean).join(' · ')}</dd>
+            <dt>Record</dt><dd>{component ? 'Recorded on this Device' : 'Catalog template only; this Device does not record it'}</dd>
+            {component && (component.serial || component.assetTag) && <><dt>Identity</dt><dd>{[component.serial, component.assetTag].filter(Boolean).join(' · ')}</dd></>}
+            {internal && <><dt>Internal path</dt><dd>{internal.componentName ?? internal.componentID}{internal.position > 1 ? ` · position ${internal.position}` : ''}</dd></>}
+            {/* A shared breakout Cable has one medium; its lanes are the positions above. */}
+            {!cablesDenied && cables.map(link => {
+              const medium = shared ? shared.medium : mediumText(link);
+              return <Fragment key={link.cable!.name}><dt>Cable record</dt><dd><code>{link.cable!.name}</code>{medium && <small>{medium}</small>}</dd></Fragment>;
+            })}
+            {!cablesDenied && peers.map(link => <Fragment key={link.key}><dt>Peer record</dt><dd><code>{link.peer!.name}</code>{tile.positions > 1 ? <small>position {link.position}</small> : null}</dd></Fragment>)}
+            {!cablesDenied && tile.links.some(link => link.trace.length > 0) && <><dt>Path</dt><dd>{tile.links.map(link => <Trace key={link.key} hops={link.trace} namespace={namespace} href={href} names={names} />)}</dd></>}
+            <dt>Source</dt><dd>Cable records, not live link state</dd>
+          </dl>
+        )}
       </div>
     </>
   );

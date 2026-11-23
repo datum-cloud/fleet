@@ -56,9 +56,10 @@ async function capture(browser: Browser, base: string, entry: CapturePage, viewp
     await page.goto(url.href, { waitUntil: 'networkidle' });
     await page.locator(entry.ready).first().waitFor({ state: 'visible', timeout: 15_000 });
     await page.evaluate(() => document.fonts.ready);
-    if (entry.click) {
-      // Bring the target to the middle of the viewport, open it, and capture what is on screen.
-      const target = page.locator(entry.click).first();
+    // Bring each target to the middle of the viewport, open it, and capture what is on screen.
+    for (const selector of [entry.click ?? []].flat()) {
+      const target = page.locator(selector).first();
+      await target.waitFor({ state: 'visible', timeout: 15_000 });
       await target.evaluate(element => element.scrollIntoView({ block: 'center' }));
       if (viewport.mobile) await target.tap();
       else await target.click();

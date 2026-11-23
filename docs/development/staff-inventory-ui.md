@@ -546,7 +546,7 @@ human name (`pdu-a.rk105.yul3`). Without one, a Cable is named by its medium
 ("Copper cable") and a peer by its kind ("Unnamed device"). When two different
 records would read the same, `viewNames()` adds a short suffix from the
 resource name ("Copper cable #295e"). A denied peer is never named or
-disambiguated. Full resource names appear only in a port's pinned card. Type
+disambiguated. Full resource names appear only behind a port card's More. Type
 words ("Device", "Power", "NetworkPort") appear only in group headers.
 
 ### Port tiles (default view)
@@ -599,10 +599,17 @@ gives the port, state and every peer and Cable, so nothing hidden visually is
 lost. Hover or keyboard focus shows a one-line tooltip ("swp37 · no cable
 recorded"), hidden from assistive technology because it repeats the
 accessible name. A click, tap, Enter or Space opens the port's card, a
-non-modal dialog named "swp37 details" with the connector, any identity, links
-to the Cable and peer, the reasons records disagree, any opposite-face check,
-any trace, the full resource names, and a **Health** section that reads "No
-health reported" because no kind reports observed status. On screens 600 px
+non-modal dialog named "swp37 details". The card leads with the answer: each
+position's record state, then "→ peer · port via Cable" using display names
+(a breakout names its shared Cable once, then one line per lane), the short
+reason records disagree, and any opposite-face check. A **Health** section
+follows and reads "No health reported", because no kind reports observed
+status. Everything else sits behind a collapsed **More** button, which is not
+rendered until opened: connector and positions, whether the Device records the
+component or only the catalog does, serial and asset tag, internal path, the
+generated Cable and peer record names with medium and lane, any trace, and
+"Cable records, not live link state". A denied peer's name and record name
+appear in neither part. On screens 600 px
 wide or less, the card is a bottom sheet. Touch shows no tooltip. Escape or
 Close closes the card and returns focus to the tile.
 
