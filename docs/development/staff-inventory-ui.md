@@ -1110,6 +1110,56 @@ and fails if any mock-only string appears in it. The real source is a
 whose PSUs both reach Feed A through one PDU: "Single feed (recorded)").
 `rack-elevation` shows every unit.
 
+## Bare Metal tabs: Capacity, Profiles and Classes (implemented)
+
+All four Bare Metal tabs share one header in `fleet-page.tsx`: the tab row
+comes first, with the page action (Register capacity, Create profile, Create
+class) at its right end, so switching tabs never moves the row. There is no
+page title or project subtitle; Capacity, Profiles and Classes carry a
+visually hidden "Bare Metal" heading, and Inventory pages title themselves
+below the tabs.
+
+- **Tab counts.** Capacity, Profiles and Classes each read all three lists
+  (shared with the page through React Query) and show their lengths on the
+  tabs. A failed or denied read shows "?"; a list still loading shows no count.
+  Inventory pages only read what is already cached and send no Bare Metal
+  requests of their own.
+- **Search** appears only when a list has 10 or more rows (`SEARCH_MIN_ROWS`).
+- **Tables** keep one line per row. At phone width the table scrolls inside
+  its frame and the page does not; the leading columns are the ones operators
+  scan for.
+
+**Capacity** columns are Name | State | Device | Pool | Allocation | CPU |
+Memory. State is one word from `capacityState()` in `types.ts`:
+
+| State | When | Colour |
+| --- | --- | --- |
+| Unhealthy | Healthy=False, even on Disabled capacity | Red |
+| Disabled | `allocationPolicy: Disabled` | None |
+| Allocated | Available=False with reason `Allocated` | None |
+| Unavailable | Available=False for any other reason | Amber |
+| Available | Available, Prepared and Healthy are all True | None |
+| ? | Anything else, including absent conditions | Amber |
+
+The tooltip and accessible name list each condition with its reason. Device is
+the capacity's `spec.deviceRef`, linked to the inventory record when the
+capacity is in the inventory namespace (`default`); elsewhere it is named
+without a link. `?namespace=…&pool=…` filters the list to one pool, with a
+"Show all" link.
+
+Register capacity is disabled when the session or permission is missing, and
+the reason is the button's tooltip and accessible description, not page text.
+A confirmed registration closes the dialog and leaves no message: the new row
+is the confirmation. See
+[inventory-backed capacity registration](inventory-capacity-registration.md#ui).
+
+**Classes** show the pool the class selects as `central-metal · 1/3`
+(available / in pool), linked to Capacity filtered to that pool. The count is
+amber when nothing in the pool is available, and "?" when capacity cannot be
+read. The create form picks the pool from the pools that MachineCapacities
+carry, each with its count, and derives the namespace from that choice; with
+no readable pool, a class cannot be created.
+
 ## Deliberate gaps and decisions
 
 | Interaction | Remaining boundary |

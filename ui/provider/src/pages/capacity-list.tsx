@@ -7,9 +7,15 @@ import { PROVIDER_PROJECT, useDeleteMachineCapacity, useMachineCapacities } from
 import type { MachineCapacity } from '../types';
 import { EmptyContent } from '@datum-cloud/datum-ui/empty-content';
 import { useCallback, useState } from 'react';
+import { Link, useSearchParams } from 'react-router';
 
 export default function CapacityList() {
-  const { data: capacities, isLoading, error, refetch } = useMachineCapacities();
+  const { data: all, isLoading, error, refetch } = useMachineCapacities();
+  // Classes link here with the namespace and pool their selector names.
+  const [params] = useSearchParams();
+  const pool = params.get('pool') ?? undefined;
+  const namespace = params.get('namespace') ?? undefined;
+  const capacities = pool || namespace ? all?.filter((c) => (!pool || c.pool === pool) && (!namespace || c.namespace === namespace)) : all;
   const isEmpty = !isLoading && !error && (capacities?.length ?? 0) === 0;
   const [deleting, setDeleting] = useState<MachineCapacity>();
   const deletion = useDeleteMachineCapacity();
@@ -22,7 +28,14 @@ export default function CapacityList() {
   );
 
   return (
-    <FleetPage testId="fleet-plugin-capacity-list" actions={<CreateCapacityDialog onRegistered={() => void refetch()} />}>
+    <FleetPage live testId="fleet-plugin-capacity-list" actions={<CreateCapacityDialog onRegistered={() => void refetch()} />}>
+      {(pool || namespace) && (
+        <p className="fleet-filter" data-testid="fleet-plugin-capacity-filter">
+          <span title={namespace && `MachineCapacities in ${namespace}`}>Pool {pool ?? 'any'}</span>
+          <Link className="fleet-link" to="?">Show all</Link>
+        </p>
+      )}
+
       {isLoading && <LoadingState />}
 
       {!isLoading && error && (
@@ -36,8 +49,8 @@ export default function CapacityList() {
       {isEmpty && (
         <div data-testid="fleet-plugin-capacity-empty">
           <EmptyContent
-            title="No machine capacity yet"
-            subtitle="Add machine capacity for a class to draw from."
+            title={pool || namespace ? 'No machine capacity in this pool' : 'No machine capacity yet'}
+            subtitle={pool || namespace ? undefined : 'Add machine capacity for a class to draw from.'}
             className="w-full"
           />
         </div>

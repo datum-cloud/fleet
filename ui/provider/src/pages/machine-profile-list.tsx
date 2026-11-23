@@ -32,7 +32,7 @@ export default function MachineProfileList() {
     .map((c) => c.name);
 
   return (
-    <FleetPage testId="fleet-plugin-profile-list" actions={<CreateProfileDialog />}>
+    <FleetPage live testId="fleet-plugin-profile-list" actions={<CreateProfileDialog />}>
       {isLoading && <LoadingState />}
 
       {!isLoading && error && (
