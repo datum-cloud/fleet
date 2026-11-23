@@ -370,13 +370,13 @@ const devices: Device[] = [
 
 // Claims for the racked equipment. Devices with a reported placement use it;
 // the claim is the installation plan and history.
-function claim(name: string, rack: RackName, position: number, height: number, face: 'front' | 'rear', model: string): DeviceClaim {
+function claim(name: string, rack: RackName, position: number, height: number, face: 'front' | 'rear', manufacturer: string, model: string): DeviceClaim {
   return {
     kind: 'DeviceClaim', metadata: meta(name),
     spec: {
       displayName: `Installation · ${rack.slice(-3).toUpperCase()} U${position}`,
       lifecycle: 'Installation',
-      expectedIdentity: { manufacturer: 'example-compute', model },
+      expectedIdentity: { manufacturer, model },
       placement: { scope: 'RackUnits', facilityRef: { name: FIXTURE_FACILITY }, rackRef: { name: rack }, position, height, face },
     },
   };
@@ -386,10 +386,10 @@ const claims: DeviceClaim[] = [
   ...devices.flatMap(item => {
     const report = item.spec.reportedPlacement;
     if (!report?.rackRef || report.position === undefined || item.spec.claimRef.name !== `${item.metadata.name}-install`) return [];
-    return [claim(item.spec.claimRef.name, report.rackRef.name as RackName, report.position, report.height ?? 1, report.face ?? 'front', item.spec.identity.model)];
+    return [claim(item.spec.claimRef.name, report.rackRef.name as RackName, report.position, report.height ?? 1, report.face ?? 'front', item.spec.identity.manufacturer ?? 'unknown', item.spec.identity.model)];
   }),
   // A planned installation with no Device registered yet.
-  claim('example-plan-a02-u35', 'example-rack-a02', 35, 1, 'front', 'EX-C1'),
+  claim('example-plan-a02-u35', 'example-rack-a02', 35, 1, 'front', 'example-compute', 'EX-C1'),
 ];
 
 // ---- Cables ----

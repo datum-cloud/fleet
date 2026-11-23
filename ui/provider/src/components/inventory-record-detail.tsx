@@ -3,23 +3,26 @@
 // summary (a Device adds one strip of identity facts), issue banners, one
 // primary view and secondary tabs. Generated
 // identity lives in "About this record" (see inventory-record-layout.tsx).
-import { Title } from '@datum-cloud/datum-ui/typography';
-import type { ReactNode } from 'react';
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@datum-cloud/datum-ui/table';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { modelLabel, slotKey, type Inventory, type InventorySlot, type RawDevice, type RawDeviceClaim } from '../inventory';
-import type { CableEndpoint, ComponentTemplate, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
+import type { CableEndpoint, PhysicalRecord } from '../../../shared/fleet-api';
 import { devicePlacement, placementFacility, type EquipmentPlacement } from '../lib/device-placement';
 import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { depthLabel, deviceDepth } from '../lib/device-depth';
-import { componentTypes, interfaceAddresses, typeTitle } from '../lib/device-connections';
+import { interfaceAddresses, typeTitle } from '../lib/device-connections';
 import { facilityIdentifiers, facilitySites } from '../lib/site-membership';
 import { displayLabel, sharedValue } from '../lib/display-names';
 import { DeviceConnections } from './device-connections';
-import { FacilityRacks, FacilityUnrackedEquipment, unrackedCount } from './inventory-location';
+import type { ComponentHighlight } from './device-faceplate';
+import { FaceplateDrawing, modelDrawingModel } from './faceplate-drawing';
+import { DeviceTable, facilityRackCount, FacilityRacks, FacilityUnrackedEquipment, unrackedCount } from './inventory-location';
 import { FactSection, Facts, RecordSummary, SmallTable, SummaryParts, type FactItem, type RecordIssue, type RecordTab, type SummaryBadge } from './inventory-record-layout';
 import { observedDisagrees, type TelemetryContextValue } from '../lib/telemetry';
 import { feedPath } from '../lib/power-paths';
 import { DeviceDrawFact, PowerFeedPath } from './power-feed-path';
+import { CapacityBar, useTelemetry } from './power-telemetry';
 
 export type DetailKind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 export type DetailEntry = { kind: DetailKind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -46,10 +49,6 @@ export interface DetailView {
 }
 
 const recordLabel = displayLabel;
-
-function byType<T extends { type: PhysicalComponent['type'] }>(items: T[]) {
-  return componentTypes.map(type => ({ type, items: items.filter(item => item.type === type) })).filter(group => group.items.length);
-}
 
 /** Facility › Rack · position, with links, for a placement. */
 function PlacementLinks({ placement, namespace, helpers, omitFacility }: { placement: EquipmentPlacement['placement']; namespace?: string; helpers: DetailHelpers; omitFacility?: boolean }) {
@@ -271,14 +270,63 @@ export function powerFeedDetail(feed: PhysicalRecord, helpers: DetailHelpers): D
 
 // ---- Facility ----
 
+/** Power feeds in one dense table: Feed | Rack | Capacity, the capacity as the Rack page's compact load and percentage. */
+function FeedsTable({ feeds, helpers }: { feeds: PhysicalRecord[]; helpers: DetailHelpers }) {
+  const { source, now } = useTelemetry();
+  const { inventory, reference, href } = helpers;
+  return <div className="inventory-scroll"><Table aria-label="Facility power feeds" className="inventory-dense-table">
+    <TableHeader><TableRow><TableHead>Feed</TableHead><TableHead>Rack</TableHead><TableHead>Capacity</TableHead></TableRow></TableHeader>
+    <TableBody>{feeds.map(feed => <TableRow key={feed.metadata.name}>
+      <TableCell><Link to={href('PowerFeed', feed.metadata.namespace, feed.metadata.name)}>{recordLabel(feed)}</Link></TableCell>
+      <TableCell>{!feed.spec.rackRef ? '—' : inventory.issues?.Rack ? 'Unavailable' : reference('Rack', feed.metadata.namespace, feed.spec.rackRef.name)}</TableCell>
+      <TableCell><CapacityBar feed={feed} reading={source.read({ kind: 'PowerFeed', namespace: feed.metadata.namespace, name: feed.metadata.name })} now={now} source={source} compact /></TableCell>
+    </TableRow>)}</TableBody>
+  </Table></div>;
+}
+
+/** Cables in one dense table: Cable | Medium | Lanes | End A | End B. A Cable that names a position another Cable also names carries a red edge. */
+function CablesTable({ cables, helpers }: { cables: PhysicalRecord[]; helpers: DetailHelpers }) {
+  const { inventory, reference, href } = helpers;
+  // Every readable Cable's lane ends, so a duplicate outside this list still counts.
+  const holders = new Map<string, Set<string>>();
+  const endKey = (endpoint: CableEndpoint) => { const target = endTarget(endpoint); return target && `${target.kind}/${target.name}/${endpoint.componentID}/${endpoint.position}`; };
+  for (const record of inventory.physical) if (record.kind === 'Cable' && record.metadata.namespace === cables[0]?.metadata.namespace) for (const lane of record.spec.lanes ?? []) for (const endpoint of [lane.a, lane.b]) {
+    const key = endKey(endpoint);
+    if (key) holders.set(key, (holders.get(key) ?? new Set()).add(record.metadata.name));
+  }
+  const end = (cable: PhysicalRecord, side: 'a' | 'b') => {
+    const lanes = cable.spec.lanes ?? [];
+    const targets = [...new Map(lanes.flatMap(lane => { const target = endTarget(lane[side]); return target ? [[`${target.kind}/${target.name}`, target] as const] : []; })).values()];
+    if (!targets.length) return '—';
+    return <>{targets.map((target, index) => <span key={`${target.kind}/${target.name}`}>{index > 0 && ', '}{inventory.issues?.[target.kind] ? 'Unavailable' : reference(target.kind, cable.metadata.namespace, target.name)}</span>)}{lanes.length === 1 && <span className="inventory-muted"> {lanes[0][side].componentID}</span>}</>;
+  };
+  return <div className="inventory-scroll"><Table aria-label="Facility cables" className="inventory-dense-table">
+    <TableHeader><TableRow><TableHead>Cable</TableHead><TableHead>Medium</TableHead><TableHead>Lanes</TableHead><TableHead>End A</TableHead><TableHead>End B</TableHead></TableRow></TableHeader>
+    <TableBody>{cables.map(cable => {
+      const shared = (cable.spec.lanes ?? []).flatMap(lane => [lane.a, lane.b]).some(endpoint => { const key = endKey(endpoint); return !!key && (holders.get(key)?.size ?? 0) > 1; });
+      const note = shared ? 'Records disagree: another Cable names the same position' : undefined;
+      return <TableRow key={cable.metadata.name} data-attention={shared ? 'conflict' : undefined}>
+        <TableCell title={note}><Link to={href('Cable', cable.metadata.namespace, cable.metadata.name)}>{recordLabel(cable)}</Link>{note && <span className="inventory-visually-hidden"> · {note}</span>}</TableCell>
+        <TableCell>{cable.spec.medium ?? '—'}</TableCell>
+        <TableCell className="inventory-numeric">{cable.spec.lanes?.length ?? 0}</TableCell>
+        <TableCell>{end(cable, 'a')}</TableCell>
+        <TableCell>{end(cable, 'b')}</TableCell>
+      </TableRow>;
+    })}</TableBody>
+  </Table></div>;
+}
+
 export function facilityDetail(facility: PhysicalRecord, helpers: DetailHelpers): DetailView {
-  const { inventory, entries } = helpers;
+  const { inventory, entries, reference } = helpers;
   const namespace = facility.metadata.namespace;
-  const sites = facilitySites(facility, inventory);
-  const summary = <RecordSummary><SummaryParts parts={[facilityIdentifiers(facility), sites]} /></RecordSummary>;
-  const issues: RecordIssue[] = [];
-  if (inventory.issues?.Rack) issues.push({ id: 'racks', text: "Rack details unavailable. The facility's rack count is unknown." });
-  if (inventory.issues?.Device || inventory.issues?.DeviceClaim) issues.push({ id: 'equipment', text: 'Some equipment records are unavailable; equipment counts are incomplete.' });
+  // Header facts: the premises codes (provider and type in the tooltip), the Site links, the geographic location.
+  const codes = facility.spec.identifiers?.map(identifier => identifier.value).join(' · ');
+  const sites = inventory.issues?.Site ? [] : inventory.physical.filter(record => record.kind === 'Site' && !!record.metadata.uid && record.metadata.namespace === namespace && !record.metadata.deletionTimestamp && !facility.metadata.deletionTimestamp && record.spec.facilityRefs?.some(ref => ref.name === facility.metadata.name));
+  const summary = <RecordSummary><SummaryParts parts={[
+    codes && <span title={facilityIdentifiers(facility)}>{codes}</span>,
+    sites.length ? <>{sites.map((site, index) => <span key={site.metadata.name}>{index > 0 && ', '}{reference('Site', namespace, site.metadata.name)}</span>)}</> : facilitySites(facility, inventory),
+    facility.spec.locationRef && <span title="Geographic location reference">{facility.spec.locationRef.name}</span>,
+  ]} /></RecordSummary>;
   const inFacility = (name?: string) => {
     if (!name) return false;
     const rack = helpers.find('Rack', namespace, name)?.record as PhysicalRecord | undefined;
@@ -291,58 +339,84 @@ export function facilityDetail(facility: PhysicalRecord, helpers: DetailHelpers)
     const location = device && devicePlacement(device, inventory)?.placement;
     return location?.facilityRef?.name === facility.metadata.name || inFacility(location?.rackRef?.name);
   }))).map(entry => entry.record as PhysicalRecord);
-  const unracked = <FacilityUnrackedEquipment facility={facility} inventory={inventory} />;
+  const equipmentUnknown = inventory.issues?.Device || inventory.issues?.DeviceClaim;
+  // Unreadable collections read "?" on their tabs; no banners.
   const tabs: RecordTab[] = [
-    { id: 'unracked', label: 'Equipment without a rack', count: inventory.issues?.Device || inventory.issues?.DeviceClaim ? '?' : unrackedCount(facility, inventory), content: unracked },
-    {
-      id: 'power', label: 'Power & cables', count: inventory.issues?.PowerFeed || inventory.issues?.Cable ? '?' : feeds.length + cables.length, content: <>
-        <h4>Power feeds <span className="inventory-count">{inventory.issues?.PowerFeed ? 'unavailable' : feeds.length}</span></h4>
-        {inventory.issues?.PowerFeed ? <p>Power feed records are unavailable to you.</p> : <RecordLinks kind="PowerFeed" records={feeds} helpers={helpers} empty="No power feed records name this facility." />}
-        <h4>Cables at this facility <span className="inventory-count">{inventory.issues?.Cable ? 'unavailable' : cables.length}</span></h4>
-        {inventory.issues?.Cable ? <p>Cable records are unavailable to you.</p> : <RecordLinks kind="Cable" records={cables} helpers={helpers} empty="No Cable records reach equipment placed here. That does not establish that none exist." />}
-      </>,
-    },
+    { id: 'racks', label: 'Racks', count: inventory.issues?.Rack ? '?' : facilityRackCount(facility, inventory), content: <FacilityRacks facility={facility} inventory={inventory} /> },
+    { id: 'unracked', label: 'Without a rack', count: equipmentUnknown ? '?' : unrackedCount(facility, inventory), content: <FacilityUnrackedEquipment facility={facility} inventory={inventory} /> },
+    { id: 'feeds', label: 'Power feeds', count: inventory.issues?.PowerFeed ? '?' : feeds.length, content: inventory.issues?.PowerFeed ? <p>Power feed records unavailable.</p> : feeds.length ? <FeedsTable feeds={feeds} helpers={helpers} /> : <p className="inventory-muted">No power feeds recorded.</p> },
+    { id: 'cables', label: 'Cables', count: inventory.issues?.Cable ? '?' : cables.length, content: inventory.issues?.Cable ? <p>Cable records unavailable.</p> : cables.length ? <CablesTable cables={cables} helpers={helpers} /> : <p className="inventory-muted">No cables recorded.</p> },
   ];
-  return { summary, issues, primary: <FacilityRacks facility={facility} inventory={inventory} />, tabs, about: [{ label: 'Geographic location reference', value: facility.spec.locationRef?.name }] };
+  return { summary, issues: [], primary: null, tabs };
 }
 
 // ---- DeviceType ----
+
+const FACE_ORDER: Record<string, number> = { Front: 0, Rear: 1 };
+
+/**
+ * The model's picture and component table, as on the Device page: the
+ * faceplate drawn from the recorded layout with every port catalog only, then
+ * one row per template. Hovering or focusing a row outlines its tile.
+ */
+function ModelComponents({ model, href }: { model: PhysicalRecord; href: DetailHelpers['href'] }) {
+  const drawing = useMemo(() => modelDrawingModel(model), [model]);
+  const [highlighted, setHighlighted] = useState<string>();
+  const highlight = useMemo<ComponentHighlight>(() => ({ id: highlighted, set: setHighlighted, clear: id => setHighlighted(value => value === id ? undefined : value) }), [highlighted]);
+  const rows = [...(model.spec.componentTemplates ?? [])].sort((a, b) => (FACE_ORDER[a.face ?? ''] ?? 2) - (FACE_ORDER[b.face ?? ''] ?? 2));
+  if (!rows.length) return <p className="inventory-muted">No component templates recorded.</p>;
+  const connectors = rows.some(row => row.connector);
+  const positions = rows.some(row => (row.positions ?? 1) > 1);
+  return <section className="inventory-connections" aria-label="Components">
+    <div className="inventory-device-picture">
+      {drawing.layout.recorded
+        ? <FaceplateDrawing drawing={drawing} namespace={model.metadata.namespace} href={href} dense highlight={highlight} label="Model faceplate" />
+        : <p className="inventory-faceplate-fallback"><span className="inventory-faceplate-fallback-label">Layout not recorded</span></p>}
+    </div>
+    <div className="inventory-component-panel">
+      <div className="inventory-scroll inventory-connection-table" role="region" tabIndex={0} aria-label="Components table">
+        <Table className="inventory-dense-table">
+          <TableCaption className="inventory-visually-hidden">Components · {rows.length}</TableCaption>
+          <TableHeader><TableRow>
+            <TableHead>Component <span className="inventory-count">{rows.length}</span></TableHead><TableHead>Type</TableHead><TableHead>Face</TableHead>
+            {connectors && <TableHead>Connector</TableHead>}
+            {positions && <TableHead>Positions</TableHead>}
+          </TableRow></TableHeader>
+          <TableBody>{rows.map(row => <TableRow key={row.id}
+            data-highlight={highlight.id === row.id ? '' : undefined}
+            onPointerEnter={event => { if (event.pointerType === 'mouse') highlight.set(row.id); }}
+            onPointerLeave={event => { if (event.pointerType === 'mouse') highlight.clear(row.id); }}
+            onClick={() => highlight.set(row.id)}
+          >
+            <TableCell><span title={row.name !== row.id ? row.id : undefined}>{row.name}</span></TableCell>
+            <TableCell>{typeTitle(row.type, 1)}</TableCell>
+            <TableCell>{row.face ?? '?'}</TableCell>
+            {connectors && <TableCell>{row.connector}</TableCell>}
+            {positions && <TableCell className="inventory-numeric">{(row.positions ?? 1) > 1 ? row.positions : ''}</TableCell>}
+          </TableRow>)}</TableBody>
+        </Table>
+      </div>
+    </div>
+  </section>;
+}
 
 export function deviceTypeDetail(model: PhysicalRecord, helpers: DetailHelpers): DetailView {
   const { inventory, reference } = helpers;
   const namespace = model.metadata.namespace;
   const shape = model.spec.modelShape;
-  const templates = model.spec.componentTemplates ?? [];
+  // One facts strip: manufacturer · model key · size. A zero-U strip has no rack depth.
+  const zeroU = shape?.heightUnits === 0;
   const summary = <RecordSummary><SummaryParts parts={[
     model.spec.manufacturerRef && reference('Manufacturer', namespace, model.spec.manufacturerRef.name),
-    model.spec.model && `Model key ${model.spec.model}`,
-    `${shape?.heightUnits ?? 'Unknown'}U`,
-    shape?.fullDepth === false ? 'Half depth' : shape?.fullDepth ? 'Full depth' : 'Depth unknown',
+    model.spec.model && <span title="Model key">{model.spec.model}</span>,
+    zeroU ? 'Zero-U' : shape?.heightUnits === undefined ? 'Height unknown' : `${shape.heightUnits}U`,
+    !zeroU && (shape?.fullDepth === false ? 'Half depth' : shape?.fullDepth ? 'Full depth' : 'Depth unknown'),
   ]} /></RecordSummary>;
-  const faces: { face: ComponentTemplate['face'] | 'unknown'; title: string }[] = [{ face: 'Front', title: 'Chassis front' }, { face: 'Rear', title: 'Chassis rear' }, { face: 'unknown', title: 'Chassis face unknown' }];
-  const primary = <>
-    {faces.map(({ face, title }) => {
-      const items = templates.filter(template => (template.face ?? 'unknown') === face);
-      if (!items.length) return null;
-      return <section key={face} className="inventory-template-face" aria-label={title}>
-        <Title as="h3" level={6}>{title} <span className="inventory-count">{items.length}</span></Title>
-        {byType(items).map(group => {
-          const connector = sharedValue(group.items.map(item => item.connector));
-          const positions = sharedValue(group.items.map(item => item.positions ?? 1));
-          return <div key={group.type} className="inventory-template-group">
-            <h4>{typeTitle(group.type, group.items.length)} <span className="inventory-count">{group.items.length}{connector ? ` · ${connector}` : ''}{positions && positions > 1 ? ` · ${positions} positions each` : ''}</span></h4>
-            <p>{group.items.map(item => [item.name, !connector && item.connector, !positions && (item.positions ?? 1) > 1 && `${item.positions} positions`].filter(Boolean).join(' ')).join(', ')}</p>
-          </div>;
-        })}
-      </section>;
-    })}
-    {!templates.length && <p className="inventory-muted">No component templates recorded.</p>}
-  </>;
   const devices = inventory.issues?.Device ? [] : helpers.entries.filter(entry => entry.kind === 'Device' && entry.record.metadata.namespace === namespace && (entry.record as RawDevice).spec.deviceTypeRef?.name === model.metadata.name).map(entry => entry.record as RawDevice);
   const tabs: RecordTab[] = [
-    { id: 'devices', label: 'Devices', count: inventory.issues?.Device ? '?' : devices.length, content: inventory.issues?.Device ? <p>Device records are unavailable to you; the count is unknown.</p> : <RecordLinks kind="Device" records={devices} helpers={helpers} empty="No Device records reference this type." /> },
+    { id: 'devices', label: 'Devices', count: inventory.issues?.Device ? '?' : devices.length, content: inventory.issues?.Device ? <p>Device records unavailable.</p> : devices.length ? <DeviceTable devices={devices} inventory={inventory} label="Devices of this type" withFacility={new Set(devices.flatMap(device => { const at = devicePlacement(device, inventory); const facility = at && placementFacility(at.placement, namespace, inventory); return facility ? [facility] : []; })).size > 1} /> : <p className="inventory-muted">No devices of this type.</p> },
   ];
-  return { summary, issues: [], primary, tabs, about: [{ label: 'Normalized model identity', value: model.spec.model }] };
+  return { summary, issues: [], primary: <ModelComponents model={model} href={helpers.href} />, tabs };
 }
 
 // ---- DeviceClaim ----

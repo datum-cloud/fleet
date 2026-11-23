@@ -1,5 +1,4 @@
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@datum-cloud/datum-ui/table';
-import { Title } from '@datum-cloud/datum-ui/typography';
 import { Link } from 'react-router';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory, InventoryKind } from '../inventory';
@@ -7,12 +6,21 @@ import { catalogLabel, manufacturerInventory } from '../lib/manufacturer-invento
 import { inventoryHref } from './inventory-location';
 import { RecordTabs, type RecordTab } from './inventory-record-layout';
 
+/** "1U · full", "2U", "Zero-U": the catalog size, without depth for a zero-U strip. */
+function sizeLabel(model: PhysicalRecord) {
+  const shape = model.spec.modelShape;
+  if (shape?.heightUnits === 0) return 'Zero-U';
+  return [shape?.heightUnits === undefined ? '?' : `${shape.heightUnits}U`, shape?.fullDepth === undefined ? undefined : shape.fullDepth ? 'full' : 'half'].filter(Boolean).join(' · ');
+}
+
 export function ManufacturerOverview({ manufacturer, inventory }: { manufacturer: PhysicalRecord; inventory: Inventory }) {
   const { models, devices, unresolved } = manufacturerInventory(manufacturer, inventory);
-  if (manufacturer.metadata.deletionTimestamp) return <p>Manufacturer is deleting; catalog relationships are unavailable, not empty.</p>;
   const issue = (kind: InventoryKind) => inventory.issues?.[kind];
-  const unavailable = (kind: InventoryKind) => issue(kind)?.status === 403 ? 'Access denied. Request inventory read access, then refresh.' : 'Records unavailable. Refresh inventory to retry; counts are unknown.';
+  const unavailable = (kind: InventoryKind) => issue(kind)?.status === 403 ? 'Access denied.' : 'Records unavailable.';
   const link = (kind: string, record: PhysicalRecord | Device, peers: (PhysicalRecord | Device)[]) => <Link to={inventoryHref(kind, record.metadata.namespace, record.metadata.name)}>{catalogLabel(record, peers)}</Link>;
+  // The facility is named only when the devices span more than one, or a device has no rack.
+  const facilities = new Set(devices.flatMap(({ device }) => device.spec.reportedPlacement?.facilityRef ? [device.spec.reportedPlacement.facilityRef.name] : []));
+  // Reported placement only: a claim's planned location is never substituted here.
   const location = (device: Device) => {
     const placement = device.spec.reportedPlacement;
     if (!placement) return 'Not recorded';
@@ -22,24 +30,35 @@ export function ManufacturerOverview({ manufacturer, inventory }: { manufacturer
       const target = peers.find(record => record.metadata.name === name);
       return target ? link(kind, target, peers) : <span>{kind} reference missing</span>;
     };
-    return <>{placement.facilityRef && reference('Facility', placement.facilityRef.name)}{placement.facilityRef && placement.rackRef && ' · '}{placement.rackRef && reference('Rack', placement.rackRef.name)}{placement.position !== undefined && ` · U${placement.position}`}{placement.mount && ` · Mount: ${placement.mount}`}{placement.face && ` · ${placement.face}`}</>;
+    const facility = placement.facilityRef && (facilities.size > 1 || !placement.rackRef);
+    return <>{facility && reference('Facility', placement.facilityRef!.name)}{facility && placement.rackRef && ' · '}{placement.rackRef && reference('Rack', placement.rackRef.name)}{placement.position !== undefined && ` · U${placement.position}`}{placement.mount && ` · Mount: ${placement.mount}`}{placement.face && ` · ${placement.face}`}</>;
   };
-  const devicesUnknown = !!issue('DeviceType') || !!issue('Device');
+  const deleting = !!manufacturer.metadata.deletionTimestamp;
+  const devicesUnknown = deleting || !!issue('DeviceType') || !!issue('Device');
+  const serials = devices.some(({ device }) => device.spec.identity.serial);
+  const tags = devices.some(({ device }) => device.spec.assetTag);
+  const deletingNote = 'Manufacturer is deleting; catalog relationships are unknown';
+  const unresolvedNote = 'Some device type references are missing or deleting; those devices are not attributed';
   const tabs: RecordTab[] = [
     {
-      id: 'devices', label: 'Devices', count: devicesUnknown ? '?' : devices.length, content: <section aria-label="Manufacturer devices">
-        {issue('DeviceType') ? <p>Device relationships unavailable until device types are readable. Counts are unknown.</p> : issue('Device') ? <p>{unavailable('Device')}</p> : <>
-          {unresolved && <p>Some device type references are missing or deleting. Those devices cannot be attributed to a manufacturer; only resolved relationships are shown.</p>}
-          {devices.length ? <div className="inventory-scroll" tabIndex={0} role="region" aria-label="Manufacturer devices table"><Table><TableHeader><TableRow><TableHead>Device</TableHead><TableHead>Model</TableHead><TableHead>Reported location</TableHead></TableRow></TableHeader><TableBody>{devices.map(({ device, model }) => <TableRow key={device.metadata.name}><TableCell>{link('Device', device, devices.map(entry => entry.device))}</TableCell><TableCell>{link('DeviceType', model, models)}</TableCell><TableCell>{location(device)}</TableCell></TableRow>)}</TableBody></Table></div> : <p>{unresolved ? 'No resolved device relationships found.' : 'No devices explicitly linked to these device types.'}</p>}
-        </>}
-      </section>,
+      id: 'types', label: 'Device types', count: deleting || issue('DeviceType') ? '?' : models.length, countNote: deleting ? deletingNote : undefined, content: <>
+        {deleting ? <p>Unknown while the manufacturer is deleting.</p> : issue('DeviceType') ? <p>{unavailable('DeviceType')}</p> : models.length ? <div className="inventory-scroll" tabIndex={0} role="region" aria-label="Manufacturer device types table"><Table className="inventory-dense-table"><TableHeader><TableRow><TableHead>Device type</TableHead><TableHead>Model key</TableHead><TableHead>Size</TableHead><TableHead>Devices</TableHead></TableRow></TableHeader><TableBody>{models.map(model => <TableRow key={model.metadata.name}><TableCell>{link('DeviceType', model, models)}</TableCell><TableCell>{model.spec.model ?? '—'}</TableCell><TableCell>{sizeLabel(model)}</TableCell><TableCell className="inventory-numeric">{issue('Device') ? '?' : devices.filter(entry => entry.model.metadata.name === model.metadata.name).length}</TableCell></TableRow>)}</TableBody></Table></div> : <p className="inventory-muted">No device types linked to this manufacturer.</p>}
+      </>,
+    },
+    {
+      id: 'devices', label: 'Devices', count: devicesUnknown ? '?' : unresolved ? `${devices.length}+` : devices.length, countNote: deleting ? deletingNote : unresolved && !devicesUnknown ? unresolvedNote : undefined, content: <>
+        {deleting ? <p>Unknown while the manufacturer is deleting.</p> : issue('DeviceType') ? <p>Unknown until device types are readable.</p> : issue('Device') ? <p>{unavailable('Device')}</p> : devices.length ? <div className="inventory-scroll" tabIndex={0} role="region" aria-label="Manufacturer devices table"><Table className="inventory-dense-table">
+          <TableHeader><TableRow><TableHead>Device</TableHead><TableHead>Model</TableHead><TableHead>Rack · U</TableHead>{serials && <TableHead>Serial</TableHead>}{tags && <TableHead>Asset tag</TableHead>}</TableRow></TableHeader>
+          <TableBody>{devices.map(({ device, model }) => <TableRow key={device.metadata.name}>
+            <TableCell>{link('Device', device, devices.map(entry => entry.device))}</TableCell>
+            <TableCell>{link('DeviceType', model, models)}</TableCell>
+            <TableCell>{location(device)}</TableCell>
+            {serials && <TableCell className="inventory-numeric">{device.spec.identity.serial}</TableCell>}
+            {tags && <TableCell className="inventory-numeric">{device.spec.assetTag}</TableCell>}
+          </TableRow>)}</TableBody>
+        </Table></div> : <p className="inventory-muted">{unresolved ? 'No resolved devices.' : 'No devices of these types.'}</p>}
+      </>,
     },
   ];
-  return <div className="inventory-equipment-sections">
-    <section aria-label="Manufacturer device types">
-      <Title as="h3" level={5}>Device types <span className="inventory-count">{issue('DeviceType') ? 'unknown' : models.length}</span></Title>
-      {issue('DeviceType') ? <p>{unavailable('DeviceType')}</p> : models.length ? <div className="inventory-scroll inventory-fit" tabIndex={0} role="region" aria-label="Manufacturer device types table"><Table><TableHeader><TableRow><TableHead>Device type</TableHead><TableHead>Associated devices</TableHead></TableRow></TableHeader><TableBody>{models.map(model => <TableRow key={model.metadata.name}><TableCell>{link('DeviceType', model, models)}</TableCell><TableCell>{issue('Device') ? 'Unknown' : devices.filter(entry => entry.model.metadata.name === model.metadata.name).length}</TableCell></TableRow>)}</TableBody></Table></div> : <p>No device types linked to this manufacturer.</p>}
-    </section>
-    <RecordTabs label="Manufacturer details" tabs={tabs} />
-  </div>;
+  return <RecordTabs label="Manufacturer details" tabs={tabs} />;
 }

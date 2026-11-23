@@ -602,3 +602,8 @@
 .fleet-state[data-attention="unavailable"] { color:var(--warning,#b45309); font-weight:500; }
 .fleet-link { text-decoration:underline; text-underline-offset:2px; }
 .fleet-filter { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted-foreground); }
+/* Locations and catalog pages: an amber count or cell that needs checking (the tooltip says why), and the model's component table. */
+.inventory-count[data-tone="warning"],.fleet-inventory [data-tone="warning"] { color:var(--warning,#b45309); font-weight:500; }
+/* A rack's feeds sit side by side in one table row. */
+.inventory-rack-power { display:flex; gap:12px; align-items:center; }
+.inventory-rack-power .inventory-capacity { width:110px; flex:none; }
