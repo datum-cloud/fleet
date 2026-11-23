@@ -549,16 +549,19 @@ resource name ("Copper cable #295e"). A denied peer is never named or
 disambiguated. Full resource names appear only behind a port card's More. Type
 words ("Device", "Power", "NetworkPort") appear only in group headers.
 
-### Port tiles (default view)
+### Port tiles
 
-The view opens on **Ports** at every size. `portLayout()` lays the tiles out
+The view opens on **Faceplate** when the Device's model records a layout
+(see [Faceplate drawing](#faceplate-drawing)), and on **Ports** otherwise.
+Without a layout, the tiles carry a "Layout not recorded" caption: they are
+grouped, not placed. `portLayout()` lays the tiles out
 as a faceplate: by chassis face (Front, Rear, or Face unknown), then one
 cluster per type, ordered by the first component of that type, which follows
 the DeviceType's template order. Each face's title states its derived rack
 face once ("Rear · rack rear"); when no port has a recorded face, one caption
-reads "Component faces not recorded". `portLayout()` is the only place that
-decides placement, so DeviceType layout data (rows, columns, banks) can
-replace template order there later. A cluster that is entirely catalog only
+reads "Component faces not recorded". `portLayout()` decides grouping for the
+tiles; recorded positions are decided only by `faceplate-layout.ts`. A
+cluster that is entirely catalog only
 is hidden behind a "Show … catalog only" button.
 
 The faceplate is the shared `PortFaceplate` component in
@@ -621,6 +624,108 @@ The section header is one line: the port counts ("60 ports · 7 recorded · 51
 unknown · 2 disagree"), "Unknown is not free; nothing here is verified", and a
 **Legend** toggle. It does not repeat the Device's name, which the page heading
 already shows.
+
+### Faceplate drawing
+
+**Implemented.** When the Device's DeviceType records a
+[faceplate layout](hardware-catalog.md#faceplate-layout-implemented), Device
+detail opens on **Faceplate** and the rack side panel shows the same drawing.
+`faceplate-drawing.tsx` draws each recorded face from one pure geometry
+function, `faceGeometry()` in `lib/faceplate-layout.ts`, in millimetres at
+1.9 px/mm. The drawing never invents a position:
+
+- **Banks.** Each bank is a grid of cells. Banks with offsets sit at
+  offset × face width; banks without offsets flow left to right with even
+  gaps. A layout wider or taller than the face is scaled down and says so.
+  CEL cannot check physical fit.
+- **Ports.** Ports are the shared `PortTileButton` in their cells, with the
+  shared tooltip and `PortCard` through `usePortGrid()`. They are not a
+  second tile or card. A cell's outline comes from the connector kind (see
+  below).
+- **Module cells.** Drive bays, fans and accessory ports (`Module`,
+  `InventoryItem`, `DeviceBay`) are drawn with no Cable state. They read
+  "Component recorded" (■) or "Catalog only" (◇, hatched), and they are not
+  focusable.
+- **The dense rule.** `TEXT_TILE_LIMIT` (12) is one constant, in
+  `lib/faceplate-layout.ts`. It is shared by the tile clusters and the drawn
+  banks. Above it, ports carry no text: faint printed-style numbers sit at
+  the bank's first and last columns, above the top row and below the bottom
+  row. Hover or focus shows the one-line tooltip, and click, tap or Enter
+  opens the card. Smaller banks print short labels above the top row or
+  below the bottom row. Module cells carry their label inside. Accessible
+  names always give the port, its state and every peer.
+- **Not on the faceplate.** Templates without a layout, layout that
+  disagrees (an overlap, a bank on the other face, outside the grid), and
+  Device components with no matching template are listed in this tray with
+  the reason. They are never placed. Disagreeing layout also shows a
+  "Records disagree" warning on the face.
+- **Honest labels.** Unknown width is drawn full width and says "Width not
+  recorded". A zero-U model is drawn as a one-unit strip and says its
+  length is not recorded. A model with no `heightUnits` gets tiles.
+- **Keyboard.** The drawing is one tab stop. Ports are in row-major order
+  per bank, so Left and Right move along a drawn row, and Up and Down move
+  to the nearest port in the next drawn row. Escape closes the card and
+  returns focus to the port.
+- **Phones.** The chassis keeps its drawn width and scrolls sideways inside
+  its own frame. The page itself never overflows at 390 px.
+
+**Connector kinds** are derived, never stored. `connectorKind()` in
+`lib/connector-kind.ts` holds the one fixed table. It matches whole tokens,
+case-insensitively, and the first row wins:
+
+| Kind | Matches (examples) | Nominal cell (mm) |
+| --- | --- | --- |
+| QSFP-DD | `QSFP-DD`, `qsfpdd` | 18.4 × 10.8 |
+| OSFP | `OSFP` | 22.6 × 13 |
+| QSFP28 | `QSFP28`, `100gbase-x-qsfp28` | 18.4 × 9.4 |
+| SFP28 | `SFP28`, `25gbase-x-sfp28` | 13.7 × 9.2 |
+| SFP | `SFP`, `SFP+`, `sfpp` | 13.7 × 9.2 |
+| RJ45 | `RJ45`, `rj-45 keystone`, `8P8C` | 13.2 × 11.6 |
+| C13, C14, C19, C20 | `IEC C13`, `iec-60320-c14` | 24 × 16.4; 22 × 17 |
+| USB | `USB`, `USB-A`, `usb-c` | 13.2 × 6 |
+| DB9 (serial) | `DB9`, `DE-9` | 31 × 12.5 |
+| VGA | `VGA`, `DE-15` | 31 × 12.5 |
+| Other | anything else, including `QSFP`, `QSFP+`, `LC`, `MPO` and absent text | 14 × 12 |
+
+The tile outline (`connectorShape()`) derives from the same table.
+
+**Mini faceplates in the elevation.** `RackSlotDevice` draws the visible
+chassis face as an SVG, hidden from assistive technology. The front shows on
+the mounted face and the rear on the far face of a full-depth device. The
+**Outline / Ports / Full** control (held in the URL as `?detail=`) sets
+pixels per unit to 12, 16 or 44. The level follows the pixels per unit:
+
+| Level | Pixels per unit | What is drawn |
+| --- | --- | --- |
+| Silhouette | under 16 | The chassis and its bank outlines |
+| Reduced | 16 to 39 | One block per cell: solid when recorded, hollow when none, destructive when records disagree, dashed when the peer is unavailable, dotted when catalog only |
+| Full | 40 or more | The same blocks with `!` and `?` glyphs |
+
+At every level the slot stays one link, with no focusable drawing inside it.
+Beside the name it shows `! n` and `? n` counts for the whole Device, and
+its accessible name gives them in words ("2 ports disagree"). A model
+without a layout is a plain chassis, and its link says "layout not
+recorded". Cells use `--foreground` on `--background` rather than muted
+tokens, which fixes the prototype's low-contrast reduced blocks in dark
+mode. Hatching is not used at these sizes, because at 16 px per unit it is
+noise.
+
+**Not implemented:**
+
+- health marks; cards read "No health reported";
+- decorative marks;
+- photos or hotspots;
+- cards for module cells;
+- a drawing on DeviceType detail.
+
+`pnpm screenshots` captures these pages:
+
+- `faceplate-server`, `faceplate-storage` and `faceplate-switch`;
+- `faceplate-switch-card`;
+- `faceplate-patch-pdu` and `faceplate-pdu`;
+- `faceplate-fallback`;
+- `rack-mini-reduced`, `rack-mini-full` and `rack-mini-silhouette`;
+- `rack-panel-faceplate`, which includes a 390 px phone.
 
 ### Diagram and list
 
@@ -712,10 +817,9 @@ it.
   names the rack without a usable unit position. Each names the affected
   equipment as links that select it.
 
-The elevation keeps device bars this round. `RackSlotDevice`
-(`rack-slot-device.tsx`) is the single component that renders equipment in a
-unit span, so mini faceplates can replace the bars once DeviceTypes record a
-layout. The elevation toolbar (`RackOverview`'s `toolbar` slot, beside the
+`RackSlotDevice` (`rack-slot-device.tsx`) is the single component that
+renders equipment in a unit span. For a readable Device it draws a mini
+faceplate (see [Faceplate drawing](#faceplate-drawing)). The elevation toolbar (`RackOverview`'s `toolbar` slot, beside the
 face switch) and the stage's `data-view="2d"` leave room for a later 2D/3D
 toggle; no 3D view exists. `condensedName()` in `lib/display-names.ts`
 shortens component names for tiles (Ethernet 0 → eth0, Outlet 3 → O3); the

@@ -94,8 +94,8 @@ The CRD's CEL rules reject:
 
 Banks are per face, so a cell that is unique in its bank is unique on its face.
 CEL cannot check physical fit, such as banks that together are wider than the
-face or that overlap each other. A drawing reader must scale it and warn,
-not reject it.
+face or that overlap each other. The staff UI drawing scales such a layout and
+warns; it does not reject it.
 
 **CEL cost outcome.** The overlap rule compares every pair of templates. Its
 static estimate is about 4.4M against the 10M per-expression limit, so the CRD
@@ -106,7 +106,8 @@ IDs, every template in row 1), the cost passes 1M between 176 and 192 laid-out
 templates. The smallest safe change was a cheap cap: at most 128 templates may
 carry a layout. That keeps the worst case at about 627K. `componentTemplates`
 keeps its 256-item limit. Templates past the cap simply have no layout and no
-position on the drawing.
+position on the drawing; the staff UI lists them in its "Not on the faceplate"
+tray.
 
 The cap rule runs before the overlap rule, so an over-cap object reports the
 cap rather than a cost error. `faceplate_test.go` pins the estimates and the
