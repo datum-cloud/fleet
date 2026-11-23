@@ -126,6 +126,11 @@ metrics owners.
   behind the same build-time flag as the fixture inventory, and
   `src/test/production-bundle.test.ts` builds the production bundle and fails
   if any mock-only string is in it.
+- Views show telemetry as a load tint and status marks on outlet and PSU
+  tiles, one "Updated N s ago" line per outlet group, and the values in the
+  component card's Telemetry section. The collector, instance, observed time
+  and freshness window are behind the card's More. See
+  [Power path and telemetry](staff-inventory-ui.md#power-path-and-telemetry-implemented-telemetry-mocked).
 - There is no metrics client. A real source would implement
   `TelemetrySource` by querying the platform metrics store through the
   portal's existing proxy, using the labels above, and would return nothing

@@ -74,7 +74,7 @@ field or view.
    | --- | --- |
    | Device | Identity strip (model, serial, asset tag), component counts, then the connection view |
    | Cable | End A and End B side by side, with one row per lane |
-   | PowerFeed | The power path: upstream, feed rating and capacity, PDU outlet strips, then device PSUs (see [Power path](#power-path-and-telemetry-implemented-telemetry-mocked)) |
+   | PowerFeed | The power path: upstream, feed rating and capacity, outlet tiles for the feed and each PDU, then device PSUs (see [Power path](#power-path-and-telemetry-implemented-telemetry-mocked)) |
    | Facility | Its racks |
    | Rack | Its elevation |
    | Site | Its linked facilities |
@@ -606,16 +606,20 @@ non-modal dialog named "swp37 details". The card leads with the answer: each
 position's record state, then "→ peer · port via Cable" using display names
 (a breakout names its shared Cable once, then one line per lane), the short
 reason records disagree, and any opposite-face check. Power tiles (PSUs and
-outlets) then get a **Telemetry** section, and a load tint and words in their
-accessible name when a source reports values; see
+outlets) then get a **Telemetry** section with the values, their ages and a
+sparkline, and a load tint and words in their accessible name when a source
+reports values; see
 [Power path and telemetry](#power-path-and-telemetry-implemented-telemetry-mocked).
 A **Health** section follows and reads "No health reported" unless a
 telemetry source observes it. Everything else sits behind a collapsed
 **More** button, which is not
-rendered until opened: connector and positions, whether the Device records the
-component or only the catalog does, serial and asset tag, internal path, the
-generated Cable and peer record names with medium and lane, any trace, and
-"Cable records, not live link state". A denied peer's name and record name
+rendered until opened: connector and positions, whether the owner records the
+component (worded by owner kind: "Recorded on this Device", "Catalog template
+only; this Device does not record it", or "Recorded on this power feed" for a
+PowerFeed termination), serial and asset tag, internal path, the
+generated Cable and peer record names with medium and lane, any trace, the
+**Telemetry source** (collector, instance, observed time and freshness
+window), and "Cable records, not live link state". A denied peer's name and record name
 appear in neither part. On screens 600 px
 wide or less, the card is a bottom sheet. Touch shows no tooltip. Escape or
 Close closes the card and returns focus to the tile.
@@ -742,6 +746,31 @@ tokens, which fixes the prototype's low-contrast reduced blocks in dark
 mode. Hatching is not used at these sizes, because at 16 px per unit it is
 noise.
 
+**Collapsed empty runs.** Each run of three or more units
+(`MIN_EMPTY_RUN`) with no recorded placement is one compact row, for
+example "U22–U39 · 18 units · no placement recorded (not free)". Blank is
+never free: the row says only that no record places anything there, and
+expanding it shows each unit as "—" (occupancy unverified). A click, or
+Enter, expands the run in place; the top unit of an expanded run carries a
+"Collapse U22–U39" control, and focus moves between the two. `emptyRuns()` in
+`lib/rack-faces.ts` computes runs from the same face-aware occupancy the
+elevation draws, so full-depth and unknown-depth equipment occupy both
+faces and overlapping placements count once.
+
+Alignment: a single-face view (Front or Rear) collapses that face's own
+empty units. **Front + rear collapses only units empty on both faces**, so
+the two columns share one row template and their rows always line up; a
+half-depth device on one face keeps its units expanded on the other. Grid
+rows stay one per unit (row = height − unit + 1): a collapsed run gives its
+top unit's row a compact height (24 px, 44 px on coarse pointers) and its
+other rows zero, so no placement's row ever moves. Expansion is shared by
+both columns. Collapsed rows work at every level of detail and with
+`?detail=`; only unit rows take the level's pixels per unit. Elevation
+entries are in drawn order, top to bottom, and the rack page's arrow keys,
+Home and End move across equipment links and collapsed rows alike. A
+collapsed row's accessible name starts with its visible words and adds the
+face ("on either face" or "on the front face") and "Show each unit".
+
 **Not implemented:**
 
 - health marks; cards read "No health reported";
@@ -839,13 +868,18 @@ it.
 - **Cables tab.** Cables grouped by the device in this rack they terminate on,
   with counts, port, peer, record state and the Cable's display name. Record
   names are only in each group's collapsed "Record names" list.
-- **Power tab.** A redundancy view first: the rack's feeds side by side,
-  each with a compact capacity bar, and each device once with its PSUs under
-  the feed their recorded path reaches (see
+- **Power tab.** One redundancy view: the rack's feeds side by side, and
+  each device once with its PSUs under the feed their recorded path reaches
+  (see
   [Power path and telemetry](#power-path-and-telemetry-implemented-telemetry-mocked)).
-  Then each feed's terminations with their recorded cable or "no cable
-  recorded", and PDUs (Devices with power outlets) with the outlets that have
-  a cable recorded.
+  Each feed column carries a compact capacity bar, the feed's terminations as
+  outlet tiles (peer and Cable in each tile's name, tooltip and card), their
+  counts and a **Power path** link to the feed page. A PDU's row says "5 of 8
+  outlets have a cable recorded" and links to the PDU, whose page draws every
+  outlet. The separate "Feed outlets" and "PDUs" lists below the grid were
+  removed because they repeated this. When power feeds are unreadable the
+  grid still lists devices and PDUs, with every PSU's feed unknown and no
+  feed named.
 - **History tab.** Record history and verification, unchanged in meaning.
 - **Issue banners.** Above the elevation, one short banner per cluster of
   same-face overlapping placements, from the elevation's own face-aware
@@ -866,22 +900,32 @@ full name stays in the tile's accessible name and card.
 **PowerFeed page.** The primary view is the recorded power path, read left
 to right and stacked at phone width: **Upstream** (a count linking to the
 Upstream sources tab) → **Feed** (rating, phase, capacity bar, and the feed's
-terminations as an outlet strip) → **PDUs** (each PDU cabled to a termination,
-drawn as a vertical outlet strip: inlet first, then outlets) → **Devices**
+terminations as outlet tiles) → **PDUs** (each PDU cabled to a termination,
+drawn as its faceplate when its model records a layout, otherwise as outlet
+tiles: inlet first, then outlets) → **Devices**
 (each Device whose PSUs the path reaches, once, with a feed-class badge and
 where its other PSUs go). `feedPath()` and `psuFeeds()` in
 `ui/provider/src/lib/power-paths.ts` derive this from Cable records and PDU
 internal mappings only; `feedConnections()` in `device-connections.ts` joins
 a feed's terminations with the same record states as Device components.
 
-Outlet strips (`PowerStrip` in `power-feed-path.tsx`) reuse the shared
-`PortTileButton` and `PortCard`, so connector shapes, record states,
-accessible names and cards match the Device faceplate; there is no second
-card. Each row shows the tile, what the outlet is cabled to, and its observed
-reading. A strip is one tab stop: arrow keys, Home and End move; Enter or a
-click opens the card; Escape closes it and returns focus. When a DeviceType
-records a PDU layout, the strip should render through the shared faceplate
-renderer instead.
+Outlets are tiles, not rows of text. A PDU whose DeviceType records a
+layout is drawn by the shared faceplate renderer (`FaceplateDrawing` with
+`fit`), cropped to its recorded banks and scaled to the column, down to
+1.2 px/mm before it scrolls in its own frame. Anything else, including a
+feed's terminations, is `OutletTiles` in `power-feed-path.tsx`: the shared
+`PortTileButton` shaped by connector kind. Both use `usePortGrid`, so the
+tooltip, keyboard model and `PortCard` match the Device faceplate; there is
+no second card. The dense rule is the faceplate's: above `TEXT_TILE_LIMIT`
+(12) outlets the tiles carry no text and faint edge numbers mark the first,
+every eighth and the last. Each tile has the load tint and the status marks
+(`↑`, `⚠`, `◷`, `≠`, `✕`); what an outlet is cabled to is in its accessible
+name, tooltip and card, and the numbers (A, W) are in the card only. Each
+group (the feed's outlets, each PDU) has one freshness line instead of an age
+per outlet: "Updated 40 s ago", "Stale · updated 3 h ago", or "Not reported",
+with counts of stale and unreported outlets (`groupFreshness()`). A group is
+one tab stop: arrow keys, Home and End move; Enter or a click opens the card;
+Escape closes it and returns focus.
 
 **Capacity.** `feedCapacity()` in `power-capacity.ts` computes the rated
 apparent power from the recorded supply: single-phase `S = V × I`,
@@ -930,7 +974,11 @@ and fails if any mock-only string appears in it. The real source is a
 
 `pnpm screenshots` captures `power-feed-normal`, `power-feed-high-load`,
 `power-feed-stale`, `power-feed-mismatch`, `power-feed-no-telemetry`,
-`power-feed-outlet-card`, `rack-power-redundancy` and `device-psu-card`.
+`power-feed-outlet-card`, `power-feed-outlet-card-more`,
+`rack-power-redundancy`, `device-psu-card` and `device-single-feed` (a server
+whose PSUs both reach Feed A through one PDU: "Single feed (recorded)").
+`rack-elevation` shows collapsed runs and `rack-elevation-expanded` one run
+expanded.
 
 ## Deliberate gaps and decisions
 

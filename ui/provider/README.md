@@ -99,7 +99,8 @@ fixture build replaces every API read with synthetic data:
   one facility with three 42U racks, about fifteen Devices (1U and 2U servers,
   a 48+8-port leaf mounted reversed, a half-depth rear patch panel, a PDU on a
   non-unit mount, a Device with a rack but no position, one with no placement,
-  two overlapping placements, a Decommissioning and a Retired Device), the
+  two overlapping placements, a Decommissioning and a Retired Device, and a
+  server whose PSUs both reach one feed through the same PDU), the
   catalog of Manufacturers and DeviceTypes with network, power, console and
   BMC templates, two power feeds, and Cables covering every connection-view
   state (recorded, two Cables on one port, a missing peer, a 4-lane breakout,
