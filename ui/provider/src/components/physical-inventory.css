@@ -590,3 +590,15 @@
 .inventory-dense-table tr[data-attention="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
 .inventory-dense-table tr[data-attention="unavailable"] > td:first-child { box-shadow:inset 3px 0 var(--warning,#d97706); }
 .inventory-dense-table td[data-single] { color:var(--warning,#b45309); font-weight:500; }
+
+/* Capacity, Profiles and Classes: one tab row for every Bare Metal tab, one-line rows, and a state word coloured only when it needs attention. */
+.fleet-tab-row { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:8px; min-height:40px; border-bottom:1px solid var(--border); }
+.fleet-tab-row > :first-child { min-width:0; max-width:100%; overflow-x:auto; }
+@media (max-width:480px) { .fleet-tab-row [role="tablist"] { gap:16px; } }
+.fleet-tab-count { margin-left:6px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.fleet-tab-actions { display:flex; align-items:center; gap:8px; margin-left:auto; padding-bottom:4px; }
+.fleet-table td,.fleet-table th { white-space:nowrap; }
+.fleet-state[data-attention="conflict"] { color:var(--destructive); font-weight:500; }
+.fleet-state[data-attention="unavailable"] { color:var(--warning,#b45309); font-weight:500; }
+.fleet-link { text-decoration:underline; text-underline-offset:2px; }
+.fleet-filter { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted-foreground); }
