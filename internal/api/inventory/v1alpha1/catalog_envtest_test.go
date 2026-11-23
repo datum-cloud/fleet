@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -52,6 +53,13 @@ func TestCatalogAPIConcurrencyAndStrictFields(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	var stored DeviceType
+	if err := api.Get(ctx, client.ObjectKeyFromObject(model), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Spec.ModelShape != nil {
+		t.Fatalf("API server invented a DeviceType shape; unset depth must stay unknown: %+v", stored.Spec.ModelShape)
+	}
 	stale := device.DeepCopyObject().(*Device)
 	device.Spec.DeviceTypeRef = &LocalReference{Name: model.Name}
 	if err := api.Update(ctx, &device); err != nil {
@@ -79,6 +87,20 @@ func TestCatalogAPIConcurrencyAndStrictFields(t *testing.T) {
 	core, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for face, valid := range map[string]bool{"Front": true, "Rear": true, "front": false, "Side": false} {
+		faced := object(t, model)
+		faced["apiVersion"], faced["kind"] = GroupVersion.String(), "DeviceType"
+		faced["metadata"] = map[string]any{"name": "faced-" + strings.ToLower(face), "namespace": "fleet-system"}
+		faced["spec"].(map[string]any)["componentTemplates"] = []any{map[string]any{"id": "port-1", "name": "Port 1", "type": "NetworkPort", "face": face}}
+		body, err := json.Marshal(faced)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = core.RESTClient().Post().AbsPath("/apis/fleet.datumapis.com/v1alpha1/namespaces/fleet-system/devicetypes").Param("fieldValidation", "Strict").Body(body).Do(ctx).Error()
+		if valid && err != nil || !valid && !apierrors.IsInvalid(err) {
+			t.Fatalf("template face %q: valid=%v, got %v", face, valid, err)
+		}
 	}
 	invalid := object(t, syntheticDevice())
 	invalid["metadata"].(map[string]any)["name"] = "invalid-reference"

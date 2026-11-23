@@ -251,7 +251,7 @@ export interface DeviceClaim {
     lifecycle?: 'Installation';
     displayName?: string;
     cableRefs?: LocalReference[];
-    placement: { facility?: string; rack?: string; position?: number; height?: number; face?: 'front' | 'rear'; scope?: 'Facility' | 'RackMembership' | 'RackUnits' | 'NonRackUnitMount'; facilityRef?: LocalReference; rackRef?: LocalReference; mount?: string };
+    placement: { facility?: string; rack?: string; position?: number; height?: number; face?: RackFace; scope?: 'Facility' | 'RackMembership' | 'RackUnits' | 'NonRackUnitMount'; facilityRef?: LocalReference; rackRef?: LocalReference; mount?: string };
     ports?: { name: string; type?: string; speedMbps?: number; expectedPeer?: PortPeer }[];
   };
 }
@@ -295,7 +295,7 @@ export interface ReportedPlacement {
   rackRef?: LocalReference;
   position?: number;
   height?: number;
-  face?: 'front' | 'rear';
+  face?: RackFace;
   fullDepth?: boolean;
   mount?: string;
 }
@@ -310,6 +310,15 @@ export interface PhysicalComponent {
   positions?: number;
   serial?: string;
   assetTag?: string;
+}
+// The mounted rack face: the rack face the chassis front points toward.
+export type RackFace = 'front' | 'rear';
+// A side of the chassis itself, never of the rack. Unset means unknown.
+export type ChassisFace = 'Front' | 'Rear';
+// A DeviceType component template. A Device component inherits its face from
+// the template whose id equals the component id.
+export interface ComponentTemplate extends Omit<PhysicalComponent, 'serial' | 'assetTag'> {
+  face?: ChassisFace;
 }
 export interface CableEndpoint extends ComponentPosition {
   deviceRef?: LocalReference;
@@ -326,7 +335,9 @@ export interface PhysicalRecord {
     manufacturerRef?: LocalReference;
     model?: string;
     modelShape?: { heightUnits?: number; fullDepth?: boolean };
-    componentTemplates?: Omit<PhysicalComponent, 'serial' | 'assetTag'>[];
+    // DeviceType only. modelShape.fullDepth unset means depth unknown; a
+    // Device's own value overrides it.
+    componentTemplates?: ComponentTemplate[];
     facilityRefs?: LocalReference[];
     identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];
     facilityRef?: LocalReference;

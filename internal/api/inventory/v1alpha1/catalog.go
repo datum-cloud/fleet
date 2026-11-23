@@ -21,7 +21,21 @@ type ComponentTemplate struct {
 	Type      string `json:"type"`
 	Connector string `json:"connector,omitempty"`
 	Positions int32  `json:"positions,omitempty"`
+	// Face is the chassis face the component sits on, relative to the
+	// chassis and never to the rack. Unset means unknown. A Device component
+	// inherits it from the template whose ID equals the component ID; there
+	// is no Device-level override.
+	Face ChassisFace `json:"face,omitempty"`
 }
+
+// ChassisFace names a side of the chassis itself. The front is whatever the
+// manufacturer calls the front; for many switches that is the port side.
+type ChassisFace string
+
+const (
+	ChassisFront ChassisFace = "Front"
+	ChassisRear  ChassisFace = "Rear"
+)
 
 type DeviceTypeSpec struct {
 	PhysicalMetadata   `json:",inline"`

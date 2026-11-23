@@ -1254,6 +1254,11 @@ spec:
                       type: integer
                       minimum: 1
                       maximum: 256
+                    face:
+                      type: string
+                      enum:
+                      - Front
+                      - Rear
                   required:
                   - id
                   - name

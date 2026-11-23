@@ -53,7 +53,9 @@ type Placement struct {
 	Rack        string          `json:"rack,omitempty"`
 	Position    int32           `json:"position,omitempty"`
 	Height      int32           `json:"height,omitempty"`
-	Face        string          `json:"face,omitempty"`
+	// Face is the mounted rack face: the rack face the chassis front points
+	// toward. See ReportedPlacement.Face.
+	Face string `json:"face,omitempty"`
 }
 
 // ExpectedPort is a planned physical port and the cable peer it should reach.
@@ -137,9 +139,20 @@ type ReportedPlacement struct {
 	RackRef     *LocalReference `json:"rackRef,omitempty"`
 	Position    *float64        `json:"position,omitempty"`
 	Height      *float64        `json:"height,omitempty"`
-	Face        string          `json:"face,omitempty"`
-	FullDepth   *bool           `json:"fullDepth,omitempty"`
-	Mount       string          `json:"mount,omitempty"`
+	// Face is the mounted rack face, front or rear: the rack face the
+	// chassis front points toward, as NetBox records it. A half-depth device
+	// sits on that face's rails and occupies only that face; a full-depth
+	// device occupies both faces. A switch mounted reversed, with its ports
+	// toward the rack rear, has face rear when its ports are on the chassis
+	// front. A chassis-relative component face maps to a rack face through
+	// this value: Front lands on Face, Rear on the opposite face.
+	Face string `json:"face,omitempty"`
+	// FullDepth is the reported depth for this installation. When unset,
+	// readers fall back to the Device's and then the DeviceType's model
+	// shape. A depth still unknown is counted as full depth for occupancy
+	// and conflicts only, and is labelled unknown; it is never defaulted.
+	FullDepth *bool  `json:"fullDepth,omitempty"`
+	Mount     string `json:"mount,omitempty"`
 }
 
 type LocalReference struct {

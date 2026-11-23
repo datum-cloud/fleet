@@ -11,6 +11,9 @@ type ExternalReference struct {
 	ID     string `json:"id"`
 }
 
+// ModelShape is a nominal shape, never a measurement. FullDepth means the
+// chassis reaches both the front and rear rails. Unset means unknown and is
+// never defaulted. A Device value overrides its DeviceType's value.
 type ModelShape struct {
 	HeightUnits *float64 `json:"heightUnits,omitempty"`
 	FullDepth   *bool    `json:"fullDepth,omitempty"`
