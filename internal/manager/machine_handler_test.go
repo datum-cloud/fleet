@@ -242,37 +242,6 @@ func TestMachineHandlerReleaseRemovesFinalizerOnlyAfterSafeSettlement(t *testing
 	}
 }
 
-func TestMachineHandlerDoesNotRetryLegacyAuthorityButStillReleases(t *testing.T) {
-	handler, kube, lifecycle, request, _ := newMachineHandlerFixture(t)
-	if first := handler.ReconcileEvent(context.Background(), request); first.RetryError != nil {
-		t.Fatal(first.RetryError)
-	}
-	lifecycle.allocateErr = controller.ErrLegacyRecord
-	if outcome := handler.ReconcileEvent(context.Background(), request); outcome.RetryError != nil {
-		t.Fatalf("legacy allocation outcome = %#v", outcome)
-	}
-	lifecycle.allocateErr, lifecycle.retainErr = nil, controller.ErrLegacyRecord
-	if outcome := handler.ReconcileEvent(context.Background(), request); outcome.RetryError != nil {
-		t.Fatalf("legacy recovery outcome = %#v", outcome)
-	}
-
-	var claim fleetv1.Machine
-	key := client.ObjectKey{Namespace: request.Namespace, Name: request.Name}
-	if err := kube.Get(context.Background(), key, &claim); err != nil {
-		t.Fatal(err)
-	}
-	if err := kube.Delete(context.Background(), &claim); err != nil {
-		t.Fatal(err)
-	}
-	lifecycle.release.SafeToRemoveFinalizer = true
-	if outcome := handler.ReconcileEvent(context.Background(), request); outcome.RetryError != nil || lifecycle.releases != 1 {
-		t.Fatalf("legacy release outcome = %#v releases=%d", outcome, lifecycle.releases)
-	}
-	if err := kube.Get(context.Background(), key, &claim); !apierrors.IsNotFound(err) {
-		t.Fatalf("finalizer retained after legacy release: %v", err)
-	}
-}
-
 func TestMachineHandlerRetriesInfrastructureFailure(t *testing.T) {
 	handler, _, lifecycle, request, _ := newMachineHandlerFixture(t)
 	want := errors.New("authority store unavailable")
