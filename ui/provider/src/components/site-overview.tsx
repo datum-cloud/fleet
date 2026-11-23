@@ -6,6 +6,7 @@ import { slotKey, type Inventory } from '../inventory';
 import { devicePlacement, placementFacility } from '../lib/device-placement';
 import { facilityIdentifiers, siteFacilities } from '../lib/site-membership';
 import { inventoryHref } from './inventory-location';
+import { RecordTabs, historyTab, type RecordTab } from './inventory-record-layout';
 
 // This is a projection of authorized inventory, never a Site assignment or capacity resolver.
 export function SiteOverview({ site, inventory }: { site: PhysicalRecord; inventory: Inventory }) {
@@ -34,48 +35,44 @@ export function SiteOverview({ site, inventory }: { site: PhysicalRecord; invent
   const link = (kind: string, record: { metadata: PhysicalRecord['metadata']; spec: { displayName?: string } }) => <Link to={inventoryHref(kind, record.metadata.namespace, record.metadata.name)}>{record.spec.displayName || record.metadata.name}</Link>;
   const unavailable = (kind: 'Rack' | 'Device' | 'DeviceClaim') => inventory.issues?.[kind]?.status === 403 ? 'Access denied. Request inventory read access, then refresh.' : 'Records unavailable. Refresh inventory to retry.';
   const mapped = facilities.length > 0;
-  return <div className="inventory-equipment-sections">
-    <section aria-label="Site location">
-      <Title as="h3" level={5}>Location</Title>
-      {facilities.map(facility => <div key={facility.metadata.name}>
-        {link('Facility', facility)}
-        <p className="inventory-muted">{facilityIdentifiers(facility)}</p>
-        {facility.spec.locationRef && <p>Geographic location reference: {facility.spec.locationRef.name}</p>}
-      </div>)}
-      {unresolved.length > 0 && <p>{unresolved[0].state}. {inventory.issues?.Facility?.status === 403 ? 'Request Facility read access, then refresh.' : 'Refresh inventory; ask an inventory manager to review unresolved links.'}</p>}
-      {!memberships.length && <p>No facilities linked. Ask an inventory manager to record the Site’s facility references.</p>}
-    </section>
-    <section aria-label="Equipment at linked facilities">
-      <Title as="h3" level={5}>Equipment at linked facilities</Title>
-      <p className="inventory-muted">These records describe equipment at shared premises, not equipment assigned to this Site. Counts do not establish placement eligibility, capacity, or readiness.</p>
-      {!mapped ? <p>Equipment cannot be summarized until linked facilities are readable.</p> : <>
-        <h4>Racks {inventory.issues?.Rack ? '' : `· ${racks.length}${membershipIncomplete ? ' found · incomplete' : ' recorded'}`}</h4>
-        {inventory.issues?.Rack ? <p>{unavailable('Rack')}</p> : racks.length ? <ul>{racks.map(rack => <li key={rack.metadata.name}>{link('Rack', rack)}</li>)}</ul> : <p>No matching rack records found. Review facility links and rack records.</p>}
-        <h4>Devices {inventory.issues?.Device ? '' : `· ${locatedDevices.length}${deviceIncomplete ? ' found · incomplete' : ' recorded'}`}</h4>
+  const count = (value: number, incomplete: boolean) => `${value}${incomplete ? ' found · incomplete' : ' recorded'}`;
+  const tabs: RecordTab[] = [
+    {
+      id: 'racks', label: 'Racks', count: !mapped || inventory.issues?.Rack ? '?' : racks.length, content: !mapped ? <p>Unknown until linked facilities are readable.</p> : <>
+        <h4>Racks {inventory.issues?.Rack ? '' : `· ${count(racks.length, membershipIncomplete)}`}</h4>
+        {inventory.issues?.Rack ? <p>{unavailable('Rack')}</p> : racks.length ? <ul className="inventory-link-list">{racks.map(rack => <li key={rack.metadata.name}>{link('Rack', rack)}</li>)}</ul> : <p>No matching rack records found. Review facility links and rack records.</p>}
+      </>,
+    },
+    {
+      id: 'devices', label: 'Devices', count: !mapped || inventory.issues?.Device ? '?' : locatedDevices.length, content: !mapped ? <p>Unknown until linked facilities are readable.</p> : <>
+        <h4>Devices {inventory.issues?.Device ? '' : `· ${count(locatedDevices.length, deviceIncomplete)}`}</h4>
         {inventory.issues?.Device ? <p>{unavailable('Device')}</p> : <>
           {deviceIncomplete && <p>Some locations or related records are unresolved or unavailable; this is not a complete device count.</p>}
-          {locatedDevices.length ? <div className="inventory-scroll" tabIndex={0} role="region" aria-label="Devices at linked facilities"><Table><TableHeader><TableRow><TableHead>Device</TableHead><TableHead>Location basis</TableHead></TableRow></TableHeader><TableBody>{locatedDevices.map(({ device, basis }) => <TableRow key={device.metadata.name}><TableCell>{link('Device', device)}</TableCell><TableCell>{basis}</TableCell></TableRow>)}</TableBody></Table></div> : <p>No matching device records found. Review reported locations and claim references.</p>}
+          {locatedDevices.length ? <div className="inventory-scroll inventory-fit" tabIndex={0} role="region" aria-label="Devices at linked facilities"><Table><TableHeader><TableRow><TableHead>Device</TableHead><TableHead>Location basis</TableHead></TableRow></TableHeader><TableBody>{locatedDevices.map(({ device, basis }) => <TableRow key={device.metadata.name}><TableCell>{link('Device', device)}</TableCell><TableCell>{basis}</TableCell></TableRow>)}</TableBody></Table></div> : <p>No matching device records found. Review reported locations and claim references.</p>}
         </>}
-      </>}
-    </section>
-    <section aria-label="Installation plans at linked facilities">
-      <Title as="h3" level={5}>Installation plans at linked facilities</Title>
-      {!mapped ? <p>Plans cannot be summarized until linked facilities are readable.</p> : inventory.issues?.DeviceClaim ? <p>{unavailable('DeviceClaim')}</p> : <>
+      </>,
+    },
+    {
+      id: 'plans', label: 'Installation plans', count: !mapped || inventory.issues?.DeviceClaim ? '?' : plans.length, content: !mapped ? <p>Plans cannot be summarized until linked facilities are readable.</p> : inventory.issues?.DeviceClaim ? <p>{unavailable('DeviceClaim')}</p> : <>
         <p>{plans.length} {planIncomplete ? 'found · incomplete' : 'recorded'} · execution status is not recorded by the current API.</p>
-        {plans.length ? <ul>{plans.map(plan => <li key={plan.metadata.name}>{link('DeviceClaim', plan)} · Recorded installation plan</li>)}</ul> : <p>No matching installation plans found. Review installation plans and their location references.</p>}
+        {plans.length ? <ul className="inventory-link-list">{plans.map(plan => <li key={plan.metadata.name}>{link('DeviceClaim', plan)}</li>)}</ul> : <p>No matching installation plans found. Review installation plans and their location references.</p>}
         <p className="inventory-muted">Legacy claims remain in <Link to={inventoryHref('DeviceClaim')}>Claims & registrations</Link>. A recorded plan does not establish installation progress.</p>
-      </>}
+      </>,
+    },
+    historyTab(site.metadata, <p className="inventory-muted">Facility references follow namespace/name. Recreating a name resolves to the replacement; this does not verify physical continuity.</p>),
+  ];
+  return <div className="inventory-equipment-sections">
+    <section aria-label="Site location">
+      <Title as="h3" level={5}>Facilities <span className="inventory-count">{facilities.length}</span></Title>
+      {facilities.length > 0 && <ul className="inventory-link-list">{facilities.map(facility => <li key={facility.metadata.name}>
+        {link('Facility', facility)}
+        <small>{[facilityIdentifiers(facility), facility.spec.locationRef && `Geographic location reference: ${facility.spec.locationRef.name}`].filter(Boolean).join(' · ')}</small>
+      </li>)}</ul>}
+      {unresolved.length > 0 && <p>{unresolved[0].state}. {inventory.issues?.Facility?.status === 403 ? 'Request Facility read access, then refresh.' : 'Refresh inventory; ask an inventory manager to review unresolved links.'}</p>}
+      {!memberships.length && <p>No facilities linked. Ask an inventory manager to record the Site’s facility references.</p>}
+      {!mapped && <p>Equipment cannot be summarized until linked facilities are readable.</p>}
+      <p className="inventory-legend">Equipment at shared premises, not equipment assigned to this Site. Membership grants no placement eligibility or operational authority. Counts do not establish capacity or readiness.</p>
     </section>
-    <details>
-      <summary>Technical details</summary>
-      <dl className="inventory-fields">
-        <div><dt>Internal Site code</dt><dd>{site.spec.code || 'Not recorded'}</dd></div>
-        <div><dt>Record name</dt><dd>{site.metadata.name}</dd></div>
-        <div><dt>Resource UID</dt><dd>{site.metadata.uid || 'Not recorded'}</dd></div>
-        <div><dt>Created</dt><dd>{site.metadata.creationTimestamp || 'Not recorded'}</dd></div>
-      </dl>
-      <p>Membership grants no placement eligibility, capacity, or operational authority.</p>
-      <p>Facility references follow namespace/name. Recreating a name resolves to the replacement; this does not verify physical continuity.</p>
-    </details>
+    <RecordTabs label="Site details" tabs={tabs} />
   </div>;
 }

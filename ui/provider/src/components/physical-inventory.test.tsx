@@ -40,7 +40,9 @@ describe('hardware directory', () => {
     const data = structuredClone(inventory);
     for (const item of data.physical) delete item.metadata.creationTimestamp;
     browse(`?kind=${record.kind}&record=${record.metadata.name}&namespace=${record.metadata.namespace}${record.kind === 'Rack' ? '&tab=history' : ''}`, data);
-    expect(screen.getByText(record.kind === 'Site' ? 'Technical details' : 'Record history & verification')).toBeInTheDocument();
+    expect(screen.getByText('About this record').closest('details')).not.toHaveAttribute('open');
+    if (record.kind === 'Rack') expect(screen.getByText('Record history & verification')).toBeInTheDocument();
+    else expect(screen.getByRole('tab', { name: 'History & verification' })).toBeInTheDocument();
     expect(screen.queryByText(/Unexpected Application Error/)).not.toBeInTheDocument();
   });
   it('does not turn no-read permission into empty inventory or zero counts', () => {
@@ -114,18 +116,22 @@ describe('hardware directory', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Server installation · U12' }));
     fireEvent.click(screen.getByRole('link', { name: 'Example compute server' }));
     expect(screen.getByText('SYNTHETIC-0001')).toBeInTheDocument();
-    expect(screen.getByText('NetworkPort')).toBeInTheDocument();
-    expect(screen.getByText('PowerInlet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Server power cable' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Network ports?\b/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Power inlets?\b/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /^Cable records/ }));
+    expect(within(screen.getByRole('region', { name: 'Cable records' })).getByRole('link', { name: 'Server power cable' })).toBeInTheDocument();
   });
 
   it('follows typed cable endpoints to the supply and retains power uncertainty', () => {
     browse('?kind=Cable&record=power-01&namespace=default');
-    expect(screen.getByText('psu-1 · position 1')).toBeInTheDocument();
+    expect(screen.getByText('psu-1')).toBeInTheDocument();
+    expect(screen.getByText(/Cable records, not live link state/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Feed A' }));
-    expect(screen.getByText('PowerOutlet')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Power outlets?\b/ })).toBeInTheDocument();
     expect(screen.getByText(/supply ratings do not establish available power/)).toBeInTheDocument();
-    expect(screen.getByText('example-provider/Supply/synthetic-supply-a')).toBeInTheDocument();
+    expect(screen.getByText(/unknown, not free/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /^Upstream sources/ }));
+    expect(screen.getByRole('region', { name: 'Upstream sources' })).toHaveTextContent('example-provider/Supply/synthetic-supply-a');
   });
 
   it('retains replacements without choosing an active registration', () => {

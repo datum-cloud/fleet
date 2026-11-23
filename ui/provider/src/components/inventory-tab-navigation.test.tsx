@@ -296,3 +296,18 @@ it.each(['principal', 'logout', 'denial', 'hidden', 'pagehide', 'revalidation', 
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });
+
+it('switches record detail tabs as presentation navigation without extra collection reads', async () => {
+  const view = host(`?kind=Device&record=${fixturePhysicalDevices[0].metadata.name}&namespace=default`);
+  await screen.findByRole('heading', { name: 'Example compute server' });
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  const tabs = () => within(screen.getByRole('tablist', { name: 'Example compute server details' }));
+  fireEvent.click(tabs().getByRole('tab', { name: 'Location' }));
+  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true'));
+  expect(new URLSearchParams(view.router.state.location.search).get('tab')).toBe('location');
+  await act(async () => { await view.router.navigate(-1); });
+  await waitFor(() => expect(tabs().getByRole('tab', { name: /^Components/ })).toHaveAttribute('aria-selected', 'true'));
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  expect(view.writes).not.toHaveBeenCalled();
+  view.router.dispose();
+});

@@ -58,7 +58,7 @@ describe('manufacturer detail', () => {
     }
     expect(devices.getByText(/U4/)).toBeInTheDocument();
     expect(screen.queryByText(/Manufacturers \/ vendor-key/)).not.toBeInTheDocument();
-    expect(screen.getByText('vendor-key').closest('details')).toHaveTextContent('Technical details');
+    expect(screen.getByText('vendor-key').closest('details')).toHaveTextContent('About this record');
   });
 
   it('uses only same-namespace references, not text, templates or dangling targets', () => {
@@ -165,7 +165,7 @@ describe('manufacturer detail', () => {
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
     show(inventory);
-    fireEvent.click(screen.getByRole('link', { name: '← Back to manufacturers' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'breadcrumb' })).getByRole('link', { name: 'Manufacturers' }));
     expect(screen.getByRole('searchbox')).toHaveValue('Acme');
     expect(screen.queryByText('vendor-key')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Acme hardware' }));

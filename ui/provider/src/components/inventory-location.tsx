@@ -91,11 +91,28 @@ export function RackOverview({ rack, inventory, selection, toolbar }: { rack: Ph
   </section>;
 }
 
-export function FacilityOverview({ facility, inventory }: { facility: PhysicalRecord; inventory: Inventory }) {
-  const racks = inventory.physical.filter(record => record.kind === 'Rack' && record.metadata.namespace === facility.metadata.namespace && record.spec.facilityRef?.name === facility.metadata.name);
+const facilityRacks = (facility: PhysicalRecord, inventory: Inventory) => inventory.physical.filter(record => record.kind === 'Rack' && record.metadata.namespace === facility.metadata.namespace && record.spec.facilityRef?.name === facility.metadata.name);
+const facilityOnly = (facility: PhysicalRecord, inventory: Inventory) => equipmentPlacements(inventory).filter(slot => slot.record.metadata.namespace === facility.metadata.namespace && !slot.placement.rackRef && slot.placement.facilityRef?.name === facility.metadata.name);
+
+/** A Facility's primary view: its racks. Free space is stated once, as unknown. */
+export function FacilityRacks({ facility, inventory }: { facility: PhysicalRecord; inventory: Inventory }) {
+  const racks = facilityRacks(facility, inventory);
   const equipment = equipmentPlacements(inventory);
-  const facilityOnly = equipment.filter(slot => slot.record.metadata.namespace === facility.metadata.namespace && !slot.placement.rackRef && slot.placement.facilityRef?.name === facility.metadata.name);
-  return <section className="inventory-equipment-sections" aria-label="Facility contents"><Title as="h3" level={5}>Racks</Title>{inventory.issues?.Rack ? <p>Rack details unavailable. The facility's rack count is unknown.</p> : racks.length ? <div className="inventory-scroll"><Table aria-label="Facility racks"><TableHeader><TableRow><TableHead>Rack</TableHead><TableHead>Recorded height</TableHead><TableHead>Equipment reports / claim fallback</TableHead><TableHead>Available space</TableHead></TableRow></TableHeader><TableBody>{racks.map(rack => <TableRow key={slotKey(rack.metadata.namespace, rack.metadata.name)}><TableCell><Link to={inventoryHref('Rack', rack.metadata.namespace, rack.metadata.name)}>{rack.spec.displayName || rack.metadata.name}</Link></TableCell><TableCell>{rack.spec.heightUnits ? `${rack.spec.heightUnits}U` : 'Not recorded'}</TableCell><TableCell>{inventory.issues?.DeviceClaim || inventory.issues?.Device ? 'Incomplete' : equipment.filter(slot => slot.record.metadata.namespace === rack.metadata.namespace && slot.placement.rackRef?.name === rack.metadata.name).length}</TableCell><TableCell>Not verified</TableCell></TableRow>)}</TableBody></Table></div> : <p className="inventory-muted">No racks recorded in this facility.</p>}
-    <Title as="h3" level={5}>Equipment without a recorded rack</Title>{facilityOnly.length ? <Equipment slots={facilityOnly} devicesDenied={!!inventory.issues?.Device} inventory={inventory} /> : inventory.issues?.DeviceClaim || inventory.issues?.Device ? <p>Equipment details unavailable.</p> : <p className="inventory-muted">No facility-only reports or claims recorded.</p>}
+  const incomplete = !!inventory.issues?.DeviceClaim || !!inventory.issues?.Device;
+  return <section className="inventory-equipment-sections" aria-label="Facility contents">
+    <Title as="h3" level={5}>Racks <span className="inventory-count">{inventory.issues?.Rack ? 'unknown' : racks.length}</span></Title>
+    {inventory.issues?.Rack ? <p>Rack details unavailable. The facility's rack count is unknown.</p> : racks.length ? <div className="inventory-scroll inventory-fit"><Table aria-label="Facility racks"><TableHeader><TableRow><TableHead>Rack</TableHead><TableHead>Height</TableHead><TableHead>Equipment records</TableHead></TableRow></TableHeader><TableBody>{racks.map(rack => <TableRow key={slotKey(rack.metadata.namespace, rack.metadata.name)}><TableCell><Link to={inventoryHref('Rack', rack.metadata.namespace, rack.metadata.name)}>{rack.spec.displayName || rack.metadata.name}</Link></TableCell><TableCell>{rack.spec.heightUnits ? `${rack.spec.heightUnits}U` : 'Not recorded'}</TableCell><TableCell>{incomplete ? 'Incomplete' : equipment.filter(slot => slot.record.metadata.namespace === rack.metadata.namespace && slot.placement.rackRef?.name === rack.metadata.name).length}</TableCell></TableRow>)}</TableBody></Table></div> : <p className="inventory-muted">No racks recorded in this facility.</p>}
+    {racks.length > 0 && <p className="inventory-legend">Equipment counts are reports and claim fallback, not verified occupancy. Available space is not verified: unknown, not free.</p>}
   </section>;
+}
+
+/** Equipment recorded at the facility without a rack. */
+export function FacilityUnrackedEquipment({ facility, inventory }: { facility: PhysicalRecord; inventory: Inventory }) {
+  const slots = facilityOnly(facility, inventory);
+  return slots.length ? <Equipment slots={slots} devicesDenied={!!inventory.issues?.Device} inventory={inventory} /> : inventory.issues?.DeviceClaim || inventory.issues?.Device ? <p>Equipment details unavailable.</p> : <p className="inventory-muted">No facility-only reports or claims recorded.</p>;
+}
+
+/** Facility-only equipment count, for the tab label. */
+export function unrackedCount(facility: PhysicalRecord, inventory: Inventory) {
+  return facilityOnly(facility, inventory).length;
 }

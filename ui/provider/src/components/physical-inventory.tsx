@@ -1,19 +1,18 @@
 import { Button } from '@datum-cloud/datum-ui/button';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableCaption } from '@datum-cloud/datum-ui/table';
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@datum-cloud/datum-ui/table';
 import { Title } from '@datum-cloud/datum-ui/typography';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocation, useSearchParams } from 'react-router';
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { InventoryNavigation, sections } from './inventory-navigation';
 import {
   modelLabel,
   placementLabel,
-  legacyPeerLabel,
   slotKey,
   type Inventory,
   type RawDevice,
   type RawDeviceClaim,
 } from '../inventory';
-import type { CableEndpoint, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
+import type { CableEndpoint, PhysicalRecord } from '../../../shared/fleet-api';
 import './physical-inventory.css';
 import { SiteOverview } from './site-overview';
 import { ManufacturerOverview } from './manufacturer-overview';
@@ -23,7 +22,7 @@ import { InventoryManagement } from './inventory-management';
 import { DevicePlacementEdit } from './device-placement-edit';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
-import { FacilityOverview, inventoryHref } from './inventory-location';
+import { inventoryHref } from './inventory-location';
 import { RackDetail } from './rack-detail';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
 import { facilityIdentifiers, facilitySites } from '../lib/site-membership';
@@ -31,8 +30,9 @@ import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { InventoryDirectoryHeading, InventoryToolbar } from './inventory-directory-heading';
 import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
-import { DeviceConnections } from './device-connections';
-import { depthLabel, deviceDepth } from '../lib/device-depth';
+import { AboutRecord, IssueBanners, RecordSummary, RecordTabs, SummaryParts } from './inventory-record-layout';
+import { cableDetail, claimDetail, deviceDetail, deviceTypeDetail, facilityDetail, powerFeedDetail, type DetailHelpers, type DetailView } from './inventory-record-detail';
+import { sharedValue } from '../lib/display-names';
 
 type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -42,55 +42,6 @@ export { endpointLabel } from '../inventory';
 
 function recordName(entry: RecordEntry) {
   return entry.record.spec.displayName || entry.record.metadata.name;
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{children ?? 'Not recorded'}</dd>
-    </div>
-  );
-}
-
-function Components({ components }: { components: PhysicalComponent[] }) {
-  return components.length ? (
-    <div className="inventory-scroll">
-      <Table>
-        <TableCaption>Physical components</TableCaption>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name / ID</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Connector / positions</TableHead>
-            <TableHead>Identity</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {components.map((component) => (
-            <TableRow key={component.id}>
-              <TableCell>
-                {component.name}
-                <small>{component.id}</small>
-              </TableCell>
-              <TableCell>{component.type}</TableCell>
-              <TableCell>
-                {component.connector ?? 'Not recorded'} / {component.positions ?? 'Not recorded'}
-              </TableCell>
-              <TableCell>
-                {component.serial ?? 'No serial recorded'}
-                <small>
-                  {component.assetTag ? `Asset tag: ${component.assetTag}` : 'No asset tag recorded'}
-                </small>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  ) : (
-    <p className="inventory-muted">No components recorded.</p>
-  );
 }
 
 export function PhysicalInventory({ inventory: source, onRetry, showNavigation = true }: { inventory: Inventory; onRetry?: () => void; showNavigation?: boolean }) {
@@ -250,326 +201,74 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
         ),
     );
 
-  function Endpoint({ endpoint, namespace }: { endpoint: CableEndpoint; namespace?: string }) {
-    if ((endpoint.deviceRef && inventory.issues?.Device) || (endpoint.powerFeedRef && inventory.issues?.PowerFeed)) return <span>Related endpoint unavailable</span>;
-    return (
-      <span>
-        {endpoint.deviceRef
-          ? reference('Device', namespace, endpoint.deviceRef.name)
-          : endpoint.powerFeedRef
-            ? reference('PowerFeed', namespace, endpoint.powerFeedRef.name)
-            : 'Endpoint not recorded'}
-        <small>
-          {endpoint.componentID} · position {endpoint.position}
-        </small>
-      </span>
-    );
-  }
 
-  function Detail({ entry }: { entry: RecordEntry }) {
-    const { record, kind } = entry;
-    if (kind === 'Site') return <SiteOverview site={record as PhysicalRecord} inventory={inventory} />;
-    if (kind === 'Manufacturer') return <ManufacturerOverview manufacturer={record as PhysicalRecord} inventory={inventory} />;
-    const namespace = record.metadata.namespace;
-    const device = kind === 'Device' ? (record as RawDevice) : undefined;
-    const catalog = device && deviceCatalog(device, inventory);
-    const claim = kind === 'DeviceClaim' ? (record as RawDeviceClaim) : undefined;
-    const physical = !device && !claim ? (record as PhysicalRecord) : undefined;
-    const slot = device
-      ? claimFor(device)
-      : claim
-        ? inventory.slots.find((item) => item.key === slotKey(namespace, claim.metadata.name))
-        : undefined;
-    const sameNamespace = (candidate: RecordEntry) =>
-      (candidate.record.metadata.namespace ?? '') === (namespace ?? '');
-    const related = entries.filter((candidate) => {
-      if (!sameNamespace(candidate)) return false;
-      if (candidate.kind === 'DeviceClaim') {
-        if (kind === 'Cable')
-          return (candidate.record as RawDeviceClaim).spec.cableRefs?.some(
-            (cable) => cable.name === record.metadata.name,
-          );
-        const location = (candidate.record as RawDeviceClaim).spec.placement;
-        const rack = location.rackRef
-          ? (find('Rack', namespace, location.rackRef.name)?.record as PhysicalRecord | undefined)
-          : undefined;
-        return kind === 'Rack'
-          ? location.rackRef?.name === record.metadata.name
-          : kind === 'Facility' &&
-              (location.facilityRef?.name === record.metadata.name ||
-                rack?.spec.facilityRef?.name === record.metadata.name);
+  /** A Cable end in a list row: the target named once, then its ports. */
+  const endSummary = (cable: PhysicalRecord, side: 'a' | 'b') => {
+    const lanes = cable.spec.lanes ?? [];
+    const label = (endpoint: CableEndpoint) => {
+      const kind = endpoint.deviceRef ? 'Device' : endpoint.powerFeedRef ? 'PowerFeed' : undefined;
+      if (!kind) return 'Endpoint not recorded';
+      if (inventory.issues?.[kind]) return 'Related endpoint unavailable';
+      const name = endpoint.deviceRef?.name ?? endpoint.powerFeedRef!.name;
+      const target = find(kind, cable.metadata.namespace, name);
+      return target ? recordName(target) : `${name} (record not found)`;
+    };
+    if (!lanes.length) return 'No lanes recorded';
+    const target = sharedValue(lanes.map(lane => label(lane[side])));
+    const ports = [...new Set(lanes.map(lane => lane[side].componentID))];
+    if (target) return <>{target}<small>{ports.join(', ')}{lanes.length > 1 ? ` · ${lanes.length} lanes` : ''}</small></>;
+    return lanes.map(lane => <div key={lane.id}>{label(lane[side])}<small>{lane[side].componentID}</small></div>);
+  };
+
+  /** A Device's location in a list row: rack and units; facility only when there is more than one. */
+  const multipleFacilities = inventory.physical.filter(record => record.kind === 'Facility').length > 1;
+  const listLocation = (device: RawDevice): string => {
+    const projected = devicePlacement(device, inventory);
+    if (!projected) return inventory.issues?.DeviceClaim ? 'Claim details unavailable' : claimFor(device) ? 'Location unknown' : 'Claim record not found';
+    const { placement: where } = projected;
+    const display = (kind: 'Facility' | 'Rack', name?: string) => name && (inventory.issues?.[kind] ? `${kind} unavailable` : find(kind, device.metadata.namespace, name) ? recordName(find(kind, device.metadata.namespace, name)!) : name);
+    const facility = placementFacility(where, device.metadata.namespace, inventory);
+    const units = where.mount ? `mount: ${where.mount}` : where.position !== undefined ? `U${where.position}${(where.height ?? 1) > 1 ? `–U${where.position + (where.height ?? 1) - 1}` : ''}` : where.rackRef ? 'position unknown' : 'rack unknown';
+    const parts = [multipleFacilities || !where.rackRef ? display('Facility', facility) ?? 'Facility unknown' : undefined, display('Rack', where.rackRef?.name), units];
+    return `${parts.filter(Boolean).join(' · ')}${projected.basis === 'Claim-derived fallback' ? ' (planned, claim-derived)' : ''}${projected.multipleRegistrations ? ' · active device unknown' : ''}`;
+  };
+
+  const slotFor = (entry: RecordEntry) => entry.kind === 'Device'
+    ? claimFor(entry.record as RawDevice)
+    : entry.kind === 'DeviceClaim' ? inventory.slots.find(item => item.key === slotKey(entry.record.metadata.namespace, entry.record.metadata.name)) : undefined;
+  const helpers: DetailHelpers = { inventory, entries, href, reference, find, placement, slotFor };
+
+  function detailView(entry: RecordEntry, locationEditor: ReactNode): DetailView {
+    const record = entry.record;
+    switch (entry.kind) {
+      case 'Device': return deviceDetail(record as RawDevice, helpers, locationEditor);
+      case 'DeviceClaim': return claimDetail(record as RawDeviceClaim, helpers);
+      case 'Cable': return cableDetail(record as PhysicalRecord, helpers);
+      case 'PowerFeed': return powerFeedDetail(record as PhysicalRecord, helpers);
+      case 'Facility': return facilityDetail(record as PhysicalRecord, helpers);
+      case 'DeviceType': return deviceTypeDetail(record as PhysicalRecord, helpers);
+      // The rack page (rack-detail.tsx) renders its own header summary, tabs and About.
+      case 'Rack': return { summary: undefined, issues: [], primary: null, tabs: [] };
+      case 'Site': {
+        const site = record as PhysicalRecord;
+        return {
+          summary: <RecordSummary><SummaryParts parts={[site.spec.code && `Site code ${site.spec.code}`, 'Operational membership only']} /></RecordSummary>,
+          issues: [], tabs: [],
+          primary: <SiteOverview site={site} inventory={inventory} />,
+          about: [{ label: 'Internal Site code', value: site.spec.code }],
+        };
       }
-      if (candidate.kind === 'Device')
-        return (
-          kind === 'DeviceClaim' &&
-          (candidate.record as RawDevice).spec.claimRef.name === record.metadata.name
-        );
-      const target = candidate.record as PhysicalRecord;
-      if (target.kind === 'Cable')
-        return target.spec.lanes?.some((lane) =>
-          [lane.a, lane.b].some((endpoint) => {
-            if ((kind === 'Rack' || kind === 'Facility') && endpoint.deviceRef) {
-              const targetDevice = find('Device', namespace, endpoint.deviceRef.name)?.record as RawDevice | undefined;
-              const location = targetDevice && devicePlacement(targetDevice, inventory)?.placement;
-              const rack = location?.rackRef && find('Rack', namespace, location.rackRef.name)?.record as PhysicalRecord | undefined;
-              return kind === 'Rack' ? location?.rackRef?.name === record.metadata.name : location?.facilityRef?.name === record.metadata.name || rack?.spec.facilityRef?.name === record.metadata.name;
-            }
-            return kind === 'Device'
-              ? endpoint.deviceRef?.name === record.metadata.name
-              : kind === 'PowerFeed' && endpoint.powerFeedRef?.name === record.metadata.name;
-          }),
-        );
-      return kind === 'Facility'
-        ? target.spec.facilityRef?.name === record.metadata.name
-        : kind === 'Rack' && target.spec.rackRef?.name === record.metadata.name;
-    });
-    const relatedRecords = kind === 'Facility' || kind === 'Rack' ? related.filter(item => item.kind === 'Cable' || item.kind === 'PowerFeed') : related;
-    return (
-      <>
-        {kind === 'Facility' && <FacilityOverview facility={record as PhysicalRecord} inventory={inventory} />}
-        <dl className="inventory-fields">
-          {kind === 'DeviceType' && <>
-            <Field label="Manufacturer">{physical?.spec.manufacturerRef && reference('Manufacturer', namespace, physical.spec.manufacturerRef.name)}</Field>
-            <Field label="Normalized model identity">{physical?.spec.model}</Field>
-            <Field label="Nominal shape">{`${physical?.spec.modelShape?.heightUnits ?? 'Unknown'}U · ${physical?.spec.modelShape?.fullDepth === false ? 'Half depth' : physical?.spec.modelShape?.fullDepth ? 'Full depth' : 'Depth unknown'}`}</Field>
-            <Field label="Component templates">{physical?.spec.componentTemplates?.map(template => <div key={template.id}>{template.name} · {template.type} · {template.connector ?? 'Connector unknown'} · {template.positions ?? 1} position(s) · {template.face ? `chassis ${template.face.toLowerCase()}` : 'chassis face unknown'}</div>) ?? 'Not recorded'}</Field>
-            <Field label="Template semantics">Reference defaults only. No installed assets, measured geometry, observed occupancy, or automatic materialization. Template faces are relative to the chassis; a Device component with the same id inherits its face.</Field>
-          </>}
-          {kind === 'Facility' && <>
-            <Field label="Provider premises identifiers">{facilityIdentifiers(record as PhysicalRecord)}</Field>
-            <Field label="Operational sites">{facilitySites(record as PhysicalRecord, inventory)}</Field>
-          </>}
-          <Field label="Record name">{record.metadata.name}</Field>
-          <Field label="Namespace">{namespace || 'Not recorded'}</Field>
-          {device && (
-            <>
-              <Field label="Manufacturer / model">{deviceModelLabel(device, inventory)}</Field>
-              <Field label="Recorded hardware observation">{modelLabel(device.spec.identity)}</Field>
-              <Field label="Shared catalog">{catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'Not assigned · showing recorded observation'}</Field>
-              <Field label="Catalog nominal height">{catalog?.model.spec.modelShape?.heightUnits === undefined ? 'Unknown' : `${catalog.model.spec.modelShape.heightUnits}U · not measured or used for occupancy`}</Field>
-              <Field label="Depth for rack conflicts">{`${depthLabel(deviceDepth(device, inventory))} · ${deviceDepth(device, inventory).full ? 'occupies both rack faces' : 'occupies its mounted face only'} · not measured`}</Field>
-              <Field label="Lifecycle">{device.spec.lifecycle ?? 'Active'}</Field>
-              <Field label="Serial number">{device.spec.identity.serial}</Field>
-              <Field label="Asset tag">{device.spec.assetTag}</Field>
-              <Field label="System UUID">{device.spec.identity.systemUUID}</Field>
-              {device.spec.identity.unidentified && <Field label="Hardware identity">No serial or system UUID recorded · {device.spec.identity.unidentifiedReason} · cannot back machine capacity</Field>}
-              <Field label="Claim / registration history">
-                {reference('DeviceClaim', namespace, device.spec.claimRef.name)}
-              </Field>
-              <Field label="Location / Reported placement">{placement(entry)}</Field>
-              {device.spec.reportedPlacement?.rackRef && <Field label="Reported rack">{reference('Rack', namespace, device.spec.reportedPlacement.rackRef.name)}</Field>}
-              {device.spec.reportedPlacement?.facilityRef && <Field label="Reported facility">{reference('Facility', namespace, device.spec.reportedPlacement.facilityRef.name)}</Field>}
-              {device.spec.reportedPlacement && <Field label="Placement report">Revision {device.spec.reportedPlacement.revision} · {device.spec.reportedPlacement.observedAt}, not physically verified · Reason: {device.spec.reportedPlacement.reason} · Evidence: {device.spec.reportedPlacement.reference}</Field>}
-              <Field label="Placement corrections">Recordkeeping is not a physical move or a capacity reservation.</Field>
-              <Field label="Recorded nominal dimensions">
-                {device.spec.modelShape
-                  ? `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'Depth not recorded' : device.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}`
-                  : undefined}
-              </Field>
-              <Field label="Management endpoint">{device.spec.bmc?.endpoint}</Field>
-              <Field label="Provider host reference">
-                {device.spec.providerHostRef &&
-                  `${device.spec.providerHostRef.system}/${device.spec.providerHostRef.type}/${device.spec.providerHostRef.id}`}
-              </Field>
-            </>
-          )}
-          {claim && (
-            <>
-              <Field label="Expected hardware">{modelLabel(claim.spec.expectedIdentity)}</Field>
-              <Field label="Expected serial">{claim.spec.expectedIdentity.serial}</Field>
-              <Field label="Claim placement (intent / history)">{plannedPlacement(claim)}</Field>
-              <Field label="Registered devices">{inventory.issues?.Device ? 'Device details unavailable' : slot?.devices.length ?? 0}</Field>
-              {claim.spec.placement.facilityRef && (
-                <Field label="Facility">
-                  {reference('Facility', namespace, claim.spec.placement.facilityRef.name)}
-                </Field>
-              )}
-              {claim.spec.placement.rackRef && (
-                <Field label="Rack">{reference('Rack', namespace, claim.spec.placement.rackRef.name)}</Field>
-              )}
-            </>
-          )}
-          {physical?.spec.facilityRef && (
-            <Field label="Facility">{reference('Facility', namespace, physical.spec.facilityRef.name)}</Field>
-          )}
-          {physical?.spec.rackRef && (
-            <Field label="Rack">{reference('Rack', namespace, physical.spec.rackRef.name)}</Field>
-          )}
-          {physical?.spec.locationRef && (
-            <Field label="Geographic location reference">{physical.spec.locationRef.name}</Field>
-          )}
-          {kind === 'Cable' && <Field label="Medium">{physical?.spec.medium}</Field>}
-          {kind === 'PowerFeed' && (
-            <>
-              <Field label="Supply">{summary(entry)}</Field>
-              <Field label="Phase">{physical?.spec.supply?.phase}</Field>
-              <Field label="Usable budget / redundancy">
-                Unknown — supply ratings do not establish available power.
-              </Field>
-            </>
-          )}
-        </dl>
-        {slot && slot.devices.length > 1 && (
-          <p className="inventory-note">
-            Multiple devices reference this claim. All registrations are retained; the active device and its
-            placement are unknown.
-          </p>
-        )}
-        {device && (
-          <>
-            <Title as="h3" level={5}>Components & connections</Title>
-            <Components components={device.spec.components ?? []} />
-            <DeviceConnections key={slotKey(namespace, record.metadata.name)} device={device} inventory={inventory} href={href} />
-            {!!device.spec.internalMappings?.length && (
-              <>
-                <h4>Internal paths</h4>
-                <ul>
-                  {device.spec.internalMappings.map((mapping, index) => (
-                    <li key={index}>
-                      {mapping.from.componentID}:{mapping.from.position} → {mapping.to.componentID}:
-                      {mapping.to.position}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {!!device.spec.serviceAssociations?.length && (
-              <>
-                <h4>Service references</h4>
-                <ul>
-                  {device.spec.serviceAssociations.map((association, index) => (
-                    <li key={index}>
-                      {association.componentID} → {association.serviceRef.system}/
-                      {association.serviceRef.type}/{association.serviceRef.id}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            <details>
-              <summary>Recorded network interfaces & legacy peers</summary>
-              <p className="inventory-muted">
-                Legacy peers are retained as history. Cable records describe typed physical connections;
-                neither verifies a live link.
-              </p>
-              <ul>
-                {device.spec.interfaces?.map((iface) => (
-                  <li key={iface.name}>
-                    {iface.name} · {iface.macAddress ?? 'MAC not recorded'}
-                    {iface.peer && ` · legacy peer ${legacyPeerLabel(iface.peer, inventory.issues)}`}
-                  </li>
-                ))}
-              </ul>
-              <h4>Unmapped MAC addresses</h4>
-              <p>{device.spec.unmappedMACAddresses?.join(', ') || 'None recorded'}</p>
-            </details>
-          </>
-        )}
-        {claim && (
-          <>
-            <Title as="h3" level={5}>Planned connections</Title>
-            <ul>
-              {claim.spec.cableRefs?.map((cable) => (
-                <li key={cable.name}>{reference('Cable', namespace, cable.name)}</li>
-              ))}
-            </ul>
-            {!claim.spec.cableRefs?.length && (
-              <p className="inventory-muted">No cable references recorded.</p>
-            )}
-            <details>
-              <summary>Legacy expected ports</summary>
-              <ul>
-                {claim.spec.ports?.map((port) => (
-                  <li key={port.name}>
-                    {port.name} · {port.type ?? 'Type not recorded'} · {port.speedMbps ?? 'Unknown'} Mb/s
-                    {port.expectedPeer && ` → ${legacyPeerLabel(port.expectedPeer, inventory.issues)}`}
-                  </li>
-                ))}
-              </ul>
-              {!claim.spec.ports?.length && <p>No expected ports recorded.</p>}
-            </details>
-          </>
-        )}
-        {kind === 'Cable' && (
-          <>
-            <Title as="h3" level={5}>Cable lanes</Title>
-            {physical?.spec.lanes?.length ? (
-              <div className="inventory-scroll">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Lane</TableHead>
-                      <TableHead>End A</TableHead>
-                      <TableHead>End B</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {physical.spec.lanes.map((lane) => (
-                      <TableRow key={lane.id}>
-                        <TableCell>{lane.id}</TableCell>
-                        <TableCell>
-                          <Endpoint endpoint={lane.a} namespace={namespace} />
-                        </TableCell>
-                        <TableCell>
-                          <Endpoint endpoint={lane.b} namespace={namespace} />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ) : (
-              <p>No lanes recorded.</p>
-            )}
-          </>
-        )}
-        {kind === 'PowerFeed' && (
-          <>
-            <Title as="h3" level={5}>Terminations</Title>
-            <Components components={physical?.spec.terminations ?? []} />
-            <Title as="h3" level={5}>Upstream sources</Title>
-            <ul>
-              {physical?.spec.upstreamSources?.map((source, index) => (
-                <li key={index}>
-                  {source.system}/{source.type}/{source.id}
-                </li>
-              ))}
-            </ul>
-            {!physical?.spec.upstreamSources?.length && (
-              <p className="inventory-muted">No upstream sources recorded.</p>
-            )}
-          </>
-        )}
-        {(kind !== 'Facility' && kind !== 'Rack' || relatedRecords.length > 0) && <><Title as="h3" level={5}>
-          Related records
-        </Title>
-        {relatedRecords.length ? (
-          <ul className="inventory-related">
-            {relatedRecords.map((item) => (
-              <li key={`${item.kind}/${slotKey(namespace, item.record.metadata.name)}`}>
-                <span className="inventory-muted">
-                  {sections.find((section) => section.kind === item.kind)?.title}
-                </span>
-                <Link to={href(item.kind, namespace, item.record.metadata.name)}>{recordName(item)}</Link>
-                <small>{placement(item)}</small>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="inventory-muted">
-            No related records found in this namespace. This does not establish that equipment or connections
-            are absent.
-          </p>
-        )}</>}
-        <details>
-          <summary>Record history & verification</summary>
-          <dl className="inventory-fields">
-            <Field label="Verification">Unknown — no verification evidence is available.</Field>
-            <Field label="Created">{record.metadata.creationTimestamp}</Field>
-          </dl>
-        </details>
-      </>
-    );
+      case 'Manufacturer': {
+        const manufacturer = record as PhysicalRecord;
+        const aliases = manufacturer.spec.aliases ?? [];
+        return {
+          summary: <RecordSummary><SummaryParts parts={[manufacturer.spec.canonicalName && manufacturer.spec.canonicalName !== recordName(entry) && `Canonical name ${manufacturer.spec.canonicalName}`, aliases.length > 0 && `Also recorded as ${aliases.join(', ')}`]} /></RecordSummary>,
+          issues: [], tabs: [],
+          primary: <ManufacturerOverview manufacturer={manufacturer} inventory={inventory} />,
+          about: [{ label: 'Canonical name', value: manufacturer.spec.canonicalName }, { label: 'Descriptive aliases', value: aliases.join(' · ') }],
+        };
+      }
+    }
   }
 
   const management =
@@ -589,7 +288,34 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       catalog={inventory.physical.filter(record => record.kind === 'Manufacturer' || record.kind === 'DeviceType')}
     /> : null;
   const placementEditor = selected?.kind === 'Device' && !inventory.issues?.Device ? <DevicePlacementEdit key={`${selectedNamespace}/${selectedName}`} device={selected.record as RawDevice} locations={inventory.physical} issues={inventory.issues} /> : null;
+  const navigate = useNavigate();
+  const openRow = (event: MouseEvent<HTMLElement>, target: string) => {
+    if ((event.target as HTMLElement).closest('a,button,input,select,summary')) return;
+    if (window.getSelection()?.toString()) return;
+    void navigate(target);
+  };
   if (Object.values(inventory.issues ?? {}).some(issue => issue?.status === 401)) return <InventoryAccessState status={401} />;
+  const view = selected ? detailView(selected, placementEditor) : undefined;
+  const refresh = onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>;
+  const titleActions = <>{refresh}{management}</>;
+  const kindColumns = section.kind === 'Device' ? ['Model', 'Location', 'Serial number']
+    : section.kind === 'Cable' ? ['Medium', 'End A', 'End B']
+      : section.kind === 'Rack' ? ['Facility', 'Height']
+        : section.kind === 'Manufacturer' ? ['Details']
+          : ['Details', section.kind === 'DeviceClaim' ? 'Planned location' : 'Location / reference'];
+  const cells = (entry: RecordEntry): ReactNode[] => {
+    const physical = entry.record as PhysicalRecord;
+    const namespace = entry.record.metadata.namespace;
+    if (entry.kind === 'Device') {
+      const device = entry.record as RawDevice;
+      const catalog = deviceCatalog(device, inventory);
+      return [catalog ? recordName({ kind: 'DeviceType', record: catalog.model }) : modelLabel(device.spec.identity), listLocation(device), device.spec.identity.serial ?? (device.spec.identity.unidentified ? 'No hardware identity' : 'Not recorded')];
+    }
+    if (entry.kind === 'Cable') return [physical.spec.medium ?? 'Not recorded', endSummary(physical, 'a'), endSummary(physical, 'b')];
+    if (entry.kind === 'Rack') return [physical.spec.facilityRef ? reference('Facility', namespace, physical.spec.facilityRef.name) : 'Not recorded', physical.spec.heightUnits ? `${physical.spec.heightUnits}U` : 'Not recorded'];
+    if (entry.kind === 'Manufacturer') return [summary(entry)];
+    return [summary(entry), placement(entry)];
+  };
   return (
     <InventoryReadAccessContext.Provider value={error => setReadIssues(previous => ({ ...previous, ...readFailureIssues(error) }))}>
     <section className="fleet-inventory" aria-label="Physical inventory">
@@ -597,16 +323,13 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       <div className="inventory-body">
           {inventory.issues?.[section.kind] ? <><InventoryDirectoryHeading section={section} onRetry={onRetry} management={management} /><InventoryToolbar section={section} /><InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /></> : selectedName !== null ? (
             <>
-              <div className="inventory-list-heading"><Link to={href(section.kind)}>← Back to {section.title.toLowerCase()}</Link>{onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>}</div>
-              <div ref={heading} tabIndex={-1}><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} actions={selected?.kind === 'Rack' ? undefined : management} /></div>
-              {placementEditor}
-              {selected?.kind === 'Rack' ? <RackDetail rack={selected.record as PhysicalRecord} inventory={inventory} management={management} /> : selected ? (
+              <div ref={heading} tabIndex={-1} className="inventory-record-header"><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} description={view?.summary} actions={selected?.kind === 'Rack' ? refresh : titleActions} /></div>
+              {selected?.kind === 'Rack' ? <RackDetail rack={selected.record as PhysicalRecord} inventory={inventory} management={management} /> : selected && view ? (
                 <>
-                  {selected.kind !== 'Site' && selected.kind !== 'Manufacturer' && <p className="inventory-muted">
-                    {section.title} /{' '}
-                    {selected.record.metadata.name}
-                  </p>}
-                  <Detail entry={selected} />
+                  <IssueBanners issues={view.issues} />
+                  <div className="inventory-primary">{view.primary}</div>
+                  {view.tabs.length > 0 && <RecordTabs label={`${recordName(selected)} details`} tabs={view.tabs} />}
+                  <AboutRecord metadata={selected.record.metadata} extra={view.about} />
                 </>
               ) : (
                 <p>
@@ -624,50 +347,20 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
-                        <TableHead>
-                          {section.kind === 'Device' || section.kind === 'DeviceClaim'
-                            ? 'Hardware'
-                            : 'Details'}
-                        </TableHead>
-                        {section.kind !== 'Manufacturer' && <TableHead>
-                          {section.kind === 'Cable' ? 'End A' : section.kind === 'Device' || section.kind === 'DeviceClaim'
-                            ? 'Location / Reported placement'
-                            : 'Location / reference'}
-                        </TableHead>}
-                        {(section.kind === 'Cable' || section.kind === 'Device') && <TableHead>{section.kind === 'Cable' ? 'End B' : 'Serial / asset tag'}</TableHead>}
+                        {kindColumns.map(column => <TableHead key={column}>{column}</TableHead>)}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {matching.map((entry) => (
-                        <TableRow key={slotKey(entry.record.metadata.namespace, entry.record.metadata.name)}>
+                      {matching.map((entry) => {
+                        const target = href(entry.kind, entry.record.metadata.namespace, entry.record.metadata.name);
+                        return <TableRow key={slotKey(entry.record.metadata.namespace, entry.record.metadata.name)} className="inventory-row-link" onClick={event => openRow(event, target)}>
                           <TableCell>
-                            <Link
-                              to={href(
-                                entry.kind,
-                                entry.record.metadata.namespace,
-                                entry.record.metadata.name,
-                              )}
-                            >
-                              {recordName(entry)}
-                            </Link>
-                            {entry.record.spec.displayName && (entry.kind !== 'Manufacturer' && entry.kind !== 'DeviceType' || catalogLabel(entry.record, records.map(item => item.record)) !== recordName(entry)) && <small>{entry.record.metadata.name}</small>}
+                            <Link to={target}>{recordName(entry)}</Link>
+                            {(entry.kind === 'Manufacturer' || entry.kind === 'DeviceType') && entry.record.spec.displayName && catalogLabel(entry.record, records.map(item => item.record)) !== recordName(entry) && <small>{entry.record.metadata.name}</small>}
                           </TableCell>
-                          <TableCell>{summary(entry)}</TableCell>
-                          {entry.kind !== 'Manufacturer' && <TableCell>{entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.a} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Rack' && (entry.record as PhysicalRecord).spec.facilityRef ? reference('Facility', entry.record.metadata.namespace, (entry.record as PhysicalRecord).spec.facilityRef!.name) : placement(entry)}</TableCell>}
-                          {(entry.kind === 'Cable' || entry.kind === 'Device') && <TableCell>
-                            {entry.kind === 'Cable' ? (entry.record as PhysicalRecord).spec.lanes?.map(lane => <div key={lane.id}><Endpoint endpoint={lane.b} namespace={entry.record.metadata.namespace} /></div>) : entry.kind === 'Device' ? (
-                              <>
-                                {(entry.record as RawDevice).spec.identity.serial ?? ((entry.record as RawDevice).spec.identity.unidentified ? 'No hardware identity' : 'Serial not recorded')}
-                                <small>
-                                  {(entry.record as RawDevice).spec.assetTag ?? 'Asset tag not recorded'}
-                                </small>
-                              </>
-                            ) : (
-                              entry.record.metadata.namespace || 'Not recorded'
-                            )}
-                          </TableCell>}
-                        </TableRow>
-                      ))}
+                          {cells(entry).map((cell, index) => <TableCell key={index}>{cell}</TableCell>)}
+                        </TableRow>;
+                      })}
                     </TableBody>
                   </Table>
                 </div>
