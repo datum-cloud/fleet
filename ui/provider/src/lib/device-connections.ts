@@ -9,6 +9,7 @@ import type { CableEndpoint, ChassisFace, ComponentPosition, ComponentTemplate, 
 import type { Inventory } from '../inventory';
 import { condensedName, humanName, isGeneratedName } from './display-names';
 import { deviceCatalog } from './hardware-catalog';
+import { connectorKind, type ConnectorKind } from './connector-kind';
 import { componentChassisFace, componentRackFace, deviceMountedFace } from './rack-faces';
 
 export type LinkState = 'cabled' | 'none' | 'conflict' | 'unavailable' | 'catalog';
@@ -510,19 +511,18 @@ export interface PortTile {
 
 export type ConnectorShape = 'rj45' | 'sfp' | 'qsfp' | 'iec' | 'generic';
 
+const SHAPE_OF: Record<ConnectorKind, ConnectorShape> = {
+  'QSFP-DD': 'qsfp', OSFP: 'qsfp', QSFP28: 'qsfp', SFP28: 'sfp', SFP: 'sfp', RJ45: 'rj45',
+  C13: 'iec', C14: 'iec', C19: 'iec', C20: 'iec', USB: 'generic', DB9: 'generic', VGA: 'generic', Other: 'generic',
+};
+
 /**
- * A tile outline for the recorded connector. Only connectors that clearly
- * name a family get a shape; anything else is a generic tile, so the drawing
- * never implies more than the free text says.
+ * A tile outline for the recorded connector, from the one connector-kind
+ * table (connector-kind.ts). Text the table does not map is a generic tile,
+ * so the drawing never implies more than the free text says.
  */
 export function connectorShape(connector: string | undefined): ConnectorShape {
-  const text = connector?.toUpperCase() ?? '';
-  const compact = text.replace(/[\s-]+/g, '');
-  if (/QSFP/.test(compact)) return 'qsfp';
-  if (/SFP/.test(compact)) return 'sfp';
-  if (/RJ45|8P8C/.test(compact)) return 'rj45';
-  if (/(^|[^A-Z0-9])C(13|14|19|20)([^0-9]|$)/.test(text)) return 'iec';
-  return 'generic';
+  return SHAPE_OF[connectorKind(connector)];
 }
 
 /** A face of the drawn chassis, and the type clusters on it in layout order. */
