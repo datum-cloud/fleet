@@ -54,7 +54,7 @@ dispatch, but a referenced object can subsequently change.
 The existing manager role grants create/update/patch for six inventory kinds
 project-wide; this change adds **no privilege**, delete/status or hardware grant.
 It does not introduce owner or namespace isolation. Managed-field/Flux markers
-are a UI/migration exclusion for legacy GitOps records, not server authorization.
+are a UI exclusion for GitOps-owned records, not server authorization.
 Operator-managed records are eligible for ordinary manager corrections.
 Absence of a marker does not prove ownership, and direct API RBAC still applies.
 The separate display-name editor retains its older, narrower UI policy.

@@ -19,7 +19,7 @@ It has six physical kinds plus the observational operational `Site` kind in
 stable membership references, provider premises identifiers and rollout gates.
 The primary workflow is **manual entry, operator review, and explicit record
 ownership**. Authorized direct API creation is supported for new records;
-legacy Flux-owned records require a reviewed ownership transition before edits
+GitOps-owned records require a reviewed ownership transition before edits
 by another writer. Fleet does not read or reconcile any external inventory
 source. A separate writer may copy records in from another system; it writes
 ordinary records through the same API and validation, and keeps any record of
@@ -221,13 +221,9 @@ authenticated, complete NIC mapping before any network path depends on it.
 ## Manually record a small installation
 
 1. Choose the provider project and namespace, and inspect existing records and
-   their writers. The legacy staging `fleet-provider-inventory` reconciles
-   `apps/fleet-system/staging/provider-inventory` with `prune: false` and
-   `deletionPolicy: Orphan`. Flux remains the sole writer of those legacy records
-   until an explicit ownership transition. Do not run a competing apply
-   against them. New and separately created inventory can be direct
-   API/operator-managed; GitOps is not required. Establish the authorized writer
-   per record before making changes.
+   their writers. A record applied by GitOps keeps that writer; do not run a
+   competing apply against it. Other inventory is direct API/operator-managed.
+   Establish the authorized writer per record before making changes.
 2. Enter the Facility and Rack facts you actually know. Leave unknown
    dimensions absent. Rack
    membership is not a reserved footprint or evidence of available space.
