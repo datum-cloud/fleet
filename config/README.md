@@ -14,7 +14,7 @@ API servers and must be reconciled independently.
 
 | Root | Destination | Contents |
 | --- | --- | --- |
-| `config/milo` | Milo root control plane | Fleet CRDs, IAM protected resources and roles, service registration, and machine quota registration |
+| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service registration, and machine quota registration |
 | `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
 
@@ -26,6 +26,14 @@ staging's Bare Metal prices: committed servers and server setup, which
 contracts charge, as billing ServicePricings for `metal.datumapis.com`. Staging's infra enables it
 on `config/milo`; production doesn't, so production has no Bare Metal prices.
 A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
+
+`config/components/inventory` registers the operator-written
+`fleet.datumapis.com` inventory kinds in Milo: their CRDs, ProtectedResources,
+and the inventory viewer, editor, manager and importer roles. `config/milo`
+includes it, and the records live in the provider project. `config/inventory`
+renders the CRDs alone, for an environment that installed them on the
+management cluster before Milo became their home; new environments must not use
+it. See [Planning and registering physical devices](../docs/operations/physical-inventory.md).
 
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
@@ -84,6 +92,7 @@ Render both production roots before publishing the Kustomize bundle:
 kustomize build config/milo >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
 kustomize build config/overlays/synthetic-staging >/dev/null
+kustomize build config/inventory >/dev/null
 ```
 
 ## Published artifacts

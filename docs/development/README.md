@@ -678,6 +678,33 @@ The persisted schema and HTTP endpoints are internal alpha interfaces. No
 compatibility promise exists yet. The process fails closed if retained state is
 corrupt or uses an unsupported schema version.
 
+## Physical inventory subset
+
+`internal/api/inventory/v1alpha1` defines Facility, Rack, DeviceClaim, Device,
+Cable and PowerFeed records, a Manufacturer and DeviceType
+[hardware catalog](hardware-catalog.md), and an observational Site. Legacy slot
+claims coexist with new installation claims; no move or replacement handover is
+automated. Records live in the provider project in Milo.
+`config/components/inventory` holds their CRDs, ProtectedResources, and the
+inventory viewer, editor, manager and importer roles. Only `config/milo`
+includes it.
+
+Records carry no attribution fields: resource audit logs record who changed a
+record and `metadata.creationTimestamp` records when it was created. CEL requires
+a Device serial or system UUID, or the explicit `identity.unidentified` marker
+with a reason and neither, and keeps a Device's `claimRef` and identity immutable,
+rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
+BMC endpoints. Status is a reserved subresource with no fields and no writer.
+No metal role grants inventory access.
+
+No controller reads these records. The primary workflow is
+[manual entry and review](../operations/physical-inventory.md#manually-record-a-small-installation).
+Fleet reads no external inventory source; a separate writer that copies records
+in uses the same API and validation. Unit tests run API-server validation
+offline and check IAM; envtest tests run the CEL rules against a real API
+server. No physical verification, reservation, deletion safety, adoption or
+hardware-effect path is established.
+
 ## Build, test, and run
 
 Run the implemented checks from the repository root:
