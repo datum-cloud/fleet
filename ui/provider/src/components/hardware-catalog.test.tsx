@@ -89,7 +89,7 @@ describe('hardware catalog readers', () => {
     expect(device.spec.components).not.toContainEqual(expect.objectContaining({ id: 'new-port' }));
   });
 
-  it('keeps legacy source fallback through missing, cross-namespace and recreated references', () => {
+  it('falls back to the recorded identity through missing, cross-namespace and recreated references', () => {
     const { device, manufacturer, model, inventory } = fixture();
     inventory.physical = [];
     expect(deviceModelLabel(device, inventory)).toContain(device.spec.identity.model);
@@ -119,7 +119,9 @@ describe('hardware catalog readers', () => {
     expect(result.container.textContent).toContain('Private model label');
     result.rerender(view({ ...inventory, issues: { Manufacturer: { status: 403 } } }));
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor/);
-    expect(screen.getByText('Catalog unavailable · showing recorded observation')).toBeInTheDocument();
+    expect(screen.getByText('Catalog unavailable · showing recorded observation.')).toBeInTheDocument();
+    // The model fact is the recorded observation; the reason is its tooltip.
+    expect(screen.getByTitle('Catalog unavailable · showing recorded observation')).toBeInTheDocument();
   });
 
   it('browses aliases and nominal templates without inventing installed components', () => {

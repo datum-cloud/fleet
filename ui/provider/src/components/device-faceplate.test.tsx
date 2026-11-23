@@ -63,7 +63,7 @@ describe('DeviceFaceplate', () => {
     const tiles = within(network).getAllByRole('button');
     expect(tiles.length).toBeGreaterThan(TEXT_TILE_LIMIT);
     expect(tiles.filter(tile => tile.hasAttribute('data-labelled'))).toEqual([]);
-    expect(within(network).getByRole('button', { name: /^swp37: No cable recorded, unknown, not free$/ })).toBeInTheDocument();
+    expect(within(network).getByRole('button', { name: /^swp37: No cable recorded$/ })).toBeInTheDocument();
     const numbers = [...network.querySelectorAll('.inventory-port-number')].map(item => item.textContent).filter(Boolean);
     expect(numbers.slice(0, 6)).toEqual(['1', '9', '17', '25', '33', '41']);
     // Small groups keep their labels.

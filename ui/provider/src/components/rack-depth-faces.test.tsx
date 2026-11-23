@@ -16,7 +16,7 @@ function showRack() {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-02']}><PhysicalInventory inventory={inventory} /></MemoryRouter></QueryClientProvider>);
 }
 const face = (side: 'front' | 'rear') => screen.getByRole('list', { name: `${side} recorded placements` });
-const blocks = (side: 'front' | 'rear') => within(face(side)).getAllByRole('link').map(link => ({ name: link.querySelector('.inventory-rack-plan-name')?.textContent, far: link.parentElement!.hasAttribute('data-far'), depth: link.parentElement!.getAttribute('data-depth'), overlap: !!within(link).queryByText('!') }));
+const blocks = (side: 'front' | 'rear') => within(face(side)).getAllByRole('link').map(link => ({ name: link.querySelector('.inventory-rack-plan-name')?.textContent, far: link.parentElement!.hasAttribute('data-far'), depth: link.parentElement!.getAttribute('data-depth'), overlap: link.getAttribute('data-attention') === 'conflict' }));
 
 describe('rack elevation by face', () => {
   it('draws full-depth devices on both faces, muted and labelled on the far side', () => {
@@ -24,7 +24,7 @@ describe('rack elevation by face', () => {
     expect(blocks('front')).toContainEqual({ name: 'Example compute 07', far: false, depth: 'full', overlap: false });
     expect(blocks('rear')).toContainEqual({ name: 'rear of Example compute 07', far: true, depth: 'full', overlap: false });
     const far = within(face('rear')).getByRole('link', { name: /^Review Rear of Example compute 07/ });
-    expect(far).toHaveAccessibleName('Review Rear of Example compute 07 · U10 · 1U · Reported placement · mounted front · Full depth (catalog), rear, layout not recorded');
+    expect(far).toHaveAccessibleName('Review Rear of Example compute 07 · U10 · 1U · Reported placement · mounted front · Full depth (catalog), rear');
     expect(far.parentElement).toHaveClass('inventory-rack-plan-far');
     expect(far.parentElement).toHaveStyle({ gridRow: '33 / span 1' });
   });
@@ -44,7 +44,7 @@ describe('rack elevation by face', () => {
     expect(u42).not.toHaveTextContent('—');
     const u41 = within(face('front')).getByText('U41').parentElement!;
     expect(within(u41).getByLabelText('Occupancy unverified')).toBeInTheDocument();
-    // Collapsed runs say "not free"; nothing may claim free, open or available space.
+    // Nothing may claim free, open or available space.
     expect(within(face('front')).queryByText(/(?<!not )free|open|available/i)).not.toBeInTheDocument();
   });
 
@@ -55,7 +55,9 @@ describe('rack elevation by face', () => {
     expect(blocks('rear')).toContainEqual({ name: 'Example console server 01', far: false, depth: 'half', overlap: true });
     const unknown = within(face('rear')).getByRole('link', { name: /^Review Rear of Example appliance 03/ });
     expect(unknown).toHaveAccessibleName(/Depth unknown · records disagree: overlapping placements on this face/);
-    expect(within(unknown).getByText('U20–U21 · 2U · depth unknown')).toBeInTheDocument();
+    // Range, height and depth are the tooltip, not text in the slot.
+    expect(unknown.getAttribute('title')).toMatch(/U20–U21 · 2U · .*Depth unknown/);
+    expect(unknown.querySelector('small')).toBeNull();
   });
 
   it('keeps the far-side block when only one face is shown', () => {
@@ -76,7 +78,7 @@ describe('connection view by chassis face', () => {
     expect(within(tiles).getByRole('group', { name: 'Front · rack front' })).toBeInTheDocument();
     fireEvent.click(within(rearPlate).getByRole('button', { name: /^Ethernet 1:/ }));
     expect(screen.getByRole('dialog')).toHaveTextContent(/Check.*this end is on the rack rear and the far end on the rack front/);
-    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
     const diagram = screen.getByRole('group', { name: /Connection diagram/ });
     expect(within(diagram).queryByRole('list', { name: 'Network links' })).not.toBeInTheDocument();
     const rear = within(diagram).getByRole('list', { name: 'Network · Rear links' });
@@ -88,18 +90,21 @@ describe('connection view by chassis face', () => {
     expect(within(rows[0]).queryByText(/^Check:/)).not.toBeInTheDocument();
     expect(within(diagram).getByRole('list', { name: 'Console · Front links' })).toHaveTextContent('Chassis front · rack front');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+    // Back to the table: the soft check is a short marker, its sentence the tooltip and accessible text.
+    fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
     const tableRows = within(screen.getByRole('table', { name: 'Components and Cables' })).getAllByRole('row').slice(1);
-    const eth1 = tableRows.find(row => within(row).getAllByRole('cell')[0].textContent?.startsWith('Ethernet 1'))!;
-    expect(within(eth1).getByText(/^Check:/)).toBeInTheDocument();
-    expect(within(eth1).getAllByRole('cell').slice(1, 3).map(cell => cell.textContent)).toEqual(['Network portSFP28', 'Chassis rear · rack rear']);
+    const eth1 = tableRows.find(row => within(row).getAllByRole('cell')[0].textContent === 'Ethernet 1')!;
+    expect(eth1.querySelector('.inventory-connection-check')).toHaveTextContent(/^· Check this end is on the rack rear and the far end on the rack front/);
+    expect(within(eth1).getAllByRole('cell')[3].querySelector('[title]')!.getAttribute('title')).toMatch(/^Check: this end is on the rack rear/);
+    // The face is short: the rack face matches the chassis face, so it goes without saying.
+    expect(within(eth1).getAllByRole('cell').slice(1, 3).map(cell => cell.textContent)).toEqual(['Network SFP28', 'Rear']);
   });
 
   it('puts ports without a recorded face under Face unknown only when the group has known faces', () => {
     render(<MemoryRouter><DeviceConnections device={device('appliance-03')} inventory={inventory} href={inventoryHref} /></MemoryRouter>);
     // No face is recorded, so the tiles draw one unlabelled faceplate.
     expect(within(screen.getByRole('group', { name: /Port tiles/ })).queryByText('Face unknown')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
     expect(screen.getByRole('list', { name: 'Network links' })).toBeInTheDocument();
     expect(screen.queryByText('Face unknown · 1 link')).not.toBeInTheDocument();
   });

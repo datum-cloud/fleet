@@ -3,7 +3,7 @@ import type { CableEndpoint, Device, PhysicalComponent, PhysicalRecord } from '.
 import { toInventory, type Inventory } from '../inventory';
 import {
   connectorShape, deviceConnections, deviceTitle, faceGroups, faceLabel, localLabel, oppositeFaceCheck, peerLabel, portLayout, portTiles, remotePortLabel,
-  shortLabels, stateCounts, tileCounts, unmatchedLinks, viewNames,
+  interfaceAddresses, shortLabels, stateCounts, tileCounts, unmatchedLinks, viewNames,
   type ConnectionLink, type PortTile,
 } from './device-connections';
 import { humanName, isGeneratedName } from './display-names';
@@ -72,7 +72,7 @@ describe('deviceConnections', () => {
   });
 
   it('marks a Cable naming a component the Device does not record as records disagree', () => {
-    const result = deviceConnections(server, inv([server, leaf], [cable('dac-legacy', 'Copper', [['l1', D('server-01', 'eth9'), D('leaf-01', 'swp2')]])]));
+    const result = deviceConnections(server, inv([server, leaf], [cable('dac-stray', 'Copper', [['l1', D('server-01', 'eth9'), D('leaf-01', 'swp2')]])]));
     const [orphan] = link(result.links, 'eth9');
     expect(orphan).toMatchObject({ state: 'conflict', group: 'unrecorded', component: undefined });
     expect(orphan.reasons[0]).toMatch(/names component "eth9", which this Device does not record/);
@@ -385,5 +385,18 @@ describe('links against every Cable that names the Device', () => {
     expect(extra.find(item => item.cable?.name === 'omitted-01')?.peer).toEqual({ kind: 'PowerFeed', access: 'denied' });
     const hidden = inv([server, leaf], records, { Cable: { status: 403 } });
     expect(unmatchedLinks(server, hidden, deviceConnections(server, hidden).links)).toEqual([]);
+  });
+});
+
+describe('interfaceAddresses', () => {
+  it('matches interfaces to components by name or id and lists the rest', () => {
+    const device = { metadata: { name: 'synthetic-server', namespace: 'default' }, spec: {
+      claimRef: { name: 'plan' }, identity: { model: 'Example' },
+      components: [{ id: 'nic-0', name: 'eth0', type: 'NetworkPort' }, { id: 'eth1', name: 'Port 2', type: 'NetworkPort' }],
+      interfaces: [{ name: 'eth0', macAddress: '00:00:5e:00:53:a0' }, { name: 'eth1', macAddress: '00:00:5e:00:53:a1' }, { name: 'eth9', macAddress: '00:00:5e:00:53:a9' }, { name: 'eth0' }],
+    } } as Device;
+    const { byComponent, unplaced } = interfaceAddresses(device);
+    expect([...byComponent]).toEqual([['nic-0', '00:00:5e:00:53:a0'], ['eth1', '00:00:5e:00:53:a1']]);
+    expect(unplaced).toEqual([{ name: 'eth9', macAddress: '00:00:5e:00:53:a9' }]);
   });
 });

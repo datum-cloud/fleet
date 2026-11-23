@@ -116,8 +116,9 @@ it.each(['principal', 'logout', 'hidden', 'pagehide'] as const)('retires private
   expect(createInventoryRecord).not.toHaveBeenCalled();
 });
 
-it('registers the task module before the legacy namespaced detail matcher', () => {
+it('registers the create page and no per-claim route', () => {
   const paths = manifest.extensions.filter(extension => extension.type === 'portal.page/platform').map(extension => extension.properties.path);
   expect(manifest.exposedModules.InventoryCreatePage).toBe('./src/pages/inventory-create.tsx');
-  expect(paths.indexOf('inventory/create/:kind')).toBeLessThan(paths.indexOf('inventory/:namespace/:claim'));
+  expect(paths).toContain('inventory/create/:kind');
+  expect(paths).not.toContain('inventory/:namespace/:claim');
 });

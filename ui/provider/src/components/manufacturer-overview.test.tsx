@@ -58,7 +58,7 @@ describe('manufacturer detail', () => {
     }
     expect(devices.getByText(/U4/)).toBeInTheDocument();
     expect(screen.queryByText(/Manufacturers \/ vendor-key/)).not.toBeInTheDocument();
-    expect(screen.getByText('vendor-key').closest('details')).toHaveTextContent('About this record');
+    expect(screen.getByText('vendor-key').closest('.inventory-record-footer')).toHaveTextContent('Record');
   });
 
   it('uses only same-namespace references, not text, templates or dangling targets', () => {

@@ -264,12 +264,3 @@ export function edgeNumbers(bank: LayoutBank): { cell: LayoutCell; where: 'above
     ...(cell.row === bank.rows && bank.rows > 1 && edge(cell) ? [{ cell, where: 'below' as const }] : []),
   ]);
 }
-
-export type DetailLevel = 'silhouette' | 'reduced' | 'full';
-
-/** The elevation's level of detail from pixels per unit: under 16 silhouette, under 40 reduced, else full. */
-export function detailLevel(pxPerUnit: number): DetailLevel {
-  if (pxPerUnit < 16) return 'silhouette';
-  if (pxPerUnit < 40) return 'reduced';
-  return 'full';
-}

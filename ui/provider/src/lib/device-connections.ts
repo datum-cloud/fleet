@@ -429,6 +429,16 @@ export type FaceGroup = ChassisFace | 'unknown';
 
 export const faceGroupTitles: Record<FaceGroup, string> = { Front: 'Front', Rear: 'Rear', unknown: 'Face unknown' };
 
+/**
+ * The short face label for the Device page's picture and table: "Front", or
+ * "Front · rack rear" only when the Device is mounted reversed, because the
+ * matching rack face goes without saying. Unknown faces say so.
+ */
+export function shortFaceLabel(face: FaceGroup | undefined, rack?: RackFace) {
+  if (!face || face === 'unknown') return faceGroupTitles.unknown;
+  return rack && rack !== face.toLowerCase() ? `${face} · rack ${rack}` : face;
+}
+
 /** Splits links by chassis face, in the order Front, Rear, Face unknown. */
 export function faceGroups<T extends Pick<ConnectionLink, 'chassisFace'>>(links: T[]): { face: FaceGroup; title: string; links: T[] }[] {
   return (['Front', 'Rear', 'unknown'] as const)
@@ -703,4 +713,21 @@ export function shortLabels(tiles: PortTile[]): Map<string, string> {
     pending = next;
   }
   return chosen;
+}
+
+/**
+ * Recorded network interfaces matched to components by name or id. The
+ * component table shows a matched MAC beside its port; `unplaced` lists the
+ * interfaces no component names.
+ */
+export function interfaceAddresses(device: Device): { byComponent: Map<string, string>; unplaced: { name: string; macAddress?: string }[] } {
+  const byComponent = new Map<string, string>();
+  const unplaced: { name: string; macAddress?: string }[] = [];
+  const components = device.spec.components ?? [];
+  for (const iface of device.spec.interfaces ?? []) {
+    const component = components.find(item => item.name === iface.name || item.id === iface.name);
+    if (component && iface.macAddress) byComponent.set(component.id, iface.macAddress);
+    else if (!component) unplaced.push(iface);
+  }
+  return { byComponent, unplaced };
 }

@@ -96,10 +96,9 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     if (!confirmInventoryDismissal(dirty, pending, uncertain)) return;
     scope.current.invalidate(); setBaseline(undefined); setOpen(false); setFields(placementFields());
   }
-  const status = <p role="status" className="inventory-management-status">{message || (!editable ? 'Legacy GitOps-managed or unavailable Devices are outside this editor.' : !ready || permission.isFetching ? 'Checking management access…' : open && blocked ? 'Close and reopen this form to continue.' : !permitted ? 'Device management permission must be confirmed before correcting location.' : '')}</p>;
-  return <section className="inventory-management" aria-label="Correct reported location">
-    <Title as="h3" level={5}>Reported location</Title>
-    <p>Correct a record, not a physical move, installation handover, or reservation. Identity and claim binding stay unchanged. Blank geometry means unknown; model and claim dimensions are not copied.</p>
+  const status = <p role="status" className="inventory-management-status">{message || (!editable ? 'GitOps-managed or unavailable Devices are outside this editor.' : !ready || permission.isFetching ? 'Checking management access…' : open && blocked ? 'Close and reopen this form to continue.' : !permitted ? 'Device management permission must be confirmed before correcting location.' : '')}</p>;
+  return <section className="inventory-management inventory-location-editor" aria-label="Correct reported location">
+    <Title as="h3" level={6}>Reported location</Title>
     {open && <InventoryDraftGuard dirty={dirty} pending={pending} uncertain={uncertain} />}
     <InventoryFormSurface open={open && !!permitted} title="Correct reported location" status={status} onDismiss={dismiss} trigger={<Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed || needsRefresh} onClick={() => {
       if (!allowed) return;
@@ -113,7 +112,7 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     }}>{device.spec.reportedPlacement ? 'Correct location' : 'Add reported location'}</Button>}>
     <InventoryForm onSubmit={save} message={message}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
-      <p>Record an observation, not a physical move or reservation. Verification remains separate.</p>
+      <p>Leave unknown values blank.</p>
       <Label>Actual facility (optional)<select value={fields.facility} disabled={!!unavailable.Facility} onChange={event => field('facility', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Facility').map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
       <Label>Actual rack (optional)<select value={fields.rack} disabled={!!unavailable.Rack} onChange={event => field('rack', event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
       <Label>Reported position (U)<Input type="number" min="1" max="100" step="any" value={fields.position} onChange={event => field('position', event.target.value)} /></Label>

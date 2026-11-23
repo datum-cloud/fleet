@@ -34,16 +34,20 @@ describe('rack page tabs', () => {
     expect(within(tabs).getByRole('tab', { name: 'Elevation' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('list', { name: 'front recorded placements' })).toBeInTheDocument();
 
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'Equipment' }));
+    fireEvent.click(within(tabs).getByRole('tab', { name: /^Equipment\b/ }));
     expect(search().get('tab')).toBe('equipment');
     expect(screen.queryByRole('list', { name: 'front recorded placements' })).not.toBeInTheDocument();
-    const positioned = screen.getByRole('table', { name: 'Positioned equipment' });
-    expect(within(positioned).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Device', 'U / face / depth', 'Lifecycle', 'Claim / registration']);
-    // The page states facility and rack once; rows do not repeat them.
-    expect(within(positioned).queryByText(/Example Facility One|Rack A01|Reported placement ·/)).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /Non-racked mounts/ })).toBeInTheDocument();
+    // One dense table, top of rack first; non-unit mounts sort last and read as their mount.
+    const equipment = screen.getByRole('table', { name: 'Rack equipment' });
+    expect(within(equipment).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['U', 'Device', 'Model', 'Face', 'Depth', 'Ports', 'Power', 'Serial', 'Asset tag']);
+    const rows = within(equipment).getAllByRole('row').slice(1).map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent));
+    expect(rows[0].slice(0, 2)).toEqual(['U42', 'Patch panel a01']);
+    expect(rows.at(-1)!.slice(0, 2)).toEqual(['Rear left vertical', 'PDU a01 (rear left)']);
+    expect(rows.find(row => row[1] === 'Compute a01-05')!.slice(3, 7)).toEqual(['front', 'Full', expect.stringMatching(/^\d+ \/ \d+$/), 'Feed A']);
+    // The page states facility and rack once; rows do not repeat them, and nothing reads Active per row.
+    expect(within(equipment).queryByText(/Example Facility One|Rack A01|Reported placement ·|^Active$/)).not.toBeInTheDocument();
 
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'Cables' }));
+    fireEvent.click(within(tabs).getByRole('tab', { name: /^Cables\b/ }));
     expect(search().get('tab')).toBe('cables');
     expect(screen.getByRole('heading', { name: /Leaf a01/ })).toBeInTheDocument();
     // Display names only; generated names stay in the collapsed record-name details.
@@ -51,59 +55,52 @@ describe('rack page tabs', () => {
     expect(within(leafCables).queryByText(/^example-/)).not.toBeInTheDocument();
     expect(within(leafCables).getAllByRole('link', { name: 'Breakout swp49' })).toHaveLength(4);
 
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'Power' }));
+    fireEvent.click(within(tabs).getByRole('tab', { name: /^Power\b/ }));
     expect(search().get('tab')).toBe('power');
     expect(screen.getByRole('link', { name: 'Feed A' })).toBeInTheDocument();
-    // What the removed "Feed outlets" and "PDUs" lists said is in the grid: the PDU's row and the feed's outlet tiles.
-    expect(screen.getByText(/5 of 8 outlets have a cable recorded/)).toBeInTheDocument();
+    // The grid holds the PDU's row and the feed's outlet tiles.
+    expect(screen.getByRole('rowheader', { name: /^PDU a01/ })).toBeInTheDocument();
     expect(within(screen.getByRole('list', { name: 'Feed A outlets' })).getByRole('button', { name: /^Outlet 2: No cable recorded/ })).toBeInTheDocument();
 
-    fireEvent.click(within(tabs).getByRole('tab', { name: 'History' }));
-    expect(screen.getByRole('heading', { name: 'Record history & verification' })).toBeInTheDocument();
-    expect(screen.getByText(/no verification evidence is available/)).toBeInTheDocument();
+    expect(within(tabs).queryByRole('tab', { name: 'History' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Test back' }));
-    expect(search().get('tab')).toBe('power');
+    expect(search().get('tab')).toBe('cables');
   });
 
   it('opens a tab from a deep link and falls back to the elevation for unknown tabs', () => {
     const view = open(RACK('example-rack-a01', '&tab=cables'));
-    expect(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: 'Cables' })).toHaveAttribute('aria-current', 'page');
+    expect(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Cables\b/ })).toHaveAttribute('aria-current', 'page');
     view.unmount();
     open(RACK('example-rack-a01', '&tab=nonsense'));
     expect(screen.getByRole('list', { name: 'front recorded placements' })).toBeInTheDocument();
   });
 });
 
-describe('related-records count strip', () => {
-  it('replaces the related-record list with counts that link to their tabs', () => {
+describe('tab counts', () => {
+  const tabs = () => within(screen.getByRole('tablist', { name: 'Rack views' }));
+  it('puts each related-record count on its tab, with no separate count strip', () => {
     open(RACK());
-    const strip = screen.getByRole('navigation', { name: 'Related records' });
-    expect(within(strip).getByRole('link', { name: 'Equipment · 10' })).toHaveAttribute('href', expect.stringContaining('tab=equipment'));
-    expect(within(strip).getByRole('link', { name: 'Cables · 21' })).toHaveAttribute('href', expect.stringContaining('tab=cables'));
-    expect(within(strip).getByRole('link', { name: 'Power feeds · 2' })).toHaveAttribute('href', expect.stringContaining('tab=power'));
-    expect(screen.queryByText('Related records', { selector: 'h3' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Not recorded', { selector: '.inventory-related small' })).not.toBeInTheDocument();
-    fireEvent.click(within(strip).getByRole('link', { name: 'Cables · 21' }));
+    expect(tabs().getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Elevation', 'Equipment 10', 'Cables 21', 'Power 2']);
+    expect(screen.queryByRole('navigation', { name: 'Related records' })).not.toBeInTheDocument();
+    fireEvent.click(tabs().getByRole('tab', { name: /^Cables/ }));
     expect(search().get('tab')).toBe('cables');
   });
 
-  it('keeps the free-space note and moves generated names into a collapsed record section', () => {
+  it('moves the resource name into the one-line Record footer', () => {
     open(RACK());
-    expect(screen.getByText('Free space: Unknown, recorded placement is not verified occupancy.')).toBeInTheDocument();
-    const about = screen.getByText('About this record').closest('details')!;
-    expect(about).not.toHaveAttribute('open');
+    const about = screen.getByRole('region', { name: 'Record' });
     expect(within(about).getByText('example-rack-a01')).toBeInTheDocument();
-    expect(within(about).getByText('synthetic-example-rack-a01')).toBeInTheDocument();
+    expect(about.textContent).not.toMatch(/synthetic-example-rack-a01|Facility record|Verification/);
   });
 
   it.each([
-    ['cables-denied', 'Cables · unavailable'],
-    ['power-feeds-denied', 'Power feeds · unavailable'],
-    ['devices-denied', 'Cables · unavailable'],
-  ])('shows denied counts as unavailable, never zero (%s)', (scenario, label) => {
+    ['cables-denied', 'Cables ?'],
+    ['power-feeds-denied', 'Power ?'],
+    ['devices-denied', 'Cables ?'],
+  ])('shows denied counts as unknown, never zero (%s)', (scenario, label) => {
     open(RACK(), scenario);
-    expect(within(screen.getByRole('navigation', { name: 'Related records' })).getByRole('link', { name: label })).toBeInTheDocument();
+    expect(tabs().getByRole('tab', { name: label })).toBeInTheDocument();
   });
 });
 
@@ -126,8 +123,7 @@ describe('issue banners', () => {
     expect(within(issues).getByText(/1 in this rack without a usable unit position/)).toBeInTheDocument();
     fireEvent.click(within(issues).getByRole('link', { name: 'Compute a03-01 (position unknown)' }));
     const panel = screen.getByTestId('rack-device-panel');
-    expect(within(panel).getByText('Position not recorded')).toBeInTheDocument();
-    expect(within(panel).getByText('Reported placement · not verified')).toBeInTheDocument();
+    expect(panel.querySelector('.inventory-rack-panel-facts')).toHaveTextContent(/Position not recorded/);
   });
 
   it('shows no banners when nothing disagrees', () => {
@@ -147,13 +143,12 @@ describe('device selection', () => {
     const panel = screen.getByTestId('rack-device-panel');
     expect(panel).toHaveAttribute('role', 'region');
     expect(within(panel).getByRole('heading', { name: 'Compute a01-01' })).toBeInTheDocument();
-    // The faceplate leads; the summary follows.
+    // One line of facts under the title, then the faceplate; no field grid or state counts.
     const plate = within(panel).getByRole('region', { name: 'Faceplate' });
-    expect(plate.compareDocumentPosition(panel.querySelector('.inventory-rack-panel-fields')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(panel).getByText(/Example 1U compute/)).toBeInTheDocument();
-    expect(within(panel).getByText('U2 · 1U')).toBeInTheDocument();
-    expect(within(panel).getByText('front')).toBeInTheDocument();
-    expect(within(panel).getByText('Full depth (catalog)')).toBeInTheDocument();
+    const facts = panel.querySelector('.inventory-rack-panel-facts')!;
+    expect(facts).toHaveTextContent(/^Example Compute Co. Example 1U compute · U2 · 1U · front · full depth \(catalog\)$/);
+    expect(facts.compareDocumentPosition(plate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel.querySelector('.inventory-rack-panel-fields, [aria-label="Ports and cables"]')).toBeNull();
     // The model records a layout, so the panel draws it: ports on the chassis
     // rear, drive bays on the front, and the unplaced console in the tray.
     const rear = within(plate).getByRole('group', { name: 'Rear · rack rear face' });
@@ -161,8 +156,8 @@ describe('device selection', () => {
     const front = within(plate).getByRole('group', { name: 'Front · rack front face' });
     expect(within(front).getByRole('img', { name: 'Bay 7, module, Catalog only' })).toBeInTheDocument();
     expect(within(plate).getByRole('group', { name: 'Not on the faceplate' })).toHaveTextContent('Serial console');
-    expect(within(panel).getByText('Active')).toBeInTheDocument();
-    expect(within(panel).getByRole('list', { name: 'Ports and cables' })).toHaveTextContent(/cable recorded/);
+    // Lifecycle shows only when it is not Active; the drawing carries each port's state.
+    expect(within(panel).queryByText('Active')).toBeNull();
     expect(within(panel).getByRole('link', { name: 'Open device page' })).toHaveAttribute('href', expect.stringContaining('kind=Device&record=example-srv-a01-01'));
     expect(elevationLink(/^Review Compute a01-01/)).toHaveAttribute('aria-current', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Test back' }));
@@ -188,11 +183,8 @@ describe('device selection', () => {
     open(RACK('example-rack-a01'));
     const first = screen.getAllByRole('link', { name: /^Review / })[0];
     first.focus();
+    // Arrow keys follow the drawing top to bottom, equipment to equipment.
     fireEvent.keyDown(first, { key: 'ArrowDown' });
-    // Arrow keys follow the drawing top to bottom, across the collapsed run below the leaf.
-    const run = document.activeElement as HTMLElement;
-    expect(run).toHaveAccessibleName(/^U22–U39 · 18 units · no placement recorded \(not free\)/);
-    fireEvent.keyDown(run, { key: 'ArrowDown' });
     const next = document.activeElement as HTMLElement;
     expect(next).not.toBe(first);
     expect(next).toHaveAttribute('data-slot-key');
@@ -268,7 +260,7 @@ describe('denied records', () => {
     expect(within(panel).getByText(/not among the readable records/)).toBeInTheDocument();
     // Only the URL the visitor followed carries the name; the page does not repeat it.
     expect(screen.queryAllByText(/example-srv-a01-01|Compute a01-01/).filter(item => item !== screen.getByTestId('search'))).toHaveLength(0);
-    fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: 'Cables' }));
+    fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Cables\b/ }));
     expect(screen.getByText(/Device details unavailable. Cables cannot be grouped/)).toBeInTheDocument();
   });
 
@@ -279,7 +271,7 @@ describe('denied records', () => {
     expect(within(panel).getAllByText(/Cable details unavailable/).length).toBeGreaterThan(0);
     expect(within(panel).queryByText(/cable recorded/i)).not.toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: /^Ethernet 0: Cable details unavailable, connections unknown$/ })).toBeInTheDocument();
-    fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: 'Cables' }));
+    fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Cables\b/ }));
     expect(screen.getByText(/Cable details unavailable. Connections for this rack are unknown, not absent/)).toBeInTheDocument();
   });
 

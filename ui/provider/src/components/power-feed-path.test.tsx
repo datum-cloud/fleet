@@ -42,7 +42,8 @@ describe('PowerFeed power path', () => {
     const devices = path().querySelector('[data-stage="devices"]') as HTMLElement;
     expect(within(devices).getAllByRole('link', { name: 'Compute a01-01' })).toHaveLength(1);
     expect(within(devices).getByRole('link', { name: 'Compute a01-02' }).closest('li')).toHaveTextContent('Feed unknown for some PSUs');
-    expect(screen.getByText(/separate feeds in records do not prove independent supply/)).toBeInTheDocument();
+    expect(screen.queryByText(/separate feeds in records do not prove independent supply/i)).toBeNull();
+    expect(path()).not.toHaveTextContent(/redundant|verified/i);
   });
 
   it('fills the capacity bar and tints outlets from telemetry, with value, unit and age in accessible names', () => {
@@ -137,12 +138,14 @@ describe('without a telemetry source (normal builds)', () => {
     const card = screen.getByRole('dialog');
     expect(card).toHaveTextContent('TelemetryNot reported · No telemetry source configured');
     expect(within(card).getByText('Health').nextElementSibling).toHaveTextContent('No health reported');
-    expect(screen.getByText(/Telemetry: No telemetry source configured/)).toBeInTheDocument();
+    // No page legend repeats the telemetry source.
+    expect(screen.queryByText(/Telemetry: No telemetry source configured/)).toBeNull();
   });
 
-  it('shows "Power draw: Not reported" on the device page and the PSU card', () => {
+  it('hides the draw fact on the device page when nothing reports one, and says Not reported on the PSU card', () => {
     open(SERVER);
-    expect(screen.getByText('Power draw: Not reported')).toBeInTheDocument();
+    // An empty fact is hidden in the header strip; nothing reads as zero or verified.
+    expect(screen.queryByText(/Power draw|Draws/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^PSU 1: Cable recorded/ }));
     expect(screen.getByRole('dialog', { name: 'PSU 1 details' })).toHaveTextContent('TelemetryNot reported · No telemetry source configured');
   });
@@ -209,7 +212,7 @@ describe('rack Power tab redundancy view', () => {
     const cells = within(rowFor('Compute a01-01')).getAllByRole('cell');
     expect(cells[0]).toHaveTextContent('PSU 1 via PDU a01 (rear left) · Outlet 1');
     expect(cells[1]).toHaveTextContent('PSU 2 direct');
-    expect(screen.getByText(/Separate feeds in records do not prove independent supply/)).toBeInTheDocument();
+    expect(screen.queryByText(/Separate feeds in records do not prove independent supply/)).toBeNull();
     expect(screen.getByRole('region', { name: 'Feeds and PSUs' })).not.toHaveTextContent(/redundant|verified redundan/i);
     // Each feed has a compact capacity bar.
     expect(grid.querySelectorAll('.inventory-capacity[data-compact]')).toHaveLength(2);
@@ -219,7 +222,12 @@ describe('rack Power tab redundancy view', () => {
 describe('device PSU telemetry', () => {
   it('shows per-PSU input power and observed status, and a draw summary', () => {
     open(SERVER, 'normal');
-    expect(screen.getByText(/^Draws ~358 W · 40 s ago/)).toBeInTheDocument();
+    // The draw is one short fact in the header's identity strip; the full draw text and age are its tooltip and accessible text.
+    const draw = screen.getByTitle('Draws ~358 W · 40 s ago');
+    expect(draw.querySelector('.inventory-visually-hidden')).toHaveTextContent(/^Draws ~358 W · 40 s ago$/);
+    expect(draw).not.toHaveTextContent(/verified/);
+    expect(draw).toHaveTextContent(/^358 W/);
+    expect(draw.closest('dl')).toHaveClass('inventory-fact-strip');
     const psu = screen.getByRole('button', { name: /^PSU 1: Cable recorded/ });
     expect(psu).toHaveAccessibleName(/telemetry 182 W · 40 s ago, status OK, 40 s ago/);
     fireEvent.click(psu);

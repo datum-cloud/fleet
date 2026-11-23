@@ -17,14 +17,12 @@ function view(query: string, data: Inventory) {
 describe('Site and premises directory', () => {
   it('shows internal identity separately from provider identity', () => {
     render(view('?kind=Site&record=site-stable&namespace=default', inventory));
-    expect(screen.getByText('Internal Site code')).toBeInTheDocument();
-    expect(screen.getByText('EX3')).toBeInTheDocument();
+    expect(screen.getByText('Site code EX3')).toBeInTheDocument();
     expect(screen.getByText(/example-provider \/ EX1/)).toBeInTheDocument();
-    expect(screen.getByText(/Membership grants no placement eligibility/)).toBeInTheDocument();
-    expect(screen.getByText(/Recreating a name resolves to the replacement/)).toBeInTheDocument();
+    expect(screen.queryByText(/Membership grants no placement eligibility/)).toBeNull();
   });
 
-  it('keeps a legacy Facility browsable without inventing membership', () => {
+  it('keeps a Facility without a Site browsable without inventing membership', () => {
     render(view('?kind=Facility&record=premises-stable&namespace=default', toInventory([], [], [facility])));
     expect(screen.getByText(/Unmapped · no operational Site recorded/)).toBeInTheDocument();
   });

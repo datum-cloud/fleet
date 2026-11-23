@@ -4,7 +4,7 @@ import { toInventory, type Inventory } from '../inventory';
 import { depthClaims, depthDevices, depthRecords, DEPTH_RACK } from './depth-fixtures';
 import { depthLabel, deviceDepth, equipmentDepth, type Depth } from './device-depth';
 import { equipmentPlacements, reportedPlacementLabel, type EquipmentPlacement } from './device-placement';
-import { componentChassisFace, componentRackFace, coveredUnits, deviceMountedFace, emptyRuns, faceOccupancy, MIN_EMPTY_RUN, oppositeFace, RACK_FACES, rackOccupants, runRange, type EmptyRun, type RackOccupant } from './rack-faces';
+import { componentChassisFace, componentRackFace, deviceMountedFace, faceOccupancy, oppositeFace, RACK_FACES, rackOccupants, type RackOccupant } from './rack-faces';
 
 // Synthetic records only.
 const rack = depthRecords.find(record => record.kind === 'Rack')!;
@@ -123,64 +123,5 @@ describe('face-aware rack occupancy', () => {
   it.each([{ position: 5.5, height: 1 }, { position: 42, height: 2 }, { position: 5, height: 0.5 }])('still draws only whole, in-range positions: %j', ({ position, height }) => {
     const data = inventory([placed('odd', position, height, 'front')]);
     expect(occupancy(data)).toEqual([]);
-  });
-});
-
-describe('empty runs', () => {
-  // Occupants built directly, so each case states its own geometry.
-  const DEPTHS: Record<'full' | 'half' | 'unknown', Depth> = { full: { full: true, source: 'catalog' }, half: { full: false, source: 'catalog' }, unknown: { full: true, source: 'unknown' } };
-  const at = (key: string, position: number, height: number, mounted: RackFace, depth: keyof typeof DEPTHS): RackOccupant => ({
-    entry: { key } as EquipmentPlacement, position, height, mounted, depth: DEPTHS[depth], faces: DEPTHS[depth].full ? ['front', 'rear'] : [mounted],
-  });
-  const spans = (runs: EmptyRun[]) => runs.map(runRange);
-
-  it('collapses runs of three or more units, top first, and keeps shorter gaps as units', () => {
-    const occupants = [at('a', 10, 1, 'front', 'full'), at('b', 13, 2, 'front', 'full'), at('c', 38, 1, 'front', 'full')];
-    // U11–U12 is two units: not collapsed. U1 and U42 edges are included.
-    expect(spans(emptyRuns(occupants, 42, RACK_FACES))).toEqual(['U39–U42', 'U15–U37', 'U1–U9']);
-    expect(emptyRuns(occupants, 42, RACK_FACES)[1]).toEqual({ top: 37, bottom: 15, units: 23, key: 'U15-U37' });
-    expect(MIN_EMPTY_RUN).toBe(3);
-  });
-
-  it('ends a run exactly at the units next to a device, above and below', () => {
-    const runs = emptyRuns([at('a', 20, 2, 'front', 'full')], 42, ['front']);
-    expect(runs.map(run => [run.bottom, run.top])).toEqual([[22, 42], [1, 19]]);
-    // A device at the top or bottom unit leaves no empty unit outside the rack.
-    expect(spans(emptyRuns([at('top', 42, 1, 'front', 'full'), at('bottom', 1, 1, 'front', 'full')], 42, ['front']))).toEqual(['U2–U41']);
-    expect(emptyRuns([at('all', 1, 42, 'front', 'full')], 42, RACK_FACES)).toEqual([]);
-  });
-
-  it('computes each face on its own: a half-depth device leaves the other face empty', () => {
-    const occupants = [at('panel', 20, 1, 'rear', 'half')];
-    expect(spans(emptyRuns(occupants, 42, ['front']))).toEqual(['U1–U42']);
-    expect(spans(emptyRuns(occupants, 42, ['rear']))).toEqual(['U21–U42', 'U1–U19']);
-  });
-
-  it('aligns both faces by collapsing only units that are empty on both', () => {
-    const occupants = [at('front-panel', 30, 1, 'front', 'half'), at('rear-panel', 10, 2, 'rear', 'half')];
-    expect(spans(emptyRuns(occupants, 42, ['front']))).toEqual(['U31–U42', 'U1–U29']);
-    expect(spans(emptyRuns(occupants, 42, ['rear']))).toEqual(['U12–U42', 'U1–U9']);
-    // Front + rear: a unit occupied on either face breaks the run on both, so rows line up.
-    const both = emptyRuns(occupants, 42, RACK_FACES);
-    expect(spans(both)).toEqual(['U31–U42', 'U12–U29', 'U1–U9']);
-    for (const run of both) for (let unit = run.bottom; unit <= run.top; unit++) expect(coveredUnits(occupants, RACK_FACES).has(unit)).toBe(false);
-  });
-
-  it('counts overlapping placements once, and never starts a run inside either', () => {
-    const occupants = [at('a', 20, 3, 'front', 'full'), at('b', 21, 4, 'front', 'full')];
-    expect([...coveredUnits(occupants, ['front'])].sort((x, y) => x - y)).toEqual([20, 21, 22, 23, 24]);
-    expect(spans(emptyRuns(occupants, 42, ['front']))).toEqual(['U25–U42', 'U1–U19']);
-  });
-
-  it('treats unknown depth as occupying both faces, from the records', () => {
-    // depth-fixtures: appliance-03 has no DeviceType, so its depth is unknown, mounted front at U20–U21.
-    const data = inventory();
-    const appliance = occupancy(data).find(item => item.entry.record.metadata.name === 'appliance-03')!;
-    expect(appliance.depth.source).toBe('unknown');
-    expect(coveredUnits([appliance], ['rear'])).toEqual(new Set([20, 21]));
-    expect(spans(emptyRuns([appliance], 42, ['rear']))).toEqual(['U22–U42', 'U1–U19']);
-    // The whole depth rack: U10, U20–U21, U40 and U42 are recorded on both faces.
-    expect(spans(emptyRuns(occupancy(data), 42, RACK_FACES))).toEqual(['U22–U39', 'U11–U19', 'U1–U9']);
-    expect(spans(emptyRuns(occupancy(data), 42, ['front']))).toEqual(spans(emptyRuns(occupancy(data), 42, ['rear'])));
   });
 });

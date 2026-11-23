@@ -31,7 +31,6 @@
 .fleet-inventory summary { cursor:pointer; font-weight:500; }
 .fleet-inventory details[open]>summary { margin-bottom:16px; }
 .fleet-inventory details p+p { margin-top:8px; }
-.inventory-help { font-size:12px; color:var(--muted-foreground); }
 .inventory-note { padding:12px 16px; background:var(--muted); border-left:3px solid var(--border); }
 .inventory-related { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
 .inventory-related li { display:grid; grid-template-columns:120px 1fr 1fr; gap:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius); overflow-wrap:anywhere; }
@@ -75,20 +74,11 @@
 .inventory-rack-units { display:grid; list-style:none; padding:0; margin:0; border:1px solid var(--border); font-size:9px; line-height:15px; }
 .inventory-rack-unit { display:grid; grid-template-columns:28px 1fr; border-bottom:1px solid var(--border); }
 .inventory-rack-unit > span { padding:0 3px; background:var(--muted); }
-/* A collapsed run of blank units: one compact row. Blank is unrecorded, never free. */
-.inventory-rack-run { display:flex; min-width:0; min-height:0; border-bottom:1px solid var(--border); }
-.inventory-rack-run-button { appearance:none; display:flex; align-items:center; width:100%; min-width:0; margin:0; padding:0 6px; border:0; border-left:28px solid var(--muted); background:repeating-linear-gradient(0deg,transparent 0 5px,color-mix(in oklab,var(--border) 60%,transparent) 5px 6px); color:var(--muted-foreground); font:inherit; font-size:10px; text-align:left; cursor:pointer; }
-.inventory-rack-run-button > span { min-width:0; max-height:100%; overflow:hidden; white-space:normal; line-height:11px; overflow-wrap:anywhere; }
-.inventory-rack-run-button:hover { color:var(--foreground); }
-.inventory-rack-run-button:focus-visible,.inventory-rack-run-collapse:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
 .inventory-rack-unit { position:relative; }
-.inventory-rack-run-collapse { appearance:none; position:absolute; right:2px; top:0; z-index:2; margin:0; padding:0 4px; border:1px solid var(--border); border-radius:3px; background:var(--card); color:var(--foreground); font:inherit; font-size:9px; line-height:inherit; cursor:pointer; white-space:nowrap; }
-@media(pointer:coarse) { .inventory-rack-units { --inventory-run-row:44px; } }
 .inventory-rack-plan { z-index:1; min-width:0; min-height:0; border:1px solid var(--border); background:var(--accent); }
-.inventory-rack-plan a { display:flex; flex-direction:column; justify-content:center; height:100%; min-width:0; padding:0 3px; overflow:hidden; white-space:nowrap; }
-.inventory-rack-plan-heading { display:flex; align-items:center; gap:3px; flex:none; min-width:0; line-height:12px; }
+.inventory-rack-plan a { display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; height:100%; min-width:0; padding:0 3px; overflow:hidden; white-space:nowrap; }
+.inventory-rack-plan-heading { display:flex; align-items:center; justify-content:center; gap:3px; flex:none; min-width:0; max-width:100%; line-height:12px; }
 .inventory-rack-plan-name { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.inventory-rack-overlap { flex:none; font-weight:700; }
 .inventory-rack-plan a:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
 .inventory-rack-plan small { flex:none; overflow:hidden; text-overflow:ellipsis; font-size:8px; line-height:12px; }
 .inventory-rack-plan-far { border-style:dashed; background:repeating-linear-gradient(135deg,transparent 0 5px,var(--muted) 5px 7px); color:var(--muted-foreground); }
@@ -96,7 +86,7 @@
 .inventory-rack-plan-side { font-style:italic; }
 .inventory-rack-plan[data-depth="unknown"]:not(.inventory-rack-plan-far) { border-style:dotted; }
 .inventory-face-switch { display:flex; gap:4px; }
-.inventory-face-switch button { flex:1; }
+.inventory-face-switch button { flex:none; }
 .inventory-equipment-sections { display:grid; gap:16px; min-width:0; }
 .inventory-equipment-sections section { display:grid; gap:10px; }
 .inventory-count { font-size:11px; color:var(--muted-foreground); font-weight:400; }
@@ -191,9 +181,6 @@
 .inventory-rack-summary > span + span::before { content:"·"; margin-right:12px; color:var(--muted-foreground); }
 .fleet-inventory a.inventory-issue-badge { display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border:1px solid var(--destructive); border-radius:999px; font-size:12px; text-decoration:none; }
 .fleet-inventory a.inventory-issue-badge[data-kind="unpositioned"] { border-style:dashed; border-color:var(--muted-foreground); }
-.inventory-rack-counts ul { display:flex; flex-wrap:wrap; gap:4px 16px; list-style:none; padding:0; margin:0; font-size:13px; }
-.inventory-rack-counts a { display:inline-block; min-height:24px; line-height:24px; }
-.inventory-rack-free { font-size:12px; color:var(--muted-foreground); }
 .inventory-rack-tabs [role="tablist"] { max-width:100%; overflow-x:auto; }
 .inventory-rack-tabs [role="tab"] { flex-shrink:0; }
 .fleet-inventory .inventory-rack-tabs a[role="tab"] { text-decoration:none; }
@@ -203,21 +190,16 @@
 .inventory-banner { display:flex; gap:8px; align-items:baseline; padding:8px 12px; border:1px solid var(--border); border-left:3px solid var(--destructive); border-radius:var(--radius); background:var(--card); font-size:13px; }
 .inventory-banner[data-kind="unpositioned"] { border-left-style:dashed; border-left-color:var(--muted-foreground); }
 .inventory-banner-glyph { font-weight:700; flex:none; }
-.inventory-rack-stage { display:grid; grid-template-columns:minmax(280px,560px) minmax(280px,1fr); gap:16px; align-items:start; min-width:0; }
+.inventory-rack-stage { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; align-items:start; min-width:0; }
+.inventory-rack-stage[data-selected] { grid-template-columns:minmax(280px,560px) minmax(280px,1fr); }
 .inventory-elevation-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.inventory-elevation-toolbar .inventory-face-switch { flex:1; }
 .inventory-rack-plan[data-selected] { outline:2px solid var(--primary); outline-offset:-1px; z-index:2; }
-.inventory-rack-panel { display:grid; gap:12px; min-width:0; padding:16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); position:sticky; top:16px; }
-.inventory-rack-panel-empty { border-style:dashed; background:transparent; }
+.inventory-rack-panel { display:grid; gap:8px; min-width:0; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); position:sticky; top:16px; }
 .inventory-rack-panel-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
 .inventory-rack-panel-heading h3 { font-size:16px; font-weight:600; margin:0; overflow-wrap:anywhere; }
-.inventory-rack-panel-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; margin:0; }
-.inventory-rack-panel-states { display:flex; flex-wrap:wrap; gap:4px 12px; list-style:none; padding:0; margin:0; font-size:12px; }
 .inventory-rack-panel-links { display:flex; flex-wrap:wrap; gap:8px 16px; }
 .inventory-rack-panel-links a { display:inline-block; min-height:24px; line-height:24px; }
 .inventory-rack-panel[data-variant="sheet"] { position:fixed; left:0; right:0; bottom:0; top:auto; z-index:50; max-height:75dvh; overflow-y:auto; border-radius:12px 12px 0 0; box-shadow:0 -8px 24px rgb(0 0 0 / .18); }
-.fleet-inventory .inventory-rack-about { border-top:1px solid var(--border); padding-top:12px; font-size:13px; }
-.inventory-rack-meta { display:flex; flex-wrap:wrap; gap:8px 24px; margin:0; }
 .inventory-rack-manage { margin-top:12px; }
 .inventory-record-names { font-size:12px; }
 .fleet-inventory .inventory-record-names { border-top:0; padding-top:0; }
@@ -225,7 +207,7 @@
 .inventory-equipment-sections h4 a { font-weight:600; }
 /* Rack panel faceplate: the shared port tiles (.inventory-port-*) below, without a second frame. */
 .inventory-faceplate { display:grid; gap:6px; min-width:0; }
-@media(max-width:900px) { .inventory-rack-stage { grid-template-columns:1fr; } .inventory-elevation { max-width:560px; width:100%; } }
+@media(max-width:900px) { .inventory-rack-stage,.inventory-rack-stage[data-selected] { grid-template-columns:1fr; } .inventory-elevation { max-width:560px; width:100%; } }
 /* Detail page layout: compact header, issues, primary view, tabs, About. See "Page design rules" in docs/development/staff-inventory-ui.md. */
 .inventory-record-header { min-width:0; }
 .inventory-record-header:focus { outline:none; }
@@ -245,8 +227,6 @@
 .inventory-record-tabs [role="tab"]:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
 .inventory-record-panel { display:grid; gap:12px; min-width:0; }
 .inventory-record-panel[hidden] { display:none; }
-.fleet-inventory .inventory-about { font-size:13px; }
-.inventory-legend { font-size:12px; color:var(--muted-foreground); }
 .inventory-link-list { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
 .inventory-link-list a { display:inline-block; min-height:24px; }
 .inventory-outlets { border:1px solid var(--border); border-radius:var(--radius); padding:12px; background:var(--card); min-width:0; }
@@ -275,7 +255,7 @@
   .inventory-component-groups { grid-template-columns:1fr; }
   .inventory-outlets li { grid-template-columns:1fr; gap:2px; }
 }
-@media(max-width:600px) { .inventory-rack-panel-fields { grid-template-columns:1fr 1fr; } .inventory-rack-stage[data-selected] { padding-bottom:40dvh; } }
+@media(max-width:600px) { .inventory-rack-stage[data-selected] { padding-bottom:40dvh; } }
 /* Port tiles: a faceplate per chassis face, clustered by type. State is fill or outline plus a glyph, never colour alone:
    recorded = solid fill, no cable recorded = empty outline, records disagree = "!" and the destructive token,
    peer unavailable = "?" and a dashed outline, catalog only = a faint dashed outline. Nothing is styled as verified. */
@@ -443,7 +423,7 @@
 .inventory-redundancy-grid { display:grid; gap:0; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); min-width:0; }
 .inventory-redundancy-head,.inventory-redundancy-row { display:grid; grid-template-columns:minmax(150px,1.1fr) repeat(var(--feed-columns,1),minmax(0,1fr)); gap:0 12px; padding:8px 12px; align-items:start; }
 .inventory-redundancy-row { border-top:1px solid var(--border); font-size:12px; }
-.inventory-redundancy-row[data-class="single"] { border-left:3px solid var(--warning,var(--destructive)); }
+.inventory-redundancy-row[data-class="single"] { box-shadow:inset 3px 0 var(--warning,#d97706); background:color-mix(in srgb,var(--warning,#d97706) 10%,transparent); }
 .inventory-redundancy-corner { font-size:12px; font-weight:600; }
 .inventory-redundancy-feed { display:grid; gap:2px; min-width:0; font-size:12px; }
 .fleet-inventory .inventory-redundancy-feed small { margin:0; color:var(--muted-foreground); }
@@ -503,21 +483,110 @@
 /* Mini faceplates in the elevation: visual only. Strokes do not scale, so outlines stay 1px at
    every level, and cells are drawn in --foreground on --background so they keep contrast in
    both themes (the prototype's muted blocks were too faint in dark mode). */
-.inventory-rack-plan a.inventory-rack-slot-device { flex-direction:row; align-items:stretch; justify-content:flex-start; gap:4px; padding:1px 3px; }
-.inventory-rack-plan-text { display:flex; flex-direction:column; justify-content:center; flex:0 1 auto; min-width:0; max-width:48%; }
-.inventory-rack-slot-device[data-level="full"] .inventory-rack-plan-text { max-width:34%; }
-.inventory-rack-counts { display:inline-flex; gap:3px; flex:none; font-weight:700; }
-.inventory-rack-counts > [data-state="conflict"] { color:var(--destructive); }
-.inventory-mini-faceplate { display:block; flex:1 1 0; min-width:0; height:100%; }
-.inventory-mini-faceplate * { vector-effect:non-scaling-stroke; }
-.inventory-mini-chassis { fill:var(--background); stroke:var(--muted-foreground); stroke-width:1px; }
-.inventory-mini-bank { fill:color-mix(in oklab,var(--foreground) 22%,var(--background)); stroke:var(--foreground); stroke-width:1px; }
-.inventory-mini-cell { fill:var(--background); stroke:var(--foreground); stroke-width:1px; }
-.inventory-mini-cell[data-state="cabled"] { fill:var(--foreground); }
-.inventory-mini-cell[data-state="recorded"] { fill:color-mix(in oklab,var(--foreground) 60%,var(--background)); }
-.inventory-mini-cell[data-state="conflict"] { fill:var(--destructive); stroke:var(--destructive); }
-.inventory-mini-cell[data-state="unavailable"] { stroke-dasharray:2 1.5; }
-.inventory-mini-cell[data-state="catalog"] { stroke:var(--muted-foreground); stroke-dasharray:1 1.5; }
-.inventory-mini-faceplate[data-level="reduced"] .inventory-mini-cell { stroke-width:0.75px; }
-.inventory-mini-glyph { fill:var(--background); font-weight:800; }
-.inventory-mini-cell[data-state="unavailable"] + .inventory-mini-glyph { fill:var(--foreground); }
+.inventory-rack-plan-text { display:flex; flex-direction:column; justify-content:center; align-items:center; min-width:0; max-width:100%; }
+
+/* ---- Device page: compact header, the device picture, then the dense component table.
+   See "Device page: picture and component table" in docs/development/staff-inventory-ui.md. ---- */
+.inventory-page-title:has(.inventory-fact-strip) > :first-child { flex:1 1 320px; min-width:0; }
+.inventory-page-title > :first-child > :nth-child(2):has(.inventory-fact-strip) { max-width:none; }
+/* Each fact carries its separator in a 17 px lead that the strip clips, so a wrapped line never starts with "·". */
+.inventory-fact-strip { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 0; margin:4px 0 0 -17px; font-size:13px; clip-path:inset(-8px -8px -8px 17px); }
+.inventory-fact-strip > div { position:relative; display:flex; align-items:baseline; gap:5px; min-width:0; padding-left:17px; }
+.inventory-fact-strip > div::before { content:'·'; position:absolute; left:6px; color:var(--muted-foreground); }
+.fleet-inventory .inventory-fact-strip dt { margin:0; font-size:12px; }
+.inventory-fact-strip dd { overflow-wrap:anywhere; }
+.inventory-fact-strip .inventory-telemetry-line { font-size:13px; }
+.inventory-numeric,.inventory-dense-table { font-variant-numeric:tabular-nums; }
+.inventory-record-header ~ .inventory-issues li { padding:4px 10px; font-size:13px; line-height:1.4; }
+.inventory-record-header ~ .inventory-issues { gap:4px; }
+
+.inventory-connections { gap:10px; }
+.inventory-device-picture { display:grid; gap:4px; min-width:0; }
+.inventory-device-picture .inventory-faceplate-fallback { margin:0; font-size:12px; }
+.inventory-device-picture .inventory-port-face-title { font-size:11px; font-weight:500; letter-spacing:0; text-transform:none; }
+/* The drawn faces: whole faces scaled to their column, side by side when both fit at the minimum scale. */
+/* The Device page's picture sits on the page: each face's chassis is the only frame. */
+.inventory-drawing[data-dense] { gap:6px; padding:0; border:0; background:none; }
+.inventory-drawn-faces { display:flex; flex-wrap:wrap; gap:6px 16px; min-width:0; }
+.inventory-drawing[data-dense] .inventory-drawn-face { flex:1 1 var(--face-min,320px); gap:0; }
+.inventory-drawing[data-dense] .inventory-chassis-scroll { padding:11px 1px 10px; }
+.inventory-chassis[data-scale] { box-sizing:border-box; }
+.inventory-chassis[data-scale] .inventory-chassis-module { font-size:9px; }
+.inventory-chassis[data-scale] .inventory-chassis-print { font-size:8px; left:-4px; right:-4px; letter-spacing:-.02em; }
+@media(max-width:600px) {
+  .inventory-drawing[data-dense] .inventory-drawn-face { flex-basis:100%; }
+  .inventory-drawing[data-dense] .inventory-chassis[data-scale] { min-width:var(--face-phone)!important; }
+  .inventory-chassis[data-scale] .inventory-chassis-module,.inventory-chassis[data-scale] .inventory-port-face,.inventory-chassis[data-scale] .inventory-chassis-print { font-size:7px!important; letter-spacing:-.03em; }
+}
+/* The grouped tiles (no recorded layout): faces side by side, without the separator rule. */
+.inventory-port-grid[data-dense]:not(.inventory-drawing) { grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:6px 20px; padding:8px 10px; }
+.inventory-port-grid[data-dense] .inventory-port-face-group { gap:2px; }
+.inventory-port-grid[data-dense] .inventory-port-face-group + .inventory-port-face-group { border-top:0; padding-top:0; }
+.inventory-port-grid[data-dense] .inventory-port-plate { gap:6px 16px; }
+.inventory-port-grid[data-dense] .inventory-port-cluster-title { font-size:11px; font-weight:500; }
+/* "Not on the faceplate" as one line under the faces. */
+.inventory-faceplate-tray[data-inline] { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding-top:4px; }
+.inventory-faceplate-tray[data-inline] .inventory-port-cluster-title { font-size:11px; font-weight:500; color:var(--muted-foreground); }
+.inventory-faceplate-tray[data-inline] .inventory-faceplate-tray-list { gap:4px 12px; }
+.inventory-faceplate-tray[data-inline] .inventory-faceplate-tray-name { font-weight:500; }
+.inventory-faceplate-tray[data-inline] .inventory-port { min-height:24px; }
+/* One component outlined in the picture and the table at once: an outline, never colour alone. */
+.inventory-port[data-highlight] .inventory-port-face,.inventory-chassis-module[data-highlight] { outline:2px solid var(--ring); outline-offset:1px; }
+.inventory-dense-table tr[data-highlight] { outline:2px solid var(--ring); outline-offset:-2px; background:var(--muted); }
+
+/* The component table: one row per component, about 30 px, no wrapping; it scrolls inside its frame. */
+.inventory-component-panel { position:relative; display:grid; min-width:0; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); }
+.inventory-component-bar { position:relative; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 16px; padding:4px 10px; border-bottom:1px solid var(--border); }
+.inventory-component-bar .inventory-connection-summary { font-size:13px; font-variant-numeric:tabular-nums; }
+.inventory-component-actions { display:flex; align-items:center; gap:14px; }
+.inventory-connections .inventory-link-button[aria-pressed="true"] { font-weight:600; text-decoration-thickness:2px; }
+.inventory-component-panel > .inventory-scroll { border:0; border-radius:0 0 var(--radius) var(--radius); }
+.inventory-component-panel > .inventory-connection-diagram { border:0; border-radius:0 0 var(--radius) var(--radius); }
+.fleet-inventory .inventory-dense-table th,.fleet-inventory .inventory-dense-table td { min-width:0; max-width:none; white-space:nowrap; overflow-wrap:normal; vertical-align:middle; }
+.fleet-inventory .inventory-dense-table th { height:28px; padding:0 10px; font-size:12px; }
+.fleet-inventory .inventory-dense-table td { height:30px; padding:3px 10px; font-size:13px; line-height:1.35; }
+.fleet-inventory .inventory-dense-table td a { font-weight:500; }
+.inventory-dense-table tr[data-state="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
+.inventory-component-links { display:grid; gap:0; list-style:none; margin:0; padding:0; }
+.inventory-component-via { font-size:12px; color:var(--muted-foreground); }
+.fleet-inventory .inventory-component-via a { font-weight:400; color:inherit; }
+.fleet-inventory .inventory-dense-table .inventory-connection-check { display:inline; font-size:12px; }
+@media(max-width:600px) { .fleet-inventory .inventory-dense-table th,.fleet-inventory .inventory-dense-table td { min-width:0; } }
+/* The component name stays in view while the table scrolls sideways. */
+.inventory-dense-table th:first-child,.inventory-dense-table td:first-child { position:sticky; left:0; z-index:1; background:var(--card); }
+.inventory-dense-table tr[data-highlight] > td:first-child { background:var(--muted); box-shadow:inset 2px 0 var(--ring),inset 0 2px var(--ring),inset 0 -2px var(--ring); }
+
+/* The legend popover. */
+.inventory-connection-legend-panel { position:absolute; right:8px; top:calc(100% + 4px); z-index:30; display:grid; gap:6px; width:min(380px,calc(100% - 16px)); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:0 8px 24px rgb(0 0 0 / .18); font-size:12px; }
+
+/* Location tab: the correction editor as one compact block. */
+.inventory-location-editor { display:grid; gap:4px; padding-top:8px; border-top:1px solid var(--border); }
+.inventory-location-editor > p { font-size:12px; }
+.fleet-inventory .inventory-location-editor > h3 { font-size:14px; font-weight:600; }
+.inventory-location-editor > .inventory-management-controls { justify-content:flex-start; }
+.inventory-location-editor > [role="status"] { margin-top:0; min-height:0; }
+/* The record header reserves one status line, not three: the display-name reason is now a tooltip. */
+.inventory-record-header .inventory-management-status { min-height:1.5em; }
+/* Tab panels: titled sections of label/value rows, two rows across when wide. */
+.inventory-record-panel { gap:20px; }
+.inventory-fact-section { display:grid; gap:6px; min-width:0; }
+.fleet-inventory .inventory-fact-section > h4 { margin:0; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-foreground); }
+.inventory-record-panel .inventory-fields { grid-template-columns:repeat(auto-fill,minmax(min(440px,100%),1fr)); gap:0 32px; font-size:13px; }
+.inventory-record-panel .inventory-fields > div { display:grid; grid-template-columns:150px minmax(0,1fr); gap:12px; align-items:baseline; padding:6px 0; border-bottom:1px solid var(--border); }
+.fleet-inventory .inventory-record-panel dt { margin:0; font-size:13px; }
+.inventory-small-table { width:fit-content; max-width:100%; }
+.inventory-fact-line { font-size:13px; padding:6px 0; border-bottom:1px solid var(--border); }
+@media(max-width:600px) { .inventory-record-panel .inventory-fields > div { grid-template-columns:1fr; gap:2px; } }
+.fleet-inventory .inventory-record-footer { margin:8px 0 0; padding-top:12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted-foreground); overflow-wrap:anywhere; }
+.inventory-record-footer p { margin:0; }
+.inventory-record-footer code { color:var(--foreground); }
+.inventory-connection-summary [data-state="conflict"] { color:var(--destructive); font-weight:500; }
+/* A slot that needs checking: red when records disagree, amber when a peer is missing or unreadable. The tooltip says why. */
+.inventory-rack-plan:has(> a[data-attention="conflict"]) { border-color:var(--destructive); box-shadow:inset 3px 0 var(--destructive); background:color-mix(in srgb,var(--destructive) 12%,var(--accent)); }
+.inventory-rack-plan:has(> a[data-attention="unavailable"]) { border-color:var(--warning,#d97706); box-shadow:inset 3px 0 var(--warning,#d97706); background:color-mix(in srgb,var(--warning,#d97706) 14%,var(--accent)); }
+.fleet-inventory .inventory-rack-panel-facts { margin:0; font-size:13px; color:var(--muted-foreground); }
+.inventory-rack-panel .inventory-faceplate .inventory-drawn-face { flex-basis:100%; }
+/* Rack equipment table: the elevation's colour edge on rows that need checking; a single-feed power cell in amber. */
+.inventory-dense-table tr[data-attention="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
+.inventory-dense-table tr[data-attention="unavailable"] > td:first-child { box-shadow:inset 3px 0 var(--warning,#d97706); }
+.inventory-dense-table td[data-single] { color:var(--warning,#b45309); font-weight:500; }

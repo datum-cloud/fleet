@@ -162,7 +162,7 @@ it.each(sections)('selects the correct group and only its subtabs for a direct $
     const secondary = screen.getByRole('tablist', { name: `${group.title} categories` });
     expect(within(secondary).getAllByRole('tab').map(tab => tab.textContent)).toEqual(sections.filter(item => group.kinds.some(kind => kind === item.kind)).map(item => item.title));
     expect(within(secondary).getByRole('tab', { name: section.title })).toHaveAttribute('aria-selected', 'true');
-  } else expect(navigation).toHaveTextContent('Not every legacy claim is an installation plan');
+  } else expect(navigation).toHaveTextContent('Plans do not allocate capacity');
   expect(view.collections).toHaveBeenCalledTimes(9);
   view.router.dispose();
 });
@@ -302,17 +302,18 @@ it('switches record detail tabs as presentation navigation without extra collect
   await screen.findByRole('heading', { name: 'Example compute server' });
   expect(view.collections).toHaveBeenCalledTimes(9);
   const tabs = () => within(screen.getByRole('tablist', { name: 'Example compute server details' }));
-  fireEvent.click(tabs().getByRole('tab', { name: 'Registration' }));
-  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Registration' })).toHaveAttribute('aria-selected', 'true'));
-  expect(new URLSearchParams(view.router.state.location.search).get('tab')).toBe('registration');
+  fireEvent.click(tabs().getByRole('tab', { name: 'Hardware & management' }));
+  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Hardware & management' })).toHaveAttribute('aria-selected', 'true'));
+  expect(new URLSearchParams(view.router.state.location.search).get('tab')).toBe('hardware');
   await act(async () => { await view.router.navigate(-1); });
   await waitFor(() => expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true'));
   expect(view.collections).toHaveBeenCalledTimes(9);
-  // The connection view is presentation state too: switching it reads nothing.
-  fireEvent.click(screen.getByRole('button', { name: 'Table' }));
-  await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('view')).toBe('table'));
-  expect(await screen.findByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Table' })).toHaveAttribute('aria-pressed', 'true');
+  // The link diagram is presentation state too: switching to it reads nothing.
+  expect(screen.getByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
+  await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('view')).toBe('diagram'));
+  expect(await screen.findByRole('group', { name: /Connection diagram/ })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Link diagram' })).toHaveAttribute('aria-pressed', 'true');
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();

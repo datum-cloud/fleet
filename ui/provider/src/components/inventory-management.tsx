@@ -1,6 +1,6 @@
 import { Input } from '@datum-cloud/datum-ui/input';
 import { Label } from '@datum-cloud/datum-ui/label';
-import { useContext, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
+import { useContext, useId, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@datum-cloud/datum-ui/button';
 import { ApiError, PLUGIN_ID, PROVIDER_PROJECT } from '../lib/api';
@@ -66,6 +66,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   const [uncertain, setUncertain] = useState(false);
   const [initial, setInitial] = useState('');
   const started = useRef(false);
+  const hintID = useId();
   const [values, setValues] = useState<InventoryFormValues>({ name: record?.metadata.name ?? '', namespace, displayName: record?.spec.displayName ?? '', facility: '', height: '' });
   useLayoutEffect(() => {
     scope.current.invalidate(); setBaseline(undefined); setBlocked(true);
@@ -137,11 +138,13 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       else { setMessage('The save outcome is unknown. Your input is kept here. Check inventory before attempting another save; do not assume the change failed.'); setBlocked(true); setUncertain(true); }
     } finally { setPending(false); }
   }
-  const status = <p role="status" className="inventory-management-status">{message || (!editable ? 'Display-name editing requires a portal-owned record. Other records need ownership review.' : !ready || permission.isFetching ? 'Checking management access…' : dependenciesUnavailable ? 'Related records are unavailable, not empty. Creation requires viewing access to its references.' : permission.error instanceof ApiError && permission.error.status === 401 ? 'Your session expired. Sign in again through the staff portal.' : open && blocked ? 'Close and reopen this form to continue.' : !visible ? 'Viewing and management access are separate. Ask your administrator for physical-inventory management access, or retry after a temporary failure.' : '')}</p>;
+  // Not a status: the reason a record cannot be edited is the disabled button's tooltip and description.
+  const hint = !editable ? { id: hintID, text: 'Display-name editing requires a portal-owned record. Other records need ownership review.' } : undefined;
+  const status = <p role="status" className="inventory-management-status">{message || (!editable ? '' : !ready || permission.isFetching ? 'Checking management access…' : dependenciesUnavailable ? 'Related records are unavailable, not empty. Creation requires viewing access to its references.' : permission.error instanceof ApiError && permission.error.status === 401 ? 'Your session expired. Sign in again through the staff portal.' : open && blocked ? 'Close and reopen this form to continue.' : !visible ? 'Viewing and management access are separate. Ask your administrator for physical-inventory management access, or retry after a temporary failure.' : '')}</p>;
   if (createHref && !record) return <section className="inventory-management inventory-management-compact"><div className="inventory-management-controls"><CreateTaskButton href={createHref} allowed={allowed} label={kindLabel} /></div>{status}</section>;
   return <section className={`inventory-management ${compact ? 'inventory-management-compact' : ''}`}>
     {open && <InventoryDraftGuard dirty={dirty} pending={pending} uncertain={uncertain} />}
-    <InventoryFormSurface open={open && permission.data === true && !permission.error && !issues[kind]} task={task} title={record ? 'Edit display name' : `Create ${kindLabel}`} status={status} onDismiss={dismiss} trigger={<Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={begin}>{record ? 'Edit display name' : `Create ${kindLabel}`}</Button>}>
+    <InventoryFormSurface open={open && permission.data === true && !permission.error && !issues[kind]} task={task} title={record ? 'Edit display name' : `Create ${kindLabel}`} status={status} hint={hint} onDismiss={dismiss} trigger={<Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} aria-describedby={hint?.id} onClick={begin}>{record ? 'Edit display name' : `Create ${kindLabel}`}</Button>}>
     <InventoryForm onSubmit={save} message={message}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <p>{record ? 'Only the display name changes. Identity, placement, geometry, connections, and history remain untouched.' : 'Create a physical record only. This does not verify equipment, reserve space, or provision hardware.'}</p>

@@ -166,12 +166,9 @@ function claim(name: string, position: number): RawDeviceClaim {
   return {
     metadata: { name, namespace: INVENTORY_NAMESPACE, creationTimestamp: '2026-01-02T03:04:05Z' },
     spec: {
+      lifecycle: 'Installation',
       expectedIdentity: { manufacturer: 'Example Vendor', model: 'Example 1U' },
-      placement: { facility: 'example-facility', rack: 'rack-01', position, height: 1, face: 'front' },
-      ports: [
-        { name: 'eth0', type: '25gbase-x-sfp28', speedMbps: 25000, expectedPeer: { device: 'switch-01', port: `Ethernet1/${position}` } },
-        { name: 'bmc0', type: '1000base-t', speedMbps: 1000, expectedPeer: { device: 'mgmt-switch-01', port: `Ethernet${position}` } },
-      ],
+      placement: { scope: 'RackUnits', facilityRef: { name: 'example-facility' }, rackRef: { name: 'rack-01' }, position, height: 1, face: 'front' },
     },
   };
 }

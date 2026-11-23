@@ -8,7 +8,7 @@ const facility: PhysicalRecord = { kind: 'Facility', metadata: { name: 'premises
 const site: PhysicalRecord = { kind: 'Site', metadata: { name: 'site-stable', namespace: 'inventory', uid: 'site-uid' }, spec: { displayName: 'Operational identity', code: 'EX3', facilityRefs: [{ name: facility.metadata.name }] } };
 
 describe('observational Site membership', () => {
-  it('keeps legacy Facilities explicitly unmapped and provider codes qualified', () => {
+  it('keeps Facilities without a Site explicitly unmapped and provider codes qualified', () => {
     expect(facilitySites(facility, toInventory([], [], [facility]))).toContain('Unmapped');
     expect(facilityIdentifiers(facility)).toContain('example-a / EX1');
     expect(facilityIdentifiers(facility)).toContain('example-b / EX1');

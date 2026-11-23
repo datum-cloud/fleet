@@ -267,20 +267,21 @@ export function CapacityBar({ feed, reading, now, source, compact = false }: { f
   const percent = measured ? Math.round((measured.value / capacity.continuousVA) * 100) : undefined;
   const fill = measured ? Math.min(100, (measured.value / capacity.ratedVA) * 100) : 0;
   const freshnessState = measured ? measured.state : 'missing';
+  // The full reading; compact headers show only the load and percentage, with this as the tooltip.
+  const full = measured && `${formatPower(measured.value, unit)} of ${formatPower(capacity.ratedVA, capacity.phase === 'dc' ? 'W' : 'VA')} rated · ${percent}% of continuous limit${level && level !== 'normal' ? ` · ${LOAD_WORDS[level]}` : ''} · ${measured.state === 'stale' ? `Stale · ${formatAge(measured.ageSeconds)}` : formatAge(measured.ageSeconds)}`;
   const text = !measured
-    ? <>No load reported{source.kind === 'none' ? ` · ${source.description}` : ''}</>
+    ? <>No load reported{source.kind === 'none' && !compact ? ` · ${source.description}` : ''}</>
     : <>
       {level && LOAD_GLYPH[level] && <span className="inventory-capacity-glyph" aria-hidden="true">{LOAD_GLYPH[level]} </span>}
       {measured.state === 'stale' && <span aria-hidden="true">◷ </span>}
-      {formatPower(measured.value, unit)} of {formatPower(capacity.ratedVA, capacity.phase === 'dc' ? 'W' : 'VA')} rated · {percent}% of continuous limit
-      {level && level !== 'normal' && ` · ${LOAD_WORDS[level]}`} · {measured.state === 'stale' ? `Stale · ${formatAge(measured.ageSeconds)}` : formatAge(measured.ageSeconds)}
+      {compact ? <><span aria-hidden="true">{formatPower(measured.value, unit)} · {percent}%</span><span className="inventory-visually-hidden">{full}</span></> : full}
     </>;
   return <div className="inventory-capacity" data-compact={compact ? '' : undefined} data-level={level ?? (measured ? 'stale' : 'missing')} data-freshness={freshnessState}>
     <div className="inventory-capacity-bar" aria-hidden="true">
       <span className="inventory-capacity-fill" style={{ width: `${fill}%` }} />
       <span className="inventory-capacity-limit" style={{ left: `${(capacity.continuousVA / capacity.ratedVA) * 100}%` }} />
     </div>
-    <p className="inventory-capacity-text">{text}</p>
+    <p className="inventory-capacity-text" title={compact && full ? full : undefined}>{text}</p>
     {!compact && <p className="inventory-capacity-formula">{ratingWords(capacity)} · {capacity.formula}. The line marks the continuous limit.{unit === 'W' && measured && capacity.phase !== 'dc' ? ' Apparent power not reported; real power shown.' : ''}</p>}
   </div>;
 }

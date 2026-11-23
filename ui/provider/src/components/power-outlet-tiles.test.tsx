@@ -45,7 +45,7 @@ describe('outlets as a tile strip', () => {
     // Empty outlets are tiles, not rows: no "No cable recorded" text, only the tile's state and name.
     expect(within(feedOutlets()).queryByText('No cable recorded')).not.toBeInTheDocument();
     expect(strip[1]).toHaveAttribute('data-state', 'none');
-    expect(strip[1]).toHaveAccessibleName(/^Outlet 2: No cable recorded, unknown, not free; telemetry /);
+    expect(strip[1]).toHaveAccessibleName(/^Outlet 2: No cable recorded; telemetry /);
   });
 
   it('applies the dense rule above twelve outlets: unlabelled tiles with edge numbers', () => {
@@ -167,25 +167,25 @@ describe('rack Power tab without duplicate lists', () => {
     // Each feed's terminations, with what each is cabled to, are the feed column's tiles and cards.
     const feedA = within(grid).getByRole('list', { name: 'Feed A outlets' });
     expect(within(feedA).getByRole('button', { name: /^Outlet 1: Cable recorded, to PDU a01 \(rear left\) · Inlet, via Power PDU inlet/ })).toBeInTheDocument();
-    expect(within(feedA).getAllByRole('button', { name: /No cable recorded, unknown, not free/ })).toHaveLength(3);
+    expect(within(feedA).getAllByRole('button', { name: /No cable recorded/ })).toHaveLength(3);
     const feedB = within(grid).getByRole('list', { name: 'Feed B outlets' });
     expect(within(feedB).getByRole('button', { name: /^Outlet 1: Cable recorded, to Compute a01-01 · PSU 2/ })).toBeInTheDocument();
     expect(within(feedB).getByRole('button', { name: /^Outlet 2: Cable recorded, to Leaf a01 · PSU 2/ })).toBeInTheDocument();
     fireEvent.click(within(feedA).getByRole('button', { name: /^Outlet 1:/ }));
     expect(within(screen.getByRole('dialog', { name: 'Outlet 1 details' })).getByRole('link', { name: 'PDU a01 (rear left) · Inlet' })).toBeInTheDocument();
-    // Counts, and a link to each feed's full power path.
-    expect(grid).toHaveTextContent('4 outlets · 1 recorded · 3 unknown');
-    expect(within(grid).getAllByRole('link', { name: 'Power path' })[0]).toHaveAttribute('href', expect.stringContaining('record=example-feed-a'));
-    // The PDU's outlet use is on its row; its outlets are on its own page.
+    // The tiles carry the outlet states, so there is no count line or separate power-path link under them.
+    expect(grid).not.toHaveTextContent(/\d+ outlets · /);
+    expect(within(grid).queryByRole('link', { name: 'Power path' })).toBeNull();
+    // The PDU has its own row; its outlets and their use are on its own page.
     const pduRow = within(grid).getByRole('rowheader', { name: /^PDU a01/ });
-    expect(pduRow).toHaveTextContent('5 of 8 outlets have a cable recorded');
+    expect(pduRow).not.toHaveTextContent(/outlets have a cable recorded/);
     expect(within(pduRow).getByRole('link', { name: 'PDU a01 (rear left)' })).toHaveAttribute('href', expect.stringContaining('record=example-pdu-a01'));
   });
 
-  it('still lists the PDU and its outlet use when power feeds are denied, naming no feed', () => {
+  it('still lists the PDU when power feeds are denied, naming no feed', () => {
     open(RACK_POWER, 'normal', fixtureInventory('power-feeds-denied'));
     expect(screen.getByText('Power feed details unavailable.')).toBeInTheDocument();
-    expect(screen.getByText('5 of 8 outlets have a cable recorded')).toBeInTheDocument();
+    expect(screen.getByRole('rowheader', { name: /^PDU a01/ })).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/Feed A|Feed B|example-feed/);
   });
 });
@@ -196,12 +196,14 @@ describe('a single-feed device in the fixtures', () => {
     const grid = screen.getByRole('table', { name: 'Device PSUs by recorded feed' });
     const row = within(grid).getByRole('rowheader', { name: /^Compute a01-05/ }).closest('[role="row"]') as HTMLElement;
     expect(row).toHaveAttribute('data-class', 'single');
-    expect(row).toHaveTextContent('Single feed (recorded)');
+    // Colour marks the row; the words are its tooltip and accessible text, not a visible badge.
+    expect(row).toHaveAttribute('title', 'Single feed (recorded)');
+    expect(row.querySelector('.inventory-feed-class')).toBeNull();
     const [feedA, feedB] = within(row).getAllByRole('cell');
     expect(feedA).toHaveTextContent('PSU 1 via PDU a01 (rear left) · Outlet 4');
     expect(feedA).toHaveTextContent('PSU 2 via PDU a01 (rear left) · Outlet 5');
     expect(feedB).toHaveAttribute('data-empty');
-    expect(screen.getByRole('region', { name: 'Feeds and PSUs' })).toHaveTextContent(/2 on a single feed \(recorded\)/);
+    expect(screen.getByRole('region', { name: 'Feeds and PSUs' }).querySelector('h4')).toHaveTextContent(/2 on a single feed$/);
   });
 
   it('shows on the feed path with its class badge, and its device page draws both PSUs to the PDU', () => {

@@ -8,8 +8,8 @@ function response(data: unknown, status = 200) {
 }
 
 describe('physical inventory reads', () => {
-  it('preserves legacy physical inventory while the Site API is not installed', async () => {
-    const facility = { kind: 'Facility', metadata: { name: 'legacy', namespace: 'default' }, spec: { displayName: 'Legacy premises' } };
+  it('keeps physical inventory readable when the Site collection is missing', async () => {
+    const facility = { kind: 'Facility', metadata: { name: 'premises', namespace: 'default' }, spec: { displayName: 'Premises' } };
     vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve(url.includes('/sites?') ? response(undefined, 404) : response({ items: url.includes('/facilities?') ? [facility] : [] }))));
     const inventory = await fetchInventory();
     expect(inventory.physical).toEqual([facility]);

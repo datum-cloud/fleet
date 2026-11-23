@@ -126,7 +126,7 @@ describe('reported location editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Leave form' }));
     expect(screen.getByRole('button', { name: 'Add reported location' })).toBeDisabled();
   });
-  it('disables editing for denied permission and legacy Flux', () => {
+  it('disables editing for denied permission and GitOps-managed records', () => {
     permission.mockReturnValue({ data: false, isFetching: false, error: null } as never);
     setup({ ...device, metadata: { ...device.metadata, managedFields: [{ manager: 'kustomize-controller' }] } });
     expect(screen.getByRole('button', { name: 'Add reported location' })).toBeDisabled();

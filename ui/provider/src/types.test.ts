@@ -88,11 +88,11 @@ describe('toMachineProfile', () => {
   });
 
   it('reports a stored profile that predates the exact contract as invalid', () => {
-    const legacy = {
-      metadata: { name: 'legacy' },
+    const stale = {
+      metadata: { name: 'stale' },
       spec: { cpu: { architecture: 'amd64', cores: { min: 16 } }, memory: { capacity: { min: '64Gi' } } },
     } as unknown as RawMachineProfile;
-    const profile = toMachineProfile(legacy);
+    const profile = toMachineProfile(stale);
     expect(profile.cpu).toBe('Invalid · amd64');
     expect(profile.memory).toBe('Invalid');
   });

@@ -1,24 +1,25 @@
 // Per-kind detail pages, following "Page design rules" in
 // docs/development/staff-inventory-ui.md. Each kind returns a one-line
-// summary, issue banners, one primary view and secondary tabs. Generated
+// summary (a Device adds one strip of identity facts), issue banners, one
+// primary view and secondary tabs. Generated
 // identity lives in "About this record" (see inventory-record-layout.tsx).
 import { Title } from '@datum-cloud/datum-ui/typography';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { legacyPeerLabel, modelLabel, slotKey, type Inventory, type InventorySlot, type RawDevice, type RawDeviceClaim } from '../inventory';
+import { modelLabel, slotKey, type Inventory, type InventorySlot, type RawDevice, type RawDeviceClaim } from '../inventory';
 import type { CableEndpoint, ComponentTemplate, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import { devicePlacement, placementFacility, type EquipmentPlacement } from '../lib/device-placement';
 import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { depthLabel, deviceDepth } from '../lib/device-depth';
-import { componentTypes, deviceConnections, stateCounts, typeTitle } from '../lib/device-connections';
+import { componentTypes, interfaceAddresses, typeTitle } from '../lib/device-connections';
 import { facilityIdentifiers, facilitySites } from '../lib/site-membership';
 import { displayLabel, sharedValue } from '../lib/display-names';
 import { DeviceConnections } from './device-connections';
 import { FacilityRacks, FacilityUnrackedEquipment, unrackedCount } from './inventory-location';
-import { Facts, RecordSummary, SummaryParts, ViewLegend, historyTab, type FactItem, type RecordIssue, type RecordTab, type SummaryBadge } from './inventory-record-layout';
+import { FactSection, Facts, RecordSummary, SmallTable, SummaryParts, type FactItem, type RecordIssue, type RecordTab, type SummaryBadge } from './inventory-record-layout';
 import { observedDisagrees, type TelemetryContextValue } from '../lib/telemetry';
 import { feedPath } from '../lib/power-paths';
-import { DeviceDraw, PowerFeedPath } from './power-feed-path';
+import { DeviceDrawFact, PowerFeedPath } from './power-feed-path';
 
 export type DetailKind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 export type DetailEntry = { kind: DetailKind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -80,80 +81,98 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
   const catalog = deviceCatalog(device, inventory);
   const projected = devicePlacement(device, inventory);
   const slot = helpers.slotFor({ kind: 'Device', record: device });
-  const join = deviceConnections(device, inventory);
-  const counts = stateCounts(join.links);
   const components = device.spec.components ?? [];
   const depth = deviceDepth(device, inventory);
   const report = device.spec.reportedPlacement;
 
   const issues: RecordIssue[] = [];
   if (device.spec.identity.unidentified) issues.push({ id: 'identity', tone: 'danger', text: `No serial or system UUID recorded · ${device.spec.identity.unidentifiedReason ?? 'reason not recorded'} · cannot back machine capacity` });
-  if (counts.conflict) issues.push({ id: 'conflict', tone: 'danger', text: `Records disagree on ${counts.conflict} ${counts.conflict === 1 ? 'connection' : 'connections'}: more than one Cable names the same port.`, href: '#device-connections' });
-  if (counts.unavailable) issues.push({ id: 'peer', text: `${counts.unavailable} ${counts.unavailable === 1 ? 'connection reaches a record' : 'connections reach records'} that is missing or unreadable.`, href: '#device-connections' });
-  if (join.cableAccess === 'denied') issues.push({ id: 'cables', text: 'Cable records are unavailable to you, so connections are unknown, not free.' });
-  if (inventory.issues?.DeviceClaim) issues.push({ id: 'claim', text: 'Claim details unavailable; location may be incomplete.', tab: 'registration' });
+  // Connection problems are not banners: the picture, the table's rows and its count line show them.
+  if (inventory.issues?.DeviceClaim) issues.push({ id: 'claim', text: 'Claim details unavailable; location may be incomplete.', tab: 'location' });
   else if (!projected) issues.push({ id: 'location', text: slot ? 'Location unknown: no reported placement or planned location.' : 'Location unknown: no reported placement, and the claim record was not found.', tab: 'location' });
   else if (projected.placement.rackRef && projected.placement.position === undefined && !projected.placement.mount) issues.push({ id: 'position', text: 'Position in the rack is unknown.', tab: 'location' });
-  if (slot && slot.devices.length > 1) issues.push({ id: 'registrations', text: 'Multiple devices reference this claim. All registrations are retained; the active device and its placement are unknown.', tab: 'registration' });
+  if (slot && slot.devices.length > 1) issues.push({ id: 'registrations', text: 'Multiple devices reference this claim. All registrations are retained; the active device and its placement are unknown.', tab: 'location' });
   if (device.spec.deviceTypeRef && !catalog) issues.push({ id: 'catalog', text: 'Catalog unavailable · showing recorded observation.' });
 
-  const summary = <RecordSummary badges={lifecycleBadge(device.spec.lifecycle)}>
-    {projected ? <>
-      <span className="inventory-muted">{projected.basis === 'Reported placement' ? 'Reported at ' : 'Planned at (claim-derived fallback) '}</span>
-      <PlacementLinks placement={projected.placement} namespace={namespace} helpers={helpers} />
-    </> : <span>Location unknown</span>}
-  </RecordSummary>;
-
-  // The model is stated once, here. Without a readable catalog it is the
-  // recorded observation, so Registration does not repeat it.
+  // The model is stated once, in the header's facts strip. Without a
+  // readable catalog it is the recorded observation, so Registration does not
+  // repeat it; the longer reason is the tooltip (and the catalog banner).
+  // The model link names the manufacturer in its own label, so it is not repeated.
   const model = catalog
-    ? <>{recordLabel(catalog.manufacturer)} {reference('DeviceType', namespace, catalog.model.metadata.name)}</>
-    : <>{deviceModelLabel(device, inventory)} · <span className="inventory-muted">{device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'recorded observation, no shared catalog model'}</span></>;
-  const shape = catalog?.model.spec.modelShape;
-  const primary = <>
-    <Facts label="Identity" items={[
-      { label: 'Model', value: model, always: true },
-      { label: 'Serial number', value: device.spec.identity.serial },
-      { label: 'Asset tag', value: device.spec.assetTag },
-    ]} />
-    {components.some(component => component.type === 'PowerInlet') && <p className="inventory-device-draw"><DeviceDraw device={device} /></p>}
-    <div id="device-connections"><DeviceConnections key={slotKey(namespace, device.metadata.name)} device={device} inventory={inventory} href={href} /></div>
+    ? reference('DeviceType', namespace, catalog.model.metadata.name)
+    : <span title={device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'Recorded observation, no shared catalog model'}>{deviceModelLabel(device, inventory)}</span>;
+  // Header: the location line, then one strip of identity facts. Empty facts are hidden.
+  const summary = <>
+    <RecordSummary badges={lifecycleBadge(device.spec.lifecycle)}>
+      {projected ? <>
+        {projected.basis !== 'Reported placement' && <span className="inventory-muted" title="No reported placement; this is the installation plan's location">Planned · </span>}
+        <PlacementLinks placement={projected.placement} namespace={namespace} helpers={helpers} />
+      </> : <span>Location unknown</span>}
+    </RecordSummary>
+    <dl className="inventory-fact-strip" aria-label="Identity">
+      <div><dt className="inventory-visually-hidden">Model</dt><dd>{model}</dd></div>
+      {device.spec.identity.serial && <div><dt>Serial</dt><dd className="inventory-numeric">{device.spec.identity.serial}</dd></div>}
+      {device.spec.assetTag && <div><dt>Asset tag</dt><dd className="inventory-numeric">{device.spec.assetTag}</dd></div>}
+      {components.some(component => component.type === 'PowerInlet') && <DeviceDrawFact device={device} />}
+    </dl>
   </>;
 
+  const shape = catalog?.model.spec.modelShape;
+  // The primary view is the device picture and its component table; nothing else competes with them.
+  const primary = <div id="device-connections"><DeviceConnections key={slotKey(namespace, device.metadata.name)} device={device} inventory={inventory} href={href} /></div>;
+
+  // The header already names the facility and rack, and depth has its own
+  // fact, so the placement fact keeps only units, height and face.
+  const where = projected?.placement;
+  const placementFact = projected?.basis === 'Reported placement' && where ? [
+    'Reported',
+    where.mount ? `Mount: ${where.mount}` : where.position === undefined ? 'Position not recorded' : `U${where.position}`,
+    where.height === undefined ? 'Height unknown' : `${where.height}U`,
+    where.face ?? 'Face unknown',
+    projected.multipleRegistrations ? 'multiple registrations · active device unknown' : undefined,
+  ].filter(Boolean).join(' · ') : helpers.placement({ kind: 'Device', record: device });
+
+  const unplaced = interfaceAddresses(device).unplaced;
   const tabs: RecordTab[] = [
     {
       id: 'location', label: 'Location', content: <>
         <Facts items={[
-          { label: 'Location / Reported placement', value: helpers.placement({ kind: 'Device', record: device }), always: true },
-          { label: 'Placement report', value: report && `Revision ${report.revision} · ${report.observedAt}, not physically verified · Reason: ${report.reason} · Evidence: ${report.reference}` },
-          { label: 'Depth for rack conflicts', value: `${depthLabel(depth)} · ${depth.full ? 'occupies both rack faces' : 'occupies its mounted face only'} · not measured`, always: true },
+          { label: 'Placement', value: placementFact, always: true },
+          { label: 'Placement report', value: report && <>Revision {report.revision} · observed {report.observedAt}<small>Reason: {report.reason} · Evidence: {report.reference}</small></> },
+          { label: 'Installation plan', value: inventory.issues?.DeviceClaim ? 'Plan details unavailable' : reference('DeviceClaim', namespace, device.spec.claimRef.name), always: true },
+          { label: 'Depth for rack conflicts', value: `${depthLabel(depth)} · ${depth.full ? 'occupies both rack faces' : 'occupies its mounted face only'}`, always: true },
+          { label: 'Catalog size', value: shape && (shape.heightUnits !== undefined || shape.fullDepth !== undefined) && `${shape.heightUnits ?? 'Unknown '}U · ${shape.fullDepth === undefined ? 'depth not recorded' : shape.fullDepth ? 'full depth' : 'half depth'}` },
+          { label: 'Recorded size', value: device.spec.modelShape && `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'depth not recorded' : device.spec.modelShape.fullDepth ? 'full depth' : 'partial depth'}` },
         ]} />
-        <ViewLegend>Recordkeeping is not a physical move or a capacity reservation.</ViewLegend>
+        {/* The correction editor states this itself; without it, the legend does. */}
         {locationEditor}
       </>,
     },
     {
-      id: 'registration', label: 'Registration', content: <>
-        <Facts items={[
-          { label: 'Claim / registration history', value: inventory.issues?.DeviceClaim ? 'Claim details unavailable' : reference('DeviceClaim', namespace, device.spec.claimRef.name), always: true },
-          { label: 'Recorded hardware observation', value: catalog && modelLabel(device.spec.identity) },
-          { label: 'Catalog nominal size', value: shape && (shape.heightUnits !== undefined || shape.fullDepth !== undefined) && `${shape.heightUnits ?? 'Unknown '}U · ${shape.fullDepth === undefined ? 'depth not recorded' : shape.fullDepth ? 'full depth' : 'half depth'} · not measured` },
-          { label: 'Recorded nominal dimensions', value: device.spec.modelShape && `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'Depth not recorded' : device.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}` },
-          { label: 'System UUID', value: device.spec.identity.systemUUID },
-          { label: 'Management endpoint', value: device.spec.bmc?.endpoint },
-          { label: 'Provider host reference', value: device.spec.providerHostRef && `${device.spec.providerHostRef.system}/${device.spec.providerHostRef.type}/${device.spec.providerHostRef.id}` },
-        ]} />
-        {!!device.spec.internalMappings?.length && <><h4>Internal paths</h4><ul>{device.spec.internalMappings.map((mapping, index) => <li key={index}>{mapping.from.componentID}:{mapping.from.position} → {mapping.to.componentID}:{mapping.to.position}</li>)}</ul></>}
-        {!!device.spec.serviceAssociations?.length && <><h4>Service references</h4><ul>{device.spec.serviceAssociations.map((association, index) => <li key={index}>{association.componentID} → {association.serviceRef.system}/{association.serviceRef.type}/{association.serviceRef.id}</li>)}</ul></>}
-        {(!!device.spec.interfaces?.length || !!device.spec.unmappedMACAddresses?.length) && <details>
-          <summary>Recorded network interfaces & legacy peers</summary>
-          <p className="inventory-muted">Legacy peers are retained as history. Cable records describe typed physical connections; neither verifies a live link.</p>
-          <ul>{device.spec.interfaces?.map(iface => <li key={iface.name}>{iface.name} · {iface.macAddress ?? 'MAC not recorded'}{iface.peer && ` · legacy peer ${legacyPeerLabel(iface.peer, inventory.issues)}`}</li>)}</ul>
-          {!!device.spec.unmappedMACAddresses?.length && <><h4>Unmapped MAC addresses</h4><p>{device.spec.unmappedMACAddresses.join(', ')}</p></>}
-        </details>}
+      id: 'hardware', label: 'Hardware & management', content: <>
+        <FactSection title="Hardware">
+          <Facts items={[
+            { label: 'Reported model', value: catalog && modelLabel(device.spec.identity) },
+            { label: 'System UUID', value: device.spec.identity.systemUUID },
+            { label: 'MAC addresses without an interface', value: device.spec.unmappedMACAddresses?.join(', ') },
+          ]} />
+          {/* Interfaces that match a component show their MAC in the component table. */}
+          {!!unplaced.length && <SmallTable label="Interfaces not in the component list" head={['Interface', 'MAC address']} rows={unplaced.map(iface => [iface.name, iface.macAddress ?? 'Not recorded'])} />}
+        </FactSection>
+        {(device.spec.bmc || device.spec.providerHostRef) && <FactSection title="Management">
+          <Facts items={[
+            { label: 'Management endpoint', value: device.spec.bmc?.endpoint },
+            { label: 'Provider host', value: device.spec.providerHostRef && `${device.spec.providerHostRef.system}/${device.spec.providerHostRef.type}/${device.spec.providerHostRef.id}` },
+          ]} />
+        </FactSection>}
+        {!!device.spec.internalMappings?.length && <FactSection title="Internal paths">
+          <SmallTable label="Internal paths" head={['From', 'To']} rows={device.spec.internalMappings.map(mapping => [`${mapping.from.componentID}:${mapping.from.position}`, `${mapping.to.componentID}:${mapping.to.position}`])} />
+        </FactSection>}
+        {!!device.spec.serviceAssociations?.length && <FactSection title="Service references">
+          <SmallTable label="Service references" head={['Component', 'Service']} rows={device.spec.serviceAssociations.map(association => [association.componentID, `${association.serviceRef.system}/${association.serviceRef.type}/${association.serviceRef.id}`])} />
+        </FactSection>}
       </>,
     },
-    historyTab(device.metadata),
   ];
   return { summary, issues, primary, tabs };
 }
@@ -201,12 +220,10 @@ export function cableDetail(cable: PhysicalRecord, helpers: DetailHelpers): Deta
       </div>)}
     </div>
     {!lanes.length && <p>No lanes recorded.</p>}
-    <ViewLegend>Cable records, not live link state. Nothing here is verified.</ViewLegend>
   </section>;
   const summary = <RecordSummary><SummaryParts parts={[cable.spec.medium ?? 'Medium not recorded', `${lanes.length} ${lanes.length === 1 ? 'lane' : 'lanes'}`]} /></RecordSummary>;
   const tabs: RecordTab[] = [];
   if (plans.length) tabs.push({ id: 'plans', label: 'Installation plans', count: plans.length, content: <RecordLinks kind="DeviceClaim" records={plans} helpers={helpers} empty="" /> });
-  tabs.push(historyTab(cable.metadata));
   return { summary, issues, primary, tabs };
 }
 
@@ -217,7 +234,7 @@ export function powerFeedDetail(feed: PhysicalRecord, helpers: DetailHelpers): D
   const namespace = feed.metadata.namespace;
   const path = feedPath(feed, inventory);
   const issues: RecordIssue[] = [];
-  if (inventory.issues?.Cable) issues.push({ id: 'cables', text: 'Cable records are unavailable to you, so outlet use is unknown, not free.' });
+  if (inventory.issues?.Cable) issues.push({ id: 'cables', text: 'Cable records are unavailable to you.' });
   const conflicted = path.terminations.filter(tile => tile.state === 'conflict');
   if (conflicted.length) issues.push({ id: 'conflict', tone: 'danger', text: `Records disagree: more than one Cable names ${conflicted.map(tile => tile.name).join(', ')}.` });
   // Observed load where no Cable is recorded. Records are not changed; the banner links to them.
@@ -244,15 +261,10 @@ export function powerFeedDetail(feed: PhysicalRecord, helpers: DetailHelpers): D
   const source = telemetry?.source;
   const primary = <>
     <PowerFeedPath feed={feed} inventory={inventory} href={href} />
-    <ViewLegend>
-      Cable records and observed telemetry, not verified state. No cable recorded means unknown, not free; supply ratings do not establish available power, and separate feeds in records do not prove independent supply.
-      {' '}Marks: ↑ above 80% of the continuous limit · ⚠︎ over it · ◷ stale · ≠ observed and recorded disagree. Telemetry: {source ? source.description : 'No telemetry source configured'}.
-    </ViewLegend>
   </>;
   const sources = feed.spec.upstreamSources ?? [];
   const tabs: RecordTab[] = [
     { id: 'upstream', label: 'Upstream sources', count: sources.length, content: sources.length ? <ul>{sources.map((item, index) => <li key={index}>{item.system}/{item.type}/{item.id}</li>)}</ul> : <p className="inventory-muted">No upstream sources recorded.</p> },
-    historyTab(feed.metadata),
   ];
   return { summary, issues, primary, tabs };
 }
@@ -290,7 +302,6 @@ export function facilityDetail(facility: PhysicalRecord, helpers: DetailHelpers)
         {inventory.issues?.Cable ? <p>Cable records are unavailable to you.</p> : <RecordLinks kind="Cable" records={cables} helpers={helpers} empty="No Cable records reach equipment placed here. That does not establish that none exist." />}
       </>,
     },
-    historyTab(facility.metadata),
   ];
   return { summary, issues, primary: <FacilityRacks facility={facility} inventory={inventory} />, tabs, about: [{ label: 'Geographic location reference', value: facility.spec.locationRef?.name }] };
 }
@@ -326,12 +337,10 @@ export function deviceTypeDetail(model: PhysicalRecord, helpers: DetailHelpers):
       </section>;
     })}
     {!templates.length && <p className="inventory-muted">No component templates recorded.</p>}
-    <ViewLegend>Reference template only: no installed assets, measured geometry or occupancy, and nothing is materialized automatically. Faces are relative to the chassis; a Device component with the same id inherits its face.</ViewLegend>
   </>;
   const devices = inventory.issues?.Device ? [] : helpers.entries.filter(entry => entry.kind === 'Device' && entry.record.metadata.namespace === namespace && (entry.record as RawDevice).spec.deviceTypeRef?.name === model.metadata.name).map(entry => entry.record as RawDevice);
   const tabs: RecordTab[] = [
     { id: 'devices', label: 'Devices', count: inventory.issues?.Device ? '?' : devices.length, content: inventory.issues?.Device ? <p>Device records are unavailable to you; the count is unknown.</p> : <RecordLinks kind="Device" records={devices} helpers={helpers} empty="No Device records reference this type." /> },
-    historyTab(model.metadata),
   ];
   return { summary, issues: [], primary, tabs, about: [{ label: 'Normalized model identity', value: model.spec.model }] };
 }
@@ -345,14 +354,11 @@ export function claimDetail(claim: RawDeviceClaim, helpers: DetailHelpers): Deta
   const location = claim.spec.placement;
   const issues: RecordIssue[] = [];
   if (slot && slot.devices.length > 1) issues.push({ id: 'registrations', text: 'Multiple devices reference this claim. All registrations are retained; the active device and its placement are unknown.' });
-  if (!location.scope && (location.facility || location.rack)) issues.push({ id: 'legacy', text: 'Placement is legacy text only; no typed facility or rack is linked.' });
-  const planned: ReactNode = location.scope
-    ? <PlacementLinks placement={location} namespace={namespace} helpers={helpers} />
-    : helpers.placement({ kind: 'DeviceClaim', record: claim });
+  const planned = <PlacementLinks placement={location} namespace={namespace} helpers={helpers} />;
   const scopeNote = location.scope === 'Facility' ? 'rack not recorded' : location.scope === 'RackMembership' ? 'no reserved units' : undefined;
   const devices = slot?.devices ?? [];
   const registered = inventory.issues?.Device ? 'Registration status unavailable' : devices.length === 1 ? '1 device registered' : devices.length ? `${devices.length} devices registered` : 'No device registered';
-  const summary = <RecordSummary badges={claim.spec.lifecycle ? [{ label: claim.spec.lifecycle, tone: 'muted' }] : []}>{registered}</RecordSummary>;
+  const summary = <RecordSummary badges={[{ label: claim.spec.lifecycle, tone: 'muted' }]}>{registered}</RecordSummary>;
   const primary = <Facts label="Target and status" items={[
     { label: 'Planned placement (intent / history)', value: <>{planned}{scopeNote && ` · ${scopeNote}`}</>, always: true },
     { label: 'Expected hardware', value: modelLabel(claim.spec.expectedIdentity), always: true },
@@ -360,11 +366,8 @@ export function claimDetail(claim: RawDeviceClaim, helpers: DetailHelpers): Deta
     { label: 'Registered devices', always: true, value: inventory.issues?.Device ? 'Device details unavailable' : devices.length ? <ul className="inventory-link-list">{devices.map(device => <li key={device.metadata.name}>{reference('Device', namespace, device.metadata.name)}</li>)}</ul> : 'No device registered' },
   ]} />;
   const cableRefs = claim.spec.cableRefs ?? [];
-  const ports = claim.spec.ports ?? [];
   const tabs: RecordTab[] = [
     { id: 'connections', label: 'Planned connections', count: cableRefs.length, content: cableRefs.length ? <ul>{cableRefs.map(cable => <li key={cable.name}>{reference('Cable', namespace, cable.name)}</li>)}</ul> : <p className="inventory-muted">No cable references recorded.</p> },
-    { id: 'ports', label: 'Legacy expected ports', count: ports.length, content: ports.length ? <ul>{ports.map(port => <li key={port.name}>{port.name} · {port.type ?? 'Type not recorded'} · {port.speedMbps ?? 'Unknown'} Mb/s{port.expectedPeer && ` → ${legacyPeerLabel(port.expectedPeer, inventory.issues)}`}</li>)}</ul> : <p className="inventory-muted">No expected ports recorded.</p> },
-    historyTab(claim.metadata),
   ];
   return { summary, issues, primary, tabs };
 }

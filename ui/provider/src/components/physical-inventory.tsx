@@ -30,7 +30,7 @@ import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { InventoryDirectoryHeading, InventoryToolbar } from './inventory-directory-heading';
 import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
-import { AboutRecord, IssueBanners, RecordSummary, RecordTabs, SummaryParts } from './inventory-record-layout';
+import { IssueBanners, RecordFooter, RecordSummary, RecordTabs, SummaryParts } from './inventory-record-layout';
 import { cableDetail, claimDetail, deviceDetail, deviceTypeDetail, facilityDetail, powerFeedDetail, type DetailHelpers, type DetailView } from './inventory-record-detail';
 import { sharedValue } from '../lib/display-names';
 import { useTelemetry } from './power-telemetry';
@@ -257,7 +257,6 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           summary: <RecordSummary><SummaryParts parts={[site.spec.code && `Site code ${site.spec.code}`, 'Operational membership only']} /></RecordSummary>,
           issues: [], tabs: [],
           primary: <SiteOverview site={site} inventory={inventory} />,
-          about: [{ label: 'Internal Site code', value: site.spec.code }],
         };
       }
       case 'Manufacturer': {
@@ -267,7 +266,6 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           summary: <RecordSummary><SummaryParts parts={[manufacturer.spec.canonicalName && manufacturer.spec.canonicalName !== recordName(entry) && `Canonical name ${manufacturer.spec.canonicalName}`, aliases.length > 0 && `Also recorded as ${aliases.join(', ')}`]} /></RecordSummary>,
           issues: [], tabs: [],
           primary: <ManufacturerOverview manufacturer={manufacturer} inventory={inventory} />,
-          about: [{ label: 'Canonical name', value: manufacturer.spec.canonicalName }, { label: 'Descriptive aliases', value: aliases.join(' · ') }],
         };
       }
     }
@@ -325,13 +323,13 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       <div className="inventory-body">
           {inventory.issues?.[section.kind] ? <><InventoryDirectoryHeading section={section} onRetry={onRetry} management={management} /><InventoryToolbar section={section} /><InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /></> : selectedName !== null ? (
             <>
-              <div ref={heading} tabIndex={-1} className="inventory-record-header"><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} description={view?.summary} actions={selected?.kind === 'Rack' ? refresh : titleActions} /></div>
-              {selected?.kind === 'Rack' ? <RackDetail rack={selected.record as PhysicalRecord} inventory={inventory} management={management} /> : selected && view ? (
+              <div ref={heading} tabIndex={-1} className="inventory-record-header"><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} description={view?.summary} actions={titleActions} /></div>
+              {selected?.kind === 'Rack' ? <RackDetail rack={selected.record as PhysicalRecord} inventory={inventory} /> : selected && view ? (
                 <>
                   <IssueBanners issues={view.issues} />
                   <div className="inventory-primary">{view.primary}</div>
                   {view.tabs.length > 0 && <RecordTabs label={`${recordName(selected)} details`} tabs={view.tabs} />}
-                  <AboutRecord metadata={selected.record.metadata} extra={view.about} />
+                  <RecordFooter metadata={selected.record.metadata} extra={view.about} />
                 </>
               ) : (
                 <p>
@@ -387,22 +385,6 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
             </>
           )}
       </div>
-      <details className="inventory-help">
-        <summary>About this inventory</summary>
-        <p>
-          These are reported records and registration / intent history, not live hardware status. A record does not
-          establish availability, verified placement, working connections, or permission to operate equipment.
-        </p>
-        <p>
-          Viewing and management permissions are separate. Authorized inventory managers can create facilities,
-          racks, installation plans with unknown positions, device registrations, and cables here, and edit display names of records created by this portal. Other records require an
-          explicit ownership review. Nothing here synchronizes external systems or provisions hardware.
-        </p>
-        <p>
-          Claims retain every registered device. Multiple registrations do not identify which device is
-          active. Missing values mean not recorded, not absent.
-        </p>
-      </details>
     </section>
     </InventoryReadAccessContext.Provider>
   );

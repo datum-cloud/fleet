@@ -6,7 +6,7 @@ import { slotKey, type Inventory } from '../inventory';
 import { devicePlacement, placementFacility } from '../lib/device-placement';
 import { facilityIdentifiers, siteFacilities } from '../lib/site-membership';
 import { inventoryHref } from './inventory-location';
-import { RecordTabs, historyTab, type RecordTab } from './inventory-record-layout';
+import { RecordTabs, type RecordTab } from './inventory-record-layout';
 
 // This is a projection of authorized inventory, never a Site assignment or capacity resolver.
 export function SiteOverview({ site, inventory }: { site: PhysicalRecord; inventory: Inventory }) {
@@ -24,14 +24,14 @@ export function SiteOverview({ site, inventory }: { site: PhysicalRecord; invent
     const facility = location && placementFacility(location.placement, device.metadata.namespace, readable);
     return facility && names.has(facility) ? [{ device, basis: location!.basis }] : [];
   });
-  const plans = inventory.issues?.DeviceClaim ? [] : inventory.slots.map(slot => slot.claim).filter(claim => local(claim) && claim.spec.lifecycle === 'Installation' && names.has(placementFacility(claim.spec.placement, claim.metadata.namespace, readable) ?? ''));
+  const plans = inventory.issues?.DeviceClaim ? [] : inventory.slots.map(slot => slot.claim).filter(claim => local(claim) && names.has(placementFacility(claim.spec.placement, claim.metadata.namespace, readable) ?? ''));
   const membershipIncomplete = unresolved.length > 0;
   const resolvedFacility = (name: string | undefined) => !!name && readable.physical.some(record => record.kind === 'Facility' && local(record) && record.metadata.name === name);
   const deviceIncomplete = membershipIncomplete || !!inventory.issues?.Rack || !!inventory.issues?.DeviceClaim || devices.some(device => {
     const location = devicePlacement(device, readable);
     return !location || !resolvedFacility(placementFacility(location.placement, device.metadata.namespace, readable));
   });
-  const planIncomplete = membershipIncomplete || !!inventory.issues?.Rack || inventory.slots.some(({ claim }) => local(claim) && claim.spec.lifecycle === 'Installation' && !resolvedFacility(placementFacility(claim.spec.placement, claim.metadata.namespace, readable)));
+  const planIncomplete = membershipIncomplete || !!inventory.issues?.Rack || inventory.slots.some(({ claim }) => local(claim) && !resolvedFacility(placementFacility(claim.spec.placement, claim.metadata.namespace, readable)));
   const link = (kind: string, record: { metadata: PhysicalRecord['metadata']; spec: { displayName?: string } }) => <Link to={inventoryHref(kind, record.metadata.namespace, record.metadata.name)}>{record.spec.displayName || record.metadata.name}</Link>;
   const unavailable = (kind: 'Rack' | 'Device' | 'DeviceClaim') => inventory.issues?.[kind]?.status === 403 ? 'Access denied. Request inventory read access, then refresh.' : 'Records unavailable. Refresh inventory to retry.';
   const mapped = facilities.length > 0;
@@ -56,10 +56,8 @@ export function SiteOverview({ site, inventory }: { site: PhysicalRecord; invent
       id: 'plans', label: 'Installation plans', count: !mapped || inventory.issues?.DeviceClaim ? '?' : plans.length, content: !mapped ? <p>Plans cannot be summarized until linked facilities are readable.</p> : inventory.issues?.DeviceClaim ? <p>{unavailable('DeviceClaim')}</p> : <>
         <p>{plans.length} {planIncomplete ? 'found · incomplete' : 'recorded'} · execution status is not recorded by the current API.</p>
         {plans.length ? <ul className="inventory-link-list">{plans.map(plan => <li key={plan.metadata.name}>{link('DeviceClaim', plan)}</li>)}</ul> : <p>No matching installation plans found. Review installation plans and their location references.</p>}
-        <p className="inventory-muted">Legacy claims remain in <Link to={inventoryHref('DeviceClaim')}>Claims & registrations</Link>. A recorded plan does not establish installation progress.</p>
       </>,
     },
-    historyTab(site.metadata, <p className="inventory-muted">Facility references follow namespace/name. Recreating a name resolves to the replacement; this does not verify physical continuity.</p>),
   ];
   return <div className="inventory-equipment-sections">
     <section aria-label="Site location">
@@ -71,7 +69,6 @@ export function SiteOverview({ site, inventory }: { site: PhysicalRecord; invent
       {unresolved.length > 0 && <p>{unresolved[0].state}. {inventory.issues?.Facility?.status === 403 ? 'Request Facility read access, then refresh.' : 'Refresh inventory; ask an inventory manager to review unresolved links.'}</p>}
       {!memberships.length && <p>No facilities linked. Ask an inventory manager to record the Site’s facility references.</p>}
       {!mapped && <p>Equipment cannot be summarized until linked facilities are readable.</p>}
-      <p className="inventory-legend">Equipment at shared premises, not equipment assigned to this Site. Membership grants no placement eligibility or operational authority. Counts do not establish capacity or readiness.</p>
     </section>
     <RecordTabs label="Site details" tabs={tabs} />
   </div>;

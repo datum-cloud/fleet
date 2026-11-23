@@ -36,6 +36,12 @@ export function tileSummary(tiles: PortTile[]) {
   return STATES.filter(state => counts[state]).map(state => `${counts[state]} ${countWords[state]}`).join(' · ');
 }
 
+/** The device page's count line: like tileSummary, with the disagreement count marked. */
+export function TileSummary({ tiles }: { tiles: PortTile[] }) {
+  const counts = tileCounts(tiles);
+  return <>{STATES.filter(state => counts[state]).map((state, index) => <span key={state} data-state={state}>{index > 0 && ' · '}{counts[state]} {countWords[state]}</span>)}</>;
+}
+
 export function portsWord(count: number) {
   return `${count} ${count === 1 ? 'port' : 'ports'}`;
 }
@@ -75,7 +81,7 @@ export function Trace({ hops, namespace, href, names, roving }: { hops: TraceHop
 
 /** Only what adds to the peer's name: never the bare kind, which the group already says. */
 export function peerDetail(link: ConnectionLink) {
-  if (link.state === 'none') return 'Unknown · not free';
+  if (link.state === 'none') return 'No cable recorded';
   if (link.state === 'catalog') return 'Not recorded';
   if (!link.peer) return undefined;
   if (link.peer.access === 'denied') return 'You cannot read this peer';

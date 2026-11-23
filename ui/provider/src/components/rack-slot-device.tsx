@@ -3,8 +3,7 @@ import { Link } from 'react-router';
 import type { Device } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import type { EquipmentPlacement } from '../lib/device-placement';
-import { detailLevel, FACE_WIDTH_MM, U_MM } from '../lib/faceplate-layout';
-import { countsWords, deviceDrawingModel, MiniFaceplate, miniFaceplate } from './faceplate-drawing';
+import { countsWords, deviceDrawingModel, portProblemCounts } from './faceplate-drawing';
 
 /** The one Device a slot draws: the reported Device, or a claim's only registration. */
 function slotDevice(slot: EquipmentPlacement): Device | undefined {
@@ -13,66 +12,41 @@ function slotDevice(slot: EquipmentPlacement): Device | undefined {
 }
 
 /**
- * What the elevation draws inside a recorded unit span. This is the single
- * place a device-in-slot is rendered. With a readable Device it draws a mini
- * faceplate of the visible chassis face (front on the mounted face, rear on
- * the far face) at a level of detail chosen from pixels per unit: silhouette,
- * reduced or full. A model without a layout is a plain chassis labelled
- * "layout not recorded". The drawing is visual only; the link is one tab stop
- * and its name carries the "!" and "?" counts in words.
+ * What the elevation draws inside a recorded unit span: the device's name
+ * only; the drawing shows its units, and its range, height and depth are the
+ * tooltip and accessible name. This is the single
+ * place a device-in-slot is rendered, and it is one tab stop. A slot that
+ * needs checking is colour coded instead of marked: red when records
+ * disagree (overlapping placements, or ports more than one Cable names),
+ * amber when a connection reaches a missing or unreadable record. The
+ * reason is the tooltip and part of the link's accessible name.
  */
-export function RackSlotDevice({ slot, name, range, height, label, side, overlap, far, depthUnknown, to, selected, inventory, pxPerUnit = 16 }: {
+export function RackSlotDevice({ slot, name, label, side, overlap, far, to, selected, inventory }: {
   slot: EquipmentPlacement;
   /** The record's display name; `far` adds the "rear of" prefix. */
   name: string;
-  range: string;
-  height: number;
+  /** Name, range, height, basis and depth: the tooltip and accessible name. */
   label: string;
   side: 'front' | 'rear';
   overlap: boolean;
   /** Drawn on the face opposite the mounted face: the chassis rear. */
   far: boolean;
-  depthUnknown: boolean;
   to: string;
   selected?: boolean;
-  /** Needed for the mini faceplate; without it the slot is a labelled bar. */
+  /** Needed for the port problem counts; without it only overlap is coloured. */
   inventory?: Inventory;
-  pxPerUnit?: number;
 }) {
   const device = slotDevice(slot);
-  const level = detailLevel(pxPerUnit);
-  const mini = useMemo(() => {
-    if (!device || !inventory) return undefined;
-    const drawing = deviceDrawingModel(device, inventory);
-    return { drawing, ...miniFaceplate(drawing, far ? 'Rear' : 'Front') };
-  }, [device, inventory, far]);
-  const counts = mini?.counts;
+  const counts = useMemo(() => device && inventory ? portProblemCounts(deviceDrawingModel(device, inventory)) : undefined, [device, inventory]);
   const countsText = counts ? countsWords(counts) : '';
-  const recorded = mini?.drawing.layout.recorded;
-  const accessible = [`Review ${label}, ${side}`, countsText, mini && !recorded ? 'layout not recorded' : undefined].filter(Boolean).join(', ');
-  const detail = [height > 1 ? `${range} · ${height}U` : undefined, depthUnknown ? 'depth unknown' : undefined].filter(Boolean).join(' · ');
-  return <Link title={label} to={to} aria-label={accessible} aria-current={selected ? 'true' : undefined} data-slot-key={slot.key} data-level={mini ? level : undefined} className={mini ? 'inventory-rack-slot-device' : undefined}>
+  const accessible = [`Review ${label}, ${side}`, countsText].filter(Boolean).join(', ');
+  const attention = overlap || (counts?.conflict ?? 0) > 0 ? 'conflict' : (counts?.unavailable ?? 0) > 0 ? 'unavailable' : undefined;
+  const title = [label, countsText].filter(Boolean).join(' · ');
+  return <Link title={title} to={to} aria-label={accessible} aria-current={selected ? 'true' : undefined} data-slot-key={slot.key} data-attention={attention}>
     <span className="inventory-rack-plan-text">
       <span className="inventory-rack-plan-heading">
-        {overlap && <span className="inventory-rack-overlap" aria-hidden="true">!</span>}
         <span className="inventory-rack-plan-name">{far ? <span className="inventory-rack-plan-side">rear of </span> : null}{name}</span>
-        {counts && (counts.conflict > 0 || counts.unavailable > 0) && (
-          <span className="inventory-rack-counts" aria-hidden="true">
-            {counts.conflict > 0 && <span data-state="conflict">! {counts.conflict}</span>}
-            {counts.unavailable > 0 && <span data-state="unavailable">? {counts.unavailable}</span>}
-          </span>
-        )}
       </span>
-      {detail && <small>{detail}</small>}
     </span>
-    {mini && (
-      <MiniFaceplate
-        geometry={mini.geometry}
-        states={mini.states}
-        level={level}
-        widthMM={mini.geometry?.widthMM ?? FACE_WIDTH_MM}
-        heightMM={mini.geometry?.heightMM ?? Math.max(1, height) * U_MM}
-      />
-    )}
   </Link>;
 }

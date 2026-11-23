@@ -55,7 +55,7 @@ policy, or dependency version is changed here.
 
 The installed Button implementation renders a button even though its type surface
 includes `asChild`; navigation therefore uses the implemented `LinkButton` API.
-The pre-existing outer Fleet tabs, legacy claim table, and page-title components
+The pre-existing outer Fleet tabs and page-title components
 already use Datum components and are not redesigned.
 
 Removed custom input, button, heading, table decoration and category-link skin

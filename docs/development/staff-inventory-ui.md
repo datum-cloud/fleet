@@ -13,7 +13,7 @@ described in the historical notes below, not inventory contracts or IAM.
 | --- | --- | --- |
 | Equipment | Devices, Cables, Power feeds | Physical assets and recorded connections/supplies |
 | Locations | Operational sites, Facilities, Racks | Site operational membership is distinct from physical Facility premises and rack containment |
-| Installation plans | None | The directory remains **Claims & registrations**: DeviceClaim intent, legacy slots, and registration history, not a claim that every legacy record is an installation plan or allocates capacity |
+| Installation plans | None | The directory is **Claims & registrations**: installation plans and the devices registered against them. Plans do not allocate capacity |
 | Hardware catalog | Manufacturers, Device types | Reference descriptions/templates, not installed assets or available capacity |
 
 - Uses the installed Datum `Tabs`, `TabsList variant="line"`, and
@@ -22,8 +22,8 @@ described in the historical notes below, not inventory contracts or IAM.
   Primary tabs remain mounted; secondary tabs depend only on the selected group,
   never access results. Each row scrolls horizontally on narrow screens.
 - Equipment / Devices is the default. Group links select the first kind unless
-  already in that group. Existing `?kind=...`, record/namespace bookmarks, child
-  create routes, and legacy claim URLs remain valid. Detail and task breadcrumbs
+  already in that group. `?kind=...` and record/namespace bookmarks and the
+  child create routes are the only inventory URLs. Detail and task breadcrumbs
   include group and category, for example Equipment / Devices / record name.
   Protected names appear only after successful access checks, not from URL text.
 - Search, filters, refresh, and Create remain page controls, not navigation.
@@ -65,14 +65,22 @@ field or view.
 
 1. **Compact header.** The header shows the display name and one summary line:
    lifecycle (only when it is not the normal state), location and issue
-   badges. Generated resource names, the namespace, the UID and the creation
-   time go in a collapsed **About this record** disclosure at the end of the
-   page. The breadcrumb is the way back; there is no separate back link.
+   badges. A Device adds one strip of identity facts under it. A control
+   that is unavailable explains why in its tooltip and accessible
+   description, not in a sentence beside it. Page actions, including
+   **Edit display name**, sit in the header beside **Refresh inventory**.
+   The generated resource name and creation date close every record page
+   as one quiet **Record** line ("Record example-rack-a01 · created
+   2026-10-01"), plus any fact the page shows nowhere else (a Facility's
+   location reference, a DeviceType's normalized model). The namespace
+   (always `default`), the UID and a per-record verification row are not
+   shown. No page has a History tab; it returns when an activity timeline
+   exists. The breadcrumb is the way back; there is no separate back link.
 2. **One primary view per kind**, above the fold:
 
    | Kind | Primary view |
    | --- | --- |
-   | Device | Identity strip (model, serial, asset tag), then the connection view |
+   | Device | The device picture, then the dense component table (see [Device page](#device-page-picture-and-component-table)) |
    | Cable | End A and End B side by side, with one row per lane |
    | PowerFeed | The power path: upstream, feed rating and capacity, outlet tiles for the feed and each PDU, then device PSUs (see [Power path](#power-path-and-telemetry-implemented-telemetry-mocked)) |
    | Facility | Its racks |
@@ -83,7 +91,7 @@ field or view.
    | Claim | Planned placement, expected hardware and registered devices |
 
 3. **Secondary detail goes in tabs held in the URL** (`?tab=`), for example
-   a Device's Location, Registration and History & verification. Tabs hold
+   a Device's Location and Hardware & management. Tabs hold
    only what the primary view does not already show. A tab label carries its count, or `?` when the collection is
    unreadable. Every panel stays mounted and inactive panels are `hidden`, so
    open dialogs and permission checks keep their state. `tab` is in the session
@@ -98,16 +106,20 @@ field or view.
    the rack page's `condensedName` for port tiles.
 5. **Issues first, quiet when normal.** Disagreements, unknown placement,
    conflicts and unreadable or missing records become short banners at the top
-   of the page that link to the problem (`IssueBanners`). Empty and "not
+   of the page that link to the problem (`IssueBanners`), unless the primary
+   view already shows them: the Device page leaves Cable disagreements to its
+   picture, its table rows and the count line, where "n disagree" is red. Empty and "not
    recorded" fields are hidden by default (`Facts`). Keep an absent value
    visible only when the absence itself matters: verification is unknown,
    power budget is unknown, and "No cable recorded" stays on outlets because
    it means unknown, not free.
-6. **Honesty notes stay but shrink.** "Not verified", "Cable records, not live
-   link state" and "unknown, not free" appear once per view as a legend line
-   (`ViewLegend`), not on every row. Never remove the meaning: unknown must
-   never look free, and nothing may look verified. When a collection is
-   unreadable, counts and states read as unknown, never zero or empty.
+6. **State, not caveats.** Pages carry no legend lines or caveat prose
+   ("not verified", "not free", "does not prove…"). States are shown
+   visually and named in words where they apply: "No cable recorded", red
+   and amber edges, "?" counts, with the reason as the tooltip and
+   accessible name. Nothing may look free, available or verified, and when
+   a collection is unreadable, counts and states read as unknown, never
+   zero or empty.
 7. **List pages are search-first.** Search and filters sit at the top and keep
    their URL parameters (`q`, `location`, `model`). Rows show only the columns
    needed to pick the right record (Devices: name, model, location, serial;
@@ -123,11 +135,11 @@ Location tab. Their dialogs, task pages, dirty-dismiss confirmation and
 unknown-outcome handling are unchanged.
 
 The building blocks are in `ui/provider/src/components/inventory-record-layout.tsx`
-(`RecordSummary`, `IssueBanners`, `RecordTabs`, `Facts`, `ViewLegend`,
-`AboutRecord`), and the per-kind views are in `inventory-record-detail.tsx`.
+(`RecordSummary`, `IssueBanners`, `RecordTabs`, `Facts`, `FactSection`,
+`RecordFooter`), and the per-kind views are in `inventory-record-detail.tsx`.
 `inventory-record-layout.test.tsx` covers the disclosure, tab URL state, issue
-banners, hidden empty fields, list columns, and the Device page's one
-picture, one count line and tab contents.
+banners, hidden empty fields, list columns, and the Device page's header
+strip, picture, table, one count line and tab contents.
 
 ## Default-only directory and stable controls
 
@@ -139,7 +151,7 @@ access-dependent navigation descriptions in the historical phase notes below.
   are read from `/namespaces/default/`, including every continuation page.
   Collection responses and rendered inventory are filtered to explicit `default`
   metadata; foreign and missing namespaces are not silently relabeled.
-- The directory, query-string details, and legacy claim detail route cannot select
+- The directory and query-string details cannot select
   a foreign namespace. A missing query namespace means `default`; an explicit
   foreign namespace shows safe unsupported-scope guidance rather than resolving
   even a same-named default record. Old explicit default links still work.
@@ -172,7 +184,7 @@ migration remains deferred and would require separate design and authorization.
 Validation includes provider and consumer Vitest suites, typechecks and builds,
 inventory Go tests, documentation links and whitespace. New synthetic tests cover
 all nine kinds, static layout structure through access transitions, foreign URL
-and legacy-route selection, paginated default requests, and foreign reference and
+selection, paginated default requests, and foreign reference and
 mutation guards. DOM/CSS structure checks do not prove pixel geometry in the
 authenticated staff portal. No browser login manipulation, live writes, deployment,
 or authenticated visual acceptance was performed for this update.
@@ -206,7 +218,7 @@ archives (these are source observations, not authenticated visual acceptance):
 - Device, Cable, and installation-plan creation use
   `inventory/create/device`, `inventory/create/cable`, and
   `inventory/create/installation-plan`. The manifest and federation exposure
-  register the child routes alongside the unchanged legacy claim route. Unsupported
+  register the child routes. There is no per-claim route. Unsupported
   task kinds and foreign namespace URLs fail closed before reads or writes.
 - `q`, `location`, and `model` directory filters are URL-backed. Task/back links
   retain only those filters and the relevant kind, not arbitrary redirect targets
@@ -315,8 +327,8 @@ pixel identity or completed authenticated staging acceptance.
   equipment; half-depth equipment is drawn only on its mounted face, so the
   other face keeps its unverified dashes. Each block carries its depth source
   (reported, recorded on Device, catalog, or "depth unknown"). Overlaps on the
-  same face are marked `!` and labelled "records disagree"; they are never
-  blocked. The logic is in `ui/provider/src/lib/rack-faces.ts` and
+  same face are coloured red and labelled "records disagree" in the tooltip
+  and accessible name; they are never blocked. The logic is in `ui/provider/src/lib/rack-faces.ts` and
   `device-depth.ts`.
   The Rack page layout is described under [Rack page](#rack-page-implemented).
 - Create Facility/Rack facts; rack height is optional. Create an Installation
@@ -350,13 +362,13 @@ SelfSubjectAccessReviews and the signed-in principal's API request, never group
 names or staff membership. Role/binding deployment and membership are separate
 work; nothing here asserts their live state. There are no delete/status grants.
 
-Inventory is direct API/operator-managed, not GitOps-only. Legacy Flux-managed
+Inventory is direct API/operator-managed, not GitOps-only. Flux- or Argo-managed
 records keep their writer until an explicit safe transition. This UI's
 deliberately narrow display-name edit policy still requires exclusively
 `fleet-staff-inventory-ui` managed fields, with no deletion/other-owner
 markers. The separate reported-location editor permits operator-managed
-Devices under normal manager authorization, excluding legacy Flux markers from
-its UI. These markers are not server authorization or owner isolation. Location
+Devices under normal manager authorization, excluding records with GitOps
+markers from its UI. These markers are not server authorization or owner isolation. Location
 record correction is not a handover or installation move.
 New authorized API records do not require editing Git.
 
@@ -487,9 +499,6 @@ cancelled before cached records are removed. Session expiry hides all kinds.
 Reopening inventory starts a fresh access evaluation; refreshing an existing view
 does not clear its recorded read failures. Search indexes explicit visible fields
 and readable endpoint identities, not raw records or redacted references.
-The retained direct claim route uses the same issue-aware placement and endpoint
-labels. Legacy expected peers hide both the referenced device and port whenever
-Device reads are unavailable, including temporary collection failures.
 
 ### Retained host source evidence
 
@@ -509,10 +518,10 @@ deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 
 ## Device connection view (implemented)
 
-Device detail shows a **Connections** section in its primary view, under the
-identity strip. It is the one place the page lists the Device's components
-and what each is cabled to. It is labelled "Cable records, not live link
-state". It joins the Device's typed
+Device detail's primary view is the device picture and the component table
+under it (see [Device page](#device-page-picture-and-component-table)). It
+is the one place the page lists the Device's components and what each is
+cabled to. Its legend says "Cable records, not live link state". It joins the Device's typed
 components to the Cable lanes that name them, using the Cables, Devices,
 PowerFeeds and DeviceTypes the Inventory tab already lists. It adds no
 requests, API fields or permissions.
@@ -537,29 +546,103 @@ redundancy is unknown. When a peer Device records an internal mapping
 for up to four hops, stopping at the first hop that is unrecorded, disputed
 or unreadable. A Device's own internal mapping is shown on its local port.
 When Cables cannot be read, the view says that connections are unknown and
-classifies nothing; the table still lists the components, without state,
-Cable or peer columns.
+classifies nothing: the picture draws every recorded port as unknown, and
+the table still lists the components, without the State and Connected to
+columns.
 
-### One picture, one table, one count line
+### Device page: picture and component table
 
-The section has one toggle, **Picture / Table / Diagram**, held in the URL as
-`?view=` (`table` or `diagram`; unset is the picture). `view` is in the
+The Device page shows two things, and nothing else competes with them: a
+picture of the device and a dense table of its components. Top to bottom:
+
+1. **Header.** The display name, the location line ("Facility · Rack · U2
+   front", prefixed "Planned ·" only when it comes from the installation
+   plan), then one facts strip: the model link (its label names the
+   manufacturer, so it is not repeated) · Serial · Asset tag · Draw. Empty
+   facts are hidden, including the draw when nothing reports one (each
+   PSU's card still says "Not reported"). The draw is short ("358 W", "≥"
+   when only some PSUs report, ◷ when stale); its age and "observed, not
+   verified" are the tooltip and accessible text. A Device whose model is
+   not from a readable catalog shows the recorded model; the reason is its
+   tooltip and the catalog banner. **Edit display name** is
+   disabled for records the portal does not own; the reason ("Display-name
+   editing requires a portal-owned record…") is the control's tooltip and
+   accessible description, not a sentence on the page. Issue banners follow,
+   one compact line each.
+2. **Picture.** Always shown, never toggled. The drawn faceplate when the
+   DeviceType records a layout (see [Faceplate drawing](#faceplate-drawing)),
+   otherwise the grouped port tiles captioned "Layout not recorded". Faces
+   carry short labels, "Front" and "Rear", with the rack face added only
+   when the Device is mounted reversed ("Front · rack rear"); the full title
+   stays each face's accessible name. Drawn faces are scaled whole to their
+   column, between 1.15 px/mm and the 1.9 px/mm drawing scale (0.7 px/mm
+   below 600 px wide), so front and rear sit side by side when both fit and
+   stack otherwise; a face too wide for its frame scrolls inside it. The
+   picture has no outer frame (each chassis is its own) and no "Not on the
+   faceplate" tray: the table lists those components. Clicking, tapping
+   or Enter on a port opens the shared card. The power redundancy note moves
+   to the legend.
+3. **Component table,** directly under the picture. One row per component,
+   about 30 px high, 13 px type, no wrapping (a breakout listing several
+   peers is the exception) and tabular figures. Columns:
+   - **Component**: the name. The component id is its tooltip. A lane end
+     that matches no recorded position adds "· position 0" or "· position
+     not recorded".
+   - **Type**: short words ("Network", "Power inlet", "Module"), with the
+     connector and any "4 positions" muted inline.
+   - **Face**: "Front", "Rear" or "Face unknown", by the same rule as the
+     picture's labels.
+   - **State**: the glyph and words of the record states below, never
+     colour alone. Modules and items that no Cable names read "■ Component
+     recorded". The reason for a disagreement is the cell's tooltip and
+     accessible text; a soft opposite-face check shows a short "· Check"
+     with its sentence the same way.
+   - **Connected to**: the peer link, then "via" and the Cable as a small
+     secondary link, with the Cable's medium and lane as its tooltip. A
+     peer's rating or "You cannot read this peer" is the tooltip and
+     accessible text. A recorded path beyond the peer reads "+1 hop", with
+     the hops in words as its tooltip. No cable recorded reads "Unknown",
+     never an empty cell. A breakout lists each cabled position and "No
+     cable recorded at position 1, 3, 4".
+   - **Serial** and **Asset tag** appear only when some component records
+     one.
+
+   Rows follow the picture's groups (power, network, console, pass-through,
+   modules and items), then components that only a Cable names, then Cable
+   lane ends `deviceConnections()` cannot place (see below). With Cables
+   denied the table has Component, Type, Face and any Serial and Asset tag
+   columns.
+
+   The table's header row holds the one count line ("9 ports · 4 recorded ·
+   1 disagree · 4 catalog only"), which also describes the table for
+   assistive technology. With Cables denied it reads "5 components · Cable
+   records are unavailable to you." The header row also holds **Legend** and
+   **Link diagram**. The legend is a popover (Escape or a click outside
+   closes it) with the record states, the drawn module states and the
+   catalog-unavailable note when it applies, and nothing else.
+4. **Tabs:** Location and Hardware & management, below, then the
+   **Record** section.
+
+**MAC addresses.** A recorded network interface whose name matches a
+component's name or id puts its MAC address in a **MAC address** column,
+shown only when some row has one (`interfaceAddresses()` in
+`lib/device-connections.ts`). Interfaces that match no component are listed
+in Hardware & management.
+
+**Highlight.** Hovering or focusing a row outlines that component in the
+picture, and hovering or focusing a picture port (or hovering a drawn
+module) outlines its row. Both use a `--ring` outline, not colour alone,
+from one piece of state in `DeviceConnections` (`ComponentHighlight` in
+`device-faceplate.tsx`). Touch does not highlight; a tap opens the card.
+
+**Link diagram** is offered when Cables are readable and the Device has 1
+to 16 links. Pressing it swaps the table for the
+[diagram](#diagram) and sets `?view=diagram`, so links to it still work;
+pressing it again restores the table and clears the parameter. The picture
+stays either way. Any other `view` value, including the retired `table` and
+`picture`, falls back harmlessly to the default page. `view` is in the
 session boundary's presentation allowlist, so switching never refetches
-inventory. A value the Device does not offer falls back to the picture.
-
-- **Picture.** The drawn faceplate when the DeviceType records a layout
-  (see [Faceplate drawing](#faceplate-drawing)), with its "Not on the
-  faceplate" tray. Otherwise the grouped port tiles, captioned "Layout not
-  recorded". The other picture is never offered.
-- **Table.** One row per component: name, type and connector, face and
-  position, record state, Cable, and peer. Serial and asset tag columns
-  appear only when some component records one. A multi-position component
-  is one row; its Cable and peer cells list each position. Rows follow the
-  picture's groups (power, network, console, pass-through, modules and
-  items), then components that only a Cable names. Modules and items that
-  no Cable names read "Component recorded".
-- **Diagram.** The optional link view described below, offered up to 16
-  links.
+inventory.
 
 `deviceConnections()` drops a Cable lane end that names a recorded component
 at a position below 1, or with no position (an omitted position decodes as
@@ -567,18 +650,36 @@ at a position below 1, or with no position (an omitted position decodes as
 same access rules, and the table lists them last as "Records disagree" rows
 with the reason. So every Cable that names the Device appears in the table.
 
-The section header holds the one count line ("9 ports · 4 recorded · 1
-disagree · 4 catalog only"). The identity strip carries no component counts,
-the tabs carry no badges, and the drawn Device in the diagram shows only its
-name.
+The tabs carry no component counts or badges, and the drawn Device in the
+diagram shows only its name.
 
-The Device's tabs are **Location** (placement, the placement report, and
-depth for rack conflicts), **Registration** (claim, the recorded hardware
-observation when a catalog model is assigned, the catalog's nominal size,
-any recorded nominal dimensions, system UUID, management endpoint, provider
-reference, internal paths and legacy interfaces) and **History &
-verification**. The model is stated once, in the identity strip; without a
-readable catalog model it is the recorded observation and says so.
+The Device's tabs are **Location** and **Hardware & management**.
+Location states each fact once: **Placement** holds only
+the basis, units, height and face ("Reported · U2 · 1U · front"), because
+the header names the facility and rack and depth has its own fact; the
+**Placement report** gives the revision, observation time and "not
+physically verified", with the reason and evidence on a small second line;
+**Installation plan** links the claim the hardware was placed against;
+**Depth for rack conflicts** is unchanged, followed by the catalog size and
+any recorded size. The **Reported location**
+correction states once that it corrects the record only, not a physical
+move, handover or reservation, and stays behind its permission check; its
+form keeps the blank-geometry note. Hardware & management groups its
+facts into titled sections of label/value rows: **Hardware** (the reported
+model when a catalog model is assigned, system UUID, MAC addresses without
+an interface, and a small table of interfaces that match no component) and
+**Management** (management endpoint and provider host), plus small tables
+for **Internal paths** and **Service references** when recorded. Empty
+facts and sections are hidden. The model is stated once, in the header
+strip.
+
+`device-connections.test.tsx` covers the picture with no toggle, the table
+columns and rows (unmatched lanes included), conditional serial and asset
+columns, the single count line, the legend, `?view=diagram` and its
+fallbacks, the highlight in both directions, denied peers and denied
+Cables. `inventory-record-layout.test.tsx` covers the drawn and tiled
+pictures on the fixture pages, the header strip and the Edit button's
+description.
 
 ### Names
 
@@ -667,10 +768,10 @@ appear in neither part. On screens 600 px
 wide or less, the card is a bottom sheet. Touch shows no tooltip. Escape or
 Close closes the card and returns focus to the tile.
 
-The section header is one line: the port counts ("60 ports · 7 recorded · 51
-unknown · 2 disagree"), "Unknown is not free; nothing here is verified", and a
-**Legend** toggle. It does not repeat the Device's name, which the page heading
-already shows.
+On the Device page, the table's header row holds the port counts ("60 ports ·
+7 recorded · 51 unknown · 2 disagree") and the **Legend** popover, which says
+"Unknown is not free; nothing here is verified". It does not repeat the
+Device's name, which the page heading already shows.
 
 ### Faceplate drawing
 
@@ -768,51 +869,25 @@ imported data does not use; the table keeps only families operators name.
 The tile outline (`connectorShape()`) derives from the same table. LC is
 drawn as a duplex connector: one body with a latch notch for each fiber.
 
-**Mini faceplates in the elevation.** `RackSlotDevice` draws the visible
-chassis face as an SVG, hidden from assistive technology. The front shows on
-the mounted face and the rear on the far face of a full-depth device. The
-**Outline / Ports / Full** control (held in the URL as `?detail=`) sets
-pixels per unit to 12, 16 or 44. The level follows the pixels per unit:
+**Elevation slots show names only.** `RackSlotDevice` draws the device's
+name ("rear of" on the far face of a full-depth device) and, for equipment
+taller than one unit, its range and height; no faceplate drawing sits inside
+the slot. The selected device's faceplate is in the side panel. Each unit is
+18 px, and the only view control is the face: **Front + rear** (the
+default), **Front** or **Rear**. The slot is one link. A slot that needs
+checking is colour coded rather than marked: red when records disagree
+(overlapping placements, or ports more than one Cable names) and amber when
+a connection reaches a missing or unreadable record, as a tinted fill and a
+3 px left edge. The reason is the tooltip and the link's accessible name
+("2 ports disagree"). The elevation has no legend or caption text: the
+face switch is its only control.
 
-| Level | Pixels per unit | What is drawn |
-| --- | --- | --- |
-| Silhouette | under 16 | The chassis and its bank outlines |
-| Reduced | 16 to 39 | One block per cell: solid when recorded, hollow when none, destructive when records disagree, dashed when the peer is unavailable, dotted when catalog only |
-| Full | 40 or more | The same blocks with `!` and `?` glyphs |
-
-At every level the slot stays one link, with no focusable drawing inside it.
-Beside the name it shows `! n` and `? n` counts for the whole Device, and
-its accessible name gives them in words ("2 ports disagree"). A model
-without a layout is a plain chassis, and its link says "layout not
-recorded". Cells use `--foreground` on `--background` rather than muted
-tokens, which fixes the prototype's low-contrast reduced blocks in dark
-mode. Hatching is not used at these sizes, because at 16 px per unit it is
-noise.
-
-**Collapsed empty runs.** Each run of three or more units
-(`MIN_EMPTY_RUN`) with no recorded placement is one compact row, for
-example "U22–U39 · 18 units · no placement recorded (not free)". Blank is
-never free: the row says only that no record places anything there, and
-expanding it shows each unit as "—" (occupancy unverified). A click, or
-Enter, expands the run in place; the top unit of an expanded run carries a
-"Collapse U22–U39" control, and focus moves between the two. `emptyRuns()` in
-`lib/rack-faces.ts` computes runs from the same face-aware occupancy the
-elevation draws, so full-depth and unknown-depth equipment occupy both
-faces and overlapping placements count once.
-
-Alignment: a single-face view (Front or Rear) collapses that face's own
-empty units. **Front + rear collapses only units empty on both faces**, so
-the two columns share one row template and their rows always line up; a
-half-depth device on one face keeps its units expanded on the other. Grid
-rows stay one per unit (row = height − unit + 1): a collapsed run gives its
-top unit's row a compact height (24 px, 44 px on coarse pointers) and its
-other rows zero, so no placement's row ever moves. Expansion is shared by
-both columns. Collapsed rows work at every level of detail and with
-`?detail=`; only unit rows take the level's pixels per unit. Elevation
-entries are in drawn order, top to bottom, and the rack page's arrow keys,
-Home and End move across equipment links and collapsed rows alike. A
-collapsed row's accessible name starts with its visible words and adds the
-face ("on either face" or "on the front face") and "Show each unit".
+**Every unit is drawn.** The elevation has no collapsed rows: each unit is
+one grid row (row = height − unit + 1), so no placement's row ever moves and
+Front + rear columns always line up. A unit with no recorded placement
+shows "—" (occupancy unverified); blank is never free. The rack page's
+arrow keys, Home and End move between equipment links in drawn order, top
+to bottom.
 
 **Not implemented:**
 
@@ -832,7 +907,6 @@ face ("on either face" or "on the front face") and "Show each unit".
   `faceplate-imported-card-more`: a synthetic imported switch whose component
   ids match no template id, drawn by name and type, with its two same-name
   PSUs in the tray;
-- `rack-mini-reduced`, `rack-mini-full` and `rack-mini-silhouette`;
 - `rack-panel-faceplate`, which includes a 390 px phone.
 
 ### Diagram
@@ -854,9 +928,11 @@ table uses the same states, reasons, traces and condensed names. Styling uses on
 cards (`ports-leaf-card`, `ports-server-conflict-card`,
 `ports-denied-peer-card`), and the same faceplate in the rack panel
 (`rack-leaf-faceplate`, `rack-leaf-card`) at desktop light, desktop dark and
-the opt-in `phone-dark` viewport. `device-table` captures the table, and
-`server-detail` and `device-detail-no-layout` capture a whole Device page
-with and without a recorded layout.
+the opt-in `phone-dark` viewport. `device-table` captures the default page
+through the retired `?view=table`,
+`device-diagram` captures `?view=diagram`, and `server-detail` and
+`device-detail-no-layout` capture a whole Device page with and without a
+recorded layout.
 
 In the diagram, within each type group, ports are grouped by chassis face (Front, Rear, Face
 unknown) when the Device's DeviceType records a face for at least one of them;
@@ -881,17 +957,19 @@ elevation (`RackOverview` in `inventory-location.tsx`) rather than redrawing
 it.
 
 - **Header.** The title, then one line: the facility, the rack height and
-  issue badges ("2 placements disagree", "1 without a position"). A count
-  strip follows (Equipment, Cables, Power feeds); each count links to its tab
-  and a denied collection reads "unavailable", never 0. The free-space note
-  stays visible as one small line. The record name, namespace, UID and
-  display-name editing move into a collapsed **About this record** section.
-- **Tabs.** Elevation (default), Equipment, Cables, Power and History. The tab
+  issue badges ("2 placements disagree", "1 without a position"). There is
+  no separate count strip or free-space line. **Edit display name** sits in the header
+  beside **Refresh inventory**; the resource name closes the page in the
+  one-line **Record** footer.
+- **Tabs.** Elevation (default), Equipment, Cables and Power, each related
+  tab with its count ("Equipment 10"): "?" when the collection is
+  unreadable, never 0, and "+" when it is incomplete. The tab
   is the `tab` query key beside `kind`, `record` and `namespace`; Back and
   shared links restore it. An unknown value falls back to the elevation.
 - **Selection.** Selecting equipment in the elevation sets `selectedKind`
   (`Device` or `DeviceClaim`) and `selected` (the record name) and opens a
-  side panel; below 600 px it is a bottom sheet (`role="dialog"`, non-modal,
+  side panel. With nothing selected there is no placeholder panel: the
+  elevation takes the full width. Below 600 px it is a bottom sheet (`role="dialog"`, non-modal,
   focus on Close). The panel leads with the device's faceplate, then model,
   units, rack face, depth, lifecycle, a count of recorded cable states, and
   links to the Device page and installation plan. Arrow keys, Home and End
@@ -905,10 +983,16 @@ it.
   catalog-only clusters visible. When Cables are denied it still draws the
   recorded components, each named "Cable details unavailable, connections
   unknown", never "no cable recorded".
-- **Equipment tab.** One condensed table per section (positioned,
-  unpositioned, non-racked mounts) with Device, U / face / depth (depth with
-  its source), Lifecycle and Claim / registration columns. Facility and rack are not repeated per
-  row. Claim-derived fallback rows stay labelled.
+- **Equipment tab.** One dense table (`Rack equipment`), top of rack first,
+  then equipment with no usable position ("No position"), then non-unit
+  mounts (named by their mount). Columns: **U**, **Device** (lifecycle only
+  when not Active; a plan with no registered device shows its name, muted),
+  **Model**, **Face**, **Depth** (Full, Half or Unknown), **Ports** (cabled
+  of total, the reason in the tooltip), **Power** (the feeds its PSUs reach,
+  "?" when unknown, amber for a single feed), and **Serial** and **Asset
+  tag** when any row records them. Rows that need checking carry the
+  elevation's red or amber edge. Facility, rack and installation plan are
+  not repeated per row; the plan is one step away in the side panel.
 - **Cables tab.** Cables grouped by the device in this rack they terminate on,
   with counts, port, peer, record state and the Cable's display name. Record
   names are only in each group's collapsed "Record names" list.
@@ -916,15 +1000,17 @@ it.
   each device once with its PSUs under the feed their recorded path reaches
   (see
   [Power path and telemetry](#power-path-and-telemetry-implemented-telemetry-mocked)).
-  Each feed column carries a compact capacity bar, the feed's terminations as
-  outlet tiles (peer and Cable in each tile's name, tooltip and card), their
-  counts and a **Power path** link to the feed page. A PDU's row says "5 of 8
-  outlets have a cable recorded" and links to the PDU, whose page draws every
-  outlet. The separate "Feed outlets" and "PDUs" lists below the grid were
+  Each feed column carries a compact capacity bar ("706 VA · 14%", the
+  rating, continuous limit and age in the tooltip) and the feed's
+  terminations as outlet tiles (peer and Cable in each tile's name, tooltip
+  and card); the feed name links to its page and power path. Rows carry no
+  feed-class badges: the columns show which feeds each PSU reaches, PSUs in
+  the Feed unknown column are named only, and a single-feed row has an
+  amber edge with the words as its tooltip. A PDU's row links to the PDU,
+  whose page draws every outlet. The separate "Feed outlets" and "PDUs" lists below the grid were
   removed because they repeated this. When power feeds are unreadable the
   grid still lists devices and PDUs, with every PSU's feed unknown and no
   feed named.
-- **History tab.** Record history and verification, unchanged in meaning.
 - **Issue banners.** Above the elevation, one short banner per cluster of
   same-face overlapping placements, from the elevation's own face-aware
   occupancy (flagged, not blocked), and one for equipment that
@@ -984,10 +1070,10 @@ fills the bar; without telemetry it reads "No load reported", never empty or
 **Rack Power tab.** `RackPowerRedundancy` in `rack-power.tsx` shows the
 rack's feeds as columns (plus any feed reached but recorded on another rack,
 and "Feed unknown"), and each device with a power inlet as one row, its PSUs
-in the column of the feed they reach. `classifyFeeds()` labels a device
-"Separate feeds (recorded)", "Single feed (recorded)" (flagged), "Feed
-unknown for some PSUs" or "Feed unknown". The legend states that separate
-feeds in records do not prove independent supply; nothing claims redundancy.
+in the column of the feed they reach. `classifyFeeds()` classifies a device
+as separate feeds, single feed (amber row edge), feed unknown for some PSUs
+or feed unknown; the words are the row's tooltip and accessible text, and
+nothing claims redundancy.
 Below 700 px each row stacks and names the feed in each cell.
 
 **Telemetry.** Views read observed values through `TelemetrySource`
@@ -1005,8 +1091,9 @@ display rules, in `power-telemetry.tsx`:
   tile, and a note in the card, each linking to the records, which are not
   changed. With Cables unreadable nothing is compared;
 - sparklines appear only in cards;
-- the Device page shows "Draws ~X W" (or "Power draw: Not reported"), and
-  PSU cards show input power and observed status.
+- the Device page's header strip shows "Draw X W", with the age and
+  "observed, not verified" as its tooltip (hidden when nothing reports a draw), and PSU cards show input
+  power and observed status ("Not reported" when absent).
 
 Every build uses the `none` source: everything reads "Not reported" and "No
 telemetry source configured". Fixture builds load a synthetic mock
@@ -1021,14 +1108,13 @@ and fails if any mock-only string appears in it. The real source is a
 `power-feed-outlet-card`, `power-feed-outlet-card-more`,
 `rack-power-redundancy`, `device-psu-card` and `device-single-feed` (a server
 whose PSUs both reach Feed A through one PDU: "Single feed (recorded)").
-`rack-elevation` shows collapsed runs and `rack-elevation-expanded` one run
-expanded.
+`rack-elevation` shows every unit.
 
 ## Deliberate gaps and decisions
 
 | Interaction | Remaining boundary |
 | --- | --- |
-| Other-writer edits | Reported-location correction is available to managers for operator-managed Devices; legacy Flux remains outside the UI. Other edit forms retain their existing restrictions |
+| Other-writer edits | Reported-location correction is available to managers for operator-managed Devices; GitOps-managed records remain outside the UI. Other edit forms retain their existing restrictions |
 | Rack position entry, move/assign equipment | Reported-location correction supports unknown or explicit geometry; physical moves, installation/binding changes and handovers still require separate workflows |
 | PowerFeed creation; component or endpoint edits | API kinds exist, but these forms are not implemented. Existing records remain browsable; no dead action buttons |
 | Online/active/connected badges, occupancy/free units | No verified evidence projection; never infer health/readiness from inventory |
@@ -1111,8 +1197,7 @@ Devices follow the existing reported-placement projection, with explicitly label
 claim-derived fallback only when no report exists. Rack-only references resolve
 through readable, non-deleting Rack records. Every matching device registration
 is counted; none is selected as the active device. Plans use their own typed
-placement and `lifecycle: Installation`; legacy claims remain available through
-Claims & registrations. The implemented API has no execution-status fields, so
+placement. The implemented API has no execution-status fields, so
 plans say recorded and execution status not recorded, never ready or complete.
 Facility premises identifiers and an existing geographic Location reference are
 shown when recorded. Operator, address and region are absent from the implemented
@@ -1134,7 +1219,7 @@ fencing, inert visible blur/focus and exact mutation preconditions are unchanged
 
 Validation uses provider component/regression tests, typecheck and production build,
 plus documentation link and whitespace checks. Tests cover Site → Facility → Rack
-→ claim/device paths, direct reports, legacy claims, duplicates/shared premises,
+→ claim/device paths, direct reports, duplicates/shared premises,
 missing/deleting/foreign references, denied collections and partial reads. No
 browser or authenticated host acceptance, live inventory reads/writes, deployment,
 or operational readiness is claimed. Responsive behavior uses the existing scoped

@@ -39,7 +39,7 @@ export function equipmentPlacements(inventory: Inventory): EquipmentPlacement[] 
   return [...entries.values()];
 }
 
-export function placementFacility(placement: Placement, namespace: string | undefined, inventory: Inventory): string | undefined {
+export function placementFacility(placement: Pick<Placement, 'facilityRef' | 'rackRef'>, namespace: string | undefined, inventory: Inventory): string | undefined {
   if (inventory.issues?.Facility) return undefined;
   if (placement.facilityRef) return placement.facilityRef.name;
   if (inventory.issues?.Rack) return undefined;

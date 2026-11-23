@@ -60,9 +60,16 @@ export const PAGES: CapturePage[] = [
   { name: 'rack-page-cables', path: record('Rack', 'example-rack-a01', '&tab=cables'), ready: '.inventory-rack-tab[data-tab="cables"] table' },
   { name: 'rack-page-phone-sheet', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-srv-a01-01'), ready: '.inventory-rack-panel[data-variant="sheet"] .inventory-faceplate', viewports: ['phone'] },
   { name: 'server-detail', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections' },
+  // The secondary tab and the Record section that closes every record page.
+  { name: 'device-hardware', path: record('Device', 'example-srv-a01-01', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-fact-section', element: '.inventory-record-tabs', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
+  { name: 'device-location', path: record('Device', 'example-srv-a01-01', '&tab=location'), ready: '[data-tab="location"] .inventory-fields', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
+  { name: 'record-footer', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-record-footer', element: '.inventory-record-footer', viewports: ['desktop-light', 'phone'] },
   // Device detail for a model without a layout (grouped tiles), and the one component table.
   { name: 'device-detail-no-layout', path: record('Device', 'example-app-a01'), ready: '.inventory-connections' },
+  // `view=table` is no longer a choice: it falls back to the default page, picture and table.
   { name: 'device-table', path: record('Device', 'example-srv-a01-01', '&view=table'), ready: '.inventory-connection-table', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
+  // The link diagram swaps out the table; the picture stays.
+  { name: 'device-diagram', path: record('Device', 'example-srv-a01-01', '&view=diagram'), ready: '.inventory-connection-diagram', element: '.inventory-connections', viewports: ['desktop-light', 'phone'] },
   { name: 'leaf-connections', path: record('Device', 'example-leaf-a01'), ready: '.inventory-connections', element: '.inventory-connections' },
   // Both rack faces: full depth on both (muted far side), reversed leaf,
   // half-depth rear equipment and unknown depth.
@@ -107,8 +114,6 @@ export const PAGES: CapturePage[] = [
   { name: 'power-feed-outlet-card-more', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path', click: [`.inventory-power-strip[aria-label="Power outlets"] ${tile('outlet-1')}`, '.inventory-port-card-more > button'] },
   // A server whose PSUs both reach Feed A through one PDU: "Single feed (recorded)".
   { name: 'device-single-feed', path: record('Device', 'example-srv-a01-05'), ready: '.inventory-connections' },
-  // Blank units collapse into one row per run; a click expands the run in place on both faces.
-  { name: 'rack-elevation-expanded', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-run-button', element: '.inventory-elevation', click: '.inventory-rack-units[data-face="front"] .inventory-rack-run-button[data-run="U22-U39"]' },
   // Faceplates drawn from DeviceType layouts: the 1U server and the 48+8 leaf,
   // an open card on a dense face, the no-layout fallback, mini faceplates in
   // the elevation at each level of detail, and the drawing in the rack panel.
@@ -119,9 +124,6 @@ export const PAGES: CapturePage[] = [
   { name: 'faceplate-patch-pdu', path: record('Device', 'example-patch-a01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: ['desktop-light'] },
   { name: 'faceplate-pdu', path: record('Device', 'example-pdu-a01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: ['desktop-dark'] },
   { name: 'faceplate-fallback', path: record('Device', 'example-app-a01'), ready: '.inventory-faceplate-fallback', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
-  { name: 'rack-mini-reduced', path: record('Rack', 'example-rack-a01'), ready: '.inventory-mini-faceplate', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
-  { name: 'rack-mini-full', path: record('Rack', 'example-rack-a01', '&detail=full'), ready: '.inventory-mini-faceplate[data-level="full"]', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
-  { name: 'rack-mini-silhouette', path: record('Rack', 'example-rack-a01', '&detail=silhouette'), ready: '.inventory-mini-faceplate[data-level="silhouette"]', element: '.inventory-elevation', viewports: ['desktop-dark'] },
   // Imported records whose component ids match no template id: drawn by name
   // and type, the duplicate-name PSUs in the tray, and the card's More saying so.
   { name: 'faceplate-imported', path: record('Device', 'example-imported-sw-01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },

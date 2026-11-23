@@ -4,10 +4,10 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import { deviceConnections } from '../lib/device-connections';
-import { detailLevel, modelLayout } from '../lib/faceplate-layout';
+import { modelLayout } from '../lib/faceplate-layout';
 import { FIXTURE_NAMES, fixtureInventory } from '../lib/inventory-fixtures';
 import { TEXT_TILE_LIMIT } from './device-faceplate';
-import { DeviceFaceplate, deviceDrawingModel, MiniFaceplate, miniFaceplate } from './faceplate-drawing';
+import { DeviceFaceplate, deviceDrawingModel, portProblemCounts } from './faceplate-drawing';
 import { RackOverview } from './inventory-location';
 
 // Synthetic fixture records only.
@@ -24,8 +24,8 @@ const drawingGroup = () => screen.getByRole('group', { name: /^Faceplate drawing
 const ports = () => within(drawingGroup()).getAllByRole('button').filter(item => item.hasAttribute('data-tile'));
 /** One size per rack unit, from an elevation's grid template ("repeat(3, 16px) 24px …"). */
 const rowSizes = (list: HTMLElement) => [...list.style.gridTemplateRows.matchAll(/repeat\((\d+), ([^)]+?)\)|(var\([^)]*\)|\S+)/g)].flatMap(([, count, size, single]) => count ? Array(Number(count)).fill(size) : [single]);
-/** The size of every unit row that is not inside a collapsed run (those are 0px or the compact run row). */
-const unitRowSizes = (list: HTMLElement) => new Set(rowSizes(list).filter(size => size !== '0px' && !size.startsWith('var(')));
+/** The distinct unit row sizes; every unit is drawn, so there is one. */
+const unitRowSizes = (list: HTMLElement) => new Set(rowSizes(list));
 const accessibleNames = (root: HTMLElement) => [...root.querySelectorAll('[aria-label]')].map(item => item.getAttribute('aria-label')).join('\n');
 
 describe('FaceplateDrawing', () => {
@@ -74,7 +74,7 @@ describe('FaceplateDrawing', () => {
 
   it('gives every port an accessible name with its name, state and peer', () => {
     show(FIXTURE_NAMES.leaf);
-    expect(screen.getByRole('button', { name: /^swp37: No cable recorded, unknown, not free$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^swp37: No cable recorded$/ })).toBeInTheDocument();
     const breakout = screen.getByRole('button', { name: /^swp49: Cable recorded; position 1 cable recorded to Storage a01-03 · Ethernet 0, via Breakout swp49/ });
     expect(breakout).toHaveAttribute('data-shape', 'qsfp');
     // The tooltip repeats the name and is hidden from assistive technology.
@@ -197,52 +197,27 @@ describe('FaceplateDrawing', () => {
   });
 });
 
-describe('mini faceplates', () => {
-  it('chooses the level of detail from pixels per unit', () => {
-    expect([8, 15, 16, 39, 40, 60].map(detailLevel)).toEqual(['silhouette', 'silhouette', 'reduced', 'reduced', 'full', 'full']);
-  });
-
-  it('draws outlines, blocks, or blocks with glyphs at each level, hidden from assistive technology', () => {
+describe('rack elevation slots', () => {
+  it('counts port problems across the whole Device', () => {
     const { inventory, device } = named(FIXTURE_NAMES.leaf);
-    const mini = miniFaceplate(deviceDrawingModel(device, inventory), 'Front');
-    expect(mini.counts).toEqual({ conflict: 2, unavailable: 0 });
-    for (const [level, banks, cells, glyphs] of [['silhouette', 4, 0, 0], ['reduced', 0, 58, 0], ['full', 0, 58, 2]] as const) {
-      const { container } = render(<MiniFaceplate geometry={mini.geometry} states={mini.states} level={level} widthMM={450} heightMM={44.45} />);
-      const svg = container.querySelector('svg')!;
-      expect(svg).toHaveAttribute('aria-hidden', 'true');
-      expect(svg).toHaveAttribute('data-level', level);
-      expect([svg.querySelectorAll('.inventory-mini-bank').length, svg.querySelectorAll('.inventory-mini-cell').length, svg.querySelectorAll('.inventory-mini-glyph').length]).toEqual([banks, cells, glyphs]);
-    }
+    expect(portProblemCounts(deviceDrawingModel(device, inventory))).toEqual({ conflict: 2, unavailable: 0 });
   });
 
-  it('switches the elevation level from the Detail control and names problems in words', () => {
+  it('shows only the name, colour codes problems and names them in words', () => {
     const inventory = fixtureInventory();
     const rack = inventory.physical.find(record => record.kind === 'Rack' && record.metadata.name === FIXTURE_NAMES.rack) as PhysicalRecord;
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><RackOverview rack={rack} inventory={inventory} /></MemoryRouter></QueryClientProvider>);
     const rear = screen.getByRole('list', { name: 'rear recorded placements' });
     const leaf = within(rear).getByRole('link', { name: /^Review Leaf a01/ });
-    expect(leaf).toHaveAttribute('data-level', 'reduced');
     expect(leaf.getAttribute('aria-label')).toMatch(/, 2 ports disagree$/);
-    expect(within(leaf).getByText('! 2')).toBeInTheDocument();
+    expect(leaf).toHaveAttribute('data-attention', 'conflict');
+    expect(leaf.getAttribute('title')).toMatch(/2 ports disagree$/);
+    expect(within(leaf).queryByText(/^! ?\d/)).toBeNull();
+    // No drawing inside the slot, and no level-of-detail control.
+    expect(leaf.querySelector('svg')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Elevation detail' })).toBeNull();
     expect(rowSizes(rear)).toHaveLength(42);
-    expect(unitRowSizes(rear)).toEqual(new Set(['16px']));
-    fireEvent.click(screen.getByRole('button', { name: 'Full' }));
-    expect(within(screen.getByRole('list', { name: 'rear recorded placements' })).getByRole('link', { name: /^Review Leaf a01/ })).toHaveAttribute('data-level', 'full');
-    expect(rowSizes(screen.getByRole('list', { name: 'rear recorded placements' }))).toHaveLength(42);
-    expect(unitRowSizes(screen.getByRole('list', { name: 'rear recorded placements' }))).toEqual(new Set(['44px']));
-    fireEvent.click(screen.getByRole('button', { name: 'Outline' }));
-    expect(within(screen.getByRole('list', { name: 'rear recorded placements' })).getByRole('link', { name: /^Review Leaf a01/ })).toHaveAttribute('data-level', 'silhouette');
-    // The drawing is never a second tab stop inside the link.
+    expect(unitRowSizes(rear)).toEqual(new Set(['18px']));
     expect(leaf.querySelectorAll('button, a, [tabindex]')).toHaveLength(0);
-    // A model without a layout is said to be one, in words.
-    expect(within(screen.getByRole('list', { name: 'front recorded placements' })).getByRole('link', { name: /^Review Appliance a01/ }).getAttribute('aria-label')).toMatch(/layout not recorded/);
-  });
-
-  it('shows the chassis rear on the far face of a full-depth device', () => {
-    const { inventory, device } = named(FIXTURE_NAMES.server);
-    const drawing = deviceDrawingModel(device, inventory);
-    expect(miniFaceplate(drawing, 'Rear').geometry?.face).toBe('Rear');
-    expect(miniFaceplate(drawing, 'Front').states.get('bay-7')).toBe('catalog');
-    expect(modelLayout(undefined).recorded).toBe(false);
   });
 });

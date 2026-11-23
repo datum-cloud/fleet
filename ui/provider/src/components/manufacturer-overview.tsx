@@ -5,7 +5,7 @@ import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory, InventoryKind } from '../inventory';
 import { catalogLabel, manufacturerInventory } from '../lib/manufacturer-inventory';
 import { inventoryHref } from './inventory-location';
-import { RecordTabs, historyTab, type RecordTab } from './inventory-record-layout';
+import { RecordTabs, type RecordTab } from './inventory-record-layout';
 
 export function ManufacturerOverview({ manufacturer, inventory }: { manufacturer: PhysicalRecord; inventory: Inventory }) {
   const { models, devices, unresolved } = manufacturerInventory(manufacturer, inventory);
@@ -31,17 +31,14 @@ export function ManufacturerOverview({ manufacturer, inventory }: { manufacturer
         {issue('DeviceType') ? <p>Device relationships unavailable until device types are readable. Counts are unknown.</p> : issue('Device') ? <p>{unavailable('Device')}</p> : <>
           {unresolved && <p>Some device type references are missing or deleting. Those devices cannot be attributed to a manufacturer; only resolved relationships are shown.</p>}
           {devices.length ? <div className="inventory-scroll" tabIndex={0} role="region" aria-label="Manufacturer devices table"><Table><TableHeader><TableRow><TableHead>Device</TableHead><TableHead>Model</TableHead><TableHead>Reported location</TableHead></TableRow></TableHeader><TableBody>{devices.map(({ device, model }) => <TableRow key={device.metadata.name}><TableCell>{link('Device', device, devices.map(entry => entry.device))}</TableCell><TableCell>{link('DeviceType', model, models)}</TableCell><TableCell>{location(device)}</TableCell></TableRow>)}</TableBody></Table></div> : <p>{unresolved ? 'No resolved device relationships found.' : 'No devices explicitly linked to these device types.'}</p>}
-          <p className="inventory-legend">Locations come only from each device’s reported placement, never installation plans or catalog templates. Missing location references do not remove a device from the count.</p>
         </>}
       </section>,
     },
-    historyTab(manufacturer.metadata, <p className="inventory-muted">References follow namespace/name. Recreating a name does not verify physical continuity.</p>),
   ];
   return <div className="inventory-equipment-sections">
     <section aria-label="Manufacturer device types">
       <Title as="h3" level={5}>Device types <span className="inventory-count">{issue('DeviceType') ? 'unknown' : models.length}</span></Title>
       {issue('DeviceType') ? <p>{unavailable('DeviceType')}</p> : models.length ? <div className="inventory-scroll inventory-fit" tabIndex={0} role="region" aria-label="Manufacturer device types table"><Table><TableHeader><TableRow><TableHead>Device type</TableHead><TableHead>Associated devices</TableHead></TableRow></TableHeader><TableBody>{models.map(model => <TableRow key={model.metadata.name}><TableCell>{link('DeviceType', model, models)}</TableCell><TableCell>{issue('Device') ? 'Unknown' : devices.filter(entry => entry.model.metadata.name === model.metadata.name).length}</TableCell></TableRow>)}</TableBody></Table></div> : <p>No device types linked to this manufacturer.</p>}
-      <p className="inventory-legend">Relationships use explicit catalog references, not recorded manufacturer text. Counts describe linked records, not readiness or available capacity.</p>
     </section>
     <RecordTabs label="Manufacturer details" tabs={tabs} />
   </div>;

@@ -114,10 +114,10 @@ function PowerGroup({ title, label, count, readings, children, meta }: { title: 
 // ---- Devices on the path ----
 
 /** "Draws ~358 W · 40 s ago" from the Device's own reading or the sum of its PSUs. */
-export function drawWords(source: TelemetrySource, now: number, device: Device): { text: string; freshness: 'fresh' | 'stale' | 'missing' } {
+export function drawWords(source: TelemetrySource, now: number, device: Device): { text: string; freshness: 'fresh' | 'stale' | 'missing'; short?: string } {
   const subject = { kind: 'Device' as const, namespace: device.metadata.namespace, name: device.metadata.name };
   const own = valid(source.read(subject)?.powerW, now);
-  if (own) return { text: own.state === 'stale' ? `Stale: last drew ~${formatPower(own.value)} · ${formatAge(own.ageSeconds)}` : `Draws ~${formatPower(own.value)} · ${formatAge(own.ageSeconds)}`, freshness: own.state };
+  if (own) return { text: own.state === 'stale' ? `Stale: last drew ~${formatPower(own.value)} · ${formatAge(own.ageSeconds)}` : `Draws ~${formatPower(own.value)} · ${formatAge(own.ageSeconds)}`, freshness: own.state, short: formatPower(own.value) };
   const psus = (device.spec.components ?? []).filter(component => component.type === 'PowerInlet');
   const readings = psus.map(psu => valid(source.read({ ...subject, componentID: psu.id })?.powerW, now)).filter(item => item !== undefined);
   if (!readings.length) return { text: `Power draw: ${NOT_REPORTED}`, freshness: 'missing' };
@@ -125,14 +125,22 @@ export function drawWords(source: TelemetrySource, now: number, device: Device):
   const oldest = Math.max(...readings.map(item => item.ageSeconds));
   const stale = readings.some(item => item.state === 'stale');
   const partial = readings.length < psus.length ? ` (${readings.length} of ${psus.length} PSUs report)` : '';
-  return { text: `${stale ? 'Stale: ' : ''}Draws ${partial ? '≥' : '~'}${formatPower(total)}${partial} · ${formatAge(oldest)}`, freshness: stale ? 'stale' : 'fresh' };
+  return { text: `${stale ? 'Stale: ' : ''}Draws ${partial ? '≥' : '~'}${formatPower(total)}${partial} · ${formatAge(oldest)}`, freshness: stale ? 'stale' : 'fresh', short: `${partial ? '≥' : ''}${formatPower(total)}` };
 }
 
-/** The Device page's one-line draw summary. */
-export function DeviceDraw({ device }: { device: Device }) {
+/**
+ * The draw as one short fact in the Device page's header strip ("Draw
+ * 358 W"); its age is the tooltip and accessible text. Stale reads are
+ * marked. Hidden when nothing reports a draw, as empty facts are; each PSU's
+ * card still says "Not reported".
+ */
+export function DeviceDrawFact({ device }: { device: Device }) {
   const { source, now } = useTelemetry();
   const draw = drawWords(source, now, device);
-  return <span className="inventory-telemetry-line" data-freshness={draw.freshness}>{draw.freshness === 'stale' && <span aria-hidden="true">◷ </span>}{draw.text}{draw.freshness !== 'missing' && ' · observed, not verified'}</span>;
+  if (draw.freshness === 'missing') return null;
+  return <div><dt>Draw</dt><dd className="inventory-telemetry-line inventory-numeric" data-freshness={draw.freshness} title={draw.text}>
+    {draw.freshness === 'stale' && <span aria-hidden="true">◷ </span>}<span aria-hidden="true">{draw.short ?? draw.text}</span><span className="inventory-visually-hidden">{draw.text}</span>
+  </dd></div>;
 }
 
 export function FeedClassBadge({ value }: { value: PathDevice['class'] }) {

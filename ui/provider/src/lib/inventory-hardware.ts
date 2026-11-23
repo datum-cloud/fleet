@@ -69,7 +69,7 @@ export async function validateHardwareReferences(kind: 'Device' | 'Cable' | 'Dev
     const snapshot = values.claim!;
     const claim = await readInventoryReference<DeviceClaim>('DeviceClaim', values.namespace, snapshot.name, operation);
     operation.assertCurrent();
-    if (!claim || claim.metadata.uid !== snapshot.uid || claim.metadata.resourceVersion !== snapshot.resourceVersion || claim.metadata.deletionTimestamp || claim.spec.lifecycle !== 'Installation') throw new ApiError(409, 'The installation plan changed or is a legacy binding. Review it before registration.');
+    if (!claim || claim.metadata.uid !== snapshot.uid || claim.metadata.resourceVersion !== snapshot.resourceVersion || claim.metadata.deletionTimestamp) throw new ApiError(409, 'The installation plan changed. Review it before registration.');
     if (values.catalog) {
       const selected = values.catalog;
       const model = await readInventoryReference<PhysicalRecord>('DeviceType', values.namespace, selected.name, operation);

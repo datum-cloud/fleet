@@ -8,7 +8,7 @@
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { Link } from 'react-router';
-import { linkStateWords, shortLabels, type ConnectionGroup, type ConnectionLink, type ConnectorShape, type LayoutFace, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
+import { linkStateWords, shortFaceLabel, shortLabels, type ConnectionGroup, type ConnectionLink, type ConnectorShape, type LayoutFace, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
 import { TEXT_TILE_LIMIT } from '../lib/faceplate-layout';
 import { cableText, peerDetail, PeerTarget, peerText, portsWord, StateText, TILE_GLYPH, tileSummary, Trace, type Href } from './connection-parts';
 
@@ -25,7 +25,7 @@ export const NUMBER_EVERY = 8;
 const catalogOnly = (tiles: PortTile[]) => tiles.every(tile => tile.state === 'catalog');
 
 function laneWords(link: ConnectionLink, names: ViewNames) {
-  if (!link.cable) return link.state === 'none' ? 'unknown, not free' : '';
+  if (!link.cable) return '';
   return `to ${peerText(link.peer, names)}, via ${names.cable(link.cable)}`;
 }
 
@@ -129,7 +129,7 @@ export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry
   const peers = tile.links.filter(link => link.peer && link.peer.access !== 'denied' && link.peer.name);
   return (
     <>
-      {cablesDenied ? <p>Cable details unavailable. Connections are unknown, not free.</p> : <>
+      {cablesDenied ? <p>Cable details unavailable.</p> : <>
         {shared && <p className="inventory-port-card-answer"><span className="inventory-muted">Cable</span> <Link to={href('Cable', namespace, shared.name)}>{names.cable(shared)}</Link></p>}
         <ul className="inventory-port-card-links">
           {tile.links.map(link => {
@@ -199,6 +199,8 @@ export interface PortTileButtonProps extends Omit<ButtonHTMLAttributes<HTMLButto
   tileKey?: string;
   expanded?: boolean;
   controls?: string;
+  /** Outlined because the same component is hovered or focused elsewhere, such as its table row. */
+  highlighted?: boolean;
 }
 
 /**
@@ -206,7 +208,7 @@ export interface PortTileButtonProps extends Omit<ButtonHTMLAttributes<HTMLButto
  * the tooltip and the card. Visible content is hidden from assistive
  * technology because `accessibleName` carries it all.
  */
-export function PortTileButton({ state, accessibleName, label, shape = 'generic', lanes, load, tileKey, expanded, controls, className, ...rest }: PortTileButtonProps) {
+export function PortTileButton({ state, accessibleName, label, shape = 'generic', lanes, load, tileKey, expanded, controls, highlighted, className, ...rest }: PortTileButtonProps) {
   return (
     <button
       type="button"
@@ -216,6 +218,7 @@ export function PortTileButton({ state, accessibleName, label, shape = 'generic'
       data-state={state}
       data-shape={shape}
       data-labelled={label ? '' : undefined}
+      data-highlight={highlighted ? '' : undefined}
       aria-label={accessibleName}
       aria-expanded={expanded}
       aria-controls={controls}
@@ -263,14 +266,14 @@ function nextTile(items: HTMLElement[], index: number, key: string) {
   return row.reduce((best, item) => Math.abs(centre(item.rect) - centre(here)) < Math.abs(centre(best.rect) - centre(here)) ? item : best).at;
 }
 
-function PortCluster({ label, group, title, tiles, compact, cablesDenied, children }: { label: string; group: ConnectionGroup; title: string; tiles: PortTile[]; compact: boolean; cablesDenied: boolean; children: ReactNode }) {
+function PortCluster({ label, group, title, tiles, compact, cablesDenied, powerNote = true, children }: { label: string; group: ConnectionGroup; title: string; tiles: PortTile[]; compact: boolean; cablesDenied: boolean; powerNote?: boolean; children: ReactNode }) {
   return (
     <div className="inventory-port-cluster" role="group" aria-label={label} data-group={group}>
       <p className="inventory-port-cluster-title">
         {title} · {tiles.length} <span className="inventory-count">· {cablesDenied ? 'cable details unavailable' : tileSummary(tiles)}</span>
       </p>
       <ul className="inventory-port-row" aria-label={`${title} ports`} data-compact={compact ? '' : undefined}>{children}</ul>
-      {group === 'power' && <p className="inventory-connection-group-note">Power redundancy unknown. Separate inlets or feeds do not prove independent supply.</p>}
+      {group === 'power' && powerNote && <p className="inventory-connection-group-note">Power redundancy unknown. Separate inlets or feeds do not prove independent supply.</p>}
     </div>
   );
 }
@@ -288,6 +291,26 @@ export interface PortFaceplateProps {
   showEmptyFaces?: boolean;
   /** Observed telemetry for a tile, when any source reports it. */
   telemetry?: (tile: PortTile) => PortTelemetry | undefined;
+  /**
+   * The Device page's picture: short face labels ("Front", "Rear"), faces
+   * side by side when they fit, and the power redundancy note left to the
+   * page's legend.
+   */
+  dense?: boolean;
+  /** The component outlined here and in the page's component table. */
+  highlight?: ComponentHighlight;
+}
+
+/**
+ * One component outlined in two views at once: hovering or focusing a tile
+ * outlines its table row, and the row outlines its tile. `id` is the
+ * component id; `clear` only clears the id it is given, so leaving one tile
+ * after entering the next does not undo the newer highlight.
+ */
+export interface ComponentHighlight {
+  id?: string;
+  set: (id: string) => void;
+  clear: (id: string) => void;
 }
 
 /** Everything a port grid needs to make one tile interactive. */
@@ -304,7 +327,7 @@ export interface PortGridTileOptions {
  * and one card. Tiles are found by `data-tile` inside `container`, in DOM
  * order; arrow keys move by drawn position.
  */
-export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry, owner = 'Device' }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined; owner?: ComponentOwner }) {
+export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry, owner = 'Device', highlight }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined; owner?: ComponentOwner; highlight?: ComponentHighlight }) {
   const container = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -379,15 +402,17 @@ export function usePortGrid({ tiles, names, namespace, href, cablesDenied = fals
       tabIndex={tile.key === current ? 0 : -1}
       expanded={open === tile.key}
       controls={open === tile.key ? cardID : undefined}
+      highlighted={highlight?.id === tile.componentID}
       onPointerDown={event => { pointer.current = event.pointerType; }}
-      onPointerEnter={event => { if (event.pointerType === 'mouse') setTip(tile.key); }}
-      onPointerLeave={event => { if (event.pointerType === 'mouse') setTip(value => value === tile.key ? undefined : value); }}
+      onPointerEnter={event => { if (event.pointerType === 'mouse') { setTip(tile.key); highlight?.set(tile.componentID); } }}
+      onPointerLeave={event => { if (event.pointerType === 'mouse') { setTip(value => value === tile.key ? undefined : value); highlight?.clear(tile.componentID); } }}
       onFocus={() => {
         setActive(tile.key);
+        highlight?.set(tile.componentID);
         // Touch has no hover: a tap opens the card through the click, not a tooltip.
         if (pointer.current !== 'touch' && pointer.current !== 'pen') setTip(tile.key);
       }}
-      onBlur={() => { pointer.current = undefined; setTip(value => value === tile.key ? undefined : value); }}
+      onBlur={() => { pointer.current = undefined; setTip(value => value === tile.key ? undefined : value); highlight?.clear(tile.componentID); }}
       onClick={() => { setActive(tile.key); setTip(undefined); setOpen(value => value === tile.key ? undefined : tile.key); }}
     />
     );
@@ -424,7 +449,7 @@ export function usePortGrid({ tiles, names, namespace, href, cablesDenied = fals
   return { container, onKeyDown, tileButton, overlay };
 }
 
-export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenied = false, collapseCatalogOnly = false, showEmptyFaces = false, telemetry }: PortFaceplateProps) {
+export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenied = false, collapseCatalogOnly = false, showEmptyFaces = false, telemetry, dense = false, highlight }: PortFaceplateProps) {
   const [expanded, setExpanded] = useState<Set<ConnectionGroup>>(() => new Set());
   const known = laid.some(face => face.face !== 'unknown');
   // Without any recorded face, one caption says so instead of guessing.
@@ -438,7 +463,9 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
   // Labels are unique within a cluster: its header carries the type.
   const labels = useMemo(() => new Map(faces.flatMap(face => face.clusters.flatMap(cluster => [...shortLabels(cluster.tiles)]))), [faces]);
   const marks = useMemo(() => new Map(faces.flatMap(face => face.clusters.filter(cluster => cluster.tiles.length > TEXT_TILE_LIMIT).flatMap(cluster => [...numbering(cluster.tiles, labels)]))), [faces, labels]);
-  const grid = usePortGrid({ tiles, names, namespace, href, cablesDenied, telemetry });
+  const grid = usePortGrid({ tiles, names, namespace, href, cablesDenied, telemetry, highlight });
+  // Dense: "Front", or "Front · rack rear" when mounted reversed. The full title stays the group's name.
+  const label = (face: LayoutFace) => !dense || !known ? face.title : shortFaceLabel(face.face, face.clusters.flatMap(cluster => cluster.tiles).find(tile => tile.rackFace)?.rackFace);
 
   const renderTile = (tile: PortTile, compact: boolean) => (
     <li key={tile.key}>
@@ -454,16 +481,17 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
       role="group"
       aria-label="Port tiles. Arrow keys move between ports; Enter opens a port's card; Escape closes it."
       onKeyDown={grid.onKeyDown}
+      data-dense={dense ? '' : undefined}
     >
       {faces.map(face => (
         <div key={face.face} className="inventory-port-face-group" data-face={face.face} role="group" aria-label={face.title}>
-          <p className="inventory-port-face-title">{face.title}</p>
+          <p className="inventory-port-face-title">{label(face)}</p>
           {face.clusters.length ? (
             <div className="inventory-port-plate">
               {face.clusters.filter(cluster => !hidden(cluster)).map(cluster => {
                 const compact = cluster.tiles.length > TEXT_TILE_LIMIT;
                 return (
-                  <PortCluster key={cluster.group} label={`${face.title} · ${cluster.title}`} group={cluster.group} title={cluster.title} tiles={cluster.tiles} compact={compact} cablesDenied={cablesDenied}>
+                  <PortCluster key={cluster.group} label={`${face.title} · ${cluster.title}`} group={cluster.group} title={cluster.title} tiles={cluster.tiles} compact={compact} cablesDenied={cablesDenied} powerNote={!dense}>
                     {cluster.tiles.map(tile => renderTile(tile, compact))}
                   </PortCluster>
                 );

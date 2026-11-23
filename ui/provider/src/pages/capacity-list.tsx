@@ -50,7 +50,7 @@ export default function CapacityList() {
       <DeleteDialog
         name={deleting?.name}
         resource="machine capacity"
-        warning={`Deletion in ${deleting?.namespace ?? 'its namespace'} is subject to server lifecycle fences. The production registration authority rejects deletion, including legacy records. Never use deletion to roll back an uncertain registration.`}
+        warning={`Deletion in ${deleting?.namespace ?? 'its namespace'} is subject to server lifecycle fences. The production registration authority rejects deletion. Never use deletion to roll back an uncertain registration.`}
         pending={deletion.isPending}
         error={deletion.error}
         onConfirm={() =>

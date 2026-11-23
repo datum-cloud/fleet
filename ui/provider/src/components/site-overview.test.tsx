@@ -10,7 +10,7 @@ const meta = (name: string) => ({ name, namespace: 'default', uid: `${name}-uid`
 const facility: PhysicalRecord = { kind: 'Facility', metadata: meta('building'), spec: { displayName: 'Premises', locationRef: { name: 'geo-ref' } } };
 const site: PhysicalRecord = { kind: 'Site', metadata: meta('site'), spec: { displayName: 'Operational site', code: 'EX3', facilityRefs: [{ name: 'building' }, { name: 'building' }] } };
 const rack: PhysicalRecord = { kind: 'Rack', metadata: meta('rack'), spec: { displayName: 'Rack A', facilityRef: { name: 'building' } } };
-const plan: RawDeviceClaim = { metadata: meta('plan'), spec: { displayName: 'Install A', lifecycle: 'Installation', expectedIdentity: { model: 'Example' }, placement: { rackRef: { name: 'rack' } } } };
+const plan: RawDeviceClaim = { metadata: meta('plan'), spec: { displayName: 'Install A', lifecycle: 'Installation', expectedIdentity: { model: 'Example' }, placement: { scope: 'RackMembership', rackRef: { name: 'rack' } } } };
 const device: RawDevice = { metadata: meta('device'), spec: { displayName: 'Device A', claimRef: { name: 'plan' }, identity: { model: 'Example' } } };
 const data = () => toInventory([plan], [device], [site, facility, rack]);
 function show(inventory = data()) {
@@ -28,7 +28,7 @@ describe('operational Site overview', () => {
     inventory.slots[0].devices.push(device);
     show(inventory);
     expect(screen.getAllByRole('link', { name: 'Premises', hidden: true })).toHaveLength(1);
-    expect(screen.getByText(/not equipment assigned to this Site/)).toBeInTheDocument();
+    expect(screen.queryByText(/not equipment assigned to this Site/)).toBeNull();
     openTab('Racks');
     expect(screen.getByRole('link', { name: 'Rack A' })).toHaveAttribute('href', '/inventory?kind=Rack&record=rack&namespace=default');
     openTab('Devices');
@@ -39,20 +39,17 @@ describe('operational Site overview', () => {
     expect(screen.getByRole('link', { name: 'Install A' })).toHaveAttribute('href', '/inventory?kind=DeviceClaim&record=plan&namespace=default');
     expect(screen.getByText(/execution status is not recorded/)).toBeInTheDocument();
     expect(screen.queryByText('Related records')).not.toBeInTheDocument();
-    expect(screen.getByText('Namespace').closest('details')).not.toHaveAttribute('open');
-    expect(screen.getByText('Record name').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByRole('region', { name: 'Record' })).toHaveTextContent(/^Record site/);
   });
 
-  it('prefers device reports, counts each registration, and excludes legacy claims from plans', () => {
+  it('prefers device reports and counts each registration', () => {
     const moved = { ...device, metadata: meta('moved'), spec: { ...device.spec, displayName: 'Moved device', reportedPlacement: { revision: 1, reason: 'Observation', reference: 'Synthetic', observedAt: '2026-11-22', facilityRef: { name: 'elsewhere' } } } };
     const direct = { ...device, metadata: meta('direct'), spec: { ...moved.spec, displayName: 'Direct device', claimRef: { name: 'missing' }, reportedPlacement: { ...moved.spec.reportedPlacement, facilityRef: { name: 'building' } } } };
-    const legacy = { ...plan, metadata: meta('legacy'), spec: { ...plan.spec, lifecycle: undefined, displayName: 'Legacy slot' } };
-    show(toInventory([plan, legacy], [device, moved, direct], [site, facility, rack, { ...facility, metadata: meta('elsewhere') }]));
+    show(toInventory([plan], [device, moved, direct], [site, facility, rack, { ...facility, metadata: meta('elsewhere') }]));
     openTab('Devices');
     expect(screen.getByRole('heading', { name: 'Devices · 2 recorded' })).toBeInTheDocument();
     expect(screen.getByText('Reported placement')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Moved device', hidden: true })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Legacy slot', hidden: true })).not.toBeInTheDocument();
   });
 
   it.each(['Facility', 'Rack', 'Device', 'DeviceClaim'] as const)('redacts denied %s collections without claiming zero', kind => {
@@ -99,7 +96,7 @@ describe('operational Site overview', () => {
     expect(screen.getByRole('link', { name: 'Device A' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Devices · 1 found · incomplete' })).toBeInTheDocument();
     expect(screen.getByText(/1 found · incomplete · execution/)).toBeInTheDocument();
-    expect(screen.getByText(/Counts do not establish capacity or readiness/)).toBeInTheDocument();
+    expect(screen.queryByText(/Counts do not establish capacity or readiness/)).toBeNull();
   });
 
   it('does not reuse a deleting claim for device location fallback', () => {
