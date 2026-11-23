@@ -70,31 +70,115 @@ list's view.
 
 ## Commands
 
-| Command                  | What it does                                            |
-| ------------------------ | ------------------------------------------------------- |
-| `pnpm install`           | Install dependencies (Node 26, see `.nvmrc`).           |
-| `pnpm test`              | Run the vitest suite.                                   |
-| `pnpm typecheck`         | Type-check without emitting.                            |
-| `pnpm build`             | Build into `dist/`, reading the live Fleet API.         |
-| `pnpm build:fixtures`    | Build with synthetic capacity instead of the API.       |
-| `pnpm preview`           | Serve `dist/` on http://localhost:7781.                 |
-| `pnpm dev`               | Vite dev server for the standalone `index.html` only.   |
+| Command                  | What it does                                                        |
+| ------------------------ | ------------------------------------------------------------------- |
+| `pnpm install`           | Install dependencies (Node 26, see `.nvmrc`).                       |
+| `pnpm test`              | Run the vitest suite.                                               |
+| `pnpm typecheck`         | Type-check without emitting.                                        |
+| `pnpm build`             | Build into `dist/`, reading the live Fleet API.                     |
+| `pnpm build:fixtures`    | Build with synthetic data instead of the API (`--mode fixtures`).   |
+| `pnpm preview`           | Serve `dist/` on http://localhost:7781.                             |
+| `pnpm preview:fixtures`  | `build:fixtures`, then serve it on http://localhost:7781.           |
+| `pnpm dev`               | Vite dev server for the standalone `index.html` only.               |
+| `pnpm dev:fixtures`      | The same dev server with synthetic data.                            |
+| `pnpm screenshots`       | Build the fixture preview and capture review screenshots.           |
 
 ## Fixture mode
 
-The Fleet CRDs are on staging, but reading them needs a Bare Metal role. Setting
-`VITE_FLEET_FIXTURES=true` at build time makes `useMachineCapacities` return
-the synthetic MachineCapacities in `src/lib/fixtures.ts`: one free, one allocated and one
-just enrolled, following Fleet's standalone fixtures and the statuses its
-standalone runner writes. Profiles start with the standalone fixture's
-profile; profiles you create are kept in memory until the page reloads. The
-flag is baked into the build.
+The Fleet CRDs are on staging, but reading them needs a Bare Metal role. A
+fixture build replaces every API read with synthetic data:
+
+- `useMachineCapacities` returns the MachineCapacities in `src/lib/fixtures.ts`:
+  one free, one allocated and one just enrolled, following Fleet's standalone
+  fixtures and the statuses its standalone runner writes. Profiles and classes
+  start with the standalone fixture's; ones you create stay in memory until
+  the page reloads.
+- `useInventory` returns the preview dataset in `src/lib/inventory-fixtures.ts`:
+  one facility with three 42U racks, about fifteen Devices (1U and 2U servers,
+  a 48+8-port leaf mounted reversed, a half-depth rear patch panel, a PDU on a
+  non-unit mount, a Device with a rack but no position, one with no placement,
+  two overlapping placements, a Decommissioning and a Retired Device), the
+  catalog of Manufacturers and DeviceTypes with network, power, console and
+  BMC templates, two power feeds, and Cables covering every connection-view
+  state (recorded, two Cables on one port, a missing peer, a 4-lane breakout,
+  PSU to PDU outlet to feed, and a patch-panel pass-through). It is typed
+  against `../shared/fleet-api.ts`, so wire-type drift fails `pnpm typecheck`,
+  and `inventory-fixtures.test.ts` checks it stays coherent.
+- Inventory writes are disabled: permission checks answer "not allowed", so
+  management and capacity-registration controls stay hidden or read-only.
+  Nothing is sent to the API.
+
+Add `?fixture=<scenario>` to a preview URL to deny whole collections, as a
+403 would: `power-feeds-denied`, `devices-denied` or `cables-denied`
+(`FIXTURE_SCENARIOS`). The scenario is read once per page load.
+
+Fixture data can never reach a production build. `VITE_FLEET_FIXTURES` is
+baked into the bundle at build time and is only honoured in Vite's `fixtures`
+mode, which the `*:fixtures` and `screenshots` scripts pass. `vite.config.ts`
+fails any other build or dev server that sets it, including through a local
+`.env` file (`scripts/fixture-mode.ts`). The image build runs plain
+`pnpm build`, which compiles the flag to `false`; the inventory dataset is
+loaded lazily behind it, so it is not in that bundle at all.
+
+## Preview locally
+
+```bash
+# fleet/ui/provider
+pnpm preview:fixtures   # or pnpm dev:fixtures for hot reload
+```
+
+Open http://localhost:7781/. The standalone harness (`index.html`, `src/main.tsx`)
+uses browser URLs under the same `/plugins/metal-datumapis-com/` paths
+staff-portal mounts, with no login and no session boundary. Stable URLs:
+
+| View                         | Path                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| Inventory list               | `/plugins/metal-datumapis-com/inventory`                                                         |
+| Rack elevation               | `/plugins/metal-datumapis-com/inventory?kind=Rack&record=example-rack-a01&namespace=default`     |
+| Server detail and connections | `/plugins/metal-datumapis-com/inventory?kind=Device&record=example-srv-a01-01&namespace=default` |
+| Large switch (list fallback) | `/plugins/metal-datumapis-com/inventory?kind=Device&record=example-leaf-a01&namespace=default`   |
+| Denied peer                  | the server URL plus `&fixture=power-feeds-denied`                                                |
+
+The banner's button switches light and dark; `?theme=light` or `?theme=dark`
+on any URL sets it directly. The choice is remembered in local storage. The
+theme switch is part of the harness only; federated pages use the host's theme.
+`session-fixture.html` is a separate dev-only page for session-boundary tests
+and is not built.
+
+## Screenshots
+
+```bash
+# fleet/ui/provider
+pnpm screenshots
+```
+
+This builds with fixtures, serves the build on port 7782, and captures each
+page in `scripts/screenshot-pages.ts` at 1280px light, 1280px dark and 390px
+phone width into `screenshots/` (gitignored). It prints every file it wrote,
+and fails if a page logs a console error, throws, calls the API, renders
+without the fixture banner, or scrolls horizontally at 390px. Playwright is a
+pinned devDependency; if its Chromium is missing, run
+`pnpm exec playwright install chromium`.
+
+| Variable                | Effect                                                     |
+| ----------------------- | ---------------------------------------------------------- |
+| `SCREENSHOT_DIR`        | Output directory (default `ui/provider/screenshots`).      |
+| `SCREENSHOT_PORT`       | Preview port (default 7782).                               |
+| `SCREENSHOT_ONLY`       | Comma-separated page names to capture.                     |
+| `SCREENSHOT_SKIP_BUILD` | `1` reuses `dist/` from an earlier `pnpm build:fixtures`.  |
+
+To capture a new view, append an entry to `PAGES` in
+`scripts/screenshot-pages.ts`: a `name` (the file stem), a preview `path`
+(without `theme`), a `ready` selector to wait for, and optionally an `element`
+selector to capture instead of the full page or a `viewports` subset. Name
+records from `inventory-fixtures.ts`, adding any the view needs there; a unit
+test fails if a page names a record or scenario the dataset lacks.
 
 ## Run inside staff-portal
 
 ```bash
 # fleet/ui/provider
-pnpm build:fixtures && pnpm preview
+pnpm preview:fixtures
 
 # staff-portal, in another terminal (you must be in the staff-users group)
 PORTAL_PLUGINS='metal-datumapis-com=http://localhost:7781' npm run dev
@@ -143,7 +227,7 @@ theme with Tailwind. That stylesheet is not imported by federated pages; the hos
 still supplies its design system. Inventory-specific CSS is scoped under
 `.fleet-inventory` and shipped with the existing remote. No second app or host
 navigation is introduced. Fixture mode includes all six inventory kinds with
-explicitly synthetic identities and no verified state.
+explicitly synthetic identities and no verified state (see [Fixture mode](#fixture-mode)).
 
 - The local harness pins react-router 7.18.2 and shares it with
   `requiredVersion: false`. The supplied current host pin uses Router ^8.3.1;
