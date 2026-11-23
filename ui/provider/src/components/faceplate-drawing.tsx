@@ -1,6 +1,7 @@
 // The drawn faceplate: a Device's front and rear faces generated from its
 // DeviceType's recorded layout, at full detail on Device detail and the rack
-// panel, and as mini faceplates in the rack elevation.
+// panel, and as mini faceplates in the rack elevation. DeviceType detail draws
+// the model alone, every port catalog only (modelDrawingModel).
 //
 // Ports are the shared PortTileButton, with the shared tooltip and PortCard,
 // through usePortGrid, so the drawing and the grouped tiles never drift. A
@@ -12,7 +13,7 @@ import { useMemo, type CSSProperties } from 'react';
 import type { ChassisFace, Device, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import { connectorKind } from '../lib/connector-kind';
-import { shortFaceLabel, shortLabels, viewNames, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
+import { groupOf, portTiles, shortFaceLabel, shortLabels, viewNames, type ConnectionLink, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
 import { faceplate } from '../lib/device-faceplate';
 import { deviceTray, edgeNumbers, joinTemplates, modelLayout, MODULE_TYPES, portNumber, type FaceGeometry, type LayoutBank, type ModelLayout, type TemplateJoin, type TrayEntry } from '../lib/faceplate-layout';
 import { deviceCatalog } from '../lib/hardware-catalog';
@@ -75,6 +76,36 @@ export function deviceDrawingModel(device: Device, inventory: Inventory): Device
     shortTitles: { Front: shortFaceLabel('Front', componentRackFace(mounted, 'Front')), Rear: shortFaceLabel('Rear', componentRackFace(mounted, 'Rear')) },
     names: viewNames(plate.links),
     cablesDenied: plate.cableAccess === 'denied',
+  };
+}
+
+/** A catalog model's templates as catalog-only links: no Device records them and nothing is cabled. */
+export function catalogLinks(model: PhysicalRecord): ConnectionLink[] {
+  return (model.spec.componentTemplates ?? []).map(template => ({
+    key: `catalog/${template.id}`, group: groupOf[template.type], state: 'catalog', componentID: template.id, template,
+    position: 1, positions: template.positions ?? 1, chassisFace: template.face, trace: [], reasons: [], checks: [],
+  }));
+}
+
+/**
+ * The DeviceType page's drawing: the model's recorded layout with every
+ * template catalog only. No Device, so no recorded components, no Cables and
+ * no rack face; the faces are titled by chassis face alone.
+ */
+export function modelDrawingModel(model: PhysicalRecord): DeviceDrawingModel {
+  const layout = modelLayout(model);
+  const join = joinTemplates(model.spec.componentTemplates, []);
+  const links = catalogLinks(model);
+  return {
+    layout, model, join,
+    tiles: new Map(portTiles(links).map(tile => [tile.componentID, tile])),
+    at: templateID => templateID,
+    recorded: new Set(),
+    tray: deviceTray(layout, model, [], join),
+    titles: { Front: 'Front', Rear: 'Rear' },
+    shortTitles: { Front: 'Front', Rear: 'Rear' },
+    names: viewNames([]),
+    cablesDenied: false,
   };
 }
 
