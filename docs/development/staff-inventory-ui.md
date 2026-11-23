@@ -244,6 +244,7 @@ pixel identity or completed authenticated staging acceptance.
   same face are marked `!` and labelled "records disagree"; they are never
   blocked. The logic is in `ui/provider/src/lib/rack-faces.ts` and
   `device-depth.ts`.
+  The Rack page layout is described under [Rack page](#rack-page-implemented).
 - Create Facility/Rack facts; rack height is optional. Create an Installation
   plan at a known Facility or Rack with unknown unit position, then separately
   register a Device with a real serial or system UUID and typed components.
@@ -488,6 +489,67 @@ note does not change the record state.
 Not shown, because the model does not record them: link speed, Cable label,
 colour or length, x/y port positions, live or observed link state, and any
 verified state. Shared-failure or redundancy analysis is not attempted.
+
+## Rack page (implemented)
+
+The Rack page centres the elevation and moves everything else into tabs, so
+the page answers "what is in this rack" without scrolling past related
+records. `ui/provider/src/components/rack-detail.tsx` wraps the existing
+elevation (`RackOverview` in `inventory-location.tsx`) rather than redrawing
+it.
+
+- **Header.** The title, then one line: the facility, the rack height and
+  issue badges ("2 placements disagree", "1 without a position"). A count
+  strip follows (Equipment, Cables, Power feeds); each count links to its tab
+  and a denied collection reads "unavailable", never 0. The free-space note
+  stays visible as one small line. The record name, namespace, UID and
+  display-name editing move into a collapsed **About this record** section.
+- **Tabs.** Elevation (default), Equipment, Cables, Power and History. The tab
+  is the `tab` query key beside `kind`, `record` and `namespace`; Back and
+  shared links restore it. An unknown value falls back to the elevation.
+- **Selection.** Selecting equipment in the elevation sets `selectedKind`
+  (`Device` or `DeviceClaim`) and `selected` (the record name) and opens a
+  side panel; below 600 px it is a bottom sheet (`role="dialog"`, non-modal,
+  focus on Close). The panel leads with the device's faceplate, then model,
+  units, rack face, depth, lifecycle, a count of recorded cable states, and
+  links to the Device page and installation plan. Arrow keys, Home and End
+  move between elevation entries; Enter selects; Escape closes the panel and
+  returns focus to the entry. A selection that is not among the readable
+  records for this rack says so without repeating the name.
+- **Faceplate.** `device-faceplate.tsx` draws one tile per recorded component
+  (and catalog-only template), clustered by chassis face and then by type,
+  with the connection view's state glyphs and border styles. The chassis
+  face comes from the DeviceType template with the same id; a component
+  without a readable template face is shown under "Component faces not
+  recorded", never guessed from its type. Each tile opens a pop-up card with
+  the component's type, connector, the rack face it lands on (when known),
+  positions, identity, Cables and any opposite-face check. Its Health
+  section reads "No health reported": no inventory kind reports health.
+- **Equipment tab.** One condensed table per section (positioned,
+  unpositioned, non-racked mounts) with Device, U / face / depth (depth with
+  its source), Lifecycle and Claim / registration columns. Facility and rack are not repeated per
+  row. Claim-derived fallback rows stay labelled.
+- **Cables tab.** Cables grouped by the device in this rack they terminate on,
+  with counts, port, peer, record state and the Cable's display name. Record
+  names are only in each group's collapsed "Record names" list.
+- **Power tab.** Power feeds that name the rack, with each termination's
+  recorded cable or "no cable recorded", and PDUs (Devices with power
+  outlets) with the outlets that have a cable recorded.
+- **History tab.** Record history and verification, unchanged in meaning.
+- **Issue banners.** Above the elevation, one short banner per cluster of
+  same-face overlapping placements, from the elevation's own face-aware
+  occupancy (flagged, not blocked), and one for equipment that
+  names the rack without a usable unit position. Each names the affected
+  equipment as links that select it.
+
+The elevation keeps device bars this round. `RackSlotDevice`
+(`rack-slot-device.tsx`) is the single component that renders equipment in a
+unit span, so mini faceplates can replace the bars once DeviceTypes record a
+layout. The elevation toolbar (`RackOverview`'s `toolbar` slot, beside the
+face switch) and the stage's `data-view="2d"` leave room for a later 2D/3D
+toggle; no 3D view exists. `condensedName()` in `lib/display-names.ts`
+shortens component names for tiles (Ethernet 0 → eth0, Outlet 3 → O3); the
+full name stays in the tile's accessible name and card.
 
 ## Deliberate gaps and decisions
 
