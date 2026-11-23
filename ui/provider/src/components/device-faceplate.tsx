@@ -59,7 +59,7 @@ function mediumText(link: ConnectionLink) {
  * edge) and at the last tile. A tile outside the cluster's main name series
  * (mgmt0 among swp1–swp56) shows its short label instead.
  */
-function numbering(tiles: PortTile[], labels: Map<string, string>) {
+export function numbering(tiles: PortTile[], labels: Map<string, string>) {
   const series = (name: string) => name.match(/^(.*?)(\d+)$/);
   const prefixes = new Map<string, number>();
   for (const tile of tiles) { const prefix = series(tile.name)?.[1]; if (prefix !== undefined) prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1); }
@@ -87,6 +87,17 @@ export interface PortTelemetry {
   section?: ReactNode;
   /** Replaces "No health reported" when health is observed. */
   health?: ReactNode;
+  /** Which collector reported the values, and when: shown behind the card's More. */
+  source?: ReactNode;
+}
+
+/** The record that holds a component: a Device, or a PowerFeed's terminations. */
+export type ComponentOwner = 'Device' | 'PowerFeed';
+
+/** "Recorded on this Device" or "Recorded on this power feed"; a feed has no catalog template. */
+export function recordWords(owner: ComponentOwner, recorded: boolean) {
+  if (owner === 'PowerFeed') return recorded ? 'Recorded on this power feed' : 'Not recorded on this power feed';
+  return recorded ? 'Recorded on this Device' : 'Catalog template only; this Device does not record it';
 }
 
 /** A tile's load tint and mark. Stale is grey and never coloured. */
@@ -106,7 +117,7 @@ export interface TileLoad {
  * a collapsed More, which is not rendered until it is opened. A denied peer's
  * name and record name appear nowhere, in the answer or in More.
  */
-export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry, health }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean; telemetry?: ReactNode; health?: ReactNode }) {
+export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry, health, telemetrySource, owner = 'Device' }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean; telemetry?: ReactNode; health?: ReactNode; telemetrySource?: ReactNode; owner?: ComponentOwner }) {
   const [more, setMore] = useState(false);
   const moreID = useId();
   // A breakout's lanes share one Cable: name it once, then list each position's peer.
@@ -151,7 +162,7 @@ export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry
         {more && (
           <dl id={moreID} className="inventory-port-card-fields">
             <dt>Connector</dt><dd>{[tile.connector ?? 'Not recorded', tile.positions > 1 ? `${tile.positions} positions` : undefined].filter(Boolean).join(' · ')}</dd>
-            <dt>Record</dt><dd>{component ? 'Recorded on this Device' : 'Catalog template only; this Device does not record it'}</dd>
+            <dt>Record</dt><dd>{recordWords(owner, !!component)}</dd>
             {tile.templateMatch && <><dt>Position</dt><dd>{tile.templateMatch === 'id' ? 'Matched to catalog by id' : 'Matched to catalog by name and type'}</dd></>}
             {component && (component.serial || component.assetTag) && <><dt>Identity</dt><dd>{[component.serial, component.assetTag].filter(Boolean).join(' · ')}</dd></>}
             {internal && <><dt>Internal path</dt><dd>{internal.componentName ?? internal.componentID}{internal.position > 1 ? ` · position ${internal.position}` : ''}</dd></>}
@@ -162,6 +173,7 @@ export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry
             })}
             {!cablesDenied && peers.map(link => <Fragment key={link.key}><dt>Peer record</dt><dd><code>{link.peer!.name}</code>{tile.positions > 1 ? <small>position {link.position}</small> : null}</dd></Fragment>)}
             {!cablesDenied && tile.links.some(link => link.trace.length > 0) && <><dt>Path</dt><dd>{tile.links.map(link => <Trace key={link.key} hops={link.trace} namespace={namespace} href={href} names={names} />)}</dd></>}
+            {telemetrySource && <><dt>Telemetry source</dt><dd>{telemetrySource}</dd></>}
             <dt>Source</dt><dd>Cable records, not live link state</dd>
           </dl>
         )}
@@ -292,7 +304,7 @@ export interface PortGridTileOptions {
  * and one card. Tiles are found by `data-tile` inside `container`, in DOM
  * order; arrow keys move by drawn position.
  */
-export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined }) {
+export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry, owner = 'Device' }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined; owner?: ComponentOwner }) {
   const container = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -403,7 +415,7 @@ export function usePortGrid({ tiles, names, namespace, href, cablesDenied = fals
             <h5>{card.name}</h5>
             <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={close} aria-label={`Close ${card.name}`}>Close</Button>
           </div>
-          <PortCard key={card.key} tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} />
+          <PortCard key={card.key} tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} telemetrySource={cardTelemetry?.source} owner={owner} />
         </div>
       )}
     </>

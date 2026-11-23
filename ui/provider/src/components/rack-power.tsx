@@ -3,15 +3,23 @@
 // (through PDU outlets and internal mappings). Devices whose PSUs all reach
 // one feed are flagged "Single feed (recorded)"; unrecorded paths read "Feed
 // unknown". Nothing here claims or verifies redundancy.
+//
+// This grid is the whole Power tab. Each feed's column carries its outlets as
+// the shared tiles (peer, Cable and readings in each tile's name, tooltip and
+// card) and links to the feed's power path; each PDU's row says how many of
+// its outlets have a cable recorded and links to the PDU's faceplate.
 
-import type { CSSProperties } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
-import { classifyFeeds, psuFeeds, type FeedClass, type PsuFeed } from '../lib/power-paths';
+import { classifyFeeds, feedPath, psuFeeds, type FeedClass, type PsuFeed } from '../lib/power-paths';
+import { deviceConnections, viewNames } from '../lib/device-connections';
+import { feedCapacity } from '../lib/power-capacity';
 import { displayLabel, humanName } from '../lib/display-names';
-import { CapacityBar, useTelemetry } from './power-telemetry';
-import { FeedClassBadge } from './power-feed-path';
+import { tileSummary } from './connection-parts';
+import { CapacityBar, usePortTelemetry, useTelemetry } from './power-telemetry';
+import { FeedClassBadge, OutletTiles } from './power-feed-path';
 import { inventoryHref } from './inventory-location';
 import { ViewLegend } from './inventory-record-layout';
 
@@ -41,6 +49,29 @@ function rows(devices: Device[], inventory: Inventory): Row[] {
 function psuText(psu: PsuFeed) {
   if (psu.feed) return psu.via ? `via ${psu.via.label} · ${psu.via.outlet}` : 'direct';
   return psu.unknown ?? 'Path not recorded';
+}
+
+/** A feed's outlets as tiles, for its column header. */
+function FeedOutlets({ feed, label, inventory }: { feed: PhysicalRecord; label: string; inventory: Inventory }) {
+  const path = useMemo(() => feedPath(feed, inventory), [feed, inventory]);
+  const names = useMemo(() => viewNames(path.links), [path]);
+  const cablesDenied = path.cableAccess === 'denied';
+  const telemetry = usePortTelemetry({ kind: 'PowerFeed', namespace: feed.metadata.namespace, name: feed.metadata.name, label }, { continuousA: feedCapacity(feed.spec.supply).continuousA, cablesDenied });
+  if (!path.terminations.length) return <small>No outlets recorded</small>;
+  return <div className="inventory-redundancy-outlets">
+    <OutletTiles label={`${label} outlets`} tiles={path.terminations} names={names} namespace={feed.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} telemetry={telemetry} owner="PowerFeed" />
+    <small>{path.terminations.length} {path.terminations.length === 1 ? 'outlet' : 'outlets'} · {cablesDenied ? 'cable details unavailable' : tileSummary(path.terminations)} · <Link to={`${inventoryHref('PowerFeed', feed.metadata.namespace, feed.metadata.name)}#power-path`}>Power path</Link></small>
+  </div>;
+}
+
+/** "5 of 8 outlets have a cable recorded", for a PDU's row; undefined for anything without outlets. */
+export function outletUse(device: Device, inventory: Inventory) {
+  const total = (device.spec.components ?? []).filter(component => component.type === 'PowerOutlet').reduce((sum, component) => sum + (component.positions ?? 1), 0);
+  if (!total) return undefined;
+  const connections = deviceConnections(device, inventory);
+  if (connections.cableAccess === 'denied') return 'Cable details unavailable. Outlet use is unknown.';
+  const used = new Set(connections.links.filter(link => link.cable && link.component?.type === 'PowerOutlet').map(link => `${link.componentID}/${link.position}`)).size;
+  return `${used} of ${total} outlets have a cable recorded`;
 }
 
 /**
@@ -74,6 +105,7 @@ export function RackPowerRedundancy({ rack, feeds, devices, inventory }: { rack:
             <Link to={inventoryHref('PowerFeed', column.feed.metadata.namespace, column.feed.metadata.name)}>{column.label}</Link>
             <small>{column.feed.spec.supply ? `${column.feed.spec.supply.type} · ${column.feed.spec.supply.voltageV ?? '?'} V · ${column.feed.spec.supply.currentA ?? '?'} A` : 'Supply not recorded'}{column.feed.spec.rackRef?.name !== rack.metadata.name ? ' · names another rack' : ''}</small>
             <CapacityBar feed={column.feed} reading={source.read({ kind: 'PowerFeed', namespace: column.feed.metadata.namespace, name: column.feed.metadata.name })} now={now} source={source} compact />
+            <FeedOutlets feed={column.feed} label={column.label} inventory={inventory} />
           </> : <><strong><span aria-hidden="true">? </span>{column.label}</strong><small>Path not fully recorded</small></>}
         </div>)}
       </div>
@@ -81,6 +113,7 @@ export function RackPowerRedundancy({ rack, feeds, devices, inventory }: { rack:
         <div role="rowheader" className="inventory-redundancy-device">
           <Link to={inventoryHref('Device', row.device.metadata.namespace, row.device.metadata.name)}>{displayLabel(row.device)}</Link>
           <FeedClassBadge value={row.class} />
+          {outletUse(row.device, inventory) && <small className="inventory-redundancy-outlet-use">{outletUse(row.device, inventory)}</small>}
         </div>
         {columns.map(column => {
           const psus = inColumn(row, column);

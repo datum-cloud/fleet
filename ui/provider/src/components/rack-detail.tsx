@@ -245,54 +245,21 @@ function CablesTab({ slots, inventory }: { slots: EquipmentPlacement[]; inventor
   </div>;
 }
 
-function feedUse(feed: PhysicalRecord, inventory: Inventory) {
-  const uses = new Map<string, string[]>();
-  for (const cable of inventory.physical) {
-    if (cable.kind !== 'Cable' || cable.metadata.namespace !== feed.metadata.namespace) continue;
-    for (const lane of cable.spec.lanes ?? []) for (const [mine, far] of [[lane.a, lane.b], [lane.b, lane.a]] as const) {
-      if (mine.powerFeedRef?.name !== feed.metadata.name) continue;
-      const device = far.deviceRef && !inventory.issues?.Device ? [...inventory.slots.flatMap(slot => slot.devices), ...inventory.unboundDevices].find(item => item.metadata.namespace === feed.metadata.namespace && item.metadata.name === far.deviceRef!.name) : undefined;
-      const peer = far.deviceRef ? inventory.issues?.Device ? 'Device unavailable' : device ? `${displayLabel(device)} · ${device.spec.components?.find(item => item.id === far.componentID)?.name ?? far.componentID}` : `${far.deviceRef.name} (record not found)` : 'Other power feed';
-      uses.set(`${mine.componentID}/${mine.position}`, [...(uses.get(`${mine.componentID}/${mine.position}`) ?? []), `${peer} via ${displayLabel(cable)}`]);
-    }
-  }
-  return uses;
-}
-
+/**
+ * The redundancy grid is the whole tab. Each feed's column carries its
+ * outlets as tiles and each PDU's row its outlet count, so the per-feed and
+ * per-PDU lists this tab used to repeat below the grid are not needed; every
+ * outlet's peer and Cable is in its tile's name, tooltip and card, and on
+ * the feed's power path.
+ */
 function PowerTab({ rack, slots, inventory }: { rack: PhysicalRecord; slots: EquipmentPlacement[]; inventory: Inventory }) {
   const feeds = rackFeeds(rack, inventory);
-  const cablesDenied = !!inventory.issues?.Cable;
-  const pdus = inventory.issues?.Device ? undefined : rackDevices(slots).filter(device => device.spec.components?.some(component => component.type === 'PowerOutlet'));
   const devices = inventory.issues?.Device ? undefined : rackDevices(slots);
   return <div className="inventory-equipment-sections">
     <p className="inventory-muted">Ratings, recorded cables and observed load; available power is unknown. No cable recorded means unknown, not free.</p>
-    {!feeds ? null : <RackPowerRedundancy rack={rack} feeds={feeds} devices={devices} inventory={inventory} />}
-    <section aria-label="Power feeds"><h4>Feed outlets <span className="inventory-count">{feeds ? feeds.length : 'unavailable'}</span></h4>
-      {!feeds ? <p>Power feed details unavailable.</p> : feeds.length ? <ul className="inventory-power-list">{feeds.map(feed => {
-        const uses = cablesDenied ? undefined : feedUse(feed, inventory);
-        const supply = feed.spec.supply;
-        return <li key={feed.metadata.name}>
-          <p><strong>{displayLabel(feed)}</strong> <small>{supply ? `${supply.type} · ${supply.voltageV ?? 'Unknown'} V · ${supply.currentA ?? 'Unknown'} A${supply.phase ? ` · ${supply.phase} phase` : ''}` : 'Supply not recorded'}</small></p>
-          {!uses ? <p>Cable details unavailable. Outlet use is unknown.</p> : <ul aria-label={`${displayLabel(feed)} outlets`}>{(feed.spec.terminations ?? []).flatMap(termination => Array.from({ length: termination.positions ?? 1 }, (_, index) => {
-            const key = `${termination.id}/${index + 1}`;
-            const used = uses.get(key);
-            return <li key={key} data-state={used ? used.length > 1 ? 'conflict' : 'cabled' : 'none'}><Glyph state={used ? used.length > 1 ? 'conflict' : 'cabled' : 'none'} /> {termination.name}{(termination.positions ?? 1) > 1 ? ` · position ${index + 1}` : ''}: {used ? used.join('; ') : 'no cable recorded'}</li>;
-          }))}</ul>}
-        </li>;
-      })}</ul> : <p className="inventory-muted">No power feeds name this rack.</p>}
-    </section>
-    <section aria-label="PDUs"><h4>PDUs <span className="inventory-count">{pdus ? pdus.length : 'unavailable'}</span></h4>
-      {!pdus ? <p>Device details unavailable.</p> : pdus.length ? <ul className="inventory-power-list">{pdus.map(pdu => {
-        const connections = deviceConnections(pdu, inventory);
-        const outlets = connections.links.filter(link => link.component?.type === 'PowerOutlet' || link.template?.type === 'PowerOutlet');
-        const used = outlets.filter(link => link.cable);
-        const outletCount = (pdu.spec.components ?? []).filter(component => component.type === 'PowerOutlet').reduce((sum, component) => sum + (component.positions ?? 1), 0);
-        return <li key={pdu.metadata.name}>
-          <p><Link to={inventoryHref('Device', pdu.metadata.namespace, pdu.metadata.name)}>{displayLabel(pdu)}</Link> <small>{connections.cableAccess === 'denied' ? 'Cable details unavailable. Outlet use is unknown.' : `${new Set(used.map(link => `${link.componentID}/${link.position}`)).size} of ${outletCount} outlets have a cable recorded`}</small></p>
-          {connections.cableAccess !== 'denied' && used.length > 0 && <ul aria-label={`${displayLabel(pdu)} outlets in use`}>{used.map(link => <li key={link.key} data-state={link.state}><Glyph state={link.state} /> {localLabel(link)} → {peerLabel(link.peer)}{link.state !== 'cabled' ? ` · ${linkStateWords[link.state]}` : ''}</li>)}</ul>}
-        </li>;
-      })}</ul> : <p className="inventory-muted">No device in this rack records power outlets.</p>}
-    </section>
+    {!feeds ? <p>Power feed details unavailable.</p> : !feeds.length && <p className="inventory-muted">No power feeds name this rack.</p>}
+    {/* With feeds denied the grid still lists each device and PDU; every PSU's feed reads unknown and no feed is named. */}
+    <RackPowerRedundancy rack={rack} feeds={feeds ?? []} devices={devices} inventory={inventory} />
   </div>;
 }
 
@@ -342,11 +309,13 @@ export function RackDetail({ rack, inventory, management }: { rack: PhysicalReco
   const onStageKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (event.key === 'Escape' && selecting && !target.closest('[data-component-card]')) { event.preventDefault(); closeSelection(); return; }
-    if (!target.matches('a[data-slot-key]')) return;
+    // Entries are equipment links and collapsed-run rows, in visual order per face.
+    if (!target.matches('a[data-slot-key], [data-elevation-entry]')) return;
     // Enter selects: the link's own activation, made explicit so it never depends on the browser.
-    if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { const slot = slots.find(item => item.key === target.dataset.slotKey); if (slot) { event.preventDefault(); void navigate(selectHref(slot)); } return; }
+    // On a collapsed run, Enter is the button's own activation and expands it.
+    if (event.key === 'Enter' && target.matches('a[data-slot-key]') && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { const slot = slots.find(item => item.key === target.dataset.slotKey); if (slot) { event.preventDefault(); void navigate(selectHref(slot)); } return; }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-    const items = [...(stage.current?.querySelectorAll<HTMLElement>('.inventory-rack-faces a[data-slot-key]') ?? [])];
+    const items = [...(stage.current?.querySelectorAll<HTMLElement>('.inventory-rack-faces a[data-slot-key], .inventory-rack-faces [data-elevation-entry]') ?? [])];
     const index = items.indexOf(target);
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : index + (event.key === 'ArrowDown' ? 1 : -1);
     if (next < 0 || next >= items.length) return;

@@ -75,6 +75,15 @@
 .inventory-rack-units { display:grid; list-style:none; padding:0; margin:0; border:1px solid var(--border); font-size:9px; line-height:15px; }
 .inventory-rack-unit { display:grid; grid-template-columns:28px 1fr; border-bottom:1px solid var(--border); }
 .inventory-rack-unit > span { padding:0 3px; background:var(--muted); }
+/* A collapsed run of blank units: one compact row. Blank is unrecorded, never free. */
+.inventory-rack-run { display:flex; min-width:0; min-height:0; border-bottom:1px solid var(--border); }
+.inventory-rack-run-button { appearance:none; display:flex; align-items:center; width:100%; min-width:0; margin:0; padding:0 6px; border:0; border-left:28px solid var(--muted); background:repeating-linear-gradient(0deg,transparent 0 5px,color-mix(in oklab,var(--border) 60%,transparent) 5px 6px); color:var(--muted-foreground); font:inherit; font-size:10px; text-align:left; cursor:pointer; }
+.inventory-rack-run-button > span { min-width:0; max-height:100%; overflow:hidden; white-space:normal; line-height:11px; overflow-wrap:anywhere; }
+.inventory-rack-run-button:hover { color:var(--foreground); }
+.inventory-rack-run-button:focus-visible,.inventory-rack-run-collapse:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
+.inventory-rack-unit { position:relative; }
+.inventory-rack-run-collapse { appearance:none; position:absolute; right:2px; top:0; z-index:2; margin:0; padding:0 4px; border:1px solid var(--border); border-radius:3px; background:var(--card); color:var(--foreground); font:inherit; font-size:9px; line-height:inherit; cursor:pointer; white-space:nowrap; }
+@media(pointer:coarse) { .inventory-rack-units { --inventory-run-row:44px; } }
 .inventory-rack-plan { z-index:1; min-width:0; min-height:0; border:1px solid var(--border); background:var(--accent); }
 .inventory-rack-plan a { display:flex; flex-direction:column; justify-content:center; height:100%; min-width:0; padding:0 3px; overflow:hidden; white-space:nowrap; }
 .inventory-rack-plan-heading { display:flex; align-items:center; gap:3px; flex:none; min-width:0; line-height:12px; }
@@ -210,9 +219,6 @@
 .inventory-record-names { font-size:12px; }
 .fleet-inventory .inventory-record-names { border-top:0; padding-top:0; }
 .inventory-record-names ul { list-style:none; padding:0; margin:0; display:grid; gap:2px; }
-.inventory-power-list { list-style:none; padding:0; margin:0; display:grid; gap:12px; }
-.inventory-power-list > li { padding:12px; border:1px solid var(--border); border-radius:var(--radius); display:grid; gap:6px; }
-.inventory-power-list ul { list-style:none; padding:0; margin:0; display:grid; gap:2px; font-size:12px; }
 .inventory-equipment-sections h4 a { font-weight:600; }
 /* Rack panel faceplate: the shared port tiles (.inventory-port-*) below, without a second frame. */
 .inventory-faceplate { display:grid; gap:6px; min-width:0; }
@@ -398,7 +404,7 @@
 .fleet-inventory .inventory-capacity-formula { margin:0; font-size:11px; color:var(--muted-foreground); }
 
 /* PowerFeed power path, left to right; stacked on narrow screens. */
-.inventory-power-stages { list-style:none; padding:0; margin:0; display:grid; grid-template-columns:minmax(96px,.5fr) minmax(240px,1.25fr) minmax(240px,1.25fr) minmax(200px,1fr); gap:12px 22px; align-items:start; }
+.inventory-power-stages { list-style:none; padding:0; margin:0; display:grid; grid-template-columns:minmax(96px,.5fr) minmax(200px,1fr) minmax(280px,1.6fr) minmax(200px,1fr); gap:12px 22px; align-items:start; }
 .inventory-power-stage { position:relative; display:grid; gap:8px; min-width:0; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); }
 .inventory-power-stage + .inventory-power-stage::before { content:'→'; position:absolute; left:-18px; top:10px; color:var(--muted-foreground); font-size:14px; }
 .fleet-inventory .inventory-power-stage h4 { margin:0; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-foreground); }
@@ -408,14 +414,13 @@
 .inventory-power-strip + .inventory-power-strip { border-top:1px solid var(--border); padding-top:8px; }
 .fleet-inventory .inventory-power-strip h4 { font-size:13px; font-weight:600; text-transform:none; letter-spacing:0; color:var(--foreground); }
 .fleet-inventory .inventory-power-strip-meta { font-size:12px; color:var(--muted-foreground); }
-.inventory-power-strip-body { position:relative; padding:4px 6px; border:1.5px solid var(--muted-foreground); border-radius:6px; background:color-mix(in oklab,var(--muted) 55%,var(--card)); min-width:0; }
-.inventory-power-strip-rows { list-style:none; padding:0; margin:0; display:grid; }
-.inventory-power-strip-rows > li { display:grid; grid-template-columns:auto minmax(0,1fr); grid-template-areas:"tile peer" "tile reading"; column-gap:8px; align-items:center; padding:3px 0; font-size:12px; overflow-wrap:anywhere; }
-.inventory-power-strip-rows > li + li { border-top:1px dashed color-mix(in oklab,var(--border) 80%,transparent); }
-.inventory-power-strip-rows > li > .inventory-port { grid-area:tile; }
-.inventory-power-strip-peer { grid-area:peer; min-width:0; }
-.inventory-power-strip-reading { grid-area:reading; min-width:0; }
-.inventory-power-strip-rows > li[data-state="conflict"] { border-left:3px solid var(--destructive); padding-left:4px; }
+/* Outlets as tiles: a strip of shared port tiles, or the PDU's drawn faceplate cropped to its banks. */
+.inventory-outlet-tiles { padding:6px 8px; background:color-mix(in oklab,var(--muted) 55%,var(--card)); border:1.5px solid var(--muted-foreground); border-radius:6px; }
+.inventory-power-strip .inventory-drawing { padding:6px 8px; gap:4px; }
+.inventory-power-strip .inventory-drawing .inventory-chassis-scroll { padding:12px 2px; }
+.inventory-chassis[data-fit] { box-sizing:border-box; }
+.fleet-inventory .inventory-power-updated { margin:0; font-size:11px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.inventory-power-updated[data-freshness="stale"] { font-style:italic; }
 .inventory-power-devices,.inventory-power-psus { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
 .inventory-power-devices > li + li { border-top:1px solid var(--border); padding-top:8px; }
 .inventory-power-psus { gap:2px; font-size:12px; }
@@ -447,6 +452,9 @@
 .inventory-redundancy-cell ul { list-style:none; padding:0; margin:0; display:grid; gap:2px; }
 .fleet-inventory .inventory-redundancy-cell small { display:inline; margin:0; color:var(--muted-foreground); }
 .inventory-redundancy-cell-feed { display:none; }
+.inventory-redundancy-outlets { display:grid; gap:2px; margin-top:4px; min-width:0; }
+.inventory-redundancy-outlets .inventory-outlet-tiles { padding:4px 6px; }
+.fleet-inventory .inventory-redundancy-device small.inventory-redundancy-outlet-use { margin:0; color:var(--muted-foreground); }
 @media(max-width:700px) {
   .inventory-redundancy-head { grid-template-columns:1fr; gap:10px; }
   .inventory-redundancy-corner { display:none; }

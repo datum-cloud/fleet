@@ -2,141 +2,111 @@
 // right (top to bottom on phones): upstream sources → the feed and its rating
 // → PDUs drawn as outlet strips → the devices whose PSUs the path reaches.
 //
-// Outlet tiles reuse the shared port tile and card (device-faceplate.tsx), so
-// record states, accessible names and cards match the Device faceplate.
-// Telemetry adds a load tint, numbers in each row and a Telemetry section in
-// the card; it never changes a record state.
+// Outlets are tiles, never rows of text: a PDU whose model records a layout
+// is drawn by the shared faceplate renderer (faceplate-drawing.tsx), and
+// anything else is a strip of the shared port tile shaped by connector kind
+// (device-faceplate.tsx), so record states, accessible names, tooltips and
+// cards match the Device faceplate. Telemetry adds a load tint and marks on
+// each tile, one "updated" line per group, and the numbers in the card; it
+// never changes a record state.
 
-import { Button } from '@datum-cloud/datum-ui/button';
-import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
-import { linkStateWords, shortLabels, viewNames, type PortTile, type ViewNames } from '../lib/device-connections';
+import { shortLabels, viewNames, type PortTile, type ViewNames } from '../lib/device-connections';
 import { feedPath, FEED_CLASS_GLYPH, FEED_CLASS_WORDS, type PathDevice, type PsuFeed } from '../lib/power-paths';
 import { feedCapacity, formatPower } from '../lib/power-capacity';
-import { formatAge, NOT_REPORTED, valid, type TelemetrySource } from '../lib/telemetry';
+import { formatAge, NOT_REPORTED, valid, type PowerTelemetry, type TelemetrySource } from '../lib/telemetry';
+import { TEXT_TILE_LIMIT } from '../lib/faceplate-layout';
 import { sharedValue } from '../lib/display-names';
-import { PortCard, PortTileButton, type PortTelemetry } from './device-faceplate';
-import { peerText, type Href } from './connection-parts';
+import { numbering, usePortGrid, type ComponentOwner, type PortTelemetry } from './device-faceplate';
+import { deviceDrawingModel, FaceplateDrawing } from './faceplate-drawing';
+import type { Href } from './connection-parts';
 import { CapacityBar, ReadingLine, usePortTelemetry, useTelemetry } from './power-telemetry';
 import { TabLink } from './inventory-record-layout';
 
 // ---- One strip of outlets ----
 
-export interface PowerStripProps {
-  /** The heading, such as "Power outlets" or the PDU's name. */
-  title: ReactNode;
-  /** The region's accessible name. */
+export interface OutletTilesProps {
+  /** The group's accessible name, such as "Power outlets". */
   label: string;
-  count?: string;
   tiles: PortTile[];
   names: ViewNames;
   namespace?: string;
   href: Href;
   cablesDenied: boolean;
   telemetry: (tile: PortTile) => PortTelemetry | undefined;
-  /** What the row's outlet is cabled to. */
-  peer: (tile: PortTile) => ReactNode;
-  reading: (tile: PortTile) => ReactNode;
-  children?: ReactNode;
+  /** The record that holds the outlets, for the card's wording. */
+  owner: ComponentOwner;
 }
 
 /**
- * A PDU-like strip: one row per outlet with its tile, what it is cabled to,
- * and its observed load. One tab stop; arrow keys, Home and End move between
- * tiles; Enter or a click opens the outlet's card; Escape closes it.
+ * Outlets as a strip of port tiles, for a holder without a drawn layout (a
+ * PowerFeed's terminations, or a PDU whose model records none). Tiles are
+ * the shared PortTileButton shaped by connector kind, with the shared
+ * tooltip, card and keyboard model (usePortGrid). The dense rule is the
+ * faceplate's: above TEXT_TILE_LIMIT the tiles carry no text and faint
+ * numbers mark the edges. Load is a tint and a mark; numbers are in the card.
  */
-export function PowerStrip({ title, label, count, tiles, names, namespace, href, cablesDenied, telemetry, peer, reading, children }: PowerStripProps) {
-  const container = useRef<HTMLDivElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const cardID = useId();
+export function OutletTiles({ label, tiles, names, namespace, href, cablesDenied, telemetry, owner }: OutletTilesProps) {
+  const grid = usePortGrid({ tiles, names, namespace, href, cablesDenied, telemetry, owner });
+  const dense = tiles.length > TEXT_TILE_LIMIT;
   const labels = useMemo(() => shortLabels(tiles), [tiles]);
-  const [active, setActive] = useState(tiles[0]?.key);
-  const [open, setOpen] = useState<string>();
-  const [cardAt, setCardAt] = useState<{ left: number; top: number }>();
-  const current = tiles.some(tile => tile.key === active) ? active : tiles[0]?.key;
-  const card = tiles.find(tile => tile.key === open);
-  const items = () => [...(container.current?.querySelectorAll<HTMLElement>('[data-tile]') ?? [])];
-  const element = (key?: string) => key ? items().find(item => item.dataset.tile === key) : undefined;
+  const marks = useMemo(() => dense ? numbering(tiles, labels) : new Map<string, string>(), [dense, tiles, labels]);
+  return (
+    <div ref={grid.container} className="inventory-port-grid inventory-outlet-tiles" role="group" aria-label={`${label}. Arrow keys move between outlets; Enter opens an outlet's card; Escape closes it.`} onKeyDown={grid.onKeyDown}>
+      <ul className="inventory-port-row" aria-label={label} data-compact={dense ? '' : undefined}>
+        {tiles.map(tile => (
+          <li key={tile.key}>
+            {grid.tileButton(tile, { label: dense ? undefined : labels.get(tile.key) })}
+            {dense && <span className="inventory-port-number" aria-hidden="true">{marks.get(tile.key) ?? ''}</span>}
+          </li>
+        ))}
+      </ul>
+      {grid.overlay}
+    </div>
+  );
+}
 
-  useLayoutEffect(() => {
-    const row = element(open)?.closest('li');
-    if (!row || !cardRef.current) return;
-    const next = { left: 0, top: row.offsetTop + row.offsetHeight + 4 };
-    setCardAt(previous => previous?.top === next.top && previous.left === next.left ? previous : next);
-  }, [open]);
+/**
+ * When a group's readings were taken, said once for the group: "Updated
+ * 40 s ago", "Stale · updated 3 h ago", plus how many are stale or not
+ * reported. "Not reported" when none is, never 0.
+ */
+export function groupFreshness(readings: (PowerTelemetry | undefined)[], now: number): { text: string; freshness: 'fresh' | 'stale' | 'missing' } {
+  let fresh = 0;
+  let stale = 0;
+  let missing = 0;
+  let freshAge = 0;
+  let staleAge = 0;
+  for (const reading of readings) {
+    const values = [valid(reading?.currentA, now), valid(reading?.powerW, now), valid(reading?.apparentPowerVA, now), valid(reading?.outputState, now), valid(reading?.health, now)].filter(value => value !== undefined);
+    if (!values.length) { missing++; continue; }
+    const age = Math.max(...values.map(value => value.ageSeconds));
+    if (values.some(value => value.state === 'stale')) { stale++; staleAge = Math.max(staleAge, age); } else { fresh++; freshAge = Math.max(freshAge, age); }
+  }
+  if (!fresh && !stale) return { text: NOT_REPORTED, freshness: 'missing' };
+  const notReported = missing ? ` · ${missing} not reported` : '';
+  if (!fresh) return { text: `Stale · updated ${formatAge(staleAge)}${notReported}`, freshness: 'stale' };
+  return { text: `Updated ${formatAge(freshAge)}${stale ? ` · ${stale} stale, last ${formatAge(staleAge)}` : ''}${notReported}`, freshness: stale ? 'stale' : 'fresh' };
+}
 
-  const close = () => { const key = open; setOpen(undefined); element(key)?.focus(); };
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') { if (open) { event.preventDefault(); event.stopPropagation(); close(); } return; }
-    const list = items();
-    const index = list.indexOf(document.activeElement as HTMLElement);
-    if (index === -1) return;
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? list.length - 1
-      : event.key === 'ArrowDown' || event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? index - 1 : undefined;
-    if (next === undefined) return;
-    event.preventDefault();
-    const target = list[Math.max(0, Math.min(list.length - 1, next))];
-    setActive(target.dataset.tile!);
-    if (open) setOpen(target.dataset.tile);
-    target.focus();
-  };
-  const cardTelemetry = card ? telemetry(card) : undefined;
+/** The group's one freshness line. */
+export function GroupFreshness({ readings }: { readings: (PowerTelemetry | undefined)[] }) {
+  const { now } = useTelemetry();
+  const line = groupFreshness(readings, now);
+  return <p className="inventory-power-updated" data-freshness={line.freshness}>{line.freshness === 'stale' && <span aria-hidden="true">◷ </span>}{line.text}</p>;
+}
 
+/** A group of outlets on the power path: its heading, its tiles or drawing, and one freshness line. */
+function PowerGroup({ title, label, count, readings, children, meta }: { title: ReactNode; label: string; count?: string; readings: (PowerTelemetry | undefined)[]; children: ReactNode; meta?: ReactNode }) {
   return (
     <section className="inventory-power-strip" aria-label={label}>
       <h4>{title}{count && <> <span className="inventory-count">{count}</span></>}</h4>
+      {meta}
       {children}
-      {tiles.length ? (
-        <div ref={container} className="inventory-power-strip-body" role="group" aria-label={`${label}. Arrow keys move between outlets; Enter opens an outlet's card; Escape closes it.`} onKeyDown={onKeyDown}>
-          <ul className="inventory-power-strip-rows">
-            {tiles.map(tile => {
-              const observed = telemetry(tile);
-              return (
-                <li key={tile.key} data-state={cablesDenied ? 'unavailable' : tile.state}>
-                  <PortTileButton
-                    tileKey={tile.key}
-                    state={cablesDenied ? 'unavailable' : tile.state}
-                    accessibleName={[cablesDenied ? `${tile.name}: Cable details unavailable, connections unknown` : `${tile.name}: ${linkStateWords[tile.state]}`, observed?.words].filter(Boolean).join('; ')}
-                    label={labels.get(tile.key)}
-                    shape={tile.shape}
-                    load={observed?.load}
-                    tabIndex={tile.key === current ? 0 : -1}
-                    expanded={open === tile.key}
-                    controls={open === tile.key ? cardID : undefined}
-                    onFocus={() => setActive(tile.key)}
-                    onClick={() => { setActive(tile.key); setOpen(value => value === tile.key ? undefined : tile.key); }}
-                  />
-                  <span className="inventory-power-strip-peer">{peer(tile)}</span>
-                  <span className="inventory-power-strip-reading">{reading(tile)}{observed?.load?.markKind === 'mismatch' && <strong className="inventory-power-strip-mismatch"> · <span aria-hidden="true">≠ </span>observed and recorded disagree</strong>}</span>
-                </li>
-              );
-            })}
-          </ul>
-          {card && (
-            <div
-              ref={cardRef}
-              id={cardID}
-              className="inventory-port-card"
-              data-state={cablesDenied ? 'unavailable' : card.state}
-              data-pinned=""
-              data-component-card=""
-              role="dialog"
-              aria-modal={false}
-              aria-label={`${card.name} details`}
-              style={cardAt ? { '--card-left': `${cardAt.left}px`, '--card-top': `${cardAt.top}px` } as CSSProperties : { visibility: 'hidden' }}
-              onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}
-            >
-              <div className="inventory-port-card-title">
-                <h5>{card.name}</h5>
-                <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={close} aria-label={`Close ${card.name}`}>Close</Button>
-              </div>
-              <PortCard tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} />
-            </div>
-          )}
-        </div>
-      ) : <p className="inventory-muted">No outlets recorded.</p>}
+      <GroupFreshness readings={readings} />
     </section>
   );
 }
@@ -185,20 +155,7 @@ export function PowerFeedPath({ feed, inventory, href }: { feed: PhysicalRecord;
   const terminations = path.terminations;
   const connector = sharedValue(terminations.map(tile => tile.connector));
 
-  const termPeer = (tile: PortTile): ReactNode => {
-    if (cablesDenied) return 'Unknown';
-    if (!tile.links.some(link => link.cable)) return <span className="inventory-muted">No cable recorded</span>;
-    return tile.links.map(link => {
-      const peer = link.peer;
-      const target = !peer ? 'Unknown' : peer.access === 'readable' ? <><Link to={href(peer.kind, namespace, peer.name)}>{names.peer(peer)}</Link> · {peer.componentName ?? peer.componentID}</> : peerText(peer, names);
-      return <span key={link.key} className="inventory-outlet-link">{target}{link.cable && <small> via <Link to={href('Cable', namespace, link.cable.name)}>{names.cable(link.cable)}</Link></small>}{link.state === 'conflict' && <small> · {linkStateWords.conflict}</small>}</span>;
-    });
-  };
-  const outletPeer = (tile: PortTile): ReactNode => {
-    if (!tile.links.some(link => link.cable)) return <span className="inventory-muted">No cable recorded</span>;
-    return tile.links.map(link => <span key={link.key} className="inventory-outlet-link">{link.peer ? peerText(link.peer, names) : 'Unknown'}{link.state !== 'cabled' && <small> · {linkStateWords[link.state]}</small>}</span>);
-  };
-  const strip = (kind: 'PowerFeed' | 'Device', name: string) => (tile: PortTile) => <ReadingLine reading={source.read({ kind, namespace, name, componentID: tile.componentID })} now={now} />;
+  const termReadings = terminations.map(tile => source.read({ kind: 'PowerFeed', namespace, name: feed.metadata.name, componentID: tile.componentID }));
 
   return (
     <div className="inventory-power-path" id="power-path">
@@ -211,17 +168,17 @@ export function PowerFeedPath({ feed, inventory, href }: { feed: PhysicalRecord;
           <h4>Feed</h4>
           <p className="inventory-power-rating">{supply ? `${supply.type} · ${supply.voltageV ?? 'Unknown'} V · ${supply.currentA ?? 'Unknown'} A · ${supply.phase ? `${supply.phase.toLowerCase()} phase` : 'phase not recorded'}` : 'Supply not recorded'}</p>
           <CapacityBar feed={feed} reading={source.read({ kind: 'PowerFeed', namespace, name: feed.metadata.name })} now={now} source={source} />
-          <PowerStrip
-            title="Power outlets" label="Power outlets" count={`${terminations.length}${connector ? ` · ${connector}` : ''}`}
-            tiles={terminations} names={names} namespace={namespace} href={href} cablesDenied={cablesDenied}
-            telemetry={feedTelemetry} peer={termPeer} reading={strip('PowerFeed', feed.metadata.name)}
-          />
+          <PowerGroup title="Power outlets" label="Power outlets" count={`${terminations.length}${connector ? ` · ${connector}` : ''}`} readings={termReadings}>
+            {terminations.length
+              ? <OutletTiles label="Power outlets" tiles={terminations} names={names} namespace={namespace} href={href} cablesDenied={cablesDenied} telemetry={feedTelemetry} owner="PowerFeed" />
+              : <p className="inventory-muted">No outlets recorded.</p>}
+          </PowerGroup>
         </li>
         <li className="inventory-power-stage" data-stage="pdu">
           <h4>PDUs <span className="inventory-count">{cablesDenied || path.devicesDenied ? '?' : path.pdus.length}</span></h4>
           {cablesDenied ? <p>Cable details unavailable. PDUs on this feed are unknown.</p>
             : path.devicesDenied ? <p>Device details unavailable. PDUs on this feed are unknown.</p>
-              : path.pdus.length ? path.pdus.map(pdu => <PduStrip key={pdu.device.metadata.name} pdu={pdu} names={names} namespace={namespace} href={href} continuousA={capacity.continuousA} />)
+              : path.pdus.length ? path.pdus.map(pdu => <PduStrip key={pdu.device.metadata.name} pdu={pdu} inventory={inventory} names={names} namespace={namespace} href={href} continuousA={capacity.continuousA} />)
                 : <p className="inventory-muted">No PDU is cabled to this feed in the records.</p>}
         </li>
         <li className="inventory-power-stage" data-stage="devices">
@@ -235,28 +192,29 @@ export function PowerFeedPath({ feed, inventory, href }: { feed: PhysicalRecord;
   );
 }
 
-function PduStrip({ pdu, names, namespace, href, continuousA }: { pdu: ReturnType<typeof feedPath>['pdus'][number]; names: ViewNames; namespace?: string; href: Href; continuousA?: number }) {
-  const { source, now } = useTelemetry();
-  const telemetry = usePortTelemetry({ kind: 'Device', namespace, name: pdu.device.metadata.name, label: pdu.label }, { continuousA });
+/**
+ * One PDU on the path. With a recorded layout it is drawn by the shared
+ * faceplate renderer, cropped to its banks; otherwise its inlet and outlets
+ * are a tile strip. Either way the tiles, tooltip and card are the shared ones.
+ */
+function PduStrip({ pdu, inventory, names, namespace, href, continuousA }: { pdu: ReturnType<typeof feedPath>['pdus'][number]; inventory: Inventory; names: ViewNames; namespace?: string; href: Href; continuousA?: number }) {
+  const { source } = useTelemetry();
+  const name = pdu.device.metadata.name;
+  const telemetry = usePortTelemetry({ kind: 'Device', namespace, name, label: pdu.label }, { continuousA });
+  const drawing = useMemo(() => deviceDrawingModel(pdu.device, inventory), [pdu.device, inventory]);
   const outlets = pdu.tiles.filter(tile => tile.type === 'PowerOutlet');
   const connector = sharedValue(outlets.map(tile => tile.connector));
-  const peer = (tile: PortTile): ReactNode => {
-    if (!tile.links.some(link => link.cable)) return <span className="inventory-muted">No cable recorded</span>;
-    return tile.links.map(link => {
-      const target = link.peer;
-      const text = !target ? 'Unknown' : target.access === 'readable' ? <><Link to={href(target.kind, namespace, target.name)}>{names.peer(target)}</Link> · {target.componentName ?? target.componentID}</> : peerText(target, names);
-      return <span key={link.key} className="inventory-outlet-link">{tile.type === 'PowerInlet' ? '← ' : ''}{text}{link.state !== 'cabled' && <small> · {linkStateWords[link.state]}</small>}</span>;
-    });
-  };
-  return <PowerStrip
-    title={<Link to={href('Device', namespace, pdu.device.metadata.name)}>{pdu.label}</Link>}
-    label={`${pdu.label} outlets`} count={`${outlets.length} outlets${connector ? ` · ${connector}` : ''}`}
-    tiles={pdu.tiles} names={names} namespace={namespace} href={href} cablesDenied={false}
-    telemetry={telemetry} peer={peer}
-    reading={tile => <ReadingLine reading={source.read({ kind: 'Device', namespace, name: pdu.device.metadata.name, componentID: tile.componentID })} now={now} />}
+  const label = `${pdu.label} outlets`;
+  const readings = pdu.tiles.map(tile => source.read({ kind: 'Device', namespace, name, componentID: tile.componentID }));
+  return <PowerGroup
+    title={<Link to={href('Device', namespace, name)}>{pdu.label}</Link>}
+    label={label} count={`${outlets.length} outlets${connector ? ` · ${connector}` : ''}`} readings={readings}
+    meta={<p className="inventory-power-strip-meta">Fed by {pdu.fedBy.join(', ')}</p>}
   >
-    <p className="inventory-power-strip-meta">Fed by {pdu.fedBy.join(', ')} · total <ReadingLine reading={source.read({ kind: 'Device', namespace, name: pdu.device.metadata.name })} now={now} /></p>
-  </PowerStrip>;
+    {drawing.layout.recorded
+      ? <FaceplateDrawing drawing={drawing} namespace={namespace} href={href} telemetry={telemetry} fit label={label} />
+      : <OutletTiles label={label} tiles={pdu.tiles} names={names} namespace={namespace} href={href} cablesDenied={false} telemetry={telemetry} owner="Device" />}
+  </PowerGroup>;
 }
 
 function PathDeviceRow({ row, feed, terminations, href }: { row: PathDevice; feed: PhysicalRecord; terminations: PortTile[]; href: Href }) {

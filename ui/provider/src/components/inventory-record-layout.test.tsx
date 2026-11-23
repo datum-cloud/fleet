@@ -138,14 +138,18 @@ describe('hidden empty fields', () => {
   it('keeps unknown, not free on power outlets and never shows a denied outlet as free', () => {
     const view = show(record('PowerFeed', 'example-feed-a'));
     const outlets = screen.getByRole('region', { name: 'Power outlets' });
-    expect(within(outlets).getAllByText('No cable recorded')).toHaveLength(3);
-    expect(within(outlets).getByRole('link', { name: 'PDU a01 (rear left)' })).toBeInTheDocument();
+    // Outlets are tiles: "No cable recorded … unknown, not free" is in each empty tile's name, not a row of text.
+    expect(within(outlets).getAllByRole('button', { name: /^Outlet \d: No cable recorded, unknown, not free$/ })).toHaveLength(3);
+    // The peer is one click away, in the outlet's card.
+    fireEvent.click(within(outlets).getByRole('button', { name: /^Outlet 1: Cable recorded/ }));
+    expect(within(screen.getByRole('dialog', { name: 'Outlet 1 details' })).getByRole('link', { name: 'PDU a01 (rear left) · Inlet' })).toBeInTheDocument();
     expect(screen.getByText(/No cable recorded means unknown, not free/)).toBeInTheDocument();
     expect(screen.getByText(/supply ratings do not establish available power/)).toBeInTheDocument();
     view.unmount();
     show(record('PowerFeed', 'example-feed-a'), fixtureInventory('cables-denied'));
     expect(screen.queryByText('No cable recorded')).not.toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Power outlets' })).getAllByText('Unknown')).toHaveLength(4);
+    expect(screen.queryByRole('button', { name: /No cable recorded/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Power outlets' })).getAllByRole('button', { name: /^Outlet \d: Cable details unavailable, connections unknown$/ })).toHaveLength(4);
   });
 
   it('states type words once per group instead of on every row', () => {

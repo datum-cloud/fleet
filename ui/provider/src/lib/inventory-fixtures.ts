@@ -8,8 +8,9 @@
 // exercise each inventory view: rack elevation (front, rear, reversed,
 // half-depth, overlapping, unpositioned and non-unit mounts), lifecycle
 // states, and every connection-view state (recorded, two Cables on one port,
-// missing peer, 4-lane breakout, PSU → PDU → feed trace, patch-panel
-// pass-through and catalog-only components). The denied-peer state is a
+// missing peer, 4-lane breakout, PSU → PDU → feed trace, a server whose
+// PSUs both reach one feed, patch-panel pass-through and catalog-only
+// components). The denied-peer state is a
 // read-access scenario: see FIXTURE_SCENARIOS.
 //
 // Everything is typed against ../../../shared/fleet-api.ts, so a wire type
@@ -42,6 +43,8 @@ export const FIXTURE_NAMES = {
   patchPanel: 'example-patch-a01',
   pdu: 'example-pdu-a01',
   imported: 'example-imported-sw-01',
+  /** Both PSUs reach Feed A through the same PDU: "Single feed (recorded)". */
+  singleFeedServer: 'example-srv-a01-05',
 } as const;
 
 const meta = (name: string, extra: Partial<PhysicalRecord['metadata']> = {}) => ({
@@ -310,6 +313,8 @@ const devices: Device[] = [
     },
   }),
   server('example-srv-a01-02', 'example-rack-a01', 3),
+  // Both PSUs are cabled to the same PDU, so both reach Feed A: a single feed in the records.
+  server(FIXTURE_NAMES.singleFeedServer, 'example-rack-a01', 4, { displayName: 'Compute a01-05' }),
   storage('example-sto-a01-03', 'example-rack-a01', 5),
   storage('example-sto-a01-04', 'example-rack-a01', 7),
   device({
@@ -432,6 +437,9 @@ const cables: PhysicalRecord[] = [
   one('example-pwr-a01-01-psu2', 'Power a01-01 PSU 2', 'Power', D(SRV, 'psu-2'), F('example-feed-b', 'outlet-1')),
   one('example-pwr-a01-02-psu1', 'Power a01-02 PSU 1', 'Power', D('example-srv-a01-02', 'psu-1'), D(PDU, 'outlet-2')),
   one('example-pwr-leaf-psu1', 'Power leaf PSU 1', 'Power', D(LEAF, 'psu-1'), D(PDU, 'outlet-3')),
+  // Both PSUs of one server on the same PDU, and so on the same feed.
+  one('example-pwr-a01-05-psu1', 'Power a01-05 PSU 1', 'Power', D(FIXTURE_NAMES.singleFeedServer, 'psu-1'), D(PDU, 'outlet-4')),
+  one('example-pwr-a01-05-psu2', 'Power a01-05 PSU 2', 'Power', D(FIXTURE_NAMES.singleFeedServer, 'psu-2'), D(PDU, 'outlet-5')),
   one('example-pwr-leaf-psu2', 'Power leaf PSU 2', 'Power', D(LEAF, 'psu-2'), F('example-feed-b', 'outlet-2')),
   one('example-pwr-pdu-inlet', 'Power PDU inlet', 'Power', D(PDU, 'inlet'), F('example-feed-a', 'outlet-1')),
 ];

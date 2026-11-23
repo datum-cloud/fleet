@@ -208,7 +208,11 @@ describe('recorded feed paths and redundancy', () => {
     const path = feedPath(inventory.physical.find(record => record.metadata.name === 'example-feed-a')!, inventory);
     expect(path.pdus.map(pdu => pdu.device.metadata.name)).toEqual([FIXTURE_NAMES.pdu]);
     expect(path.pdus[0].tiles[0].type).toBe('PowerInlet');
-    expect(path.devices.map(row => row.device.metadata.name)).toEqual([FIXTURE_NAMES.server, 'example-srv-a01-02', FIXTURE_NAMES.leaf]);
+    expect(path.devices.map(row => row.device.metadata.name)).toEqual([FIXTURE_NAMES.server, 'example-srv-a01-02', FIXTURE_NAMES.leaf, FIXTURE_NAMES.singleFeedServer]);
+    // Both PSUs of the single-feed server reach this feed through the same PDU.
+    const single = path.devices.find(row => row.device.metadata.name === FIXTURE_NAMES.singleFeedServer)!;
+    expect(single.class).toBe('single');
+    expect(single.onFeed.map(psu => [psu.name, psu.via?.outlet])).toEqual([['PSU 1', 'Outlet 4'], ['PSU 2', 'Outlet 5']]);
     const cablesDenied = feedPath(inventory.physical.find(record => record.metadata.name === 'example-feed-a')!, fixtureInventory('cables-denied'));
     expect(cablesDenied.terminations.map(tile => tile.state)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
     expect(cablesDenied.devices).toEqual([]);

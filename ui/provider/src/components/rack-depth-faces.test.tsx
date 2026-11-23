@@ -44,7 +44,8 @@ describe('rack elevation by face', () => {
     expect(u42).not.toHaveTextContent('—');
     const u41 = within(face('front')).getByText('U41').parentElement!;
     expect(within(u41).getByLabelText('Occupancy unverified')).toBeInTheDocument();
-    expect(within(face('front')).queryByText(/free|open|available/i)).not.toBeInTheDocument();
+    // Collapsed runs say "not free"; nothing may claim free, open or available space.
+    expect(within(face('front')).queryByText(/(?<!not )free|open|available/i)).not.toBeInTheDocument();
   });
 
   it('labels unknown depth, draws it on both faces and flags same-face overlap as records disagree', () => {

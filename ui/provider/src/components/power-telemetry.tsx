@@ -106,7 +106,9 @@ export function Sparkline({ series, unit, stale, label }: { series: SeriesPoint[
 
 // ---- Card sections ----
 
-function sourceWords(reading: PowerTelemetry, now: number) {
+/** Which collector reported a reading, when, and for how long it stays fresh. Shown behind a card's More. */
+export function sourceWords(reading: PowerTelemetry | undefined, now: number) {
+  if (!reading) return undefined;
   const first = [reading.currentA, reading.powerW, reading.apparentPowerVA, reading.outputState, reading.health].find(Boolean);
   const fresh = freshness(first, now);
   if (!first || !fresh) return undefined;
@@ -134,7 +136,6 @@ export function TelemetrySection({ reading, source, now, kind, mismatch }: { rea
   const current = valid(reading?.currentA, now);
   const state = valid(reading?.outputState, now);
   const any = power || current || state;
-  const origin = reading && sourceWords(reading, now);
   const history = power?.series ? { series: power.series, unit: 'W' as const, label: 'Power' } : current?.series ? { series: current.series, unit: 'A' as const, label: 'Current' } : undefined;
   return <div className="inventory-port-card-telemetry">
     <p className="inventory-port-card-heading">Telemetry</p>
@@ -145,7 +146,6 @@ export function TelemetrySection({ reading, source, now, kind, mismatch }: { rea
         {kind === 'outlet' && <><dt>Output</dt><dd>{state ? <span className="inventory-telemetry-value" data-freshness={state.state}>{state.value}<small>{state.state === 'stale' ? `Stale · ${formatAge(state.ageSeconds)}` : formatAge(state.ageSeconds)}</small></span> : <span className="inventory-telemetry-value" data-freshness="missing">{NOT_REPORTED}</span>}</dd></>}
       </dl>
       {history && <Sparkline series={history.series} unit={history.unit} label={history.label} stale={(power ?? current)?.state === 'stale'} />}
-      {origin && <p className="inventory-port-card-meta">Source: {origin}</p>}
     </>}
     {mismatch && <MismatchNote context={mismatch} />}
     {any && <p className="inventory-port-card-meta">Observed only; verifies nothing and changes no record.</p>}
@@ -162,7 +162,7 @@ export function healthNode(reading: PowerTelemetry | undefined, now: number): Re
   return <p className="inventory-telemetry-health" data-health={stale ? 'stale' : health.value.state.toLowerCase()}>
     <span aria-hidden="true">{stale ? '◷' : HEALTH_GLYPH[health.value.state]} </span>
     {stale ? `Stale: last ${health.value.state}` : `Observed ${health.value.state}`}{health.value.reason ? ` · ${health.value.reason}` : ''} · {formatAge(health.ageSeconds)}
-    <small>{COLLECTOR_WORDS[health.origin.collector]}{health.origin.synthetic ? ' (synthetic)' : ''} · observed only</small>
+    <small>Observed only</small>
   </p>;
 }
 
@@ -239,6 +239,7 @@ export function usePortTelemetry(holder: TelemetryHolder, options: { continuousA
       words: tileWords(reading, now, continuousA, mismatch),
       section: <TelemetrySection reading={reading} source={source} now={now} kind={psu ? 'psu' : 'outlet'} mismatch={context} />,
       health: healthNode(reading, now),
+      source: sourceWords(reading, now),
     };
   }, [source, now, kind, namespace, name, label, continuousA, cablesDenied]);
 }

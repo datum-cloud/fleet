@@ -100,6 +100,12 @@ export const PAGES: CapturePage[] = [
   { name: 'power-feed-no-telemetry', path: record('PowerFeed', 'example-feed-a', '&telemetry=none'), ready: '.inventory-power-path' },
   { name: 'power-feed-outlet-card', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path', click: `.inventory-power-strip[aria-label="PDU a01 (rear left) outlets"] ${tile('outlet-1')}` },
   { name: 'device-psu-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('psu-1') },
+  // The outlet card with More open: owner-kind wording and the telemetry source.
+  { name: 'power-feed-outlet-card-more', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path', click: [`.inventory-power-strip[aria-label="Power outlets"] ${tile('outlet-1')}`, '.inventory-port-card-more > button'] },
+  // A server whose PSUs both reach Feed A through one PDU: "Single feed (recorded)".
+  { name: 'device-single-feed', path: record('Device', 'example-srv-a01-05'), ready: '.inventory-connections' },
+  // Blank units collapse into one row per run; a click expands the run in place on both faces.
+  { name: 'rack-elevation-expanded', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-run-button', element: '.inventory-elevation', click: '.inventory-rack-units[data-face="front"] .inventory-rack-run-button[data-run="U22-U39"]' },
   // Faceplates drawn from DeviceType layouts: the 1U server and the 48+8 leaf,
   // an open card on a dense face, the no-layout fallback, mini faceplates in
   // the elevation at each level of detail, and the drawing in the rack panel.

@@ -7,6 +7,12 @@ import { toInventory } from '../inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
 
 const rack = fixturePhysicalRecords[1];
+/** Units shown as unverified one by one, plus the units each collapsed run stands for. */
+function unverifiedUnits(elevation: HTMLElement) {
+  const single = within(elevation).queryAllByLabelText('Occupancy unverified').length;
+  const runs = within(elevation).queryAllByRole('button', { name: /units · no placement recorded/ }).reduce((sum, button) => sum + Number(/ · (\d+) units · /.exec(button.getAttribute('aria-label') ?? '')![1]), 0);
+  return single + runs;
+}
 it.each([true, false, undefined])('draws reported Device geometry with explicit depth %s', fullDepth => {
   const device = { ...fixturePhysicalDevices[0], spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: { revision: 1 as const, observedAt: '2026-11-21T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: rack.metadata.name }, position: 12, height: 4, face: 'rear' as const, fullDepth } } };
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={toInventory([fixturePhysicalClaims[0]], [device], [rack])} /></MemoryRouter></QueryClientProvider>);
@@ -41,7 +47,8 @@ it.each([
   expect(links).toHaveLength(1);
   expect(links[0]).toHaveAccessibleName(new RegExp(`U${position}–U${position + height - 1}.*${height}U`));
   expect(links[0].parentElement).toHaveStyle({ gridRow: row, gridColumn: '2' });
-  expect(within(elevation).getAllByLabelText('Occupancy unverified')).toHaveLength(42 - height);
+  // Every unit without a placement is unverified: shown one by one, or counted in a collapsed run.
+  expect(unverifiedUnits(elevation)).toBe(42 - height);
   // The registered Device records full depth, so the far face shows the
   // chassis rear, muted, over the same units.
   const far = within(screen.getByRole('list', { name: `${face === 'front' ? 'rear' : 'front'} recorded placements` })).getAllByRole('link');
@@ -54,8 +61,10 @@ it.each([1, 2])('keeps overlapping %iU plans identifiable with height-aware labe
   const claims = [10, 10 + height - 1].map((position, index) => ({ ...fixturePhysicalClaims[0], metadata: { ...fixturePhysicalClaims[0].metadata, name: `overlap-${index}` }, spec: { ...fixturePhysicalClaims[0].spec, displayName: `Plan ${index}`, placement: { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position, height, face: 'front' as const } } }));
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={toInventory(claims, [], [rack])} /></MemoryRouter></QueryClientProvider>);
   const elevation = screen.getByRole('list', { name: 'front recorded placements' });
-  const links = within(elevation).getAllByRole('link', { name: /overlapping placements/ });
-  expect(links).toHaveLength(2);
+  // Entries are in visual order (top first), so pick each plan by name.
+  const all = within(elevation).getAllByRole('link', { name: /overlapping placements/ });
+  expect(all).toHaveLength(2);
+  const links = [/Plan 0/, /Plan 1/].map(name => all.find(link => name.test(link.getAttribute('aria-label') ?? ''))!);
   expect(links[0].parentElement).toHaveStyle({ gridColumn: '2', gridRow: `${34 - height} / span ${height}` });
   expect(links[1].parentElement).toHaveStyle({ gridColumn: '3', gridRow: `${35 - 2 * height} / span ${height}` });
   for (const link of links) {

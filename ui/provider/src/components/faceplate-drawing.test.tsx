@@ -22,6 +22,10 @@ const show = (name: string, scenario?: string) => {
 };
 const drawingGroup = () => screen.getByRole('group', { name: /^Faceplate drawing/ });
 const ports = () => within(drawingGroup()).getAllByRole('button').filter(item => item.hasAttribute('data-tile'));
+/** One size per rack unit, from an elevation's grid template ("repeat(3, 16px) 24px …"). */
+const rowSizes = (list: HTMLElement) => [...list.style.gridTemplateRows.matchAll(/repeat\((\d+), ([^)]+?)\)|(var\([^)]*\)|\S+)/g)].flatMap(([, count, size, single]) => count ? Array(Number(count)).fill(size) : [single]);
+/** The size of every unit row that is not inside a collapsed run (those are 0px or the compact run row). */
+const unitRowSizes = (list: HTMLElement) => new Set(rowSizes(list).filter(size => size !== '0px' && !size.startsWith('var(')));
 const accessibleNames = (root: HTMLElement) => [...root.querySelectorAll('[aria-label]')].map(item => item.getAttribute('aria-label')).join('\n');
 
 describe('FaceplateDrawing', () => {
@@ -220,10 +224,12 @@ describe('mini faceplates', () => {
     expect(leaf).toHaveAttribute('data-level', 'reduced');
     expect(leaf.getAttribute('aria-label')).toMatch(/, 2 ports disagree$/);
     expect(within(leaf).getByText('! 2')).toBeInTheDocument();
-    expect(rear).toHaveStyle({ gridTemplateRows: 'repeat(42, 16px)' });
+    expect(rowSizes(rear)).toHaveLength(42);
+    expect(unitRowSizes(rear)).toEqual(new Set(['16px']));
     fireEvent.click(screen.getByRole('button', { name: 'Full' }));
     expect(within(screen.getByRole('list', { name: 'rear recorded placements' })).getByRole('link', { name: /^Review Leaf a01/ })).toHaveAttribute('data-level', 'full');
-    expect(screen.getByRole('list', { name: 'rear recorded placements' })).toHaveStyle({ gridTemplateRows: 'repeat(42, 44px)' });
+    expect(rowSizes(screen.getByRole('list', { name: 'rear recorded placements' }))).toHaveLength(42);
+    expect(unitRowSizes(screen.getByRole('list', { name: 'rear recorded placements' }))).toEqual(new Set(['44px']));
     fireEvent.click(screen.getByRole('button', { name: 'Outline' }));
     expect(within(screen.getByRole('list', { name: 'rear recorded placements' })).getByRole('link', { name: /^Review Leaf a01/ })).toHaveAttribute('data-level', 'silhouette');
     // The drawing is never a second tab stop inside the link.

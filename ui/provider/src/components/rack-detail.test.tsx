@@ -54,8 +54,9 @@ describe('rack page tabs', () => {
     fireEvent.click(within(tabs).getByRole('tab', { name: 'Power' }));
     expect(search().get('tab')).toBe('power');
     expect(screen.getByRole('link', { name: 'Feed A' })).toBeInTheDocument();
-    expect(screen.getByText(/3 of 8 outlets have a cable recorded/)).toBeInTheDocument();
-    expect(within(screen.getByRole('list', { name: 'Feed A outlets' })).getByText(/Outlet 2: no cable recorded/)).toBeInTheDocument();
+    // What the removed "Feed outlets" and "PDUs" lists said is in the grid: the PDU's row and the feed's outlet tiles.
+    expect(screen.getByText(/5 of 8 outlets have a cable recorded/)).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Feed A outlets' })).getByRole('button', { name: /^Outlet 2: No cable recorded/ })).toBeInTheDocument();
 
     fireEvent.click(within(tabs).getByRole('tab', { name: 'History' }));
     expect(screen.getByRole('heading', { name: 'Record history & verification' })).toBeInTheDocument();
@@ -78,12 +79,12 @@ describe('related-records count strip', () => {
   it('replaces the related-record list with counts that link to their tabs', () => {
     open(RACK());
     const strip = screen.getByRole('navigation', { name: 'Related records' });
-    expect(within(strip).getByRole('link', { name: 'Equipment · 9' })).toHaveAttribute('href', expect.stringContaining('tab=equipment'));
-    expect(within(strip).getByRole('link', { name: 'Cables · 19' })).toHaveAttribute('href', expect.stringContaining('tab=cables'));
+    expect(within(strip).getByRole('link', { name: 'Equipment · 10' })).toHaveAttribute('href', expect.stringContaining('tab=equipment'));
+    expect(within(strip).getByRole('link', { name: 'Cables · 21' })).toHaveAttribute('href', expect.stringContaining('tab=cables'));
     expect(within(strip).getByRole('link', { name: 'Power feeds · 2' })).toHaveAttribute('href', expect.stringContaining('tab=power'));
     expect(screen.queryByText('Related records', { selector: 'h3' })).not.toBeInTheDocument();
     expect(screen.queryByText('Not recorded', { selector: '.inventory-related small' })).not.toBeInTheDocument();
-    fireEvent.click(within(strip).getByRole('link', { name: 'Cables · 19' }));
+    fireEvent.click(within(strip).getByRole('link', { name: 'Cables · 21' }));
     expect(search().get('tab')).toBe('cables');
   });
 
@@ -188,6 +189,10 @@ describe('device selection', () => {
     const first = screen.getAllByRole('link', { name: /^Review / })[0];
     first.focus();
     fireEvent.keyDown(first, { key: 'ArrowDown' });
+    // Arrow keys follow the drawing top to bottom, across the collapsed run below the leaf.
+    const run = document.activeElement as HTMLElement;
+    expect(run).toHaveAccessibleName(/^U22–U39 · 18 units · no placement recorded \(not free\)/);
+    fireEvent.keyDown(run, { key: 'ArrowDown' });
     const next = document.activeElement as HTMLElement;
     expect(next).not.toBe(first);
     expect(next).toHaveAttribute('data-slot-key');
