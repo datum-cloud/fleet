@@ -33,7 +33,9 @@ Operations in the navigation. The page has four tabs:
   Facilities lead to racks and installation plans; claims lead to all registered
   devices; cable endpoints lead to devices or feeds. Identity, typed components,
   internal paths, external service references, legacy peers, and creation times
-  remain visible. Device detail adds a connection view of Cable records
+  remain available in URL-held tabs and an "About this record" disclosure (see the
+  [page design rules](../../docs/development/staff-inventory-ui.md#page-design-rules)).
+  Device detail adds a connection view of Cable records
   (diagram and list), not live link state; see the
   [connection view](../../docs/development/staff-inventory-ui.md#device-connection-view-implemented).
   Missing claims do not hide hardware, and historical

@@ -31,7 +31,8 @@ described in the historical notes below, not inventory contracts or IAM.
   starts an unfiltered directory, and browser Back/Forward restores prior URLs.
   Clicking the already-current tab is a no-op, not an implicit refresh.
 - Same-principal presentation navigation reuses authorized default-namespace
-  collection data, including changes to the three known client-side filters.
+  collection data, including changes to the three known client-side filters
+  and the detail pages' `tab`, `selectedKind` and `selected` parameters.
   The narrow presentation allowlist does not include unknown query parameters,
   route changes, form submissions, or explicit revalidation. Host loaders still
   verify navigations; changed principal, logout, real denial, hidden/pagehide,
@@ -54,6 +55,78 @@ without page errors. The 390px page stays 390px wide while the primary tab row
 scrolls internally. These are not authenticated staff-portal or staging acceptance.
 No live writes, deployment, schema changes, or new capacity-allocation semantics
 are introduced; Go validation is not rerun because this follow-up changes no Go.
+
+## Page design rules
+
+Most people open this dashboard to find one record and confirm it is the right
+one. Detail and list pages follow these rules so that they are not slowed down
+by unnecessary or duplicated information. Follow them when adding a kind,
+field or view.
+
+1. **Compact header.** The header shows the display name and one summary line:
+   lifecycle (only when it is not the normal state), location and issue
+   badges. Generated resource names, the namespace, the UID and the creation
+   time go in a collapsed **About this record** disclosure at the end of the
+   page. The breadcrumb is the way back; there is no separate back link.
+2. **One primary view per kind**, above the fold:
+
+   | Kind | Primary view |
+   | --- | --- |
+   | Device | Identity strip (model, serial, asset tag), component counts, then the connection view |
+   | Cable | End A and End B side by side, with one row per lane |
+   | PowerFeed | Supply rating, then outlets and what each one is cabled to |
+   | Facility | Its racks |
+   | Rack | Its elevation |
+   | Site | Its linked facilities |
+   | DeviceType | Component templates grouped by chassis face, then type |
+   | Manufacturer | Its device types |
+   | Claim | Planned placement, expected hardware and registered devices |
+
+3. **Secondary detail goes in tabs held in the URL** (`?tab=`), for example
+   Components, Cable records, Location, Registration and History &
+   verification. A tab label carries its count, or `?` when the collection is
+   unreadable. Every panel stays mounted and inactive panels are `hidden`, so
+   open dialogs and permission checks keep their state. `tab` is in the session
+   boundary's presentation allowlist, so switching tabs never refetches
+   inventory. Links to other records never carry `tab`.
+4. **Say each fact once.** Do not repeat a facility or rack name in rows when
+   the header or breadcrumb states it. Put type words and shared values (for
+   example "Power outlets · IEC C19") in the group header, not on every row.
+   Do not show a field in both the summary and the body. Replace a related
+   records list with a count that links to the tab holding the list.
+   `ui/provider/src/lib/display-names.ts` holds the helpers for this, next to
+   the rack page's `condensedName` for port tiles.
+5. **Issues first, quiet when normal.** Disagreements, unknown placement,
+   conflicts and unreadable or missing records become short banners at the top
+   of the page that link to the problem (`IssueBanners`). Empty and "not
+   recorded" fields are hidden by default (`Facts`). Keep an absent value
+   visible only when the absence itself matters: verification is unknown,
+   power budget is unknown, and "No cable recorded" stays on outlets because
+   it means unknown, not free.
+6. **Honesty notes stay but shrink.** "Not verified", "Cable records, not live
+   link state" and "unknown, not free" appear once per view as a legend line
+   (`ViewLegend`), not on every row. Never remove the meaning: unknown must
+   never look free, and nothing may look verified. When a collection is
+   unreadable, counts and states read as unknown, never zero or empty.
+7. **List pages are search-first.** Search and filters sit at the top and keep
+   their URL parameters (`q`, `location`, `model`). Rows show only the columns
+   needed to pick the right record (Devices: name, model, location, serial;
+   Cables: name, medium, End A, End B; Racks: name, facility, height) and no
+   generated names, except to tell apart catalog records whose display names
+   collide. Clicking a row opens the record; the name stays the keyboard link.
+8. **Mobile.** At 390 px the header, primary view and tabs must work without
+   horizontal page scroll. `pnpm screenshots` fails a page that overflows.
+
+Write controls stay available but quiet: display-name editing and Refresh sit
+in the header actions, and reported-location correction is on the Device's
+Location tab. Their dialogs, task pages, dirty-dismiss confirmation and
+unknown-outcome handling are unchanged.
+
+The building blocks are in `ui/provider/src/components/inventory-record-layout.tsx`
+(`RecordSummary`, `IssueBanners`, `RecordTabs`, `Facts`, `ViewLegend`,
+`AboutRecord`), and the per-kind views are in `inventory-record-detail.tsx`.
+`inventory-record-layout.test.tsx` covers the disclosure, tab URL state, issue
+banners, hidden empty fields and list columns.
 
 ## Default-only directory and stable controls
 
@@ -435,8 +508,8 @@ deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 
 ## Device connection view (implemented)
 
-Device detail shows a **Connections** section under the component table. It
-is labelled "Cable records, not live link state". It joins the Device's typed
+Device detail shows a **Connections** section in its primary view, under the
+identity strip; the component list is on the Components tab. It is labelled "Cable records, not live link state". It joins the Device's typed
 components to the Cable lanes that name them, using the Cables, Devices,
 PowerFeeds and DeviceTypes the Inventory tab already lists. It adds no
 requests, API fields or permissions.
