@@ -18,9 +18,9 @@ export function InventoryManagement(props: ComponentProps<typeof InventoryManage
   return <InventoryManagementForm {...props} />;
 }
 
-function CreateTaskButton({ href, allowed, label }: { href: string; allowed: boolean; label: string }) {
+function CreateTaskButton({ href, allowed, label, hint }: { href: string; allowed: boolean; label: string; hint?: { id: string; text: string } }) {
   const navigate = useNavigate();
-  return <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} onClick={() => { if (allowed) void navigate(href); }}>Create {label}</Button>;
+  return <div className="inventory-management-controls" title={hint?.text}><Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} aria-describedby={hint?.id} onClick={() => { if (allowed) void navigate(href); }}>Create {label}</Button>{hint && <span id={hint.id} className="inventory-visually-hidden">{hint.text}</span>}</div>;
 }
 
 function InventoryManagementForm({ kind, record, facilities: sourceFacilities, claims: sourceClaims = [], devices: sourceDevices = [], feeds: sourceFeeds = [], racks: sourceRacks = [], catalog: sourceCatalog = [], compact = false, issues: sourceIssues, createHref, task = false, onDone }: { kind: ManagedKind; record?: ManagedRecord; facilities: PhysicalRecord[]; claims?: DeviceClaim[]; devices?: Device[]; feeds?: PhysicalRecord[]; racks?: PhysicalRecord[]; catalog?: PhysicalRecord[]; compact?: boolean; issues?: Inventory['issues']; createHref?: string; task?: boolean; onDone?: () => void }) {
@@ -138,10 +138,13 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       else { setMessage('The save outcome is unknown. Your input is kept here. Check inventory before attempting another save; do not assume the change failed.'); setBlocked(true); setUncertain(true); }
     } finally { setPending(false); }
   }
-  // Not a status: the reason a record cannot be edited is the disabled button's tooltip and description.
-  const hint = !editable ? { id: hintID, text: 'Display-name editing requires a portal-owned record. Other records need ownership review.' } : undefined;
-  const status = <p role="status" className="inventory-management-status">{message || (!editable ? '' : !ready || permission.isFetching ? 'Checking management access…' : dependenciesUnavailable ? 'Related records are unavailable, not empty. Creation requires viewing access to its references.' : permission.error instanceof ApiError && permission.error.status === 401 ? 'Your session expired. Sign in again through the staff portal.' : open && blocked ? 'Close and reopen this form to continue.' : !visible ? 'Viewing and management access are separate. Ask your administrator for physical-inventory management access, or retry after a temporary failure.' : '')}</p>;
-  if (createHref && !record) return <section className="inventory-management inventory-management-compact"><div className="inventory-management-controls"><CreateTaskButton href={createHref} allowed={allowed} label={kindLabel} /></div>{status}</section>;
+  // Not a status: the reason a record cannot be edited or created is the disabled button's tooltip and description.
+  const sessionExpired = permission.error instanceof ApiError && permission.error.status === 401;
+  const denied = editable && ready && !permission.isFetching && !visible && !dependenciesUnavailable && !issues[kind] && !sessionExpired;
+  const hint = !editable ? { id: hintID, text: 'Display-name editing requires a portal-owned record. Other records need ownership review.' }
+    : denied ? { id: hintID, text: 'Requires physical-inventory management access, which is separate from viewing. Ask your administrator, or retry after a temporary failure.' } : undefined;
+  const status = <p role="status" className="inventory-management-status">{message || (!editable ? '' : !ready || permission.isFetching ? 'Checking management access…' : dependenciesUnavailable ? 'Related records are unavailable, not empty. Creation requires viewing access to its references.' : sessionExpired ? 'Your session expired. Sign in again through the staff portal.' : open && blocked ? 'Close and reopen this form to continue.' : '')}</p>;
+  if (createHref && !record) return <section className="inventory-management inventory-management-compact"><CreateTaskButton href={createHref} allowed={allowed} label={kindLabel} hint={hint} />{status}</section>;
   return <section className={`inventory-management ${compact ? 'inventory-management-compact' : ''}`}>
     {open && <InventoryDraftGuard dirty={dirty} pending={pending} uncertain={uncertain} />}
     <InventoryFormSurface open={open && permission.data === true && !permission.error && !issues[kind]} task={task} title={record ? 'Edit display name' : `Create ${kindLabel}`} status={status} hint={hint} onDismiss={dismiss} trigger={<Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!allowed} aria-describedby={hint?.id} onClick={begin}>{record ? 'Edit display name' : `Create ${kindLabel}`}</Button>}>

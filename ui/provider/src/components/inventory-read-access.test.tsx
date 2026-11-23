@@ -54,7 +54,7 @@ it.each(['Facility', 'Rack'] as const)('redacts denied %s references in PowerFee
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=PowerFeed']}><PhysicalInventory inventory={inventory} /></MemoryRouter></QueryClientProvider>);
   expect(screen.queryByText('restricted-location')).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'restricted-location' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+  fireEvent.submit(screen.getByRole('search'));
   expect(screen.queryByRole('link', { name: feed.spec.displayName })).not.toBeInTheDocument();
 });
 
@@ -64,10 +64,10 @@ it.each(['Device', 'PowerFeed'] as const)('does not search denied %s cable endpo
   const inventory = { ...toInventory([], [], [cable]), issues: { [kind]: { status: 403 } } };
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Cable']}><PhysicalInventory inventory={inventory} /></MemoryRouter></QueryClientProvider>);
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'restricted-endpoint' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+  fireEvent.submit(screen.getByRole('search'));
   expect(screen.queryByRole('link', { name: cable.spec.displayName })).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: cable.spec.displayName! } });
-  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+  fireEvent.submit(screen.getByRole('search'));
   expect(screen.getByRole('link', { name: cable.spec.displayName })).toBeInTheDocument();
 });
 

@@ -107,7 +107,7 @@ describe('hardware catalog readers', () => {
     const result = show(inventory);
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor|private-normalized/);
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Private model label' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+    fireEvent.submit(screen.getByRole('search'));
     expect(screen.queryByRole('link', { name: device.spec.displayName })).not.toBeInTheDocument();
   });
 
@@ -128,12 +128,13 @@ describe('hardware catalog readers', () => {
     const { inventory, model } = fixture();
     show(inventory, '?kind=Manufacturer');
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'private old vendor' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+    fireEvent.submit(screen.getByRole('search'));
     expect(screen.getByRole('link', { name: 'Private vendor label' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Device types' }));
     fireEvent.click(screen.getByRole('link', { name: model.spec.displayName }));
     expect(screen.getByText(/Template-only port/)).toBeInTheDocument();
-    expect(screen.getAllByText(/not installed|No installed assets/).length).toBeGreaterThan(0);
+    // The template is shown as a chassis template, not as an installed component.
+    expect(screen.getByRole('region', { name: 'Chassis face unknown' })).toHaveTextContent('Template-only port');
     expect(screen.queryByRole('button', { name: /create|edit|delete|apply|select/i })).not.toBeInTheDocument();
   });
 

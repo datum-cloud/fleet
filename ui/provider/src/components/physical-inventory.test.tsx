@@ -91,16 +91,29 @@ describe('hardware directory', () => {
     expect(screen.queryByText(/GitOps|Flux/)).not.toBeInTheDocument();
   });
 
+  it('clears location and model filters from the no-match view, and offers Clear filters only when one is set', () => {
+    const facility = fixturePhysicalRecords.find(record => record.kind === 'Facility')!;
+    browse(`?kind=Device&location=${facility.metadata.namespace}/${facility.metadata.name}&model=no-such-model`);
+    expect(screen.getByText('No matching records')).toBeInTheDocument();
+    // One in the toolbar, one in the empty view.
+    expect(screen.getAllByRole('button', { name: 'Clear filters' })).toHaveLength(2);
+    fireEvent.click(within(screen.getByTestId('fleet-plugin-inventory-empty')).getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Filter by facility')).toHaveValue('');
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument();
+  });
+
   it('searches identity and resets the filter when navigating categories', () => {
     browse();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'EXAMPLE-001' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+    fireEvent.submit(screen.getByRole('search'));
     expect(screen.getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'orphan-synthetic-0009' })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'no-such-serial' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+    fireEvent.submit(screen.getByRole('search'));
     expect(screen.getByText('No matching records')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Facilities' }));
     expect(screen.getByRole('searchbox')).toHaveValue('');
@@ -170,7 +183,7 @@ describe('hardware directory', () => {
     const original = fixturePhysicalDevices[0];
     const panel = { ...original, metadata: { ...original.metadata, name: 'synthetic-patch-panel' }, spec: { ...original.spec, displayName: 'Synthetic patch panel', bmc: undefined, identity: { model: 'Example 24-port panel', unidentified: true, unidentifiedReason: 'passive panel; no serial on the chassis' } } };
     browse('?kind=Device', toInventory(fixturePhysicalClaims, [panel]));
-    expect(screen.getByText('No hardware identity')).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'None' })).toHaveAttribute('title', 'passive panel; no serial on the chassis');
     fireEvent.click(screen.getByRole('link', { name: 'Synthetic patch panel' }));
     expect(screen.getByText(/passive panel; no serial on the chassis · cannot back machine capacity/)).toBeInTheDocument();
   });
