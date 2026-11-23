@@ -21,7 +21,7 @@ import { DeviceTable, facilityRackCount, FacilityRacks, FacilityUnrackedEquipmen
 import { FactSection, Facts, RecordSummary, SmallTable, SummaryParts, type FactItem, type RecordIssue, type RecordTab, type SummaryBadge } from './inventory-record-layout';
 import { observedDisagrees, type TelemetryContextValue } from '../lib/telemetry';
 import { feedPath } from '../lib/power-paths';
-import { DeviceDrawFact, PowerFeedPath } from './power-feed-path';
+import { DeviceDrawFact, PowerFeedPath, UPSTREAM_INLINE_LIMIT, upstreamWords } from './power-feed-path';
 import { CapacityBar, useTelemetry } from './power-telemetry';
 
 export type DetailKind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
@@ -181,20 +181,38 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
 interface EndTarget { kind: 'Device' | 'PowerFeed'; name: string }
 const endTarget = (endpoint: CableEndpoint): EndTarget | undefined => endpoint.deviceRef ? { kind: 'Device', name: endpoint.deviceRef.name } : endpoint.powerFeedRef ? { kind: 'PowerFeed', name: endpoint.powerFeedRef.name } : undefined;
 
+const sameEnd = (one: CableEndpoint, other: CableEndpoint) => {
+  const a = endTarget(one);
+  const b = endTarget(other);
+  return !!a && !!b && a.kind === b.kind && a.name === b.name && one.componentID === other.componentID && (one.position ?? 1) === (other.position ?? 1);
+};
+
+/**
+ * The page is the cable's ends. A one-lane cable is one line, "Compute a01-01
+ * · eth0 ⟷ Leaf a01 · swp1". More lanes are a table, one line per lane; an end
+ * device shared by every lane (and its port, when shared too) is named once in
+ * the column head. An end that another Cable also names is red, with the
+ * other Cable named in its tooltip and accessible text, and linked.
+ */
 export function cableDetail(cable: PhysicalRecord, helpers: DetailHelpers): DetailView {
-  const { inventory, reference, find } = helpers;
+  const { inventory, reference, find, href } = helpers;
   const namespace = cable.metadata.namespace;
   const lanes = cable.spec.lanes ?? [];
   const issues: RecordIssue[] = [];
   const sides = (['a', 'b'] as const).map(side => {
     const targets = lanes.map(lane => endTarget(lane[side]));
-    const shared = sharedValue(targets.map(target => target && `${target.kind}/${target.name}`));
-    return { side, targets, shared: shared ? targets[0] : undefined };
+    const shared = lanes.length > 1 && sharedValue(targets.map(target => target && `${target.kind}/${target.name}`)) ? targets[0] : undefined;
+    const port = shared && sharedValue(lanes.map(lane => lane[side].componentID));
+    return { side, targets, shared, port };
   });
   const endLabel = (target: EndTarget | undefined) => {
     if (!target) return 'Endpoint not recorded';
     if (inventory.issues?.[target.kind]) return 'Related endpoint unavailable';
     return reference(target.kind, namespace, target.name);
+  };
+  const endWords = (target: EndTarget | undefined) => {
+    const record = target && !inventory.issues?.[target.kind] ? find(target.kind, namespace, target.name)?.record : undefined;
+    return record ? recordLabel(record as PhysicalRecord) : 'This end';
   };
   for (const { side, targets } of sides) {
     const unreadable = targets.some(target => target && inventory.issues?.[target.kind]);
@@ -202,25 +220,41 @@ export function cableDetail(cable: PhysicalRecord, helpers: DetailHelpers): Deta
     if (unreadable) issues.push({ id: `${side}-denied`, text: `End ${side.toUpperCase()} records are unavailable to you; that end is unknown.` });
     if (missing.length) issues.push({ id: `${side}-missing`, text: `End ${side.toUpperCase()} names ${missing.length === 1 ? 'a record' : 'records'} not found: ${missing.join(', ')}.` });
   }
+  // Other Cables naming the same position: records disagree, whichever is right.
+  const others = inventory.issues?.Cable ? [] : inventory.physical.filter(record => record.kind === 'Cable' && record.metadata.namespace === namespace && record.metadata.name !== cable.metadata.name);
+  const rivals = (endpoint: CableEndpoint) => others.filter(other => other.spec.lanes?.some(lane => sameEnd(lane.a, endpoint) || sameEnd(lane.b, endpoint)));
   const port = (endpoint: CableEndpoint, side: 'a' | 'b') => {
     const repeated = lanes.filter(lane => lane[side].componentID === endpoint.componentID && slotKey(undefined, endTarget(lane[side])?.name ?? '') === slotKey(undefined, endTarget(endpoint)?.name ?? '')).length > 1;
     return repeated || endpoint.position !== 1 ? `${endpoint.componentID} · position ${endpoint.position}` : endpoint.componentID;
   };
+  /** One end: device · port, or only what the column head does not already say. */
+  const end = (endpoint: CableEndpoint, side: typeof sides[number]) => {
+    const conflicts = rivals(endpoint);
+    const text = side.port ? `position ${endpoint.position}` : port(endpoint, side.side);
+    const reason = conflicts.length ? `${endWords(endTarget(endpoint))} ${port(endpoint, side.side)} is also named by ${conflicts.map(other => recordLabel(other)).join(', ')}` : undefined;
+    return <span className="inventory-cable-end" data-state={conflicts.length ? 'conflict' : undefined} title={reason}>
+      {conflicts.length > 0 && <span aria-hidden="true">! </span>}
+      {!side.shared && <>{endLabel(endTarget(endpoint))} · </>}{text}
+      {conflicts.length > 0 && <span className="inventory-visually-hidden">. Records disagree: {reason}.</span>}
+      {conflicts.map(other => <span key={other.metadata.name} className="inventory-cable-rival"> · also <Link to={href('Cable', namespace, other.metadata.name)}>{recordLabel(other)}</Link></span>)}
+    </span>;
+  };
   const plans = inventory.issues?.DeviceClaim ? [] : inventory.slots.map(slot => slot.claim).filter(claim => claim.metadata.namespace === namespace && claim.spec.cableRefs?.some(ref => ref.name === cable.metadata.name));
-  const primary = <section className="inventory-cable-ends" aria-label="Cable ends">
-    <div className="inventory-cable-grid" role="table" aria-label="Cable lanes">
-      <div role="row" className="inventory-cable-head">
-        <span role="columnheader">Lane</span>
-        {sides.map(({ side, shared }) => <span role="columnheader" key={side}>End {side.toUpperCase()}{shared && <strong>{endLabel(shared)}</strong>}</span>)}
-      </div>
-      {lanes.map(lane => <div role="row" key={lane.id}>
-        <span role="cell">{lane.id}</span>
-        {sides.map(({ side, shared }) => <span role="cell" key={side}>{!shared && <strong>{endLabel(endTarget(lane[side]))}</strong>}<span>{port(lane[side], side)}</span></span>)}
-      </div>)}
-    </div>
-    {!lanes.length && <p>No lanes recorded.</p>}
-  </section>;
-  const summary = <RecordSummary><SummaryParts parts={[cable.spec.medium ?? 'Medium not recorded', `${lanes.length} ${lanes.length === 1 ? 'lane' : 'lanes'}`]} /></RecordSummary>;
+  const primary = !lanes.length ? <p>No lanes recorded.</p>
+    : lanes.length === 1 ? <p className="inventory-cable-line" aria-label="Cable ends">{end(lanes[0].a, sides[0])} <span aria-hidden="true">⟷</span><span className="inventory-visually-hidden">to</span> {end(lanes[0].b, sides[1])}</p>
+      : <section className="inventory-cable-ends" aria-label="Cable ends">
+        <div className="inventory-cable-grid" role="table" aria-label="Cable lanes">
+          <div role="row" className="inventory-cable-head">
+            <span role="columnheader">Lane</span>
+            {sides.map(side => <span role="columnheader" key={side.side}>End {side.side.toUpperCase()}{side.shared && <strong>{endLabel(side.shared)}{side.port && ` · ${side.port}`}</strong>}</span>)}
+          </div>
+          {lanes.map(lane => <div role="row" key={lane.id}>
+            <span role="cell">{lane.id}</span>
+            {sides.map(side => <span role="cell" key={side.side}>{end(lane[side.side], side)}</span>)}
+          </div>)}
+        </div>
+      </section>;
+  const summary = <RecordSummary><SummaryParts parts={[cable.spec.medium ?? 'Medium not recorded', lanes.length > 1 && `${lanes.length} lanes`]} /></RecordSummary>;
   const tabs: RecordTab[] = [];
   if (plans.length) tabs.push({ id: 'plans', label: 'Installation plans', count: plans.length, content: <RecordLinks kind="DeviceClaim" records={plans} helpers={helpers} empty="" /> });
   return { summary, issues, primary, tabs };
@@ -257,14 +291,12 @@ export function powerFeedDetail(feed: PhysicalRecord, helpers: DetailHelpers): D
       feed.spec.rackRef && (inventory.issues?.Rack ? 'Rack unavailable' : reference('Rack', namespace, feed.spec.rackRef.name)),
     ]} />
   </RecordSummary>;
-  const source = telemetry?.source;
-  const primary = <>
-    <PowerFeedPath feed={feed} inventory={inventory} href={href} />
-  </>;
+  const primary = <PowerFeedPath feed={feed} inventory={inventory} href={href} />;
+  // The Upstream stage lists a few sources itself; a longer list gets its own tab.
   const sources = feed.spec.upstreamSources ?? [];
-  const tabs: RecordTab[] = [
-    { id: 'upstream', label: 'Upstream sources', count: sources.length, content: sources.length ? <ul>{sources.map((item, index) => <li key={index}>{item.system}/{item.type}/{item.id}</li>)}</ul> : <p className="inventory-muted">No upstream sources recorded.</p> },
-  ];
+  const tabs: RecordTab[] = sources.length > UPSTREAM_INLINE_LIMIT
+    ? [{ id: 'upstream', label: 'Upstream sources', count: sources.length, content: <ul>{sources.map((item, index) => <li key={index}>{upstreamWords(item)}</li>)}</ul> }]
+    : [];
   return { summary, issues, primary, tabs };
 }
 
@@ -421,6 +453,23 @@ export function deviceTypeDetail(model: PhysicalRecord, helpers: DetailHelpers):
 
 // ---- DeviceClaim ----
 
+const same = (one?: string, other?: string) => (one ?? '').trim().toLowerCase() === (other ?? '').trim().toLowerCase();
+
+/** The one readable DeviceType whose manufacturer and model key match a plan's expected identity, if any. */
+function expectedModel(identity: RawDeviceClaim['spec']['expectedIdentity'], namespace: string | undefined, inventory: Inventory) {
+  if (inventory.issues?.DeviceType || inventory.issues?.Manufacturer) return undefined;
+  const records = inventory.physical.filter(record => record.metadata.namespace === namespace && !record.metadata.deletionTimestamp);
+  const makers = new Set(records.filter(record => record.kind === 'Manufacturer' && (!identity.manufacturer || [record.metadata.name, record.spec.canonicalName, ...(record.spec.aliases ?? [])].some(name => same(name, identity.manufacturer)))).map(record => record.metadata.name));
+  const matches = records.filter(record => record.kind === 'DeviceType' && same(record.spec.model, identity.model) && makers.has(record.spec.manufacturerRef?.name ?? ''));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * An installation plan: where the equipment goes, what hardware is expected
+ * (linked to its model when the catalog resolves it), and the devices
+ * registered against it. A registered device whose reported model differs
+ * from the expected one is red, with the reason in its tooltip.
+ */
 export function claimDetail(claim: RawDeviceClaim, helpers: DetailHelpers): DetailView {
   const { inventory, reference } = helpers;
   const namespace = claim.metadata.namespace;
@@ -431,19 +480,25 @@ export function claimDetail(claim: RawDeviceClaim, helpers: DetailHelpers): Deta
   const planned = <PlacementLinks placement={location} namespace={namespace} helpers={helpers} />;
   const scopeNote = location.scope === 'Facility' ? 'rack not recorded' : location.scope === 'RackMembership' ? 'no reserved units' : undefined;
   const devices = slot?.devices ?? [];
-  const registered = inventory.issues?.Device ? 'Registration status unavailable' : devices.length === 1 ? '1 device registered' : devices.length ? `${devices.length} devices registered` : 'No device registered';
-  const summary = <RecordSummary badges={[{ label: claim.spec.lifecycle, tone: 'muted' }]}>{registered}</RecordSummary>;
+  const expected = claim.spec.expectedIdentity;
+  const model = expectedModel(expected, namespace, inventory);
+  const differs = (device: RawDevice) => !same(device.spec.identity.model, expected.model) || (!!expected.manufacturer && !!device.spec.identity.manufacturer && !same(device.spec.identity.manufacturer, expected.manufacturer));
+  const registered = (device: RawDevice) => {
+    if (!differs(device)) return reference('Device', namespace, device.metadata.name);
+    const reason = `Reports ${modelLabel(device.spec.identity)}; the plan expects ${modelLabel(expected)}`;
+    return <span className="inventory-claim-mismatch" data-state="conflict" title={reason}><span aria-hidden="true">! </span>{reference('Device', namespace, device.metadata.name)} · {modelLabel(device.spec.identity)}<span className="inventory-visually-hidden">. Records disagree: {reason}.</span></span>;
+  };
   const primary = <Facts label="Target and status" items={[
-    { label: 'Planned placement (intent / history)', value: <>{planned}{scopeNote && ` · ${scopeNote}`}</>, always: true },
-    { label: 'Expected hardware', value: modelLabel(claim.spec.expectedIdentity), always: true },
-    { label: 'Expected serial', value: claim.spec.expectedIdentity.serial },
-    { label: 'Registered devices', always: true, value: inventory.issues?.Device ? 'Device details unavailable' : devices.length ? <ul className="inventory-link-list">{devices.map(device => <li key={device.metadata.name}>{reference('Device', namespace, device.metadata.name)}</li>)}</ul> : 'No device registered' },
+    { label: 'Placement', value: <>{planned}{scopeNote && ` · ${scopeNote}`}</>, always: true },
+    { label: 'Expected hardware', value: model ? reference('DeviceType', namespace, model.metadata.name) : modelLabel(expected), always: true },
+    { label: 'Expected serial', value: expected.serial },
+    { label: 'Registered devices', always: true, value: inventory.issues?.Device ? 'Device details unavailable' : devices.length ? <ul className="inventory-link-list">{devices.map(device => <li key={device.metadata.name}>{registered(device)}</li>)}</ul> : 'No device registered' },
   ]} />;
   const cableRefs = claim.spec.cableRefs ?? [];
-  const tabs: RecordTab[] = [
-    { id: 'connections', label: 'Planned connections', count: cableRefs.length, content: cableRefs.length ? <ul>{cableRefs.map(cable => <li key={cable.name}>{reference('Cable', namespace, cable.name)}</li>)}</ul> : <p className="inventory-muted">No cable references recorded.</p> },
-  ];
-  return { summary, issues, primary, tabs };
+  const tabs: RecordTab[] = cableRefs.length
+    ? [{ id: 'connections', label: 'Planned connections', count: cableRefs.length, content: <ul>{cableRefs.map(cable => <li key={cable.name}>{reference('Cable', namespace, cable.name)}</li>)}</ul> }]
+    : [];
+  return { summary: null, issues, primary, tabs };
 }
 
 export { recordLabel };

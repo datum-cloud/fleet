@@ -8,7 +8,6 @@ import { DeviceConnections } from './device-connections';
 import { inventoryHref } from './inventory-location';
 import { PhysicalInventory } from './physical-inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
-import { DIAGRAM_LINK_LIMIT } from '../lib/device-connections';
 import { TEXT_TILE_LIMIT } from './device-faceplate';
 
 // Synthetic records only.
@@ -45,7 +44,6 @@ function show(target: Device, inventory: Inventory, search = '') {
   );
 }
 
-const diagram = () => screen.getByRole('group', { name: /Connection diagram/ });
 const grid = () => screen.getByRole('group', { name: /Port tiles/ });
 const tiles = () => within(grid()).getAllByRole('button').filter(item => item.hasAttribute('data-tile'));
 const tile = (name: RegExp) => within(grid()).getByRole('button', { name });
@@ -56,8 +54,6 @@ const cells = (row: HTMLElement) => within(row).getAllByRole('cell');
 const accessibleNames = (root: HTMLElement) => [...root.querySelectorAll('[aria-label]')].map(item => item.getAttribute('aria-label')).join('\n');
 // Tooltips are visible on hover, so they follow the same rules as text.
 const tooltips = (root: HTMLElement) => [...root.querySelectorAll('[title]')].map(item => item.getAttribute('title')).join('\n');
-const view = () => new URLSearchParams(screen.getByTestId('location').textContent!).get('view');
-const diagramButton = () => screen.getByRole('button', { name: 'Link diagram' });
 // jsdom has no PointerEvent, so set the pointer type on a plain event. React
 // derives enter and leave from over and out, so those are what is fired.
 function pointer(target: HTMLElement, type: 'pointerEnter' | 'pointerLeave', pointerType = 'mouse') {
@@ -87,44 +83,18 @@ describe('DeviceConnections', () => {
     expect(cells(rows[3])[4]).toHaveTextContent(/^Unknown$/);
   });
 
-  it('swaps the table for the link diagram in the URL, keeping the picture', () => {
-    show(server, data());
-    expect(diagramButton()).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(diagramButton());
-    expect(view()).toBe('diagram');
-    expect(diagramButton()).toHaveAttribute('aria-pressed', 'true');
-    expect(within(diagram()).getByRole('list', { name: 'Power links' })).toBeInTheDocument();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
-    expect(grid()).toBeInTheDocument();
-    // Pressing it again restores the table and clears the parameter.
-    fireEvent.click(diagramButton());
-    expect(view()).toBeNull();
-    expect(table()).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: /Connection diagram/ })).toBeNull();
-  });
-
-  it('opens the diagram the URL names, and treats any other view, table included, as the default page', () => {
-    const first = show(server, data(), '?view=diagram');
-    expect(diagram()).toBeInTheDocument();
-    expect(grid()).toBeInTheDocument();
-    first.unmount();
-    for (const search of ['?view=table', '?view=picture', '?view=list']) {
-      const other = show(server, data(), search);
+  it('has no link diagram: every view value, diagram included, is the default page', () => {
+    for (const search of ['?view=diagram', '?view=table', '?view=picture', '?view=list']) {
+      const page = show(server, data(), search);
       expect(grid()).toBeInTheDocument();
       expect(screen.getByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
-      expect(diagramButton()).toHaveAttribute('aria-pressed', 'false');
-      other.unmount();
+      expect(screen.queryByRole('button', { name: 'Link diagram' })).toBeNull();
+      expect(screen.queryByRole('group', { name: /Connection diagram/ })).toBeNull();
+      page.unmount();
     }
-    const ports = DIAGRAM_LINK_LIMIT + 1;
-    const big = device('switch-02', Array.from({ length: ports }, (_, index) => C(`swp${index + 1}`, 'NetworkPort')));
-    show(big, data(undefined, [big]), '?view=diagram');
-    expect(screen.queryByRole('button', { name: 'Link diagram' })).toBeNull();
-    expect(screen.queryByRole('group', { name: /Connection diagram/ })).toBeNull();
-    expect(grid()).toBeInTheDocument();
-    expect(tableRows()).toHaveLength(ports);
   });
 
-  it('states one count line in the table header, without the Device name, and keeps the record-state key in the legend', () => {
+  it('states one count line in the table header, without the Device name, and no legend', () => {
     const view = show(server, data());
     expect(view.container.querySelector('.inventory-connection-summary')).toHaveTextContent(/^4 ports · 2 recorded · 2 unknown$/);
     expect(document.body.textContent?.match(/\d+ ports · /g)).toHaveLength(1);
@@ -132,27 +102,10 @@ describe('DeviceConnections', () => {
     expect(screen.getByRole('region', { name: 'Components table' })).toHaveAccessibleDescription('4 ports · 2 recorded · 2 unknown');
     // The page heading already names the Device; the view does not repeat it.
     expect(view.container.textContent).not.toMatch(/server-01/);
-    // No explanatory caveat is shown inline.
+    // No explanatory caveat and no legend: each state is a glyph and words in place.
     expect(screen.queryByText(/Unknown is not free/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Legend' })).toBeNull();
     expect(screen.queryByRole('list', { name: 'Record states' })).not.toBeInTheDocument();
-    const toggle = screen.getByRole('button', { name: 'Legend' });
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    const legend = screen.getByRole('group', { name: 'Legend' });
-    expect(toggle).toHaveAttribute('aria-controls', legend.id);
-    // The legend is only the record-state key, without caveat lines.
-    expect(legend).not.toHaveTextContent(/not live link state|Power redundancy unknown/);
-    const items = within(within(legend).getByRole('list', { name: 'Record states' })).getAllByRole('listitem');
-    expect(items.map(item => item.getAttribute('data-state'))).toEqual(['cabled', 'none', 'conflict', 'unavailable', 'catalog']);
-    expect(items.map(item => within(item).getByText(/Cable recorded|No cable recorded|Records disagree|Peer unavailable|Catalog only/).textContent)).toEqual(['● Cable recorded', '○ No cable recorded', '! Records disagree', '? Peer unavailable', '◇ Catalog only']);
-    // Escape closes it and returns focus to the toggle; so does a click outside.
-    fireEvent.keyDown(legend, { key: 'Escape' });
-    expect(screen.queryByRole('group', { name: 'Legend' })).toBeNull();
-    expect(document.activeElement).toBe(toggle);
-    fireEvent.click(toggle);
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole('group', { name: 'Legend' })).toBeNull();
   });
 
   it('outlines a component in the picture and the table at once, from either side', () => {
@@ -204,7 +157,7 @@ describe('DeviceConnections', () => {
     expect(grid().textContent).not.toMatch(/Device|PowerInlet|NetworkPort|cable recorded/);
   });
 
-  it('marks disagreeing records with a ! tile and lists every claiming Cable, with the reason, in the card', () => {
+  it('marks disagreeing records with a ! tile and lists every claiming Cable, with the reason once, in the card', () => {
     const records = [...serverRecords, cable('dac-02', 'Copper', D('server-01', 'eth0'), D('leaf-01', 'swp2'))];
     show(server, data(undefined, [server, leaf], records));
     const eth0 = tile(/^Ethernet 0: Records disagree; 2 Cables: to Example leaf-01 · swp1, via dac-01; to Example leaf-01 · swp2, via dac-02$/);
@@ -213,7 +166,9 @@ describe('DeviceConnections', () => {
     fireEvent.click(eth0);
     const links = within(card()).getAllByRole('link', { name: /^dac-0[12]$/ });
     expect(links.map(link => link.textContent)).toEqual(['dac-01', 'dac-02']);
-    expect(card()).toHaveTextContent('2 Cable lanes name this position. Neither is treated as current.');
+    // Both links share the reason, so the card says it once.
+    expect(card().textContent?.match(/2 Cable lanes name this position\./g)).toHaveLength(1);
+    expect(card()).not.toHaveTextContent(/Neither is treated as current/);
   });
 
   it('moves between tiles with arrow keys using one tab stop', () => {
@@ -257,13 +212,14 @@ describe('DeviceConnections', () => {
     expect(psu1).toHaveAttribute('aria-controls', card().id);
     expect(card()).toHaveAccessibleName('PSU 1 details');
     expect(card()).toHaveAttribute('aria-modal', 'false');
-    expect(within(card()).getByText('Health').nextElementSibling).toHaveTextContent('No health reported');
+    // No health is observed, so there is no Health section: unknown is never shown as OK.
+    expect(within(card()).queryByText('Health')).toBeNull();
+    expect(card()).not.toHaveTextContent(/No health reported|OK/);
     expect(within(card()).getByRole('link', { name: 'pwr-01' })).toHaveAttribute('href', '/inventory?kind=Cable&record=pwr-01&namespace=default');
     expect(within(card()).getByRole('link', { name: 'Hidden feed · Outlet 7' })).toHaveAttribute('href', '/inventory?kind=PowerFeed&record=feed-hidden&namespace=default');
-    // Full resource names live only behind the card's More.
-    expect(within(card()).queryByText('feed-hidden')).toBeNull();
-    fireEvent.click(within(card()).getByRole('button', { name: 'More' }));
-    expect(within(card()).getByText('feed-hidden').tagName).toBe('CODE');
+    // Record names are on the records' own pages, never in the card; the card has no More.
+    expect(card()).not.toHaveTextContent('feed-hidden');
+    expect(within(card()).queryByRole('button', { name: 'More' })).toBeNull();
 
     fireEvent.keyDown(psu1, { key: 'ArrowRight' });
     expect(document.activeElement).toBe(psu2);
@@ -321,21 +277,11 @@ describe('DeviceConnections', () => {
     // Only the Cable is a link; the peer has no name, link or record name.
     expect(within(card()).getAllByRole('link').map(link => link.textContent)).toEqual(['pwr-01']);
     expect(within(card()).queryByText('Peer record')).toBeNull();
-    // More lists the Cable record but never the denied peer's.
-    fireEvent.click(within(card()).getByRole('button', { name: 'More' }));
-    expect(within(card()).getByText('Cable record')).toBeInTheDocument();
-    expect(within(card()).queryByText('Peer record')).toBeNull();
     expect(card().textContent).not.toMatch(HIDDEN_FEED);
     for (const target of tiles()) { fireEvent.focus(target); fireEvent.click(target); }
     expect(view.container.textContent).not.toMatch(HIDDEN_FEED);
     expect(accessibleNames(view.container)).not.toMatch(HIDDEN_FEED);
     expect(tooltips(view.container)).not.toMatch(HIDDEN_FEED);
-    for (let index = 0; index < 2; index++) {
-      fireEvent.click(diagramButton());
-      expect(view.container.textContent).not.toMatch(HIDDEN_FEED);
-      expect(accessibleNames(view.container)).not.toMatch(HIDDEN_FEED);
-      expect(tooltips(view.container)).not.toMatch(HIDDEN_FEED);
-    }
   });
 
   it('never shows generated resource names by default, and tells same-named records apart', () => {
@@ -359,23 +305,12 @@ describe('DeviceConnections', () => {
       'eth1: Cable recorded, to Unnamed device #b8a7 · eth0, via Copper cable #a1c0',
       'PSU1-A: Cable recorded, to pdu-a.rk105.yul3 · Outlet 1, via Power cable',
     ]);
-    // The card leads with the answer; resource names are only behind More.
+    // The card leads with the answer, the Cable on its own line; resource names appear nowhere.
     fireEvent.click(tiles()[0]);
-    expect(card()).toHaveTextContent('● Cable recorded→ Unnamed device #7a96 · eth0 via Copper cable #295e');
-    expect(card().textContent).not.toMatch(/netbox-|Connector|Cable record(?!ed)|Peer record/);
-    const more = within(card()).getByRole('button', { name: 'More' });
-    expect(more).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(more);
-    expect(within(card()).getByRole('button', { name: 'Less' })).toHaveAttribute('aria-expanded', 'true');
-    expect(within(card()).getByText('netbox-ca213d185ea9153b853f295e').tagName).toBe('CODE');
-    expect(within(card()).getByText(hostA).tagName).toBe('CODE');
-    expect(card()).toHaveTextContent('Cable records, not live link state');
+    expect(card()).toHaveTextContent(/^.*● Cable recorded→ Unnamed device #7a96 · eth0via Copper cable #295e/);
+    expect(card().textContent).not.toMatch(/netbox-|Connector|Cable record(?!ed)|Peer record|not live link state/);
+    expect(within(card()).queryByRole('button', { name: 'More' })).toBeNull();
     fireEvent.click(within(card()).getByRole('button', { name: /^Close/ }));
-    expect(tooltips(view.container)).not.toMatch(/netbox-/);
-    fireEvent.click(diagramButton());
-    expect(diagram()).toHaveTextContent('EX-9');
-    expect(view.container.textContent).not.toMatch(/netbox-/);
-    fireEvent.click(diagramButton());
     expect(view.container.textContent).not.toMatch(/netbox-/);
     expect(accessibleNames(view.container)).not.toMatch(/netbox-/);
     expect(tooltips(view.container)).not.toMatch(/netbox-/);
@@ -400,20 +335,18 @@ describe('DeviceConnections', () => {
     show(server, data({ Cable: { status: 403 } }));
     expect(screen.getByText('Cable records are unavailable to you.')).toBeInTheDocument();
     expect(screen.queryByText(/No cable recorded|\d+ recorded/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Link diagram' })).toBeNull();
     // The picture shows every recorded port as unknown, never as free.
     expect(tiles().map(item => item.getAttribute('data-state'))).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
     expect(tiles().map(item => item.getAttribute('aria-label'))).toEqual(['PSU 1', 'PSU 2', 'Ethernet 0', 'Ethernet 1'].map(name => `${name}: Cable details unavailable, connections unknown`));
     expect(screen.getByRole('table', { name: 'Components' })).toBeInTheDocument();
   });
 
-  it('shows a large device as tiles with lane segments, and offers no diagram above the limit', () => {
-    const ports = DIAGRAM_LINK_LIMIT + 16;
+  it('shows a large device as tiles with lane segments', () => {
+    const ports = 32;
     const switchDevice = device('switch-01', [...Array.from({ length: ports }, (_, index) => C(`swp${index + 1}`, 'NetworkPort', `swp${index + 1}`, undefined, 'SFP28')), C('swp99', 'NetworkPort', 'swp99', 4, 'QSFP28')]);
     const hosts = Array.from({ length: 10 }, (_, index) => device(`host-${index + 1}`, [C('eth0', 'NetworkPort')]));
     const cables = hosts.map((host, index) => cable(`dac-${index + 1}`, 'Copper', D('switch-01', `swp${index + 1}`), D(host.metadata.name, 'eth0')));
     show(switchDevice, data(undefined, [switchDevice, ...hosts], cables));
-    expect(screen.queryByRole('button', { name: 'Link diagram' })).toBeNull();
     expect(within(grid()).getByText(/^Network ·/)).toHaveTextContent(`Network · ${ports + 1} · 10 recorded · ${ports - 9} unknown`);
     expect(tiles()).toHaveLength(ports + 1);
     expect(tiles().filter(item => item.tabIndex === 0)).toHaveLength(1);
@@ -434,36 +367,6 @@ describe('DeviceConnections', () => {
     expect(tableRows()).toHaveLength(ports + 1);
     const breakout = tableRows().find(row => cells(row)[0].textContent === 'swp99')!;
     expect(cells(breakout)[1]).toHaveTextContent(/^Network QSFP28 · 4 positions$/);
-  });
-
-  it('keeps the diagram for a small device, with one tab stop over cables and peers', () => {
-    show(server, data());
-    fireEvent.click(diagramButton());
-    const items = [...diagram().querySelectorAll<HTMLElement>('[data-connection-roving]')];
-    expect(items.map(item => item.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1']);
-    items[0].focus();
-    fireEvent.keyDown(items[0], { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(items[1]);
-    fireEvent.keyDown(items[1], { key: 'End' });
-    expect(document.activeElement).toBe(items[3]);
-    fireEvent.keyDown(items[3], { key: 'Home' });
-    expect(document.activeElement).toBe(items[0]);
-    // The roving items are anchors, so Enter follows them natively.
-    const focused = document.activeElement as HTMLAnchorElement;
-    expect(focused.tagName).toBe('A');
-    expect(focused).toHaveAccessibleName('PSU 1 to Hidden feed · Outlet 7 via cable pwr-01, Power: Cable recorded');
-    fireEvent.click(focused);
-    expect(screen.getByTestId('location')).toHaveTextContent('?kind=Cable&record=pwr-01&namespace=default');
-    // The link opened another record, whose URL has no view; choose the diagram again.
-    fireEvent.click(diagramButton());
-    fireEvent.click(within(diagram()).getByRole('link', { name: 'Peer Example leaf-01 · swp1' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('?kind=Device&record=leaf-01&namespace=default');
-    fireEvent.click(diagramButton());
-    // The drawn Device carries its name only: the table header holds the one count line.
-    expect(diagram().querySelector('.inventory-connection-device')).toHaveTextContent(/^Example server-01$/);
-    expect(document.body.textContent?.match(/4 ports · 2 recorded · 2 unknown/g)).toHaveLength(1);
-    expect(within(diagram()).queryByText(/^Device$/)).toBeNull();
-    expect(diagram().textContent).not.toMatch(/Power · cable recorded/);
   });
 });
 
@@ -548,7 +451,6 @@ describe('component table', () => {
   it('lists components without states or peers when Cables are denied, and never calls a port uncabled', () => {
     show(box, data({ Cable: { status: 403 } }, [box, peers], records));
     expect(screen.getByText(/Cable records are unavailable to you/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Link diagram' })).toBeNull();
     expect(screen.getByRole('table', { name: 'Components' })).toBeInTheDocument();
     expect(headers()).toEqual(['Component', 'Type', 'Face', 'Serial']);
     expect(tableRows()).toHaveLength(5);
@@ -563,8 +465,7 @@ describe('Device detail connection view', () => {
     const inventory = toInventory(fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords);
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/inventory?kind=Device&record=rack-01-u12-synthetic-0001&namespace=default']}><PhysicalInventory inventory={inventory} /></MemoryRouter></QueryClientProvider>);
     const section = screen.getByRole('region', { name: 'Components and connections' });
-    fireEvent.click(within(section).getByRole('button', { name: 'Legend' }));
-    expect(within(section).getByRole('group', { name: 'Legend' })).toHaveTextContent('Cable recorded');
+    expect(within(section).queryByRole('button', { name: 'Legend' })).toBeNull();
     fireEvent.click(within(section).getByRole('button', { name: 'Power supply 1: Cable recorded, to Feed A · Outlet 1, via Server power cable' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Server power cable' }));
     expect(screen.getByRole('heading', { name: 'Server power cable' })).toBeInTheDocument();

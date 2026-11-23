@@ -17,7 +17,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import type { Device, DeviceClaim, PhysicalRecord } from '../../../shared/fleet-api';
 import { modelLabel, slotKey, type Inventory } from '../inventory';
-import { deviceConnections, linkStateGlyph, linkStateWords, localLabel, peerLabel, type LinkState } from '../lib/device-connections';
+import { deviceConnections, linkStateWords, localLabel, peerLabel, type CableRef, type ConnectionLink, type LinkState } from '../lib/device-connections';
 import { equipmentGeometry, type EquipmentPlacement } from '../lib/device-placement';
 import { displayLabel } from '../lib/display-names';
 import { depthLabel, equipmentDepth } from '../lib/device-depth';
@@ -136,10 +136,6 @@ function rackDevices(slots: EquipmentPlacement[]) {
   return [...seen.values()].sort((a, b) => displayLabel(a).localeCompare(displayLabel(b)));
 }
 
-function Glyph({ state }: { state: LinkState }) {
-  return <span aria-hidden="true" className="inventory-connection-glyph">{linkStateGlyph[state]}</span>;
-}
-
 function SelectedPanel({ slot, rack, inventory, phone, onClose }: { slot?: EquipmentPlacement; rack: PhysicalRecord; inventory: Inventory; phone: boolean; onClose: () => void }) {
   const titleId = useId();
   const panel = useRef<HTMLElement>(null);
@@ -183,29 +179,70 @@ function EquipmentTab({ rack, slots, inventory }: { rack: PhysicalRecord; slots:
   </div>;
 }
 
+/** A rack Cable lane, seen from its first end in this rack. */
+interface LaneRow {
+  key: string;
+  cable: CableRef;
+  device: Device;
+  local: ConnectionLink;
+  /** The same lane seen from its far end, when that device is also in this rack. */
+  far?: ConnectionLink;
+}
+
+const ATTENTION: Partial<Record<LinkState, 'conflict' | 'unavailable'>> = { conflict: 'conflict', unavailable: 'unavailable' };
+
+/**
+ * Every Cable lane that reaches a device in this rack, once, in one dense
+ * table: the Cable (breakout lanes as "· 1/4"), this rack's end, the far end
+ * and the medium when any is recorded. A lane whose records disagree gets a
+ * red edge and its disagreeing end in red; a missing or unreadable peer an
+ * amber edge. The reasons are the row's tooltip and accessible text.
+ */
 function CablesTab({ slots, inventory }: { slots: EquipmentPlacement[]; inventory: Inventory }) {
-  if (inventory.issues?.Cable) return <p>Cable details unavailable. Connections for this rack are unknown, not absent.</p>;
-  if (inventory.issues?.Device) return <p>Device details unavailable. Cables cannot be grouped by device.</p>;
-  const groups = rackDevices(slots).map(device => {
-    const links = deviceConnections(device, inventory).links.filter(link => link.cable);
-    return { device, links, cables: new Map(links.map(link => [link.cable!.name, link.cable!.label])) };
-  });
-  return <div className="inventory-equipment-sections">
-    {groups.map(({ device, links, cables }) => <section key={device.metadata.name} aria-label={`${displayLabel(device)} cables`}>
-      <h4><Link to={inventoryHref('Device', device.metadata.namespace, device.metadata.name)}>{displayLabel(device)}</Link> <span className="inventory-count">{cables.size} {cables.size === 1 ? 'cable' : 'cables'}</span></h4>
-      {links.length ? <div className="inventory-scroll"><Table aria-label={`${displayLabel(device)} cables`}>
-        <TableHeader><TableRow><TableHead>Port</TableHead><TableHead>Peer</TableHead><TableHead>Status</TableHead><TableHead>Cable</TableHead></TableRow></TableHeader>
-        <TableBody>{links.map(link => <TableRow key={link.key}>
-          <TableCell>{localLabel(link)}</TableCell>
-          <TableCell>{peerLabel(link.peer)}</TableCell>
-          <TableCell data-state={link.state}><Glyph state={link.state} /> {linkStateWords[link.state]}</TableCell>
-          <TableCell><Link to={inventoryHref('Cable', device.metadata.namespace, link.cable!.name)}>{link.cable!.label}</Link>{link.cable!.laneCount > 1 && <small>Lane {link.cable!.laneID} of {link.cable!.laneCount}</small>}</TableCell>
-        </TableRow>)}</TableBody>
-      </Table></div> : <p className="inventory-muted">No cable records name this device.</p>}
-      {cables.size > 0 && <details className="inventory-record-names"><summary>Record names</summary><ul>{[...cables].map(([name, label]) => <li key={name}>{label} · <code>{name}</code></li>)}</ul></details>}
-    </section>)}
-    {!groups.length && <p className="inventory-muted">No devices are recorded in this rack, so no cables are grouped here.</p>}
-  </div>;
+  if (inventory.issues?.Cable) return <p>Cable details unavailable.</p>;
+  if (inventory.issues?.Device) return <p>Device details unavailable.</p>;
+  const rows = new Map<string, LaneRow>();
+  for (const device of rackDevices(slots)) {
+    for (const link of deviceConnections(device, inventory).links) {
+      if (!link.cable) continue;
+      const key = `${link.cable.name}/${link.cable.laneID}`;
+      const seen = rows.get(key);
+      if (!seen) rows.set(key, { key, cable: link.cable, device, local: link });
+      else if (seen.device !== device) seen.far = link;
+    }
+  }
+  if (!rows.size) return <p className="inventory-muted">No cables recorded.</p>;
+  // An end named by more than one lane is the end that disagrees.
+  const localKey = (row: LaneRow) => `${row.device.metadata.name}/${row.local.componentID}/${row.local.position}`;
+  const farKey = (row: LaneRow) => row.local.peer?.name && `${row.local.peer.name}/${row.local.peer.componentID}/${row.local.peer.position ?? 1}`;
+  const claims = new Map<string, number>();
+  for (const row of rows.values()) for (const key of [localKey(row), farKey(row)]) if (key) claims.set(key, (claims.get(key) ?? 0) + 1);
+  const shared = (key: string | undefined) => !!key && (claims.get(key) ?? 0) > 1;
+  const media = [...rows.values()].some(row => row.cable.medium);
+  const end = (device: Device, link: ConnectionLink) => <><Link to={inventoryHref('Device', device.metadata.namespace, device.metadata.name)}>{displayLabel(device)}</Link> · {localLabel(link)}</>;
+  return <div className="inventory-scroll inventory-rack-cables"><Table aria-label="Rack cables" className="inventory-dense-table">
+    <TableHeader><TableRow><TableHead>Cable</TableHead><TableHead>End</TableHead><TableHead>Far end</TableHead>{media && <TableHead>Medium</TableHead>}</TableRow></TableHeader>
+    <TableBody>{[...rows.values()].map(row => {
+      const { key, cable, device, local, far } = row;
+      const states = [local.state, far?.state];
+      const attention = states.includes('conflict') ? 'conflict' : states.map(state => state && ATTENTION[state]).find(Boolean);
+      const reasons = [...new Set([...local.reasons, ...(far?.reasons ?? [])])].join(' ');
+      const peer = local.peer;
+      // Red marks the shared end; when no end is shared, the end whose own record disagrees.
+      const anyShared = shared(localKey(row)) || shared(farKey(row));
+      const localRed = shared(localKey(row)) || (!anyShared && local.state === 'conflict');
+      const farRed = shared(farKey(row)) || (!anyShared && !localRed && far?.state === 'conflict');
+      return <TableRow key={key} data-attention={attention} title={reasons || undefined}>
+        <TableCell><Link to={inventoryHref('Cable', device.metadata.namespace, cable.name)}>{cable.label}</Link>{cable.laneCount > 1 && <span className="inventory-muted"> · {cable.laneID}/{cable.laneCount}</span>}</TableCell>
+        <TableCell data-state={localRed ? 'conflict' : undefined}>{end(device, local)}</TableCell>
+        <TableCell data-state={farRed ? 'conflict' : peer && peer.access !== 'readable' ? 'unavailable' : undefined}>
+          {peer?.access === 'readable' && peer.name ? <Link to={inventoryHref(peer.kind, device.metadata.namespace, peer.name)}>{peerLabel(peer)}</Link> : peerLabel(peer)}
+          {attention && <span className="inventory-visually-hidden">. {linkStateWords[attention]}{reasons ? `: ${reasons}` : ''}</span>}
+        </TableCell>
+        {media && <TableCell>{cable.medium}</TableCell>}
+      </TableRow>;
+    })}</TableBody>
+  </Table></div>;
 }
 
 /**

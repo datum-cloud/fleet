@@ -60,11 +60,7 @@ export function deviceDrawingModel(device: Device, inventory: Inventory): Device
   const model = deviceCatalog(device, inventory)?.model;
   const layout = modelLayout(model);
   const join = joinTemplates(model?.spec.componentTemplates, device.spec.components);
-  // The match basis rides on the tile for the card's More; nothing else reads it.
-  const tiles = new Map(plate.faces.flatMap(face => face.clusters.flatMap(cluster => cluster.tiles)).map(tile => {
-    const match = join.byComponent.get(tile.componentID);
-    return [tile.componentID, match ? { ...tile, templateMatch: match.basis } : tile];
-  }));
+  const tiles = new Map(plate.faces.flatMap(face => face.clusters.flatMap(cluster => cluster.tiles)).map(tile => [tile.componentID, tile]));
   const mounted = deviceMountedFace(device, inventory);
   const title = (face: ChassisFace) => { const rack = componentRackFace(mounted, face); return `${face} · ${rack ? `rack ${rack}` : 'rack face unknown'}`; };
   return {
@@ -170,14 +166,15 @@ type FaceSizing = 'fixed' | 'fit' | 'scale';
 
 function DrawnFace({ geometry, drawing, title, label = title, tileButton, sizing, highlight }: { geometry: FaceGeometry; drawing: DeviceDrawingModel; title: string; label?: string; tileButton: ReturnType<typeof usePortGrid>['tileButton']; sizing: FaceSizing; highlight?: ComponentHighlight }) {
   // Fitted (the power path's PDU column): cropped to the recorded banks and
-  // scaled to the column, between MIN_FIT_PX_PER_MM and the drawing scale.
+  // scaled to the column, between MIN_FIT_PX_PER_MM and the drawing scale,
+  // and never wider than the column, so a phone shows every outlet.
   // Scaled (the Device page): the whole face, between DENSE_MIN_PX_PER_MM
   // (PHONE_PX_PER_MM on a phone) and the drawing scale.
   const box = sizing === 'fit' ? cropBox(geometry) : sizing === 'scale' ? { x: 0, y: 0, w: geometry.widthMM, h: geometry.heightMM } : undefined;
   const place = box ? fitPlace(box) : pxPlace;
   const min = sizing === 'scale' ? DENSE_MIN_PX_PER_MM : MIN_FIT_PX_PER_MM;
   const size: CSSProperties = box
-    ? { width: '100%', minWidth: px(box.w * (min / PX_PER_MM)), maxWidth: px(box.w), aspectRatio: `${box.w} / ${box.h}` }
+    ? { width: '100%', minWidth: sizing === 'fit' ? `min(100%, ${px(box.w * (min / PX_PER_MM))})` : px(box.w * (min / PX_PER_MM)), maxWidth: px(box.w), aspectRatio: `${box.w} / ${box.h}` }
     : { width: px(geometry.widthMM), height: px(geometry.heightMM) };
   // The face's flex basis, so two faces share a row only when both fit at the minimum scale.
   const basis: CSSProperties | undefined = sizing === 'scale' ? { '--face-min': px(geometry.widthMM * (min / PX_PER_MM)), '--face-phone': px(geometry.widthMM * (PHONE_PX_PER_MM / PX_PER_MM)) } as CSSProperties : undefined;
@@ -300,7 +297,7 @@ export function FaceplateDrawing({ drawing, namespace, href, telemetry, fit = fa
       {notes.length > 0 && <p className="inventory-muted inventory-drawing-note">{notes.join(' · ')}</p>}
       {dense
         ? <div className="inventory-drawn-faces">{drawing.layout.faces.map(face => <DrawnFace key={face.face} geometry={face} drawing={drawing} title={drawing.titles[face.face]} label={drawing.shortTitles[face.face]} tileButton={grid.tileButton} sizing={sizing} highlight={highlight} />)}</div>
-        : drawing.layout.faces.map(face => <DrawnFace key={face.face} geometry={face} drawing={drawing} title={drawing.titles[face.face]} tileButton={grid.tileButton} sizing={sizing} />)}
+        : drawing.layout.faces.map(face => <DrawnFace key={face.face} geometry={face} drawing={drawing} title={drawing.titles[face.face]} label={fit ? drawing.shortTitles[face.face] : undefined} tileButton={grid.tileButton} sizing={sizing} />)}
       {tray && <Tray drawing={drawing} tileButton={grid.tileButton} highlight={highlight} />}
       {grid.overlay}
     </div>

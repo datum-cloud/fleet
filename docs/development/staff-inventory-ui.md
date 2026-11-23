@@ -13,7 +13,7 @@ described in the historical notes below, not inventory contracts or IAM.
 | --- | --- | --- |
 | Equipment | Devices, Cables, Power feeds | Physical assets and recorded connections/supplies |
 | Locations | Operational sites, Facilities, Racks | Site operational membership is distinct from physical Facility premises and rack containment |
-| Installation plans | None | Installation plans and the devices registered against them. Plans do not allocate capacity |
+| Installation plans | None | The directory is **Installation plans**, named once in the breadcrumb: installation plans and the devices registered against them. Plans do not allocate capacity |
 | Hardware catalog | Manufacturers, Device types | Reference descriptions/templates, not installed assets or available capacity |
 
 - Uses the installed Datum `Tabs`, `TabsList variant="line"`, and
@@ -94,14 +94,14 @@ field or view.
    | Kind | Primary view |
    | --- | --- |
    | Device | The device picture, then the dense component table (see [Device page](#device-page-picture-and-component-table)) |
-   | Cable | End A and End B side by side, with one row per lane |
+   | Cable | A one-lane Cable is one line, "Compute a01-01 · eth0 ⟷ Leaf a01 · swp1". More lanes are a table, one line per lane, with an end device (and port) every lane shares named once in its column head. An end another Cable also names is red, naming and linking that Cable, with the reason as tooltip and accessible text |
    | PowerFeed | The power path: upstream, feed rating and capacity, outlet tiles for the feed and each PDU, then device PSUs (see [Power path](#power-path-and-telemetry-implemented-telemetry-mocked)) |
    | Facility | None: Racks, Without a rack, Power feeds and Cables tabs (see [Locations and catalog pages](#locations-and-catalog-pages-implemented)) |
    | Rack | Its elevation |
    | Site | None: Facilities (unless the header names its one facility), Racks, Devices and Installation plans tabs |
    | DeviceType | The faceplate drawn from the model's layout, then a dense component table |
    | Manufacturer | None: Device types and Devices tabs |
-   | Claim | Planned placement, expected hardware and registered devices |
+   | Claim | Placement, expected hardware (linked to its DeviceType when exactly one readable model matches the manufacturer and model key) and registered devices. A registered device that reports another model is red, with the reason as tooltip and accessible text. No lifecycle badge or registration count; the Planned connections tab appears only when the plan names Cables |
 
 3. **Secondary detail goes in tabs held in the URL** (`?tab=`), for example
    a Device's Location and Hardware & management. Tabs hold
@@ -572,7 +572,7 @@ deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 Device detail's primary view is the device picture and the component table
 under it (see [Device page](#device-page-picture-and-component-table)). It
 is the one place the page lists the Device's components and what each is
-cabled to. Its legend says "Cable records, not live link state". It joins the Device's typed
+cabled to. It joins the Device's typed
 components to the Cable lanes that name them, using the Cables, Devices,
 PowerFeeds and DeviceTypes the Inventory tab already lists. It adds no
 requests, API fields or permissions.
@@ -586,13 +586,12 @@ on this Device. Each link has one of five record states:
 | --- | --- | --- |
 | Cable recorded | ● | Exactly one Cable lane names the position, and the readable peer records the far component and position. |
 | No cable recorded | ○ | No readable Cable names the position. This means unknown, not free. |
-| Records disagree | ! | Two or more lanes name the position or the far port, or a Cable names a component or position that this Device or the peer does not record. Every claiming Cable is shown, and none is treated as current. |
+| Records disagree | ! | Two or more lanes name the position or the far port, or a Cable names a component or position that this Device or the peer does not record. Every claiming Cable is shown; the reason ("2 Cable lanes name this position.") is said once. |
 | Peer unavailable | ? | The peer collection is denied, or the named peer record is not in the namespace. A denied peer shows no name, component, position or rating. A missing peer shows only what the Cable records, marked "record not found". |
 | Catalog only | ◇ | A DeviceType template whose id (matched by convention) is not recorded on the Device. |
 
 A breakout lane maps to its own component position. PowerFeed peers show
-their recorded supply rating, and the power group always states that power
-redundancy is unknown. When a peer Device records an internal mapping
+their recorded supply rating. When a peer Device records an internal mapping
 (FrontPort to RearPort, or PowerOutlet to PowerInlet), the link traces onward
 for up to four hops, stopping at the first hop that is unrecorded, disputed
 or unreadable. A Device's own internal mapping is shown on its local port.
@@ -631,8 +630,7 @@ picture of the device and a dense table of its components. Top to bottom:
    stack otherwise; a face too wide for its frame scrolls inside it. The
    picture has no outer frame (each chassis is its own) and no "Not on the
    faceplate" tray: the table lists those components. Clicking, tapping
-   or Enter on a port opens the shared card. The power redundancy note moves
-   to the legend.
+   or Enter on a port opens the shared card.
 3. **Component table,** directly under the picture. One row per component,
    about 30 px high, 13 px type, no wrapping (a breakout listing several
    peers is the exception) and tabular figures. Columns:
@@ -652,7 +650,9 @@ picture of the device and a dense table of its components. Top to bottom:
      secondary link, with the Cable's medium and lane as its tooltip. A
      peer's rating or "You cannot read this peer" is the tooltip and
      accessible text. A recorded path beyond the peer reads "+1 hop", with
-     the hops in words as its tooltip. No cable recorded reads "Unknown",
+     the full trace in words ("via internal path to Rear 1, then Cat6 patch
+     rear 1 to Management a01 · ge1") as its tooltip and accessible text; the
+     port card lists the same path. No cable recorded reads "Unknown",
      never an empty cell. A breakout lists each cabled position and "No
      cable recorded at position 1, 3, 4".
    - **Serial** and **Asset tag** appear only when some component records
@@ -667,10 +667,9 @@ picture of the device and a dense table of its components. Top to bottom:
    The table's header row holds the one count line ("9 ports · 4 recorded ·
    1 disagree · 4 catalog only"), which also describes the table for
    assistive technology. With Cables denied it reads "5 components · Cable
-   records are unavailable to you." The header row also holds **Legend** and
-   **Link diagram**. The legend is a popover (Escape or a click outside
-   closes it) with the record states, the drawn module states and the
-   catalog-unavailable note when it applies, and nothing else.
+   records are unavailable to you." There is no legend: each state is its
+   glyph and words in place, and "· catalog unavailable" joins the count
+   line when the catalog cannot be read.
 4. **Tabs:** Location and Hardware & management, below, then the
    **Record** section.
 
@@ -686,14 +685,9 @@ module) outlines its row. Both use a `--ring` outline, not colour alone,
 from one piece of state in `DeviceConnections` (`ComponentHighlight` in
 `device-faceplate.tsx`). Touch does not highlight; a tap opens the card.
 
-**Link diagram** is offered when Cables are readable and the Device has 1
-to 16 links. Pressing it swaps the table for the
-[diagram](#diagram) and sets `?view=diagram`, so links to it still work;
-pressing it again restores the table and clears the parameter. The picture
-stays either way. Any other `view` value, including the retired `table` and
-`picture`, falls back harmlessly to the default page. `view` is in the
-session boundary's presentation allowlist, so switching never refetches
-inventory.
+The page has one view: the picture and the table. A `view` value in a link,
+such as `diagram`, `table` or `picture`, is ignored and shows the default
+page.
 
 `deviceConnections()` drops a Cable lane end that names a recorded component
 at a position below 1, or with no position (an omitted position decodes as
@@ -701,8 +695,7 @@ at a position below 1, or with no position (an omitted position decodes as
 same access rules, and the table lists them last as "Records disagree" rows
 with the reason. So every Cable that names the Device appears in the table.
 
-The tabs carry no component counts or badges, and the drawn Device in the
-diagram shows only its name.
+The tabs carry no component counts or badges.
 
 The Device's tabs are **Location** and **Hardware & management**.
 Location states each fact once: **Placement** holds only
@@ -726,8 +719,8 @@ strip.
 
 `device-connections.test.tsx` covers the picture with no toggle, the table
 columns and rows (unmatched lanes included), conditional serial and asset
-columns, the single count line, the legend, `?view=diagram` and its
-fallbacks, the highlight in both directions, denied peers and denied
+columns, the single count line, the absence of a legend and a diagram
+(every `view` value is the default page), the highlight in both directions, denied peers and denied
 Cables. `inventory-record-layout.test.tsx` covers the drawn and tiled
 pictures on the fixture pages, the header strip and the Edit button's
 description.
@@ -742,7 +735,7 @@ human name (`pdu-a.rk105.yul3`). Without one, a Cable is named by its medium
 ("Copper cable") and a peer by its kind ("Unnamed device"). When two different
 records would read the same, `viewNames()` adds a short suffix from the
 resource name ("Copper cable #295e"). A denied peer is never named or
-disambiguated. Full resource names appear only behind a port card's More. Type
+disambiguated. Full resource names appear only in each record's own footer. Type
 words ("Device", "Power", "NetworkPort") appear only in group headers.
 
 ### Port tiles
@@ -798,31 +791,29 @@ lost. Hover or keyboard focus shows a one-line tooltip ("swp37 · no cable
 recorded"), hidden from assistive technology because it repeats the
 accessible name. A click, tap, Enter or Space opens the port's card, a
 non-modal dialog named "swp37 details". The card leads with the answer: each
-position's record state, then "→ peer · port via Cable" using display names
-(a breakout names its shared Cable once, then one line per lane), the short
-reason records disagree, and any opposite-face check. Power tiles (PSUs and
-outlets) then get a **Telemetry** section with the values, their ages and a
-sparkline, and a load tint and words in their accessible name when a source
-reports values; see
+position's record state, then "→ peer · port" with "via Cable" on its own
+muted line, using display names and the Cable's medium as its tooltip (a
+breakout names its shared Cable once, then one line per lane). A reason
+every link shares, such as "2 Cable lanes name this position.", is said
+once under the links; other reasons and any opposite-face check follow
+their link. Power tiles (PSUs and outlets) then get a **Telemetry** section
+with the values, their ages and a sparkline, and a load tint and words in
+their accessible name when a source reports values; the collector, observed
+time and freshness window are the section's tooltip. See
 [Power path and telemetry](#power-path-and-telemetry-implemented-telemetry-mocked).
-A **Health** section follows and reads "No health reported" unless a
-telemetry source observes it. Everything else sits behind a collapsed
-**More** button, which is not
-rendered until opened: connector and positions, whether the owner records the
-component (worded by owner kind: "Recorded on this Device", "Catalog template
-only; this Device does not record it", or "Recorded on this power feed" for a
-PowerFeed termination), serial and asset tag, internal path, the
-generated Cable and peer record names with medium and lane, any trace, the
-**Telemetry source** (collector, instance, observed time and freshness
-window), and "Cable records, not live link state". A denied peer's name and record name
-appear in neither part. On screens 600 px
+A **Health** section appears only when a telemetry source observes health;
+with none there is no section, so unknown never reads as OK. The card ends
+with the facts that are recorded, inline: **Connector** (and positions),
+**Identity** (serial and asset tag), **Internal path** and the onward
+**Path**. There is no More: record names, match basis and "recorded on"
+wording are not shown. A denied peer's name and record name appear
+nowhere. On screens 600 px
 wide or less, the card is a bottom sheet. Touch shows no tooltip. Escape or
 Close closes the card and returns focus to the tile.
 
 On the Device page, the table's header row holds the port counts ("60 ports ·
-7 recorded · 51 unknown · 2 disagree") and the **Legend** popover, which says
-"Unknown is not free; nothing here is verified". It does not repeat the
-Device's name, which the page heading already shows.
+7 recorded · 51 unknown · 2 disagree"). It does not repeat the Device's
+name, which the page heading already shows.
 
 ### Faceplate drawing
 
@@ -867,11 +858,10 @@ function, `faceGeometry()` in `lib/faceplate-layout.ts`, in millimetres at
   component falls back to the same template. Otherwise the component stays
   in the tray. Imported records need this: their component ids are importer
   instance ids (`interfaces-3362`) and their template ids are template ids
-  (`interface-templates-34`), so no ids match. The card's More says
-  "Matched to catalog by id" or "Matched to catalog by name and type". A
+  (`interface-templates-34`), so no ids match. A
   name match only positions the component on the drawing. Record state,
   Cable joins, chassis faces (and so opposite-face checks), the grouped
-  tiles, the table and the diagram still join by id, so a name-matched template still
+  tiles and the table still join by id, so a name-matched template still
   appears there as catalog only. The long-term fix is for the importer to
   record each component's template id (gap P7). Changing component ids is
   not the fix, because Cables reference component ids.
@@ -912,7 +902,7 @@ copper module in an SFP cage stays SFP. Single-pair types (`*base-t1`) are
 not 8P8C jacks and stay Other.
 
 QSFP56 is its own kind, not a QSFP28 alias: it has the same cage and nominal
-size, so it is drawn with the QSFP outline, but the legend and card do not
+size, so it is drawn with the QSFP outline, but the card does not
 call a 200G port QSFP28. Plain `QSFP` and `QSFP+` stay Other. `QSFP` names no
 generation, and adding `QSFP+` would mean a new kind for a family the
 imported data does not use; the table keeps only families operators name.
@@ -942,7 +932,7 @@ to bottom.
 
 **Not implemented:**
 
-- health marks; cards read "No health reported";
+- health marks; a card has a Health section only when health is observed;
 - decorative marks;
 - photos or hotspots;
 - cards for module cells;
@@ -953,45 +943,28 @@ to bottom.
 - `faceplate-switch-card`;
 - `faceplate-patch-pdu` and `faceplate-pdu`;
 - `faceplate-fallback`;
-- `faceplate-imported`, `faceplate-imported-phone` and
-  `faceplate-imported-card-more`: a synthetic imported switch whose component
+- `faceplate-imported` and `faceplate-imported-phone`: a synthetic imported switch whose component
   ids match no template id, drawn by name and type, with its two same-name
   PSUs in the tray;
 - `rack-panel-faceplate`, which includes a 390 px phone.
 
-### Diagram
-
-**Diagram** is offered only up to 16 links (`DIAGRAM_LINK_LIMIT`), because
-the tiles show larger devices in a fraction of the height. It puts the Device
-in the centre, power peers on the left, and network, console and other peers
-on the right. Each line shows the local and remote port and the Cable. Its
-style (solid, dotted, double, dashed, or faint dashed with a hatched peer)
-repeats the state glyph. State words appear only for lines that are not
-recorded. The diagram has one tab stop; the arrow keys, Home and End move
-between Cable and peer links, and Enter or a click opens the record. The
-table uses the same states, reasons, traces and condensed names. Styling uses only the host's tokens
-(`--foreground`, `--background`, `--muted`, `--muted-foreground`, `--border`,
-`--accent`, `--primary`, `--destructive`, `--card`, `--popover`, `--ring` and
-`--radius`), and the diagram stacks into one column below 600 px.
+### Screenshots and chassis faces
 
 `pnpm screenshots` captures the tiles (`ports-server`, `ports-leaf`), open
 cards (`ports-leaf-card`, `ports-server-conflict-card`,
 `ports-denied-peer-card`), and the same faceplate in the rack panel
 (`rack-leaf-faceplate`, `rack-leaf-card`) at desktop light, desktop dark and
 the opt-in `phone-dark` viewport. `device-table` captures the default page
-through the retired `?view=table`,
-`device-diagram` captures `?view=diagram`, and `server-detail` and
+through the retired `?view=table`, and `server-detail` and
 `device-detail-no-layout` capture a whole Device page with and without a
 recorded layout.
 
-In the diagram, within each type group, ports are grouped by chassis face (Front, Rear, Face
-unknown) when the Device's DeviceType records a face for at least one of them;
-otherwise the group stays flat. A port's chassis face comes from the DeviceType
-template with the same id and is unknown without a readable catalog. When the
-Device's mounted face is known, each port also shows its derived rack face
-(for example "Chassis front · rack rear" on a reversed switch). A Cable whose
-two ends land on opposite rack faces gets a soft "Check" note in the row and
-in the port's card. The note does not change the record state.
+A port's chassis face comes from the DeviceType template with the same id
+and is unknown without a readable catalog. When the Device's mounted face is
+known, the face label adds the derived rack face only when it differs
+("Front · rack rear" on a reversed switch). A Cable whose two ends land on
+opposite rack faces gets a soft "Check" note in the table row and in the
+port's card. The note does not change the record state.
 
 Not shown, because the model does not record them: link speed, Cable label,
 colour or length, x/y port positions and port layout, live or observed link
@@ -1043,9 +1016,18 @@ it.
   tag** when any row records them. Rows that need checking carry the
   elevation's red or amber edge. Facility, rack and installation plan are
   not repeated per row; the plan is one step away in the side panel.
-- **Cables tab.** Cables grouped by the device in this rack they terminate on,
-  with counts, port, peer, record state and the Cable's display name. Record
-  names are only in each group's collapsed "Record names" list.
+- **Cables tab.** One dense table (`Rack cables`), one row per Cable lane
+  that reaches a device in this rack, listed once even when both ends are
+  here. Columns: **Cable** (display name; a breakout lane adds "· 1/4"),
+  **End** (this rack's device · port), **Far end** (device or feed · port)
+  and **Medium** when any lane records one. There is no status column and no
+  record names. A lane whose records disagree has a red edge and the end
+  more than one lane names in red; a missing or unreadable peer has an amber
+  edge and the far end in amber. The reasons are the row's tooltip and the
+  far end's accessible text. Below 600 px the ends wrap and Medium is
+  dropped, so nothing scrolls sideways. With Cables or Devices unreadable
+  the tab reads "Cable details unavailable." or "Device details
+  unavailable." and its count is "?".
 - **Power tab.** One redundancy view: the rack's feeds side by side, and
   each device once with its PSUs under the feed their recorded path reaches
   (see
@@ -1078,13 +1060,21 @@ full name stays in the tile's accessible name and card.
 ## Power path and telemetry (implemented, telemetry mocked)
 
 **PowerFeed page.** The primary view is the recorded power path, read left
-to right and stacked at phone width: **Upstream** (a count linking to the
-Upstream sources tab) → **Feed** (rating, phase, capacity bar, and the feed's
-terminations as outlet tiles) → **PDUs** (each PDU cabled to a termination,
-drawn as its faceplate when its model records a layout, otherwise as outlet
-tiles: inlet first, then outlets) → **Devices**
-(each Device whose PSUs the path reaches, once, with a feed-class badge and
-where its other PSUs go). `feedPath()` and `psuFeeds()` in
+to right and stacked at phone width: **Upstream** (up to three source ids,
+one line each and truncated with the full id as tooltip; more become a count
+linking to an Upstream sources tab, the only time that tab exists) →
+**Feed** (rating, phase, capacity bar, and the feed's terminations as outlet
+tiles) → **PDUs** (each PDU cabled to a termination, drawn as its faceplate
+when its model records a layout, otherwise as outlet tiles: inlet first,
+then outlets) → **Devices** (one dense table, one row per PSU: **Device**,
+once per device; **PSU**; **Via**, the PDU outlet, or just "Outlet 1" when
+the path has one PDU, with the PDU in the tooltip and accessible text, or
+the other feed it is on, or "Feed unknown" with the reason hidden for
+assistive technology; and **Draw**, "182 W" with the age as tooltip, "?"
+when not reported). A device on a single feed or with a PSU whose feed is
+unknown has an amber edge on its cell, with the feed class as tooltip and
+accessible text; separate feeds carry no mark. PSUs on another feed are
+muted rows. `feedPath()` and `psuFeeds()` in
 `ui/provider/src/lib/power-paths.ts` derive this from Cable records and PDU
 internal mappings only; `feedConnections()` in `device-connections.ts` joins
 a feed's terminations with the same record states as Device components.
@@ -1092,7 +1082,8 @@ a feed's terminations with the same record states as Device components.
 Outlets are tiles, not rows of text. A PDU whose DeviceType records a
 layout is drawn by the shared faceplate renderer (`FaceplateDrawing` with
 `fit`), cropped to its recorded banks and scaled to the column, down to
-1.2 px/mm before it scrolls in its own frame. Anything else, including a
+1.2 px/mm, and never wider than the column, so a 390 px phone shows every
+outlet. Its face label is the short one ("Rear"). Anything else, including a
 feed's terminations, is `OutletTiles` in `power-feed-path.tsx`: the shared
 `PortTileButton` shaped by connector kind. Both use `usePortGrid`, so the
 tooltip, keyboard model and `PortCard` match the Device faceplate; there is
@@ -1100,10 +1091,11 @@ no second card. The dense rule is the faceplate's: above `TEXT_TILE_LIMIT`
 (12) outlets the tiles carry no text and faint edge numbers mark the first,
 every eighth and the last. Each tile has the load tint and the status marks
 (`↑`, `⚠`, `◷`, `≠`, `✕`); what an outlet is cabled to is in its accessible
-name, tooltip and card, and the numbers (A, W) are in the card only. Each
-group (the feed's outlets, each PDU) has one freshness line instead of an age
-per outlet: "Updated 40 s ago", "Stale · updated 3 h ago", or "Not reported",
-with counts of stale and unreported outlets (`groupFreshness()`). A group is
+name, tooltip and card, and the numbers (A, W) are in the card only. A
+group (the feed's outlets, each PDU) shows a freshness line only when some
+reading is stale or missing: "Stale · updated 3 h ago", "Updated 50 s ago ·
+6 not reported" or "Not reported" (`groupFreshness()`). When every reading
+is fresh the ages are in each tile's accessible name and card. A group is
 one tab stop: arrow keys, Home and End move; Enter or a click opens the card;
 Escape closes it and returns focus.
 
@@ -1112,9 +1104,11 @@ apparent power from the recorded supply: single-phase `S = V × I`,
 three-phase `S = √3 × V × I` (recorded line-to-line voltage), DC
 `P = V × I`. The continuous limit is 80% of that, drawn as a line on the bar.
 A missing voltage, current or phase leaves the rating unknown. Measured
-apparent power (or real power, labelled, when apparent is not reported)
-fills the bar; without telemetry it reads "No load reported", never empty or
-0. Load above 80% of the continuous limit is "high" (`↑`), above it "over"
+apparent power (or real power, when apparent is not reported) fills the bar.
+The text is the same on the PowerFeed page and the rack Power tab, "706 VA ·
+14%"; the full reading, rating, continuous limit, formula and age are its
+tooltip and accessible text. Without telemetry it reads "No load reported",
+never empty or 0. Load above 80% of the continuous limit is "high" (`↑`), above it "over"
 (`⚠`).
 
 **Rack Power tab.** `RackPowerRedundancy` in `rack-power.tsx` shows the
@@ -1136,6 +1130,11 @@ display rules, in `power-telemetry.tsx`:
 - stale values are greyed, dotted and labelled "Stale", never green;
 - a missing value is "Not reported", never 0;
 - over-threshold values get a glyph as well as colour;
+- a tile reading with no limit to scale against (a Device's PSU) is a
+  neutral full bar (`reported`), never red: red is only for over the limit
+  and for observed-and-recorded disagreement;
+- observed health appears only when reported; "OK" is plain text with its
+  age, Fault is red with `✕` and Absent amber with `▼`;
 - observed load on a component with no Cable recorded is "observed and
   recorded disagree": a banner on the PowerFeed page, a `≠` mark on the
   tile, and a note in the card, each linking to the records, which are not
@@ -1155,7 +1154,7 @@ and fails if any mock-only string appears in it. The real source is a
 
 `pnpm screenshots` captures `power-feed-normal`, `power-feed-high-load`,
 `power-feed-stale`, `power-feed-mismatch`, `power-feed-no-telemetry`,
-`power-feed-outlet-card`, `power-feed-outlet-card-more`,
+`power-feed-outlet-card`,
 `rack-power-redundancy`, `device-psu-card` and `device-single-feed` (a server
 whose PSUs both reach Feed A through one PDU: "Single feed (recorded)").
 `rack-elevation` shows every unit.

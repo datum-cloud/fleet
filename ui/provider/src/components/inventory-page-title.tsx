@@ -30,7 +30,8 @@ export function InventoryPageTitle({ title, description, actions, directory, cat
       <BreadcrumbItem><BreadcrumbLink asChild><Link to={base.replace(/\/inventory$/, '')}>Bare Metal</Link></BreadcrumbLink></BreadcrumbItem>
       <BreadcrumbSeparator />
       <BreadcrumbItem>{directory || category ? <BreadcrumbLink asChild><Link to={base}>Inventory</Link></BreadcrumbLink> : <BreadcrumbPage>Inventory</BreadcrumbPage>}</BreadcrumbItem>
-      {group && <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbLink asChild><Link to={`${base}?kind=${group.kinds[0]}`}>{group.title}</Link></BreadcrumbLink></BreadcrumbItem></>}
+      {/* A one-kind group (Installation plans) shares its directory's name: one crumb, not two. */}
+      {group && group.title !== category?.title && <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbLink asChild><Link to={`${base}?kind=${group.kinds[0]}`}>{group.title}</Link></BreadcrumbLink></BreadcrumbItem></>}
       {category && <><BreadcrumbSeparator /><BreadcrumbItem>{directory ? <BreadcrumbLink asChild><Link to={`${base}${directory}`}>{category.title}</Link></BreadcrumbLink> : <BreadcrumbPage>{category.title}</BreadcrumbPage>}</BreadcrumbItem></>}
       {directory && <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem></>}
     </BreadcrumbList></Breadcrumb>

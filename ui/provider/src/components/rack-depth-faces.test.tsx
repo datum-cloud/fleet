@@ -78,20 +78,7 @@ describe('connection view by chassis face', () => {
     expect(within(tiles).getByRole('group', { name: 'Front · rack front' })).toBeInTheDocument();
     fireEvent.click(within(rearPlate).getByRole('button', { name: /^Ethernet 1:/ }));
     expect(screen.getByRole('dialog')).toHaveTextContent(/Check.*this end is on the rack rear and the far end on the rack front/);
-    fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
-    const diagram = screen.getByRole('group', { name: /Connection diagram/ });
-    expect(within(diagram).queryByRole('list', { name: 'Network links' })).not.toBeInTheDocument();
-    const rear = within(diagram).getByRole('list', { name: 'Network · Rear links' });
-    const rows = within(rear).getAllByRole('listitem').filter(item => item.classList.contains('inventory-connection-row'));
-    expect(rows.map(row => row.querySelector('.inventory-connection-local')?.textContent)).toEqual(['Ethernet 0', 'Ethernet 1', 'Management port']);
-    expect(rows.every(row => within(row).getByText('Chassis rear · rack rear'))).toBe(true);
-    expect(rows[1]).toHaveAttribute('data-state', 'cabled');
-    expect(within(rows[1]).getByText(/^Check: this end is on the rack rear and the far end on the rack front/)).toHaveClass('inventory-connection-check');
-    expect(within(rows[0]).queryByText(/^Check:/)).not.toBeInTheDocument();
-    expect(within(diagram).getByRole('list', { name: 'Console · Front links' })).toHaveTextContent('Chassis front · rack front');
-
-    // Back to the table: the soft check is a short marker, its sentence the tooltip and accessible text.
-    fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
+    // In the table the soft check is a short marker, its sentence the tooltip and accessible text.
     const tableRows = within(screen.getByRole('table', { name: 'Components and Cables' })).getAllByRole('row').slice(1);
     const eth1 = tableRows.find(row => within(row).getAllByRole('cell')[0].textContent === 'Ethernet 1')!;
     expect(eth1.querySelector('.inventory-connection-check')).toHaveTextContent(/^· Check this end is on the rack rear and the far end on the rack front/);
@@ -100,12 +87,11 @@ describe('connection view by chassis face', () => {
     expect(within(eth1).getAllByRole('cell').slice(1, 3).map(cell => cell.textContent)).toEqual(['Network SFP28', 'Rear']);
   });
 
-  it('puts ports without a recorded face under Face unknown only when the group has known faces', () => {
+  it('draws one unlabelled faceplate when no face is recorded, and the table says the face is unknown', () => {
     render(<MemoryRouter><DeviceConnections device={device('appliance-03')} inventory={inventory} href={inventoryHref} /></MemoryRouter>);
     // No face is recorded, so the tiles draw one unlabelled faceplate.
     expect(within(screen.getByRole('group', { name: /Port tiles/ })).queryByText('Face unknown')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
-    expect(screen.getByRole('list', { name: 'Network links' })).toBeInTheDocument();
-    expect(screen.queryByText('Face unknown · 1 link')).not.toBeInTheDocument();
+    const rows = within(screen.getByRole('table', { name: 'Components and Cables' })).getAllByRole('row').slice(1);
+    expect(rows.map(row => within(row).getAllByRole('cell')[2].textContent)).toEqual(rows.map(() => 'Face unknown'));
   });
 });

@@ -49,11 +49,11 @@ describe('rack page tabs', () => {
 
     fireEvent.click(within(tabs).getByRole('tab', { name: /^Cables\b/ }));
     expect(search().get('tab')).toBe('cables');
-    expect(screen.getByRole('heading', { name: /Leaf a01/ })).toBeInTheDocument();
-    // Display names only; generated names stay in the collapsed record-name details.
-    const leafCables = screen.getByRole('table', { name: 'Leaf a01 cables' });
-    expect(within(leafCables).queryByText(/^example-/)).not.toBeInTheDocument();
-    expect(within(leafCables).getAllByRole('link', { name: 'Breakout swp49' })).toHaveLength(4);
+    // One rack-wide table; display names only, with no record-name details.
+    const cables = screen.getByRole('table', { name: 'Rack cables' });
+    expect(cables).not.toHaveTextContent(/example-(?!leaf-missing)/);
+    expect(document.querySelector('.inventory-record-names, details')).toBeNull();
+    expect(within(cables).getAllByRole('link', { name: 'Breakout swp49' })).toHaveLength(4);
 
     fireEvent.click(within(tabs).getByRole('tab', { name: /^Power\b/ }));
     expect(search().get('tab')).toBe('power');
@@ -210,7 +210,7 @@ describe('device selection', () => {
     const tile = within(panel).getByRole('button', { name: /^swp1: Cable recorded, to Compute a01-01 · Ethernet 0/ });
     await act(async () => { fireEvent.click(tile); });
     const card = await screen.findByRole('dialog', { name: 'swp1 details' });
-    expect(within(card).getByText('No health reported')).toBeInTheDocument();
+    expect(within(card).queryByText('Health')).toBeNull();
     expect(within(card).getByText(/Compute a01-01 · Ethernet 0/)).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: 'DAC a01-01 eth0' })).toBeInTheDocument();
     // Escape inside the card closes the card, not the device panel.
@@ -252,6 +252,42 @@ describe('device selection', () => {
   });
 });
 
+describe('rack Cables tab', () => {
+  const rowsOf = () => within(screen.getByRole('table', { name: 'Rack cables' })).getAllByRole('row').slice(1);
+  const row = (cable: string) => rowsOf().filter(item => within(item).getAllByRole('cell')[0].textContent === cable);
+
+  it('lists each Cable lane once, even when both ends are in the rack, one line per lane', () => {
+    open(RACK('example-rack-a01', '&tab=cables'));
+    expect(within(screen.getByRole('table', { name: 'Rack cables' })).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Cable', 'End', 'Far end', 'Medium']);
+    // Compute a01-01 and Leaf a01 are both in this rack: the DAC between them is one row.
+    expect(row('DAC a01-01 eth0')).toHaveLength(1);
+    expect(within(row('DAC a01-01 eth0')[0]).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['DAC a01-01 eth0', 'Compute a01-01 · Ethernet 0', 'Leaf a01 · swp1', 'Copper DAC']);
+    // Breakout lanes read "· 1/4" on the Cable, not a second line.
+    expect(rowsOf().map(item => within(item).getAllByRole('cell')[0].textContent).filter(text => text?.startsWith('Breakout'))).toEqual(['Breakout swp49 · 1/4', 'Breakout swp49 · 2/4', 'Breakout swp49 · 3/4', 'Breakout swp49 · 4/4']);
+    // No status column: an ordinary lane has no mark.
+    expect(row('DAC a01-01 eth0')[0]).not.toHaveAttribute('data-attention');
+    expect(screen.getByRole('table', { name: 'Rack cables' })).not.toHaveTextContent(/Cable recorded/);
+  });
+
+  it('edges a disagreeing lane red with the shared end red, and a missing peer amber, with the reason as tooltip and accessible text', () => {
+    open(RACK('example-rack-a01', '&tab=cables'));
+    for (const cable of ['DAC a01-01 eth1', 'DAC a01-01 eth1 (duplicate record)']) {
+      const [lane] = row(cable);
+      expect(lane).toHaveAttribute('data-attention', 'conflict');
+      expect(lane).toHaveAttribute('title', expect.stringMatching(/2 Cable lanes name this position/));
+      const [, end, far] = within(lane).getAllByRole('cell');
+      // Both Cables name Compute a01-01 eth1: that end is red; the leaf ports are not shared.
+      expect(end).toHaveAttribute('data-state', 'conflict');
+      expect(far).not.toHaveAttribute('data-state');
+      expect(far).toHaveTextContent(/Records disagree: 2 Cable lanes name this position/);
+    }
+    const [missing] = row('DAC a01-02 eth1');
+    expect(missing).toHaveAttribute('data-attention', 'unavailable');
+    expect(within(missing).getAllByRole('cell')[2]).toHaveAttribute('data-state', 'unavailable');
+    expect(within(missing).getAllByRole('cell')[2]).toHaveTextContent(/Peer unavailable/);
+  });
+});
+
 describe('denied records', () => {
   it('does not echo a selected device when Devices are denied', () => {
     phoneWidth(false);
@@ -261,7 +297,8 @@ describe('denied records', () => {
     // Only the URL the visitor followed carries the name; the page does not repeat it.
     expect(screen.queryAllByText(/example-srv-a01-01|Compute a01-01/).filter(item => item !== screen.getByTestId('search'))).toHaveLength(0);
     fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Cables\b/ }));
-    expect(screen.getByText(/Device details unavailable. Cables cannot be grouped/)).toBeInTheDocument();
+    expect(screen.getByText('Device details unavailable.')).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Rack cables' })).not.toBeInTheDocument();
   });
 
   it('keeps faceplate state unknown when Cables are denied', () => {
@@ -272,7 +309,9 @@ describe('denied records', () => {
     expect(within(panel).queryByText(/cable recorded/i)).not.toBeInTheDocument();
     expect(within(panel).getByRole('button', { name: /^Ethernet 0: Cable details unavailable, connections unknown$/ })).toBeInTheDocument();
     fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Cables\b/ }));
-    expect(screen.getByText(/Cable details unavailable. Connections for this rack are unknown, not absent/)).toBeInTheDocument();
+    expect(screen.getByText('Cable details unavailable.')).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Rack cables' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Cables\b/ })).toHaveTextContent('Cables ?');
   });
 
   it('names no power feed when power feeds are denied', () => {

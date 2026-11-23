@@ -102,8 +102,7 @@ describe('Device page states each fact once', () => {
     expect(connections().queryByRole('group', { name: /Port tiles/ })).toBeNull();
     expect(connections().queryByText('Layout not recorded')).toBeNull();
     expect(connections().queryByRole('group', { name: 'Connection view' })).toBeNull();
-    for (const name of ['Picture', 'Table', 'Diagram', 'Faceplate', 'Ports', 'List']) expect(connections().queryByRole('button', { name })).toBeNull();
-    expect(connections().getByRole('button', { name: 'Link diagram' })).toHaveAttribute('aria-pressed', 'false');
+    for (const name of ['Picture', 'Table', 'Diagram', 'Link diagram', 'Legend', 'Faceplate', 'Ports', 'List']) expect(connections().queryByRole('button', { name })).toBeNull();
     expect(connections().getByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
   });
 
@@ -120,10 +119,10 @@ describe('Device page states each fact once', () => {
     const { container } = show(record('Device', 'example-srv-a01-01', view));
     expect(document.body.textContent?.match(/\d+ ports · /g)).toHaveLength(1);
     expect(container.querySelector('.inventory-connection-summary')).toHaveTextContent(/^9 ports · 4 recorded · 1 disagree · 4 catalog only$/);
-    // The picture is there whichever view the URL names; the diagram only swaps out the table.
+    // Whatever view the URL names, the page is the picture and the table: there is no diagram.
     expect(connections().getByRole('group', { name: /^Faceplate drawing/ })).toBeInTheDocument();
-    expect(!!connections().queryByRole('table')).toBe(view !== '&view=diagram');
-    expect(!!connections().queryByRole('group', { name: /Connection diagram/ })).toBe(view === '&view=diagram');
+    expect(connections().getByRole('table')).toBeInTheDocument();
+    expect(connections().queryByRole('group', { name: /Connection diagram/ })).toBeNull();
     expect(screen.queryByText(/All components/)).toBeNull();
     expect(screen.queryByText(/\d+ network ports? · /)).toBeNull();
     // No caveat sentence runs inline.

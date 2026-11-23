@@ -75,9 +75,6 @@ export const FEED_CLASS_WORDS: Record<FeedClass, string> = {
   unknown: 'Feed unknown',
 };
 
-// Words carry the meaning; the glyph keeps it from being colour-only.
-export const FEED_CLASS_GLYPH: Record<FeedClass, string> = { separate: '⇉', single: '⚑', partial: '?', unknown: '?' };
-
 /**
  * How a Device's PSUs spread across feeds in the records. Two or more feeds
  * is "separate (recorded)"; one feed for every PSU is "single (recorded)";
@@ -98,8 +95,6 @@ export function classifyFeeds(psus: PsuFeed[] | undefined): { class: FeedClass; 
 export interface PathPdu {
   device: Device;
   label: string;
-  /** The feed terminations cabled to this PDU, by name. */
-  fedBy: string[];
   /** Inlets first, then outlets, as port tiles. */
   tiles: PortTile[];
   links: ConnectionLink[];
@@ -156,12 +151,11 @@ export function feedPath(feed: PhysicalRecord, inventory: Inventory): FeedPath {
     const device = devices.get(link.peer.name);
     if (!device) continue;
     if (!isPdu(device)) { reached.set(device.metadata.name, device); continue; }
-    const existing = pdus.get(device.metadata.name);
-    if (existing) { existing.fedBy.push(link.component?.name ?? link.componentID); continue; }
+    if (pdus.has(device.metadata.name)) continue;
     const connections = deviceConnections(device, inventory);
     const power = connections.links.filter(item => item.component?.type === 'PowerInlet' || item.component?.type === 'PowerOutlet');
     const tiles = portTiles(power).sort((a, b) => Number(a.type === 'PowerOutlet') - Number(b.type === 'PowerOutlet'));
-    pdus.set(device.metadata.name, { device, label: deviceLabel(device), fedBy: [link.component?.name ?? link.componentID], tiles, links: power });
+    pdus.set(device.metadata.name, { device, label: deviceLabel(device), tiles, links: power });
     for (const outlet of power) {
       if (outlet.component?.type !== 'PowerOutlet' || outlet.state !== 'cabled' || outlet.peer?.kind !== 'Device' || !outlet.peer.name) continue;
       const target = devices.get(outlet.peer.name);

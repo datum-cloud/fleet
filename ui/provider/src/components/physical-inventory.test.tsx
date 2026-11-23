@@ -135,14 +135,15 @@ describe('hardware directory', () => {
 
   it('follows typed cable endpoints to the supply without claiming free outlets or available power', () => {
     browse('?kind=Cable&record=power-01&namespace=default');
-    expect(screen.getByText('psu-1')).toBeInTheDocument();
+    expect(document.querySelector('.inventory-cable-line')).toHaveTextContent(/· psu-1$/);
     expect(screen.queryByText(/Cable records, not live link state/)).toBeNull();
     fireEvent.click(screen.getByRole('link', { name: 'Feed A' }));
     expect(screen.getByRole('heading', { name: /^Power outlets?\b/ })).toBeInTheDocument();
     expect(screen.queryByText(/supply ratings do not establish available power/)).toBeNull();
     expect(document.body).not.toHaveTextContent(/\b(free|available) (outlets?|power)\b|outlets? (are )?(free|available)/i);
-    fireEvent.click(screen.getByRole('tab', { name: /^Upstream sources/ }));
-    expect(screen.getByRole('region', { name: 'Upstream sources' })).toHaveTextContent('example-provider/Supply/synthetic-supply-a');
+    // One upstream source sits in the path's Upstream stage, with no tab of its own.
+    expect(screen.queryByRole('tab', { name: /^Upstream sources/ })).toBeNull();
+    expect(screen.getByRole('list', { name: /Power path/ }).querySelector('[data-stage="upstream"]')).toHaveTextContent('example-provider/Supply/synthetic-supply-a');
   });
 
   it('retains replacements without choosing an active registration', () => {

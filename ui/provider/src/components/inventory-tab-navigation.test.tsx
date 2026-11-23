@@ -341,13 +341,7 @@ it('switches record detail tabs as presentation navigation without extra collect
   await act(async () => { await view.router.navigate(-1); });
   await waitFor(() => expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true'));
   expect(view.collections).toHaveBeenCalledTimes(9);
-  // The link diagram is presentation state too: switching to it reads nothing.
   expect(screen.getByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Link diagram' }));
-  await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('view')).toBe('diagram'));
-  expect(await screen.findByRole('group', { name: /Connection diagram/ })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Link diagram' })).toHaveAttribute('aria-pressed', 'true');
-  expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });

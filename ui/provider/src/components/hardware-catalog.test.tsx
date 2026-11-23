@@ -133,8 +133,9 @@ describe('hardware catalog readers', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Device types' }));
     fireEvent.click(screen.getByRole('link', { name: model.spec.displayName }));
     expect(screen.getByText(/Template-only port/)).toBeInTheDocument();
-    // The template is shown as a chassis template, not as an installed component.
-    expect(screen.getByRole('region', { name: 'Chassis face unknown' })).toHaveTextContent('Template-only port');
+    // The template is listed in the model's component table, as catalog only, not as an installed component.
+    expect(screen.getByRole('region', { name: 'Components table' })).toHaveTextContent('Template-only port');
+    expect(screen.queryByText(/Cable recorded|No cable recorded/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /create|edit|delete|apply|select/i })).not.toBeInTheDocument();
   });
 

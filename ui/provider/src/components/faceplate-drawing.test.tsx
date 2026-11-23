@@ -101,8 +101,8 @@ describe('FaceplateDrawing', () => {
     // Enter on a native button is a click: it pins the shared PortCard.
     fireEvent.click(swp1);
     const card = screen.getByRole('dialog', { name: 'swp1 details' });
-    expect(card).toHaveTextContent('No health reported');
-    expect(within(card).getByRole('button', { name: 'More' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(card).queryByText('Health')).toBeNull();
+    expect(within(card).queryByRole('button', { name: 'More' })).toBeNull();
     expect(swp1).toHaveAttribute('aria-expanded', 'true');
     fireEvent.keyDown(card, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -117,8 +117,6 @@ describe('FaceplateDrawing', () => {
     for (const port of ports()) {
       fireEvent.focus(port);
       fireEvent.click(port);
-      const more = screen.queryByRole('button', { name: 'More' });
-      if (more) fireEvent.click(more);
     }
     expect(view.container.textContent).not.toMatch(HIDDEN);
     expect(accessibleNames(view.container)).not.toMatch(HIDDEN);
@@ -158,25 +156,6 @@ describe('FaceplateDrawing', () => {
     expect(view.container.querySelectorAll('.inventory-chassis-cell .inventory-chassis-module[data-state="catalog"]')).toHaveLength(0);
   });
 
-  it('shows how a port was matched to the catalog only in the card\'s More', () => {
-    show(FIXTURE_NAMES.imported);
-    fireEvent.click(screen.getByRole('button', { name: /^Ethernet1:/ }));
-    const card = screen.getByRole('dialog', { name: 'Ethernet1 details' });
-    expect(card).not.toHaveTextContent('Matched to catalog');
-    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
-    expect(card).toHaveTextContent('Matched to catalog by name and type');
-    // The record state is unchanged by the name match.
-    expect(card).toHaveTextContent('Recorded on this Device');
-  });
-
-  it('says an id match is by id in the card\'s More', () => {
-    show(FIXTURE_NAMES.server);
-    fireEvent.click(screen.getByRole('button', { name: /^Ethernet 0:/ }));
-    const card = screen.getByRole('dialog', { name: 'Ethernet 0 details' });
-    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
-    expect(card).toHaveTextContent('Matched to catalog by id');
-  });
-
   it('never lets a name match change record state, Cable joins or faces outside the drawing', () => {
     const { device, inventory } = named(FIXTURE_NAMES.imported);
     const links = deviceConnections(device, inventory).links;
@@ -184,7 +163,7 @@ describe('FaceplateDrawing', () => {
     expect(links.find(link => link.componentID === 'interface-templates-101')?.state).toBe('catalog');
     const drawing = deviceDrawingModel(device, inventory);
     expect(drawing.tiles.get('interfaces-9101')?.state).toBe('none');
-    expect(drawing.tiles.get('interfaces-9101')?.templateMatch).toBe('name+type');
+    expect(drawing.join.byComponent.get('interfaces-9101')?.basis).toBe('name+type');
     expect(drawing.at('interface-templates-101')).toBe('interfaces-9101');
     expect(drawing.at('power-port-templates-301')).toBe('power-port-templates-301');
   });

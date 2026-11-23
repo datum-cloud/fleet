@@ -104,69 +104,17 @@
 @media(max-width:600px) { .inventory-form { grid-template-columns:1fr; padding:16px; } .inventory-body { padding:0!important; } }
 @media(max-width:1100px) { .inventory-sections { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media(max-width:600px) { .inventory-sections { grid-template-columns:repeat(2,minmax(0,1fr)); } .inventory-fields { grid-template-columns:1fr; } .inventory-body { padding:16px; } .inventory-heading,.inventory-list-heading { align-items:flex-start; flex-direction:column; } .inventory-related li { grid-template-columns:1fr; gap:4px; } }
-/* Device connection view: Cable records joined to components. Every state has a glyph, a line style and words. */
+/* Device component table and port card: Cable records joined to components. Every state has a glyph and words. */
 .inventory-connections { display:grid; gap:12px; min-width:0; }
-.inventory-connections-heading { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; }
-.inventory-connections-heading h4 { margin:0; }
-.inventory-connection-legend { display:flex; flex-wrap:wrap; gap:8px 16px; list-style:none; padding:0; margin:0; font-size:12px; }
-.inventory-connection-legend li { display:flex; align-items:center; gap:6px; }
 .inventory-connection-glyph { display:inline-block; min-width:1ch; font-weight:700; text-align:center; }
-[data-state="conflict"] > .inventory-connection-glyph,[data-state="conflict"] .inventory-connection-cable > .inventory-connection-glyph { color:var(--destructive); }
-.inventory-connection-caveat { font-size:12px; }
-.inventory-connection-diagram { display:grid; grid-template-columns:minmax(150px,200px) minmax(0,1fr); gap:0; padding:16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); min-width:0; }
-.inventory-connection-diagram[data-left] { grid-template-columns:minmax(0,1fr) minmax(150px,200px) minmax(0,1fr); }
-.inventory-connection-diagram:not([data-left]) > [data-side="left"] { display:none; }
-.inventory-connection-device { align-self:stretch; display:flex; flex-direction:column; justify-content:center; gap:2px; min-height:88px; padding:12px; border:2px solid var(--primary); border-radius:var(--radius); background:var(--accent); text-align:center; overflow-wrap:anywhere; }
-.fleet-inventory .inventory-connection-device small { margin-top:0; }
-.inventory-connection-side,.inventory-connection-rows,.inventory-connection-trace { list-style:none; padding:0; margin:0; min-width:0; }
-.inventory-connection-side { display:grid; gap:12px; align-content:center; }
-.inventory-connection-group-title { font-size:12px; font-weight:600; margin:0 0 4px; }
-.inventory-connection-group-note { font-size:11px; color:var(--muted-foreground); margin-top:4px!important; }
-.inventory-connection-rows { display:grid; gap:6px; }
-.inventory-connection-row { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); align-items:center; min-height:44px; }
-[data-side="left"] .inventory-connection-row { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); }
-[data-side="left"] .inventory-connection-line { order:2; }
-.inventory-connection-line { display:flex; flex-direction:column; min-width:0; padding:0 0 0 0; }
-.inventory-connection-ports { display:flex; justify-content:space-between; gap:8px; padding:0 6px; font-size:12px; overflow-wrap:anywhere; }
-[data-side="left"] .inventory-connection-ports { flex-direction:row-reverse; }
-.inventory-connection-local { font-weight:500; }
-.inventory-connection-remote { color:var(--muted-foreground); text-align:right; }
-[data-side="left"] .inventory-connection-remote { text-align:left; }
-.inventory-connection-wire { display:block; margin:3px 0; border-top:2px solid var(--foreground); }
-[data-state="unavailable"] .inventory-connection-wire { border-top-style:dashed; border-top-color:var(--muted-foreground); }
-[data-state="conflict"] .inventory-connection-wire { border-top:4px double var(--destructive); }
-[data-state="none"] .inventory-connection-wire { border-top-style:dotted; border-top-color:var(--muted-foreground); }
-[data-state="catalog"] .inventory-connection-wire { border-top:1px dashed var(--border); }
-.inventory-connection-cable { padding:0 6px; font-size:11px; color:var(--muted-foreground); overflow-wrap:anywhere; }
-.inventory-connection-cable a,.inventory-connection-peer a,.inventory-connection-trace a { display:inline-block; min-height:24px; line-height:24px; }
-.inventory-connection-peer { min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); overflow-wrap:anywhere; }
-.fleet-inventory .inventory-connection-peer small { margin-top:0; }
-[data-state="unavailable"] > .inventory-connection-peer { border-style:dashed; border-color:var(--muted-foreground); }
-[data-state="conflict"] > .inventory-connection-peer { border:2px solid var(--destructive); }
-[data-state="none"] > .inventory-connection-peer { border-style:dotted; color:var(--muted-foreground); background:transparent; }
-[data-state="catalog"] > .inventory-connection-peer { border-style:dashed; color:var(--muted-foreground); background:repeating-linear-gradient(135deg,transparent 0 6px,var(--muted) 6px 9px); }
-.fleet-inventory .inventory-connection-reason { color:var(--foreground); }
-.inventory-connection-ports:has(.inventory-connection-face) { flex-wrap:wrap; row-gap:0; }
-.inventory-connection-face { order:3; flex-basis:100%; font-size:11px; color:var(--muted-foreground); }
-[data-side="left"] .inventory-connection-face { text-align:right; }
-.inventory-connection-face-title { font-size:11px; font-weight:600; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:.04em; margin:6px 0 2px!important; padding:0 8px; }
+[data-state="conflict"] > .inventory-connection-glyph { color:var(--destructive); }
+.inventory-connection-trace { list-style:none; padding:0; margin:0; min-width:0; }
+.inventory-connection-trace a { display:inline-block; min-height:24px; line-height:24px; }
 .fleet-inventory .inventory-connection-check { display:block; color:var(--foreground); font-style:italic; }
 .inventory-connection-trace { margin-top:4px; font-size:11px; display:grid; gap:2px; }
 .fleet-inventory .inventory-connection-table caption { caption-side:top; }
 .inventory-connection-table td { vertical-align:top; }
 .inventory-connection-table tr[data-state="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
-.inventory-connection-cells { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
-.inventory-connection-cells a { display:inline-block; min-height:24px; line-height:24px; }
-.inventory-connection-diagram .inventory-connection-group-title,.inventory-connection-diagram .inventory-connection-group-note { padding:0 8px; }
-@media(max-width:600px) {
-  .inventory-connection-diagram,.inventory-connection-diagram[data-left] { grid-template-columns:1fr; gap:12px; padding:12px; }
-  .inventory-connection-device { order:-1; min-height:0; }
-  .inventory-connection-row,[data-side="left"] .inventory-connection-row { grid-template-columns:1fr; gap:4px; }
-  [data-side="left"] .inventory-connection-line { order:0; }
-  [data-side="left"] .inventory-connection-ports { flex-direction:row; }
-  [data-side="left"] .inventory-connection-remote { text-align:right; }
-  [data-side="left"] .inventory-connection-face { text-align:left; }
-}
 /* Rack page: elevation-centred, with a device panel (bottom sheet on phones) and tabs. */
 .inventory-rack-page { display:grid; gap:16px; min-width:0; }
 .inventory-rack-header { display:grid; gap:6px; min-width:0; }
@@ -194,9 +142,6 @@
 .inventory-rack-panel-links a { display:inline-block; min-height:24px; line-height:24px; }
 .inventory-rack-panel[data-variant="sheet"] { position:fixed; left:0; right:0; bottom:0; top:auto; z-index:50; max-height:75dvh; overflow-y:auto; border-radius:12px 12px 0 0; box-shadow:0 -8px 24px rgb(0 0 0 / .18); }
 .inventory-rack-manage { margin-top:12px; }
-.inventory-record-names { font-size:12px; }
-.fleet-inventory .inventory-record-names { border-top:0; padding-top:0; }
-.inventory-record-names ul { list-style:none; padding:0; margin:0; display:grid; gap:2px; }
 .inventory-equipment-sections h4 a { font-weight:600; }
 /* Rack panel faceplate: the shared port tiles (.inventory-port-*) below, without a second frame. */
 .inventory-faceplate { display:grid; gap:6px; min-width:0; }
@@ -257,7 +202,6 @@
 .inventory-connections .inventory-link-button:hover { color:var(--primary); }
 .inventory-connections .inventory-link-button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .inventory-port-hidden { display:flex; flex-wrap:wrap; gap:4px 16px; color:var(--muted-foreground); }
-.inventory-port-swatch { display:inline-flex; align-items:center; justify-content:center; width:18px; height:14px; border:1.5px solid var(--muted-foreground); border-radius:3px; font-size:10px; font-weight:700; line-height:1; }
 .inventory-port-grid { position:relative; display:grid; gap:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); min-width:0; }
 .inventory-port-face-group { display:grid; gap:6px; min-width:0; }
 .inventory-port-face-group + .inventory-port-face-group { border-top:1px solid var(--border); padding-top:10px; }
@@ -297,14 +241,14 @@
 .inventory-port[data-shape="lc"] .inventory-port-face::after { right:14%; }
 .inventory-port-lanes { display:flex; gap:2px; width:100%; padding:0 3px; }
 .inventory-port-lanes > span { flex:1; height:4px; border:1px solid var(--muted-foreground); border-radius:1px; }
-/* States: tiles, lane bars and legend swatches share one set of rules. */
-.inventory-port[data-state="cabled"] .inventory-port-face,.inventory-port-swatch[data-state="cabled"],.inventory-port-lanes > [data-state="cabled"] { background:var(--foreground); border-color:var(--foreground); color:var(--background); }
+/* States: tiles and lane bars share one set of rules. */
+.inventory-port[data-state="cabled"] .inventory-port-face,.inventory-port-lanes > [data-state="cabled"] { background:var(--foreground); border-color:var(--foreground); color:var(--background); }
 /* The destructive token is under 4.5:1 for 11px text in both themes, so it marks the outline and the label stays foreground. */
-.inventory-port[data-state="conflict"] .inventory-port-face,.inventory-port-swatch[data-state="conflict"] { border:2px solid var(--destructive); color:var(--foreground); }
+.inventory-port[data-state="conflict"] .inventory-port-face { border:2px solid var(--destructive); color:var(--foreground); }
 .inventory-port-lanes > [data-state="conflict"] { background:var(--destructive); border-color:var(--destructive); }
-.inventory-port[data-state="unavailable"] .inventory-port-face,.inventory-port-swatch[data-state="unavailable"],.inventory-port-lanes > [data-state="unavailable"] { border-style:dashed; }
+.inventory-port[data-state="unavailable"] .inventory-port-face,.inventory-port-lanes > [data-state="unavailable"] { border-style:dashed; }
 /* Faint, but its label still meets 4.5:1: muted-foreground alone falls just under in the dark theme. */
-.inventory-port[data-state="catalog"] .inventory-port-face,.inventory-port-swatch[data-state="catalog"],.inventory-port-lanes > [data-state="catalog"] { border:1px dashed var(--muted-foreground); color:color-mix(in oklab,var(--muted-foreground) 70%,var(--foreground)); }
+.inventory-port[data-state="catalog"] .inventory-port-face,.inventory-port-lanes > [data-state="catalog"] { border:1px dashed var(--muted-foreground); color:color-mix(in oklab,var(--muted-foreground) 70%,var(--foreground)); }
 @media(pointer:coarse) { .inventory-port,.inventory-port-row[data-compact] .inventory-port { min-width:44px; min-height:44px; } .inventory-port-row[data-compact] { gap:0; } }
 /* The port card: opened by click, tap or Enter; a bottom sheet on phones, above the rack panel's own sheet. */
 .inventory-port-card { position:absolute; left:var(--card-left,0); top:var(--card-top,0); z-index:60; display:grid; gap:6px; width:min(320px,calc(100% - 8px)); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:0 8px 28px rgb(0 0 0 / .22); font-size:12px; overflow-wrap:anywhere; }
@@ -312,8 +256,6 @@
 .inventory-port-card-title { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .fleet-inventory .inventory-port-card h5 { margin:0; font-size:13px; font-weight:600; }
 .fleet-inventory .inventory-port-card-answer { margin:0; }
-.inventory-port-card-more { border-top:1px solid var(--border); padding-top:2px; }
-.inventory-port-card-more > .inventory-link-button { min-height:24px; font-size:11px; }
 .inventory-port-card-links { display:grid; gap:8px; list-style:none; padding:0; margin:0; }
 .inventory-port-card-links > li + li { border-top:1px solid var(--border); padding-top:8px; }
 .fleet-inventory .inventory-port-card-fields { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 10px; margin:4px 0 0; }
@@ -336,7 +278,7 @@
 .inventory-port-load[data-tint="mid"] { --load-colour:color-mix(in oklab,var(--primary) 70%,var(--card)); }
 .inventory-port-load[data-tint="strong"] { --load-colour:var(--primary); }
 .inventory-port-load[data-tint="high"] { --load-colour:var(--warning,var(--destructive)); border-color:var(--warning,var(--destructive)); }
-.inventory-port-load[data-tint="over"],.inventory-port-load[data-tint="observed"] { --load-colour:var(--destructive); border-color:var(--destructive); }
+.inventory-port-load[data-tint="over"],.inventory-port-load[data-tint="mismatch"] { --load-colour:var(--destructive); border-color:var(--destructive); }
 .inventory-port-load[data-tint="stale"] { --load-colour:transparent; border-style:dotted; }
 .inventory-port-load[data-tint="off"],.inventory-port-load[data-tint="idle"] { --load-colour:transparent; }
 .inventory-port-mark { position:absolute; top:-3px; right:-3px; min-width:13px; height:13px; padding:0 2px; border-radius:7px; background:var(--card); border:1px solid var(--muted-foreground); color:var(--foreground); font-size:9px; font-weight:800; line-height:11px; text-align:center; }
@@ -357,7 +299,6 @@
 .fleet-inventory .inventory-telemetry-mismatch { margin:0; padding:4px 8px; border-left:3px solid var(--destructive); background:color-mix(in oklab,var(--destructive) 8%,transparent); font-size:12px; }
 .fleet-inventory .inventory-telemetry-health { margin:0; }
 .fleet-inventory .inventory-telemetry-health small { display:block; color:var(--muted-foreground); }
-.inventory-telemetry-health[data-health="ok"] > span { color:var(--success,var(--foreground)); }
 .inventory-telemetry-health[data-health="fault"] > span { color:var(--destructive); }
 .inventory-telemetry-health[data-health="stale"] { color:var(--muted-foreground); font-style:italic; }
 
@@ -374,10 +315,9 @@
 .inventory-capacity[data-freshness="stale"] .inventory-capacity-text,.inventory-capacity[data-level="missing"] .inventory-capacity-text { color:var(--muted-foreground); }
 .inventory-capacity[data-freshness="stale"] .inventory-capacity-text { font-style:italic; }
 .inventory-capacity-glyph { font-weight:800; }
-.fleet-inventory .inventory-capacity-formula { margin:0; font-size:11px; color:var(--muted-foreground); }
 
 /* PowerFeed power path, left to right; stacked on narrow screens. */
-.inventory-power-stages { list-style:none; padding:0; margin:0; display:grid; grid-template-columns:minmax(96px,.5fr) minmax(200px,1fr) minmax(280px,1.6fr) minmax(200px,1fr); gap:12px 22px; align-items:start; }
+.inventory-power-stages { list-style:none; padding:0; margin:0; display:grid; grid-template-columns:minmax(96px,.5fr) minmax(200px,1fr) minmax(260px,1.3fr) minmax(300px,1.4fr); gap:12px 22px; align-items:start; }
 .inventory-power-stage { position:relative; display:grid; gap:8px; min-width:0; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); }
 .inventory-power-stage + .inventory-power-stage::before { content:'→'; position:absolute; left:-18px; top:10px; color:var(--muted-foreground); font-size:14px; }
 .fleet-inventory .inventory-power-stage h4 { margin:0; font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-foreground); }
@@ -386,7 +326,6 @@
 .inventory-power-strip { display:grid; gap:6px; min-width:0; }
 .inventory-power-strip + .inventory-power-strip { border-top:1px solid var(--border); padding-top:8px; }
 .fleet-inventory .inventory-power-strip h4 { font-size:13px; font-weight:600; text-transform:none; letter-spacing:0; color:var(--foreground); }
-.fleet-inventory .inventory-power-strip-meta { font-size:12px; color:var(--muted-foreground); }
 /* Outlets as tiles: a strip of shared port tiles, or the PDU's drawn faceplate cropped to its banks. */
 .inventory-outlet-tiles { padding:6px 8px; background:color-mix(in oklab,var(--muted) 55%,var(--card)); border:1.5px solid var(--muted-foreground); border-radius:6px; }
 .inventory-power-strip .inventory-drawing { padding:6px 8px; gap:4px; }
@@ -394,15 +333,7 @@
 .inventory-chassis[data-fit] { box-sizing:border-box; }
 .fleet-inventory .inventory-power-updated { margin:0; font-size:11px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .inventory-power-updated[data-freshness="stale"] { font-style:italic; }
-.inventory-power-devices,.inventory-power-psus { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
-.inventory-power-devices > li + li { border-top:1px solid var(--border); padding-top:8px; }
-.inventory-power-psus { gap:2px; font-size:12px; }
-.inventory-power-psus > li { display:grid; gap:0; }
-.inventory-power-psus > li:not([data-on-feed]) { color:var(--muted-foreground); }
 .fleet-inventory .inventory-power-device-title { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:baseline; }
-.inventory-feed-class { display:inline-flex; align-items:baseline; gap:2px; padding:0 6px; border:1px solid var(--border); border-radius:999px; font-size:11px; white-space:nowrap; }
-.inventory-feed-class[data-class="single"] { border-color:var(--warning,var(--destructive)); }
-.inventory-feed-class[data-class="unknown"],.inventory-feed-class[data-class="partial"] { border-style:dashed; }
 .inventory-device-draw { font-size:12px; }
 @media(max-width:1100px) { .inventory-power-stages { grid-template-columns:repeat(2,minmax(0,1fr)); } .inventory-power-stage:nth-child(odd)::before { content:none; } }
 @media(max-width:600px) {
@@ -531,10 +462,7 @@
 .inventory-component-panel { position:relative; display:grid; min-width:0; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); }
 .inventory-component-bar { position:relative; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:2px 16px; padding:4px 10px; border-bottom:1px solid var(--border); }
 .inventory-component-bar .inventory-connection-summary { font-size:13px; font-variant-numeric:tabular-nums; }
-.inventory-component-actions { display:flex; align-items:center; gap:14px; }
-.inventory-connections .inventory-link-button[aria-pressed="true"] { font-weight:600; text-decoration-thickness:2px; }
 .inventory-component-panel > .inventory-scroll { border:0; border-radius:0 0 var(--radius) var(--radius); }
-.inventory-component-panel > .inventory-connection-diagram { border:0; border-radius:0 0 var(--radius) var(--radius); }
 .fleet-inventory .inventory-dense-table th,.fleet-inventory .inventory-dense-table td { min-width:0; max-width:none; white-space:nowrap; overflow-wrap:normal; vertical-align:middle; }
 .fleet-inventory .inventory-dense-table th { height:28px; padding:0 10px; font-size:12px; }
 .fleet-inventory .inventory-dense-table td { height:30px; padding:3px 10px; font-size:13px; line-height:1.35; }
@@ -549,8 +477,6 @@
 .inventory-dense-table th:first-child,.inventory-dense-table td:first-child { position:sticky; left:0; z-index:1; background:var(--card); }
 .inventory-dense-table tr[data-highlight] > td:first-child { background:var(--muted); box-shadow:inset 2px 0 var(--ring),inset 0 2px var(--ring),inset 0 -2px var(--ring); }
 
-/* The legend popover. */
-.inventory-connection-legend-panel { position:absolute; right:8px; top:calc(100% + 4px); z-index:30; display:grid; gap:6px; width:min(380px,calc(100% - 16px)); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:0 8px 24px rgb(0 0 0 / .18); font-size:12px; }
 
 /* Location tab: the correction editor as one compact block. */
 .inventory-location-editor { display:grid; gap:4px; padding-top:8px; border-top:1px solid var(--border); }
@@ -620,4 +546,29 @@
 @media(max-width:600px) {
   .fleet-inventory .inventory-directory-table td:first-child { max-width:150px; }
   .inventory-toolbar select { flex:1 1 140px; width:auto; }
+}
+/* Connections and power: a reading with no limit to scale against is a neutral bar; an absent PSU is amber. */
+.inventory-port-load[data-tint="reported"] { --load-colour:color-mix(in oklab,var(--muted-foreground) 45%,var(--card)); }
+.inventory-telemetry-health[data-health="absent"] > span { color:var(--warning,#d97706); }
+/* Power feed page: upstream ids on one line each; the devices table mutes PSUs on other feeds and edges devices that need checking in amber. */
+.inventory-power-sources { list-style:none; padding:0; margin:0; display:grid; gap:2px; font-size:12px; }
+.inventory-power-sources > li { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.inventory-power-devices tr:not([data-on-feed]) > td { color:var(--muted-foreground); }
+.inventory-power-devices td[data-class="single"],.inventory-power-devices td[data-class="partial"],.inventory-power-devices td[data-class="unknown"] { box-shadow:inset 3px 0 var(--warning,#d97706); }
+.fleet-inventory .inventory-power-devices th,.fleet-inventory .inventory-power-devices td { padding-left:6px; padding-right:6px; font-size:12px; }
+.fleet-inventory .inventory-power-devices td[rowspan] { vertical-align:top; padding-top:6px; }
+/* Cable page: a one-lane cable is one line; an end another Cable also names is red. */
+.fleet-inventory .inventory-cable-line { margin:0; font-size:14px; }
+.inventory-cable-end[data-state="conflict"] { color:var(--destructive); font-weight:500; }
+.inventory-cable-end[data-state="conflict"] a { color:inherit; }
+/* Installation plan: a registered device that reports another model is red. */
+.inventory-claim-mismatch { color:var(--destructive); font-weight:500; }
+.inventory-claim-mismatch a { color:inherit; }
+/* Rack Cables tab: one row per Cable lane; a disagreeing end is red, an unavailable peer amber. On a phone the ends wrap and the medium is dropped, so nothing scrolls sideways. */
+.inventory-rack-cables td[data-state="conflict"],.inventory-rack-cables td[data-state="conflict"] a { color:var(--destructive); }
+.inventory-rack-cables td[data-state="unavailable"] { color:var(--warning,#b45309); }
+@media(max-width:600px) {
+  .inventory-rack-cables table { table-layout:fixed; width:100%; }
+  .fleet-inventory .inventory-rack-cables th,.fleet-inventory .inventory-rack-cables td { height:auto; padding:4px 6px; white-space:normal; overflow-wrap:anywhere; font-size:12px; }
+  .inventory-rack-cables th:nth-child(4),.inventory-rack-cables td:nth-child(4) { display:none; }
 }
