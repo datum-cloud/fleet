@@ -174,4 +174,5 @@
   [data-side="left"] .inventory-connection-line { order:0; }
   [data-side="left"] .inventory-connection-ports { flex-direction:row; }
   [data-side="left"] .inventory-connection-remote { text-align:right; }
+  [data-side="left"] .inventory-connection-face { text-align:left; }
 }

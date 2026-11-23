@@ -3,6 +3,7 @@ import { PAGES } from '../../scripts/screenshot-pages';
 import { assertFixtureMode } from '../../scripts/fixture-mode';
 import { DIAGRAM_LINK_LIMIT, deviceConnections } from './device-connections';
 import { equipmentGeometry, equipmentPlacements } from './device-placement';
+import { equipmentDepth } from './device-depth';
 import { FIXTURE_NAMES, FIXTURE_RACKS, FIXTURE_SCENARIOS, fixtureInventory, inventoryFixture } from './inventory-fixtures';
 
 const inventory = fixtureInventory();
@@ -71,6 +72,22 @@ describe('preview inventory fixture', () => {
     expect(leaf.links.length).toBeGreaterThan(DIAGRAM_LINK_LIMIT);
     expect(leaf.links.filter(link => link.componentID === 'swp49' && link.state === 'cabled').map(link => link.cable?.laneCount)).toEqual([4, 4, 4, 4]);
     expect(leaf.links.some(link => link.state === 'none')).toBe(true);
+  });
+
+  it('exercises depth and faces: catalog, reported, unknown, reversed and opposite-face cables', () => {
+    const entries = equipmentPlacements(inventory);
+    const depth = (name: string) => equipmentDepth(entries.find(item => item.record.metadata.name === name)!, inventory);
+    expect(depth(FIXTURE_NAMES.server)).toEqual({ full: true, source: 'catalog' });
+    expect(depth(FIXTURE_NAMES.leaf)).toEqual({ full: true, source: 'reported' });
+    expect(depth(FIXTURE_NAMES.patchPanel)).toEqual({ full: false, source: 'reported' });
+    expect(depth('example-app-a01')).toEqual({ full: true, source: 'unknown' });
+    const templates = physical('DeviceType').flatMap(type => type.spec.componentTemplates ?? []);
+    expect(new Set(templates.map(item => item.face))).toEqual(new Set(['Front', 'Rear']));
+    const leaf = deviceConnections(device(FIXTURE_NAMES.leaf), inventory).links;
+    expect(leaf.find(link => link.componentID === 'swp1')).toMatchObject({ chassisFace: 'Front', rackFace: 'rear', checks: [] });
+    const app = deviceConnections(device('example-app-a01'), inventory).links.find(link => link.componentID === 'net0');
+    expect(app).toMatchObject({ state: 'cabled', rackFace: 'front', peer: { rackFace: 'rear' } });
+    expect(app?.checks).toHaveLength(1);
   });
 
   it('denies whole collections in read scenarios', () => {

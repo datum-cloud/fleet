@@ -15,11 +15,12 @@
 // Everything is typed against ../../../shared/fleet-api.ts, so a wire type
 // change that the fixtures no longer satisfy fails `pnpm typecheck`.
 //
-// Adding fields that are still being designed: templates go through
-// `template()`, which already receives the component's rack face, Device
-// placement goes through `placed()`, and DeviceType shape through
-// `deviceType()`. When the wire types gain DeviceType.fullDepth, a template
-// `face`, or a placement orientation, set them in those helpers only.
+// Depth and faces: templates go through `template()`, which sets each
+// component's chassis face; Device placement goes through `placed()`, whose
+// `face` is the mounted rack face; and DeviceType shape goes through
+// `deviceType()`. Devices take their depth from the report when it records
+// one, otherwise from the DeviceType. One model leaves fullDepth unset, so its
+// Device's depth is unknown.
 
 import type { Device, DeviceClaim, DeviceLifecycle, PhysicalComponent, PhysicalRecord, ReportedPlacement } from '../../../shared/fleet-api';
 import { toInventory, type Inventory, type InventoryKind } from '../inventory';
@@ -51,14 +52,9 @@ const meta = (name: string, extra: Partial<PhysicalRecord['metadata']> = {}) => 
 type Template = NonNullable<PhysicalRecord['spec']['componentTemplates']>[number];
 type Face = 'Front' | 'Rear';
 
-/**
- * One component template. `face` is the side of the chassis the component is
- * on. The wire type does not carry it yet; it is accepted here so adding it
- * is a one-line change.
- */
+/** One component template. `face` is the side of the chassis, not the rack. */
 function template(id: string, name: string, type: PhysicalComponent['type'], connector: string, face: Face, positions?: number): Template {
-  void face;
-  return { id, name, type, connector, ...(positions ? { positions } : {}) };
+  return { id, name, type, connector, face, ...(positions ? { positions } : {}) };
 }
 
 function range(count: number, start = 1) {
@@ -69,7 +65,7 @@ const manufacturer = (name: string, displayName: string): PhysicalRecord => ({
   kind: 'Manufacturer', metadata: meta(name), spec: { displayName, canonicalName: displayName, aliases: [name] },
 });
 
-function deviceType(name: string, displayName: string, maker: string, model: string, shape: { heightUnits: number; fullDepth: boolean }, componentTemplates: Template[]): PhysicalRecord {
+function deviceType(name: string, displayName: string, maker: string, model: string, shape: { heightUnits: number; fullDepth?: boolean }, componentTemplates: Template[]): PhysicalRecord {
   return { kind: 'DeviceType', metadata: meta(name), spec: { displayName, manufacturerRef: { name: maker }, model, modelShape: shape, componentTemplates } };
 }
 
@@ -100,6 +96,11 @@ const TYPES = {
   patch: deviceType('example-patch-12', 'Example 12-port patch panel', 'example-cabling', 'EX-PP12', { heightUnits: 1, fullDepth: false }, [
     ...range(12).map(index => template(`front-${index}`, `Front ${index}`, 'FrontPort', 'RJ45', 'Front')),
     ...range(12).map(index => template(`rear-${index}`, `Rear ${index}`, 'RearPort', 'RJ45 keystone', 'Rear')),
+  ]),
+  // fullDepth is unset: depth unknown, drawn as full depth and labelled.
+  appliance: deviceType('example-appliance-2u', 'Example 2U appliance', 'example-compute', 'EX-A2', { heightUnits: 2 }, [
+    template('net0', 'net0', 'NetworkPort', 'SFP28', 'Front'),
+    template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear'),
   ]),
   pdu: deviceType('example-pdu-8', 'Example 8-outlet PDU', 'example-power', 'EX-PDU8', { heightUnits: 0, fullDepth: false }, [
     template('inlet', 'Inlet', 'PowerInlet', 'IEC C20', 'Rear'),
@@ -142,9 +143,9 @@ const feeds: PhysicalRecord[] = [feed('example-feed-a', 'Feed A'), feed('example
 type Placement = Omit<ReportedPlacement, 'revision' | 'observedAt' | 'reason' | 'reference' | 'rackRef' | 'facilityRef'> & { rack?: RackName };
 
 /**
- * A reported placement. `face` is the rack face the Device's front is on:
- * `rear` on a full-depth Device means it is mounted reversed. When the wire
- * type clarifies face and orientation, map them here.
+ * A reported placement. `face` is the mounted rack face, the face the
+ * chassis front points toward: `rear` on a full-depth Device means it is
+ * mounted reversed.
  */
 function placed({ rack, ...placement }: Placement): ReportedPlacement {
   return {
@@ -181,7 +182,6 @@ function device({ name, displayName, type, placement, claim, lifecycle, omit, ex
       deviceTypeRef: { name: type.metadata.name },
       identity: { manufacturer: type.spec.manufacturerRef?.name, model: type.spec.model ?? 'unknown', serial: `SYNTH-EX-${index}`, systemUUID: `00000000-0000-4000-8000-0000000000${index}` },
       assetTag: `EX-ASSET-${index}`,
-      modelShape: type.spec.modelShape,
       topologyAuthority: 'Cable',
       components: components(type, omit),
       ...(placement ? { reportedPlacement: placement } : {}),
@@ -193,13 +193,14 @@ function device({ name, displayName, type, placement, claim, lifecycle, omit, ex
 
 const server = (name: string, rack: RackName, position: number, extra: Partial<DeviceInput> = {}) => device({
   name, displayName: `Compute ${name.split("-").slice(-2).join("-")}`, type: TYPES.server1U,
-  placement: placed({ rack, position, height: 1, face: 'front', fullDepth: true }),
+  // Depth comes from the DeviceType.
+  placement: placed({ rack, position, height: 1, face: 'front' }),
   extra: { bmc: { endpoint: `https://192.0.2.${10 + serial}:443` } }, ...extra,
 });
 
 const storage = (name: string, rack: RackName, position: number, extra: Partial<DeviceInput> = {}) => device({
   name, displayName: `Storage ${name.split("-").slice(-2).join("-")}`, type: TYPES.server2U,
-  placement: placed({ rack, position, height: 2, face: 'front', fullDepth: true }), ...extra,
+  placement: placed({ rack, position, height: 2, face: 'front' }), ...extra,
 });
 
 const devices: Device[] = [
@@ -231,6 +232,10 @@ const devices: Device[] = [
     // Half-depth on the rear rails; the front of U42 stays unrecorded.
     placement: placed({ rack: 'example-rack-a01', position: 42, height: 1, face: 'rear', fullDepth: false }),
     extra: { internalMappings: range(12).map(index => ({ from: { componentID: `front-${index}`, position: 1 }, to: { componentID: `rear-${index}`, position: 1 } })) },
+  }),
+  device({
+    name: 'example-app-a01', displayName: 'Appliance a01 (depth unknown)', type: TYPES.appliance,
+    placement: placed({ rack: 'example-rack-a01', position: 20, height: 2, face: 'front' }),
   }),
   device({
     name: FIXTURE_NAMES.pdu, displayName: 'PDU a01 (rear left)', type: TYPES.pdu,
@@ -302,6 +307,8 @@ const cables: PhysicalRecord[] = [
   one('example-dac-a01-01-eth0', 'DAC a01-01 eth0', 'Copper DAC', D(SRV, 'eth0'), D(LEAF, 'swp1')),
   one('example-dac-a01-02-eth0', 'DAC a01-02 eth0', 'Copper DAC', D('example-srv-a01-02', 'eth0'), D(LEAF, 'swp3')),
   one('example-dac-a02-03-eth0', 'DAC a02-03 eth0', 'Copper DAC', D('example-srv-a02-03', 'eth0'), D(LEAF, 'swp5')),
+  // Front-facing appliance port to a rear-facing leaf port: a soft check.
+  one('example-dac-app-a01-net0', 'DAC appliance a01 net0', 'Copper DAC', D('example-app-a01', 'net0'), D(LEAF, 'swp6')),
   // Two Cables claim the same server port: records disagree.
   one('example-dac-a01-01-eth1', 'DAC a01-01 eth1', 'Copper DAC', D(SRV, 'eth1'), D(LEAF, 'swp2')),
   one('example-dac-a01-01-eth1-dup', 'DAC a01-01 eth1 (duplicate record)', 'Copper DAC', D(SRV, 'eth1'), D(LEAF, 'swp4')),

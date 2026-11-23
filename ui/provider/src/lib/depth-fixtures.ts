@@ -1,6 +1,6 @@
 // Synthetic rack, catalog and cabling records that exercise device depth and
-// component faces. Used by tests and by the local fixture preview. Every name,
-// serial and identifier is invented.
+// component faces in unit and component tests. The preview dataset is
+// inventory-fixtures.ts. Every name, serial and identifier is invented.
 
 import type { RawDevice, RawDeviceClaim } from '../inventory';
 import type { CableEndpoint, ComponentTemplate, PhysicalComponent, PhysicalRecord, RackFace } from '../../../shared/fleet-api';

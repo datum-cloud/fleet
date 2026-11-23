@@ -47,5 +47,12 @@ export const PAGES: CapturePage[] = [
   { name: 'rack-overlap', path: record('Rack', 'example-rack-a02'), ready: '.inventory-rack-layout' },
   { name: 'server-detail', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections' },
   { name: 'leaf-connections', path: record('Device', 'example-leaf-a01'), ready: '.inventory-connections', element: '.inventory-connections' },
+  // Both rack faces: full depth on both (muted far side), reversed leaf,
+  // half-depth rear equipment and unknown depth.
+  { name: 'rack-depth-faces', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-faces', element: '.inventory-elevation' },
+  // Ports grouped by chassis face, with derived rack faces.
+  { name: 'server-connections-by-face', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections', element: '.inventory-connections' },
+  // A Cable whose ends land on opposite rack faces carries a check note.
+  { name: 'opposite-face-check', path: record('Device', 'example-app-a01'), ready: '.inventory-connection-check', element: '.inventory-connections' },
   { name: 'denied-peer-connections', path: record('Device', 'example-srv-a01-01', '&fixture=power-feeds-denied'), ready: '.inventory-connections', element: '.inventory-connections' },
 ];
