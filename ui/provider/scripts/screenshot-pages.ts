@@ -51,6 +51,10 @@ const record = (kind: string, name: string, extra = '') => `${INVENTORY}?kind=${
 
 export const PAGES: CapturePage[] = [
   { name: 'inventory-list', path: INVENTORY, ready: '[data-testid="fleet-plugin-inventory-list"] table' },
+  { name: 'capacity-list', path: '/plugins/metal-datumapis-com', ready: '[data-testid="fleet-plugin-capacity-table"] table' },
+  { name: 'capacity-pool', path: '/plugins/metal-datumapis-com?namespace=fleet-provider&pool=central-metal', ready: '[data-testid="fleet-plugin-capacity-filter"]', viewports: ['desktop-light'] },
+  { name: 'profile-list', path: '/plugins/metal-datumapis-com/profiles', ready: '[data-testid="fleet-plugin-profile-table"] table' },
+  { name: 'class-list', path: '/plugins/metal-datumapis-com/classes', ready: '[data-testid="fleet-plugin-class-table"] table' },
   { name: 'rack-elevation', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-layout' },
   { name: 'rack-overlap', path: record('Rack', 'example-rack-a02'), ready: '.inventory-rack-layout' },
   { name: 'rack-page-elevation', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-stage' },
