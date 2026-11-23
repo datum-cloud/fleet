@@ -230,6 +230,26 @@ archives (these are source observations, not authenticated visual acceptance):
   viewport-bounded scrolling, and explicit Cancel / Create record / Save changes.
   Native field errors have an accessible summary, field descriptions, and focus
   links; failed saves focus a summary while sanitized status stays visible.
+- Forms carry no recordkeeping disclaimers. Why a create or edit trigger is
+  unavailable ("Needs inventory management access", "Checking access…",
+  "References unreadable", "Session expired — sign in again", "Managed
+  elsewhere — not editable here", "Refresh to retry") is the trigger's
+  tooltip and accessible description. The status line holds save results
+  only and takes no space when empty; a create page, which has no trigger,
+  shows the reason as its one line.
+- Display name comes first; the record name follows it as a slug until the
+  operator edits it. Hints are one short line under the field they protect:
+  "Can't be changed later" (installation plan, catalog model, plan
+  location), "Real serial or system UUID required. Not an asset tag or
+  provider ID", "Physical ports and parts only — no interfaces or IPs" and
+  "No credentials or secrets" (evidence). An unreadable reference collection
+  is an amber "list incomplete" line, never an empty list.
+- Rules the browser cannot check are checked before any request and reported
+  in the error summary on their field: a serial or a system UUID, a
+  lowercase system UUID, unique component and lane IDs, and distinct cable
+  ends. A rule the form checks while saving (such as a changed installation
+  plan) shows its own message; only an API rejection reads as generic. Field
+  patterns compile under the browser's unicode-sets mode.
 - Dirty dismissal (Cancel, Escape, outside click, and router navigation) requests
   browser confirmation. Reload/close uses `beforeunload`. Pending dialog dismissal
   is disabled. Explicit navigation during a pending write requires a separate
@@ -332,15 +352,24 @@ pixel identity or completed authenticated staging acceptance.
   `device-depth.ts`.
   The Rack page layout is described under [Rack page](#rack-page-implemented).
 - Create Facility/Rack facts; rack height is optional. Create an Installation
-  plan at a known Facility or Rack with unknown unit position, then separately
-  register a Device with a real serial or system UUID and typed components.
+  plan at a known Facility or Rack (grouped Facilities / Racks) with unknown
+  unit position, then separately register a Device with a real serial or
+  system UUID and typed components. The Device form starts with the
+  installation plan; a plan that already has a device reads "· has device" in
+  amber. Selecting a plan or a catalog model never fills observed identity or
+  components. Components are one dense table row each (ID, Name, Type,
+  Connector, Positions).
   The form does not offer the `identity.unidentified` marker; record such a
   Device through the API. Directory and detail views show the marker and its
   reason as "No hardware identity".
   This is not an atomic multi-record workflow or an adoption operation.
 - Create Cable records with a medium and named lanes using existing readable
-  Device/PowerFeed components with recorded positions. No guessed ports, cable
-  lengths or live connectivity. Reference owner UID/resourceVersion is retained
+  Device/PowerFeed components with recorded positions. Each lane is one row
+  (ID, End A, End B); an end is picked device or feed first (grouped by
+  readable rack, then power feeds), then port ("swp49/1"). A port that a
+  recorded Cable already names is amber with "· cabled" and the Cable's name
+  as its tooltip; the same port twice is red. New lanes default to `lane-N`.
+  No guessed ports, cable lengths or live connectivity. Reference owner UID/resourceVersion is retained
   and checked before creation; the API still cannot atomically reserve endpoints.
 - Edit display name only for records with established
   portal ownership. No device identity, claim binding, components, topology,
@@ -565,8 +594,8 @@ picture of the device and a dense table of its components. Top to bottom:
    verified" are the tooltip and accessible text. A Device whose model is
    not from a readable catalog shows the recorded model; the reason is its
    tooltip and the catalog banner. **Edit display name** is
-   disabled for records the portal does not own; the reason ("Display-name
-   editing requires a portal-owned record…") is the control's tooltip and
+   disabled for records the portal does not own; the reason ("Managed
+   elsewhere — not editable here") is the control's tooltip and
    accessible description, not a sentence on the page. Issue banners follow,
    one compact line each.
 2. **Picture.** Always shown, never toggled. The drawn faceplate when the
@@ -661,10 +690,12 @@ the header names the facility and rack and depth has its own fact; the
 physically verified", with the reason and evidence on a small second line;
 **Installation plan** links the claim the hardware was placed against;
 **Depth for rack conflicts** is unchanged, followed by the catalog size and
-any recorded size. The **Reported location**
-correction states once that it corrects the record only, not a physical
-move, handover or reservation, and stays behind its permission check; its
-form keeps the blank-geometry note. Hardware & management groups its
+any recorded size. **Correct location** (or **Add reported location**) sits
+on the Placement row and stays behind its permission check, with the reason
+as its tooltip. Its dialog is two columns: Facility | Rack, Position |
+Height, Face | Depth, then Mount, then Observation time | Evidence and the
+reason. Choosing a rack sets its facility; changing the facility clears a
+rack outside it. Hardware & management groups its
 facts into titled sections of label/value rows: **Hardware** (the reported
 model when a catalog model is assigned, system UUID, MAC addresses without
 an interface, and a small table of interfaces that match no component) and
