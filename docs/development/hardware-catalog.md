@@ -60,6 +60,19 @@ Layout is nominal catalog data on DeviceType only. A Device inherits it through
 carries no state: whether a port is cabled comes from Cable records, and there
 is still no observed health.
 
+**Joining components to templates.** The template-id convention means a Device
+component whose `id` equals a template's `id` takes that template's face and
+cell. Imported records can break the convention: their component ids are
+importer instance ids (`interfaces-3362`), and their template ids are template
+ids (`interface-templates-34`). For drawing only, the staff UI then falls back
+to the one template with the same name and type; see
+[template join](staff-inventory-ui.md#faceplate-drawing). That fallback
+positions a component on the drawing and changes nothing else. The long-term
+fix is for the importer to record each component's template id (gap P7).
+Changing component ids is not the fix, because Cables reference component ids.
+Connector text maps to a drawn kind through one fixed table; see
+[connector kinds](staff-inventory-ui.md#faceplate-drawing).
+
 Positions are cells of a **bank grid**, never millimetres. A bank is one
 cluster of identical cells on one face, such as a 2×12 RJ45 block or a PSU
 bay. Row and column inside a bank give the usual odd-top, even-bottom switch

@@ -580,7 +580,7 @@ connector changes, and the last port, so port 37 is easy to find. A
 multi-position component
 draws one lane bar per position, and the tile takes its most urgent lane
 state. The outline follows the recorded connector only when the free text
-clearly names a family (RJ45, SFP, QSFP, IEC C13/C14/C19/C20); anything else is
+clearly names a family (RJ45, SFP, QSFP, LC, IEC C13/C14/C19/C20/C22); anything else is
 a generic tile. State never relies on colour:
 
 | State | Tile |
@@ -659,6 +659,23 @@ function, `faceGeometry()` in `lib/faceplate-layout.ts`, in millimetres at
   Device components with no matching template are listed in this tray with
   the reason. They are never placed. Disagreeing layout also shows a
   "Records disagree" warning on the face.
+- **Template join.** `joinTemplates()` in `lib/faceplate-layout.ts` decides
+  which component a template cell draws. The id join comes first. A
+  component with no template of the same id falls back to an exact match on
+  name and type, with names trimmed and runs of whitespace collapsed (case
+  is kept). The fallback is used only when exactly one template matches,
+  that template is not joined by id to another component, and no other
+  component falls back to the same template. Otherwise the component stays
+  in the tray. Imported records need this: their component ids are importer
+  instance ids (`interfaces-3362`) and their template ids are template ids
+  (`interface-templates-34`), so no ids match. The card's More says
+  "Matched to catalog by id" or "Matched to catalog by name and type". A
+  name match only positions the component on the drawing. Record state,
+  Cable joins, chassis faces (and so opposite-face checks), the Ports view
+  and every other view still join by id, so a name-matched template still
+  appears there as catalog only. The long-term fix is for the importer to
+  record each component's template id (gap P7). Changing component ids is
+  not the fix, because Cables reference component ids.
 - **Honest labels.** Unknown width is drawn full width and says "Width not
   recorded". A zero-U model is drawn as a one-unit strip and says its
   length is not recorded. A model with no `heightUnits` gets tiles.
@@ -675,19 +692,34 @@ case-insensitively, and the first row wins:
 
 | Kind | Matches (examples) | Nominal cell (mm) |
 | --- | --- | --- |
-| QSFP-DD | `QSFP-DD`, `qsfpdd` | 18.4 × 10.8 |
-| OSFP | `OSFP` | 22.6 × 13 |
+| QSFP-DD | `QSFP-DD`, `qsfpdd`, `400gbase-x-qsfpdd` | 18.4 × 10.8 |
+| OSFP | `OSFP`, `800gbase-x-osfp` | 22.6 × 13 |
+| QSFP56 | `QSFP56`, `200gbase-x-qsfp56` | 18.4 × 9.4 |
 | QSFP28 | `QSFP28`, `100gbase-x-qsfp28` | 18.4 × 9.4 |
 | SFP28 | `SFP28`, `25gbase-x-sfp28` | 13.7 × 9.2 |
-| SFP | `SFP`, `SFP+`, `sfpp` | 13.7 × 9.2 |
-| RJ45 | `RJ45`, `rj-45 keystone`, `8P8C` | 13.2 × 11.6 |
-| C13, C14, C19, C20 | `IEC C13`, `iec-60320-c14` | 24 × 16.4; 22 × 17 |
+| SFP | `SFP`, `SFP+`, `sfpp`, `10gbase-x-sfpp`, `1000base-x-sfp` | 13.7 × 9.2 |
+| RJ45 | `RJ45`, `rj-45 keystone`, `8P8C`, and any `<rate>base-t` or `<rate>base-tx`: `1000base-t`, `100base-tx`, `10gbase-t`, `2.5gbase-t`, `5gbase-t` | 13.2 × 11.6 |
+| LC (duplex fiber) | `LC`, `lc`, `LC duplex`, `lc-upc`, `LC/APC` | 13 × 10 |
+| C13, C14, C19, C20, C22 | `IEC C13`, `iec-60320-c14`, `iec-60320-c22` | 24 × 16.4; 22 × 17 |
 | USB | `USB`, `USB-A`, `usb-c` | 13.2 × 6 |
 | DB9 (serial) | `DB9`, `DE-9` | 31 × 12.5 |
 | VGA | `VGA`, `DE-15` | 31 × 12.5 |
-| Other | anything else, including `QSFP`, `QSFP+`, `LC`, `MPO` and absent text | 14 × 12 |
+| Other | anything else, including `QSFP`, `QSFP+`, `40gbase-x-qsfpp`, `SFP56`, `MPO`, `100base-t1`, and blank or absent text | 14 × 12 |
 
-The tile outline (`connectorShape()`) derives from the same table.
+NetBox interface types read `<rate>base-<media>-<form factor>`, so the cage
+rows match the last token (`800gbase-x-osfp` is OSFP, `10gbase-x-sfpp` is
+SFP). Copper types name no form factor and come after every cage row, so a
+copper module in an SFP cage stays SFP. Single-pair types (`*base-t1`) are
+not 8P8C jacks and stay Other.
+
+QSFP56 is its own kind, not a QSFP28 alias: it has the same cage and nominal
+size, so it is drawn with the QSFP outline, but the legend and card do not
+call a 200G port QSFP28. Plain `QSFP` and `QSFP+` stay Other. `QSFP` names no
+generation, and adding `QSFP+` would mean a new kind for a family the
+imported data does not use; the table keeps only families operators name.
+
+The tile outline (`connectorShape()`) derives from the same table. LC is
+drawn as a duplex connector: one body with a latch notch for each fiber.
 
 **Mini faceplates in the elevation.** `RackSlotDevice` draws the visible
 chassis face as an SVG, hidden from assistive technology. The front shows on
@@ -724,6 +756,10 @@ noise.
 - `faceplate-switch-card`;
 - `faceplate-patch-pdu` and `faceplate-pdu`;
 - `faceplate-fallback`;
+- `faceplate-imported`, `faceplate-imported-phone` and
+  `faceplate-imported-card-more`: a synthetic imported switch whose component
+  ids match no template id, drawn by name and type, with its two same-name
+  PSUs in the tray;
 - `rack-mini-reduced`, `rack-mini-full` and `rack-mini-silhouette`;
 - `rack-panel-faceplate`, which includes a 390 px phone.
 
