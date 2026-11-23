@@ -71,8 +71,7 @@ field or view.
    **Edit display name**, sit in the header beside **Refresh inventory**.
    The generated resource name and creation date close every record page
    as one quiet **Record** line ("Record example-rack-a01 · created
-   2026-10-01"), plus any fact the page shows nowhere else (a Facility's
-   location reference, a DeviceType's normalized model). The namespace
+   2026-10-01"), plus any fact the page shows nowhere else. The namespace
    (always `default`), the UID and a per-record verification row are not
    shown. No page has a History tab; it returns when an activity timeline
    exists. The breadcrumb is the way back; there is no separate back link.
@@ -83,17 +82,19 @@ field or view.
    | Device | The device picture, then the dense component table (see [Device page](#device-page-picture-and-component-table)) |
    | Cable | End A and End B side by side, with one row per lane |
    | PowerFeed | The power path: upstream, feed rating and capacity, outlet tiles for the feed and each PDU, then device PSUs (see [Power path](#power-path-and-telemetry-implemented-telemetry-mocked)) |
-   | Facility | Its racks |
+   | Facility | None: Racks, Without a rack, Power feeds and Cables tabs (see [Locations and catalog pages](#locations-and-catalog-pages-implemented)) |
    | Rack | Its elevation |
-   | Site | Its linked facilities |
-   | DeviceType | Component templates grouped by chassis face, then type |
-   | Manufacturer | Its device types |
+   | Site | None: Facilities (unless the header names its one facility), Racks, Devices and Installation plans tabs |
+   | DeviceType | The faceplate drawn from the model's layout, then a dense component table |
+   | Manufacturer | None: Device types and Devices tabs |
    | Claim | Planned placement, expected hardware and registered devices |
 
 3. **Secondary detail goes in tabs held in the URL** (`?tab=`), for example
    a Device's Location and Hardware & management. Tabs hold
    only what the primary view does not already show. A tab label carries its count, or `?` when the collection is
-   unreadable. Every panel stays mounted and inactive panels are `hidden`, so
+   unreadable. A count that needs checking (`17+` when incomplete, `?` with a
+   reason) is amber, with the reason as its tooltip and in the tab's
+   accessible name, instead of a sentence on the page. Every panel stays mounted and inactive panels are `hidden`, so
    open dialogs and permission checks keep their state. `tab` is in the session
    boundary's presentation allowlist, so switching tabs never refetches
    inventory. Links to other records never carry `tab`.
@@ -895,7 +896,6 @@ to bottom.
 - decorative marks;
 - photos or hotspots;
 - cards for module cells;
-- a drawing on DeviceType detail.
 
 `pnpm screenshots` captures these pages:
 
@@ -1185,9 +1185,52 @@ signed commit and a PR against `feat/manual-inventory-records`, not a merge,
 deployment or live mutation. Authenticated staging integration, including host
 principal changes and proxy enforcement, remains a release acceptance check.
 
-## Operational Site overview (implemented)
+## Locations and catalog pages (implemented)
 
-Site detail now leads with linked Facilities, equipment recorded at those premises,
+Site, Facility, Manufacturer and DeviceType pages carry no caveat sentences or
+issue banners: counts on tabs show unknown (`?`) and incomplete (amber `N+`)
+collections, with the reason in the tooltip.
+
+- **Site.** The header is the site code and, when the Site links exactly one
+  readable facility, a link to it. Otherwise the first tab is **Facilities**
+  (Facility | Premises code | Racks), with an unresolved membership as one
+  amber line. **Racks** uses the shared racks table. **Devices** is a dense
+  table: Device | Rack · U (Location, naming the facility, when the devices
+  span several) | Model | Serial | Asset tag | Lifecycle; a planned-only or
+  unknown location has an amber edge, the reason in its tooltip.
+  **Installation plans** is Plan | Planned location | Expected model |
+  Registered device, sorted by rack, then unit.
+- **Facility.** The header is the premises code (provider and identifier
+  type in the tooltip), Site links and the geographic location reference.
+  Tabs: **Racks** (Rack | Height | Equipment | Power, the power as the Rack
+  page's compact load per feed; red edge when placements overlap, amber
+  when some have no usable position), **Without a rack** (the Rack page's
+  equipment table without the U column, plus **Plan**: the plan's link,
+  "Unavailable" when plans are unreadable, or amber "Plan not found" with
+  the missing plan's name in the tooltip), **Power feeds** (Feed | Rack |
+  Capacity) and **Cables** (Cable | Medium | Lanes | End A | End B; red edge
+  when another Cable names the same position).
+- **Manufacturer.** Tabs **Device types** (Device type | Model key | Size |
+  Devices) and **Devices** (Device | Model | Rack · U | Serial | Asset tag,
+  reported placement only; the facility only when devices span several or a
+  device has no rack). An alias equal to the record name is not repeated in
+  the header.
+- **DeviceType.** The header is one facts strip: manufacturer link, model key
+  (tooltip "Model key"), height and depth; a zero-U model reads "Zero-U"
+  with no depth. The picture is `FaceplateDrawing dense` over
+  `modelDrawingModel(model)`: the model's layout with every template catalog
+  only, no Cables and no rack face. Without banks it reads "Layout not
+  recorded". The component table is Component | Type | Face | Connector |
+  Positions, Positions only when some template has several; hovering or
+  clicking a row outlines its tile. **Devices** uses the Site's device table
+  without the Model column.
+
+The Rack page's equipment table lives in `equipment-table.tsx` and is shared
+with the Facility's **Without a rack** tab.
+
+### Operational Site membership
+
+Site detail shows linked Facilities, equipment recorded at those premises,
 and installation plans. Facility links use `Site.spec.facilityRefs` in the same
 namespace, never display names or provider codes. Shared/duplicate Facility links
 and device/rack records are deduplicated; equipment is **at linked facilities**,
@@ -1197,20 +1240,15 @@ Devices follow the existing reported-placement projection, with explicitly label
 claim-derived fallback only when no report exists. Rack-only references resolve
 through readable, non-deleting Rack records. Every matching device registration
 is counted; none is selected as the active device. Plans use their own typed
-placement. The implemented API has no execution-status fields, so
-plans say recorded and execution status not recorded, never ready or complete.
-Facility premises identifiers and an existing geographic Location reference are
-shown when recorded. Operator, address and region are absent from the implemented
-Facility schema and are not invented from provider identifiers or display names.
+placement. The implemented API has no execution-status fields, so no plan
+shows ready or complete. Operator, address and region are absent from the
+implemented Facility schema and are not invented from provider identifiers or
+display names.
 
 Missing/deleting Facility references remain unresolved. Denied collections redact
-names and links and provide access guidance; unavailable collections offer refresh.
-Readable subsets remain useful with incomplete counts where dependencies are
-unavailable or unresolved. Zero matching records describes the loaded snapshot,
-not absence of physical equipment. Unmapped Sites ask for an operator to record
-Facility references. Record name, UID, internal code and name-reuse semantics move
-to collapsed Technical details; the redundant default namespace label and empty
-Related records section are omitted on Site detail.
+names and links and read "Access denied"; unavailable collections read "Records
+unavailable". Readable subsets remain useful with incomplete counts where
+dependencies are unavailable or unresolved.
 
 This is presentation over the existing authorized default-only inventory snapshot.
 No new queries, forms, mutations, cache policy or session/operation guards are
