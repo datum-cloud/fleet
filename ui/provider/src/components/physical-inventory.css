@@ -118,7 +118,6 @@
 .inventory-connections-heading h4 { margin:0; }
 .inventory-connection-legend { display:flex; flex-wrap:wrap; gap:8px 16px; list-style:none; padding:0; margin:0; font-size:12px; }
 .inventory-connection-legend li { display:flex; align-items:center; gap:6px; }
-.inventory-connection-swatch { display:inline-block; width:24px; border-top:2px solid var(--foreground); }
 .inventory-connection-glyph { display:inline-block; min-width:1ch; font-weight:700; text-align:center; }
 [data-state="conflict"] > .inventory-connection-glyph,[data-state="conflict"] .inventory-connection-cable > .inventory-connection-glyph { color:var(--destructive); }
 .inventory-connection-caveat { font-size:12px; }
@@ -129,10 +128,7 @@
 .fleet-inventory .inventory-connection-device small { margin-top:0; }
 .inventory-connection-side,.inventory-connection-rows,.inventory-connection-trace { list-style:none; padding:0; margin:0; min-width:0; }
 .inventory-connection-side { display:grid; gap:12px; align-content:center; }
-.inventory-connection-group-title,.fleet-inventory .inventory-connection-collapse > summary { font-size:12px; font-weight:600; margin:0 0 4px; }
-.fleet-inventory .inventory-connection-collapse { border-top:0; padding-top:0; }
-.fleet-inventory .inventory-connection-collapse[open] > summary { margin-bottom:4px; }
-.inventory-connection-collapse > summary { min-height:24px; }
+.inventory-connection-group-title { font-size:12px; font-weight:600; margin:0 0 4px; }
 .inventory-connection-group-note { font-size:11px; color:var(--muted-foreground); margin-top:4px!important; }
 .inventory-connection-rows { display:grid; gap:6px; }
 .inventory-connection-row { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); align-items:center; min-height:44px; }
@@ -145,10 +141,10 @@
 .inventory-connection-remote { color:var(--muted-foreground); text-align:right; }
 [data-side="left"] .inventory-connection-remote { text-align:left; }
 .inventory-connection-wire { display:block; margin:3px 0; border-top:2px solid var(--foreground); }
-[data-state="unavailable"] .inventory-connection-wire,[data-state="unavailable"] > .inventory-connection-swatch { border-top-style:dashed; border-top-color:var(--muted-foreground); }
-[data-state="conflict"] .inventory-connection-wire,[data-state="conflict"] > .inventory-connection-swatch { border-top:4px double var(--destructive); }
-[data-state="none"] .inventory-connection-wire,[data-state="none"] > .inventory-connection-swatch { border-top-style:dotted; border-top-color:var(--muted-foreground); }
-[data-state="catalog"] .inventory-connection-wire,[data-state="catalog"] > .inventory-connection-swatch { border-top:1px dashed var(--border); }
+[data-state="unavailable"] .inventory-connection-wire { border-top-style:dashed; border-top-color:var(--muted-foreground); }
+[data-state="conflict"] .inventory-connection-wire { border-top:4px double var(--destructive); }
+[data-state="none"] .inventory-connection-wire { border-top-style:dotted; border-top-color:var(--muted-foreground); }
+[data-state="catalog"] .inventory-connection-wire { border-top:1px dashed var(--border); }
 .inventory-connection-cable { padding:0 6px; font-size:11px; color:var(--muted-foreground); overflow-wrap:anywhere; }
 .inventory-connection-cable a,.inventory-connection-peer a,.inventory-connection-trace a { display:inline-block; min-height:24px; line-height:24px; }
 .inventory-connection-peer { min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); overflow-wrap:anywhere; }
@@ -166,7 +162,7 @@
 .inventory-connection-trace { margin-top:4px; font-size:11px; display:grid; gap:2px; }
 .inventory-connection-tables { display:grid; gap:12px; }
 .fleet-inventory .inventory-connection-tables caption { caption-side:top; }
-.inventory-connection-group-title,.inventory-connection-collapse > summary,.inventory-connection-group-note { padding:0 8px; }
+.inventory-connection-diagram .inventory-connection-group-title,.inventory-connection-diagram .inventory-connection-group-note { padding:0 8px; }
 @media(max-width:600px) {
   .inventory-connection-diagram,.inventory-connection-diagram[data-left] { grid-template-columns:1fr; gap:12px; padding:12px; }
   .inventory-connection-device { order:-1; min-height:0; }
@@ -299,4 +295,65 @@
   .inventory-cable-grid [role="row"] > :first-child { overflow-wrap:normal; }
   .inventory-component-groups { grid-template-columns:1fr; }
   .inventory-outlets li { grid-template-columns:1fr; gap:2px; }
+}
+/* Port tiles: a faceplate per chassis face, clustered by type. State is fill or outline plus a glyph, never colour alone:
+   recorded = solid fill, no cable recorded = empty outline, records disagree = "!" and the destructive token,
+   peer unavailable = "?" and a dashed outline, catalog only = a faint dashed outline. Nothing is styled as verified. */
+.inventory-connection-summary { font-size:13px; overflow-wrap:anywhere; }
+.inventory-connections .inventory-link-button { appearance:none; display:inline-flex; align-items:center; min-height:24px; padding:0; border:0; background:none; color:inherit; font:inherit; font-size:12px; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+.inventory-connections .inventory-link-button:hover { color:var(--primary); }
+.inventory-connections .inventory-link-button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.inventory-port-hidden { display:flex; flex-wrap:wrap; gap:4px 16px; color:var(--muted-foreground); }
+.inventory-port-swatch { display:inline-flex; align-items:center; justify-content:center; width:18px; height:14px; border:1.5px solid var(--muted-foreground); border-radius:3px; font-size:10px; font-weight:700; line-height:1; }
+.inventory-port-grid { position:relative; display:grid; gap:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); min-width:0; }
+.inventory-port-face-group { display:grid; gap:6px; min-width:0; }
+.inventory-port-face-group + .inventory-port-face-group { border-top:1px solid var(--border); padding-top:10px; }
+.inventory-port-face-title { font-size:11px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted-foreground); }
+.inventory-port-plate { display:flex; flex-wrap:wrap; align-items:flex-start; gap:10px 20px; min-width:0; }
+.inventory-port-cluster { display:grid; gap:4px; min-width:0; max-width:100%; }
+.inventory-port-cluster-title { font-size:12px; font-weight:600; }
+.inventory-port-row { display:flex; flex-wrap:wrap; gap:3px; list-style:none; padding:0; margin:0; min-width:0; }
+.inventory-port-row > li { display:flex; }
+.inventory-port { appearance:none; display:inline-flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; min-width:34px; min-height:32px; padding:2px; margin:0; border:0; border-radius:4px; background:transparent; color:var(--foreground); font:inherit; cursor:pointer; }
+.inventory-port:hover .inventory-port-face { box-shadow:0 0 0 2px var(--ring); }
+.inventory-port:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.inventory-port[aria-expanded="true"] { outline:2px solid var(--foreground); outline-offset:1px; }
+.inventory-port-face { position:relative; display:inline-flex; align-items:center; justify-content:center; gap:1px; min-width:30px; height:24px; padding:0 4px; border:1.5px solid var(--muted-foreground); border-radius:6px; font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1; white-space:nowrap; }
+.inventory-port-glyph { font-weight:800; }
+/* Connector outlines, only where the recorded connector clearly names a family. */
+.inventory-port[data-shape="rj45"] .inventory-port-face { min-width:30px; height:26px; border-radius:2px; }
+.inventory-port[data-shape="rj45"] .inventory-port-face::after { content:''; position:absolute; bottom:-1.5px; left:50%; width:10px; height:4px; transform:translateX(-50%); border:1.5px solid; border-color:inherit; border-bottom:0; background:var(--card); }
+.inventory-port[data-shape="sfp"] .inventory-port-face { min-width:38px; height:20px; border-radius:2px; }
+.inventory-port[data-shape="qsfp"] .inventory-port-face { min-width:48px; height:22px; border-radius:2px; }
+.inventory-port[data-shape="iec"] .inventory-port-face { min-width:34px; height:24px; border-radius:9px 9px 3px 3px; }
+.inventory-port-lanes { display:flex; gap:2px; width:100%; padding:0 3px; }
+.inventory-port-lanes > span { flex:1; height:4px; border:1px solid var(--muted-foreground); border-radius:1px; }
+/* States: tiles, lane bars and legend swatches share one set of rules. */
+.inventory-port[data-state="cabled"] .inventory-port-face,.inventory-port-swatch[data-state="cabled"],.inventory-port-lanes > [data-state="cabled"] { background:var(--foreground); border-color:var(--foreground); color:var(--background); }
+/* The destructive token is under 4.5:1 for 11px text in both themes, so it marks the outline and the label stays foreground. */
+.inventory-port[data-state="conflict"] .inventory-port-face,.inventory-port-swatch[data-state="conflict"] { border:2px solid var(--destructive); color:var(--foreground); }
+.inventory-port-lanes > [data-state="conflict"] { background:var(--destructive); border-color:var(--destructive); }
+.inventory-port[data-state="unavailable"] .inventory-port-face,.inventory-port-swatch[data-state="unavailable"],.inventory-port-lanes > [data-state="unavailable"] { border-style:dashed; }
+/* Faint, but its label still meets 4.5:1: muted-foreground alone falls just under in the dark theme. */
+.inventory-port[data-state="catalog"] .inventory-port-face,.inventory-port-swatch[data-state="catalog"],.inventory-port-lanes > [data-state="catalog"] { border:1px dashed var(--muted-foreground); color:color-mix(in oklab,var(--muted-foreground) 70%,var(--foreground)); }
+@media(pointer:coarse) { .inventory-port { min-width:44px; min-height:44px; } }
+/* The pop-up card: a preview on hover or focus, pinned by click, tap or Enter; a bottom sheet on phones. */
+.inventory-port-card { position:absolute; left:var(--card-left,0); top:var(--card-top,0); z-index:20; display:grid; gap:6px; width:min(320px,calc(100% - 8px)); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:0 8px 28px rgb(0 0 0 / .22); font-size:12px; overflow-wrap:anywhere; }
+.inventory-port-card:not([data-pinned]) { pointer-events:none; }
+.inventory-port-card[data-state="conflict"] { border-color:var(--destructive); }
+.inventory-port-card-title { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.fleet-inventory .inventory-port-card h5 { margin:0; font-size:13px; font-weight:600; }
+.fleet-inventory .inventory-port-card-meta,.fleet-inventory .inventory-port-card-meta small { margin:0; color:var(--muted-foreground); font-size:11px; }
+.inventory-port-card-links { display:grid; gap:8px; list-style:none; padding:0; margin:0; }
+.inventory-port-card-links > li + li { border-top:1px solid var(--border); padding-top:8px; }
+.fleet-inventory .inventory-port-card-fields { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 10px; margin:4px 0 0; }
+.fleet-inventory .inventory-port-card-fields dt { margin:0; font-size:11px; line-height:24px; }
+.fleet-inventory .inventory-port-card small { margin-top:0; }
+.inventory-port-card a { display:inline-block; min-height:24px; line-height:24px; }
+.inventory-port-card code { font-size:11px; }
+.inventory-port-card-health { border-top:1px solid var(--border); padding-top:6px; }
+.inventory-port-card-heading { font-size:11px; font-weight:600; }
+@media(max-width:600px) {
+  .inventory-port-grid { padding:10px; }
+  .inventory-port-card[data-pinned] { position:fixed; left:0; right:0; top:auto; bottom:0; width:auto; max-height:70dvh; overflow:auto; padding:14px 16px calc(14px + env(safe-area-inset-bottom)); border-radius:var(--radius) var(--radius) 0 0; box-shadow:0 -8px 32px rgb(0 0 0 / .35); }
 }

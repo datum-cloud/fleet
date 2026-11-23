@@ -68,6 +68,14 @@ describe('rack elevation by face', () => {
 describe('connection view by chassis face', () => {
   it('groups ports by chassis face with the derived rack face, and notes an opposite-face cable', () => {
     render(<MemoryRouter><DeviceConnections device={device('compute-07')} inventory={inventory} href={inventoryHref} /></MemoryRouter>);
+    // The port tiles lay each chassis face out as its own faceplate, stating the rack face once.
+    const tiles = screen.getByRole('group', { name: /Port tiles/ });
+    const rearPlate = within(tiles).getByRole('group', { name: 'Rear · rack rear' });
+    expect(within(rearPlate).getByRole('list', { name: 'Network ports' })).toBeInTheDocument();
+    expect(within(tiles).getByRole('group', { name: 'Front · rack front' })).toBeInTheDocument();
+    fireEvent.click(within(rearPlate).getByRole('button', { name: /^Ethernet 1:/ }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/Check.*this end is on the rack rear and the far end on the rack front/);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     const diagram = screen.getByRole('group', { name: /Connection diagram/ });
     expect(within(diagram).queryByRole('list', { name: 'Network links' })).not.toBeInTheDocument();
     const rear = within(diagram).getByRole('list', { name: 'Network · Rear links' });
@@ -89,6 +97,9 @@ describe('connection view by chassis face', () => {
 
   it('puts ports without a recorded face under Face unknown only when the group has known faces', () => {
     render(<MemoryRouter><DeviceConnections device={device('appliance-03')} inventory={inventory} href={inventoryHref} /></MemoryRouter>);
+    // No face is recorded, so the tiles draw one unlabelled faceplate.
+    expect(within(screen.getByRole('group', { name: /Port tiles/ })).queryByText('Face unknown')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     expect(screen.getByRole('list', { name: 'Network links' })).toBeInTheDocument();
     expect(screen.queryByText('Face unknown · 1 link')).not.toBeInTheDocument();
   });
