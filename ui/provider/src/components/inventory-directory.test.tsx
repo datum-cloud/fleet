@@ -68,8 +68,8 @@ describe('directory toolbar', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: { status: { allowed: false } } }) })));
     show('?kind=Device');
     const create = screen.getByRole('button', { name: 'Create device' });
-    await vi.waitFor(() => expect(create).toHaveAccessibleDescription(/Requires physical-inventory management access/));
-    expect(create.parentElement).toHaveAttribute('title', expect.stringMatching(/^Requires physical-inventory management access/));
+    await vi.waitFor(() => expect(create).toHaveAccessibleDescription(/^Needs inventory management access$/));
+    expect(create.parentElement).toHaveAttribute('title', 'Needs inventory management access');
     expect(screen.queryByText(/Viewing and management access are separate/)).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('');
   });

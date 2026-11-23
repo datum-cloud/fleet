@@ -15,8 +15,9 @@ describe('management affordances', () => {
   it('explains session expiry during the permission check without exposing raw errors', () => {
     permission.mockReturnValue({ data: undefined, isFetching: false, error: new ApiError(401, 'private upstream error') } as never);
     renderManagement();
-    expect(screen.getByText(/Your session expired/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create facility', hidden: true })).toHaveAccessibleDescription('Session expired — sign in again');
     expect(screen.getByRole('button', { name: 'Create facility', hidden: true })).toBeDisabled();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     expect(screen.queryByText(/private upstream error/)).not.toBeInTheDocument();
   });
   it('disables create for viewers, denied users and unresolved reviews', () => {
@@ -32,7 +33,7 @@ describe('management affordances', () => {
     fireEvent.change(screen.getByLabelText('Record name'), { target: { value: 'example' } });
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Example' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Facility record created.'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Facility created.'));
   });
   it.each([401, 403, 500])('retains safe input without false success on submit failure %s', async status => {
     create.mockRejectedValue(new ApiError(status, 'Raw server error with private information'));

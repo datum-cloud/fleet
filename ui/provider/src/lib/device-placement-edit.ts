@@ -4,6 +4,7 @@ import { inventoryPermission, INVENTORY_FIELD_MANAGER } from './inventory-manage
 import type { InventoryOperation } from './inventory-operation';
 import { readInventoryReference } from './inventory-read-access';
 import { inInventoryNamespace } from './inventory-namespace';
+import { InventoryValidationError } from './inventory-hardware';
 
 export interface PlacementFields {
   facility: string;
@@ -29,7 +30,7 @@ export function placementFields(report?: ReportedPlacement): PlacementFields {
 }
 
 export function placementPayload(original: Device, fields: PlacementFields, now = new Date().toISOString()): ReportedPlacement {
-  const invalid = (message: string): never => { throw new ApiError(422, message); };
+  const invalid = (message: string): never => { throw new InventoryValidationError(422, message); };
   const name = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
   for (const value of [fields.facility, fields.rack]) if (value && (!name.test(value) || value.length > 253)) invalid('Choose a valid location record.');
   if (!fields.reason.trim() || !fields.reference.trim() || fields.reason.trim().length > 1024 || fields.reference.trim().length > 1024) invalid('Reason and evidence reference are required (at most 1024 characters).');
@@ -85,7 +86,7 @@ export async function correctDevicePlacement(original: Device, fields: Placement
     operation.assertCurrent();
     if (!rack.metadata.uid || rack.metadata.deletionTimestamp || (report.facilityRef && rack.spec.facilityRef?.name !== report.facilityRef.name)) throw new ApiError(409, 'Rack or facility changed.');
     const height = rack.spec.heightUnits;
-    if (height !== undefined && ((report.position !== undefined && report.position > height) || (report.height !== undefined && report.height > height) || (report.position !== undefined && report.height !== undefined && report.position + report.height - 1 > height))) throw new ApiError(422, 'Geometry exceeds the recorded rack height.');
+    if (height !== undefined && ((report.position !== undefined && report.position > height) || (report.height !== undefined && report.height > height) || (report.position !== undefined && report.height !== undefined && report.position + report.height - 1 > height))) throw new InventoryValidationError(422, 'Geometry exceeds the recorded rack height.');
   }
   const path = `/apis/fleet.datumapis.com/v1alpha1/namespaces/${encodeURIComponent(namespace)}/devices/${encodeURIComponent(original.metadata.name)}?fieldManager=${INVENTORY_FIELD_MANAGER}`;
   const patch = [

@@ -73,9 +73,9 @@ it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(tran
   await open(editing);
   await act(async () => release!(response({ status: { allowed: true } })));
   expect(writes).toEqual([]);
-  expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Display name saved\.|Facility created\./)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
-  await screen.findByText(editing ? 'Display name saved.' : 'Facility record created.');
+  await screen.findByText(editing ? 'Display name saved.' : 'Facility created.');
   expect(writes).toEqual([editing ? 'PATCH' : 'POST']);
 });
 
@@ -117,10 +117,10 @@ it.each(['create-review', 'edit-review', 'edit-get', 'create-dispatch', 'edit-di
   await open(editing);
   await act(async () => release!(response(mode.endsWith('review') ? { status: { allowed: true } } : original)));
   expect(writes).toEqual(mode.endsWith('dispatch') ? ['staff-a'] : []);
-  expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Display name saved\.|Facility created\./)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Display name')).toHaveValue('Independent safe input');
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
-  await screen.findByText(editing ? 'Display name saved.' : 'Facility record created.');
+  await screen.findByText(editing ? 'Display name saved.' : 'Facility created.');
   expect(writes).toHaveLength(mode.endsWith('dispatch') ? 2 : 1);
 });
 

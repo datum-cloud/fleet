@@ -32,7 +32,7 @@ export function InventoryDraftGuard(props: { dirty: boolean; pending: boolean; u
   return router ? <RoutedDraftGuard {...props} /> : null;
 }
 
-export function InventoryFormSurface({ open, task = false, title, description = 'Physical inventory records only. Verification and operational authority remain separate.', trigger, status, hint, onDismiss, children }: {
+export function InventoryFormSurface({ open, task = false, title, description, trigger, status, hint, onDismiss, children }: {
   open: boolean; task?: boolean; title: string; description?: string; trigger?: ReactNode; status: ReactNode;
   /**
    * Why the trigger is unavailable, as its tooltip rather than a sentence on
@@ -63,6 +63,8 @@ export function InventoryForm({ children, onSubmit, message }: { children: React
   useEffect(() => { if (attempt && errors.length) summary.current?.focus(); }, [attempt]);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // A field states a rule the browser cannot check (such as "serial or system UUID") in data-problem; it is reported like any other invalid field.
+    for (const field of Array.from(event.currentTarget.elements)) if ((field instanceof HTMLInputElement || field instanceof HTMLSelectElement) && field.hasAttribute('data-problem')) field.setCustomValidity(field.dataset.problem ?? '');
     const invalid = Array.from(event.currentTarget.elements)
       .filter((field): field is HTMLInputElement | HTMLSelectElement => (field instanceof HTMLInputElement || field instanceof HTMLSelectElement) && field.willValidate && !field.validity.valid)
       .map((field, index) => {

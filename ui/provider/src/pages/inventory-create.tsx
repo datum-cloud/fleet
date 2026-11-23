@@ -20,7 +20,7 @@ export default function InventoryCreatePage() {
   const unsupportedNamespace = new URLSearchParams(search).has('namespace') && new URLSearchParams(search).get('namespace') !== 'default';
   return <FleetPage testId="fleet-plugin-inventory-create">
     <InventoryNavigation kind={kind} />
-    <InventoryPageTitle focusTitle title={title} category={sections.find(section => section.kind === kind)} directory={directory} description="Create a record only. This does not verify, reserve, or provision equipment." actions={<Link to={back}>Back to inventory</Link>} />
+    <InventoryPageTitle focusTitle title={title} category={sections.find(section => section.kind === kind)} directory={directory} actions={<Link to={back}>Back to inventory</Link>} />
     {!kind || unsupportedNamespace ? <p>This task only supports default-namespace Device, Cable, and installation-plan records.</p> : <InventorySessionBoundary pending={<p role="status">Checking inventory access…</p>} unavailable={status => <InventoryAccessState status={status} />}>
       <CreateContent key={kind} kind={kind} back={back} />
     </InventorySessionBoundary>}
@@ -39,5 +39,6 @@ function CreateContent({ kind, back }: { kind: ManagedKind; back: string }) {
     racks={data.physical.filter(record => record.kind === 'Rack')}
     claims={data.slots.map(slot => slot.claim)} devices={[...data.slots.flatMap(slot => slot.devices), ...data.unboundDevices]}
     feeds={data.physical.filter(record => record.kind === 'PowerFeed')}
+    cables={data.physical.filter(record => record.kind === 'Cable')}
     catalog={data.physical.filter(record => record.kind === 'Manufacturer' || record.kind === 'DeviceType')} />;
 }
