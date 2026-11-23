@@ -140,12 +140,9 @@ func syntheticClaim() DeviceClaim {
 		TypeMeta:   metav1.TypeMeta{APIVersion: GroupVersion.String(), Kind: "DeviceClaim"},
 		ObjectMeta: metav1.ObjectMeta{Name: "rack-01-u12", Namespace: "fleet-system"},
 		Spec: DeviceClaimSpec{
+			Lifecycle:        ClaimInstallation,
 			ExpectedIdentity: ExpectedIdentity{Manufacturer: "Example Vendor", Model: "Example 1U"},
-			Placement:        Placement{Facility: "example-facility", Rack: "rack-01", Position: 12, Face: "front"},
-			Ports: []ExpectedPort{
-				{Name: "eth0", Type: "25gbase-x-sfp28", SpeedMbps: 25000, ExpectedPeer: &PortPeer{Device: "switch-01", Port: "Ethernet1/1"}},
-				{Name: "bmc0", Type: "1000base-t", SpeedMbps: 1000, ExpectedPeer: &PortPeer{Device: "mgmt-switch-01", Port: "Ethernet5"}},
-			},
+			Placement:        Placement{Scope: "RackUnits", RackRef: &LocalReference{Name: "rack-01"}, Position: 12, Height: 1, Face: "front"},
 		},
 	}
 }
@@ -159,7 +156,7 @@ func syntheticDevice() Device {
 			Identity: DeviceIdentity{Manufacturer: "Example Vendor", Model: "Example 1U", Serial: "SYNTHETIC-0001", SystemUUID: "00000000-0000-4000-8000-000000000001"},
 			BMC:      &BMC{Endpoint: "https://192.0.2.100:443"},
 			Interfaces: []Interface{
-				{Name: "eth0", MACAddress: "00:00:5e:00:53:01", Peer: &PortPeer{Device: "switch-01", Port: "Ethernet1/1"}},
+				{Name: "eth0", MACAddress: "00:00:5e:00:53:01"},
 				{Name: "bmc0", MACAddress: "00:00:5e:00:53:02"},
 			},
 			UnmappedMACAddresses: []string{"00:00:5e:00:53:03"},
@@ -185,7 +182,9 @@ func TestValidRecordsAreAccepted(t *testing.T) {
 }
 
 func TestClaimDoesNotRequireSerialOrInventHeight(t *testing.T) {
-	claim := object(t, syntheticClaim())
+	membership := syntheticClaim()
+	membership.Spec.Placement = Placement{Scope: "RackMembership", RackRef: &LocalReference{Name: "rack-01"}}
+	claim := object(t, membership)
 	if errs := admit(t, "DeviceClaim", claim, nil); len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -196,14 +195,17 @@ func TestClaimDoesNotRequireSerialOrInventHeight(t *testing.T) {
 
 func TestInvalidClaimsAreRejected(t *testing.T) {
 	for name, mutate := range map[string]func(*DeviceClaim){
-		"missing model":    func(c *DeviceClaim) { c.Spec.ExpectedIdentity.Model = "" },
-		"missing facility": func(c *DeviceClaim) { c.Spec.Placement.Facility = "" },
-		"zero position":    func(c *DeviceClaim) { c.Spec.Placement.Position = 0 },
-		"unknown face":     func(c *DeviceClaim) { c.Spec.Placement.Face = "side" },
-		"duplicate port":   func(c *DeviceClaim) { c.Spec.Ports[1].Name = c.Spec.Ports[0].Name },
-		"peer without port": func(c *DeviceClaim) {
-			c.Spec.Ports[0].ExpectedPeer = &PortPeer{Device: "switch-01"}
-		},
+		"missing model":     func(c *DeviceClaim) { c.Spec.ExpectedIdentity.Model = "" },
+		"missing lifecycle": func(c *DeviceClaim) { c.Spec.Lifecycle = "" },
+		"unknown lifecycle": func(c *DeviceClaim) { c.Spec.Lifecycle = "Slot" },
+		"missing scope":     func(c *DeviceClaim) { c.Spec.Placement.Scope = "" },
+		"unknown scope":     func(c *DeviceClaim) { c.Spec.Placement.Scope = "Row" },
+		"missing rack":      func(c *DeviceClaim) { c.Spec.Placement.RackRef = nil },
+		"facility and rack": func(c *DeviceClaim) { c.Spec.Placement.FacilityRef = &LocalReference{Name: "facility-01"} },
+		"zero position":     func(c *DeviceClaim) { c.Spec.Placement.Position = 0 },
+		"missing height":    func(c *DeviceClaim) { c.Spec.Placement.Height = 0 },
+		"unknown face":      func(c *DeviceClaim) { c.Spec.Placement.Face = "side" },
+		"mount on units":    func(c *DeviceClaim) { c.Spec.Placement.Mount = "side-a" },
 	} {
 		claim := syntheticClaim()
 		mutate(&claim)
@@ -268,7 +270,7 @@ func TestDeviceIdentityNeedsSerialOrSystemUUID(t *testing.T) {
 // attribution field; audit logs record who changed a record.
 func TestEditsDoNotNeedARecordingTimestamp(t *testing.T) {
 	claim := syntheticClaim()
-	claim.Spec.Placement.Position = 14
+	claim.Spec.DisplayName = "Example server"
 	if errs := admit(t, "DeviceClaim", object(t, claim), object(t, syntheticClaim())); len(errs) > 0 {
 		t.Fatalf("claim edit rejected: %v", errs)
 	}
