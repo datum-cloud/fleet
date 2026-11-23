@@ -601,10 +601,49 @@ Environment-owned inputs, none of which this repository supplies:
    in the target environment. This change performs **no live writes or
    deployment**, so it does not claim those checks.
 
-Removing the ledger deletes nothing live. An environment that bootstrapped the
-old `fleet-capacity-registration-v1` Secret, its segments, the
-`fleet-registration-control` ConfigMap, or the old retention policies keeps
-those objects until its owner removes them; the new service ignores them.
+### Leftover ledger objects
+
+Removing the ledger deletes nothing that the ledger service or its operator
+created at runtime. GitOps prune removes only what the old manifests applied.
+The ledger revisions created these objects on the host cluster:
+
+| Object | Namespace | Created by | Removed by prune |
+| --- | --- | --- | --- |
+| Secret `fleet-capacity-registration-v1` (the ledger root) | `fleet-system-private` | the operator, once, at bootstrap | no |
+| Immutable Secrets `fleet-registration-segment-<digest>-<NN>` (sealed segments) | `fleet-system-private` | the registration service, on expansion | no |
+| ConfigMap `fleet-registration-control` (`public.pem`, `request.json`) | `fleet-system` | the environment owner | only if the owner applied it with GitOps and has stopped |
+| ValidatingAdmissionPolicies and bindings `fleet-registration-ledger-protection` and `fleet-registration-namespace-protection` | cluster | `config/base/registration` | yes |
+| Role and RoleBinding `fleet-registration-ledger` | `fleet-system-private` | `config/base/registration` | yes |
+
+Remove the Secrets and the ConfigMap by hand. The current service never reads
+them, and they hold Device identity digests, project names and signed control
+requests that no longer protect anything. If you want a record of the
+identities the ledger retained, export the Secrets to private storage outside
+Git first. Do not delete the `fleet-system-private` namespace: the manager
+keeps its own private records there.
+
+Delete in this order, on the host cluster, after the current registration
+release is running and no older registration pod remains:
+
+```sh
+# 1. The retention policies must be gone, or they deny the Secret delete.
+kubectl get validatingadmissionpolicybindings \
+  fleet-registration-ledger-protection fleet-registration-namespace-protection
+# Expect NotFound for both. If either exists, prune did not run; fix that
+# first rather than deleting the policies by hand.
+
+# 2. The ledger root and its segments.
+kubectl -n fleet-system-private delete secret fleet-capacity-registration-v1 --ignore-not-found
+kubectl -n fleet-system-private get secrets -o name \
+  | grep '^secret/fleet-registration-segment-' \
+  | xargs -r kubectl -n fleet-system-private delete
+
+# 3. The control ConfigMap, after removing it from the environment overlay.
+kubectl -n fleet-system delete configmap fleet-registration-control --ignore-not-found
+```
+
+Environments that never deployed the registration service have none of these
+objects and nothing to clean.
 
 ## Stage 2 blockers
 
