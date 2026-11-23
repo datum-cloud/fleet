@@ -187,15 +187,68 @@ export function modelLayout(model: PhysicalRecord | undefined): ModelLayout {
   return { ...base, recorded: true, faces, tray };
 }
 
+/** How a Device component was joined to a DeviceType template. */
+export type TemplateMatchBasis = 'id' | 'name+type';
+
+export interface TemplateMatch {
+  componentID: string;
+  templateID: string;
+  basis: TemplateMatchBasis;
+}
+
+export interface TemplateJoin {
+  byComponent: Map<string, TemplateMatch>;
+  byTemplate: Map<string, TemplateMatch>;
+}
+
+/** Names compare after trimming and collapsing runs of whitespace; case is kept. */
+export const matchName = (name: string | undefined) => (name ?? '').trim().replace(/\s+/g, ' ');
+
+/**
+ * Joins a Device's components to its DeviceType's templates, for drawing
+ * only. The id join comes first. A component with no template of the same id
+ * falls back to the one template with the same name and type, when exactly
+ * one template matches, that template is not joined by id to another
+ * component, and no other component falls back to it. Anything else stays
+ * unjoined and goes to the tray.
+ *
+ * Importers can give components instance ids (`interfaces-3362`) that differ
+ * from the template ids (`interface-templates-34`). A name match positions the
+ * component on the drawing and nothing else: record state, Cable joins,
+ * chassis faces for checks and every other view still join by id.
+ */
+export function joinTemplates(templates: ComponentTemplate[] | undefined, components: PhysicalComponent[] | undefined): TemplateJoin {
+  const byComponent = new Map<string, TemplateMatch>();
+  const byTemplate = new Map<string, TemplateMatch>();
+  const add = (match: TemplateMatch) => { byComponent.set(match.componentID, match); byTemplate.set(match.templateID, match); };
+  const ids = new Set((templates ?? []).map(template => template.id));
+  for (const component of components ?? []) {
+    if (ids.has(component.id) && !byTemplate.has(component.id)) add({ componentID: component.id, templateID: component.id, basis: 'id' });
+  }
+  // Template id → the components that fall back to it by name and type.
+  const wanted = new Map<string, string[]>();
+  for (const component of components ?? []) {
+    if (ids.has(component.id)) continue;
+    const name = matchName(component.name);
+    if (!name) continue;
+    const candidates = (templates ?? []).filter(template => template.type === component.type && matchName(template.name) === name);
+    if (candidates.length !== 1 || byTemplate.has(candidates[0].id)) continue;
+    wanted.set(candidates[0].id, [...(wanted.get(candidates[0].id) ?? []), component.id]);
+  }
+  for (const [templateID, claimants] of wanted) if (claimants.length === 1) add({ componentID: claimants[0], templateID, basis: 'name+type' });
+  return { byComponent, byTemplate };
+}
+
 /**
  * The "Not on the faceplate" tray for one Device: the model's templates that
- * are not drawn, plus the Device's components with no matching template,
- * whose position on the chassis is unknown.
+ * are not drawn (under the joined component's id when one is joined), plus
+ * the Device's components with no joined template, whose position on the
+ * chassis is unknown.
  */
-export function deviceTray(layout: ModelLayout, model: PhysicalRecord | undefined, components: PhysicalComponent[] | undefined): TrayEntry[] {
-  const templates = new Set((model?.spec.componentTemplates ?? []).map(template => template.id));
-  const untemplated = (components ?? []).filter(component => !templates.has(component.id)).map(component => ({ id: component.id, name: component.name, type: component.type, reason: 'no-template' as const, detail: 'Not in the model, so its position is unknown' }));
-  return [...layout.tray, ...untemplated];
+export function deviceTray(layout: ModelLayout, model: PhysicalRecord | undefined, components: PhysicalComponent[] | undefined, join = joinTemplates(model?.spec.componentTemplates, components)): TrayEntry[] {
+  const templates = layout.tray.map(entry => ({ ...entry, id: join.byTemplate.get(entry.id)?.componentID ?? entry.id }));
+  const untemplated = (components ?? []).filter(component => !join.byComponent.has(component.id)).map(component => ({ id: component.id, name: component.name, type: component.type, reason: 'no-template' as const, detail: 'Not in the model, so its position is unknown' }));
+  return [...templates, ...untemplated];
 }
 
 /** The number to print at a dense bank's edge: the trailing number of the name or id. */

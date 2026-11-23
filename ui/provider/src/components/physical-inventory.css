@@ -296,6 +296,7 @@
 .inventory-port-row[data-compact] .inventory-port[data-shape="qsfp"] .inventory-port-face { width:26px; height:14px; }
 .inventory-port-row[data-compact] .inventory-port[data-shape="rj45"] .inventory-port-face { width:16px; height:15px; }
 .inventory-port-row[data-compact] .inventory-port[data-shape="rj45"] .inventory-port-face::after { width:6px; height:3px; }
+.inventory-port-row[data-compact] .inventory-port[data-shape="lc"] .inventory-port-face { width:18px; height:12px; }
 .inventory-port-number { min-height:10px; font-size:9px; line-height:10px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
 .inventory-port-tip { position:absolute; left:var(--card-left,0); top:var(--card-top,0); z-index:21; max-width:calc(100% - 8px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--popover); color:var(--popover-foreground); box-shadow:0 4px 12px rgb(0 0 0 / .18); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
 .inventory-port { appearance:none; display:inline-flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; min-width:34px; min-height:32px; padding:2px; margin:0; border:0; border-radius:4px; background:transparent; color:var(--foreground); font:inherit; cursor:pointer; }
@@ -310,6 +311,11 @@
 .inventory-port[data-shape="sfp"] .inventory-port-face { min-width:38px; height:20px; border-radius:2px; }
 .inventory-port[data-shape="qsfp"] .inventory-port-face { min-width:48px; height:22px; border-radius:2px; }
 .inventory-port[data-shape="iec"] .inventory-port-face { min-width:34px; height:24px; border-radius:9px 9px 3px 3px; }
+/* LC duplex: one body with two latch notches along the top, one per fiber. */
+.inventory-port[data-shape="lc"] .inventory-port-face { min-width:32px; height:20px; border-radius:2px; }
+.inventory-port[data-shape="lc"] .inventory-port-face::before,.inventory-port[data-shape="lc"] .inventory-port-face::after { content:''; position:absolute; top:-1.5px; width:22%; height:3px; border:1.5px solid; border-color:inherit; border-top:0; background:var(--card); }
+.inventory-port[data-shape="lc"] .inventory-port-face::before { left:14%; }
+.inventory-port[data-shape="lc"] .inventory-port-face::after { right:14%; }
 .inventory-port-lanes { display:flex; gap:2px; width:100%; padding:0 3px; }
 .inventory-port-lanes > span { flex:1; height:4px; border:1px solid var(--muted-foreground); border-radius:1px; }
 /* States: tiles, lane bars and legend swatches share one set of rules. */

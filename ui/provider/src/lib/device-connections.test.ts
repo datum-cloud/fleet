@@ -327,7 +327,7 @@ describe('port tiles', () => {
 
   it('shapes tiles only for connectors that clearly name a family', () => {
     expect(['RJ45', 'rj-45 keystone', 'SFP28', 'SFP+', 'QSFP28', 'QSFP-DD', 'IEC C14', 'C13', 'IEC C20', 'LC duplex', undefined, 'C130 custom'].map(connectorShape))
-      .toEqual(['rj45', 'rj45', 'sfp', 'sfp', 'qsfp', 'qsfp', 'iec', 'iec', 'iec', 'generic', 'generic', 'generic']);
+      .toEqual(['rj45', 'rj45', 'sfp', 'sfp', 'qsfp', 'qsfp', 'iec', 'iec', 'iec', 'lc', 'generic', 'generic']);
   });
 
   it('lays tiles out by face, then by type in recorded order, with an unknown face when none is recorded', () => {

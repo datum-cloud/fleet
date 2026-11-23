@@ -5,8 +5,8 @@
 // row is Other. Nothing is guessed from a type, a name or a rate.
 
 export type ConnectorKind =
-  | 'QSFP-DD' | 'OSFP' | 'QSFP28' | 'SFP28' | 'SFP' | 'RJ45'
-  | 'C13' | 'C14' | 'C19' | 'C20' | 'USB' | 'DB9' | 'VGA' | 'Other';
+  | 'QSFP-DD' | 'OSFP' | 'QSFP56' | 'QSFP28' | 'SFP28' | 'SFP' | 'RJ45' | 'LC'
+  | 'C13' | 'C14' | 'C19' | 'C20' | 'C22' | 'USB' | 'DB9' | 'VGA' | 'Other';
 
 export interface ConnectorKindRow {
   kind: ConnectorKind;
@@ -23,22 +23,34 @@ export interface ConnectorKindRow {
 const token = (body: string) => new RegExp(`(?:^|[^A-Z0-9])(?:${body})(?:$|[^A-Z0-9])`);
 
 /**
- * The table, in match order. QSFP-DD and OSFP come before QSFP28 and SFP28,
- * which come before SFP, so a longer name is never read as a shorter one.
- * `SFP+` and `SFPP` are SFP (same cage). `QSFP` and `QSFP+` match no row and
- * are Other: the table keeps only the families operators name.
+ * The table, in match order. QSFP-DD and OSFP come before QSFP56 and QSFP28,
+ * which come before SFP28 and SFP, so a longer name is never read as a
+ * shorter one. `SFP+` and `SFPP` are SFP (same cage). QSFP56 is its own kind
+ * with the QSFP28 cage size, so a 200G port is never labelled QSFP28. `QSFP`
+ * and `QSFP+` match no row and are Other: plain `QSFP` names no generation,
+ * and the table keeps only the families operators name.
+ *
+ * NetBox interface types read `<rate>base-<media>-<form factor>`
+ * (`100gbase-x-qsfp28`, `10gbase-x-sfpp`), so the form factor is the last
+ * token and the cage rows match it. Copper types (`1000base-t`, `100base-tx`,
+ * `10gbase-t`) name no form factor: they are RJ45, after every cage row, so a
+ * copper SFP module stays SFP. `*base-t1` (single pair) is not RJ45.
  */
 export const CONNECTOR_KINDS: ConnectorKindRow[] = [
   { kind: 'QSFP-DD', label: 'QSFP-DD', pattern: token('QSFP-?DD'), widthMM: 18.4, heightMM: 10.8 },
   { kind: 'OSFP', label: 'OSFP', pattern: token('OSFP'), widthMM: 22.6, heightMM: 13 },
+  { kind: 'QSFP56', label: 'QSFP56', pattern: token('QSFP56'), widthMM: 18.4, heightMM: 9.4 },
   { kind: 'QSFP28', label: 'QSFP28', pattern: token('QSFP28'), widthMM: 18.4, heightMM: 9.4 },
   { kind: 'SFP28', label: 'SFP28', pattern: token('SFP28'), widthMM: 13.7, heightMM: 9.2 },
   { kind: 'SFP', label: 'SFP', pattern: token('SFP(?:\\+|P)?'), widthMM: 13.7, heightMM: 9.2 },
-  { kind: 'RJ45', label: 'RJ45', pattern: token('RJ-?45|8P8C'), widthMM: 13.2, heightMM: 11.6 },
+  { kind: 'RJ45', label: 'RJ45', pattern: token('RJ-?45|8P8C|\\d+(?:\\.\\d+)?[MG]?BASE-TX?'), widthMM: 13.2, heightMM: 11.6 },
+  // A duplex LC fiber connector or adapter (`LC`, `LC duplex`, `lc-upc`).
+  { kind: 'LC', label: 'LC duplex', pattern: token('LC'), widthMM: 13, heightMM: 10 },
   { kind: 'C13', label: 'IEC C13', pattern: token('C13'), widthMM: 24, heightMM: 16.4 },
   { kind: 'C14', label: 'IEC C14', pattern: token('C14'), widthMM: 24, heightMM: 16.4 },
   { kind: 'C19', label: 'IEC C19', pattern: token('C19'), widthMM: 22, heightMM: 17 },
   { kind: 'C20', label: 'IEC C20', pattern: token('C20'), widthMM: 22, heightMM: 17 },
+  { kind: 'C22', label: 'IEC C22', pattern: token('C22'), widthMM: 22, heightMM: 17 },
   { kind: 'USB', label: 'USB', pattern: token('USB(?:-?[ABC])?'), widthMM: 13.2, heightMM: 6 },
   { kind: 'DB9', label: 'Serial DB9', pattern: token('DB-?9|DE-?9'), widthMM: 31, heightMM: 12.5 },
   { kind: 'VGA', label: 'VGA', pattern: token('VGA|DE-?15|DB-?15'), widthMM: 31, heightMM: 12.5 },

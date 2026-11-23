@@ -41,6 +41,7 @@ export const FIXTURE_NAMES = {
   leaf: 'example-leaf-a01',
   patchPanel: 'example-patch-a01',
   pdu: 'example-pdu-a01',
+  imported: 'example-imported-sw-01',
 } as const;
 
 const meta = (name: string, extra: Partial<PhysicalRecord['metadata']> = {}) => ({
@@ -168,7 +169,38 @@ const TYPES = {
     template('inlet', 'Inlet', 'PowerInlet', 'IEC C20', 'Rear', undefined, { bank: 'inlet', row: 1, column: 1 }),
     ...laid(range(8).map(index => template(`outlet-${index}`, `Outlet ${index}`, 'PowerOutlet', 'IEC C13', 'Rear')), 'outlets', 1),
   ], [bank('inlet', 'Rear', 1, 1, { offset: 0.02 }), bank('outlets', 'Rear', 1, 8, { offset: 0.2 })]),
+  // Shaped like an importer's output: template ids are template-instance ids
+  // (`interface-templates-101`) and connectors are NetBox interface type
+  // strings. Its Device's components carry different ids, so they are drawn
+  // by name and type. The two PSU templates share one name, so neither PSU
+  // can be matched by name: both go to the tray. The console's connector is
+  // blank, so it is drawn as Other.
+  imported: deviceType('example-imported-switch-24', 'Example imported 24-port switch', 'example-networks', 'EX-IMP24', { heightUnits: 1, fullDepth: true, width: 'Full' }, [
+    ...laid(range(16).map(index => template(`interface-templates-${100 + index}`, `Ethernet${index}`, 'NetworkPort', '10gbase-t', 'Front')), 'copper', 2, 'odd-top'),
+    ...laid(range(4, 17).map(index => template(`interface-templates-${100 + index}`, `Ethernet${index}`, 'NetworkPort', '25gbase-x-sfp28', 'Front')), 'sfp', 2, 'odd-top'),
+    ...laid(range(2, 21).map(index => template(`interface-templates-${100 + index}`, `Ethernet${index}`, 'NetworkPort', '200gbase-x-qsfp56', 'Front')), 'qsfp', 1),
+    ...laid([template('interface-templates-123', 'Management1', 'NetworkPort', '100base-tx', 'Front'), template('console-port-templates-201', 'Console', 'ConsolePort', '', 'Front')], 'oob', 2),
+    template('power-port-templates-301', 'PSU', 'PowerInlet', 'iec-60320-c14', 'Rear', undefined, { bank: 'psu-1', row: 1, column: 1 }),
+    template('power-port-templates-302', 'PSU', 'PowerInlet', 'iec-60320-c14', 'Rear', undefined, { bank: 'psu-2', row: 1, column: 1 }),
+  ], [
+    bank('copper', 'Front', 2, 8, { offset: 0.02 }),
+    bank('sfp', 'Front', 2, 2, { offset: 0.4 }),
+    bank('qsfp', 'Front', 1, 2, { offset: 0.56 }),
+    bank('oob', 'Front', 2, 1, { offset: 0.94 }),
+    bank('psu-1', 'Rear', 1, 1, { offset: 0, cellMM: PSU }),
+    bank('psu-2', 'Rear', 1, 1, { offset: 0.9, cellMM: PSU }),
+  ]),
 };
+
+/**
+ * The imported switch's components: the same names, types and connectors as
+ * its templates, under importer instance ids (`interfaces-9101`) that match
+ * no template id.
+ */
+const importedComponents: PhysicalComponent[] = (TYPES.imported.spec.componentTemplates ?? []).map((item, index) => {
+  const kind = item.type === 'NetworkPort' ? 'interfaces' : item.type === 'ConsolePort' ? 'console-ports' : 'power-ports';
+  return { id: `${kind}-${9101 + index}`, name: item.name, type: item.type, connector: item.connector };
+});
 
 const catalog: PhysicalRecord[] = [
   manufacturer('example-compute', 'Example Compute Co.'),
@@ -323,6 +355,12 @@ const devices: Device[] = [
   }),
   // No reported placement and no matching claim.
   device({ name: 'example-srv-unplaced-01', displayName: 'Compute unplaced-01', type: TYPES.server1U, claim: 'example-claim-not-recorded' }),
+  // Imported records: component ids differ from template ids. In the
+  // facility, not a rack, so the elevations are unchanged.
+  device({
+    name: FIXTURE_NAMES.imported, displayName: 'Imported switch 01', type: TYPES.imported,
+    placement: placed({}), extra: { components: importedComponents },
+  }),
 ];
 
 // Claims for the racked equipment. Devices with a reported placement use it;

@@ -152,6 +152,7 @@ export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry
           <dl id={moreID} className="inventory-port-card-fields">
             <dt>Connector</dt><dd>{[tile.connector ?? 'Not recorded', tile.positions > 1 ? `${tile.positions} positions` : undefined].filter(Boolean).join(' · ')}</dd>
             <dt>Record</dt><dd>{component ? 'Recorded on this Device' : 'Catalog template only; this Device does not record it'}</dd>
+            {tile.templateMatch && <><dt>Position</dt><dd>{tile.templateMatch === 'id' ? 'Matched to catalog by id' : 'Matched to catalog by name and type'}</dd></>}
             {component && (component.serial || component.assetTag) && <><dt>Identity</dt><dd>{[component.serial, component.assetTag].filter(Boolean).join(' · ')}</dd></>}
             {internal && <><dt>Internal path</dt><dd>{internal.componentName ?? internal.componentID}{internal.position > 1 ? ` · position ${internal.position}` : ''}</dd></>}
             {/* A shared breakout Cable has one medium; its lanes are the positions above. */}

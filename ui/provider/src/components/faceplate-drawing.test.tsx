@@ -3,6 +3,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
+import { deviceConnections } from '../lib/device-connections';
 import { detailLevel, modelLayout } from '../lib/faceplate-layout';
 import { FIXTURE_NAMES, fixtureInventory } from '../lib/inventory-fixtures';
 import { TEXT_TILE_LIMIT } from './device-faceplate';
@@ -131,6 +132,57 @@ describe('FaceplateDrawing', () => {
     expect(screen.getByText('Layout not recorded')).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: /^Faceplate drawing/ })).toBeNull();
     expect(screen.getByRole('group', { name: /^Front · rack front · Network$/ })).toHaveTextContent('net0');
+  });
+
+  it('draws imported components by name and type when their ids match no template', () => {
+    const view = show(FIXTURE_NAMES.imported);
+    const front = screen.getByRole('group', { name: 'Front · rack face unknown face' });
+    const names = within(front).getAllByRole('button').map(item => item.getAttribute('aria-label')!.split(':')[0]);
+    expect(names).toHaveLength(24);
+    expect(names).toEqual(expect.arrayContaining(['Ethernet1', 'Ethernet16', 'Ethernet21', 'Management1', 'Console']));
+    // Drawn cells carry the Device's components, not catalog-only copies.
+    expect(within(front).getByRole('button', { name: /^Ethernet1:/ })).toHaveAttribute('data-tile', 'network/interfaces-9101');
+    expect(within(front).getAllByRole('button').filter(item => item.getAttribute('data-state') === 'catalog')).toEqual([]);
+    // NetBox interface type strings map to kinds; a blank connector is Other.
+    const kind = (name: string) => within(front).getByRole('button', { name: new RegExp(`^${name}:`) }).closest('[data-kind]')?.getAttribute('data-kind');
+    expect(['Ethernet1', 'Ethernet17', 'Ethernet21', 'Management1', 'Console'].map(kind)).toEqual(['RJ45', 'SFP28', 'QSFP56', 'RJ45', 'Other']);
+    // Two PSU templates share a name: both PSUs stay in the tray.
+    const tray = screen.getByRole('group', { name: 'Not on the faceplate' });
+    expect(within(tray).getAllByRole('listitem').map(item => [item.dataset.reason, item.textContent])).toEqual([
+      ['no-template', expect.stringContaining('PSU')], ['no-template', expect.stringContaining('PSU')],
+    ]);
+    expect(view.container.querySelectorAll('.inventory-chassis-cell .inventory-chassis-module[data-state="catalog"]')).toHaveLength(0);
+  });
+
+  it('shows how a port was matched to the catalog only in the card\'s More', () => {
+    show(FIXTURE_NAMES.imported);
+    fireEvent.click(screen.getByRole('button', { name: /^Ethernet1:/ }));
+    const card = screen.getByRole('dialog', { name: 'Ethernet1 details' });
+    expect(card).not.toHaveTextContent('Matched to catalog');
+    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
+    expect(card).toHaveTextContent('Matched to catalog by name and type');
+    // The record state is unchanged by the name match.
+    expect(card).toHaveTextContent('Recorded on this Device');
+  });
+
+  it('says an id match is by id in the card\'s More', () => {
+    show(FIXTURE_NAMES.server);
+    fireEvent.click(screen.getByRole('button', { name: /^Ethernet 0:/ }));
+    const card = screen.getByRole('dialog', { name: 'Ethernet 0 details' });
+    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
+    expect(card).toHaveTextContent('Matched to catalog by id');
+  });
+
+  it('never lets a name match change record state, Cable joins or faces outside the drawing', () => {
+    const { device, inventory } = named(FIXTURE_NAMES.imported);
+    const links = deviceConnections(device, inventory).links;
+    expect(links.find(link => link.componentID === 'interfaces-9101')).toMatchObject({ state: 'none', chassisFace: undefined });
+    expect(links.find(link => link.componentID === 'interface-templates-101')?.state).toBe('catalog');
+    const drawing = deviceDrawingModel(device, inventory);
+    expect(drawing.tiles.get('interfaces-9101')?.state).toBe('none');
+    expect(drawing.tiles.get('interfaces-9101')?.templateMatch).toBe('name+type');
+    expect(drawing.at('interface-templates-101')).toBe('interfaces-9101');
+    expect(drawing.at('power-port-templates-301')).toBe('power-port-templates-301');
   });
 
   it('draws a zero-U PDU as a one-unit strip and says why', () => {

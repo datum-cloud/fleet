@@ -10,6 +10,7 @@ import type { Inventory } from '../inventory';
 import { condensedName, humanName, isGeneratedName } from './display-names';
 import { deviceCatalog } from './hardware-catalog';
 import { connectorKind, type ConnectorKind } from './connector-kind';
+import type { TemplateMatchBasis } from './faceplate-layout';
 import { componentChassisFace, componentRackFace, deviceMountedFace } from './rack-faces';
 
 export type LinkState = 'cabled' | 'none' | 'conflict' | 'unavailable' | 'catalog';
@@ -507,13 +508,19 @@ export interface PortTile {
   state: LinkState;
   lanes: TileLane[];
   links: ConnectionLink[];
+  /**
+   * How the drawn faceplate joined this component to its template cell. Set
+   * only by the drawing and shown only in the card's More; it never changes
+   * the state, the links or any other view's id join.
+   */
+  templateMatch?: TemplateMatchBasis;
 }
 
-export type ConnectorShape = 'rj45' | 'sfp' | 'qsfp' | 'iec' | 'generic';
+export type ConnectorShape = 'rj45' | 'sfp' | 'qsfp' | 'lc' | 'iec' | 'generic';
 
 const SHAPE_OF: Record<ConnectorKind, ConnectorShape> = {
-  'QSFP-DD': 'qsfp', OSFP: 'qsfp', QSFP28: 'qsfp', SFP28: 'sfp', SFP: 'sfp', RJ45: 'rj45',
-  C13: 'iec', C14: 'iec', C19: 'iec', C20: 'iec', USB: 'generic', DB9: 'generic', VGA: 'generic', Other: 'generic',
+  'QSFP-DD': 'qsfp', OSFP: 'qsfp', QSFP56: 'qsfp', QSFP28: 'qsfp', SFP28: 'sfp', SFP: 'sfp', RJ45: 'rj45', LC: 'lc',
+  C13: 'iec', C14: 'iec', C19: 'iec', C20: 'iec', C22: 'iec', USB: 'generic', DB9: 'generic', VGA: 'generic', Other: 'generic',
 };
 
 /**

@@ -14,7 +14,7 @@ import type { Inventory } from '../inventory';
 import { connectorKind } from '../lib/connector-kind';
 import { shortLabels, viewNames, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
 import { faceplate } from '../lib/device-faceplate';
-import { deviceTray, edgeNumbers, modelLayout, MODULE_TYPES, portNumber, type DetailLevel, type FaceGeometry, type LayoutBank, type ModelLayout, type TrayEntry } from '../lib/faceplate-layout';
+import { deviceTray, edgeNumbers, joinTemplates, modelLayout, MODULE_TYPES, portNumber, type DetailLevel, type FaceGeometry, type LayoutBank, type ModelLayout, type TemplateJoin, type TrayEntry } from '../lib/faceplate-layout';
 import { deviceCatalog } from '../lib/hardware-catalog';
 import { componentRackFace, deviceMountedFace } from '../lib/rack-faces';
 import { TILE_GLYPH, type Href } from './connection-parts';
@@ -41,6 +41,10 @@ export interface DeviceDrawingModel {
   tiles: Map<string, PortTile>;
   /** Component ids the Device records. */
   recorded: Set<string>;
+  /** Components joined to template cells, by id first, then by name and type. */
+  join: TemplateJoin;
+  /** The id a template cell draws: the joined component's, else the template's own (catalog only). */
+  at: (templateID: string) => string;
   tray: TrayEntry[];
   /** "Front · rack rear" per chassis face. */
   titles: Record<ChassisFace, string>;
@@ -52,13 +56,19 @@ export function deviceDrawingModel(device: Device, inventory: Inventory): Device
   const plate = faceplate(device, inventory);
   const model = deviceCatalog(device, inventory)?.model;
   const layout = modelLayout(model);
-  const tiles = new Map(plate.faces.flatMap(face => face.clusters.flatMap(cluster => cluster.tiles)).map(tile => [tile.componentID, tile]));
+  const join = joinTemplates(model?.spec.componentTemplates, device.spec.components);
+  // The match basis rides on the tile for the card's More; nothing else reads it.
+  const tiles = new Map(plate.faces.flatMap(face => face.clusters.flatMap(cluster => cluster.tiles)).map(tile => {
+    const match = join.byComponent.get(tile.componentID);
+    return [tile.componentID, match ? { ...tile, templateMatch: match.basis } : tile];
+  }));
   const mounted = deviceMountedFace(device, inventory);
   const title = (face: ChassisFace) => { const rack = componentRackFace(mounted, face); return `${face} · ${rack ? `rack ${rack}` : 'rack face unknown'}`; };
   return {
-    layout, model, tiles,
+    layout, model, tiles, join,
+    at: templateID => join.byTemplate.get(templateID)?.componentID ?? templateID,
     recorded: new Set((device.spec.components ?? []).map(component => component.id)),
-    tray: deviceTray(layout, model, device.spec.components),
+    tray: deviceTray(layout, model, device.spec.components, join),
     titles: { Front: title('Front'), Rear: title('Rear') },
     names: viewNames(plate.links),
     cablesDenied: plate.cableAccess === 'denied',
@@ -90,14 +100,14 @@ function DrawnFace({ geometry, drawing, title, tileButton }: { geometry: FaceGeo
 function Bank({ bank, drawing, tileButton }: { bank: LayoutBank; drawing: DeviceDrawingModel; tileButton: ReturnType<typeof usePortGrid>['tileButton'] }) {
   // Row-major DOM order, so Left and Right move along a drawn row.
   const cells = [...bank.cells].sort((a, b) => a.row - b.row || a.column - b.column);
-  const labels = useMemo(() => shortLabels(cells.flatMap(cell => { const tile = drawing.tiles.get(cell.template.id); return tile ? [tile] : []; })), [cells, drawing.tiles]);
-  const shortOf = (id: string) => drawing.tiles.get(id)?.key;
+  const labels = useMemo(() => shortLabels(cells.flatMap(cell => { const tile = drawing.tiles.get(drawing.at(cell.template.id)); return tile ? [tile] : []; })), [cells, drawing]);
+  const shortOf = (id: string) => drawing.tiles.get(drawing.at(id))?.key;
   const numbers = bank.dense ? edgeNumbers(bank) : [];
   return (
     <>
       <span className="inventory-chassis-bank" aria-hidden="true" style={{ left: px(bank.x), top: px(bank.y), width: px(bank.w), height: px(bank.h) }} />
       {cells.map(cell => {
-        const tile = MODULE_TYPES.has(cell.template.type) ? undefined : drawing.tiles.get(cell.template.id);
+        const tile = MODULE_TYPES.has(cell.template.type) ? undefined : drawing.tiles.get(drawing.at(cell.template.id));
         const key = shortOf(cell.template.id);
         const label = bank.dense ? undefined : (key && labels.get(key)) ?? (cell.template.name.length <= 8 ? cell.template.name : cell.template.id.slice(0, 8));
         // Small connector cells print their label above (top row) or below (bottom row); module cells carry it inside.
@@ -107,7 +117,7 @@ function Bank({ bank, drawing, tileButton }: { bank: LayoutBank; drawing: Device
           <div key={cell.template.id} className="inventory-chassis-cell" data-kind={connectorKind(cell.template.connector)} data-module={bank.module ? '' : undefined} style={style}>
             {tile
               ? tileButton(tile, { label: bank.module ? label : undefined, className: 'inventory-chassis-port' })
-              : <ModuleCell name={cell.template.name} type={cell.template.type} state={drawing.recorded.has(cell.template.id) ? 'recorded' : 'catalog'} label={label} />}
+              : <ModuleCell name={cell.template.name} type={cell.template.type} state={drawing.recorded.has(drawing.at(cell.template.id)) ? 'recorded' : 'catalog'} label={label} />}
             {printed && <span className="inventory-chassis-print" data-where={printed} aria-hidden="true">{label}</span>}
           </div>
         );
@@ -150,7 +160,7 @@ export function FaceplateDrawing({ drawing, namespace, href, telemetry }: { draw
   // Every port the drawing shows, faces first, then the tray, in DOM order.
   const tiles = useMemo(() => {
     const drawn = drawing.layout.faces.flatMap(face => face.banks.flatMap(bank => [...bank.cells].sort((a, b) => a.row - b.row || a.column - b.column).map(cell => cell.template)))
-      .filter(template => !MODULE_TYPES.has(template.type)).map(template => template.id);
+      .filter(template => !MODULE_TYPES.has(template.type)).map(template => drawing.at(template.id));
     const ids = [...drawn, ...drawing.tray.map(entry => entry.id)];
     return ids.flatMap(id => { const tile = drawing.tiles.get(id); return tile ? [tile] : []; });
   }, [drawing]);
@@ -217,8 +227,9 @@ export function miniFaceplate(drawing: DeviceDrawingModel, face: ChassisFace) {
   const states = new Map<string, MiniState>();
   for (const bank of geometry?.banks ?? []) {
     for (const cell of bank.cells) {
-      const tile = MODULE_TYPES.has(cell.template.type) ? undefined : drawing.tiles.get(cell.template.id);
-      states.set(cell.template.id, tile ? (drawing.cablesDenied ? 'unavailable' : tile.state) : drawing.recorded.has(cell.template.id) ? 'recorded' : 'catalog');
+      const id = drawing.at(cell.template.id);
+      const tile = MODULE_TYPES.has(cell.template.type) ? undefined : drawing.tiles.get(id);
+      states.set(cell.template.id, tile ? (drawing.cablesDenied ? 'unavailable' : tile.state) : drawing.recorded.has(id) ? 'recorded' : 'catalog');
     }
   }
   // Counts cover the whole Device, not one face: a problem on the hidden face still counts.

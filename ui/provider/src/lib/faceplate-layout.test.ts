@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ComponentTemplate, FaceplateBank, PhysicalRecord } from '../../../shared/fleet-api';
-import { BANK_GAP_MM, CELL_GAP_MM, deviceTray, edgeNumbers, faceGeometry, FACE_WIDTH_MM, modelLayout, portNumber, TEXT_TILE_LIMIT, U_MM } from './faceplate-layout';
+import type { ComponentTemplate, FaceplateBank, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
+import { BANK_GAP_MM, CELL_GAP_MM, deviceTray, edgeNumbers, faceGeometry, FACE_WIDTH_MM, joinTemplates, matchName, modelLayout, portNumber, TEXT_TILE_LIMIT, U_MM } from './faceplate-layout';
 
 // Synthetic catalog records only.
 const T = (id: string, face: 'Front' | 'Rear' | undefined, layout?: ComponentTemplate['layout'], connector = 'RJ45', type: ComponentTemplate['type'] = 'NetworkPort'): ComponentTemplate =>
@@ -116,5 +116,76 @@ describe('deviceTray', () => {
     const catalog = model([{ id: 'a', face: 'Rear', rows: 1, columns: 1 }], [T('eth0', 'Rear', { bank: 'a', row: 1, column: 1 }), T('bmc', 'Rear')]);
     const tray = deviceTray(modelLayout(catalog), catalog, [{ id: 'eth0', name: 'eth0', type: 'NetworkPort' }, { id: 'usb9', name: 'Front USB', type: 'InventoryItem' }]);
     expect(tray.map(entry => [entry.id, entry.reason])).toEqual([['bmc', 'not-laid-out'], ['usb9', 'no-template']]);
+  });
+
+  it('uses a name-matched component for a template entry, and keeps ambiguous components in the tray', () => {
+    const catalog = model([{ id: 'a', face: 'Rear', rows: 1, columns: 1 }], [
+      named('interface-templates-1', 'Ethernet1', 'Rear', { bank: 'a', row: 1, column: 1 }),
+      named('console-port-templates-2', 'Console', 'Rear', undefined, 'ConsolePort'),
+      named('power-port-templates-3', 'PSU', 'Rear', undefined, 'PowerInlet'),
+      named('power-port-templates-4', 'PSU', 'Rear', undefined, 'PowerInlet'),
+    ]);
+    const tray = deviceTray(modelLayout(catalog), catalog, [C('interfaces-11', 'Ethernet1'), C('console-ports-12', 'Console', 'ConsolePort'), C('power-ports-13', 'PSU', 'PowerInlet'), C('power-ports-14', 'PSU', 'PowerInlet')]);
+    expect(tray.map(entry => [entry.id, entry.reason])).toEqual([
+      // Not laid out: listed once, under the joined component's id.
+      ['console-ports-12', 'not-laid-out'],
+      ['power-port-templates-3', 'not-laid-out'],
+      ['power-port-templates-4', 'not-laid-out'],
+      // Two templates share the name: neither PSU is joined.
+      ['power-ports-13', 'no-template'],
+      ['power-ports-14', 'no-template'],
+    ]);
+  });
+});
+
+// Synthetic importer-shaped records: instance ids that differ from template ids.
+const named = (id: string, name: string, face: 'Front' | 'Rear' | undefined, layout?: ComponentTemplate['layout'], type: ComponentTemplate['type'] = 'NetworkPort'): ComponentTemplate =>
+  ({ ...T(id, face, layout, 'RJ45', type), name });
+const C = (id: string, name: string, type: PhysicalComponent['type'] = 'NetworkPort'): PhysicalComponent => ({ id, name, type });
+const joined = (templates: ComponentTemplate[], components: PhysicalComponent[]) =>
+  [...joinTemplates(templates, components).byComponent.values()].map(match => [match.componentID, match.templateID, match.basis]);
+
+describe('joinTemplates', () => {
+  it('joins by id first, and records the basis', () => {
+    expect(joined([named('eth0', 'Ethernet 0', 'Rear'), named('eth1', 'Ethernet 1', 'Rear')], [C('eth0', 'Ethernet 0'), C('eth1', 'renamed')]))
+      .toEqual([['eth0', 'eth0', 'id'], ['eth1', 'eth1', 'id']]);
+  });
+
+  it('falls back to one template with the same name and type when no template has the id', () => {
+    const templates = [named('interface-templates-34', 'Ethernet1', 'Front'), named('interface-templates-35', 'Ethernet2', 'Front')];
+    const join = joinTemplates(templates, [C('interfaces-3362', 'Ethernet1'), C('interfaces-3363', ' Ethernet2 ')]);
+    expect([...join.byComponent.values()].map(match => [match.componentID, match.templateID, match.basis]))
+      .toEqual([['interfaces-3362', 'interface-templates-34', 'name+type'], ['interfaces-3363', 'interface-templates-35', 'name+type']]);
+    expect(join.byTemplate.get('interface-templates-34')?.componentID).toBe('interfaces-3362');
+  });
+
+  it('needs the type to match as well as the name', () => {
+    expect(joined([named('console-port-templates-1', 'Console', 'Front', undefined, 'ConsolePort')], [C('interfaces-1', 'Console', 'NetworkPort')])).toEqual([]);
+  });
+
+  it('leaves a component unjoined when several templates share its name and type', () => {
+    const templates = [named('power-port-templates-1', 'PSU', 'Rear', undefined, 'PowerInlet'), named('power-port-templates-2', 'PSU', 'Rear', undefined, 'PowerInlet')];
+    expect(joined(templates, [C('power-ports-1', 'PSU', 'PowerInlet')])).toEqual([]);
+  });
+
+  it('leaves a component unjoined when no template matches, or its name is blank', () => {
+    expect(joined([named('interface-templates-1', 'Ethernet1', 'Front')], [C('interfaces-1', 'Ethernet9'), C('interfaces-2', '  ')])).toEqual([]);
+  });
+
+  it('never reuses a template already joined by id to another component', () => {
+    const templates = [named('eth0', 'Ethernet 0', 'Rear')];
+    // interfaces-7 has the same name and type, but eth0 already has its component.
+    expect(joined(templates, [C('interfaces-7', 'Ethernet 0'), C('eth0', 'Ethernet 0')])).toEqual([['eth0', 'eth0', 'id']]);
+  });
+
+  it('never gives one template to two components that both fall back to it', () => {
+    const templates = [named('interface-templates-1', 'Ethernet1', 'Front')];
+    expect(joined(templates, [C('interfaces-1', 'Ethernet1'), C('interfaces-2', 'Ethernet1')])).toEqual([]);
+  });
+
+  it('keeps case and inner words, only trimming and collapsing whitespace', () => {
+    expect(matchName('  Ethernet   1 ')).toBe('Ethernet 1');
+    expect(joined([named('interface-templates-1', 'Ethernet1', 'Front')], [C('interfaces-1', 'ethernet1')])).toEqual([]);
+    expect(joined([named('interface-templates-1', 'Ethernet 1', 'Front')], [C('interfaces-1', 'Ethernet  1')])).toEqual([['interfaces-1', 'interface-templates-1', 'name+type']]);
   });
 });

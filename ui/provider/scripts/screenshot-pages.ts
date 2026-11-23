@@ -113,6 +113,11 @@ export const PAGES: CapturePage[] = [
   { name: 'rack-mini-reduced', path: record('Rack', 'example-rack-a01'), ready: '.inventory-mini-faceplate', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
   { name: 'rack-mini-full', path: record('Rack', 'example-rack-a01', '&detail=full'), ready: '.inventory-mini-faceplate[data-level="full"]', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
   { name: 'rack-mini-silhouette', path: record('Rack', 'example-rack-a01', '&detail=silhouette'), ready: '.inventory-mini-faceplate[data-level="silhouette"]', element: '.inventory-elevation', viewports: ['desktop-dark'] },
+  // Imported records whose component ids match no template id: drawn by name
+  // and type, the duplicate-name PSUs in the tray, and the card's More saying so.
+  { name: 'faceplate-imported', path: record('Device', 'example-imported-sw-01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
+  { name: 'faceplate-imported-phone', path: record('Device', 'example-imported-sw-01'), ready: '.inventory-drawing', viewports: ['phone'] },
+  { name: 'faceplate-imported-card-more', path: record('Device', 'example-imported-sw-01'), ready: '.inventory-drawing', click: [`.inventory-drawing ${tile('interfaces-9101')}`, '.inventory-port-card-more > button'], viewports: ['desktop-light', 'desktop-dark'] },
   { name: 'rack-panel-faceplate', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-srv-a01-01'), ready: '.inventory-faceplate .inventory-drawing', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
 ];
 
