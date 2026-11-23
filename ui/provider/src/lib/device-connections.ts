@@ -5,9 +5,10 @@
 // nothing is ever verified. "No cable recorded" means unknown, never free.
 // A denied collection read is never treated as an absent record.
 
-import type { CableEndpoint, ComponentPosition, Device, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
+import type { CableEndpoint, ChassisFace, ComponentPosition, ComponentTemplate, Device, PhysicalComponent, PhysicalRecord, RackFace } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import { deviceCatalog } from './hardware-catalog';
+import { componentChassisFace, componentRackFace, deviceMountedFace } from './rack-faces';
 
 export type LinkState = 'cabled' | 'none' | 'conflict' | 'unavailable' | 'catalog';
 export type ConnectionGroup = 'power' | 'network' | 'console' | 'passthrough' | 'other' | 'unrecorded';
@@ -76,6 +77,8 @@ export interface PeerEnd {
   multiPosition?: boolean;
   /** Recorded supply rating, for PowerFeed peers. */
   supply?: string;
+  /** The rack face the peer component lands on, when both faces are known. */
+  rackFace?: RackFace;
 }
 
 export interface CableRef {
@@ -102,7 +105,11 @@ export interface ConnectionLink {
   state: LinkState;
   componentID: string;
   component?: PhysicalComponent;
-  template?: Omit<PhysicalComponent, 'serial' | 'assetTag'>;
+  template?: ComponentTemplate;
+  /** Inherited from the DeviceType template with the same id. Unset is unknown. */
+  chassisFace?: ChassisFace;
+  /** The chassis face transformed by the mounted rack face. Unset is unknown. */
+  rackFace?: RackFace;
   position: number;
   positions: number;
   /** This Device's own internal mapping from this position, if recorded. */
@@ -111,6 +118,8 @@ export interface ConnectionLink {
   peer?: PeerEnd;
   trace: TraceHop[];
   reasons: string[];
+  /** Soft notes worth a look. They never change the state. */
+  checks: string[];
 }
 
 export interface DeviceConnections {
@@ -194,6 +203,7 @@ class Join {
       kind, access: 'readable', name, label: recordLabel(record), componentID: far.componentID, componentName: component?.name,
       position: far.position, multiPosition: positionsOf(component) > 1 || far.position > 1,
       supply: supply && `${supply.type} · ${supply.voltageV ?? 'unknown'} V · ${supply.currentA ?? 'unknown'} A`,
+      rackFace: kind === 'Device' && component ? componentRackFace(deviceMountedFace(record as Device, this.inventory), componentChassisFace(record as Device, this.inventory, far.componentID)) : undefined,
     };
     const reasons: string[] = [];
     if (!component) reasons.push(`The peer does not record component "${far.componentID}".`);
@@ -242,13 +252,18 @@ export function deviceConnections(device: Device, inventory: Inventory): DeviceC
   const byID = new Map(components.map(component => [component.id, component]));
   const templates = deviceCatalog(device, inventory)?.model.spec.componentTemplates ?? [];
   const links: ConnectionLink[] = [];
+  const mounted = deviceMountedFace(device, inventory);
+  const facesOf = (componentID: string) => {
+    const chassisFace = templates.find(template => template.id === componentID)?.face;
+    return { chassisFace, rackFace: componentRackFace(mounted, chassisFace) };
+  };
 
   const internalFor = (componentID: string, position: number) => {
     const mapped = findMapping(device, componentID, position);
     return mapped && { componentID: mapped.componentID, componentName: byID.get(mapped.componentID)?.name, position: mapped.position };
   };
 
-  const linkFor = (base: Omit<ConnectionLink, 'state' | 'cable' | 'peer' | 'trace' | 'reasons' | 'key'>, termination: Termination, claims: number, localReasons: string[], index: number): ConnectionLink => {
+  const linkFor = (base: Omit<ConnectionLink, 'state' | 'cable' | 'peer' | 'trace' | 'reasons' | 'checks' | 'key'>, termination: Termination, claims: number, localReasons: string[], index: number): ConnectionLink => {
     const resolved = join.peer(termination.far);
     const reasons = [...localReasons];
     if (claims > 1) reasons.push(`${claims} Cable lanes name this position. Neither is treated as current.`);
@@ -256,16 +271,17 @@ export function deviceConnections(device: Device, inventory: Inventory): DeviceC
     const unavailable = resolved.peer.access !== 'readable';
     const state: LinkState = localReasons.length || claims > 1 ? 'conflict' : unavailable ? 'unavailable' : resolved.reasons.length ? 'conflict' : 'cabled';
     const trace = state === 'cabled' ? join.trace(resolved.device, termination.far, new Set([`${device.metadata.name}/${base.componentID}/${base.position}`])) : [];
-    return { ...base, key: `${base.componentID}/${base.position}/${termination.cable.metadata.name}/${termination.laneID}/${index}`, state, cable: cableRef(termination.cable, termination.laneID), peer: resolved.peer, trace, reasons };
+    const checks = oppositeFaceCheck(base.rackFace, resolved.peer.rackFace);
+    return { ...base, key: `${base.componentID}/${base.position}/${termination.cable.metadata.name}/${termination.laneID}/${index}`, state, cable: cableRef(termination.cable, termination.laneID), peer: resolved.peer, trace, reasons, checks };
   };
 
   for (const component of components) {
     const positions = positionsOf(component);
     for (let position = 1; position <= positions; position++) {
       const claims = join.terminationsAt('Device', device.metadata.name, component.id, position);
-      const base = { group: groupOf[component.type], componentID: component.id, component, position, positions, internal: internalFor(component.id, position) };
+      const base = { group: groupOf[component.type], componentID: component.id, component, position, positions, internal: internalFor(component.id, position), ...facesOf(component.id) };
       if (!claims.length) {
-        if (!UNCABLED_TYPES.has(component.type)) links.push({ ...base, key: `${component.id}/${position}`, state: 'none', trace: [], reasons: [] });
+        if (!UNCABLED_TYPES.has(component.type)) links.push({ ...base, key: `${component.id}/${position}`, state: 'none', trace: [], reasons: [], checks: [] });
         continue;
       }
       claims.forEach((claim, index) => links.push(linkFor(base, claim, claims.length, [], index)));
@@ -284,16 +300,43 @@ export function deviceConnections(device: Device, inventory: Inventory): DeviceC
     const reason = component
       ? `The Cable names position ${termination.mine.position}; this Device records ${positionsOf(component)} for "${component.id}".`
       : `The Cable names component "${termination.mine.componentID}", which this Device does not record${template ? ' (it appears only in the catalog)' : ''}.`;
-    links.push(linkFor({ group: component ? groupOf[component.type] : 'unrecorded', componentID: termination.mine.componentID, component, template, position: termination.mine.position, positions: positionsOf(component) }, termination, 1, [reason], index));
+    links.push(linkFor({ group: component ? groupOf[component.type] : 'unrecorded', componentID: termination.mine.componentID, component, template, position: termination.mine.position, positions: positionsOf(component), ...facesOf(termination.mine.componentID) }, termination, 1, [reason], index));
   });
 
   const orphanIDs = new Set(orphans.map(termination => termination.mine.componentID));
   for (const template of templates) {
     if (byID.has(template.id) || orphanIDs.has(template.id)) continue;
-    links.push({ key: `catalog/${template.id}`, group: groupOf[template.type], state: 'catalog', componentID: template.id, template, position: 1, positions: positionsOf(template), trace: [], reasons: [] });
+    links.push({ key: `catalog/${template.id}`, group: groupOf[template.type], state: 'catalog', componentID: template.id, template, position: 1, positions: positionsOf(template), ...facesOf(template.id), trace: [], reasons: [], checks: [] });
   }
 
   return { cableAccess: 'readable', catalog: catalogState, links };
+}
+
+/**
+ * A Cable whose ends land on opposite rack faces is possible (a pass-through
+ * or a reversed peer) but worth confirming. It is a note, never an error.
+ */
+export function oppositeFaceCheck(local: RackFace | undefined, far: RackFace | undefined): string[] {
+  if (!local || !far || local === far) return [];
+  return [`Check: this end is on the rack ${local} and the far end on the rack ${far}. Confirm the records; opposite faces can be correct.`];
+}
+
+export type FaceGroup = ChassisFace | 'unknown';
+
+export const faceGroupTitles: Record<FaceGroup, string> = { Front: 'Front', Rear: 'Rear', unknown: 'Face unknown' };
+
+/** Splits links by chassis face, in the order Front, Rear, Face unknown. */
+export function faceGroups<T extends Pick<ConnectionLink, 'chassisFace'>>(links: T[]): { face: FaceGroup; title: string; links: T[] }[] {
+  return (['Front', 'Rear', 'unknown'] as const)
+    .map(face => ({ face, title: faceGroupTitles[face], links: links.filter(link => (link.chassisFace ?? 'unknown') === face) }))
+    .filter(group => group.links.length);
+}
+
+/** The chassis and rack face of a link's local end, in words. */
+export function faceLabel(link: Pick<ConnectionLink, 'chassisFace' | 'rackFace'>) {
+  if (!link.chassisFace) return 'Chassis face unknown';
+  const chassis = `Chassis ${link.chassisFace.toLowerCase()}`;
+  return link.rackFace ? `${chassis} · rack ${link.rackFace}` : `${chassis} · rack face unknown`;
 }
 
 export function stateCounts(links: ConnectionLink[]) {

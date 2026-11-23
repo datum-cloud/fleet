@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { CableEndpoint, Device, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import { toInventory, type Inventory } from '../inventory';
-import { deviceConnections, localLabel, peerLabel, remotePortLabel, stateCounts, type ConnectionLink } from './device-connections';
+import { deviceConnections, faceGroups, faceLabel, localLabel, oppositeFaceCheck, peerLabel, remotePortLabel, stateCounts, type ConnectionLink } from './device-connections';
+import { depthClaims, depthDevices, depthRecords } from './depth-fixtures';
 
 // Synthetic records only.
 const NS = 'default';
@@ -185,5 +186,62 @@ describe('deviceConnections', () => {
   it('ignores Cables in other namespaces', () => {
     const foreign = { ...cable('dac-x', 'Copper', [['l1', D('server-01', 'eth0'), D('leaf-01', 'swp1')]]), metadata: { name: 'dac-x', namespace: 'other' } };
     expect(link(deviceConnections(server, inv([server, leaf], [foreign])).links, 'eth0')[0].state).toBe('none');
+  });
+});
+
+describe('component faces in the connection join', () => {
+  const faced = toInventory(depthClaims, depthDevices, depthRecords);
+  const named = (name: string) => depthDevices.find(record => record.metadata.name === name)!;
+
+  it('inherits chassis faces from templates and derives the rack face from the mounted face', () => {
+    const { links } = deviceConnections(named('leaf-01'), faced);
+    expect(link(links, 'swp1')[0]).toMatchObject({ chassisFace: 'Front', rackFace: 'rear' });
+    expect(link(links, 'psu-1')[0]).toMatchObject({ chassisFace: 'Rear', rackFace: 'front' });
+    expect(faceLabel(link(links, 'swp1')[0])).toBe('Chassis front · rack rear');
+    const compute = deviceConnections(named('compute-07'), faced).links;
+    expect(link(compute, 'eth0')[0]).toMatchObject({ chassisFace: 'Rear', rackFace: 'rear' });
+    expect(link(compute, 'console')[0]).toMatchObject({ chassisFace: 'Front', rackFace: 'front' });
+  });
+
+  it('keeps the face unknown without a template, and the rack face unknown without a mounted face', () => {
+    expect(link(deviceConnections(named('appliance-03'), faced).links, 'net0')[0]).toMatchObject({ chassisFace: undefined, rackFace: undefined });
+    const unmounted = { ...named('leaf-01'), spec: { ...named('leaf-01').spec, reportedPlacement: { ...named('leaf-01').spec.reportedPlacement!, face: undefined } } };
+    const [swp1] = link(deviceConnections(unmounted, faced).links, 'swp1');
+    expect(swp1).toMatchObject({ chassisFace: 'Front', rackFace: undefined });
+    expect(faceLabel(swp1)).toBe('Chassis front · rack face unknown');
+    expect(faceLabel({})).toBe('Chassis face unknown');
+    const hidden = deviceConnections(named('leaf-01'), { ...faced, issues: { DeviceType: { status: 403 } } }).links;
+    expect(hidden.every(item => item.chassisFace === undefined && item.rackFace === undefined)).toBe(true);
+  });
+
+  it('groups ports by chassis face in the order Front, Rear, Face unknown', () => {
+    const groups = faceGroups([{ chassisFace: 'Rear' as const, id: 1 }, { id: 2 }, { chassisFace: 'Front' as const, id: 3 }, { chassisFace: 'Rear' as const, id: 4 }]);
+    expect(groups.map(group => [group.title, group.links.map(item => item.id)])).toEqual([['Front', [3]], ['Rear', [1, 4]], ['Face unknown', [2]]]);
+    expect(faceGroups([])).toEqual([]);
+  });
+
+  it('adds a soft check, never a conflict, when a Cable lands on opposite rack faces', () => {
+    const { links } = deviceConnections(named('compute-07'), faced);
+    const [eth1] = link(links, 'eth1');
+    expect(eth1.state).toBe('cabled');
+    expect(eth1.reasons).toEqual([]);
+    expect(eth1.peer?.rackFace).toBe('front');
+    expect(eth1.checks).toEqual(['Check: this end is on the rack rear and the far end on the rack front. Confirm the records; opposite faces can be correct.']);
+    // The reversed leaf's chassis-front ports face the rack rear, like eth0.
+    const [eth0] = link(links, 'eth0');
+    expect(eth0).toMatchObject({ state: 'cabled', rackFace: 'rear', peer: { rackFace: 'rear' }, checks: [] });
+    // Power feeds have no faces.
+    expect(link(links, 'psu-1')[0].checks).toEqual([]);
+  });
+
+  it('never derives a face for an unreadable peer', () => {
+    const { links } = deviceConnections(named('compute-07'), { ...faced, issues: { Device: { status: 403 } } });
+    const [eth1] = link(links, 'eth1');
+    expect(eth1.peer).toEqual({ kind: 'Device', access: 'denied' });
+    expect(eth1.checks).toEqual([]);
+  });
+
+  it.each([[undefined, 'rear'], ['front', undefined], ['front', 'front']] as const)('adds no check for %s to %s', (local, far) => {
+    expect(oppositeFaceCheck(local, far)).toEqual([]);
   });
 });

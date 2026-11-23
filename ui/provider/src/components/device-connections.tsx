@@ -5,7 +5,7 @@ import { Link } from 'react-router';
 import type { Device } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import {
-  connectionGroups, deviceConnections, DIAGRAM_LINK_LIMIT, linkStateGlyph, linkStateWords, localLabel, peerLabel, remotePortLabel, stateCounts,
+  connectionGroups, deviceConnections, DIAGRAM_LINK_LIMIT, faceGroups, faceLabel, linkStateGlyph, linkStateWords, localLabel, peerLabel, remotePortLabel, stateCounts,
   type ConnectionGroup, type ConnectionLink, type LinkState, type PeerEnd, type TraceHop,
 } from '../lib/device-connections';
 
@@ -62,7 +62,7 @@ function Trace({ hops, namespace, href, roving }: { hops: TraceHop[]; namespace?
 function LocalDetail({ link }: { link: ConnectionLink }) {
   const type = link.component?.type ?? link.template?.type;
   const connector = link.component?.connector ?? link.template?.connector;
-  return <small>{[type ?? 'Not on this Device', connector ?? 'Connector not recorded'].join(' · ')}{link.internal ? ` · internal path to ${link.internal.componentName ?? link.internal.componentID}${link.internal.position > 1 ? ` position ${link.internal.position}` : ''}` : ''}</small>;
+  return <small>{[type ?? 'Not on this Device', connector ?? 'Connector not recorded', faceLabel(link)].join(' · ')}{link.internal ? ` · internal path to ${link.internal.componentName ?? link.internal.componentID}${link.internal.position > 1 ? ` position ${link.internal.position}` : ''}` : ''}</small>;
 }
 
 function peerDetail(link: ConnectionLink) {
@@ -85,6 +85,7 @@ function DiagramRow({ link, namespace, href }: { link: ConnectionLink; namespace
       <div className="inventory-connection-line">
         <span className="inventory-connection-ports">
           <span className="inventory-connection-local">{localLabel(link)}</span>
+          {link.chassisFace && <span className="inventory-connection-face">{faceLabel(link)}</span>}
           <span className="inventory-connection-remote">{link.cable ? remotePortLabel(link.peer) : ''}</span>
         </span>
         <span className="inventory-connection-wire" aria-hidden="true" />
@@ -101,13 +102,20 @@ function DiagramRow({ link, namespace, href }: { link: ConnectionLink; namespace
         <small>{peerDetail(link)}</small>
         <Trace hops={link.trace} namespace={namespace} href={href} roving />
         {link.reasons.length > 0 && <small className="inventory-connection-reason">{link.reasons.join(' ')}</small>}
+        {link.checks.length > 0 && <small className="inventory-connection-check">{link.checks.join(' ')}</small>}
       </div>
     </li>
   );
 }
 
 function DiagramGroup({ group, title, links, collapsed, namespace, href, onToggle }: { group: ConnectionGroup; title: string; links: ConnectionLink[]; collapsed: boolean; namespace?: string; href: Href; onToggle: () => void }) {
-  const rows = <ul className="inventory-connection-rows" aria-label={`${title} links`}>{links.map(link => <DiagramRow key={link.key} link={link} namespace={namespace} href={href} />)}</ul>;
+  const list = (items: ConnectionLink[], label: string) => <ul className="inventory-connection-rows" aria-label={label}>{items.map(link => <DiagramRow key={link.key} link={link} namespace={namespace} href={href} />)}</ul>;
+  // Group by chassis face only when the catalog records at least one face;
+  // otherwise every port would sit under a single "Face unknown" heading.
+  const faces = links.some(link => link.chassisFace) ? faceGroups(links) : undefined;
+  const rows = faces
+    ? <div className="inventory-connection-faces">{faces.map(item => <section key={item.face} className="inventory-connection-face-group" data-face={item.face} aria-label={`${title} · ${item.title}`}><p className="inventory-connection-face-title">{item.title} · {linksWord(item.links.length)}</p>{list(item.links, `${title} · ${item.title} links`)}</section>)}</div>
+    : list(links, `${title} links`);
   const summary = `${title} · ${linksWord(links.length)}`;
   return (
     <li className="inventory-connection-group" data-group={group}>
@@ -185,8 +193,8 @@ function Diagram({ device, groups, collapsed, namespace, href }: { device: Devic
 function LinkTable({ groups, namespace, href }: { groups: { group: ConnectionGroup; title: string; links: ConnectionLink[] }[]; namespace?: string; href: Href }) {
   return (
     <div className="inventory-connection-tables">
-      {groups.map(({ group, title, links }) => (
-        <div className="inventory-scroll" key={group} role="region" tabIndex={0} aria-label={`${title} links table`}>
+      {groups.flatMap(({ group, title: base, links: all }) => (all.some(link => link.chassisFace) ? faceGroups(all).map(item => ({ key: `${group}/${item.face}`, title: `${base} · ${item.title}`, links: item.links })) : [{ key: group, title: base, links: all }])).map(({ key, title, links }) => (
+        <div className="inventory-scroll" key={key} role="region" tabIndex={0} aria-label={`${title} links table`}>
           <Table>
             <TableCaption>{title} · {linksWord(links.length)} <span className="inventory-count">{countsText(links)}</span></TableCaption>
             <TableHeader>
@@ -201,7 +209,7 @@ function LinkTable({ groups, namespace, href }: { groups: { group: ConnectionGro
               {links.map(link => (
                 <TableRow key={link.key} data-state={link.state}>
                   <TableCell>{localLabel(link)}<LocalDetail link={link} /></TableCell>
-                  <TableCell><StateText state={link.state} />{link.reasons.length > 0 && <small>{link.reasons.join(' ')}</small>}</TableCell>
+                  <TableCell><StateText state={link.state} />{link.reasons.length > 0 && <small>{link.reasons.join(' ')}</small>}{link.checks.length > 0 && <small className="inventory-connection-check">{link.checks.join(' ')}</small>}</TableCell>
                   <TableCell>{link.cable ? <><Link to={href('Cable', namespace, link.cable.name)}>{link.cable.label}</Link><small>{cableText(link)}</small></> : <span className="inventory-muted">{cableText(link)}</span>}</TableCell>
                   <TableCell>
                     {link.cable ? <PeerTarget peer={link.peer} namespace={namespace} href={href} /> : <span className="inventory-muted">{link.state === 'catalog' ? 'Catalog only' : 'Unknown'}</span>}
@@ -260,7 +268,7 @@ export function DeviceConnections({ device, inventory, href }: { device: Device;
       </div>
       {join.cableAccess === 'readable' && join.links.length > 0 && <Legend />}
       <p className="inventory-muted inventory-connection-caveat">
-        No cable recorded means unknown, not free. Nothing here is verified.
+        No cable recorded means unknown, not free. Nothing here is verified. Port faces come from the hardware catalog; rack faces are derived from the reported mounted face.
         {join.catalog === 'unavailable' && ' The hardware catalog is unavailable, so catalog-only components are not shown.'}
       </p>
       {large && join.cableAccess === 'readable' && (
