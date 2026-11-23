@@ -1,7 +1,7 @@
-import { Eyebrow, Fact, Facts } from '../components/fact';
-import { MachineStatusChip } from '../components/machine-status';
+import { Fact, Facts } from '../components/fact';
+import { Dot, MachineStatusChip } from '../components/machine-status';
 import { MachinesPage, usePluginBase } from '../components/machines-page';
-import { ReleaseDialog } from '../components/release-dialog';
+import { RELEASE_ICON, ReleaseDialog } from '../components/release-dialog';
 import { ErrorOrRestrictedState, LoadingState } from '../components/states';
 import { ApiError, useMachine } from '../lib/api';
 import { machineSteps, type MachineDetail as MachineDetailModel, type MachineStep } from '../types';
@@ -11,6 +11,7 @@ import { DateTime } from '@datum-cloud/datum-ui/date-time';
 import { EmptyContent } from '@datum-cloud/datum-ui/empty-content';
 import { Icon } from '@datum-cloud/datum-ui/icons';
 import { Skeleton } from '@datum-cloud/datum-ui/skeleton';
+import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
 import {
   ActivityIcon,
   ArrowRightIcon,
@@ -18,7 +19,6 @@ import {
   CpuIcon,
   FileTextIcon,
   HourglassIcon,
-  LogOutIcon,
   NetworkIcon,
   XIcon,
   type LucideIcon,
@@ -63,6 +63,19 @@ function FlowArrow() {
   );
 }
 
+// A short muted word, with the explanation in its tooltip and accessible name.
+function Word({ word, reason, tone }: { word: string; reason?: string; tone?: 'warning' }) {
+  return (
+    <Tooltip message={reason} hidden={!reason}>
+      <span
+        className={tone === 'warning' ? 'fleet-warn cursor-default' : 'text-muted-foreground cursor-default'}
+        aria-label={reason ? `${word}: ${reason}` : undefined}>
+        {word}
+      </span>
+    </Tooltip>
+  );
+}
+
 function RequestCard({ machine }: { machine: MachineDetailModel }) {
   return (
     <FlowCard icon={FileTextIcon} title="You asked for" testId="fleet-plugin-machine-request">
@@ -70,17 +83,24 @@ function RequestCard({ machine }: { machine: MachineDetailModel }) {
         <Fact label="Class" mono>{machine.machineClass}</Fact>
         <Fact label="Profile" mono>{machine.machineProfile}</Fact>
         <Fact label="Location">{machine.location}</Fact>
-        <Fact label="Power">{machine.powerIntent}</Fact>
       </Facts>
     </FlowCard>
   );
 }
 
-// Until Fleet binds a server there's no hardware to show: skeleton lines and
-// Fleet's own explanation instead.
+function unassigned(machine: MachineDetailModel): { word: string; reason: string } {
+  if (machine.phase === 'Rejected') return { word: 'None', reason: "The request wasn't accepted." };
+  if (machine.waitingForCapacity) {
+    return { word: 'Waiting', reason: 'No free server matches this profile yet. One is assigned as soon as capacity frees up.' };
+  }
+  return { word: 'Pending', reason: 'A server is assigned when one matching the profile is free.' };
+}
+
+// Until a server is assigned there's no hardware to show: skeleton lines and
+// one word, never zeros.
 function HardwareCard({ machine }: { machine: MachineDetailModel }) {
   if (!machine.hardware) {
-    const tone = machine.phase === 'Rejected' ? 'danger' : machine.waitingForCapacity ? 'warning' : undefined;
+    const { word, reason } = unassigned(machine);
     return (
       <FlowCard icon={CpuIcon} title="Hardware" testId="fleet-plugin-machine-hardware">
         <div className="flex flex-col gap-2.5" aria-hidden>
@@ -88,40 +108,30 @@ function HardwareCard({ machine }: { machine: MachineDetailModel }) {
           <Skeleton className="h-2.5 w-60 rounded" />
           <Skeleton className="h-2.5 w-36 rounded" />
         </div>
-        <p className="fleet-note flex items-start gap-2 text-sm" data-tone={tone}>
-          <Icon icon={HourglassIcon} size={14} className="mt-0.5 shrink-0" />
-          <span>
-            {machine.waitingForCapacity
-              ? `No free server matches ${machine.machineProfile} in ${machine.machineClass} yet. We'll bind one as soon as capacity frees up; you don't need to do anything.`
-              : 'No hardware is allocated yet. We bind a server when capacity matching the profile is available.'}
-          </span>
-        </p>
+        <span className="text-sm">
+          <Word word={word} reason={reason} />
+        </span>
       </FlowCard>
     );
   }
+  const profile = machine.acceptedProfile;
   return (
-    <FlowCard icon={CpuIcon} title="Allocated hardware" testId="fleet-plugin-machine-hardware">
+    <FlowCard icon={CpuIcon} title="Hardware" testId="fleet-plugin-machine-hardware">
       <Facts>
-        {machine.acceptedProfile && machine.acceptedProfile !== machine.machineProfile && (
-          <Fact label="Accepted profile" mono>{machine.acceptedProfile}</Fact>
+        {profile && profile !== machine.machineProfile && (
+          <Fact label="Profile" mono>
+            <Word word={profile} reason={`Differs from the requested ${machine.machineProfile}`} tone="warning" />
+          </Fact>
         )}
         {machine.hardware.map(({ label, value }) => (
           <Fact key={label} label={label} mono>{value}</Fact>
         ))}
-        <Fact label="Power">
-          {machine.powerObserved ?? 'Not reported'}
-          {machine.hardwareObservedAt && (
-            <span className="text-muted-foreground">
-              {' '}· reported <When date={machine.hardwareObservedAt} />
-            </span>
-          )}
-        </Fact>
-        <Fact label="Installation">{machine.installation ?? 'None yet'}</Fact>
       </Facts>
     </FlowCard>
   );
 }
 
+// The address is the main fact; the network's name follows it.
 function NetworkCard({ machine }: { machine: MachineDetailModel }) {
   return (
     <FlowCard icon={NetworkIcon} title="Network" testId="fleet-plugin-machine-network">
@@ -130,12 +140,28 @@ function NetworkCard({ machine }: { machine: MachineDetailModel }) {
           <Fact label="Interfaces">None requested</Fact>
         ) : (
           machine.interfaces.map((i) => (
-            <Fact key={i.name} label={i.name} mono>
-              {i.network}
-              {i.addresses.length > 0 && (
-                <span className="text-muted-foreground"> · {i.addresses.join(', ')}</span>
-              )}
-            </Fact>
+            <div key={i.name} className="flex min-w-0 flex-col gap-0.5" data-testid={`fleet-plugin-interface-${i.name}`}>
+              <dt className="fleet-fact-label text-muted-foreground flex items-center gap-1.5">
+                {i.ready !== 'True' && (
+                  <Tooltip message="Not ready">
+                    <span className="inline-flex cursor-default" role="img" aria-label="Not ready">
+                      <Dot tone="warning" />
+                    </span>
+                  </Tooltip>
+                )}
+                {i.name}
+              </dt>
+              <dd className="flex min-w-0 flex-col gap-0.5 text-sm">
+                {i.addresses.length > 0 ? (
+                  i.addresses.map((a) => (
+                    <span key={a} className="font-mono text-xs break-all select-all">{a}</span>
+                  ))
+                ) : (
+                  <span className="text-muted-foreground text-xs">No address</span>
+                )}
+                <span className="text-muted-foreground text-xs wrap-break-word">{i.network}</span>
+              </dd>
+            </div>
           ))
         )}
       </Facts>
@@ -144,15 +170,17 @@ function NetworkCard({ machine }: { machine: MachineDetailModel }) {
 }
 
 function Overview({ machine }: { machine: MachineDetailModel }) {
-  const power = machine.phase === 'Ready' && machine.powerObserved ? `powered ${machine.powerObserved.toLowerCase()}` : undefined;
+  const reported = machine.powerObserved && machine.hardwareObservedAt && (
+    <span>
+      Power reported <When date={machine.hardwareObservedAt} />
+    </span>
+  );
   return (
     <section
       className="fleet-band flex flex-col gap-4 rounded-xl px-5 pt-5 pb-6 md:px-7"
       data-testid="fleet-plugin-machine-overview">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <Eyebrow>Request → allocation</Eyebrow>
-        <span className="flex-1" />
-        <MachineStatusChip machine={machine} suffix={power} />
+      <div className="flex justify-end">
+        <MachineStatusChip machine={machine} power tooltip={reported || undefined} />
       </div>
       <div className="fleet-flow">
         <RequestCard machine={machine} />
@@ -174,15 +202,12 @@ const STEP_ICON: Record<MachineStep['state'], LucideIcon | undefined> = {
 
 function Progress({ machine }: { machine: MachineDetailModel }) {
   const steps = machineSteps(machine.conditions);
-  // Conditions beyond the four lifecycle ones, listed as written.
-  const extra = machine.conditions.filter((c) => !steps.some((s) => s.type === c.type));
   return (
     <Card size="sm" data-testid="fleet-plugin-machine-progress">
       <CardContent className="flex flex-col gap-5">
         <span className="flex items-center gap-2">
           <Icon icon={ActivityIcon} size={14} className="text-muted-foreground" />
           <span className="text-sm font-semibold">Progress</span>
-          <span className="text-muted-foreground text-xs">from the machine's conditions</span>
         </span>
         <ol className="fleet-steps">
           {steps.map((step, i) => {
@@ -201,13 +226,14 @@ function Progress({ machine }: { machine: MachineDetailModel }) {
                     <span className="fleet-step-line" data-state={step.state === 'done' ? 'done' : undefined} />
                   )}
                 </span>
-                <span className="text-sm font-medium">{step.label}</span>
-                <span
-                  className={
-                    step.state === 'upcoming' ? 'text-muted-foreground/70 text-xs' : 'text-muted-foreground text-xs'
-                  }>
-                  {step.detail}
-                </span>
+                <span className="text-sm font-medium wrap-break-word">{step.label}</span>
+                {step.detail && (
+                  <Tooltip message={step.detailTooltip} hidden={!step.detailTooltip}>
+                    <span className="text-muted-foreground min-w-0 cursor-default text-xs wrap-break-word">
+                      {step.detail}
+                    </span>
+                  </Tooltip>
+                )}
                 {step.at && (
                   <span className="text-muted-foreground font-mono text-xs">
                     <When date={step.at} />
@@ -217,19 +243,6 @@ function Progress({ machine }: { machine: MachineDetailModel }) {
             );
           })}
         </ol>
-        {extra.length > 0 && (
-          <dl className="border-border flex flex-col gap-1 border-t pt-4 text-xs">
-            {extra.map((c) => (
-              <div key={c.type} className="flex gap-2">
-                <dt className="font-medium">{c.type}</dt>
-                <dd className="text-muted-foreground">
-                  {c.status}
-                  {c.reason && ` · ${c.reason}`}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        )}
       </CardContent>
     </Card>
   );
@@ -248,12 +261,16 @@ export default function MachineDetail() {
       title={machineName ?? 'Machine'}
       crumbs={[{ label: 'Machines', href: base }, { label: machineName ?? '' }]}
       description={
-        machine && (
+        machine &&
+        (machine.deletingSince || machine.createdAt) && (
           <span className="text-muted-foreground text-sm">
-            Bare-metal machine · created <When date={machine.createdAt} />
-            {machine.deletingSince && (
+            {machine.deletingSince ? (
               <>
-                {' '}· releasing since <When date={machine.deletingSince} />
+                Releasing since <When date={machine.deletingSince} />
+              </>
+            ) : (
+              <>
+                Created <When date={machine.createdAt} />
               </>
             )}
           </span>
@@ -267,7 +284,7 @@ export default function MachineDetail() {
             theme="outline"
             size="xs"
             htmlType="button"
-            icon={<Icon icon={LogOutIcon} size={12} />}
+            icon={<Icon icon={RELEASE_ICON} size={12} />}
             onClick={() => setReleasing(true)}>
             Release
           </Button>
@@ -288,6 +305,7 @@ export default function MachineDetail() {
       {!isLoading && error && !notFound && (
         <ErrorOrRestrictedState
           error={error}
+          errorTitle="Couldn't load this machine"
           restrictedMessage="You don't have permission to view this machine."
           onRetry={() => void refetch()}
         />

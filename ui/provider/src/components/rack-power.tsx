@@ -13,15 +13,13 @@ import { useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
-import { classifyFeeds, feedPath, psuFeeds, type FeedClass, type PsuFeed } from '../lib/power-paths';
-import { deviceConnections, viewNames } from '../lib/device-connections';
+import { classifyFeeds, feedPath, FEED_CLASS_WORDS, psuFeeds, type FeedClass, type PsuFeed } from '../lib/power-paths';
+import { viewNames } from '../lib/device-connections';
 import { feedCapacity } from '../lib/power-capacity';
 import { displayLabel, humanName } from '../lib/display-names';
-import { tileSummary } from './connection-parts';
 import { CapacityBar, usePortTelemetry, useTelemetry } from './power-telemetry';
-import { FeedClassBadge, OutletTiles } from './power-feed-path';
+import { OutletTiles } from './power-feed-path';
 import { inventoryHref } from './inventory-location';
-import { ViewLegend } from './inventory-record-layout';
 
 interface Row {
   device: Device;
@@ -59,19 +57,8 @@ function FeedOutlets({ feed, label, inventory }: { feed: PhysicalRecord; label: 
   const telemetry = usePortTelemetry({ kind: 'PowerFeed', namespace: feed.metadata.namespace, name: feed.metadata.name, label }, { continuousA: feedCapacity(feed.spec.supply).continuousA, cablesDenied });
   if (!path.terminations.length) return <small>No outlets recorded</small>;
   return <div className="inventory-redundancy-outlets">
-    <OutletTiles label={`${label} outlets`} tiles={path.terminations} names={names} namespace={feed.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} telemetry={telemetry} owner="PowerFeed" />
-    <small>{path.terminations.length} {path.terminations.length === 1 ? 'outlet' : 'outlets'} · {cablesDenied ? 'cable details unavailable' : tileSummary(path.terminations)} · <Link to={`${inventoryHref('PowerFeed', feed.metadata.namespace, feed.metadata.name)}#power-path`}>Power path</Link></small>
+    <OutletTiles label={`${label} outlets`} tiles={path.terminations} names={names} namespace={feed.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} telemetry={telemetry} />
   </div>;
-}
-
-/** "5 of 8 outlets have a cable recorded", for a PDU's row; undefined for anything without outlets. */
-export function outletUse(device: Device, inventory: Inventory) {
-  const total = (device.spec.components ?? []).filter(component => component.type === 'PowerOutlet').reduce((sum, component) => sum + (component.positions ?? 1), 0);
-  if (!total) return undefined;
-  const connections = deviceConnections(device, inventory);
-  if (connections.cableAccess === 'denied') return 'Cable details unavailable. Outlet use is unknown.';
-  const used = new Set(connections.links.filter(link => link.cable && link.component?.type === 'PowerOutlet').map(link => `${link.componentID}/${link.position}`)).size;
-  return `${used} of ${total} outlets have a cable recorded`;
 }
 
 /**
@@ -96,7 +83,7 @@ export function RackPowerRedundancy({ rack, feeds, devices, inventory }: { rack:
   const style = { '--feed-columns': String(columns.length) } as CSSProperties;
 
   return <section className="inventory-redundancy" aria-label="Feeds and PSUs">
-    <h4>Feeds and PSUs <span className="inventory-count">{table.length} {table.length === 1 ? 'device' : 'devices'}{single ? ` · ${single} on a single feed (recorded)` : ''}</span></h4>
+    <h4>Feeds and PSUs <span className="inventory-count">{table.length} {table.length === 1 ? 'device' : 'devices'}{single ? ` · ${single} on a single feed` : ''}</span></h4>
     {table.length ? <div className="inventory-redundancy-grid" role="table" aria-label="Device PSUs by recorded feed" style={style}>
       <div role="row" className="inventory-redundancy-head">
         <span role="columnheader" className="inventory-redundancy-corner">Device</span>
@@ -106,28 +93,24 @@ export function RackPowerRedundancy({ rack, feeds, devices, inventory }: { rack:
             <small>{column.feed.spec.supply ? `${column.feed.spec.supply.type} · ${column.feed.spec.supply.voltageV ?? '?'} V · ${column.feed.spec.supply.currentA ?? '?'} A` : 'Supply not recorded'}{column.feed.spec.rackRef?.name !== rack.metadata.name ? ' · names another rack' : ''}</small>
             <CapacityBar feed={column.feed} reading={source.read({ kind: 'PowerFeed', namespace: column.feed.metadata.namespace, name: column.feed.metadata.name })} now={now} source={source} compact />
             <FeedOutlets feed={column.feed} label={column.label} inventory={inventory} />
-          </> : <><strong><span aria-hidden="true">? </span>{column.label}</strong><small>Path not fully recorded</small></>}
+          </> : <strong>{column.label}</strong>}
         </div>)}
       </div>
-      {table.map(row => <div role="row" key={row.device.metadata.name} className="inventory-redundancy-row" data-class={row.class}>
+      {/* The columns show which feeds each PSU reaches; a single-feed row is marked by colour, with the words as tooltip and accessible text. */}
+      {table.map(row => <div role="row" key={row.device.metadata.name} className="inventory-redundancy-row" data-class={row.class} title={row.class === 'single' ? FEED_CLASS_WORDS.single : undefined}>
         <div role="rowheader" className="inventory-redundancy-device">
           <Link to={inventoryHref('Device', row.device.metadata.namespace, row.device.metadata.name)}>{displayLabel(row.device)}</Link>
-          <FeedClassBadge value={row.class} />
-          {outletUse(row.device, inventory) && <small className="inventory-redundancy-outlet-use">{outletUse(row.device, inventory)}</small>}
+          <span className="inventory-visually-hidden">{FEED_CLASS_WORDS[row.class]}</span>
         </div>
         {columns.map(column => {
           const psus = inColumn(row, column);
           return <div role="cell" key={column.key} className="inventory-redundancy-cell" data-empty={psus.length ? undefined : ''}>
             <span className="inventory-redundancy-cell-feed">{column.label}</span>
-            {psus.length ? <ul>{psus.map(psu => <li key={psu.componentID}><strong>{psu.name}</strong> <small>{psuText(psu)}</small></li>)}</ul>
+            {psus.length ? <ul>{psus.map(psu => <li key={psu.componentID}><strong>{psu.name}</strong>{psu.feed && <> <small>{psuText(psu)}</small></>}</li>)}</ul>
               : <span className="inventory-muted"><span aria-hidden="true">–</span><span className="inventory-visually-hidden">No PSU</span></span>}
           </div>;
         })}
       </div>)}
     </div> : <p className="inventory-muted">No device in this rack records a power inlet.</p>}
-    <ViewLegend>
-      <span aria-hidden="true">⚑ </span>Single feed (recorded): every PSU reaches the same feed in the records. <span aria-hidden="true">⇉ </span>Separate feeds (recorded). <span aria-hidden="true">? </span>Feed unknown: the path is not fully recorded.
-      {' '}Separate feeds in records do not prove independent supply; nothing here is verified.
-    </ViewLegend>
   </section>;
 }

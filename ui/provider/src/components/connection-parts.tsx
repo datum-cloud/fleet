@@ -1,9 +1,9 @@
-// Small pieces shared by the connection view (diagram and table) and the port
-// faceplate: state words and glyphs, condensed Cable and peer names, traces.
+// Small pieces shared by the component table and the port faceplate: state
+// words and glyphs, condensed Cable and peer names, traces.
 
 import { Link } from 'react-router';
 import {
-  linkStateGlyph, linkStateWords, localLabel, peerLabel, tileCounts,
+  linkStateGlyph, linkStateWords, peerLabel, tileCounts,
   type ConnectionLink, type LinkState, type PeerEnd, type PortTile, type TraceHop, type ViewNames,
 } from '../lib/device-connections';
 
@@ -36,12 +36,14 @@ export function tileSummary(tiles: PortTile[]) {
   return STATES.filter(state => counts[state]).map(state => `${counts[state]} ${countWords[state]}`).join(' · ');
 }
 
-export function portsWord(count: number) {
-  return `${count} ${count === 1 ? 'port' : 'ports'}`;
+/** The device page's count line: like tileSummary, with the disagreement count marked. */
+export function TileSummary({ tiles }: { tiles: PortTile[] }) {
+  const counts = tileCounts(tiles);
+  return <>{STATES.filter(state => counts[state]).map((state, index) => <span key={state} data-state={state}>{index > 0 && ' · '}{counts[state]} {countWords[state]}</span>)}</>;
 }
 
-export function linksWord(count: number) {
-  return `${count} ${count === 1 ? 'link' : 'links'}`;
+export function portsWord(count: number) {
+  return `${count} ${count === 1 ? 'port' : 'ports'}`;
 }
 
 export function cableText(link: ConnectionLink) {
@@ -52,20 +54,20 @@ export function cableText(link: ConnectionLink) {
 
 export const peerText = (peer: PeerEnd | undefined, names: ViewNames) => peer ? peerLabel(peer, peer.access === 'denied' ? undefined : names.peer(peer)) : 'Unknown';
 
-export function PeerTarget({ peer, namespace, href, names, roving, label }: { peer?: PeerEnd; namespace?: string; href: Href; names: ViewNames; roving?: boolean; label?: string }) {
+export function PeerTarget({ peer, namespace, href, names }: { peer?: PeerEnd; namespace?: string; href: Href; names: ViewNames }) {
   if (!peer) return <span>Unknown</span>;
   if (peer.access !== 'readable') return <span>{peerText(peer, names)}</span>;
-  return <Link to={href(peer.kind, namespace, peer.name)} data-connection-roving={roving ? '' : undefined} aria-label={label}>{peerText(peer, names)}</Link>;
+  return <Link to={href(peer.kind, namespace, peer.name)}>{peerText(peer, names)}</Link>;
 }
 
-export function Trace({ hops, namespace, href, names, roving }: { hops: TraceHop[]; namespace?: string; href: Href; names: ViewNames; roving?: boolean }) {
+export function Trace({ hops, namespace, href, names }: { hops: TraceHop[]; namespace?: string; href: Href; names: ViewNames }) {
   if (!hops.length) return null;
   return (
     <ol className="inventory-connection-trace" aria-label="Recorded path beyond the peer">
       {hops.map((hop, index) => (
         <li key={index}>
           <Glyph state={hop.state} /> via internal path to {hop.via.componentName ?? hop.via.componentID}{hop.via.position > 1 ? ` · position ${hop.via.position}` : ''}
-          {hop.cable ? <>, then <Link to={href('Cable', namespace, hop.cable.name)} data-connection-roving={roving ? '' : undefined}>{names.cable(hop.cable)}</Link> to <PeerTarget peer={hop.peer} namespace={namespace} href={href} names={names} roving={roving} /></> : `: ${linkStateWords[hop.state].toLowerCase()}`}
+          {hop.cable ? <>, then <Link to={href('Cable', namespace, hop.cable.name)}>{names.cable(hop.cable)}</Link> to <PeerTarget peer={hop.peer} namespace={namespace} href={href} names={names} /></> : `: ${linkStateWords[hop.state].toLowerCase()}`}
           {hop.reasons.length > 0 && <small>{hop.reasons.join(' ')}</small>}
         </li>
       ))}
@@ -75,15 +77,10 @@ export function Trace({ hops, namespace, href, names, roving }: { hops: TraceHop
 
 /** Only what adds to the peer's name: never the bare kind, which the group already says. */
 export function peerDetail(link: ConnectionLink) {
-  if (link.state === 'none') return 'Unknown · not free';
+  if (link.state === 'none') return 'No cable recorded';
   if (link.state === 'catalog') return 'Not recorded';
   if (!link.peer) return undefined;
   if (link.peer.access === 'denied') return 'You cannot read this peer';
   if (link.peer.access === 'missing') return `${link.peer.kind} record not found`;
   return link.peer.supply ? `Recorded rating ${link.peer.supply}` : undefined;
-}
-
-export function linkLabel(link: ConnectionLink, names: ViewNames) {
-  const cable = link.cable ? ` via cable ${names.cable(link.cable)}, ${cableText(link)}` : '';
-  return `${localLabel(link)} to ${link.peer ? peerText(link.peer, names) : 'unknown peer'}${cable}: ${linkStateWords[link.state]}`;
 }

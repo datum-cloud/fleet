@@ -27,12 +27,25 @@ const pduStrip = () => screen.getByRole('region', { name: 'PDU a01 (rear left) o
 const outlet = (region: HTMLElement, name: RegExp) => within(region).getByRole('button', { name });
 
 describe('PowerFeed power path', () => {
-  it('reads upstream → feed → PDU strip → device PSUs, with the rating formula and the continuous limit', () => {
+  it('reads upstream → feed → PDU strip → device PSUs, with the rating formula and the continuous limit in the tooltip', () => {
     open(FEED_A, 'normal');
     const stages = within(path()).getAllByRole('listitem').filter(item => item.parentElement === path());
     expect(stages.map(stage => stage.querySelector('h4')?.textContent)).toEqual(['Upstream', 'Feed', 'PDUs 1', 'Devices 4']);
-    expect(screen.getByText(/208 V × 30 A = 6,240 VA/)).toBeInTheDocument();
-    expect(screen.getByText(/4\.99 kVA continuous \(80%\)/)).toBeInTheDocument();
+    // The capacity is "706 VA · 14%"; the rating, formula and age are its tooltip, not a paragraph.
+    const capacity = path().querySelector('.inventory-capacity-text')!;
+    expect(capacity.querySelector('[aria-hidden="true"]')).toHaveTextContent(/^706 VA · 14%$/);
+    expect(capacity).toHaveAttribute('title', expect.stringMatching(/6\.24 kVA rated · 4\.99 kVA continuous \(80%\) · 208 V × 30 A = 6,240 VA/));
+    expect(path().querySelector('.inventory-capacity-formula')).toBeNull();
+    expect(path()).not.toHaveTextContent(/The line marks/);
+    // A few upstream sources sit in the Upstream stage; there is no tab for them.
+    const upstream = path().querySelector('[data-stage="upstream"]') as HTMLElement;
+    expect(within(upstream).getByRole('listitem')).toHaveAttribute('title', expect.stringMatching(/^example-/));
+    expect(screen.queryByRole('tab', { name: /^Upstream sources/ })).toBeNull();
+    // The PDU's own face, with no rack-face caveat and no "Fed by" line: the tiles show the link.
+    expect(within(pduStrip()).getByText(/^Rear$/)).toBeInTheDocument();
+    expect(pduStrip()).not.toHaveTextContent(/rack face unknown|Fed by/i);
+    // The fitted drawing never grows wider than its column, so a phone shows every outlet.
+    expect((pduStrip().querySelector('.inventory-chassis[data-fit]') as HTMLElement).getAttribute('style')).toMatch(/min-width: min\(100%, [\d.]+px\)/);
     expect(within(pduStrip()).getAllByRole('button').filter(item => item.hasAttribute('data-tile'))).toHaveLength(9);
     // Outlet tiles reuse the shared port tile: shape and record state.
     const o1 = outlet(pduStrip(), /^Outlet 1: Cable recorded/);
@@ -41,24 +54,37 @@ describe('PowerFeed power path', () => {
     expect(outlet(pduStrip(), /^Outlet 6: No cable recorded/)).toHaveAttribute('data-state', 'none');
     const devices = path().querySelector('[data-stage="devices"]') as HTMLElement;
     expect(within(devices).getAllByRole('link', { name: 'Compute a01-01' })).toHaveLength(1);
-    expect(within(devices).getByRole('link', { name: 'Compute a01-02' }).closest('li')).toHaveTextContent('Feed unknown for some PSUs');
-    expect(screen.getByText(/separate feeds in records do not prove independent supply/)).toBeInTheDocument();
+    // One dense table, one row per PSU. Single or unknown feeds are an amber edge with the words as tooltip and accessible text; separate feeds carry no mark.
+    const table = within(devices).getByRole('table', { name: 'Devices on this feed' });
+    expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Device', 'PSU', 'Via', 'Draw']);
+    const partial = within(table).getByRole('link', { name: 'Compute a01-02' }).closest('td')!;
+    expect(partial).toHaveAttribute('data-class', 'partial');
+    expect(partial).toHaveAttribute('title', 'Feed unknown for some PSUs');
+    expect(partial).toHaveTextContent('Feed unknown for some PSUs');
+    const separate = within(table).getByRole('link', { name: 'Compute a01-01' }).closest('td')!;
+    expect(separate).toHaveAttribute('data-class', 'separate');
+    expect(separate).not.toHaveAttribute('title');
+    expect(devices.querySelector('.inventory-feed-class')).toBeNull();
+    const psu1 = within(table).getAllByRole('row').find(row => row.textContent?.startsWith('Compute a01-01PSU 1'))!;
+    expect(within(psu1).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['Compute a01-01', 'PSU 1', 'Outlet 1 on PDU a01 (rear left)', '182 W182 W · 40 s ago']);
+    expect(screen.queryByText(/separate feeds in records do not prove independent supply/i)).toBeNull();
+    expect(path()).not.toHaveTextContent(/redundant|verified/i);
   });
 
   it('fills the capacity bar and tints outlets from telemetry, with value, unit and age in accessible names', () => {
     open(FEED_A, 'normal');
-    expect(screen.getByText(/^706 VA of 6\.24 kVA rated · 14% of continuous limit/)).toBeInTheDocument();
+    expect(screen.getByText(/^706 VA of 6\.24 kVA rated · 14% of continuous limit/)).toHaveClass('inventory-visually-hidden');
     // No row of text: the peer and Cable ride in the tile's name, after the state.
     const o1 = outlet(pduStrip(), /^Outlet 1: Cable recorded, to Compute a01-01 · PSU 1, via Power a01-01 PSU 1; telemetry 0\.92 A · 182 W · 40 s ago$/);
     expect(o1.querySelector('.inventory-port-load')).toHaveAttribute('data-tint', 'low');
-    // Numbers are in the card only; the group says when it was updated, once.
+    // Numbers are in the card only. Every reading is fresh, so no group repeats when it was updated: ages are in the tiles' names.
     expect(pduStrip()).not.toHaveTextContent(/0\.92 A|182 W/);
-    expect(within(pduStrip()).getAllByText('Updated 40 s ago')).toHaveLength(1);
+    expect(path().querySelector('.inventory-power-updated')).toBeNull();
     fireEvent.click(o1);
     expect(within(screen.getByRole('dialog', { name: 'Outlet 1 details' })).getByText('Current').nextElementSibling).toHaveTextContent('0.92 A40 s ago');
   });
 
-  it('opens an outlet card with record state, Cable, peer, telemetry, a sparkline and no health', () => {
+  it('opens an outlet card with record state, Cable, peer, telemetry, a sparkline and no health section', () => {
     open(FEED_A, 'normal');
     fireEvent.click(outlet(pduStrip(), /^Outlet 1:/));
     const card = screen.getByRole('dialog', { name: 'Outlet 1 details' });
@@ -69,13 +95,11 @@ describe('PowerFeed power path', () => {
     expect(within(telemetry).getByText('Power').nextElementSibling).toHaveTextContent('182 W40 s ago');
     expect(within(telemetry).getByText('Output').nextElementSibling).toHaveTextContent('On40 s ago');
     expect(within(telemetry).getByRole('img', { name: /Power, last 24 hours: low \d+ W, high \d+ W/ })).toBeInTheDocument();
-    expect(telemetry).toHaveTextContent('Observed only; verifies nothing and changes no record.');
-    expect(within(card).getByText('Health').nextElementSibling).toHaveTextContent('No health reported');
-    // The collector and its window are behind More, not in the Telemetry section.
+    expect(card).not.toHaveTextContent(/Observed only|verifies nothing|No health reported/);
+    expect(within(card).queryByText('Health')).toBeNull();
+    // The collector and its window are the Telemetry section's tooltip, not text.
     expect(card).not.toHaveTextContent(/PDU collector/);
-    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
-    expect(within(card).getByText('Telemetry source').nextElementSibling).toHaveTextContent(/^PDU collector \(synthetic-pdu-collector, synthetic\) · observed .* UTC · fresh for 5 min$/);
-    expect(telemetry).not.toHaveTextContent(/PDU collector/);
+    expect(telemetry.parentElement).toHaveAttribute('title', expect.stringMatching(/^PDU collector \(synthetic-pdu-collector, synthetic\) · observed .* UTC · fresh for 5 min$/));
   });
 
   it('greys and labels stale values, never green', () => {
@@ -136,13 +160,15 @@ describe('without a telemetry source (normal builds)', () => {
     fireEvent.click(outlet(pduStrip(), /^Outlet 1:/));
     const card = screen.getByRole('dialog');
     expect(card).toHaveTextContent('TelemetryNot reported · No telemetry source configured');
-    expect(within(card).getByText('Health').nextElementSibling).toHaveTextContent('No health reported');
-    expect(screen.getByText(/Telemetry: No telemetry source configured/)).toBeInTheDocument();
+    expect(within(card).queryByText('Health')).toBeNull();
+    // No page legend repeats the telemetry source.
+    expect(screen.queryByText(/Telemetry: No telemetry source configured/)).toBeNull();
   });
 
-  it('shows "Power draw: Not reported" on the device page and the PSU card', () => {
+  it('hides the draw fact on the device page when nothing reports one, and says Not reported on the PSU card', () => {
     open(SERVER);
-    expect(screen.getByText('Power draw: Not reported')).toBeInTheDocument();
+    // An empty fact is hidden in the header strip; nothing reads as zero or verified.
+    expect(screen.queryByText(/Power draw|Draws/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^PSU 1: Cable recorded/ }));
     expect(screen.getByRole('dialog', { name: 'PSU 1 details' })).toHaveTextContent('TelemetryNot reported · No telemetry source configured');
   });
@@ -209,7 +235,7 @@ describe('rack Power tab redundancy view', () => {
     const cells = within(rowFor('Compute a01-01')).getAllByRole('cell');
     expect(cells[0]).toHaveTextContent('PSU 1 via PDU a01 (rear left) · Outlet 1');
     expect(cells[1]).toHaveTextContent('PSU 2 direct');
-    expect(screen.getByText(/Separate feeds in records do not prove independent supply/)).toBeInTheDocument();
+    expect(screen.queryByText(/Separate feeds in records do not prove independent supply/)).toBeNull();
     expect(screen.getByRole('region', { name: 'Feeds and PSUs' })).not.toHaveTextContent(/redundant|verified redundan/i);
     // Each feed has a compact capacity bar.
     expect(grid.querySelectorAll('.inventory-capacity[data-compact]')).toHaveLength(2);
@@ -219,13 +245,29 @@ describe('rack Power tab redundancy view', () => {
 describe('device PSU telemetry', () => {
   it('shows per-PSU input power and observed status, and a draw summary', () => {
     open(SERVER, 'normal');
-    expect(screen.getByText(/^Draws ~358 W · 40 s ago/)).toBeInTheDocument();
+    // The draw is one short fact in the header's identity strip; the full draw text and age are its tooltip and accessible text.
+    const draw = screen.getByTitle('Draws ~358 W · 40 s ago');
+    expect(draw.querySelector('.inventory-visually-hidden')).toHaveTextContent(/^Draws ~358 W · 40 s ago$/);
+    expect(draw).not.toHaveTextContent(/verified/);
+    expect(draw).toHaveTextContent(/^358 W/);
+    expect(draw.closest('dl')).toHaveClass('inventory-fact-strip');
     const psu = screen.getByRole('button', { name: /^PSU 1: Cable recorded/ });
     expect(psu).toHaveAccessibleName(/telemetry 182 W · 40 s ago, status OK, 40 s ago/);
     fireEvent.click(psu);
     const card = screen.getByRole('dialog', { name: 'PSU 1 details' });
     expect(within(card).getByText('Input power').nextElementSibling).toHaveTextContent('182 W40 s ago');
-    expect(card.querySelector('[data-health="ok"]')).toHaveTextContent('Observed OK · 40 s ago');
+    // OK is plain text: no glyph and no colour, since an observation verifies nothing.
+    expect(card.querySelector('[data-health="ok"]')).toHaveTextContent(/^OK · 40 s ago$/);
+    expect(card.querySelector('[data-health="ok"] [aria-hidden="true"]')).toBeNull();
+  });
+
+  it('gives a reporting PSU a neutral load bar, never a red one: it has no limit to scale against', () => {
+    open(SERVER, 'normal');
+    for (const name of [/^PSU 1: Cable recorded/, /^PSU 2: Cable recorded/]) {
+      const load = screen.getByRole('button', { name }).querySelector('.inventory-port-load');
+      expect(load).toHaveAttribute('data-tint', 'reported');
+    }
+    expect(document.querySelector('.inventory-port-load[data-tint="mismatch"], .inventory-port-load[data-tint="over"]')).toBeNull();
   });
 
   it('marks a faulted PSU with a glyph and words', () => {

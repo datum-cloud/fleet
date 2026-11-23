@@ -65,7 +65,7 @@ it.each(['create', 'label', 'location'].flatMap(mode => ['review', 'read', 'disp
     await waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
     await act(async () => release!());
     expect(opener).not.toBeInTheDocument();
-    expect(screen.queryByText(/Reported location saved|Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Location saved|Display name saved\.|Facility created\./)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(mode === 'location' ? 'Correction reason' : 'Display name')).not.toBeInTheDocument();
     expect(fetch.mock.calls.filter(([url, init]) => !url.includes('selfsubjectaccessreviews') && init.method !== 'GET')).toHaveLength(stage === 'dispatch' ? 1 : 0);
     return;
@@ -79,7 +79,7 @@ it.each(['create', 'label', 'location'].flatMap(mode => ['review', 'read', 'disp
   expect(fetch).toHaveBeenCalledTimes(requests);
   expect(loader).toHaveBeenCalledTimes(1);
   await act(async () => release!());
-  await screen.findByText(mode === 'location' ? /Reported location saved/ : mode === 'label' ? 'Display name saved.' : 'Facility record created.');
+  await screen.findByText(mode === 'location' ? /Location saved/ : mode === 'label' ? 'Display name saved.' : 'Facility created.');
   const writes = fetch.mock.calls.filter(([url, init]) => !url.includes('selfsubjectaccessreviews') && init.method !== 'GET');
   expect(writes).toHaveLength(1);
   if (mode !== 'create') expect(JSON.parse(writes[0][1].body as string).slice(0, 2)).toEqual([

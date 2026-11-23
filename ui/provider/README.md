@@ -32,15 +32,14 @@ Operations in the navigation. The page has four tabs:
   links never resolve records or change request scope.
   Facilities lead to racks and installation plans; claims lead to all registered
   devices; cable endpoints lead to devices or feeds. Identity, typed components,
-  internal paths, external service references, legacy peers, and creation times
-  remain available in URL-held tabs and an "About this record" disclosure (see the
+  internal paths, external service references, network interfaces, and record
+  identity remain available in URL-held tabs (see the
   [page design rules](../../docs/development/staff-inventory-ui.md#page-design-rules)).
   Device detail adds a connection view of Cable records
   (diagram and list), not live link state; see the
   [connection view](../../docs/development/staff-inventory-ui.md#device-connection-view-implemented).
   Missing claims do not hide hardware, and historical
-  registrations do not establish an active device. The original `inventory/:namespace/:claim`
-  route remains available for existing `default` links. Authorized manual management uses
+  registrations do not establish an active device. Authorized manual management uses
   focused Datum dialogs for Facility/Rack creation, display-name editing, and
   separate reported-location correction. Device/Cable/installation-plan creation
   uses `inventory/create/device`, `inventory/create/cable`, and
@@ -213,8 +212,7 @@ Inventory uses four route-linked Datum underline groups: Equipment (Devices,
 Cables, Power feeds), Locations (Operational sites, Facilities, Racks), Installation
 plans, and Hardware catalog (Manufacturers, Device types). Only the selected
 group's secondary navigation is shown. Installation plans opens the existing
-Claims & registrations directory: legacy slots and registrations are not all
-installation plans, and claims do not allocate capacity. Site membership and
+Claims & registrations directory; plans do not allocate capacity. Site membership and
 Facility premises remain distinct. The default is Equipment / Devices.
 Search/filter/refresh/Create stay in the page toolbar. Existing query bookmarks,
 detail and task routes work with group/category breadcrumbs; Back/Forward restores

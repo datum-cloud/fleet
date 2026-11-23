@@ -28,6 +28,8 @@ export interface MachineCapacity {
   name: string;
   registrationProtected?: boolean;
   namespace?: string;
+  /** The backing Device's record name, in the capacity's namespace. */
+  device?: string;
   pool?: string;
   allocationPolicy: string;
   cpu?: string;
@@ -50,6 +52,23 @@ function cpuSummary(cpu: NonNullable<NonNullable<RawMachineCapacity['status']>['
   return `${cpu.cores} cores${threads}${arch}`;
 }
 
+export type CapacityState = 'Available' | 'Allocated' | 'Disabled' | 'Unhealthy' | 'Unavailable' | 'Unknown';
+
+/**
+ * One word for what an operator scans for. Healthy=False is a problem even on
+ * Disabled capacity; Disabled capacity is otherwise expected to be idle.
+ * Enabled capacity reads Available only when Fleet reports all three
+ * conditions True; anything unreported reads Unknown, never free.
+ */
+export function capacityState(capacity: Pick<MachineCapacity, 'allocationPolicy' | 'prepared' | 'healthy' | 'available'>): CapacityState {
+  const { prepared, healthy, available } = capacity;
+  if (healthy.state === 'False') return 'Unhealthy';
+  if (capacity.allocationPolicy === 'Disabled') return 'Disabled';
+  if (available.state === 'False') return available.reason === 'Allocated' ? 'Allocated' : 'Unavailable';
+  if (available.state === 'True' && prepared.state === 'True' && healthy.state === 'True') return 'Available';
+  return 'Unknown';
+}
+
 export function toMachineCapacity(raw: RawMachineCapacity): MachineCapacity {
   const conditions = raw.status?.conditions ?? [];
   const hw = raw.status?.hardware;
@@ -57,6 +76,7 @@ export function toMachineCapacity(raw: RawMachineCapacity): MachineCapacity {
     name: raw.metadata.name,
     ...(raw.metadata.annotations?.['fleet.datumapis.com/registration-operation'] && { registrationProtected: true }),
     namespace: raw.metadata.namespace,
+    device: raw.spec.deviceRef?.name || undefined,
     pool: raw.metadata.labels?.[CAPACITY_POOL_LABEL],
     allocationPolicy: raw.spec.allocationPolicy ?? 'Disabled',
     cpu: cpuSummary(hw?.cpu),
@@ -92,8 +112,7 @@ export interface MachineClass {
   source?: string;
   allowedProfiles: string[];
   customProfiles: boolean;
-  /** "default / central-metal": the MachineCapacities namespace and capacity pool. */
-  capacity?: string;
+  /** The MachineCapacities namespace and the capacity pool label value the class selects. */
   capacityNamespace?: string;
   capacityPool?: string;
   powerControl: boolean;
@@ -110,7 +129,6 @@ export function toMachineClass(raw: RawMachineClass): MachineClass {
     source: spec.source && `${spec.source.project}/${spec.source.name}`,
     allowedProfiles: (spec.profilePolicy?.allowedProfiles ?? []).map((p) => p.name),
     customProfiles: !!spec.profilePolicy?.customProfiles?.enabled,
-    capacity: capacities && (pool ? `${capacities.namespace} / ${pool}` : capacities.namespace),
     capacityNamespace: capacities?.namespace,
     capacityPool: pool,
     powerControl: !!spec.access?.powerControl,

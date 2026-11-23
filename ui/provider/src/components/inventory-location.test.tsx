@@ -7,12 +7,8 @@ import { toInventory } from '../inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
 
 const rack = fixturePhysicalRecords[1];
-/** Units shown as unverified one by one, plus the units each collapsed run stands for. */
-function unverifiedUnits(elevation: HTMLElement) {
-  const single = within(elevation).queryAllByLabelText('Occupancy unverified').length;
-  const runs = within(elevation).queryAllByRole('button', { name: /units · no placement recorded/ }).reduce((sum, button) => sum + Number(/ · (\d+) units · /.exec(button.getAttribute('aria-label') ?? '')![1]), 0);
-  return single + runs;
-}
+/** Units drawn as unverified: every unit without a placement. */
+const unverifiedUnits = (elevation: HTMLElement) => within(elevation).queryAllByLabelText('Occupancy unverified').length;
 it.each([true, false, undefined])('draws reported Device geometry with explicit depth %s', fullDepth => {
   const device = { ...fixturePhysicalDevices[0], spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: { revision: 1 as const, observedAt: '2026-11-21T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: rack.metadata.name }, position: 12, height: 4, face: 'rear' as const, fullDepth } } };
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={toInventory([fixturePhysicalClaims[0]], [device], [rack])} /></MemoryRouter></QueryClientProvider>);
@@ -47,7 +43,7 @@ it.each([
   expect(links).toHaveLength(1);
   expect(links[0]).toHaveAccessibleName(new RegExp(`U${position}–U${position + height - 1}.*${height}U`));
   expect(links[0].parentElement).toHaveStyle({ gridRow: row, gridColumn: '2' });
-  // Every unit without a placement is unverified: shown one by one, or counted in a collapsed run.
+  // Every unit without a placement is drawn, and unverified.
   expect(unverifiedUnits(elevation)).toBe(42 - height);
   // The registered Device records full depth, so the far face shows the
   // chassis rear, muted, over the same units.
@@ -68,13 +64,16 @@ it.each([1, 2])('keeps overlapping %iU plans identifiable with height-aware labe
   expect(links[0].parentElement).toHaveStyle({ gridColumn: '2', gridRow: `${34 - height} / span ${height}` });
   expect(links[1].parentElement).toHaveStyle({ gridColumn: '3', gridRow: `${35 - 2 * height} / span ${height}` });
   for (const link of links) {
-    expect(within(link).getByText('!')).toHaveClass('inventory-rack-overlap');
+    // Overlap is colour coded, not marked; the reason is the tooltip and accessible name.
+    expect(link).toHaveAttribute('data-attention', 'conflict');
+    expect(link.getAttribute('title')).toMatch(/records disagree/);
+    expect(within(link).queryByText('!')).toBeNull();
     // No Device is registered, so depth is unknown and labelled as such.
-    expect(link.querySelector('small')).toHaveTextContent(height > 1 ? /U\d+–U\d+ · 2U · depth unknown/ : /^depth unknown$/);
+    expect(link.querySelector('small')).toBeNull();
+    expect(link.getAttribute('title')).toMatch(height > 1 ? /U\d+–U\d+ · 2U · .*Depth unknown/ : /Depth unknown/);
     expect(link).toHaveAccessibleName(/Depth unknown · records disagree/);
     expect(link.querySelector('.inventory-rack-plan-name')).toHaveTextContent(/Plan/);
   }
-  expect(screen.getByText(/! means records disagree: placements overlap on the same face/)).toBeInTheDocument();
 });
 it('renders recorded front/rear plans, never free units or occupancy percentages', () => {
   show();
@@ -95,24 +94,25 @@ it.each([
   show(placement);
   expect(within(screen.getByRole('list', { name: 'front recorded placements' })).queryByRole('link')).not.toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Rack issues' })).getByRole('link', { name: 'Server installation · U12' })).toHaveAttribute('href', expect.stringContaining('selectedKind=DeviceClaim&selected=rack-01-u12'));
-  fireEvent.click(screen.getByRole('link', { name: /^Equipment · / }));
-  const section = screen.getByRole('heading', { name: /Unpositioned equipment/ }).parentElement!;
-  expect(within(section).getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Equipment/ }));
+  // One table: equipment without a usable position reads "No position" and sorts after positioned rows.
+  const row = within(screen.getByRole('table', { name: 'Rack equipment' })).getByRole('link', { name: 'Example compute server' }).closest('tr')!;
+  expect(within(row).getAllByRole('cell')[0]).toHaveTextContent(/^No position$/);
 });
 it('separates non-unit mounts rather than consuming rack units', () => {
   show({ scope: 'NonRackUnitMount', rackRef: { name: 'rack-01' }, mount: 'left-rail' });
   expect(within(screen.getByRole('list', { name: 'front recorded placements' })).queryByRole('link')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('link', { name: /^Equipment · / }));
-  const section = screen.getByRole('heading', { name: /Non-racked mounts/ }).parentElement!;
-  expect(within(section).getByText(/Mount: left-rail/)).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: /^Equipment/ }));
+  const table = screen.getByRole('table', { name: 'Rack equipment' });
+  expect(within(table).getAllByRole('row')[1].querySelector('td')).toHaveTextContent(/^left-rail$/);
 });
 it('does not disguise denied installation collections as empty geometry', () => {
   show(undefined, { DeviceClaim: { status: 403 } });
   expect(screen.getByText(/Installation details unavailable. Rack positions cannot be shown/)).toBeInTheDocument();
   expect(screen.queryByRole('list', { name: 'front recorded placements' })).not.toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Equipment · unavailable' })).toBeInTheDocument();
+  expect(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: 'Equipment ?' })).toBeInTheDocument();
   expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('link', { name: 'Equipment · unavailable' }));
+  fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: 'Equipment ?' }));
   expect(screen.getByText(/This is not an empty rack/)).toBeInTheDocument();
   expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
 });

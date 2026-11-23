@@ -2,12 +2,14 @@
 //   - every value shows its age;
 //   - stale values are greyed out and labelled stale, never green;
 //   - a missing value is "Not reported", never 0;
-//   - over-threshold values get a glyph as well as colour;
+//   - over-threshold values get a glyph as well as colour; a value with no
+//     limit to scale against gets a neutral bar, never a red one;
 //   - observed load where no Cable is recorded says "observed and recorded
 //     disagree" and links to the records, which it never changes;
 //   - sparklines appear only in cards;
 //   - accessible names carry the value, unit and age.
-// Health is shown only from an observation; otherwise "No health reported".
+// Health is shown only from an observation; otherwise the card has no Health
+// section. OK is neutral text; only Fault and Absent are coloured.
 
 import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
@@ -148,27 +150,30 @@ export function TelemetrySection({ reading, source, now, kind, mismatch }: { rea
       {history && <Sparkline series={history.series} unit={history.unit} label={history.label} stale={(power ?? current)?.state === 'stale'} />}
     </>}
     {mismatch && <MismatchNote context={mismatch} />}
-    {any && <p className="inventory-port-card-meta">Observed only; verifies nothing and changes no record.</p>}
   </div>;
 }
 
-const HEALTH_GLYPH: Record<HealthValue['state'], string> = { OK: '▲', Fault: '✕', Absent: '▼' };
+const HEALTH_GLYPH: Partial<Record<HealthValue['state'], string>> = { Fault: '✕', Absent: '▼' };
 
-/** Health from an observation, or undefined so the card keeps "No health reported". */
+/** Health from an observation, or undefined so the card shows no Health section. */
 export function healthNode(reading: PowerTelemetry | undefined, now: number): ReactNode | undefined {
   const health = valid(reading?.health, now);
   if (!health) return undefined;
   const stale = health.state === 'stale';
   return <p className="inventory-telemetry-health" data-health={stale ? 'stale' : health.value.state.toLowerCase()}>
-    <span aria-hidden="true">{stale ? '◷' : HEALTH_GLYPH[health.value.state]} </span>
-    {stale ? `Stale: last ${health.value.state}` : `Observed ${health.value.state}`}{health.value.reason ? ` · ${health.value.reason}` : ''} · {formatAge(health.ageSeconds)}
-    <small>Observed only</small>
+    {(stale || HEALTH_GLYPH[health.value.state]) && <span aria-hidden="true">{stale ? '◷' : HEALTH_GLYPH[health.value.state]} </span>}
+    {stale ? `Stale: last ${health.value.state}` : health.value.state}{health.value.reason ? ` · ${health.value.reason}` : ''} · {formatAge(health.ageSeconds)}
   </p>;
 }
 
 // ---- Tiles ----
 
-/** A load tint from current against a continuous limit (the feed's), with marks. */
+/**
+ * A load tint from current against a continuous limit (the feed's), with
+ * marks. With no limit to scale against (a Device's PSUs), a positive reading
+ * is a neutral "reported" bar: red is kept for over the limit and for
+ * observed-and-recorded disagreement.
+ */
 export function tileLoad(reading: PowerTelemetry | undefined, now: number, continuousA: number | undefined, mismatch: boolean): TileLoad | undefined {
   const current = valid(reading?.currentA, now);
   const power = valid(reading?.powerW, now);
@@ -178,10 +183,10 @@ export function tileLoad(reading: PowerTelemetry | undefined, now: number, conti
   const fault = health?.state === 'fresh' && health.value.state === 'Fault';
   if (!value && !state && !health) return undefined;
   if ([value, state, health].some(item => item?.state === 'stale')) return { tint: 'stale', fraction: 1, mark: '◷', markKind: 'stale' };
-  if (mismatch) return { tint: 'observed', fraction: 1, mark: '≠', markKind: 'mismatch' };
+  if (mismatch) return { tint: 'mismatch', fraction: 1, mark: '≠', markKind: 'mismatch' };
   const faultMark = fault ? { mark: '✕', markKind: 'fault' as const } : {};
   if (state?.value === 'Off') return { tint: 'off', fraction: 0, ...faultMark };
-  if (!current || !continuousA) return value ? { tint: value.value > 0 ? 'observed' : 'idle', fraction: value.value > 0 ? 1 : 0, ...faultMark } : fault ? { tint: 'idle', fraction: 0, ...faultMark } : undefined;
+  if (!current || !continuousA) return value ? { tint: value.value > 0 ? 'reported' : 'idle', fraction: value.value > 0 ? 1 : 0, ...faultMark } : fault ? { tint: 'idle', fraction: 0, ...faultMark } : undefined;
   const fraction = current.value / continuousA;
   const level = loadLevel(current.value, continuousA);
   const tint: TileLoad['tint'] = level === 'over' ? 'over' : level === 'high' ? 'high' : current.value <= 0.02 ? 'idle' : fraction < 0.1 ? 'low' : fraction < 0.3 ? 'mid' : 'strong';
@@ -248,8 +253,9 @@ export function usePortTelemetry(holder: TelemetryHolder, options: { continuousA
 
 /**
  * A feed's rated capacity with the continuous-load line, filled by measured
- * load when telemetry reports it. Without telemetry it reads "No load
- * reported", never empty or 0.
+ * load when telemetry reports it. The text is "706 VA · 14%"; the rating,
+ * formula and age are the tooltip and accessible text. Without telemetry it
+ * reads "No load reported", never empty or 0. `compact` draws a thinner bar.
  */
 export function CapacityBar({ feed, reading, now, source, compact = false }: { feed: PhysicalRecord; reading?: PowerTelemetry; now: number; source: TelemetrySource; compact?: boolean }) {
   const capacity: FeedCapacity = feedCapacity(feed.spec.supply);
@@ -267,20 +273,21 @@ export function CapacityBar({ feed, reading, now, source, compact = false }: { f
   const percent = measured ? Math.round((measured.value / capacity.continuousVA) * 100) : undefined;
   const fill = measured ? Math.min(100, (measured.value / capacity.ratedVA) * 100) : 0;
   const freshnessState = measured ? measured.state : 'missing';
+  // The full reading and the rating; the text shows only the load and percentage, with these as the tooltip.
+  const rating = `${ratingWords(capacity)} · ${capacity.formula}${unit === 'W' && measured && capacity.phase !== 'dc' ? ' · apparent power not reported; real power shown' : ''}`;
+  const full = measured && `${formatPower(measured.value, unit)} of ${formatPower(capacity.ratedVA, capacity.phase === 'dc' ? 'W' : 'VA')} rated · ${percent}% of continuous limit${level && level !== 'normal' ? ` · ${LOAD_WORDS[level]}` : ''} · ${measured.state === 'stale' ? `Stale · ${formatAge(measured.ageSeconds)}` : formatAge(measured.ageSeconds)}`;
   const text = !measured
-    ? <>No load reported{source.kind === 'none' ? ` · ${source.description}` : ''}</>
+    ? <>No load reported{source.kind === 'none' && !compact ? ` · ${source.description}` : ''}</>
     : <>
       {level && LOAD_GLYPH[level] && <span className="inventory-capacity-glyph" aria-hidden="true">{LOAD_GLYPH[level]} </span>}
       {measured.state === 'stale' && <span aria-hidden="true">◷ </span>}
-      {formatPower(measured.value, unit)} of {formatPower(capacity.ratedVA, capacity.phase === 'dc' ? 'W' : 'VA')} rated · {percent}% of continuous limit
-      {level && level !== 'normal' && ` · ${LOAD_WORDS[level]}`} · {measured.state === 'stale' ? `Stale · ${formatAge(measured.ageSeconds)}` : formatAge(measured.ageSeconds)}
+      <span aria-hidden="true">{formatPower(measured.value, unit)} · {percent}%</span><span className="inventory-visually-hidden">{full}</span>
     </>;
   return <div className="inventory-capacity" data-compact={compact ? '' : undefined} data-level={level ?? (measured ? 'stale' : 'missing')} data-freshness={freshnessState}>
     <div className="inventory-capacity-bar" aria-hidden="true">
       <span className="inventory-capacity-fill" style={{ width: `${fill}%` }} />
       <span className="inventory-capacity-limit" style={{ left: `${(capacity.continuousVA / capacity.ratedVA) * 100}%` }} />
     </div>
-    <p className="inventory-capacity-text">{text}</p>
-    {!compact && <p className="inventory-capacity-formula">{ratingWords(capacity)} · {capacity.formula}. The line marks the continuous limit.{unit === 'W' && measured && capacity.phase !== 'dc' ? ' Apparent power not reported; real power shown.' : ''}</p>}
+    <p className="inventory-capacity-text" title={[full, rating].filter(Boolean).join('\n')}>{text}</p>
   </div>;
 }

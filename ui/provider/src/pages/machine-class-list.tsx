@@ -3,7 +3,7 @@ import { CreateClassDialog } from '../components/create-class-dialog';
 import { DeleteDialog } from '../components/delete-dialog';
 import { FleetPage } from '../components/fleet-page';
 import { ErrorOrRestrictedState, LoadingState } from '../components/states';
-import { PROVIDER_PROJECT, useDeleteMachineClass, useMachineClasses } from '../lib/api';
+import { PROVIDER_PROJECT, useDeleteMachineClass, useMachineCapacities, useMachineClasses } from '../lib/api';
 import type { MachineClass } from '../types';
 import { EmptyContent } from '@datum-cloud/datum-ui/empty-content';
 import { useCallback, useState } from 'react';
@@ -11,6 +11,8 @@ import { useCallback, useState } from 'react';
 export default function MachineClassList() {
   const { data: classes, isLoading, error, refetch } = useMachineClasses();
   const isEmpty = !isLoading && !error && (classes?.length ?? 0) === 0;
+  const capacity = useMachineCapacities();
+  const capacities = capacity.error ? 'unknown' : capacity.data;
   const [deleting, setDeleting] = useState<MachineClass>();
   const deletion = useDeleteMachineClass();
   const startDelete = useCallback(
@@ -22,7 +24,7 @@ export default function MachineClassList() {
   );
 
   return (
-    <FleetPage testId="fleet-plugin-class-list" actions={<CreateClassDialog />}>
+    <FleetPage live testId="fleet-plugin-class-list" actions={<CreateClassDialog capacities={capacities} />}>
       {isLoading && <LoadingState />}
 
       {!isLoading && error && (
@@ -44,7 +46,7 @@ export default function MachineClassList() {
       )}
 
       {!isLoading && !error && classes && classes.length > 0 && (
-        <ClassTable classes={classes} onDelete={startDelete} />
+        <ClassTable classes={classes} capacities={capacities} onDelete={startDelete} />
       )}
 
       <DeleteDialog

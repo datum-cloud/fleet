@@ -120,7 +120,7 @@ it('fences an in-flight create across a cached tab transition without carrying i
   fireEvent.click(await screen.findByRole('tab', { name: 'Facilities' }));
   fireEvent.click(await findEnabledButton({ name: 'Create facility' }));
   expect(screen.getByLabelText('Display name')).toHaveValue('');
-  expect(screen.queryByText('Facility record created.')).not.toBeInTheDocument();
+  expect(screen.queryByText('Facility created.')).not.toBeInTheDocument();
   view.router.dispose();
 });
 
@@ -142,10 +142,43 @@ it('keeps typing local and focused, then persists the applied search in the URL'
   expect(search).toHaveFocus();
   expect(view.loader).toHaveBeenCalledTimes(loads);
   expect(view.collections).toHaveBeenCalledTimes(9);
-  fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+  // Search applies as the reader types: there is no Apply button, and the URL waits for a pause.
+  expect(screen.queryByRole('button', { name: 'Apply search' })).not.toBeInTheDocument();
+  expect(new URLSearchParams(view.router.state.location.search).get('q')).toBeNull();
   await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('q')).toBe('EXAMPLE'));
   await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue('EXAMPLE'));
+  expect(search).toHaveFocus();
   expect(view.collections).toHaveBeenCalledTimes(9);
+  view.router.dispose();
+});
+
+it('applies the search at once on Enter', async () => {
+  const view = host();
+  await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
+  fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'leaf' } });
+  fireEvent.submit(screen.getByRole('search'));
+  // Sooner than the typing pause would apply it.
+  await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('q')).toBe('leaf'), { timeout: 100 });
+  view.router.dispose();
+});
+
+it('puts counts on the kind tabs only after inventory access resolves', async () => {
+  const view = host();
+  const devices = await screen.findByRole('tab', { name: 'Devices' });
+  expect(devices.querySelector('.inventory-tab-count')).toBeNull();
+  await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
+  await waitFor(() => expect(devices).toHaveAccessibleDescription(`${fixturePhysicalDevices.length} records`));
+  expect(devices.querySelector('.inventory-tab-count')).toHaveTextContent(String(fixturePhysicalDevices.length));
+  expect(screen.getByRole('tab', { name: 'Cables' })).toHaveAccessibleDescription(/^\d+ records?$/);
+  expect(screen.queryByText(/ of \d+ records$/)).not.toBeInTheDocument();
+  view.router.dispose();
+});
+
+it('counts the filtered directory on its tab', async () => {
+  const view = host('?kind=Device&q=no-such-device');
+  await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('tab', { name: 'Devices' })).toHaveAccessibleDescription(`0 of ${fixturePhysicalDevices.length} records`));
+  expect(screen.getByRole('tab', { name: 'Cables' })).not.toHaveAccessibleDescription(/ of /);
   view.router.dispose();
 });
 
@@ -154,15 +187,15 @@ it.each(sections)('selects the correct group and only its subtabs for a direct $
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
   const group = inventoryGroup(section.kind);
   const primary = screen.getByRole('tablist', { name: 'Inventory groups' });
-  expect(within(primary).getAllByRole('tab').map(tab => tab.textContent)).toEqual(inventoryGroups.map(item => item.title));
+  expect(within(primary).getAllByRole('tab').map(tab => tab.getAttribute('aria-label'))).toEqual(inventoryGroups.map(item => item.title));
   expect(within(primary).getByRole('tab', { name: group.title })).toHaveAttribute('aria-selected', 'true');
   const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
   expect(within(navigation).getAllByRole('tablist')).toHaveLength(group.kinds.length > 1 ? 2 : 1);
   if (group.kinds.length > 1) {
     const secondary = screen.getByRole('tablist', { name: `${group.title} categories` });
-    expect(within(secondary).getAllByRole('tab').map(tab => tab.textContent)).toEqual(sections.filter(item => group.kinds.some(kind => kind === item.kind)).map(item => item.title));
+    expect(within(secondary).getAllByRole('tab').map(tab => tab.getAttribute('aria-label'))).toEqual(sections.filter(item => group.kinds.some(kind => kind === item.kind)).map(item => item.title));
     expect(within(secondary).getByRole('tab', { name: section.title })).toHaveAttribute('aria-selected', 'true');
-  } else expect(navigation).toHaveTextContent('Not every legacy claim is an installation plan');
+  } else expect(navigation.querySelector('.inventory-subcategories')).toBeNull();
   expect(view.collections).toHaveBeenCalledTimes(9);
   view.router.dispose();
 });
@@ -302,18 +335,13 @@ it('switches record detail tabs as presentation navigation without extra collect
   await screen.findByRole('heading', { name: 'Example compute server' });
   expect(view.collections).toHaveBeenCalledTimes(9);
   const tabs = () => within(screen.getByRole('tablist', { name: 'Example compute server details' }));
-  fireEvent.click(tabs().getByRole('tab', { name: 'Registration' }));
-  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Registration' })).toHaveAttribute('aria-selected', 'true'));
-  expect(new URLSearchParams(view.router.state.location.search).get('tab')).toBe('registration');
+  fireEvent.click(tabs().getByRole('tab', { name: 'Hardware & management' }));
+  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Hardware & management' })).toHaveAttribute('aria-selected', 'true'));
+  expect(new URLSearchParams(view.router.state.location.search).get('tab')).toBe('hardware');
   await act(async () => { await view.router.navigate(-1); });
   await waitFor(() => expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true'));
   expect(view.collections).toHaveBeenCalledTimes(9);
-  // The connection view is presentation state too: switching it reads nothing.
-  fireEvent.click(screen.getByRole('button', { name: 'Table' }));
-  await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('view')).toBe('table'));
-  expect(await screen.findByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Table' })).toHaveAttribute('aria-pressed', 'true');
-  expect(view.collections).toHaveBeenCalledTimes(9);
+  expect(screen.getByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });

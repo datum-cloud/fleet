@@ -370,12 +370,13 @@ const devices: Device[] = [
 
 // Claims for the racked equipment. Devices with a reported placement use it;
 // the claim is the installation plan and history.
-function claim(name: string, rack: RackName, position: number, height: number, face: 'front' | 'rear', model: string): DeviceClaim {
+function claim(name: string, rack: RackName, position: number, height: number, face: 'front' | 'rear', manufacturer: string, model: string): DeviceClaim {
   return {
     kind: 'DeviceClaim', metadata: meta(name),
     spec: {
       displayName: `Installation · ${rack.slice(-3).toUpperCase()} U${position}`,
-      expectedIdentity: { manufacturer: 'example-compute', model },
+      lifecycle: 'Installation',
+      expectedIdentity: { manufacturer, model },
       placement: { scope: 'RackUnits', facilityRef: { name: FIXTURE_FACILITY }, rackRef: { name: rack }, position, height, face },
     },
   };
@@ -385,10 +386,10 @@ const claims: DeviceClaim[] = [
   ...devices.flatMap(item => {
     const report = item.spec.reportedPlacement;
     if (!report?.rackRef || report.position === undefined || item.spec.claimRef.name !== `${item.metadata.name}-install`) return [];
-    return [claim(item.spec.claimRef.name, report.rackRef.name as RackName, report.position, report.height ?? 1, report.face ?? 'front', item.spec.identity.model)];
+    return [claim(item.spec.claimRef.name, report.rackRef.name as RackName, report.position, report.height ?? 1, report.face ?? 'front', item.spec.identity.manufacturer ?? 'unknown', item.spec.identity.model)];
   }),
   // A planned installation with no Device registered yet.
-  claim('example-plan-a02-u35', 'example-rack-a02', 35, 1, 'front', 'EX-C1'),
+  claim('example-plan-a02-u35', 'example-rack-a02', 35, 1, 'front', 'example-compute', 'EX-C1'),
 ];
 
 // ---- Cables ----
@@ -418,7 +419,7 @@ const cables: PhysicalRecord[] = [
   one('example-dac-a01-01-eth1', 'DAC a01-01 eth1', 'Copper DAC', D(SRV, 'eth1'), D(LEAF, 'swp2')),
   one('example-dac-a01-01-eth1-dup', 'DAC a01-01 eth1 (duplicate record)', 'Copper DAC', D(SRV, 'eth1'), D(LEAF, 'swp4')),
   // The peer Device has no record: peer unavailable.
-  one('example-dac-a01-02-eth1', 'DAC a01-02 eth1', 'Copper DAC', D('example-srv-a01-02', 'eth1'), D('example-leaf-legacy', 'swp7')),
+  one('example-dac-a01-02-eth1', 'DAC a01-02 eth1', 'Copper DAC', D('example-srv-a01-02', 'eth1'), D('example-leaf-missing', 'swp7')),
   // A 4-lane breakout from one 100G leaf port to four servers.
   cable('example-brk-swp49', 'Breakout swp49', 'Copper DAC breakout 1×100G to 4×25G', [
     ['1', D(LEAF, 'swp49', 1), D('example-sto-a01-03', 'eth0')],

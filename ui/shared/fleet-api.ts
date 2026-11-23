@@ -237,22 +237,16 @@ export const MACHINE_FINALIZER = 'fleet.datumapis.com/machine-protection';
 export const INVENTORY_API_GROUP = 'fleet.datumapis.com';
 export const INVENTORY_API_VERSION = 'v1alpha1';
 
-export interface PortPeer {
-  device: string;
-  port: string;
-}
-
 export interface DeviceClaim {
   apiVersion?: string;
   kind?: string;
   metadata: ObjectMeta;
   spec: {
     expectedIdentity: { manufacturer?: string; model: string; serial?: string };
-    lifecycle?: 'Installation';
+    lifecycle: 'Installation';
     displayName?: string;
     cableRefs?: LocalReference[];
-    placement: { facility?: string; rack?: string; position?: number; height?: number; face?: RackFace; scope?: 'Facility' | 'RackMembership' | 'RackUnits' | 'NonRackUnitMount'; facilityRef?: LocalReference; rackRef?: LocalReference; mount?: string };
-    ports?: { name: string; type?: string; speedMbps?: number; expectedPeer?: PortPeer }[];
+    placement: { scope: 'Facility' | 'RackMembership' | 'RackUnits' | 'NonRackUnitMount'; facilityRef?: LocalReference; rackRef?: LocalReference; position?: number; height?: number; face?: RackFace; mount?: string };
   };
 }
 
@@ -276,7 +270,7 @@ export interface Device {
     internalMappings?: { from: ComponentPosition; to: ComponentPosition }[];
     serviceAssociations?: { serviceRef: ExternalReference; componentID: string }[];
     bmc?: { endpoint: string };
-    interfaces?: { name: string; macAddress?: string; peer?: PortPeer }[];
+    interfaces?: { name: string; macAddress?: string }[];
     unmappedMACAddresses?: string[];
     // lifecycle defaults to Active. Active and Decommissioning move between
     // each other, Decommissioning moves to Retired, and Retired is terminal.

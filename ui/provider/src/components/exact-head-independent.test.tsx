@@ -85,10 +85,10 @@ it.each([false, true].flatMap(strict => [false, true].flatMap(editing => ['revie
   await open(editing, 'Fresh input');
   await act(async () => releaseOperation!(response(stage === 'review' ? { status: { allowed: true } } : original, stage === 'dispatch-error' ? 503 : 200)));
   expect(writes).toHaveLength(stage === 'review' ? 0 : 1);
-  expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Display name saved\.|Facility created\./)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Display name')).toHaveValue('Fresh input');
   fireEvent.click(screen.getByRole('button', { name: submit }));
-  await screen.findByText(editing ? 'Display name saved.' : 'Facility record created.');
+  await screen.findByText(editing ? 'Display name saved.' : 'Facility created.');
   expect(writes).toHaveLength(stage === 'review' ? 1 : 2);
   router.dispose();
 });

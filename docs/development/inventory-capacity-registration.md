@@ -666,7 +666,11 @@ These must be resolved before any stage lets it:
 ## UI
 
 The Datum dialog uses the existing host-session boundary and isolated read
-cache. It shows the derived capacity name instead of a name field. Missing
+cache. Without a verified session or registration permission, the Register
+capacity button is disabled and its tooltip gives the reason. The dialog shows
+the derived capacity name instead of a name field. A confirmed registration
+closes the dialog without a message; the new row in the Capacity table is the
+confirmation. Missing
 host authority, denied registration, unavailable Devices, Devices that are not
 Active, partial identity and conflicting identities, including a conflict with
 a Retired Device, have explicit explanations. The inventory detail panel shows
@@ -677,6 +681,13 @@ pending work. After dispatch, an uncertain result keeps the selection, disables
 retry in that form, and asks the operator to check whether the derived capacity
 exists. A repeat cannot create a second record. The unfenced legacy deletion
 helper is never used for rollback.
+
+Registration sets no `fleet.datumapis.com/capacity-pool` label, so no
+MachineClass selects registered capacity. The webhook does not inspect labels
+on create, but it denies every later update, so a label set at registration
+could never be corrected, and registered capacity stays `Disabled` in this
+stage anyway. Which writer sets the pool label, at registration or when a
+future stage enables capacity, is undecided.
 
 ## Verification
 

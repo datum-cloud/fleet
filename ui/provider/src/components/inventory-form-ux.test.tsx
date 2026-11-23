@@ -1,3 +1,4 @@
+import { chooseEndpoint } from '../test/cable-endpoint';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -43,13 +44,10 @@ function fill(kind: ManagedKind) {
   change('Record name', 'synthetic-record'); change('Display name', 'Synthetic record');
   if (kind === 'Rack') change('Facility', facilities[0].metadata.name);
   if (kind === 'Device') { change('Installation plan', 'plan-uid'); change('Model', 'Synthetic model'); change('Serial number', 'SYNTHETIC'); }
-  if (kind === 'DeviceClaim') { change('Expected model', 'Synthetic model'); change('Recorded location', 'facility-uid'); }
+  if (kind === 'DeviceClaim') { change('Expected model', 'Synthetic model'); change('Location', 'facility-uid'); }
   if (kind === 'Cable') {
     change('Cable medium', 'Power');
-    for (const [label, name] of [['Lane 1 end A', 'Feed A'], ['Lane 1 end B', 'Power supply 1']]) {
-      const control = screen.getByLabelText(label) as HTMLSelectElement;
-      fireEvent.change(control, { target: { value: [...control.options].find(option => option.text.includes(name))!.value } });
-    }
+    chooseEndpoint('Lane 1 end A', 'Feed A'); chooseEndpoint('Lane 1 end B', 'Power supply 1');
   }
 }
 
@@ -66,7 +64,7 @@ it.each(['Facility', 'Rack', 'Device', 'Cable', 'DeviceClaim'] as const)('valida
   expect(screen.getByLabelText('Record name')).toHaveFocus();
   fill(kind);
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
-  await screen.findByText(`${kind} record created.`);
+  await screen.findByText(`${kind === 'DeviceClaim' ? 'Installation plan' : kind} created.`);
   expect(create).toHaveBeenCalledTimes(1);
   expect(create.mock.calls[0][1]).toMatchObject({ namespace: 'default', name: 'synthetic-record' });
   expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
@@ -78,7 +76,7 @@ it.each(['Device', 'Cable', 'DeviceClaim'] as const)('starts %s task authority a
   fill(kind);
   expect(screen.getByRole('button', { name: 'Create record' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
-  await screen.findByText(`${kind} record created.`);
+  await screen.findByText(`${kind === 'DeviceClaim' ? 'Installation plan' : kind} created.`);
   expect(create).toHaveBeenCalledTimes(1);
 });
 
@@ -99,7 +97,8 @@ it.each(['Facility', 'Rack', 'Device', 'Cable'] as const)('edits only the displa
 
 it('traps dialog focus, confirms dirty Escape/Cancel, and returns focus to the opener', async () => {
   setup();
-  const name = screen.getByLabelText('Record name');
+  // Display name is the first field; the record name follows it.
+  const name = screen.getByLabelText('Display name');
   await waitFor(() => expect(name).toHaveFocus());
   fireEvent.keyDown(name, { key: 'Tab', shiftKey: true });
   expect(screen.getByRole('button', { name: 'Create record' })).toHaveFocus();
@@ -173,7 +172,7 @@ it('keeps reported-location correction separate and confirms dirty dismissal', a
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-  await screen.findByText('Reported location saved. No physical move or reservation was performed.');
+  await screen.findByText('Location saved.');
   expect(placement.mock.calls[0][0]).toEqual(device);
   expect(edit).not.toHaveBeenCalled();
 });
@@ -189,5 +188,5 @@ it('keeps post-dispatch invalidation unknown in the dialog', async () => {
   await screen.findByText(/outcome is unknown/);
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Leave form' })).toBeInTheDocument();
-  expect(screen.queryByText('Facility record created.')).not.toBeInTheDocument();
+  expect(screen.queryByText('Facility created.')).not.toBeInTheDocument();
 });

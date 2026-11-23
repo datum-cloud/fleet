@@ -17,14 +17,15 @@ function view(query: string, data: Inventory) {
 describe('Site and premises directory', () => {
   it('shows internal identity separately from provider identity', () => {
     render(view('?kind=Site&record=site-stable&namespace=default', inventory));
-    expect(screen.getByText('Internal Site code')).toBeInTheDocument();
-    expect(screen.getByText('EX3')).toBeInTheDocument();
-    expect(screen.getByText(/example-provider \/ EX1/)).toBeInTheDocument();
-    expect(screen.getByText(/Membership grants no placement eligibility/)).toBeInTheDocument();
-    expect(screen.getByText(/Recreating a name resolves to the replacement/)).toBeInTheDocument();
+    expect(screen.getByTitle('Site code')).toHaveTextContent('EX3');
+    // The one facility is a header link; its provider identifiers stay on the Facility page.
+    expect(screen.getByRole('link', { name: 'Physical premises' }).closest('.inventory-record-summary')).not.toBeNull();
+    expect(screen.queryByText(/example-provider/)).toBeNull();
+    expect(screen.queryByText('Operational membership only')).toBeNull();
+    expect(screen.queryByText(/Membership grants no placement eligibility/)).toBeNull();
   });
 
-  it('keeps a legacy Facility browsable without inventing membership', () => {
+  it('keeps a Facility without a Site browsable without inventing membership', () => {
     render(view('?kind=Facility&record=premises-stable&namespace=default', toInventory([], [], [facility])));
     expect(screen.getByText(/Unmapped · no operational Site recorded/)).toBeInTheDocument();
   });
@@ -32,14 +33,14 @@ describe('Site and premises directory', () => {
   it('redacts denied Site identity from Facility search', () => {
     render(view('?kind=Facility', { ...inventory, issues: { Site: { status: 403 } } }));
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'EX3' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+    fireEvent.submit(screen.getByRole('search'));
     expect(screen.queryByText('Physical premises')).not.toBeInTheDocument();
     expect(screen.queryByText(/EX3 · Operational identity/)).not.toBeInTheDocument();
   });
 
   it('redacts denied Facility identifiers and links from Site details', () => {
     render(view('?kind=Site&record=site-stable&namespace=default', { ...inventory, issues: { Facility: { status: 403 } } }));
-    expect(screen.getByText(/Facility details unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Facilities' })).toHaveTextContent('Access denied · Facility details unavailable');
     expect(screen.queryByText(/EX1/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Physical premises' })).not.toBeInTheDocument();
   });

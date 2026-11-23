@@ -1,4 +1,5 @@
 import { DeleteButton } from './delete-dialog';
+import { SEARCH_MIN_ROWS } from './fleet-page';
 import type { MachineProfile } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
 import { Text } from '@datum-cloud/datum-ui/typography';
@@ -73,8 +74,8 @@ export function ProfileTable({
       defaultSort={[{ id: 'name', desc: false }]}
       searchFn={matchesSearch}
       className="space-y-6">
-      <DataTable.Search placeholder="Search profiles" className="w-full sm:max-w-xs" />
-      <div className="overflow-hidden rounded-lg border" data-testid="fleet-plugin-profile-table">
+      {profiles.length >= SEARCH_MIN_ROWS && <DataTable.Search placeholder="Search profiles" className="w-full sm:max-w-xs" />}
+      <div className="fleet-table overflow-hidden rounded-lg border" data-testid="fleet-plugin-profile-table">
         <DataTable.Content
           emptyMessage={
             <Text as="p" textColor="muted" className="py-8 text-center">

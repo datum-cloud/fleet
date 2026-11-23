@@ -1,6 +1,7 @@
 // The drawn faceplate: a Device's front and rear faces generated from its
 // DeviceType's recorded layout, at full detail on Device detail and the rack
-// panel, and as mini faceplates in the rack elevation.
+// panel, and as mini faceplates in the rack elevation. DeviceType detail draws
+// the model alone, every port catalog only (modelDrawingModel).
 //
 // Ports are the shared PortTileButton, with the shared tooltip and PortCard,
 // through usePortGrid, so the drawing and the grouped tiles never drift. A
@@ -12,13 +13,13 @@ import { useMemo, type CSSProperties } from 'react';
 import type { ChassisFace, Device, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import { connectorKind } from '../lib/connector-kind';
-import { shortLabels, viewNames, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
+import { groupOf, portTiles, shortFaceLabel, shortLabels, viewNames, type ConnectionLink, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
 import { faceplate } from '../lib/device-faceplate';
-import { deviceTray, edgeNumbers, joinTemplates, modelLayout, MODULE_TYPES, portNumber, type DetailLevel, type FaceGeometry, type LayoutBank, type ModelLayout, type TemplateJoin, type TrayEntry } from '../lib/faceplate-layout';
+import { deviceTray, edgeNumbers, joinTemplates, modelLayout, MODULE_TYPES, portNumber, type FaceGeometry, type LayoutBank, type ModelLayout, type TemplateJoin, type TrayEntry } from '../lib/faceplate-layout';
 import { deviceCatalog } from '../lib/hardware-catalog';
 import { componentRackFace, deviceMountedFace } from '../lib/rack-faces';
-import { TILE_GLYPH, type Href } from './connection-parts';
-import { PortFaceplate, usePortGrid, type PortTelemetry } from './device-faceplate';
+import type { Href } from './connection-parts';
+import { PortFaceplate, usePortGrid, type ComponentHighlight, type PortTelemetry } from './device-faceplate';
 import { inventoryHref } from './inventory-location';
 import { usePortTelemetry } from './power-telemetry';
 
@@ -48,6 +49,8 @@ export interface DeviceDrawingModel {
   tray: TrayEntry[];
   /** "Front · rack rear" per chassis face. */
   titles: Record<ChassisFace, string>;
+  /** "Front", or "Front · rack rear" only when mounted reversed: the Device page's labels. */
+  shortTitles: Record<ChassisFace, string>;
   names: ViewNames;
   cablesDenied: boolean;
 }
@@ -57,11 +60,7 @@ export function deviceDrawingModel(device: Device, inventory: Inventory): Device
   const model = deviceCatalog(device, inventory)?.model;
   const layout = modelLayout(model);
   const join = joinTemplates(model?.spec.componentTemplates, device.spec.components);
-  // The match basis rides on the tile for the card's More; nothing else reads it.
-  const tiles = new Map(plate.faces.flatMap(face => face.clusters.flatMap(cluster => cluster.tiles)).map(tile => {
-    const match = join.byComponent.get(tile.componentID);
-    return [tile.componentID, match ? { ...tile, templateMatch: match.basis } : tile];
-  }));
+  const tiles = new Map(plate.faces.flatMap(face => face.clusters.flatMap(cluster => cluster.tiles)).map(tile => [tile.componentID, tile]));
   const mounted = deviceMountedFace(device, inventory);
   const title = (face: ChassisFace) => { const rack = componentRackFace(mounted, face); return `${face} · ${rack ? `rack ${rack}` : 'rack face unknown'}`; };
   return {
@@ -70,14 +69,50 @@ export function deviceDrawingModel(device: Device, inventory: Inventory): Device
     recorded: new Set((device.spec.components ?? []).map(component => component.id)),
     tray: deviceTray(layout, model, device.spec.components, join),
     titles: { Front: title('Front'), Rear: title('Rear') },
+    shortTitles: { Front: shortFaceLabel('Front', componentRackFace(mounted, 'Front')), Rear: shortFaceLabel('Rear', componentRackFace(mounted, 'Rear')) },
     names: viewNames(plate.links),
     cablesDenied: plate.cableAccess === 'denied',
   };
 }
 
-function ModuleCell({ name, type, state, label }: { name: string; type?: PhysicalComponent['type']; state: ModuleState; label?: string }) {
+/** A catalog model's templates as catalog-only links: no Device records them and nothing is cabled. */
+export function catalogLinks(model: PhysicalRecord): ConnectionLink[] {
+  return (model.spec.componentTemplates ?? []).map(template => ({
+    key: `catalog/${template.id}`, group: groupOf[template.type], state: 'catalog', componentID: template.id, template,
+    position: 1, positions: template.positions ?? 1, chassisFace: template.face, trace: [], reasons: [], checks: [],
+  }));
+}
+
+/**
+ * The DeviceType page's drawing: the model's recorded layout with every
+ * template catalog only. No Device, so no recorded components, no Cables and
+ * no rack face; the faces are titled by chassis face alone.
+ */
+export function modelDrawingModel(model: PhysicalRecord): DeviceDrawingModel {
+  const layout = modelLayout(model);
+  const join = joinTemplates(model.spec.componentTemplates, []);
+  const links = catalogLinks(model);
+  return {
+    layout, model, join,
+    tiles: new Map(portTiles(links).map(tile => [tile.componentID, tile])),
+    at: templateID => templateID,
+    recorded: new Set(),
+    tray: deviceTray(layout, model, [], join),
+    titles: { Front: 'Front', Rear: 'Rear' },
+    shortTitles: { Front: 'Front', Rear: 'Rear' },
+    names: viewNames([]),
+    cablesDenied: false,
+  };
+}
+
+function ModuleCell({ id, name, type, state, label, highlight }: { id: string; name: string; type?: PhysicalComponent['type']; state: ModuleState; label?: string; highlight?: ComponentHighlight }) {
   return (
-    <span className="inventory-chassis-module" role="img" data-state={state} aria-label={`${name}, ${(type && TYPE_WORDS[type]) ?? 'component'}, ${moduleStateWords[state]}`}>
+    <span
+      className="inventory-chassis-module" role="img" data-state={state} aria-label={`${name}, ${(type && TYPE_WORDS[type]) ?? 'component'}, ${moduleStateWords[state]}`}
+      data-highlight={highlight?.id === id ? '' : undefined}
+      onPointerEnter={highlight && (event => { if (event.pointerType === 'mouse') highlight.set(id); })}
+      onPointerLeave={highlight && (event => { if (event.pointerType === 'mouse') highlight.clear(id); })}
+    >
       <span aria-hidden="true">{label ?? ''}{state === 'catalog' ? <span className="inventory-chassis-module-glyph">{moduleStateGlyph.catalog}</span> : null}</span>
     </span>
   );
@@ -97,6 +132,14 @@ const CROP_MARGIN_MM = 4;
 const CROP_MARGIN_Y_MM = 9;
 /** The smallest scale a fitted face shrinks to before it scrolls in its frame. */
 const MIN_FIT_PX_PER_MM = 1.2;
+/**
+ * The Device page draws each whole face scaled to its column, so the front
+ * and rear sit side by side when both fit at this scale or more, and stack
+ * otherwise. Below 600 px wide a face may shrink further, to PHONE_PX_PER_MM,
+ * before it scrolls in its frame.
+ */
+export const DENSE_MIN_PX_PER_MM = 1.15;
+export const PHONE_PX_PER_MM = 0.7;
 
 /** The banks' bounding box, with a margin, inside the face. */
 function cropBox(geometry: FaceGeometry) {
@@ -118,28 +161,37 @@ function fitPlace(box: { x: number; y: number; w: number; h: number }): Place {
   });
 }
 
-function DrawnFace({ geometry, drawing, title, tileButton, fit }: { geometry: FaceGeometry; drawing: DeviceDrawingModel; title: string; tileButton: ReturnType<typeof usePortGrid>['tileButton']; fit?: boolean }) {
+/** How a face is sized: at the drawing scale, cropped and fitted to a column, or whole and scaled to a column. */
+type FaceSizing = 'fixed' | 'fit' | 'scale';
+
+function DrawnFace({ geometry, drawing, title, label = title, tileButton, sizing, highlight }: { geometry: FaceGeometry; drawing: DeviceDrawingModel; title: string; label?: string; tileButton: ReturnType<typeof usePortGrid>['tileButton']; sizing: FaceSizing; highlight?: ComponentHighlight }) {
   // Fitted (the power path's PDU column): cropped to the recorded banks and
-  // scaled to the column, between MIN_FIT_PX_PER_MM and the drawing scale.
-  const box = fit ? cropBox(geometry) : undefined;
+  // scaled to the column, between MIN_FIT_PX_PER_MM and the drawing scale,
+  // and never wider than the column, so a phone shows every outlet.
+  // Scaled (the Device page): the whole face, between DENSE_MIN_PX_PER_MM
+  // (PHONE_PX_PER_MM on a phone) and the drawing scale.
+  const box = sizing === 'fit' ? cropBox(geometry) : sizing === 'scale' ? { x: 0, y: 0, w: geometry.widthMM, h: geometry.heightMM } : undefined;
   const place = box ? fitPlace(box) : pxPlace;
+  const min = sizing === 'scale' ? DENSE_MIN_PX_PER_MM : MIN_FIT_PX_PER_MM;
   const size: CSSProperties = box
-    ? { width: '100%', minWidth: px(box.w * (MIN_FIT_PX_PER_MM / PX_PER_MM)), maxWidth: px(box.w), aspectRatio: `${box.w} / ${box.h}` }
+    ? { width: '100%', minWidth: sizing === 'fit' ? `min(100%, ${px(box.w * (min / PX_PER_MM))})` : px(box.w * (min / PX_PER_MM)), maxWidth: px(box.w), aspectRatio: `${box.w} / ${box.h}` }
     : { width: px(geometry.widthMM), height: px(geometry.heightMM) };
+  // The face's flex basis, so two faces share a row only when both fit at the minimum scale.
+  const basis: CSSProperties | undefined = sizing === 'scale' ? { '--face-min': px(geometry.widthMM * (min / PX_PER_MM)), '--face-phone': px(geometry.widthMM * (PHONE_PX_PER_MM / PX_PER_MM)) } as CSSProperties : undefined;
   return (
-    <div className="inventory-drawn-face" role="group" aria-label={`${title} face`} data-face={geometry.face}>
-      <p className="inventory-port-face-title">{title}</p>
+    <div className="inventory-drawn-face" role="group" aria-label={`${title} face`} data-face={geometry.face} style={basis}>
+      <p className="inventory-port-face-title">{label}</p>
       {geometry.warnings.map(warning => <p key={warning} className="inventory-faceplate-warning"><span aria-hidden="true">! </span>{warning}</p>)}
       <div className="inventory-chassis-scroll">
-        <div className="inventory-chassis" style={size} data-strip={drawing.layout.strip ? '' : undefined} data-fit={box ? '' : undefined}>
-          {geometry.banks.map(bank => <Bank key={bank.id} bank={bank} drawing={drawing} tileButton={tileButton} place={place} />)}
+        <div className="inventory-chassis" style={size} data-strip={drawing.layout.strip ? '' : undefined} data-fit={box ? '' : undefined} data-scale={sizing === 'scale' ? '' : undefined}>
+          {geometry.banks.map(bank => <Bank key={bank.id} bank={bank} drawing={drawing} tileButton={tileButton} place={place} highlight={highlight} />)}
         </div>
       </div>
     </div>
   );
 }
 
-function Bank({ bank, drawing, tileButton, place }: { bank: LayoutBank; drawing: DeviceDrawingModel; tileButton: ReturnType<typeof usePortGrid>['tileButton']; place: Place }) {
+function Bank({ bank, drawing, tileButton, place, highlight }: { bank: LayoutBank; drawing: DeviceDrawingModel; tileButton: ReturnType<typeof usePortGrid>['tileButton']; place: Place; highlight?: ComponentHighlight }) {
   // Row-major DOM order, so Left and Right move along a drawn row.
   const cells = [...bank.cells].sort((a, b) => a.row - b.row || a.column - b.column);
   const labels = useMemo(() => shortLabels(cells.flatMap(cell => { const tile = drawing.tiles.get(drawing.at(cell.template.id)); return tile ? [tile] : []; })), [cells, drawing]);
@@ -159,7 +211,7 @@ function Bank({ bank, drawing, tileButton, place }: { bank: LayoutBank; drawing:
           <div key={cell.template.id} className="inventory-chassis-cell" data-kind={connectorKind(cell.template.connector)} data-module={bank.module ? '' : undefined} style={style}>
             {tile
               ? tileButton(tile, { label: bank.module ? label : undefined, className: 'inventory-chassis-port' })
-              : <ModuleCell name={cell.template.name} type={cell.template.type} state={drawing.recorded.has(drawing.at(cell.template.id)) ? 'recorded' : 'catalog'} label={label} />}
+              : <ModuleCell id={drawing.at(cell.template.id)} name={cell.template.name} type={cell.template.type} state={drawing.recorded.has(drawing.at(cell.template.id)) ? 'recorded' : 'catalog'} label={label} highlight={highlight} />}
             {printed && <span className="inventory-chassis-print" data-where={printed} aria-hidden="true">{label}</span>}
           </div>
         );
@@ -171,7 +223,7 @@ function Bank({ bank, drawing, tileButton, place }: { bank: LayoutBank; drawing:
   );
 }
 
-function Tray({ drawing, tileButton }: { drawing: DeviceDrawingModel; tileButton: ReturnType<typeof usePortGrid>['tileButton'] }) {
+function Tray({ drawing, tileButton, highlight }: { drawing: DeviceDrawingModel; tileButton: ReturnType<typeof usePortGrid>['tileButton']; highlight?: ComponentHighlight }) {
   if (!drawing.tray.length) return null;
   // The tray is not dense: each entry shows its full name beside an unlabelled tile.
   return (
@@ -182,7 +234,7 @@ function Tray({ drawing, tileButton }: { drawing: DeviceDrawingModel; tileButton
           const tile = MODULE_TYPES.has(entry.type ?? 'Module') ? undefined : drawing.tiles.get(entry.id);
           return (
             <li key={entry.id} data-reason={entry.reason}>
-              {tile ? tileButton(tile) : <ModuleCell name={entry.name} type={entry.type} state={drawing.recorded.has(entry.id) ? 'recorded' : 'catalog'} />}
+              {tile ? tileButton(tile) : <ModuleCell id={entry.id} name={entry.name} type={entry.type} state={drawing.recorded.has(entry.id) ? 'recorded' : 'catalog'} highlight={highlight} />}
               <span className="inventory-faceplate-tray-name" aria-hidden="true">{entry.name}</span>
               <small>{entry.detail}</small>
             </li>
@@ -198,13 +250,23 @@ function Tray({ drawing, tileButton }: { drawing: DeviceDrawingModel; tileButton
  * the "Not on the faceplate" tray. One tab stop for every port; arrows move
  * between drawn ports and the tray; Enter opens the shared card.
  */
-export function FaceplateDrawing({ drawing, namespace, href, telemetry, fit = false, label = 'Faceplate drawing' }: {
+export function FaceplateDrawing({ drawing, namespace, href, telemetry, fit = false, dense = false, tray = !dense, highlight, label = 'Faceplate drawing' }: {
   drawing: DeviceDrawingModel;
   namespace?: string;
   href: Href;
   telemetry?: (tile: PortTile) => PortTelemetry | undefined;
   /** Crop each face to its recorded banks and scale it to the container, as the power path's PDU column does. */
   fit?: boolean;
+  /**
+   * The Device page's picture: each whole face scaled to its column, front
+   * and rear side by side when both fit, short face labels, and no tray:
+   * the page's component table lists those components.
+   */
+  dense?: boolean;
+  /** List components that are not on the faceplate. Off by default when dense: the Device page's table lists them. */
+  tray?: boolean;
+  /** The component outlined here and in the page's component table. */
+  highlight?: ComponentHighlight;
   /** The group's name, before the keyboard instructions. */
   label?: string;
 }) {
@@ -212,10 +274,11 @@ export function FaceplateDrawing({ drawing, namespace, href, telemetry, fit = fa
   const tiles = useMemo(() => {
     const drawn = drawing.layout.faces.flatMap(face => face.banks.flatMap(bank => [...bank.cells].sort((a, b) => a.row - b.row || a.column - b.column).map(cell => cell.template)))
       .filter(template => !MODULE_TYPES.has(template.type)).map(template => drawing.at(template.id));
-    const ids = [...drawn, ...drawing.tray.map(entry => entry.id)];
+    const ids = tray ? [...drawn, ...drawing.tray.map(entry => entry.id)] : drawn;
     return ids.flatMap(id => { const tile = drawing.tiles.get(id); return tile ? [tile] : []; });
-  }, [drawing]);
-  const grid = usePortGrid({ tiles, names: drawing.names, namespace, href, cablesDenied: drawing.cablesDenied, telemetry });
+  }, [drawing, tray]);
+  const grid = usePortGrid({ tiles, names: drawing.names, namespace, href, cablesDenied: drawing.cablesDenied, telemetry, highlight });
+  const sizing: FaceSizing = fit ? 'fit' : dense ? 'scale' : 'fixed';
   // A fitted face is cropped to its banks, so its recorded width is not drawn and needs no note.
   const notes = fit ? [] : [
     drawing.layout.widthAssumed ? 'Width not recorded; drawn full width' : undefined,
@@ -229,10 +292,13 @@ export function FaceplateDrawing({ drawing, namespace, href, telemetry, fit = fa
       aria-label={`${label}. Arrow keys move between ports; Enter opens a port's card; Escape closes it.`}
       onKeyDown={grid.onKeyDown}
       data-fit={fit ? '' : undefined}
+      data-dense={dense ? '' : undefined}
     >
       {notes.length > 0 && <p className="inventory-muted inventory-drawing-note">{notes.join(' · ')}</p>}
-      {drawing.layout.faces.map(face => <DrawnFace key={face.face} geometry={face} drawing={drawing} title={drawing.titles[face.face]} tileButton={grid.tileButton} fit={fit} />)}
-      <Tray drawing={drawing} tileButton={grid.tileButton} />
+      {dense
+        ? <div className="inventory-drawn-faces">{drawing.layout.faces.map(face => <DrawnFace key={face.face} geometry={face} drawing={drawing} title={drawing.titles[face.face]} label={drawing.shortTitles[face.face]} tileButton={grid.tileButton} sizing={sizing} highlight={highlight} />)}</div>
+        : drawing.layout.faces.map(face => <DrawnFace key={face.face} geometry={face} drawing={drawing} title={drawing.titles[face.face]} label={fit ? drawing.shortTitles[face.face] : undefined} tileButton={grid.tileButton} sizing={sizing} />)}
+      {tray && <Tray drawing={drawing} tileButton={grid.tileButton} highlight={highlight} />}
       {grid.overlay}
     </div>
   );
@@ -246,8 +312,9 @@ export function LayoutNotRecorded() {
 /**
  * A Device's faceplate for the rack side panel: the drawing when the model
  * records a layout, otherwise the grouped tiles labelled "Layout not
- * recorded". When Cables are denied, the recorded components are still
- * drawn, with every state unknown.
+ * recorded". Both are the compact (dense) forms the Device page uses, each
+ * face scaled to the panel. When Cables are denied, the recorded components
+ * are still drawn, with every state unknown.
  */
 export function DeviceFaceplate({ device, inventory }: { device: Device; inventory: Inventory }) {
   const plate = useMemo(() => faceplate(device, inventory), [device, inventory]);
@@ -256,8 +323,8 @@ export function DeviceFaceplate({ device, inventory }: { device: Device; invento
   const cablesDenied = plate.cableAccess === 'denied';
   const telemetry = usePortTelemetry({ kind: 'Device', namespace: device.metadata.namespace, name: device.metadata.name }, { cablesDenied });
   let body;
-  if (drawing.layout.recorded) body = <FaceplateDrawing drawing={drawing} namespace={device.metadata.namespace} href={inventoryHref} telemetry={telemetry} />;
-  else if (plate.faces.length) body = <><LayoutNotRecorded /><PortFaceplate faces={plate.faces} names={names} namespace={device.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} showEmptyFaces telemetry={telemetry} /></>;
+  if (drawing.layout.recorded) body = <FaceplateDrawing drawing={drawing} namespace={device.metadata.namespace} href={inventoryHref} telemetry={telemetry} dense tray />;
+  else if (plate.faces.length) body = <><LayoutNotRecorded /><PortFaceplate faces={plate.faces} names={names} namespace={device.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} showEmptyFaces telemetry={telemetry} dense /></>;
   else body = <p className="inventory-muted">No ports are recorded for this Device.</p>;
   return (
     <section className="inventory-faceplate" aria-label="Faceplate">
@@ -267,62 +334,14 @@ export function DeviceFaceplate({ device, inventory }: { device: Device; invento
   );
 }
 
-// ---- Mini faceplates for the rack elevation ----
+// ---- Problem counts for the rack elevation ----
 
-/** One cell's state in a mini faceplate. */
-export type MiniState = LinkState | ModuleState;
+export interface PortProblemCounts { conflict: number; unavailable: number }
 
-export interface MiniCounts { conflict: number; unavailable: number }
-
-/** The visible face's cell states, and the "!" and "?" counts the elevation label carries. */
-export function miniFaceplate(drawing: DeviceDrawingModel, face: ChassisFace) {
-  const geometry = drawing.layout.faces.find(item => item.face === face);
-  const states = new Map<string, MiniState>();
-  for (const bank of geometry?.banks ?? []) {
-    for (const cell of bank.cells) {
-      const id = drawing.at(cell.template.id);
-      const tile = MODULE_TYPES.has(cell.template.type) ? undefined : drawing.tiles.get(id);
-      states.set(cell.template.id, tile ? (drawing.cablesDenied ? 'unavailable' : tile.state) : drawing.recorded.has(id) ? 'recorded' : 'catalog');
-    }
-  }
-  // Counts cover the whole Device, not one face: a problem on the hidden face still counts.
+/** Ports whose records disagree or whose peer is unavailable, across the whole Device, for the elevation's colour coding. */
+export function portProblemCounts(drawing: DeviceDrawingModel): PortProblemCounts {
   const all = [...drawing.tiles.values()].map(tile => drawing.cablesDenied ? 'unavailable' : tile.state);
-  const counts: MiniCounts = { conflict: all.filter(state => state === 'conflict').length, unavailable: all.filter(state => state === 'unavailable').length };
-  return { geometry, states, counts };
+  return { conflict: all.filter(state => state === 'conflict').length, unavailable: all.filter(state => state === 'unavailable').length };
 }
 
-export const countsWords = (counts: MiniCounts) => [counts.conflict ? `${counts.conflict} ${counts.conflict === 1 ? 'port disagrees' : 'ports disagree'}` : undefined, counts.unavailable ? `${counts.unavailable} ${counts.unavailable === 1 ? 'peer' : 'peers'} unavailable` : undefined].filter(Boolean).join(', ');
-
-/**
- * A visual-only faceplate for one elevation slot, hidden from assistive
- * technology: the slot's link carries the name and counts in words. Silhouette
- * draws the chassis and bank outlines; reduced adds one block per cell, with
- * the state as fill and outline (solid recorded, hollow none, destructive
- * disagree, dashed peer unavailable, dotted catalog only); full adds the "!"
- * and "?" glyphs. Hatching is not used: at 16 px per unit it is noise, and
- * the slot's text counts carry the problems without colour. A model without
- * a layout is a plain chassis.
- */
-export function MiniFaceplate({ geometry, states, level, widthMM, heightMM }: { geometry?: FaceGeometry; states: Map<string, MiniState>; level: DetailLevel; widthMM: number; heightMM: number }) {
-  return (
-    <svg className="inventory-mini-faceplate" data-level={level} viewBox={`0 0 ${widthMM} ${heightMM}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true" focusable="false">
-      <rect className="inventory-mini-chassis" x="0.5" y="0.5" width={widthMM - 1} height={heightMM - 1} rx="1.5" />
-      {geometry?.banks.map(bank => (
-        <g key={bank.id}>
-          {level === 'silhouette'
-            ? <rect className="inventory-mini-bank" x={bank.x} y={bank.y} width={bank.w} height={bank.h} rx="0.8" />
-            : bank.cells.map(cell => {
-              const state = states.get(cell.template.id) ?? 'catalog';
-              const glyph = level === 'full' ? TILE_GLYPH[state as LinkState] : undefined;
-              return (
-                <g key={cell.template.id}>
-                  <rect className="inventory-mini-cell" data-state={state} data-kind={connectorKind(cell.template.connector)} x={cell.x} y={cell.y} width={cell.w} height={cell.h} rx={level === 'full' ? 0.8 : 0.3} />
-                  {glyph && <text className="inventory-mini-glyph" x={cell.x + cell.w / 2} y={cell.y + cell.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(cell.h, cell.w) * 0.8}>{glyph}</text>}
-                </g>
-              );
-            })}
-        </g>
-      ))}
-    </svg>
-  );
-}
+export const countsWords = (counts: PortProblemCounts) => [counts.conflict ? `${counts.conflict} ${counts.conflict === 1 ? 'port disagrees' : 'ports disagree'}` : undefined, counts.unavailable ? `${counts.unavailable} ${counts.unavailable === 1 ? 'peer' : 'peers'} unavailable` : undefined].filter(Boolean).join(', ');

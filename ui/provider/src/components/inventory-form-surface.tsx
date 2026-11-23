@@ -32,15 +32,23 @@ export function InventoryDraftGuard(props: { dirty: boolean; pending: boolean; u
   return router ? <RoutedDraftGuard {...props} /> : null;
 }
 
-export function InventoryFormSurface({ open, task = false, title, trigger, status, onDismiss, children }: {
-  open: boolean; task?: boolean; title: string; trigger?: ReactNode; status: ReactNode; onDismiss: () => void; children: ReactNode;
+export function InventoryFormSurface({ open, task = false, title, description, trigger, status, hint, onDismiss, children }: {
+  open: boolean; task?: boolean; title: string; description?: string; trigger?: ReactNode; status: ReactNode;
+  /**
+   * Why the trigger is unavailable, as its tooltip rather than a sentence on
+   * the page. The trigger points at it with aria-describedby={hint.id}, and
+   * the words stay in the accessible text.
+   */
+  hint?: { id: string; text: string };
+  onDismiss: () => void; children: ReactNode;
 }) {
   if (task) return <>{status}{open && children}</>;
   return <Dialog open={open} onOpenChange={next => { if (!next) onDismiss(); }}>
-    <div className="inventory-management-controls"><Dialog.Trigger asChild>{trigger}</Dialog.Trigger></div>
+    {/* The tooltip sits on the wrapper: a disabled button does not receive the pointer. */}
+    <div className="inventory-management-controls" title={hint?.text}><Dialog.Trigger asChild>{trigger}</Dialog.Trigger>{hint && <span id={hint.id} className="inventory-visually-hidden">{hint.text}</span>}</div>
     {!open && status}
     <Dialog.Content className="inventory-dialog">
-      <Dialog.Header title={title} description="Physical inventory records only. Verification and operational authority remain separate." />
+      <Dialog.Header title={title} description={description} />
       <Dialog.Body className="inventory-dialog-body">{status}{children}</Dialog.Body>
     </Dialog.Content>
   </Dialog>;
@@ -55,6 +63,8 @@ export function InventoryForm({ children, onSubmit, message }: { children: React
   useEffect(() => { if (attempt && errors.length) summary.current?.focus(); }, [attempt]);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // A field states a rule the browser cannot check (such as "serial or system UUID") in data-problem; it is reported like any other invalid field.
+    for (const field of Array.from(event.currentTarget.elements)) if ((field instanceof HTMLInputElement || field instanceof HTMLSelectElement) && field.hasAttribute('data-problem')) field.setCustomValidity(field.dataset.problem ?? '');
     const invalid = Array.from(event.currentTarget.elements)
       .filter((field): field is HTMLInputElement | HTMLSelectElement => (field instanceof HTMLInputElement || field instanceof HTMLSelectElement) && field.willValidate && !field.validity.valid)
       .map((field, index) => {

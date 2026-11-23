@@ -39,7 +39,7 @@ it.each(['create-pagehide', 'create-unmount', 'edit-pagehide', 'edit-unmount', '
   expect(writes).toEqual(mode.includes('dispatched') ? [editing ? 'PATCH' : 'POST'] : []);
   if (mode.endsWith('pagehide')) {
     expect(screen.getByRole('status')).toHaveTextContent(mode.includes('dispatched') ? 'outcome is unknown' : 'No write was dispatched');
-    expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Display name saved\.|Facility created\./)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Display name')).toHaveValue('Retained safe input');
     expect(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' })).toBeDisabled();
   }

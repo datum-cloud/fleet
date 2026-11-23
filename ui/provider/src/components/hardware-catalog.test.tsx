@@ -43,12 +43,12 @@ describe('hardware catalog readers', () => {
     }));
     render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} claims={[claim]} catalog={[manufacturer, model]} /></QueryClientProvider>);
     fireEvent.click(await findEnabledButton({ name: 'Create device' }));
-    for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Shared catalog model (optional)', 'model-uid']]) {
+    for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Catalog model', 'model-uid']]) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
     fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
     await screen.findByText(/Related inventory is no longer readable/);
-    expect(screen.getByLabelText('Shared catalog model (optional)')).toHaveValue('unavailable');
+    expect(screen.getByLabelText('Catalog model')).toHaveValue('unavailable');
     expect(screen.getByRole('option', { name: /Selected catalog unavailable/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Model')).toHaveValue('Observed model');
     expect(screen.queryByText(/Private canonical vendor/)).not.toBeInTheDocument();
@@ -67,7 +67,7 @@ describe('hardware catalog readers', () => {
     const form = (current: InventoryFormValues, catalog: PhysicalRecord[]) => <InventoryHardwareFields kind="Device" values={current} namespace="default" claims={[]} devices={[]} feeds={[]} locations={[]} catalog={catalog} onChange={change} />;
     const result = render(form(values, [manufacturer, model, other]));
     expect(screen.queryByRole('option', { name: /Other namespace/ })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Shared catalog model (optional)'), { target: { value: 'model-uid' } });
+    fireEvent.change(screen.getByLabelText('Catalog model'), { target: { value: 'model-uid' } });
     const selected = change.mock.calls[0][0];
     expect(selected.catalog).toEqual({ namespace: 'default', name: model.metadata.name, uid: 'model-uid', resourceVersion: '2', manufacturer: { name: manufacturer.metadata.name, uid: 'vendor-uid', resourceVersion: '1' } });
     expect(selected.model).toBe(values.model);
@@ -89,7 +89,7 @@ describe('hardware catalog readers', () => {
     expect(device.spec.components).not.toContainEqual(expect.objectContaining({ id: 'new-port' }));
   });
 
-  it('keeps legacy source fallback through missing, cross-namespace and recreated references', () => {
+  it('falls back to the recorded identity through missing, cross-namespace and recreated references', () => {
     const { device, manufacturer, model, inventory } = fixture();
     inventory.physical = [];
     expect(deviceModelLabel(device, inventory)).toContain(device.spec.identity.model);
@@ -107,7 +107,7 @@ describe('hardware catalog readers', () => {
     const result = show(inventory);
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor|private-normalized/);
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Private model label' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+    fireEvent.submit(screen.getByRole('search'));
     expect(screen.queryByRole('link', { name: device.spec.displayName })).not.toBeInTheDocument();
   });
 
@@ -119,19 +119,23 @@ describe('hardware catalog readers', () => {
     expect(result.container.textContent).toContain('Private model label');
     result.rerender(view({ ...inventory, issues: { Manufacturer: { status: 403 } } }));
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor/);
-    expect(screen.getByText('Catalog unavailable · showing recorded observation')).toBeInTheDocument();
+    expect(screen.getByText('Catalog unavailable · showing recorded observation.')).toBeInTheDocument();
+    // The model fact is the recorded observation; the reason is its tooltip.
+    expect(screen.getByTitle('Catalog unavailable · showing recorded observation')).toBeInTheDocument();
   });
 
   it('browses aliases and nominal templates without inventing installed components', () => {
     const { inventory, model } = fixture();
     show(inventory, '?kind=Manufacturer');
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'private old vendor' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply search' }));
+    fireEvent.submit(screen.getByRole('search'));
     expect(screen.getByRole('link', { name: 'Private vendor label' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Device types' }));
     fireEvent.click(screen.getByRole('link', { name: model.spec.displayName }));
     expect(screen.getByText(/Template-only port/)).toBeInTheDocument();
-    expect(screen.getAllByText(/not installed|No installed assets/).length).toBeGreaterThan(0);
+    // The template is listed in the model's component table, as catalog only, not as an installed component.
+    expect(screen.getByRole('region', { name: 'Components table' })).toHaveTextContent('Template-only port');
+    expect(screen.queryByText(/Cable recorded|No cable recorded/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /create|edit|delete|apply|select/i })).not.toBeInTheDocument();
   });
 

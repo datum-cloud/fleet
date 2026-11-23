@@ -1,6 +1,7 @@
 // Building blocks for inventory detail pages. See "Page design rules" in
 // docs/development/staff-inventory-ui.md: a compact header, one primary view,
 // secondary detail in tabs held in the URL, issues first, quiet when normal.
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@datum-cloud/datum-ui/table';
 import { Tabs, TabsLinkTrigger, TabsList } from '@datum-cloud/datum-ui/tabs';
 import type { ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
@@ -16,6 +17,8 @@ export interface RecordTab {
   label: string;
   /** Shown after the label. Undefined hides it; use a string for "unknown". */
   count?: number | string;
+  /** Why the count needs checking ("17+", "?"): shows the count in amber, with this as its tooltip and accessible text. */
+  countNote?: string;
   content: ReactNode;
 }
 
@@ -56,7 +59,7 @@ export function RecordTabs({ tabs, label }: { tabs: RecordTab[]; label: string }
           onClick={event => { if (tabHref(tab.id) === `${pathname}${search}`) event.preventDefault(); }}
           aria-current={tab.id === current.id ? 'page' : undefined} aria-controls={undefined}
           onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}>
-          {tab.label}{tab.count !== undefined && <span className="inventory-count"> {tab.count}</span>}
+          {tab.label}{tab.count !== undefined && <span className="inventory-count" data-tone={tab.countNote ? 'warning' : undefined} title={tab.countNote}> {tab.count}{tab.countNote && <span className="inventory-visually-hidden"> · {tab.countNote}</span>}</span>}
         </TabsLinkTrigger>)}
       </TabsList>
     </Tabs>
@@ -127,35 +130,30 @@ export function Facts({ items, label }: { items: FactItem[]; label?: string }) {
   </dl>;
 }
 
-/** Generated identity, collapsed: record name, namespace, UID, created. */
-export function AboutRecord({ metadata, extra = [], children }: { metadata: ObjectMeta; extra?: FactItem[]; children?: ReactNode }) {
-  return <details className="inventory-about">
-    <summary>About this record</summary>
-    <Facts label="Record identity" items={[
-      { label: 'Record name', value: metadata.name, always: true },
-      { label: 'Namespace', value: metadata.namespace, always: true },
-      { label: 'Resource UID', value: metadata.uid },
-      { label: 'Created', value: metadata.creationTimestamp },
-      ...extra,
-    ]} />
-    {children}
-  </details>;
+/** A titled group of facts inside a tab. */
+export function FactSection({ title, children }: { title: string; children: ReactNode }) {
+  return <section className="inventory-fact-section" aria-label={title}><h4>{title}</h4>{children}</section>;
 }
 
-/** One short honesty line per view, instead of a note on every row. */
-export function ViewLegend({ children }: { children: ReactNode }) {
-  return <p className="inventory-legend">{children}</p>;
+/** A compact read-only table for short lists inside a tab. */
+export function SmallTable({ label, head, rows }: { label: string; head: string[]; rows: ReactNode[][] }) {
+  return <div className="inventory-scroll inventory-small-table"><Table aria-label={label} className="inventory-dense-table">
+    <TableHeader><TableRow>{head.map(cell => <TableHead key={cell}>{cell}</TableHead>)}</TableRow></TableHeader>
+    <TableBody>{rows.map((row, index) => <TableRow key={index}>{row.map((cell, column) => <TableCell key={column}>{cell}</TableCell>)}</TableRow>)}</TableBody>
+  </Table></div>;
 }
 
-/** The standard last tab: verification is never established by a record. */
-export function historyTab(metadata: ObjectMeta, extra?: ReactNode): RecordTab {
-  return {
-    id: 'history', label: 'History & verification', content: <>
-      <Facts items={[
-        { label: 'Verification', value: 'Unknown — no verification evidence is available.', always: true },
-        { label: 'Created', value: metadata.creationTimestamp },
-      ]} />
-      {extra}
-    </>,
-  };
+/**
+ * The record's resource name, creation date and any fact the page does not
+ * show elsewhere, as one quiet line at the end of the page. Namespace, UID
+ * and verification are left out: the UI reads only `default`, and nothing
+ * verifies inventory yet.
+ */
+export function RecordFooter({ metadata, extra = [] }: { metadata: ObjectMeta; extra?: FactItem[] }) {
+  const parts = [
+    <>Record <code>{metadata.name}</code></>,
+    metadata.creationTimestamp && <>created {metadata.creationTimestamp.slice(0, 10)}</>,
+    ...extra.filter(item => !isEmpty(item.value)).map(item => <>{item.label} {item.value}</>),
+  ].filter(Boolean);
+  return <section className="inventory-record-footer" aria-label="Record"><p>{parts.map((part, index) => <span key={index}>{index > 0 && ' · '}{part}</span>)}</p></section>;
 }

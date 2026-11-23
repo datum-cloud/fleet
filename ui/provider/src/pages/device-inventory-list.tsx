@@ -4,18 +4,18 @@ import { LoadingState } from '../components/states';
 import { InventoryAccessState } from '../components/inventory-access-state';
 import { useInventory } from '../lib/api';
 import { InventorySessionBoundary } from '../components/inventory-session-boundary';
-import { InventoryNavigation } from '../components/inventory-navigation';
+import { InventoryCountsProvider, InventoryNavigation } from '../components/inventory-navigation';
 import { Text } from '@datum-cloud/datum-ui/typography';
 import { InventoryPendingShell } from '../components/inventory-directory-heading';
 import { TelemetryProvider } from '../components/power-telemetry';
 
 export default function DeviceInventoryList() {
-  return <FleetPage testId="fleet-plugin-inventory-list">
+  return <FleetPage testId="fleet-plugin-inventory-list"><InventoryCountsProvider>
     <InventoryNavigation />
     <InventorySessionBoundary retainPresentationData pending={<InventoryPendingShell><Text as="p" role="status" aria-busy="true">Checking inventory access…</Text></InventoryPendingShell>} unavailable={status => <InventoryPendingShell><InventoryAccessState status={status} /></InventoryPendingShell>}>
       <InventoryListContent />
     </InventorySessionBoundary>
-  </FleetPage>;
+  </InventoryCountsProvider></FleetPage>;
 }
 
 function InventoryListContent() {

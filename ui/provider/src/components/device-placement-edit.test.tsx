@@ -42,7 +42,7 @@ describe('reported location editor', () => {
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     openAndFill(existing);
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Reported location saved'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Location saved'));
     expect(invalidate).toHaveBeenCalled();
     const patch = JSON.parse(fetch.mock.calls.find(([, request]) => request.method === 'PATCH')![1].body as string);
     expect(patch[2].value.revision).toBe(existing ? 2 : 1);
@@ -62,7 +62,7 @@ describe('reported location editor', () => {
   it.each([401, 403, 404, 503])('purges denied rack references and choices: %s', async status => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({}, status));
     vi.stubGlobal('fetch', fetch); setup(); openAndFill();
-    fireEvent.change(screen.getByLabelText('Actual rack (optional)'), { target: { value: 'rack' } });
+    fireEvent.change(screen.getByLabelText('Rack'), { target: { value: 'rack' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Restricted names and choices were removed'));
     expect(screen.queryByText('Restricted rack name')).not.toBeInTheDocument();
@@ -102,7 +102,7 @@ describe('reported location editor', () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
     const view = setup(); openAndFill();
-    fireEvent.change(screen.getByLabelText('Actual rack (optional)'), { target: { value: 'rack' } });
+    fireEvent.change(screen.getByLabelText('Rack'), { target: { value: 'rack' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(resolve).toBeDefined());
     if (event === 'session') view.session.invalidate();
@@ -126,7 +126,7 @@ describe('reported location editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Leave form' }));
     expect(screen.getByRole('button', { name: 'Add reported location' })).toBeDisabled();
   });
-  it('disables editing for denied permission and legacy Flux', () => {
+  it('disables editing for denied permission and GitOps-managed records', () => {
     permission.mockReturnValue({ data: false, isFetching: false, error: null } as never);
     setup({ ...device, metadata: { ...device.metadata, managedFields: [{ manager: 'kustomize-controller' }] } });
     expect(screen.getByRole('button', { name: 'Add reported location' })).toBeDisabled();

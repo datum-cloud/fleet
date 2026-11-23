@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { CableEndpoint, Device, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import { toInventory, type Inventory } from '../inventory';
 import {
-  connectorShape, deviceConnections, deviceTitle, faceGroups, faceLabel, localLabel, oppositeFaceCheck, peerLabel, portLayout, portTiles, remotePortLabel,
-  shortLabels, stateCounts, tileCounts, unmatchedLinks, viewNames,
+  connectorShape, deviceConnections, deviceTitle, localLabel, oppositeFaceCheck, peerLabel, portLayout, portTiles,
+  interfaceAddresses, shortLabels, stateCounts, tileCounts, unmatchedLinks, viewNames,
   type ConnectionLink, type PortTile,
 } from './device-connections';
 import { humanName, isGeneratedName } from './display-names';
@@ -37,7 +37,6 @@ describe('deviceConnections', () => {
     const [eth0] = link(result.links, 'eth0');
     expect(eth0).toMatchObject({ state: 'cabled', group: 'network', cable: { name: 'dac-01', medium: 'Copper', laneID: 'l1' }, peer: { kind: 'Device', access: 'readable', name: 'leaf-01', componentID: 'swp1' } });
     expect(peerLabel(eth0.peer)).toBe('Example leaf-01 · swp1');
-    expect(remotePortLabel(eth0.peer)).toBe('swp1');
   });
 
   it('classifies an uncabled port as no cable recorded, never free', () => {
@@ -72,7 +71,7 @@ describe('deviceConnections', () => {
   });
 
   it('marks a Cable naming a component the Device does not record as records disagree', () => {
-    const result = deviceConnections(server, inv([server, leaf], [cable('dac-legacy', 'Copper', [['l1', D('server-01', 'eth9'), D('leaf-01', 'swp2')]])]));
+    const result = deviceConnections(server, inv([server, leaf], [cable('dac-stray', 'Copper', [['l1', D('server-01', 'eth9'), D('leaf-01', 'swp2')]])]));
     const [orphan] = link(result.links, 'eth9');
     expect(orphan).toMatchObject({ state: 'conflict', group: 'unrecorded', component: undefined });
     expect(orphan.reasons[0]).toMatch(/names component "eth9", which this Device does not record/);
@@ -109,7 +108,6 @@ describe('deviceConnections', () => {
     expect(psu.peer).toEqual({ kind: 'PowerFeed', access: 'denied' });
     expect(JSON.stringify(psu.peer)).not.toMatch(/feed-a|outlet-7/);
     expect(peerLabel(psu.peer)).toBe('Power feed unavailable');
-    expect(remotePortLabel(psu.peer)).toBe('Port unavailable');
   });
 
   it('treats denied Cable reads as unknown connections, not as no cable recorded', () => {
@@ -140,7 +138,7 @@ describe('deviceConnections', () => {
     expect(localLabel(link(result.links, 'swp49', 3)[0])).toBe('swp49 · position 3');
     const [fromServer] = link(deviceConnections(servers[2], data).links, 'eth0');
     expect(fromServer.peer).toMatchObject({ name: 'leaf-01', componentID: 'swp49', position: 3, multiPosition: true });
-    expect(remotePortLabel(fromServer.peer)).toBe('swp49 · position 3');
+    expect(peerLabel(fromServer.peer)).toMatch(/· swp49 · position 3$/);
   });
 
   it('joins PSU inlets to PowerFeed outlets with the recorded rating, leaving other inlets unknown', () => {
@@ -202,7 +200,6 @@ describe('component faces in the connection join', () => {
     const { links } = deviceConnections(named('leaf-01'), faced);
     expect(link(links, 'swp1')[0]).toMatchObject({ chassisFace: 'Front', rackFace: 'rear' });
     expect(link(links, 'psu-1')[0]).toMatchObject({ chassisFace: 'Rear', rackFace: 'front' });
-    expect(faceLabel(link(links, 'swp1')[0])).toBe('Chassis front · rack rear');
     const compute = deviceConnections(named('compute-07'), faced).links;
     expect(link(compute, 'eth0')[0]).toMatchObject({ chassisFace: 'Rear', rackFace: 'rear' });
     expect(link(compute, 'console')[0]).toMatchObject({ chassisFace: 'Front', rackFace: 'front' });
@@ -213,16 +210,8 @@ describe('component faces in the connection join', () => {
     const unmounted = { ...named('leaf-01'), spec: { ...named('leaf-01').spec, reportedPlacement: { ...named('leaf-01').spec.reportedPlacement!, face: undefined } } };
     const [swp1] = link(deviceConnections(unmounted, faced).links, 'swp1');
     expect(swp1).toMatchObject({ chassisFace: 'Front', rackFace: undefined });
-    expect(faceLabel(swp1)).toBe('Chassis front · rack face unknown');
-    expect(faceLabel({})).toBe('Chassis face unknown');
     const hidden = deviceConnections(named('leaf-01'), { ...faced, issues: { DeviceType: { status: 403 } } }).links;
     expect(hidden.every(item => item.chassisFace === undefined && item.rackFace === undefined)).toBe(true);
-  });
-
-  it('groups ports by chassis face in the order Front, Rear, Face unknown', () => {
-    const groups = faceGroups([{ chassisFace: 'Rear' as const, id: 1 }, { id: 2 }, { chassisFace: 'Front' as const, id: 3 }, { chassisFace: 'Rear' as const, id: 4 }]);
-    expect(groups.map(group => [group.title, group.links.map(item => item.id)])).toEqual([['Front', [3]], ['Rear', [1, 4]], ['Face unknown', [2]]]);
-    expect(faceGroups([])).toEqual([]);
   });
 
   it('adds a soft check, never a conflict, when a Cable lands on opposite rack faces', () => {
@@ -385,5 +374,18 @@ describe('links against every Cable that names the Device', () => {
     expect(extra.find(item => item.cable?.name === 'omitted-01')?.peer).toEqual({ kind: 'PowerFeed', access: 'denied' });
     const hidden = inv([server, leaf], records, { Cable: { status: 403 } });
     expect(unmatchedLinks(server, hidden, deviceConnections(server, hidden).links)).toEqual([]);
+  });
+});
+
+describe('interfaceAddresses', () => {
+  it('matches interfaces to components by name or id and lists the rest', () => {
+    const device = { metadata: { name: 'synthetic-server', namespace: 'default' }, spec: {
+      claimRef: { name: 'plan' }, identity: { model: 'Example' },
+      components: [{ id: 'nic-0', name: 'eth0', type: 'NetworkPort' }, { id: 'eth1', name: 'Port 2', type: 'NetworkPort' }],
+      interfaces: [{ name: 'eth0', macAddress: '00:00:5e:00:53:a0' }, { name: 'eth1', macAddress: '00:00:5e:00:53:a1' }, { name: 'eth9', macAddress: '00:00:5e:00:53:a9' }, { name: 'eth0' }],
+    } } as Device;
+    const { byComponent, unplaced } = interfaceAddresses(device);
+    expect([...byComponent]).toEqual([['nic-0', '00:00:5e:00:53:a0'], ['eth1', '00:00:5e:00:53:a1']]);
+    expect(unplaced).toEqual([{ name: 'eth9', macAddress: '00:00:5e:00:53:a9' }]);
   });
 });

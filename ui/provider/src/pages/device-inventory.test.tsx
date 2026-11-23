@@ -1,4 +1,3 @@
-import DeviceClaimDetail from './device-claim-detail';
 import DeviceInventoryList from './device-inventory-list';
 import { toInventory } from '../inventory';
 import * as api from '../lib/api';
@@ -29,7 +28,6 @@ function renderAt(path: string) {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/plugins/:slug/inventory" element={<DeviceInventoryList />} />
-          <Route path="/plugins/:slug/inventory/:namespace/:claim" element={<DeviceClaimDetail />} />
         </Routes>
       </MemoryRouter>
       </InventoryPreviewContext.Provider>
@@ -70,8 +68,9 @@ describe('DeviceInventoryList', () => {
   it('shows Devices whose claim is missing', () => {
     mockInventory({ data: inventory });
     renderAt('/plugins/metal-datumapis-com/inventory');
-    expect(within(screen.getByTestId('fleet-plugin-inventory-table')).getByText(/orphan-synthetic-0009/)).toBeInTheDocument();
-    expect(screen.getByText('Claim record not found')).toBeInTheDocument();
+    const row = within(screen.getByTestId('fleet-plugin-inventory-table')).getByText(/orphan-synthetic-0009/).closest('tr')!;
+    expect(row).toHaveAttribute('data-attention', 'unavailable');
+    expect(row).toHaveAttribute('title', 'Installation plan not found and no placement reported');
   });
 
   it('shows the restricted state on a 403', () => {
@@ -116,65 +115,5 @@ describe('DeviceInventoryList', () => {
     renderAt('/plugins/metal-datumapis-com/inventory');
     expect(screen.getByRole('button', { name: /create/i })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /delete|edit/i })).not.toBeInTheDocument();
-  });
-});
-
-describe('DeviceClaimDetail', () => {
-  it('refuses a foreign legacy route even with supplied same-named records', () => {
-    const foreignClaims = fixtureDeviceClaims.map(claim => ({ ...claim, metadata: { ...claim.metadata, namespace: 'other' }, spec: { ...claim.spec, displayName: 'Private foreign claim' } }));
-    const foreignDevices = fixtureDevices.map(device => ({ ...device, metadata: { ...device.metadata, namespace: 'other' } }));
-    mockInventory({ data: toInventory([...fixtureDeviceClaims, ...foreignClaims], [...fixtureDevices, ...foreignDevices]) });
-    renderAt('/plugins/metal-datumapis-com/inventory/other/rack-01-u12');
-    expect(screen.getByText(/only supports the default namespace/)).toBeInTheDocument();
-    expect(screen.queryByText('Private foreign claim')).not.toBeInTheDocument();
-    expect(screen.queryByText('SYNTHETIC-0001')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('fleet-plugin-claim')).not.toBeInTheDocument();
-  });
-
-  it('denies old direct links without leaking cached claims or devices', () => {
-    mockInventory({ data: inventory, error: new ApiError(403, 'Secret error') });
-    renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');
-    expect(screen.getByRole('heading', { name: 'Inventory access needed' })).toBeInTheDocument();
-    expect(screen.queryByText('SYNTHETIC-0001')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('fleet-plugin-claim')).not.toBeInTheDocument();
-  });
-
-  it('shows placement, ports, binding, identity, BMC endpoint, unmapped MACs and created time', () => {
-    mockInventory({ data: inventory });
-    renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');
-    const claim = screen.getByTestId('fleet-plugin-claim');
-    expect(within(claim).getByText('example-facility · rack-01 · U12 front')).toBeInTheDocument();
-    expect(within(claim).getByText(/eth0 \(25gbase-x-sfp28, 25000 Mb\/s\) → switch-01 Ethernet1\/12/)).toBeInTheDocument();
-    expect(within(claim).getByText('2026-01-02T03:04:05Z')).toBeInTheDocument();
-    const device = screen.getByTestId('fleet-plugin-device-rack-01-u12-synthetic-0001');
-    for (const text of ['SYNTHETIC-0001', '00000000-0000-4000-8000-000000000001', 'https://192.0.2.100:443', 'rack-01-u12', '2026-01-09T10:00:00Z']) {
-      expect(within(device).getByText(text)).toBeInTheDocument();
-    }
-    const macs = within(device).getByTestId('fleet-plugin-unmapped-macs');
-    expect(within(macs).getByText('00:00:5e:00:53:01')).toBeInTheDocument();
-    expect(within(macs).getByText('00:00:5e:00:53:02')).toBeInTheDocument();
-  });
-
-  it('shows an unregistered slot', () => {
-    mockInventory({ data: inventory });
-    renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u10');
-    expect(within(screen.getByTestId('fleet-plugin-claim')).getByText('Not registered')).toBeInTheDocument();
-  });
-
-  it('reports a missing claim', () => {
-    mockInventory({ data: inventory });
-    renderAt('/plugins/metal-datumapis-com/inventory/default/nope');
-    expect(screen.getByTestId('fleet-plugin-claim-missing')).toBeInTheDocument();
-  });
-
-  it('preserves history without guessing an active replacement', () => {
-    const replacement = {
-      ...fixtureDevices[0],
-      metadata: { ...fixtureDevices[0].metadata, name: 'rack-01-u12-synthetic-0002', creationTimestamp: '2026-02-01T00:00:00Z' },
-    };
-    mockInventory({ data: toInventory(fixtureDeviceClaims, [fixtureDevices[0], replacement]) });
-    renderAt('/plugins/metal-datumapis-com/inventory/default/rack-01-u12');
-    expect(within(screen.getByTestId('fleet-plugin-claim')).getByText('Multiple records; active binding Unknown')).toBeInTheDocument();
-    expect(within(screen.getByTestId('fleet-plugin-device-rack-01-u12-synthetic-0001')).getByText('Historical binding; active placement Unknown')).toBeInTheDocument();
   });
 });

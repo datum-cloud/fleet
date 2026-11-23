@@ -8,7 +8,6 @@ import { FIXTURE_NAMES, fixtureInventory } from '../lib/inventory-fixtures';
 import { mockTelemetrySource } from '../lib/telemetry-mock';
 import { TelemetryContext } from '../lib/telemetry';
 import { PhysicalInventory } from './physical-inventory';
-import { recordWords } from './device-faceplate';
 import { groupFreshness } from './power-feed-path';
 
 // Synthetic fixture records only.
@@ -45,7 +44,7 @@ describe('outlets as a tile strip', () => {
     // Empty outlets are tiles, not rows: no "No cable recorded" text, only the tile's state and name.
     expect(within(feedOutlets()).queryByText('No cable recorded')).not.toBeInTheDocument();
     expect(strip[1]).toHaveAttribute('data-state', 'none');
-    expect(strip[1]).toHaveAccessibleName(/^Outlet 2: No cable recorded, unknown, not free; telemetry /);
+    expect(strip[1]).toHaveAccessibleName(/^Outlet 2: No cable recorded; telemetry /);
   });
 
   it('applies the dense rule above twelve outlets: unlabelled tiles with edge numbers', () => {
@@ -94,18 +93,19 @@ describe('outlets as a tile strip', () => {
   });
 });
 
-describe('one "updated" line per group', () => {
+describe('an "updated" line per group only when some reading is stale or missing', () => {
   it.each([
-    ['normal', 'Updated 40 s ago', 'Updated 40 s ago'],
+    ['normal', undefined, undefined],
     ['stale', 'Stale · updated 3 h ago', 'Stale · updated 3 h ago'],
     ['missing', 'Not reported', 'Updated 50 s ago · 6 not reported'],
     [undefined, 'Not reported', 'Not reported'],
-  ])('%s: the feed and the PDU each say it once', (scenario, feed, pdu) => {
+  ])('%s: the feed and the PDU each say it at most once', (scenario, feed, pdu) => {
     open(FEED_A, scenario);
     for (const [region, text] of [[feedOutlets(), feed], [pduOutlets(), pdu]] as const) {
       const lines = region.querySelectorAll('.inventory-power-updated');
-      expect(lines).toHaveLength(1);
-      expect(lines[0]).toHaveTextContent(text);
+      // All fresh: the ages are in each tile's name and card, so the group says nothing.
+      expect(lines).toHaveLength(text ? 1 : 0);
+      if (text) expect(lines[0]).toHaveTextContent(text);
       // No per-outlet ages.
       expect(within(region).queryAllByText(/ ago$/).filter(item => !item.classList.contains('inventory-power-updated'))).toHaveLength(0);
     }
@@ -114,44 +114,34 @@ describe('one "updated" line per group', () => {
   it('summarises fresh, stale and missing readings honestly', () => {
     const at = (seconds: number, window = 300) => ({ value: 1, origin: { collector: 'pdu' as const, name: 'synthetic' }, observedAt: new Date(NOW - seconds * 1000).toISOString(), staleAfterSeconds: window });
     expect(groupFreshness([], NOW)).toEqual({ text: 'Not reported', freshness: 'missing' });
-    expect(groupFreshness([{ powerW: at(20) }, { currentA: at(70) }], NOW)).toEqual({ text: 'Updated 1 min ago', freshness: 'fresh' });
+    expect(groupFreshness([{ powerW: at(20) }, { currentA: at(70) }], NOW)).toEqual({ text: 'Updated 1 min ago', freshness: 'fresh', complete: true });
     expect(groupFreshness([{ powerW: at(20) }, { powerW: at(4000) }, undefined], NOW)).toEqual({ text: 'Updated 20 s ago · 1 stale, last 1 h ago · 1 not reported', freshness: 'stale' });
     // A value without a window is invalid, so it is not reported, never fresh.
     expect(groupFreshness([{ powerW: at(20, 0) }], NOW)).toEqual({ text: 'Not reported', freshness: 'missing' });
   });
 });
 
-describe('card wording by owner kind', () => {
-  it('says a feed outlet is recorded on the power feed, and a PDU outlet on the Device', () => {
+describe('outlet and PSU cards', () => {
+  it('shows no record-identity rows and no More on feed or PDU outlet cards', () => {
     open(FEED_A, 'normal');
-    fireEvent.click(within(feedOutlets()).getByRole('button', { name: /^Outlet 2:/ }));
-    let card = screen.getByRole('dialog', { name: 'Outlet 2 details' });
-    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
-    expect(within(card).getByText('Record').nextElementSibling).toHaveTextContent('Recorded on this power feed');
-    expect(card).not.toHaveTextContent('this Device');
-    fireEvent.click(within(card).getByRole('button', { name: 'Close Outlet 2' }));
-    fireEvent.click(within(pduOutlets()).getByRole('button', { name: /^Outlet 2:/ }));
-    card = screen.getByRole('dialog', { name: 'Outlet 2 details' });
-    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
-    expect(within(card).getByText('Record').nextElementSibling).toHaveTextContent('Recorded on this Device');
+    for (const region of [feedOutlets(), pduOutlets()]) {
+      fireEvent.click(within(region).getByRole('button', { name: /^Outlet 2:/ }));
+      const card = screen.getByRole('dialog', { name: 'Outlet 2 details' });
+      expect(card).not.toHaveTextContent(/Recorded on this|Record|Peer record|example-/);
+      expect(within(card).queryByRole('button', { name: 'More' })).toBeNull();
+      fireEvent.click(within(card).getByRole('button', { name: 'Close Outlet 2' }));
+    }
   });
 
-  it('words each owner and state', () => {
-    expect(recordWords('Device', true)).toBe('Recorded on this Device');
-    expect(recordWords('Device', false)).toBe('Catalog template only; this Device does not record it');
-    expect(recordWords('PowerFeed', true)).toBe('Recorded on this power feed');
-    expect(recordWords('PowerFeed', false)).toBe('Not recorded on this power feed');
-  });
-
-  it('keeps Telemetry in the card body and moves the collector behind More, for a PSU too', () => {
+  it('keeps Telemetry in the card body, with the collector as its tooltip, for a PSU too', () => {
     open(`${BASE}?kind=Device&record=${FIXTURE_NAMES.server}&namespace=default`, 'normal');
     fireEvent.click(screen.getByRole('button', { name: /^PSU 1: Cable recorded/ }));
     const card = screen.getByRole('dialog', { name: 'PSU 1 details' });
-    expect(card.querySelector('.inventory-port-card-telemetry')).toHaveTextContent(/^TelemetryInput power182 W40 s ago/);
+    const telemetry = card.querySelector('.inventory-port-card-telemetry')!;
+    expect(telemetry).toHaveTextContent(/^TelemetryInput power182 W40 s ago/);
     expect(card).not.toHaveTextContent(/BMC collector|synthetic-bmc-collector/);
-    expect(card.querySelector('[data-health="ok"]')).toHaveTextContent('Observed OK · 40 s ago');
-    fireEvent.click(within(card).getByRole('button', { name: 'More' }));
-    expect(within(card).getByText('Telemetry source').nextElementSibling).toHaveTextContent(/^BMC collector \(synthetic-bmc-collector, synthetic\) · observed .* · fresh for 10 min$/);
+    expect(card.querySelector('[data-health="ok"]')).toHaveTextContent(/^OK · 40 s ago$/);
+    expect(telemetry.parentElement).toHaveAttribute('title', expect.stringMatching(/^BMC collector \(synthetic-bmc-collector, synthetic\) · observed .* · fresh for 10 min$/));
   });
 });
 
@@ -167,25 +157,25 @@ describe('rack Power tab without duplicate lists', () => {
     // Each feed's terminations, with what each is cabled to, are the feed column's tiles and cards.
     const feedA = within(grid).getByRole('list', { name: 'Feed A outlets' });
     expect(within(feedA).getByRole('button', { name: /^Outlet 1: Cable recorded, to PDU a01 \(rear left\) · Inlet, via Power PDU inlet/ })).toBeInTheDocument();
-    expect(within(feedA).getAllByRole('button', { name: /No cable recorded, unknown, not free/ })).toHaveLength(3);
+    expect(within(feedA).getAllByRole('button', { name: /No cable recorded/ })).toHaveLength(3);
     const feedB = within(grid).getByRole('list', { name: 'Feed B outlets' });
     expect(within(feedB).getByRole('button', { name: /^Outlet 1: Cable recorded, to Compute a01-01 · PSU 2/ })).toBeInTheDocument();
     expect(within(feedB).getByRole('button', { name: /^Outlet 2: Cable recorded, to Leaf a01 · PSU 2/ })).toBeInTheDocument();
     fireEvent.click(within(feedA).getByRole('button', { name: /^Outlet 1:/ }));
     expect(within(screen.getByRole('dialog', { name: 'Outlet 1 details' })).getByRole('link', { name: 'PDU a01 (rear left) · Inlet' })).toBeInTheDocument();
-    // Counts, and a link to each feed's full power path.
-    expect(grid).toHaveTextContent('4 outlets · 1 recorded · 3 unknown');
-    expect(within(grid).getAllByRole('link', { name: 'Power path' })[0]).toHaveAttribute('href', expect.stringContaining('record=example-feed-a'));
-    // The PDU's outlet use is on its row; its outlets are on its own page.
+    // The tiles carry the outlet states, so there is no count line or separate power-path link under them.
+    expect(grid).not.toHaveTextContent(/\d+ outlets · /);
+    expect(within(grid).queryByRole('link', { name: 'Power path' })).toBeNull();
+    // The PDU has its own row; its outlets and their use are on its own page.
     const pduRow = within(grid).getByRole('rowheader', { name: /^PDU a01/ });
-    expect(pduRow).toHaveTextContent('5 of 8 outlets have a cable recorded');
+    expect(pduRow).not.toHaveTextContent(/outlets have a cable recorded/);
     expect(within(pduRow).getByRole('link', { name: 'PDU a01 (rear left)' })).toHaveAttribute('href', expect.stringContaining('record=example-pdu-a01'));
   });
 
-  it('still lists the PDU and its outlet use when power feeds are denied, naming no feed', () => {
+  it('still lists the PDU when power feeds are denied, naming no feed', () => {
     open(RACK_POWER, 'normal', fixtureInventory('power-feeds-denied'));
     expect(screen.getByText('Power feed details unavailable.')).toBeInTheDocument();
-    expect(screen.getByText('5 of 8 outlets have a cable recorded')).toBeInTheDocument();
+    expect(screen.getByRole('rowheader', { name: /^PDU a01/ })).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/Feed A|Feed B|example-feed/);
   });
 });
@@ -196,18 +186,25 @@ describe('a single-feed device in the fixtures', () => {
     const grid = screen.getByRole('table', { name: 'Device PSUs by recorded feed' });
     const row = within(grid).getByRole('rowheader', { name: /^Compute a01-05/ }).closest('[role="row"]') as HTMLElement;
     expect(row).toHaveAttribute('data-class', 'single');
-    expect(row).toHaveTextContent('Single feed (recorded)');
+    // Colour marks the row; the words are its tooltip and accessible text, not a visible badge.
+    expect(row).toHaveAttribute('title', 'Single feed (recorded)');
+    expect(row.querySelector('.inventory-feed-class')).toBeNull();
     const [feedA, feedB] = within(row).getAllByRole('cell');
     expect(feedA).toHaveTextContent('PSU 1 via PDU a01 (rear left) · Outlet 4');
     expect(feedA).toHaveTextContent('PSU 2 via PDU a01 (rear left) · Outlet 5');
     expect(feedB).toHaveAttribute('data-empty');
-    expect(screen.getByRole('region', { name: 'Feeds and PSUs' })).toHaveTextContent(/2 on a single feed \(recorded\)/);
+    expect(screen.getByRole('region', { name: 'Feeds and PSUs' }).querySelector('h4')).toHaveTextContent(/2 on a single feed$/);
   });
 
-  it('shows on the feed path with its class badge, and its device page draws both PSUs to the PDU', () => {
+  it('shows on the feed path with an amber edge, and its device page draws both PSUs to the PDU', () => {
     const view = open(FEED_A, 'normal');
     const devices = screen.getByRole('list', { name: /Power path/ }).querySelector('[data-stage="devices"]') as HTMLElement;
-    expect(within(devices).getByRole('link', { name: 'Compute a01-05' }).closest('li')).toHaveTextContent(/Single feed \(recorded\).*PSU 1 via PDU a01 \(rear left\) · Outlet 4.*PSU 2 via PDU a01 \(rear left\) · Outlet 5/);
+    const cell = within(devices).getByRole('link', { name: 'Compute a01-05' }).closest('td')!;
+    expect(cell).toHaveAttribute('data-class', 'single');
+    expect(cell).toHaveAttribute('title', 'Single feed (recorded)');
+    expect(cell).toHaveAttribute('rowspan', '2');
+    const rows = [cell.closest('tr')!, cell.closest('tr')!.nextElementSibling!];
+    expect(rows.map(row => row.textContent)).toEqual([expect.stringMatching(/PSU 1Outlet 4 on PDU a01 \(rear left\)/), expect.stringMatching(/^PSU 2Outlet 5 on PDU a01 \(rear left\)/)]);
     view.unmount();
     open(`${BASE}?kind=Device&record=${FIXTURE_NAMES.singleFeedServer}&namespace=default`);
     expect(screen.getByRole('button', { name: /^PSU 1: Cable recorded, to PDU a01 \(rear left\) · Outlet 4/ })).toBeInTheDocument();

@@ -94,8 +94,8 @@ describe('physical record creation', () => {
   it.each([{ serial: '', systemUUID: '' }, { model: '' }, { systemUUID: 'invented' }, { components: [{ id: 'a', name: 'A', type: 'NetworkPort', positions: 0 }] }, { components: [values.components![0], values.components![0]] }])('rejects incomplete or invalid hardware: %j', invalid => {
     expect(() => hardwarePayload('Device', { ...values, ...invalid } as InventoryFormValues, common)).toThrow();
   });
-  it.each(['legacy', 'changed', 'deleted'])('does not register against %s plans', async mode => {
-    const changed = { ...claim, metadata: { ...claim.metadata, ...(mode === 'changed' && { resourceVersion: '2' }), ...(mode === 'deleted' && { deletionTimestamp: 'now' }) }, spec: { lifecycle: mode === 'legacy' ? undefined : 'Installation' } };
+  it.each(['changed', 'deleted'])('does not register against %s plans', async mode => {
+    const changed = { ...claim, metadata: { ...claim.metadata, ...(mode === 'changed' && { resourceVersion: '2' }), ...(mode === 'deleted' && { deletionTimestamp: 'now' }) }, spec: { lifecycle: 'Installation' } };
     const requests = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(changed));
     vi.stubGlobal('fetch', requests);
     await expect(createInventoryRecord('Device', values, new InventoryOperationScope().begin())).rejects.toMatchObject({ status: 409 });

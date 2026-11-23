@@ -51,6 +51,10 @@ const record = (kind: string, name: string, extra = '') => `${INVENTORY}?kind=${
 
 export const PAGES: CapturePage[] = [
   { name: 'inventory-list', path: INVENTORY, ready: '[data-testid="fleet-plugin-inventory-list"] table' },
+  { name: 'capacity-list', path: '/plugins/metal-datumapis-com', ready: '[data-testid="fleet-plugin-capacity-table"] table' },
+  { name: 'capacity-pool', path: '/plugins/metal-datumapis-com?namespace=fleet-provider&pool=central-metal', ready: '[data-testid="fleet-plugin-capacity-filter"]', viewports: ['desktop-light'] },
+  { name: 'profile-list', path: '/plugins/metal-datumapis-com/profiles', ready: '[data-testid="fleet-plugin-profile-table"] table' },
+  { name: 'class-list', path: '/plugins/metal-datumapis-com/classes', ready: '[data-testid="fleet-plugin-class-table"] table' },
   { name: 'rack-elevation', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-layout' },
   { name: 'rack-overlap', path: record('Rack', 'example-rack-a02'), ready: '.inventory-rack-layout' },
   { name: 'rack-page-elevation', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-stage' },
@@ -60,8 +64,13 @@ export const PAGES: CapturePage[] = [
   { name: 'rack-page-cables', path: record('Rack', 'example-rack-a01', '&tab=cables'), ready: '.inventory-rack-tab[data-tab="cables"] table' },
   { name: 'rack-page-phone-sheet', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-srv-a01-01'), ready: '.inventory-rack-panel[data-variant="sheet"] .inventory-faceplate', viewports: ['phone'] },
   { name: 'server-detail', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections' },
+  // The secondary tab and the Record section that closes every record page.
+  { name: 'device-hardware', path: record('Device', 'example-srv-a01-01', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-fact-section', element: '.inventory-record-tabs', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
+  { name: 'device-location', path: record('Device', 'example-srv-a01-01', '&tab=location'), ready: '[data-tab="location"] .inventory-fields', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
+  { name: 'record-footer', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-record-footer', element: '.inventory-record-footer', viewports: ['desktop-light', 'phone'] },
   // Device detail for a model without a layout (grouped tiles), and the one component table.
   { name: 'device-detail-no-layout', path: record('Device', 'example-app-a01'), ready: '.inventory-connections' },
+  // `view=table` is no longer a choice: it falls back to the default page, picture and table.
   { name: 'device-table', path: record('Device', 'example-srv-a01-01', '&view=table'), ready: '.inventory-connection-table', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
   { name: 'leaf-connections', path: record('Device', 'example-leaf-a01'), ready: '.inventory-connections', element: '.inventory-connections' },
   // Both rack faces: full depth on both (muted far side), reversed leaf,
@@ -73,11 +82,22 @@ export const PAGES: CapturePage[] = [
   { name: 'opposite-face-check', path: record('Device', 'example-app-a01'), ready: '.inventory-port-grid', click: tile('net0') },
   // Detail and list pages for each kind, for page-design review.
   { name: 'cable-detail', path: record('Cable', 'example-brk-swp49'), ready: '.inventory-page-title' },
+  // A one-lane Cable is one line; a duplicate's shared end is red.
+  { name: 'cable-detail-dac', path: record('Cable', 'example-dac-a01-01-eth0'), ready: '.inventory-cable-line' },
+  { name: 'cable-detail-conflict', path: record('Cable', 'example-dac-a01-01-eth1-dup'), ready: '.inventory-cable-line' },
   { name: 'power-feed-detail', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-page-title' },
   { name: 'facility-detail', path: record('Facility', 'example-dc1'), ready: '.inventory-page-title' },
   { name: 'site-detail', path: record('Site', 'example-site-one'), ready: '.inventory-page-title' },
   { name: 'device-type-detail', path: record('DeviceType', 'example-server-1u'), ready: '.inventory-page-title' },
   { name: 'manufacturer-detail', path: record('Manufacturer', 'example-compute'), ready: '.inventory-page-title' },
+  { name: 'site-devices', path: record('Site', 'example-site-one', '&tab=devices'), ready: '[data-tab="devices"] table' },
+  { name: 'site-plans', path: record('Site', 'example-site-one', '&tab=plans'), ready: '[data-tab="plans"] table' },
+  { name: 'facility-unracked', path: record('Facility', 'example-dc1', '&tab=unracked'), ready: '[data-tab="unracked"] table' },
+  { name: 'facility-feeds', path: record('Facility', 'example-dc1', '&tab=feeds'), ready: '[data-tab="feeds"] table' },
+  { name: 'facility-cables', path: record('Facility', 'example-dc1', '&tab=cables'), ready: '[data-tab="cables"] table' },
+  { name: 'device-type-leaf', path: record('DeviceType', 'example-leaf-48x25-8x100'), ready: '.inventory-drawing' },
+  { name: 'device-type-pdu', path: record('DeviceType', 'example-pdu-8'), ready: '.inventory-page-title' },
+  { name: 'manufacturer-devices', path: record('Manufacturer', 'example-compute', '&tab=devices'), ready: '[data-tab="devices"] table' },
   { name: 'claim-detail', path: record('DeviceClaim', 'example-srv-a01-01-install'), ready: '.inventory-page-title' },
   { name: 'devices-list', path: `${INVENTORY}?kind=Device`, ready: '[data-testid="fleet-plugin-inventory-table"]' },
   { name: 'cables-list', path: `${INVENTORY}?kind=Cable`, ready: '[data-testid="fleet-plugin-inventory-table"]' },
@@ -87,8 +107,6 @@ export const PAGES: CapturePage[] = [
   { name: 'ports-server', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-leaf', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-leaf-card', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', click: tile('swp49'), viewports: CONNECTION_VIEWPORTS },
-  // The same breakout card with More open: record names, connector and source.
-  { name: 'ports-leaf-card-more', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', click: [tile('swp49'), '.inventory-port-card-more > button'], viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-server-conflict-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('eth1'), viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-denied-peer-card', path: record('Device', 'example-srv-a01-01', '&fixture=power-feeds-denied'), ready: '.inventory-port-grid', click: tile('psu-2'), viewports: CONNECTION_VIEWPORTS },
   // The same shared faceplate in the rack side panel: the leaf's unlabelled tiles, and an open card.
@@ -103,12 +121,8 @@ export const PAGES: CapturePage[] = [
   { name: 'power-feed-no-telemetry', path: record('PowerFeed', 'example-feed-a', '&telemetry=none'), ready: '.inventory-power-path' },
   { name: 'power-feed-outlet-card', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path', click: `.inventory-power-strip[aria-label="PDU a01 (rear left) outlets"] ${tile('outlet-1')}` },
   { name: 'device-psu-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('psu-1') },
-  // The outlet card with More open: owner-kind wording and the telemetry source.
-  { name: 'power-feed-outlet-card-more', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path', click: [`.inventory-power-strip[aria-label="Power outlets"] ${tile('outlet-1')}`, '.inventory-port-card-more > button'] },
   // A server whose PSUs both reach Feed A through one PDU: "Single feed (recorded)".
   { name: 'device-single-feed', path: record('Device', 'example-srv-a01-05'), ready: '.inventory-connections' },
-  // Blank units collapse into one row per run; a click expands the run in place on both faces.
-  { name: 'rack-elevation-expanded', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-run-button', element: '.inventory-elevation', click: '.inventory-rack-units[data-face="front"] .inventory-rack-run-button[data-run="U22-U39"]' },
   // Faceplates drawn from DeviceType layouts: the 1U server and the 48+8 leaf,
   // an open card on a dense face, the no-layout fallback, mini faceplates in
   // the elevation at each level of detail, and the drawing in the rack panel.
@@ -119,14 +133,10 @@ export const PAGES: CapturePage[] = [
   { name: 'faceplate-patch-pdu', path: record('Device', 'example-patch-a01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: ['desktop-light'] },
   { name: 'faceplate-pdu', path: record('Device', 'example-pdu-a01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: ['desktop-dark'] },
   { name: 'faceplate-fallback', path: record('Device', 'example-app-a01'), ready: '.inventory-faceplate-fallback', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
-  { name: 'rack-mini-reduced', path: record('Rack', 'example-rack-a01'), ready: '.inventory-mini-faceplate', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
-  { name: 'rack-mini-full', path: record('Rack', 'example-rack-a01', '&detail=full'), ready: '.inventory-mini-faceplate[data-level="full"]', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
-  { name: 'rack-mini-silhouette', path: record('Rack', 'example-rack-a01', '&detail=silhouette'), ready: '.inventory-mini-faceplate[data-level="silhouette"]', element: '.inventory-elevation', viewports: ['desktop-dark'] },
   // Imported records whose component ids match no template id: drawn by name
-  // and type, the duplicate-name PSUs in the tray, and the card's More saying so.
+  // and type, with the duplicate-name PSUs in the tray.
   { name: 'faceplate-imported', path: record('Device', 'example-imported-sw-01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
   { name: 'faceplate-imported-phone', path: record('Device', 'example-imported-sw-01'), ready: '.inventory-drawing', viewports: ['phone'] },
-  { name: 'faceplate-imported-card-more', path: record('Device', 'example-imported-sw-01'), ready: '.inventory-drawing', click: [`.inventory-drawing ${tile('interfaces-9101')}`, '.inventory-port-card-more > button'], viewports: ['desktop-light', 'desktop-dark'] },
   { name: 'rack-panel-faceplate', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-srv-a01-01'), ready: '.inventory-faceplate .inventory-drawing', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
 ];
 
