@@ -73,8 +73,14 @@ func startAPI(t *testing.T) *liveAPI {
 // routing filters establish it.
 func (api *liveAPI) actor(name string, groups ...string) client.Client {
 	api.t.Helper()
+	return api.actorIn("datum-cloud", name, groups...)
+}
+
+// actorIn impersonates a caller routed through the named project.
+func (api *liveAPI) actorIn(project, name string, groups ...string) client.Client {
+	api.t.Helper()
 	config := rest.CopyConfig(api.config)
-	config.Impersonate = rest.ImpersonationConfig{UserName: name, UID: name + "-uid", Groups: groups, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {"datum-cloud"}}}
+	config.Impersonate = rest.ImpersonationConfig{UserName: name, UID: name + "-uid", Groups: groups, Extra: map[string][]string{iam.ParentKindExtraKey: {"Project"}, iam.ParentAPIGroupExtraKey: {"resourcemanager.miloapis.com"}, iam.ParentNameExtraKey: {project}}}
 	actor, err := client.New(config, client.Options{Scheme: api.scheme})
 	if err != nil {
 		api.t.Fatal(err)
@@ -118,9 +124,15 @@ func (api *liveAPI) retire(device *inventory.Device) {
 // configuration and returns the server so a test can take it away.
 func (api *liveAPI) installWebhook() *httptest.Server {
 	api.t.Helper()
-	handler := &Handler{Projects: []string{"datum-cloud"}, Resolve: func(context.Context, string) (Project, error) {
+	return api.installHandler(&Handler{Projects: []string{"datum-cloud"}, Resolve: func(context.Context, string) (Project, error) {
 		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "datum-cloud", UID: "project-1"}, Client: api.admin}, nil
-	}, Authorize: Authorize}
+	}, Authorize: Authorize})
+}
+
+// installHandler serves the given handler behind the packaged webhook
+// configuration.
+func (api *liveAPI) installHandler(handler *Handler) *httptest.Server {
+	api.t.Helper()
 	server := httptest.NewTLSServer(&admission.Webhook{Handler: handler})
 	api.t.Cleanup(server.Close)
 	data, err := os.ReadFile("../../config/components/registration-admission/webhook.yaml")
