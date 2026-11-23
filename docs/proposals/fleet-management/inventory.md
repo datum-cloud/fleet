@@ -170,9 +170,9 @@ follow a device to its new location.
 ## Bringing existing records into Fleet
 
 The [existing manual inventory guide][manual-guide] describes a smaller model:
-installation plans represent long-lived slots, locations are text fields, and
-expected connections are stored on ports. This proposal instead uses a new plan
-for each installation and separate Cable records. That difference must be settled
+one plan per installation with typed placement, and separate Cable records, but
+a replacement Device still names its predecessor's plan. This proposal instead
+uses a new plan for each move or replacement. That difference must be settled
 before automating moves and replacements.
 
 The current implementation uses manual entry and operator-controlled migration,
@@ -210,8 +210,8 @@ describe work still required; they are not a report of tests already passed.
 
 ## Decisions still needed
 
-- Agree how to move from long-lived slot plans to one plan per installation
-  without losing existing bindings or history.
+- Agree how moves and replacements create successor installation plans without
+  losing existing bindings or history.
 - Decide who can view and change shared facilities, racks, cables and feeds,
   and where their authoritative records live.
 - Choose how reservations survive failures, which hardware and connection layouts
@@ -219,4 +219,4 @@ describe work still required; they are not a report of tests already passed.
 - Assign ownership of circuit references and physical handoff points, and decide
   whether a separate Circuit record is needed.
 
-[manual-guide]: https://github.com/datum-cloud/fleet/blob/08d6dde8563b7c999ecf839565db2bd37b4dda7e/docs/operations/physical-inventory.md
+[manual-guide]: ../../operations/physical-inventory.md

@@ -27,7 +27,7 @@ where facts came from on its own labels and annotations.
 
 | Kind | What it is | Writer |
 | --- | --- | --- |
-| `DeviceClaim` | An observational installation plan with expected model and known placement. New records use typed placement and Cable references; existing long-lived slots retain their legacy representation. | Installation planner, through the record's explicitly assigned writer |
+| `DeviceClaim` | An observational installation plan with expected model, typed placement and Cable references. | Installation planner, through the record's explicitly assigned writer |
 | `Device` | One actual asset, bound to exactly one DeviceClaim when detected hardware is registered. It carries the serial and SMBIOS system UUID, or an explicit marker that neither is on record, the model, an optional BMC endpoint, and interfaces. | The registrar (an operator, for now) |
 | `Facility` / `Rack` | Explicit premises and rack definitions; membership is not free-capacity evidence. | Inventory operator through the environment's existing writer |
 | `Cable` / `PowerFeed` | Typed termination/lane topology and physical supply dependencies. | Inventory operator through the environment's existing writer |
@@ -46,7 +46,7 @@ where facts came from on its own labels and annotations.
 ## What registration does and does not do
 
 Creating a Device is the explicit, manual binding step. It records that the
-registrar saw this hardware in this planned slot. It does not:
+registrar saw this hardware at this planned installation. It does not:
 
 - authorize power, boot, wipe, BMC credential, or network changes;
 - create, change, or enable any `MachineCapacity`, or make anything
@@ -136,11 +136,14 @@ in the provider project. The plugin never writes.
 | Rule | Kind | Why |
 | --- | --- | --- |
 | Records carry no attribution fields | All six | Resource audit logs record who changed a record and `metadata.creationTimestamp` records when it was created. A writer that needs to remember where facts came from uses its own labels and annotations. |
-| `claimRef` is required and immutable | Device | A Device binds to exactly one claim, and moving hardware to another slot is not an edit. |
-| `identity` is immutable, including adding missing fields; requires a serial or system UUID, or `unidentified: true` with a reason and neither | Device | Neither proves chassis identity. Legacy bindings are preserved; hardware handover is not automated. See [Devices without hardware identity](#devices-without-hardware-identity). |
+| `claimRef` is required and immutable | Device | A Device binds to exactly one claim, and moving hardware to another installation is not an edit. |
+| `identity` is immutable, including adding missing fields; requires a serial or system UUID, or `unidentified: true` with a reason and neither | Device | Neither proves chassis identity. Hardware handover is not automated. See [Devices without hardware identity](#devices-without-hardware-identity). |
 | An unidentified Device cannot record a `bmc` endpoint | Device | Equipment that cannot be matched to a chassis must not be enrolled as machine capacity. |
 | Serial is optional | DeviceClaim | It is usually unknown at plan time. |
-| Port and interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
+| `lifecycle` is required and is `Installation` | DeviceClaim | Every claim describes one installation. |
+| `placement.scope` is required and names exactly its reference: `Facility` takes `facilityRef`; `RackMembership`, `RackUnits` and `NonRackUnitMount` take `rackRef`. Only `RackUnits` takes `position`, `height` and `face`, all three required; only `NonRackUnitMount` takes `mount`, and requires it | DeviceClaim | Partial placement cannot assert rack units. |
+| `placement` is immutable | DeviceClaim | Moving an installation is a new claim, not an edit. |
+| Interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
 | `bmc.endpoint` is an `https` URL without credentials | Device | Credentials never live in inventory records. |
 | `lifecycle` is `Active` (default), `Decommissioning` or `Retired`; `Active` and `Decommissioning` move between each other, only `Decommissioning` moves to `Retired`, and `Retired` is terminal | Device | Retirement is deliberate and one-way. Only an Active Device can be registered as capacity. See [Device lifecycle](../development/inventory-capacity-registration.md#device-lifecycle). |
@@ -228,7 +231,7 @@ authenticated, complete NIC mapping before any network path depends on it.
 2. Enter the Facility and Rack facts you actually know. Leave unknown
    dimensions absent. Rack
    membership is not a reserved footprint or evidence of available space.
-3. For a new installation, set `DeviceClaim.spec.lifecycle: Installation` and
+3. For each installation, set `DeviceClaim.spec.lifecycle: Installation` and
    typed placement. Use `Facility` when only the premises are known,
    `RackMembership` when the rack is known, or explicitly reviewed `RackUnits`
    with position, height and face. Never guess a rack position. Use a new record
@@ -239,7 +242,7 @@ authenticated, complete NIC mapping before any network path depends on it.
    [no-hardware-identity marker](#devices-without-hardware-identity); otherwise
    keep the plan and defer registration. Provider host IDs and asset tags are
    not serials. Use typed `components` and `topologyAuthority: Cable`; put expected
-   connections in Cable records, not `ports.expectedPeer` or `interfaces.peer`.
+   connections in Cable records, the only topology authority.
    Add PowerFeed facts without inferring usable power or independent redundancy.
 5. Review every reference in the same namespace, component type and position,
    cable endpoint, and potential duplicate against existing records. API validation
@@ -346,56 +349,7 @@ placement is reported and not verified. A Cable whose two ends land on
 opposite rack faces gets a soft "Check" note in the connection view, never an
 error: a pass-through panel or a reversed peer can make that correct.
 
-## Historical legacy example
-
-The following representation remains supported for existing long-lived slots.
-It is **not the template for new records**. Do not convert existing claims in
-place or copy their inline topology into a second Cable authority.
-
-```yaml
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: DeviceClaim
-metadata:
-  name: rack-01-u12
-  namespace: fleet-system
-spec:
-  expectedIdentity:
-    manufacturer: Example Vendor
-    model: Example 1U
-  placement:
-    facility: example-facility
-    rack: rack-01
-    position: 12
-    face: front
-  ports:
-    - name: eth0
-      type: 25gbase-x-sfp28
-      speedMbps: 25000
-      expectedPeer: {device: switch-01, port: Ethernet1/1}
-    - name: bmc0
-      type: 1000base-t
-      speedMbps: 1000
-      expectedPeer: {device: mgmt-switch-01, port: Ethernet5}
----
-apiVersion: fleet.datumapis.com/v1alpha1
-kind: Device
-metadata:
-  name: rack-01-u12-synthetic-0001
-  namespace: fleet-system
-spec:
-  claimRef:
-    name: rack-01-u12
-  identity:
-    manufacturer: Example Vendor
-    model: Example 1U
-    serial: SYNTHETIC-0001
-    systemUUID: 00000000-0000-4000-8000-000000000001
-  bmc:
-    endpoint: https://192.0.2.100:443
-  unmappedMACAddresses:
-    - 00:00:5e:00:53:01
-    - 00:00:5e:00:53:02
-```
+## Replacing hardware
 
 To replace the hardware, create a new Device with its own name and identity
 that names the same claim. Leave the old Device in place and move its
@@ -425,9 +379,7 @@ The names and writers match #63:
 
 Still deferred to #63:
 
-- Qualified geometry/reservations and automatic migration of legacy text
-  placement/inline peers. The four additional physical record kinds now exist;
-  typed records do not silently take over historical surfaces.
+- Qualified geometry and reservations.
 - Plan acceptance, revisions, and reservations; canonical-identity
   adjudication and duplicate detection; and the protected ledger.
 - Trust roots, qualification profiles, enrollment challenges, technician and
@@ -452,10 +404,8 @@ for one authoritative record that MachineCapacity can name and that staff can
 read. #63's ledger, trust, and enrollment protocol would still sit behind these
 records if adopted.
 
-**Compatibility decision:** legacy slots retain all historical bindings. New
-typed records use a distinct `Installation` lifecycle, but no automatic move or
-replacement handover exists. Device identity and its original claimRef remain
-immutable. No writer may delete/recreate or relabel legacy records to bypass this.
+No automatic move or replacement handover exists. Device identity, its
+claimRef and the claim's placement remain immutable.
 
 ## Applying the records
 

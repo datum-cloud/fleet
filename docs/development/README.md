@@ -771,8 +771,9 @@ corrupt or uses an unsupported schema version.
 ## Physical inventory subset
 
 `internal/api/inventory/v1alpha1` defines Facility, Rack, DeviceClaim, Device,
-Cable and PowerFeed records. Legacy slot claims coexist with new observational
-installation claims; no move or replacement handover is automated. Records live
+Cable and PowerFeed records. Each DeviceClaim is an observational installation
+claim with typed, immutable placement, and Cable records are the only topology
+authority; no move or replacement handover is automated. Records live
 in the provider project in Milo. `config/components/inventory` holds their
 CRDs, ProtectedResources, and the `fleet.datumapis.com-inventory-viewer` and
 `-editor` roles. Only `config/milo` includes it.
