@@ -1,6 +1,6 @@
-import { optionKey, type DeployOption } from './deploy-options';
+import { Chips, optionKey, specChips, type DeployOption } from './deploy-options';
 import { usePluginBase } from './machines-page';
-import { ApiError, DEFAULT_LOCATION, useCreateMachine } from '../lib/api';
+import { ApiError, useCreateMachine } from '../lib/api';
 import { Form } from '@datum-cloud/datum-ui/form';
 import { ConformAdapter } from '@datum-cloud/datum-ui/form/adapters/conform';
 import { toast } from '@datum-cloud/datum-ui/toast';
@@ -19,32 +19,29 @@ export const deployFormSchema = z.object({
     .regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, NAME_MESSAGE),
 });
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-4 text-sm">
-      <Text textColor="muted">{label}</Text>
-      <Text className="text-right font-mono break-all">{value}</Text>
-    </div>
-  );
-}
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
+// The chosen profile's hardware as one chip line, as on the profile cards.
+// The select already names the profile and class.
 function Summary({ options }: { options: DeployOption[] }) {
   const key = Form.useWatch<string>('option');
   const option = options.find((o) => optionKey(o) === key);
   if (!option) return null;
+  const { profile } = option;
+  const chips = [
+    ...specChips(profile),
+    ...(profile.disks ? [plural(profile.disks, 'disk')] : []),
+    ...(profile.interfaces ? [plural(profile.interfaces, 'NIC')] : []),
+  ];
   return (
-    <div className="flex flex-col gap-1" data-testid="fleet-plugin-deploy-summary">
-      <Row label="Class" value={option.className} />
-      <Row label="CPU" value={option.profile.cpu} />
-      <Row label="Memory" value={option.profile.memory} />
-      <Row label="GPUs" value={option.profile.gpus ?? 'None'} />
-      <Row label="Location" value={DEFAULT_LOCATION} />
+    <div data-testid="fleet-plugin-deploy-summary">
+      <Chips chips={chips} />
     </div>
   );
 }
 
 // Deploying creates a Machine. It doesn't reserve capacity: the Machine
-// starts Pending and Fleet binds capacity when some is free.
+// starts Pending and Fleet assigns a server when one is free.
 export function DeployDialog({
   open,
   options,
@@ -75,15 +72,16 @@ export function DeployDialog({
           onOpenChange(false);
           navigate(`${base}/${encodeURIComponent(name)}`);
         },
-        // A 403 is the common case (no consumer role); keep the API's
-        // wording as the detail rather than the headline.
+        // The API's text names resources, groups and paths, so it isn't
+        // shown. A 403 is the common case (no consumer role).
         onError: (error) => {
-          if (error instanceof ApiError && error.status === 403) {
-            toast.error("You don't have permission to deploy machines in this project.", {
-              description: error.message,
-            });
+          const status = error instanceof ApiError ? error.status : undefined;
+          if (status === 403) {
+            toast.error("You don't have permission to deploy machines in this project.");
+          } else if (status === 409) {
+            toast.error(`A machine named ${name} already exists.`);
           } else {
-            toast.error(error.message);
+            toast.error("Couldn't deploy the machine.");
           }
         },
       }
@@ -97,7 +95,6 @@ export function DeployDialog({
         open={open}
         onOpenChange={onOpenChange}
         title="Deploy a machine"
-        description="We bind a server matching the profile and hand it over powered off."
         schema={deployFormSchema}
         defaultValues={{ option: initial }}
         onSubmit={handleSubmit}
@@ -126,7 +123,7 @@ export function DeployDialog({
           <Form.Field
             name="name"
             label="Name"
-            description="Identifies the machine in this project. It can't be changed later."
+            description="Can't be changed later."
             required>
             <Form.Input autoFocus placeholder="e.g. build-runner" />
           </Form.Field>
