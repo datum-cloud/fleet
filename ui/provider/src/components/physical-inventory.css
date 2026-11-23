@@ -590,3 +590,9 @@
 .inventory-dense-table tr[data-attention="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
 .inventory-dense-table tr[data-attention="unavailable"] > td:first-child { box-shadow:inset 3px 0 var(--warning,#d97706); }
 .inventory-dense-table td[data-single] { color:var(--warning,#b45309); font-weight:500; }
+
+/* Locations and catalog pages: an amber count or cell that needs checking (the tooltip says why), and the model's component table. */
+.inventory-count[data-tone="warning"],.fleet-inventory [data-tone="warning"] { color:var(--warning,#b45309); font-weight:500; }
+/* A rack's feeds sit side by side in one table row. */
+.inventory-rack-power { display:flex; gap:12px; align-items:center; }
+.inventory-rack-power .inventory-capacity { width:110px; flex:none; }

@@ -17,6 +17,8 @@ export interface RecordTab {
   label: string;
   /** Shown after the label. Undefined hides it; use a string for "unknown". */
   count?: number | string;
+  /** Why the count needs checking ("17+", "?"): shows the count in amber, with this as its tooltip and accessible text. */
+  countNote?: string;
   content: ReactNode;
 }
 
@@ -57,7 +59,7 @@ export function RecordTabs({ tabs, label }: { tabs: RecordTab[]; label: string }
           onClick={event => { if (tabHref(tab.id) === `${pathname}${search}`) event.preventDefault(); }}
           aria-current={tab.id === current.id ? 'page' : undefined} aria-controls={undefined}
           onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}>
-          {tab.label}{tab.count !== undefined && <span className="inventory-count"> {tab.count}</span>}
+          {tab.label}{tab.count !== undefined && <span className="inventory-count" data-tone={tab.countNote ? 'warning' : undefined} title={tab.countNote}> {tab.count}{tab.countNote && <span className="inventory-visually-hidden"> · {tab.countNote}</span>}</span>}
         </TabsLinkTrigger>)}
       </TabsList>
     </Tabs>
