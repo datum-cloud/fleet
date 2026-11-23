@@ -1,13 +1,17 @@
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@datum-cloud/datum-ui/table';
 import { Title } from '@datum-cloud/datum-ui/typography';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { slotKey, type Inventory, type InventorySlot } from '../inventory';
 import type { PhysicalRecord, RackFace as RackFaceName } from '../../../shared/fleet-api';
 import { depthLabel } from '../lib/device-depth';
 import { faceOccupancy, rackOccupants, type RackOccupant } from '../lib/rack-faces';
 import { equipmentGeometry, equipmentPlacements, reportedPlacementLabel, type EquipmentPlacement } from '../lib/device-placement';
+import { RackSlotDevice } from './rack-slot-device';
+
+/** How the elevation links a device-in-slot: to its record, or to a selection on the rack page. */
+export interface RackSelection { href: (slot: EquipmentPlacement) => string; selectedKey?: string }
 
 export function inventoryHref(kind: string, namespace?: string, name?: string) {
   const params = new URLSearchParams({ kind });
@@ -25,7 +29,7 @@ function Equipment({ slots, devicesDenied, inventory }: { slots: EquipmentPlacem
   </TableBody></Table></div>;
 }
 
-function RackFace({ occupants, height, side }: { occupants: RackOccupant[]; height: number; side: RackFaceName }) {
+function RackFace({ occupants, height, side, selection }: { occupants: RackOccupant[]; height: number; side: RackFaceName; selection?: RackSelection }) {
   const plans = faceOccupancy(occupants, side)
     .sort((first, second) => first.position - second.position || first.entry.key.localeCompare(second.entry.key));
   const laneEnds: number[] = [];
@@ -51,41 +55,39 @@ function RackFace({ occupants, height, side }: { occupants: RackOccupant[]; heig
         const name = plan.far ? `Rear of ${recordName}` : recordName;
         const range = plan.height === 1 ? `U${plan.position}` : `U${plan.position}–U${top}`;
         const label = [name, range, `${plan.height}U`, plan.entry.basis, plan.far ? `mounted ${plan.mounted}` : undefined, depthLabel(plan.depth), overlap ? 'records disagree: overlapping placements on this face' : undefined].filter(Boolean).join(' · ');
-        return <li key={plan.entry.key} className={`inventory-rack-plan${plan.far ? ' inventory-rack-plan-far' : ''}`} data-far={plan.far ? '' : undefined} data-depth={plan.depth.source === 'unknown' ? 'unknown' : plan.depth.full ? 'full' : 'half'} style={{ gridRow: `${height - top + 1} / span ${plan.height}`, gridColumn: plan.lane + 2 }}>
-          <Link title={label} to={inventoryHref(plan.entry.kind, record.metadata.namespace, record.metadata.name)} aria-label={`Review ${label}, ${side}`}><span className="inventory-rack-plan-heading">{overlap && <span className="inventory-rack-overlap" aria-hidden="true">!</span>}<span className="inventory-rack-plan-name">{plan.far ? <span className="inventory-rack-plan-side">rear of </span> : null}{recordName}</span></span>{(plan.height > 1 || plan.depth.source === 'unknown') && <small>{[plan.height > 1 ? `${range} · ${plan.height}U` : undefined, plan.depth.source === 'unknown' ? 'depth unknown' : undefined].filter(Boolean).join(' · ')}</small>}</Link>
+        const selected = selection?.selectedKey === plan.entry.key;
+        return <li key={plan.entry.key} className={`inventory-rack-plan${plan.far ? ' inventory-rack-plan-far' : ''}`} data-far={plan.far ? '' : undefined} data-depth={plan.depth.source === 'unknown' ? 'unknown' : plan.depth.full ? 'full' : 'half'} data-selected={selected ? '' : undefined} style={{ gridRow: `${height - top + 1} / span ${plan.height}`, gridColumn: plan.lane + 2 }}>
+          <RackSlotDevice slot={plan.entry} name={recordName} range={range} height={plan.height} label={label} side={side} overlap={overlap} far={plan.far} depthUnknown={plan.depth.source === 'unknown'} to={selection ? selection.href(plan.entry) : inventoryHref(plan.entry.kind, record.metadata.namespace, record.metadata.name)} selected={selected} />
         </li>;
       })}
     </ol>
   </div>;
 }
 
-export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; inventory: Inventory }) {
+/** The rack's recorded placements within this rack, the elevation's input. */
+export function rackPlacements(rack: PhysicalRecord, inventory: Inventory) {
+  return equipmentPlacements(inventory).filter(slot => slot.record.metadata.namespace === rack.metadata.namespace && slot.placement.rackRef?.name === rack.metadata.name);
+}
+
+/**
+ * The rack elevation. The rack page wraps it: selection, tabs and issue
+ * banners live in rack-detail.tsx. `toolbar` sits beside the face switch,
+ * where a later 2D/3D view toggle belongs.
+ */
+export function RackOverview({ rack, inventory, selection, toolbar }: { rack: PhysicalRecord; inventory: Inventory; selection?: RackSelection; toolbar?: ReactNode }) {
   const [face, setFace] = useState<'both' | 'front' | 'rear'>('both');
-  const slots = equipmentPlacements(inventory).filter(slot => slot.record.metadata.namespace === rack.metadata.namespace && slot.placement.rackRef?.name === rack.metadata.name);
+  const slots = rackPlacements(rack, inventory);
   const positioned = slots.filter(slot => equipmentGeometry(slot, rack));
   const occupants = rackOccupants(positioned, rack, inventory);
-  const nonRacked = slots.filter(slot => slot.placement.scope === 'NonRackUnitMount');
-  const unpositioned = slots.filter(slot => !equipmentGeometry(slot, rack) && slot.placement.scope !== 'NonRackUnitMount');
   const denied = !!inventory.issues?.DeviceClaim && !slots.length;
-  const devicesDenied = !!inventory.issues?.Device;
   const height = rack.spec.heightUnits;
   return <section className="inventory-rack-layout" aria-label="Rack layout">
     <aside className="inventory-elevation">
       <div className="inventory-list-heading"><Title as="h3" level={5}>Rack elevation</Title><span>{height ? `${height}U` : 'Height unknown'}</span></div>
-      <div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type="secondary" theme={face === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</div>
-      <p className="inventory-muted">Reported placements and explicitly labelled claim-derived fallback, not verified occupancy. Blank units are not available space. Full-depth equipment appears on both faces, muted on the far side where its chassis rear shows; half-depth equipment appears only on its mounted face. Unknown depth is drawn as full depth and does not establish clearance on the opposite face. ! means records disagree: placements overlap on the same face.</p>
-      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} occupants={occupants} height={height} side={side} />)}</div>}
+      <div className="inventory-elevation-toolbar"><div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type="secondary" theme={face === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</div>{toolbar}</div>
+      <p className="inventory-muted">Reported, not verified. Blank units are not free space. Full-depth equipment shows on both faces, muted where its chassis rear shows; half-depth only on its mounted face. Unknown depth is drawn as full depth. ! means records disagree: placements overlap on the same face.</p>
+      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} occupants={occupants} height={height} side={side} selection={selection} />)}</div>}
     </aside>
-    <div className="inventory-equipment-sections">
-      <Title as="h3" level={5}>Equipment & registration history</Title>
-      {(inventory.issues?.Device || inventory.issues?.DeviceClaim) && <p>Some records are unavailable; equipment counts are incomplete.</p>}
-      {denied ? <p>Installation details unavailable. This is not an empty rack.</p> : <>
-        <section><h4>Positioned equipment <span className="inventory-count">{positioned.length}</span></h4>{positioned.length ? <Equipment slots={positioned} devicesDenied={devicesDenied} inventory={inventory} /> : <p className="inventory-muted">No complete in-range unit positions recorded.</p>}</section>
-        <section><h4>Unpositioned equipment <span className="inventory-count">{unpositioned.length}</span></h4>{unpositioned.length ? <Equipment slots={unpositioned} devicesDenied={devicesDenied} inventory={inventory} /> : <p className="inventory-muted">No unpositioned reports or claims recorded for this rack.</p>}</section>
-        <section><h4>Non-racked mounts <span className="inventory-count">{nonRacked.length}</span></h4>{nonRacked.length ? <Equipment slots={nonRacked} devicesDenied={devicesDenied} inventory={inventory} /> : <p className="inventory-muted">No side, rail, or other non-unit mounts recorded.</p>}</section>
-        {!slots.length && <p className="inventory-muted">No related records found. This does not establish that equipment is absent.</p>}
-      </>}
-    </div>
   </section>;
 }
 

@@ -39,7 +39,7 @@ describe('hardware directory', () => {
   it.each(inventory.physical)('renders $kind details without creation metadata', record => {
     const data = structuredClone(inventory);
     for (const item of data.physical) delete item.metadata.creationTimestamp;
-    browse(`?kind=${record.kind}&record=${record.metadata.name}&namespace=${record.metadata.namespace}`, data);
+    browse(`?kind=${record.kind}&record=${record.metadata.name}&namespace=${record.metadata.namespace}${record.kind === 'Rack' ? '&tab=history' : ''}`, data);
     expect(screen.getByText(record.kind === 'Site' ? 'Technical details' : 'Record history & verification')).toBeInTheDocument();
     expect(screen.queryByText(/Unexpected Application Error/)).not.toBeInTheDocument();
   });
@@ -110,6 +110,7 @@ describe('hardware directory', () => {
     browse('?kind=Facility&record=example-facility&namespace=default');
     fireEvent.click(screen.getByRole('link', { name: 'Rack 01' }));
     expect(screen.getByText(/recorded placement is not verified occupancy/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: /^Equipment · / }));
     fireEvent.click(screen.getByRole('link', { name: 'Server installation · U12' }));
     fireEvent.click(screen.getByRole('link', { name: 'Example compute server' }));
     expect(screen.getByText('SYNTHETIC-0001')).toBeInTheDocument();

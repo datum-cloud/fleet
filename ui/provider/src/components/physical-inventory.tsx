@@ -23,7 +23,8 @@ import { InventoryManagement } from './inventory-management';
 import { DevicePlacementEdit } from './device-placement-edit';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
-import { FacilityOverview, RackOverview, inventoryHref } from './inventory-location';
+import { FacilityOverview, inventoryHref } from './inventory-location';
+import { RackDetail } from './rack-detail';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
 import { facilityIdentifiers, facilitySites } from '../lib/site-membership';
 import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
@@ -326,7 +327,6 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
     return (
       <>
         {kind === 'Facility' && <FacilityOverview facility={record as PhysicalRecord} inventory={inventory} />}
-        {kind === 'Rack' && <RackOverview rack={record as PhysicalRecord} inventory={inventory} />}
         <dl className="inventory-fields">
           {kind === 'DeviceType' && <>
             <Field label="Manufacturer">{physical?.spec.manufacturerRef && reference('Manufacturer', namespace, physical.spec.manufacturerRef.name)}</Field>
@@ -397,14 +397,6 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           )}
           {physical?.spec.locationRef && (
             <Field label="Geographic location reference">{physical.spec.locationRef.name}</Field>
-          )}
-          {kind === 'Rack' && (
-            <>
-              <Field label="Rack height">
-                {physical?.spec.heightUnits === undefined ? 'Not recorded' : `${physical.spec.heightUnits}U`}
-              </Field>
-              <Field label="Free space">Unknown — recorded placement is not verified occupancy.</Field>
-            </>
           )}
           {kind === 'Cable' && <Field label="Medium">{physical?.spec.medium}</Field>}
           {kind === 'PowerFeed' && (
@@ -606,9 +598,9 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           {inventory.issues?.[section.kind] ? <><InventoryDirectoryHeading section={section} onRetry={onRetry} management={management} /><InventoryToolbar section={section} /><InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /></> : selectedName !== null ? (
             <>
               <div className="inventory-list-heading"><Link to={href(section.kind)}>← Back to {section.title.toLowerCase()}</Link>{onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>}</div>
-              <div ref={heading} tabIndex={-1}><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} actions={management} /></div>
+              <div ref={heading} tabIndex={-1}><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} actions={selected?.kind === 'Rack' ? undefined : management} /></div>
               {placementEditor}
-              {selected ? (
+              {selected?.kind === 'Rack' ? <RackDetail rack={selected.record as PhysicalRecord} inventory={inventory} management={management} /> : selected ? (
                 <>
                   {selected.kind !== 'Site' && selected.kind !== 'Manufacturer' && <p className="inventory-muted">
                     {section.title} /{' '}

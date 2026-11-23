@@ -11,7 +11,10 @@ it.each([true, false, undefined])('draws reported Device geometry with explicit 
   const device = { ...fixturePhysicalDevices[0], spec: { ...fixturePhysicalDevices[0].spec, reportedPlacement: { revision: 1 as const, observedAt: '2026-11-21T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: rack.metadata.name }, position: 12, height: 4, face: 'rear' as const, fullDepth } } };
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/?kind=Rack&namespace=default&record=rack-01']}><PhysicalInventory inventory={toInventory([fixturePhysicalClaims[0]], [device], [rack])} /></MemoryRouter></QueryClientProvider>);
   const rear = within(screen.getByRole('list', { name: 'rear recorded placements' })).getByRole('link', { name: /Reported placement/ });
-  expect(rear).toHaveAttribute('href', expect.stringContaining('kind=Device&'));
+  // The elevation selects on the rack page; the Device page is one step on, from the panel.
+  expect(rear).toHaveAttribute('href', expect.stringContaining(`selectedKind=Device&selected=${device.metadata.name}`));
+  fireEvent.click(rear);
+  expect(within(screen.getByTestId('rack-device-panel')).getByRole('link', { name: 'Open device page' })).toHaveAttribute('href', expect.stringContaining(`kind=Device&record=${device.metadata.name}`));
   expect(rear.parentElement).toHaveStyle({ gridRow: '28 / span 4' });
   const front = within(screen.getByRole('list', { name: 'front recorded placements' })).queryAllByRole('link');
   // Unset reported depth falls back to the Device's recorded full depth.
@@ -82,19 +85,26 @@ it.each([
 ])('keeps incomplete or out-of-range geometry out of the elevation: %j', placement => {
   show(placement);
   expect(within(screen.getByRole('list', { name: 'front recorded placements' })).queryByRole('link')).not.toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Rack issues' })).getByRole('link', { name: 'Server installation · U12' })).toHaveAttribute('href', expect.stringContaining('selectedKind=DeviceClaim&selected=rack-01-u12'));
+  fireEvent.click(screen.getByRole('link', { name: /^Equipment · / }));
   const section = screen.getByRole('heading', { name: /Unpositioned equipment/ }).parentElement!;
   expect(within(section).getByRole('link', { name: 'Example compute server' })).toBeInTheDocument();
 });
 it('separates non-unit mounts rather than consuming rack units', () => {
   show({ scope: 'NonRackUnitMount', rackRef: { name: 'rack-01' }, mount: 'left-rail' });
+  expect(within(screen.getByRole('list', { name: 'front recorded placements' })).queryByRole('link')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: /^Equipment · / }));
   const section = screen.getByRole('heading', { name: /Non-racked mounts/ }).parentElement!;
   expect(within(section).getByText(/Mount: left-rail/)).toBeInTheDocument();
-  expect(within(screen.getByRole('list', { name: 'front recorded placements' })).queryByRole('link')).not.toBeInTheDocument();
 });
 it('does not disguise denied installation collections as empty geometry', () => {
   show(undefined, { DeviceClaim: { status: 403 } });
-  expect(screen.getByText(/This is not an empty rack/)).toBeInTheDocument();
+  expect(screen.getByText(/Installation details unavailable. Rack positions cannot be shown/)).toBeInTheDocument();
   expect(screen.queryByRole('list', { name: 'front recorded placements' })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Equipment · unavailable' })).toBeInTheDocument();
+  expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: 'Equipment · unavailable' }));
+  expect(screen.getByText(/This is not an empty rack/)).toBeInTheDocument();
   expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
 });
 it('does not invent rack units when the rack height is unknown', () => {
