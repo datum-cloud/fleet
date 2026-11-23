@@ -36,9 +36,9 @@ function Location() {
   return <output data-testid="location">{search}</output>;
 }
 
-function show(target: Device, inventory: Inventory) {
+function show(target: Device, inventory: Inventory, search = '') {
   return render(
-    <MemoryRouter initialEntries={['/inventory']}>
+    <MemoryRouter initialEntries={[`/inventory${search}`]}>
       <DeviceConnections device={target} inventory={inventory} href={inventoryHref} />
       <Location />
     </MemoryRouter>,
@@ -50,32 +50,59 @@ const grid = () => screen.getByRole('group', { name: /Port tiles/ });
 const tiles = () => within(grid()).getAllByRole('button').filter(item => item.hasAttribute('data-tile'));
 const tile = (name: RegExp) => within(grid()).getByRole('button', { name });
 const card = () => screen.getByRole('dialog');
+const table = () => screen.getByRole('table', { name: /^Components/ });
+const tableRows = () => within(table()).getAllByRole('row').slice(1);
+const cells = (row: HTMLElement) => within(row).getAllByRole('cell');
 const accessibleNames = (root: HTMLElement) => [...root.querySelectorAll('[aria-label]')].map(item => item.getAttribute('aria-label')).join('\n');
 
 describe('DeviceConnections', () => {
-  it('labels the view as records, not live state, opens on port tiles, and toggles to diagram and list', () => {
+  it('labels the view as records, not live state, opens on the picture, and toggles to table and diagram in the URL', () => {
     show(server, data());
     expect(screen.getByText('Cable records, not live link state')).toBeInTheDocument();
     expect(screen.getByText(/nothing here is verified/)).toBeInTheDocument();
     expect(screen.getByText(/Unknown is not free/)).toBeInTheDocument();
     expect(screen.queryByText(/^Verified$/)).not.toBeInTheDocument();
     const toggle = screen.getByRole('group', { name: 'Connection view' });
-    expect(within(toggle).getByRole('button', { name: 'Ports' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(toggle).getAllByRole('button').map(button => button.textContent)).toEqual(['Picture', 'Table', 'Diagram']);
+    expect(within(toggle).getByRole('button', { name: 'Picture' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(grid()).getByRole('list', { name: 'Power ports' })).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
 
     fireEvent.click(within(toggle).getByRole('button', { name: 'Diagram' }));
+    expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('view')).toBe('diagram');
     expect(within(diagram()).getByRole('list', { name: 'Power links' })).toBeInTheDocument();
 
-    fireEvent.click(within(toggle).getByRole('button', { name: 'List' }));
-    expect(within(toggle).getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(within(toggle).getByRole('button', { name: 'Table' }));
+    expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('view')).toBe('table');
+    expect(within(toggle).getByRole('button', { name: 'Table' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('group', { name: /Connection diagram|Port tiles/ })).not.toBeInTheDocument();
-    const network = screen.getByRole('table', { name: /Network · 2 links/ });
-    const rows = within(network).getAllByRole('row').slice(1);
-    expect(rows.map(row => within(row).getAllByRole('cell')[1].textContent)).toEqual(['● Cable recorded', '○ No cable recorded']);
-    expect(within(rows[0]).getByRole('link', { name: 'dac-01' })).toHaveAttribute('href', '/inventory?kind=Cable&record=dac-01&namespace=default');
-    expect(within(rows[0]).getByRole('link', { name: 'Example leaf-01 · swp1' })).toHaveAttribute('href', '/inventory?kind=Device&record=leaf-01&namespace=default');
-    expect(within(rows[1]).getByText('Unknown · not free')).toBeInTheDocument();
+    const rows = tableRows();
+    expect(rows.map(row => cells(row)[0].textContent)).toEqual(['PSU 1psu-1', 'PSU 2psu-2', 'Ethernet 0eth0', 'Ethernet 1eth1']);
+    expect(rows.map(row => cells(row)[3].textContent)).toEqual(['● Cable recorded', '○ No cable recorded', '● Cable recorded', '○ No cable recorded']);
+    expect(within(rows[2]).getByRole('link', { name: 'dac-01' })).toHaveAttribute('href', '/inventory?kind=Cable&record=dac-01&namespace=default');
+    expect(within(rows[2]).getByRole('link', { name: 'Example leaf-01 · swp1' })).toHaveAttribute('href', '/inventory?kind=Device&record=leaf-01&namespace=default');
+    expect(within(rows[3]).getByText('Unknown · not free')).toBeInTheDocument();
+
+    // Back to the picture clears the parameter.
+    fireEvent.click(within(toggle).getByRole('button', { name: 'Picture' }));
+    expect(new URLSearchParams(screen.getByTestId('location').textContent!).get('view')).toBeNull();
+    expect(grid()).toBeInTheDocument();
+  });
+
+  it('opens the view the URL names, and falls back to the picture for one it does not offer', () => {
+    const first = show(server, data(), '?view=table');
+    expect(screen.getByRole('button', { name: 'Table' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
+    first.unmount();
+    const second = show(server, data(), '?view=list');
+    expect(screen.getByRole('button', { name: 'Picture' })).toHaveAttribute('aria-pressed', 'true');
+    second.unmount();
+    const ports = DIAGRAM_LINK_LIMIT + 1;
+    const big = device('switch-02', Array.from({ length: ports }, (_, index) => C(`swp${index + 1}`, 'NetworkPort')));
+    show(big, data(undefined, [big]), '?view=diagram');
+    expect(screen.queryByRole('button', { name: 'Diagram' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Picture' })).toHaveAttribute('aria-pressed', 'true');
+    expect(grid()).toBeInTheDocument();
   });
 
   it('summarises once, without the Device name or resource name, and keeps the legend behind a toggle', () => {
@@ -235,7 +262,7 @@ describe('DeviceConnections', () => {
     for (const target of tiles()) { fireEvent.focus(target); fireEvent.click(target); }
     expect(view.container.textContent).not.toMatch(HIDDEN_FEED);
     expect(accessibleNames(view.container)).not.toMatch(HIDDEN_FEED);
-    for (const name of ['Diagram', 'List']) {
+    for (const name of ['Diagram', 'Table']) {
       fireEvent.click(screen.getByRole('button', { name }));
       expect(view.container.textContent).not.toMatch(HIDDEN_FEED);
       expect(accessibleNames(view.container)).not.toMatch(HIDDEN_FEED);
@@ -278,8 +305,9 @@ describe('DeviceConnections', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     expect(diagram()).toHaveTextContent('EX-9');
     expect(view.container.textContent).not.toMatch(/netbox-/);
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
     expect(view.container.textContent).not.toMatch(/netbox-/);
+    expect(accessibleNames(view.container)).not.toMatch(/netbox-/);
   });
 
   it('keeps groups that are entirely catalog only behind a count until expanded', () => {
@@ -311,7 +339,7 @@ describe('DeviceConnections', () => {
     const hosts = Array.from({ length: 10 }, (_, index) => device(`host-${index + 1}`, [C('eth0', 'NetworkPort')]));
     const cables = hosts.map((host, index) => cable(`dac-${index + 1}`, 'Copper', D('switch-01', `swp${index + 1}`), D(host.metadata.name, 'eth0')));
     show(switchDevice, data(undefined, [switchDevice, ...hosts], cables));
-    expect(screen.getByRole('button', { name: 'Ports' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Picture' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('button', { name: 'Diagram' })).toBeNull();
     expect(within(grid()).getByText(/^Network ·/)).toHaveTextContent(`Network · ${ports + 1} · 10 recorded · ${ports - 9} unknown`);
     expect(tiles()).toHaveLength(ports + 1);
@@ -329,8 +357,11 @@ describe('DeviceConnections', () => {
     expect(qsfp).toHaveAttribute('data-shape', 'qsfp');
     expect(qsfp.querySelectorAll('.inventory-port-lanes > span')).toHaveLength(4);
     expect(qsfp).toHaveAccessibleName('swp99: No cable recorded; position 1 no cable recorded; position 2 no cable recorded; position 3 no cable recorded; position 4 no cable recorded');
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    expect(screen.getByRole('table', { name: new RegExp(`Network · ${ports + 4} links`) })).toBeInTheDocument();
+    // One row per component: the breakout's four positions share one row.
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+    expect(tableRows()).toHaveLength(ports + 1);
+    const breakout = tableRows().find(row => cells(row)[0].textContent === 'swp99')!;
+    expect(cells(breakout)[2]).toHaveTextContent('4 positions');
   });
 
   it('keeps the diagram for a small device, with one tab stop over cables and peers', () => {
@@ -351,12 +382,99 @@ describe('DeviceConnections', () => {
     expect(focused).toHaveAccessibleName('PSU 1 to Hidden feed · Outlet 7 via cable pwr-01, Power: Cable recorded');
     fireEvent.click(focused);
     expect(screen.getByTestId('location')).toHaveTextContent('?kind=Cable&record=pwr-01&namespace=default');
+    // The link opened another record, whose URL has no view; choose the diagram again.
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
     fireEvent.click(within(diagram()).getByRole('link', { name: 'Peer Example leaf-01 · swp1' }));
     expect(screen.getByTestId('location')).toHaveTextContent('?kind=Device&record=leaf-01&namespace=default');
-    // The drawn Device carries its name and one summary, not its resource name or bare kind words.
-    expect(diagram().querySelector('.inventory-connection-device')).toHaveTextContent(/^Example server-01\s*4 ports · 2 recorded · 2 unknown$/);
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }));
+    // The drawn Device carries its name only: the section header holds the one count line.
+    expect(diagram().querySelector('.inventory-connection-device')).toHaveTextContent(/^Example server-01$/);
+    expect(screen.getAllByText(/4 ports · 2 recorded · 2 unknown/)).toHaveLength(1);
     expect(within(diagram()).queryByText(/^Device$/)).toBeNull();
     expect(diagram().textContent).not.toMatch(/Power · cable recorded/);
+  });
+});
+
+describe('component table', () => {
+  const omitted = { deviceRef: { name: 'box-01' }, componentID: 'eth0' } as CableEndpoint;
+  const box = device('box-01', [
+    { ...C('psu-1', 'PowerInlet', 'PSU 1', undefined, 'IEC C14'), serial: 'SYNTH-PSU-1' },
+    C('eth0', 'NetworkPort', 'Ethernet 0', undefined, 'SFP28'),
+    C('qsfp1', 'NetworkPort', 'Breakout 1', 4, 'QSFP28'),
+    C('bay-1', 'Module', 'Bay 1'),
+    C('usb-1', 'InventoryItem', 'USB 1', undefined, 'USB-A'),
+  ], { deviceTypeRef: { name: 'box-type' } });
+  const peers = device('leaf-02', [C('swp1', 'NetworkPort'), C('swp2', 'NetworkPort'), C('swp3', 'NetworkPort')]);
+  const catalog: PhysicalRecord[] = [
+    { kind: 'Manufacturer', metadata: { name: 'example-maker', namespace: NS }, spec: { displayName: 'Example maker', canonicalName: 'Example maker' } },
+    { kind: 'DeviceType', metadata: { name: 'box-type', namespace: NS }, spec: { displayName: 'Example box', manufacturerRef: { name: 'example-maker' }, model: 'example-box', componentTemplates: [...box.spec.components!, C('console', 'ConsolePort', 'Serial console', undefined, 'RJ45')] } },
+  ];
+  const twoLanes: PhysicalRecord = { kind: 'Cable', metadata: { name: 'zero-01', namespace: NS }, spec: { displayName: 'zero-01', medium: 'Copper', lanes: [{ id: 'l1', a: D('box-01', 'eth0'), b: D('leaf-02', 'swp1') }, { id: 'l2', a: D('box-01', 'eth0', 0), b: D('leaf-02', 'swp3') }] } };
+  const records = [
+    feed, ...catalog, twoLanes,
+    cable('pwr-02', 'Power', P('feed-hidden', 'outlet-7'), D('box-01', 'psu-1')),
+    cable('brk-01', 'Fiber', D('box-01', 'qsfp1', 2), D('leaf-02', 'swp2')),
+    cable('ghost-01', 'Copper', D('box-01', 'ghost'), D('leaf-02', 'swp3')),
+    cable('omitted-01', 'Power', omitted, P('feed-hidden', 'outlet-7')),
+  ];
+  const naming = (inventory: Inventory) => inventory.physical.filter(record => record.kind === 'Cable' && record.spec.lanes?.some(lane => lane.a.deviceRef?.name === 'box-01' || lane.b.deviceRef?.name === 'box-01')).map(record => record.metadata.name);
+  const headers = () => within(table()).getAllByRole('columnheader').map(cell => cell.textContent);
+
+  it('lists every component once and every Cable that names the Device, unmatched lane ends last', () => {
+    const inventory = data(undefined, [box, peers], records);
+    show(box, inventory, '?view=table');
+    expect(headers()).toEqual(['Name', 'Type and connector', 'Face and position', 'Record state', 'Cable', 'Peer', 'Serial']);
+    const rows = tableRows();
+    expect(rows.map(row => cells(row)[0].textContent)).toEqual([
+      'PSU 1psu-1', 'Ethernet 0eth0', 'Breakout 1qsfp1', 'Serial consoleconsole', 'Bay 1bay-1', 'USB 1usb-1', 'ghost',
+      'Ethernet 0eth0 · Position 0', 'Ethernet 0eth0 · Position not recorded',
+    ]);
+    // PSU 1 disagrees: the unmatched omitted-01 names the same feed outlet as pwr-02.
+    expect(rows.map(row => cells(row)[3].textContent?.match(/^. [A-Z][a-z ]+?(?=[A-Z]|$)|^Component recorded/)?.[0])).toEqual([
+      '! Records disagree', '● Cable recorded', '● Cable recorded', '◇ Catalog only', 'Component recorded', 'Component recorded', '! Records disagree', '! Records disagree', '! Records disagree',
+    ]);
+    // A breakout is one row; its positions are listed in the Cable and peer cells.
+    expect(cells(rows[2])[1]).toHaveTextContent('Network portQSFP28');
+    expect(cells(rows[2])[2]).toHaveTextContent('4 positions');
+    expect(cells(rows[2])[4]).toHaveTextContent(/^Position 2 · brk-01Fiber/);
+    expect(cells(rows[2])[4]).toHaveTextContent('No cable recorded at position 1, 3, 4');
+    expect(cells(rows[2])[5]).toHaveTextContent(/^Position 2 · Example leaf-02 · swp2/);
+    expect(cells(rows[2])[5]).toHaveTextContent('Unknown · not free');
+    expect(cells(rows[0])[6]).toHaveTextContent('SYNTH-PSU-1');
+    expect(rows.at(-2)).toHaveAttribute('data-unmatched');
+    expect(cells(rows.at(-2)!)[3]).toHaveTextContent('The Cable names position 0; this Device records one position for "eth0".');
+    // Every Cable that names the Device is a link in the table, including the unmatched lane ends.
+    const linked = new Set(within(table()).getAllByRole('link').map(item => item.textContent));
+    expect(naming(inventory).filter(name => !linked.has(name))).toEqual([]);
+    expect(within(rows.at(-1)!).getByRole('link', { name: 'omitted-01' })).toBeInTheDocument();
+    expect(within(rows.at(-2)!).getByRole('link', { name: 'zero-01' })).toBeInTheDocument();
+  });
+
+  it('adds serial and asset tag columns only when some component records one', () => {
+    const first = show(server, data(), '?view=table');
+    expect(headers()).toEqual(['Name', 'Type and connector', 'Face and position', 'Record state', 'Cable', 'Peer']);
+    first.unmount();
+    const tagged = device('server-01', [server.spec.components![0], { ...server.spec.components![1], assetTag: 'EX-TAG-2' }, ...server.spec.components!.slice(2)]);
+    show(tagged, data(undefined, [tagged, leaf]), '?view=table');
+    expect(headers()).toEqual(['Name', 'Type and connector', 'Face and position', 'Record state', 'Cable', 'Peer', 'Asset tag']);
+    expect(cells(tableRows()[1]).at(-1)).toHaveTextContent('EX-TAG-2');
+  });
+
+  it('keeps a denied peer nameless in the table, unmatched rows included', () => {
+    const view = show(box, data({ PowerFeed: { status: 403 } }, [box, peers], records), '?view=table');
+    expect(cells(tableRows().at(-1)!)[5]).toHaveTextContent(/^Power feed unavailableYou cannot read this peer$/);
+    expect(view.container.textContent).not.toMatch(HIDDEN_FEED);
+    expect(accessibleNames(view.container)).not.toMatch(HIDDEN_FEED);
+  });
+
+  it('lists components without states when Cables are denied, and never calls a port uncabled', () => {
+    show(box, data({ Cable: { status: 403 } }, [box, peers], records), '?view=table');
+    expect(screen.getByText(/Cable records are unavailable to you/)).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Connection view' })).toBeNull();
+    expect(screen.getByRole('table', { name: 'Components' })).toBeInTheDocument();
+    expect(headers()).toEqual(['Name', 'Type and connector', 'Face and position', 'Serial']);
+    expect(tableRows()).toHaveLength(5);
+    expect(screen.queryByText(/No cable recorded|Cable recorded|Unknown · not free/)).toBeNull();
   });
 });
 

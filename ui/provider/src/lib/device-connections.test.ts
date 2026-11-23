@@ -3,7 +3,7 @@ import type { CableEndpoint, Device, PhysicalComponent, PhysicalRecord } from '.
 import { toInventory, type Inventory } from '../inventory';
 import {
   connectorShape, deviceConnections, deviceTitle, faceGroups, faceLabel, localLabel, oppositeFaceCheck, peerLabel, portLayout, portTiles, remotePortLabel,
-  shortLabels, stateCounts, tileCounts, viewNames,
+  shortLabels, stateCounts, tileCounts, unmatchedLinks, viewNames,
   type ConnectionLink, type PortTile,
 } from './device-connections';
 import { humanName, isGeneratedName } from './display-names';
@@ -339,5 +339,51 @@ describe('port tiles', () => {
       ['Front', [['swp1', 'swp2'], ['console']]],
       ['Rear', [['psu-1']]],
     ]);
+  });
+});
+
+describe('links against every Cable that names the Device', () => {
+  // The same match the Device page's former Cable records tab used: any lane
+  // end that names the Device, in its namespace.
+  const naming = (inventory: Inventory, name: string) => inventory.physical
+    .filter(record => record.kind === 'Cable' && record.metadata.namespace === NS && record.spec.lanes?.some(lane => lane.a.deviceRef?.name === name || lane.b.deviceRef?.name === name))
+    .map(record => record.metadata.name).sort();
+  const shown = (links: ConnectionLink[]) => [...new Set(links.flatMap(item => item.cable ? [item.cable.name] : []))].sort();
+  const omitted = { deviceRef: { name: 'server-01' }, componentID: 'eth0' } as CableEndpoint;
+  const records = [
+    feed('feed-a', 2),
+    cable('pwr-01', 'Power', [['l1', P('feed-a', 'outlet-1'), D('server-01', 'psu-1')]]),
+    cable('ghost-01', 'Copper', [['l1', D('server-01', 'ghost'), D('leaf-01', 'swp1')]]),
+    cable('high-01', 'Copper', [['l1', D('server-01', 'eth0', 3), D('leaf-01', 'swp2')]]),
+    cable('zero-01', 'Copper', [['l1', D('server-01', 'eth0'), D('leaf-01', 'swp49', 1)], ['l2', D('server-01', 'eth0', 0), D('leaf-01', 'swp49', 2)]]),
+    cable('omitted-01', 'Power', [['l1', omitted, P('feed-a', 'outlet-2')]]),
+    cable('other-01', 'Copper', [['l1', D('leaf-01', 'swp49', 3), D('leaf-01', 'swp49', 4)]]),
+  ];
+
+  it('misses lane ends at a position below 1 or with no position, which unmatchedLinks() returns', () => {
+    const inventory = inv([server, leaf], records);
+    const { links } = deviceConnections(server, inventory);
+    // An unknown component and a position above the recorded count are joined as disagreements.
+    expect(link(links, 'ghost')[0]).toMatchObject({ state: 'conflict', group: 'unrecorded', cable: { name: 'ghost-01' } });
+    expect(link(links, 'eth0', 3)[0]).toMatchObject({ state: 'conflict', cable: { name: 'high-01' } });
+    // A recorded component at position 0, or with no position, is not.
+    expect(links.some(item => item.cable?.name === 'zero-01' && item.cable.laneID === 'l2')).toBe(false);
+    expect(shown(links)).toEqual(naming(inventory, 'server-01').filter(name => name !== 'omitted-01'));
+
+    const extra = unmatchedLinks(server, inventory, links);
+    expect(extra.map(item => [item.cable?.name, item.cable?.laneID, item.position, item.state, item.reasons[0]])).toEqual([
+      ['zero-01', 'l2', 0, 'conflict', 'The Cable names position 0; this Device records one position for "eth0".'],
+      ['omitted-01', 'l1', undefined, 'conflict', 'The Cable names no position; this Device records one position for "eth0".'],
+    ]);
+    expect(extra[1].peer).toMatchObject({ kind: 'PowerFeed', access: 'readable', name: 'feed-a', componentID: 'outlet-2' });
+    expect(shown([...links, ...extra])).toEqual(naming(inventory, 'server-01'));
+  });
+
+  it('keeps a denied peer nameless on an unmatched lane end, and returns nothing when Cables are denied', () => {
+    const denied = inv([server, leaf], records, { PowerFeed: { status: 403 } });
+    const extra = unmatchedLinks(server, denied, deviceConnections(server, denied).links);
+    expect(extra.find(item => item.cable?.name === 'omitted-01')?.peer).toEqual({ kind: 'PowerFeed', access: 'denied' });
+    const hidden = inv([server, leaf], records, { Cable: { status: 403 } });
+    expect(unmatchedLinks(server, hidden, deviceConnections(server, hidden).links)).toEqual([]);
   });
 });

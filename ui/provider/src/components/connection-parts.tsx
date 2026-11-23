@@ -1,9 +1,9 @@
-// Small pieces shared by the connection view (diagram and list) and the port
+// Small pieces shared by the connection view (diagram and table) and the port
 // faceplate: state words and glyphs, condensed Cable and peer names, traces.
 
 import { Link } from 'react-router';
 import {
-  faceLabel, linkStateGlyph, linkStateWords, localLabel, peerLabel, stateCounts, tileCounts,
+  linkStateGlyph, linkStateWords, localLabel, peerLabel, tileCounts,
   type ConnectionLink, type LinkState, type PeerEnd, type PortTile, type TraceHop, type ViewNames,
 } from '../lib/device-connections';
 
@@ -29,11 +29,6 @@ export function Glyph({ state }: { state: LinkState }) {
 
 export function StateText({ state }: { state: LinkState }) {
   return <span className="inventory-connection-state" data-state={state}><Glyph state={state} /> {linkStateWords[state]}</span>;
-}
-
-export function countsText(links: ConnectionLink[]) {
-  const counts = stateCounts(links);
-  return STATES.filter(state => counts[state]).map(state => `${counts[state]} ${linkStateWords[state].toLowerCase()}`).join(', ');
 }
 
 export function tileSummary(tiles: PortTile[]) {
@@ -76,13 +71,6 @@ export function Trace({ hops, namespace, href, names, roving }: { hops: TraceHop
       ))}
     </ol>
   );
-}
-
-export function LocalDetail({ link }: { link: ConnectionLink }) {
-  // The group already names the type; only its absence is worth saying.
-  const type = link.component?.type ?? link.template?.type;
-  const connector = link.component?.connector ?? link.template?.connector;
-  return <small>{[type ? undefined : 'Not on this Device', connector ?? 'Connector not recorded', faceLabel(link)].filter(Boolean).join(' · ')}{link.internal ? ` · internal path to ${link.internal.componentName ?? link.internal.componentID}${link.internal.position > 1 ? ` position ${link.internal.position}` : ''}` : ''}</small>;
 }
 
 /** Only what adds to the peer's name: never the bare kind, which the group already says. */

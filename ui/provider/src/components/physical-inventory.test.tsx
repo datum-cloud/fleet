@@ -116,10 +116,10 @@ describe('hardware directory', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Server installation · U12' }));
     fireEvent.click(screen.getByRole('link', { name: 'Example compute server' }));
     expect(screen.getByText('SYNTHETIC-0001')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /^Network ports?\b/ })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /^Power inlets?\b/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: /^Cable records/ }));
-    expect(within(screen.getByRole('region', { name: 'Cable records' })).getByRole('link', { name: 'Server power cable' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+    const rows = within(screen.getByRole('table', { name: 'Components and Cables' })).getAllByRole('row').slice(1);
+    expect(rows.map(row => within(row).getAllByRole('cell')[1].textContent)).toEqual(['Power inletIEC C14', 'Network portSFP28']);
+    expect(within(rows[0]).getByRole('link', { name: 'Server power cable' })).toBeInTheDocument();
   });
 
   it('follows typed cable endpoints to the supply and retains power uncertainty', () => {

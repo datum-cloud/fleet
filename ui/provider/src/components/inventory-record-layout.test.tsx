@@ -41,14 +41,14 @@ describe('About this record', () => {
 describe('detail tabs held in the URL', () => {
   it('selects the first tab by default and hides the other panels', () => {
     const { container } = show(record('Device', 'example-srv-a01-01'));
-    expect(tabs().getByRole('tab', { name: /^Components/ })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('region', { name: 'Components' })).toBeVisible();
-    expect(container.querySelector('[data-tab="location"]')).toHaveAttribute('hidden');
+    expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('region', { name: 'Location' })).toBeVisible();
+    expect(container.querySelector('[data-tab="registration"]')).toHaveAttribute('hidden');
     expect(url().get('tab')).toBeNull();
   });
 
   it('writes the selected tab to the URL and keeps other parameters', () => {
-    show(record('Device', 'example-srv-a01-01', '&q=compute'));
+    show(record('Device', 'example-srv-a01-01', '&q=compute&tab=registration'));
     fireEvent.click(tabs().getByRole('tab', { name: 'Location' }));
     expect(url().get('tab')).toBe('location');
     expect(url().get('record')).toBe('example-srv-a01-01');
@@ -66,7 +66,7 @@ describe('detail tabs held in the URL', () => {
     expect(screen.getByRole('region', { name: 'Registration' })).toHaveTextContent('example-provider/Host/synthetic-host-0001');
     view.unmount();
     show(record('Device', 'example-srv-a01-01', '&tab=not-a-tab'));
-    expect(tabs().getByRole('tab', { name: /^Components/ })).toHaveAttribute('aria-selected', 'true');
+    expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('does not carry the tab into links to other records', () => {
@@ -75,11 +75,57 @@ describe('detail tabs held in the URL', () => {
     expect(new URL(rack.getAttribute('href')!, 'https://inventory.test').searchParams.get('tab')).toBeNull();
   });
 
-  it('shows counts on tabs and unknown counts when a collection is denied', () => {
-    const inventory = fixtureInventory('cables-denied');
-    show(record('Device', 'example-srv-a01-01'), inventory);
-    expect(tabs().getByRole('tab', { name: 'Cable records ?' })).toBeInTheDocument();
-    expect(tabs().queryByRole('tab', { name: 'Cable records 0' })).not.toBeInTheDocument();
+  it('shows unknown counts when a collection is denied', () => {
+    show(record('DeviceType', 'example-server-1u'), fixtureInventory('devices-denied'));
+    expect(tabs().getByRole('tab', { name: 'Devices ?' })).toBeInTheDocument();
+    expect(tabs().queryByRole('tab', { name: 'Devices 0' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Device page states each fact once', () => {
+  const connections = () => within(screen.getByRole('region', { name: 'Connections' }));
+  const views = () => within(connections().getByRole('group', { name: 'Connection view' })).getAllByRole('button').map(button => button.textContent);
+
+  it('shows the drawn faceplate as the one picture when the model records a layout', () => {
+    show(record('Device', 'example-srv-a01-01'));
+    expect(views()).toEqual(['Picture', 'Table', 'Diagram']);
+    expect(connections().getByRole('button', { name: 'Picture' })).toHaveAttribute('aria-pressed', 'true');
+    expect(connections().getByRole('group', { name: /^Faceplate drawing/ })).toBeInTheDocument();
+    expect(connections().getByRole('group', { name: 'Not on the faceplate' })).toBeInTheDocument();
+    expect(connections().queryByRole('group', { name: /Port tiles/ })).toBeNull();
+    expect(connections().queryByText('Layout not recorded')).toBeNull();
+    for (const name of ['Faceplate', 'Ports', 'List']) expect(connections().queryByRole('button', { name })).toBeNull();
+  });
+
+  it('shows the grouped tiles as the one picture when the model records no layout', () => {
+    show(record('Device', 'example-app-a01'));
+    expect(views()).toEqual(['Picture', 'Table', 'Diagram']);
+    expect(connections().getByText('Layout not recorded')).toBeInTheDocument();
+    expect(connections().getByRole('group', { name: /Port tiles/ })).toBeInTheDocument();
+    expect(connections().queryByRole('group', { name: /^Faceplate drawing/ })).toBeNull();
+    for (const name of ['Faceplate', 'Ports', 'List']) expect(connections().queryByRole('button', { name })).toBeNull();
+  });
+
+  it.each(['', '&view=table', '&view=diagram'])('states the port counts once, in the Connections header (%s)', view => {
+    const { container } = show(record('Device', 'example-srv-a01-01', view));
+    expect(screen.getAllByText(/\d+ ports · /)).toHaveLength(1);
+    expect(container.querySelector('.inventory-connection-summary')).toHaveTextContent(/^9 ports · 4 recorded · 1 disagree · 4 catalog only\./);
+    expect(screen.queryByText(/All components/)).toBeNull();
+    expect(screen.queryByText(/\d+ network ports? · /)).toBeNull();
+    // The tabs hold only what is not about ports, with no count badges.
+    expect(tabs().getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Location', 'Registration', 'History & verification']);
+    expect(container.querySelector('.inventory-record-tabs .inventory-count')).toBeNull();
+  });
+
+  it('states the model once, with the catalog nominal size in Registration and only placement in Location', () => {
+    const { container } = show(record('Device', 'example-srv-a01-01'));
+    expect(screen.getAllByRole('link', { name: 'Example 1U compute' })).toHaveLength(1);
+    expect(container.textContent).not.toMatch(/Shared catalog/);
+    const registration = container.querySelector<HTMLElement>('[data-tab="registration"]')!;
+    expect(within(registration).getByText('Catalog nominal size').nextElementSibling).toHaveTextContent('1U · full depth · not measured');
+    const location = screen.getByRole('region', { name: 'Location' });
+    expect(location.textContent).not.toMatch(/Catalog nominal|Recorded nominal|not measured or used for occupancy/);
+    expect(within(location).getByText('Depth for rack conflicts')).toBeInTheDocument();
   });
 });
 

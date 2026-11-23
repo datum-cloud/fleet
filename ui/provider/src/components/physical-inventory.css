@@ -169,8 +169,11 @@
 .inventory-connection-face-title { font-size:11px; font-weight:600; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:.04em; margin:6px 0 2px!important; padding:0 8px; }
 .fleet-inventory .inventory-connection-check { display:block; color:var(--foreground); font-style:italic; }
 .inventory-connection-trace { margin-top:4px; font-size:11px; display:grid; gap:2px; }
-.inventory-connection-tables { display:grid; gap:12px; }
-.fleet-inventory .inventory-connection-tables caption { caption-side:top; }
+.fleet-inventory .inventory-connection-table caption { caption-side:top; }
+.inventory-connection-table td { vertical-align:top; }
+.inventory-connection-table tr[data-state="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
+.inventory-connection-cells { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
+.inventory-connection-cells a { display:inline-block; min-height:24px; line-height:24px; }
 .inventory-connection-diagram .inventory-connection-group-title,.inventory-connection-diagram .inventory-connection-group-note { padding:0 8px; }
 @media(max-width:600px) {
   .inventory-connection-diagram,.inventory-connection-diagram[data-left] { grid-template-columns:1fr; gap:12px; padding:12px; }
@@ -246,12 +249,9 @@
 .inventory-legend { font-size:12px; color:var(--muted-foreground); }
 .inventory-link-list { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
 .inventory-link-list a { display:inline-block; min-height:24px; }
-.inventory-component-groups { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
-.inventory-component-group,.inventory-outlets { border:1px solid var(--border); border-radius:var(--radius); padding:12px; background:var(--card); min-width:0; }
-.inventory-component-group h4,.inventory-outlets h4,.inventory-template-group h4 { font-size:13px; margin:0 0 8px; }
-.inventory-component-group ul,.inventory-outlets ul { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
-.inventory-component-group li { display:flex; flex-wrap:wrap; gap:2px 12px; font-size:13px; }
-.fleet-inventory .inventory-component-name small { display:inline; margin:0 0 0 6px; }
+.inventory-outlets { border:1px solid var(--border); border-radius:var(--radius); padding:12px; background:var(--card); min-width:0; }
+.inventory-outlets h4,.inventory-template-group h4 { font-size:13px; margin:0 0 8px; }
+.inventory-outlets ul { list-style:none; padding:0; margin:0; display:grid; gap:6px; }
 .inventory-outlets li { display:grid; grid-template-columns:minmax(80px,auto) minmax(0,1fr); gap:12px; align-items:baseline; min-height:32px; font-size:13px; }
 .inventory-outlets li[data-state="conflict"] { border-left:3px solid var(--destructive); padding-left:6px; }
 .inventory-outlet-link { display:block; overflow-wrap:anywhere; }

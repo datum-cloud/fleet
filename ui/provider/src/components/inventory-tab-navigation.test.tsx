@@ -302,11 +302,17 @@ it('switches record detail tabs as presentation navigation without extra collect
   await screen.findByRole('heading', { name: 'Example compute server' });
   expect(view.collections).toHaveBeenCalledTimes(9);
   const tabs = () => within(screen.getByRole('tablist', { name: 'Example compute server details' }));
-  fireEvent.click(tabs().getByRole('tab', { name: 'Location' }));
-  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true'));
-  expect(new URLSearchParams(view.router.state.location.search).get('tab')).toBe('location');
+  fireEvent.click(tabs().getByRole('tab', { name: 'Registration' }));
+  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Registration' })).toHaveAttribute('aria-selected', 'true'));
+  expect(new URLSearchParams(view.router.state.location.search).get('tab')).toBe('registration');
   await act(async () => { await view.router.navigate(-1); });
-  await waitFor(() => expect(tabs().getByRole('tab', { name: /^Components/ })).toHaveAttribute('aria-selected', 'true'));
+  await waitFor(() => expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true'));
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  // The connection view is presentation state too: switching it reads nothing.
+  fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+  await waitFor(() => expect(new URLSearchParams(view.router.state.location.search).get('view')).toBe('table'));
+  expect(await screen.findByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Table' })).toHaveAttribute('aria-pressed', 'true');
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();

@@ -51,6 +51,23 @@ export const groupOf: Record<PhysicalComponent['type'], ConnectionGroup> = {
   Module: 'other', InventoryItem: 'other', DeviceBay: 'other',
 };
 
+const TYPE_TITLES: Record<PhysicalComponent['type'], [string, string]> = {
+  NetworkPort: ['Network port', 'Network ports'],
+  PowerInlet: ['Power inlet', 'Power inlets'],
+  PowerOutlet: ['Power outlet', 'Power outlets'],
+  ConsolePort: ['Console port', 'Console ports'],
+  ConsoleServerPort: ['Console server port', 'Console server ports'],
+  FrontPort: ['Front pass-through port', 'Front pass-through ports'],
+  RearPort: ['Rear pass-through port', 'Rear pass-through ports'],
+  Module: ['Module', 'Modules'],
+  InventoryItem: ['Inventory item', 'Inventory items'],
+  DeviceBay: ['Device bay', 'Device bays'],
+};
+/** Component types in display order. */
+export const componentTypes = Object.keys(TYPE_TITLES) as PhysicalComponent['type'][];
+/** "Network port" for one, "Network ports" otherwise. */
+export const typeTitle = (type: PhysicalComponent['type'], count = 2) => (TYPE_TITLES[type] ?? [type, type])[count === 1 ? 0 : 1];
+
 // Modules, items and bays rarely terminate cables. They join the view only
 // when a Cable names them.
 export const UNCABLED_TYPES = new Set<PhysicalComponent['type']>(['Module', 'InventoryItem', 'DeviceBay']);
@@ -331,6 +348,35 @@ export function deviceConnections(device: Device, inventory: Inventory): DeviceC
   }
 
   return { cableAccess: 'readable', catalog: catalogState, links };
+}
+
+const laneEndKey = (cable: string, laneID: string, componentID: string, position: number) => `${cable}/${laneID}/${componentID}/${position}`;
+
+/**
+ * Cable lane ends that name this Device but that `links` does not show: a
+ * recorded component at a position below 1, a fractional one, or none (an
+ * omitted position reads as 0). Each comes back as a disagreeing link with
+ * its peer resolved by the same access rules, so a table can list every
+ * Cable that names the Device. Empty when Cables are denied.
+ */
+export function unmatchedLinks(device: Device, inventory: Inventory, links: ConnectionLink[]): ConnectionLink[] {
+  if (inventory.issues?.Cable) return [];
+  const join = new Join(inventory, device.metadata.namespace);
+  const shown = new Set(links.flatMap(link => link.cable ? [laneEndKey(link.cable.name, link.cable.laneID, link.componentID, link.position)] : []));
+  const byID = new Map((device.spec.components ?? []).map(component => [component.id, component]));
+  return join.terminationsOn(device)
+    .filter(termination => !shown.has(laneEndKey(termination.cable.metadata.name, termination.laneID, termination.mine.componentID, termination.mine.position)))
+    .map((termination, index) => {
+      const component = byID.get(termination.mine.componentID);
+      const resolved = join.peer(termination.far);
+      const position = termination.mine.position;
+      const reason = `The Cable names ${typeof position === 'number' && Number.isFinite(position) ? `position ${position}` : 'no position'}${component ? `; this Device records ${positionsOf(component) === 1 ? 'one position' : `positions 1 to ${positionsOf(component)}`} for "${component.id}"` : ''}.`;
+      return {
+        key: `unmatched/${termination.cable.metadata.name}/${termination.laneID}/${index}`, group: component ? groupOf[component.type] : 'unrecorded', state: 'conflict',
+        componentID: termination.mine.componentID, component, position, positions: positionsOf(component),
+        cable: cableRef(termination.cable, termination.laneID), peer: resolved.peer, trace: [], reasons: [reason, ...resolved.reasons], checks: [],
+      };
+    });
 }
 
 /**
