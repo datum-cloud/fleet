@@ -15,8 +15,8 @@ beforeEach(() => {
   });
 });
 
-async function openForm() {
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'operator-1' } } }), element: <Outlet />, children: [{ index: true, element: <CreateCapacityDialog /> }] }]);
+async function openForm(onRegistered = vi.fn()) {
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'operator-1' } } }), element: <Outlet />, children: [{ index: true, element: <CreateCapacityDialog onRegistered={onRegistered} /> }] }]);
   render(<RouterProvider router={router} />);
   const trigger = await screen.findByRole('button', { name: 'Register capacity' });
   await waitFor(() => expect(trigger).toBeEnabled()); fireEvent.click(trigger);
@@ -26,11 +26,33 @@ async function openForm() {
 }
 
 it('registers the selected incarnation through a real host session fence', async () => {
-  await openForm();
+  const onRegistered = vi.fn();
+  await openForm(onRegistered);
+  expect(screen.getByRole('dialog')).toHaveTextContent('Creates a Disabled/Retain MachineCapacity from an Active Device in default.');
+  expect(screen.getByRole('dialog')).not.toHaveTextContent('Physical inventory records only');
   fireEvent.click(screen.getByRole('button', { name: 'Register Disabled capacity' }));
-  expect(await screen.findByText(/Registered device-device-1 as Disabled\/Retain/)).toBeInTheDocument();
+  await waitFor(() => expect(onRegistered).toHaveBeenCalledTimes(1));
   expect(fetcher.mock.calls.filter(([url, init]) => String(url).includes('machinecapacities?') && init?.method === 'POST')).toHaveLength(1);
   expect(screen.queryByRole('checkbox')).toBeNull();
+});
+
+it('leaves no message beside the trigger after a confirmed registration', async () => {
+  await openForm();
+  fireEvent.click(screen.getByRole('button', { name: 'Register Disabled capacity' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByText(/Registered device-device-1/)).toBeNull();
+});
+
+it('gives a denied trigger its reason as a tooltip, not page text', async () => {
+  fetcher.mockImplementation(async () => Response.json({ data: { status: { allowed: false } } }));
+  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'operator-1' } } }), element: <Outlet />, children: [{ index: true, element: <CreateCapacityDialog /> }] }]);
+  render(<RouterProvider router={router} />);
+  const trigger = await screen.findByRole('button', { name: 'Register capacity' });
+  await waitFor(() => expect(trigger).toHaveAccessibleDescription('Registration denied or unavailable for this session.'));
+  expect(trigger).toBeDisabled();
+  expect(trigger.parentElement).toHaveAttribute('title', 'Registration denied or unavailable for this session.');
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 it('visible blur/focus is a no-op for the selected baseline and draft', async () => {

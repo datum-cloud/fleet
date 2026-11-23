@@ -32,8 +32,8 @@ export function InventoryDraftGuard(props: { dirty: boolean; pending: boolean; u
   return router ? <RoutedDraftGuard {...props} /> : null;
 }
 
-export function InventoryFormSurface({ open, task = false, title, trigger, status, hint, onDismiss, children }: {
-  open: boolean; task?: boolean; title: string; trigger?: ReactNode; status: ReactNode;
+export function InventoryFormSurface({ open, task = false, title, description = 'Physical inventory records only. Verification and operational authority remain separate.', trigger, status, hint, onDismiss, children }: {
+  open: boolean; task?: boolean; title: string; description?: string; trigger?: ReactNode; status: ReactNode;
   /**
    * Why the trigger is unavailable, as its tooltip rather than a sentence on
    * the page. The trigger points at it with aria-describedby={hint.id}, and
@@ -48,7 +48,7 @@ export function InventoryFormSurface({ open, task = false, title, trigger, statu
     <div className="inventory-management-controls" title={hint?.text}><Dialog.Trigger asChild>{trigger}</Dialog.Trigger>{hint && <span id={hint.id} className="inventory-visually-hidden">{hint.text}</span>}</div>
     {!open && status}
     <Dialog.Content className="inventory-dialog">
-      <Dialog.Header title={title} description="Physical inventory records only. Verification and operational authority remain separate." />
+      <Dialog.Header title={title} description={description} />
       <Dialog.Body className="inventory-dialog-body">{status}{children}</Dialog.Body>
     </Dialog.Content>
   </Dialog>;

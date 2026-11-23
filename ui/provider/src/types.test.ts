@@ -1,4 +1,5 @@
 import {
+  capacityState,
   formatConstraint,
   toMachineCapacity,
   toMachineProfile,
@@ -26,6 +27,7 @@ describe('toMachineCapacity', () => {
     expect(toMachineCapacity(FIXTURE_CAPACITIES[0])).toEqual({
       name: 'central1-baremetal-01',
       namespace: 'fleet-provider',
+      device: 'synthetic-device-central-01',
       pool: 'central-metal',
       allocationPolicy: 'Enabled',
       cpu: '24 cores / 48 threads · amd64',
@@ -46,6 +48,38 @@ describe('toMachineCapacity', () => {
     const capacity = toMachineCapacity(bare());
     expect(capacity.cpu).toBeUndefined();
     expect(capacity.memory).toBeUndefined();
+  });
+
+  it('keeps the backing Device reference', () => {
+    expect(toMachineCapacity(bare()).device).toBe('device-1');
+  });
+});
+
+describe('capacityState', () => {
+  const conditions = (prepared: string, healthy: string, available: string, reason = 'Evidence') => [
+    { type: 'Prepared', status: prepared, reason }, { type: 'Healthy', status: healthy, reason }, { type: 'Available', status: available, reason },
+  ] as NonNullable<RawMachineCapacity['status']>['conditions'];
+  const state = (allocationPolicy: 'Enabled' | 'Disabled', c?: ReturnType<typeof conditions>) =>
+    capacityState(toMachineCapacity({ ...bare({ allocationPolicy }), status: c && { conditions: c } }));
+
+  it('reads the fixture capacity as Available, Allocated and Disabled', () => {
+    expect(FIXTURE_CAPACITIES.map((c) => capacityState(toMachineCapacity(c)))).toEqual(['Available', 'Allocated', 'Disabled']);
+  });
+
+  it('never reads unreported conditions as Available', () => {
+    expect(state('Enabled')).toBe('Unknown');
+    expect(state('Enabled', conditions('Unknown', 'True', 'True'))).toBe('Unknown');
+    expect(state('Enabled', conditions('True', 'True', 'True'))).toBe('Available');
+  });
+
+  it('reads Healthy=False as Unhealthy even when Disabled', () => {
+    expect(state('Disabled', conditions('True', 'False', 'False'))).toBe('Unhealthy');
+    expect(state('Disabled')).toBe('Disabled');
+  });
+
+  it('tells Allocated apart from other unavailable capacity', () => {
+    expect(state('Enabled', conditions('True', 'True', 'False', 'Allocated'))).toBe('Allocated');
+    expect(state('Enabled', conditions('False', 'True', 'False', 'NotPrepared'))).toBe('Unavailable');
   });
 });
 
