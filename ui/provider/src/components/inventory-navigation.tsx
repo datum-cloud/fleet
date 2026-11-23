@@ -34,7 +34,7 @@ export const sections = [
   },
   {
     kind: 'DeviceClaim',
-    title: 'Claims & registrations',
+    title: 'Installation plans',
     icon: ClipboardList,
     description: 'Registration and intent history, kept separate from physical hardware. Installation lifecycle alone does not distinguish prospective from existing equipment.',
   },

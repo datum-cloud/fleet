@@ -57,7 +57,7 @@ function FeedOutlets({ feed, label, inventory }: { feed: PhysicalRecord; label: 
   const telemetry = usePortTelemetry({ kind: 'PowerFeed', namespace: feed.metadata.namespace, name: feed.metadata.name, label }, { continuousA: feedCapacity(feed.spec.supply).continuousA, cablesDenied });
   if (!path.terminations.length) return <small>No outlets recorded</small>;
   return <div className="inventory-redundancy-outlets">
-    <OutletTiles label={`${label} outlets`} tiles={path.terminations} names={names} namespace={feed.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} telemetry={telemetry} owner="PowerFeed" />
+    <OutletTiles label={`${label} outlets`} tiles={path.terminations} names={names} namespace={feed.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} telemetry={telemetry} />
   </div>;
 }
 

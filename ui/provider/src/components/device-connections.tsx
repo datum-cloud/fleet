@@ -1,139 +1,24 @@
 // The Device page's primary view: the device picture, then one dense table
 // of its components. The picture is the drawn faceplate when the DeviceType
 // records a layout, otherwise the grouped port tiles; it is never toggled.
-// The link diagram is a secondary view that replaces the table, held in the
-// URL as ?view=diagram. Hovering or focusing a tile outlines its row, and the
-// row outlines its tile. See "Device page: picture and component table" in
+// Hovering or focusing a tile outlines its row, and the row outlines its
+// tile. See "Device page: picture and component table" in
 // docs/development/staff-inventory-ui.md.
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@datum-cloud/datum-ui/table';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { useId, useMemo, useState } from 'react';
+import { Link } from 'react-router';
 import type { ChassisFace, Device, PhysicalComponent, RackFace } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import {
-  connectionGroups, deviceConnections, deviceTitle, DIAGRAM_LINK_LIMIT, faceGroups, faceLabel, groupOf, interfaceAddresses, linkStateWords, localLabel, portTiles, remotePortLabel, shortFaceLabel, unmatchedLinks, viewNames,
-  type ConnectionGroup, type ConnectionLink, type DeviceConnections as JoinResult, type LinkState, type PortTile, type TraceHop, type ViewNames,
+  connectionGroups, deviceConnections, deviceTitle, groupOf, interfaceAddresses, linkStateWords, portTiles, shortFaceLabel, unmatchedLinks, viewNames,
+  type ConnectionGroup, type ConnectionLink, type DeviceConnections as JoinResult, type LinkState, type TraceHop, type ViewNames,
 } from '../lib/device-connections';
 import { faceplate } from '../lib/device-faceplate';
 import { componentChassisFace, componentRackFace, deviceMountedFace } from '../lib/rack-faces';
-import {
-  cableText, Glyph, linkLabel, linksWord, peerDetail, PeerTarget, peerText, portsWord, STATES, StateText, TILE_GLYPH, TileSummary, tileSummary, Trace, type Href,
-} from './connection-parts';
+import { cableText, peerDetail, PeerTarget, peerText, portsWord, StateText, TileSummary, type Href } from './connection-parts';
 import { PortFaceplate, type ComponentHighlight } from './device-faceplate';
 import { usePortTelemetry } from './power-telemetry';
 import { deviceDrawingModel, FaceplateDrawing, LayoutNotRecorded, moduleStateGlyph, moduleStateWords } from './faceplate-drawing';
-
-/**
- * The URL search parameter holding the secondary view. `diagram` swaps the
- * table for the link diagram; anything else, `table` included, is the
- * default page.
- */
-export const CONNECTION_VIEW_PARAM = 'view';
-
-type Group = { group: ConnectionGroup; title: string; links: ConnectionLink[]; tiles: PortTile[] };
-
-const LEFT: ConnectionGroup[] = ['power'];
-
-// ---- Diagram (small devices) ----
-
-function DiagramRow({ link, namespace, href, names }: { link: ConnectionLink; namespace?: string; href: Href; names: ViewNames }) {
-  const detail = peerDetail(link);
-  return (
-    <li className="inventory-connection-row" data-state={link.state}>
-      <div className="inventory-connection-line">
-        <span className="inventory-connection-ports">
-          <span className="inventory-connection-local">{localLabel(link)}</span>
-          {link.chassisFace && <span className="inventory-connection-face">{faceLabel(link)}</span>}
-          <span className="inventory-connection-remote">{link.cable ? remotePortLabel(link.peer) : ''}</span>
-        </span>
-        <span className="inventory-connection-wire" aria-hidden="true" />
-        <span className="inventory-connection-cable">
-          <Glyph state={link.state} />{' '}
-          {link.cable
-            ? <Link to={href('Cable', namespace, link.cable.name)} data-connection-roving="" aria-label={linkLabel(link, names)}>{names.cable(link.cable)}</Link>
-            : <span>{linkStateWords[link.state]}</span>}
-          {link.cable && link.state !== 'cabled' && <> · {linkStateWords[link.state].toLowerCase()}</>}
-        </span>
-      </div>
-      <div className="inventory-connection-peer">
-        {link.cable ? <PeerTarget peer={link.peer} namespace={namespace} href={href} names={names} roving label={link.peer?.access === 'readable' ? `Peer ${peerText(link.peer, names)}` : undefined} /> : <span>{link.state === 'catalog' ? 'Catalog only' : 'Unknown'}</span>}
-        {detail && <small>{detail}</small>}
-        <Trace hops={link.trace} namespace={namespace} href={href} names={names} roving />
-        {link.checks.length > 0 && <small className="inventory-connection-check">{link.checks.join(' ')}</small>}
-      </div>
-    </li>
-  );
-}
-
-function DiagramGroup({ group, title, links, tiles, namespace, href, names }: Group & { namespace?: string; href: Href; names: ViewNames }) {
-  const list = (items: ConnectionLink[], label: string) => <ul className="inventory-connection-rows" aria-label={label}>{items.map(link => <DiagramRow key={link.key} link={link} namespace={namespace} href={href} names={names} />)}</ul>;
-  // Group by chassis face only when the catalog records at least one face;
-  // otherwise every port would sit under a single "Face unknown" heading.
-  const faces = links.some(link => link.chassisFace) ? faceGroups(links) : undefined;
-  const rows = faces
-    ? <div className="inventory-connection-faces">{faces.map(item => <section key={item.face} className="inventory-connection-face-group" data-face={item.face} aria-label={`${title} · ${item.title}`}><p className="inventory-connection-face-title">{item.title} · {linksWord(item.links.length)}</p>{list(item.links, `${title} · ${item.title} links`)}</section>)}</div>
-    : list(links, `${title} links`);
-  return (
-    <li className="inventory-connection-group" data-group={group}>
-      <p className="inventory-connection-group-title">{title} · {tiles.length} <span className="inventory-count">· {tileSummary(tiles)}</span></p>
-      {rows}
-      {group === 'power' && <p className="inventory-connection-group-note">Power redundancy unknown. Separate inlets or feeds do not prove independent supply.</p>}
-    </li>
-  );
-}
-
-function Diagram({ title, groups, namespace, href, names }: { title: string; groups: Group[]; namespace?: string; href: Href; names: ViewNames }) {
-  const container = useRef<HTMLDivElement>(null);
-  const active = useRef<Element | null>(null);
-  const visible = () => [...(container.current?.querySelectorAll<HTMLElement>('[data-connection-roving]') ?? [])];
-  // One tab stop for the whole drawing; arrow keys move between its links.
-  useLayoutEffect(() => {
-    const items = visible();
-    const current = items.find(item => item === active.current) ?? items[0];
-    for (const item of items) item.tabIndex = item === current ? 0 : -1;
-  });
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = visible();
-    const index = items.indexOf(document.activeElement as HTMLElement);
-    if (index === -1) return;
-    const next = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : undefined;
-    if (next === undefined) return;
-    event.preventDefault();
-    const target = items[Math.max(0, Math.min(items.length - 1, next))];
-    for (const item of items) item.tabIndex = item === target ? 0 : -1;
-    active.current = target;
-    target.focus();
-  };
-  const side = (left: boolean) => groups.filter(item => LEFT.includes(item.group) === left);
-  const renderSide = (left: boolean, label: string) => {
-    const items = side(left);
-    return items.length ? (
-      <ul className="inventory-connection-side" data-side={left ? 'left' : 'right'} aria-label={label}>
-        {items.map(item => <DiagramGroup key={item.group} {...item} namespace={namespace} href={href} names={names} />)}
-      </ul>
-    ) : <div className="inventory-connection-side" data-side={left ? 'left' : 'right'} aria-hidden="true" />;
-  };
-  return (
-    <div
-      ref={container}
-      className="inventory-connection-diagram"
-      data-left={side(true).length > 0 ? '' : undefined}
-      role="group"
-      aria-label="Connection diagram. Arrow keys move between cables and peers; Enter opens one."
-      onKeyDown={onKeyDown}
-      onFocus={event => { if ((event.target as HTMLElement).hasAttribute('data-connection-roving')) active.current = event.target; }}
-    >
-      {renderSide(true, 'Power feeds and power peers')}
-      {/* The section header carries the counts; the drawn Device carries only its name. */}
-      <div className="inventory-connection-device">
-        <strong>{title}</strong>
-      </div>
-      {renderSide(false, 'Network, console and other peers')}
-    </div>
-  );
-}
-
-// ---- Table ----
 
 /**
  * One table row: a recorded component, a catalog template the Device does
@@ -318,31 +203,6 @@ function ComponentTable({ rows, cablesDenied, namespace, href, names, highlight,
   );
 }
 
-/**
- * The legend popover: record states and the honesty notes the page states
- * once instead of on every row. Escape or a click outside closes it.
- */
-function Legend({ id, drawn, power, catalogUnavailable, onClose }: { id: string; drawn: boolean; power: boolean; catalogUnavailable: boolean; onClose: () => void }) {
-  const panel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const outside = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!panel.current?.contains(target) && !(target instanceof Element && target.closest(`[aria-controls="${id}"]`))) onClose();
-    };
-    document.addEventListener('pointerdown', outside);
-    return () => document.removeEventListener('pointerdown', outside);
-  }, [id, onClose]);
-  return (
-    <div ref={panel} id={id} className="inventory-connection-legend-panel" role="group" aria-label="Legend">
-      <ul className="inventory-connection-legend" aria-label="Record states">
-        {STATES.map(state => <li key={state} data-state={state}><span className="inventory-port-swatch" data-state={state} aria-hidden="true">{TILE_GLYPH[state]}</span><StateText state={state} /></li>)}
-      </ul>
-      {drawn && <p className="inventory-muted">Drawn modules: {moduleStateGlyph.recorded} {moduleStateWords.recorded.toLowerCase()} · {moduleStateGlyph.catalog} {moduleStateWords.catalog.toLowerCase()}</p>}
-      {catalogUnavailable && <p className="inventory-muted">Catalog unavailable, so catalog-only ports are not shown.</p>}
-    </div>
-  );
-}
-
 export function DeviceConnections({ device, inventory, href }: { device: Device; inventory: Inventory; href: Href }) {
   const headingID = useId();
   const summaryID = useId();
@@ -350,9 +210,7 @@ export function DeviceConnections({ device, inventory, href }: { device: Device;
   const unmatched = useMemo(() => unmatchedLinks(device, inventory, join.links), [device, inventory, join]);
   const rows = useMemo(() => componentRows(device, inventory, join, unmatched), [device, inventory, join, unmatched]);
   const names = useMemo(() => viewNames([...join.links, ...unmatched]), [join, unmatched]);
-  const groups = useMemo<Group[]>(() => connectionGroups
-    .map(item => { const links = join.links.filter(link => link.group === item.group); return { ...item, links, tiles: portTiles(links) }; })
-    .filter(item => item.links.length), [join]);
+  const tiles = useMemo(() => connectionGroups.flatMap(item => portTiles(join.links.filter(link => link.group === item.group))), [join]);
   // The faces come from faceplate(), which draws recorded components with
   // unknown states when Cables are denied.
   const plate = useMemo(() => faceplate(device, inventory), [device, inventory]);
@@ -361,22 +219,11 @@ export function DeviceConnections({ device, inventory, href }: { device: Device;
   const drawing = useMemo(() => deviceDrawingModel(device, inventory), [device, inventory]);
   const drawn = drawing.layout.recorded;
   const cablesDenied = join.cableAccess === 'denied';
-  const offersDiagram = !cablesDenied && join.links.length > 0 && join.links.length <= DIAGRAM_LINK_LIMIT;
-  // The diagram is held in the URL (?view=diagram), like the record's tabs;
-  // any other value, `table` included, is the default page.
-  const [params, setParams] = useSearchParams();
-  const diagram = offersDiagram && params.get(CONNECTION_VIEW_PARAM) === 'diagram';
-  const setDiagram = (value: boolean) => setParams(current => { const next = new URLSearchParams(current); if (value) next.set(CONNECTION_VIEW_PARAM, 'diagram'); else next.delete(CONNECTION_VIEW_PARAM); return next; }, { replace: true });
   const namespace = device.metadata.namespace;
-  const tiles = groups.flatMap(group => group.tiles);
   const title = deviceTitle(device);
-  const [legend, setLegend] = useState(false);
-  const legendID = useId();
-  const legendButton = useRef<HTMLButtonElement>(null);
   const [highlighted, setHighlighted] = useState<string>();
   const highlight = useMemo<ComponentHighlight>(() => ({ id: highlighted, set: setHighlighted, clear: id => setHighlighted(value => value === id ? undefined : value) }), [highlighted]);
   const telemetry = usePortTelemetry({ kind: 'Device', namespace: device.metadata.namespace, name: device.metadata.name, label: title }, { cablesDenied });
-  const closeLegend = useMemo(() => () => setLegend(false), []);
 
   const picture = drawn
     ? <FaceplateDrawing drawing={drawing} namespace={namespace} href={href} telemetry={telemetry} dense highlight={highlight} />
@@ -388,22 +235,15 @@ export function DeviceConnections({ device, inventory, href }: { device: Device;
     : <>{portsWord(tiles.length)}{tiles.length > 0 && <> · <TileSummary tiles={tiles} /></>}{join.catalog === 'unavailable' && <span className="inventory-muted"> · catalog unavailable</span>}</>;
 
   return (
-    <section className="inventory-connections" aria-labelledby={headingID} onKeyDown={event => { if (legend && event.key === 'Escape') { event.stopPropagation(); setLegend(false); legendButton.current?.focus(); } }}>
+    <section className="inventory-connections" aria-labelledby={headingID}>
       <h4 id={headingID} className="inventory-visually-hidden">Components and connections</h4>
       {picture && <div className="inventory-device-picture">{picture}</div>}
       {rows.length ? (
         <div className="inventory-component-panel">
           <div className="inventory-component-bar">
             <p id={summaryID} className="inventory-connection-summary">{summary}</p>
-            <div className="inventory-component-actions">
-              <button ref={legendButton} type="button" className="inventory-link-button" aria-expanded={legend} aria-controls={legendID} onClick={() => setLegend(value => !value)}>Legend</button>
-              {offersDiagram && <button type="button" className="inventory-link-button" aria-pressed={diagram} onClick={() => setDiagram(!diagram)}>Link diagram</button>}
-            </div>
-            {legend && <Legend id={legendID} drawn={drawn} power={groups.some(group => group.group === 'power') || rows.some(row => row.type === 'PowerInlet')} catalogUnavailable={join.catalog === 'unavailable'} onClose={closeLegend} />}
           </div>
-          {diagram
-            ? <Diagram title={title} groups={groups} namespace={namespace} href={href} names={names} />
-            : <ComponentTable rows={rows} cablesDenied={cablesDenied} namespace={namespace} href={href} names={names} highlight={highlight} describedBy={summaryID} />}
+          <ComponentTable rows={rows} cablesDenied={cablesDenied} namespace={namespace} href={href} names={names} highlight={highlight} describedBy={summaryID} />
         </div>
       ) : <p className="inventory-muted">No typed components or Cable terminations are recorded for this Device.</p>}
     </section>

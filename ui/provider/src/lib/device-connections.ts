@@ -10,7 +10,6 @@ import type { Inventory } from '../inventory';
 import { condensedName, humanName, isGeneratedName } from './display-names';
 import { deviceCatalog } from './hardware-catalog';
 import { connectorKind, type ConnectorKind } from './connector-kind';
-import type { TemplateMatchBasis } from './faceplate-layout';
 import { componentChassisFace, componentRackFace, deviceMountedFace } from './rack-faces';
 
 export type LinkState = 'cabled' | 'none' | 'conflict' | 'unavailable' | 'catalog';
@@ -71,11 +70,6 @@ export const typeTitle = (type: PhysicalComponent['type'], count = 2) => (TYPE_T
 // Modules, items and bays rarely terminate cables. They join the view only
 // when a Cable names them.
 export const UNCABLED_TYPES = new Set<PhysicalComponent['type']>(['Module', 'InventoryItem', 'DeviceBay']);
-
-// The port tiles are the default view at every size. The line diagram is
-// offered only up to this many links: above it the diagram is many times
-// taller than the tiles that already show the same records.
-export const DIAGRAM_LINK_LIMIT = 16;
 
 // Internal-path traces (patch panels, PDUs) stop after this many hops.
 export const MAX_TRACE_HOPS = 4;
@@ -247,7 +241,7 @@ class Join {
     if (!component) reasons.push(`The peer does not record component "${far.componentID}".`);
     else if (far.position > positionsOf(component)) reasons.push(`The Cable names position ${far.position}; the peer component records ${positionsOf(component)}.`);
     const claims = this.terminationsAt(kind, name, far.componentID, far.position);
-    if (claims.length > 1) reasons.push(`The peer port is named by ${claims.length} Cable lanes: ${[...new Set(claims.map(claim => claim.cable.metadata.name))].join(', ')}.`);
+    if (claims.length > 1) reasons.push(`The peer port is named by ${claims.length} Cable lanes: ${[...new Set(claims.map(claim => cableName(cableRef(claim.cable, claim.laneID))))].join(', ')}.`);
     return { peer, reasons, device: kind === 'Device' ? record as Device : undefined };
   }
 
@@ -304,7 +298,7 @@ export function deviceConnections(device: Device, inventory: Inventory): DeviceC
   const linkFor = (base: Omit<ConnectionLink, 'state' | 'cable' | 'peer' | 'trace' | 'reasons' | 'checks' | 'key'>, termination: Termination, claims: number, localReasons: string[], index: number): ConnectionLink => {
     const resolved = join.peer(termination.far);
     const reasons = [...localReasons];
-    if (claims > 1) reasons.push(`${claims} Cable lanes name this position. Neither is treated as current.`);
+    if (claims > 1) reasons.push(`${claims} Cable lanes name this position.`);
     reasons.push(...resolved.reasons);
     const unavailable = resolved.peer.access !== 'readable';
     const state: LinkState = localReasons.length || claims > 1 ? 'conflict' : unavailable ? 'unavailable' : resolved.reasons.length ? 'conflict' : 'cabled';
@@ -393,7 +387,7 @@ export function feedConnections(feed: PhysicalRecord, inventory: Inventory): Dev
   const links: ConnectionLink[] = [];
   const add = (base: Omit<ConnectionLink, 'key' | 'state' | 'cable' | 'peer' | 'trace' | 'reasons' | 'checks'>, claim: Termination, claims: number, local: string[], index: number) => {
     const resolved = join.peer(claim.far);
-    const reasons = [...local, ...(claims > 1 ? [`${claims} Cable lanes name this position. Neither is treated as current.`] : []), ...resolved.reasons];
+    const reasons = [...local, ...(claims > 1 ? [`${claims} Cable lanes name this position.`] : []), ...resolved.reasons];
     const state: LinkState = local.length || claims > 1 ? 'conflict' : resolved.peer.access !== 'readable' ? 'unavailable' : resolved.reasons.length ? 'conflict' : 'cabled';
     links.push({ ...base, key: `${base.componentID}/${base.position}/${claim.cable.metadata.name}/${claim.laneID}/${index}`, state, cable: cableRef(claim.cable, claim.laneID), peer: resolved.peer, trace: [], reasons, checks: [] });
   };
@@ -439,20 +433,6 @@ export function shortFaceLabel(face: FaceGroup | undefined, rack?: RackFace) {
   return rack && rack !== face.toLowerCase() ? `${face} · rack ${rack}` : face;
 }
 
-/** Splits links by chassis face, in the order Front, Rear, Face unknown. */
-export function faceGroups<T extends Pick<ConnectionLink, 'chassisFace'>>(links: T[]): { face: FaceGroup; title: string; links: T[] }[] {
-  return (['Front', 'Rear', 'unknown'] as const)
-    .map(face => ({ face, title: faceGroupTitles[face], links: links.filter(link => (link.chassisFace ?? 'unknown') === face) }))
-    .filter(group => group.links.length);
-}
-
-/** The chassis and rack face of a link's local end, in words. */
-export function faceLabel(link: Pick<ConnectionLink, 'chassisFace' | 'rackFace'>) {
-  if (!link.chassisFace) return 'Chassis face unknown';
-  const chassis = `Chassis ${link.chassisFace.toLowerCase()}`;
-  return link.rackFace ? `${chassis} · rack ${link.rackFace}` : `${chassis} · rack face unknown`;
-}
-
 export function stateCounts(links: ConnectionLink[]) {
   const counts: Record<LinkState, number> = { cabled: 0, none: 0, conflict: 0, unavailable: 0, catalog: 0 };
   for (const link of links) counts[link.state]++;
@@ -489,11 +469,6 @@ export function peerLabel(peer: PeerEnd | undefined, name?: string) {
   const position = peer.multiPosition ? ` · position ${peer.position}` : '';
   if (peer.access === 'missing') return `${name ?? peerName(peer)} · ${peer.componentID}${position} (record not found)`;
   return `${name ?? peerName(peer)} · ${port}${position}`;
-}
-
-export function remotePortLabel(peer: PeerEnd | undefined) {
-  if (!peer || peer.access === 'denied') return 'Port unavailable';
-  return `${peer.componentName ?? peer.componentID}${peer.multiPosition || (peer.position ?? 1) > 1 ? ` · position ${peer.position}` : ''}`;
 }
 
 /** A short, stable suffix from a resource name, to tell two same-named records apart. */
@@ -564,12 +539,6 @@ export interface PortTile {
   state: LinkState;
   lanes: TileLane[];
   links: ConnectionLink[];
-  /**
-   * How the drawn faceplate joined this component to its template cell. Set
-   * only by the drawing and shown only in the card's More; it never changes
-   * the state, the links or any other view's id join.
-   */
-  templateMatch?: TemplateMatchBasis;
 }
 
 export type ConnectorShape = 'rj45' | 'sfp' | 'qsfp' | 'lc' | 'iec' | 'generic';

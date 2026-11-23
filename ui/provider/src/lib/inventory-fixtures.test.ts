@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PAGES } from '../../scripts/screenshot-pages';
 import { assertFixtureMode } from '../../scripts/fixture-mode';
-import { DIAGRAM_LINK_LIMIT, deviceConnections } from './device-connections';
+import { deviceConnections } from './device-connections';
 import { equipmentGeometry, equipmentPlacements } from './device-placement';
 import { equipmentDepth } from './device-depth';
 import { FIXTURE_NAMES, FIXTURE_RACKS, FIXTURE_SCENARIOS, fixtureInventory, inventoryFixture } from './inventory-fixtures';
@@ -69,7 +69,7 @@ describe('preview inventory fixture', () => {
     const missing = deviceConnections(device('example-srv-a01-02'), inventory).links.find(link => link.componentID === 'eth1');
     expect(missing).toMatchObject({ state: 'unavailable', peer: { access: 'missing' } });
     const leaf = deviceConnections(device(FIXTURE_NAMES.leaf), inventory);
-    expect(leaf.links.length).toBeGreaterThan(DIAGRAM_LINK_LIMIT);
+    expect(leaf.links.length).toBeGreaterThan(16);
     expect(leaf.links.filter(link => link.componentID === 'swp49' && link.state === 'cabled').map(link => link.cable?.laneCount)).toEqual([4, 4, 4, 4]);
     expect(leaf.links.some(link => link.state === 'none')).toBe(true);
   });

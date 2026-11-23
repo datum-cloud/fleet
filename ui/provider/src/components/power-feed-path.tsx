@@ -7,24 +7,28 @@
 // anything else is a strip of the shared port tile shaped by connector kind
 // (device-faceplate.tsx), so record states, accessible names, tooltips and
 // cards match the Device faceplate. Telemetry adds a load tint and marks on
-// each tile, one "updated" line per group, and the numbers in the card; it
-// never changes a record state.
+// each tile, an "updated" line for a group only when some reading is stale or
+// missing, and the numbers in the card; it never changes a record state.
 
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@datum-cloud/datum-ui/table';
 import { useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
 import { shortLabels, viewNames, type PortTile, type ViewNames } from '../lib/device-connections';
-import { feedPath, FEED_CLASS_GLYPH, FEED_CLASS_WORDS, type PathDevice, type PsuFeed } from '../lib/power-paths';
+import { feedPath, FEED_CLASS_WORDS, type PathDevice, type PsuFeed } from '../lib/power-paths';
 import { feedCapacity, formatPower } from '../lib/power-capacity';
 import { formatAge, NOT_REPORTED, valid, type PowerTelemetry, type TelemetrySource } from '../lib/telemetry';
 import { TEXT_TILE_LIMIT } from '../lib/faceplate-layout';
 import { sharedValue } from '../lib/display-names';
-import { numbering, usePortGrid, type ComponentOwner, type PortTelemetry } from './device-faceplate';
+import { numbering, usePortGrid, type PortTelemetry } from './device-faceplate';
 import { deviceDrawingModel, FaceplateDrawing } from './faceplate-drawing';
 import type { Href } from './connection-parts';
-import { CapacityBar, ReadingLine, usePortTelemetry, useTelemetry } from './power-telemetry';
+import { CapacityBar, readingWords, usePortTelemetry, useTelemetry } from './power-telemetry';
 import { TabLink } from './inventory-record-layout';
+
+/** Up to this many upstream sources are listed in the Upstream stage; more go to their own tab. */
+export const UPSTREAM_INLINE_LIMIT = 3;
 
 // ---- One strip of outlets ----
 
@@ -37,8 +41,6 @@ export interface OutletTilesProps {
   href: Href;
   cablesDenied: boolean;
   telemetry: (tile: PortTile) => PortTelemetry | undefined;
-  /** The record that holds the outlets, for the card's wording. */
-  owner: ComponentOwner;
 }
 
 /**
@@ -49,8 +51,8 @@ export interface OutletTilesProps {
  * faceplate's: above TEXT_TILE_LIMIT the tiles carry no text and faint
  * numbers mark the edges. Load is a tint and a mark; numbers are in the card.
  */
-export function OutletTiles({ label, tiles, names, namespace, href, cablesDenied, telemetry, owner }: OutletTilesProps) {
-  const grid = usePortGrid({ tiles, names, namespace, href, cablesDenied, telemetry, owner });
+export function OutletTiles({ label, tiles, names, namespace, href, cablesDenied, telemetry }: OutletTilesProps) {
+  const grid = usePortGrid({ tiles, names, namespace, href, cablesDenied, telemetry });
   const dense = tiles.length > TEXT_TILE_LIMIT;
   const labels = useMemo(() => shortLabels(tiles), [tiles]);
   const marks = useMemo(() => dense ? numbering(tiles, labels) : new Map<string, string>(), [dense, tiles, labels]);
@@ -72,9 +74,10 @@ export function OutletTiles({ label, tiles, names, namespace, href, cablesDenied
 /**
  * When a group's readings were taken, said once for the group: "Updated
  * 40 s ago", "Stale · updated 3 h ago", plus how many are stale or not
- * reported. "Not reported" when none is, never 0.
+ * reported. "Not reported" when none is, never 0. `complete` is true when
+ * every reading is fresh.
  */
-export function groupFreshness(readings: (PowerTelemetry | undefined)[], now: number): { text: string; freshness: 'fresh' | 'stale' | 'missing' } {
+export function groupFreshness(readings: (PowerTelemetry | undefined)[], now: number): { text: string; freshness: 'fresh' | 'stale' | 'missing'; complete?: boolean } {
   let fresh = 0;
   let stale = 0;
   let missing = 0;
@@ -89,22 +92,22 @@ export function groupFreshness(readings: (PowerTelemetry | undefined)[], now: nu
   if (!fresh && !stale) return { text: NOT_REPORTED, freshness: 'missing' };
   const notReported = missing ? ` · ${missing} not reported` : '';
   if (!fresh) return { text: `Stale · updated ${formatAge(staleAge)}${notReported}`, freshness: 'stale' };
-  return { text: `Updated ${formatAge(freshAge)}${stale ? ` · ${stale} stale, last ${formatAge(staleAge)}` : ''}${notReported}`, freshness: stale ? 'stale' : 'fresh' };
+  return { text: `Updated ${formatAge(freshAge)}${stale ? ` · ${stale} stale, last ${formatAge(staleAge)}` : ''}${notReported}`, freshness: stale ? 'stale' : 'fresh', ...(!stale && !missing ? { complete: true } : {}) };
 }
 
-/** The group's one freshness line. */
+/** The group's one freshness line, shown only when some reading is stale or missing: fresh ages are in each tile's name and card. */
 export function GroupFreshness({ readings }: { readings: (PowerTelemetry | undefined)[] }) {
   const { now } = useTelemetry();
   const line = groupFreshness(readings, now);
+  if (line.complete) return null;
   return <p className="inventory-power-updated" data-freshness={line.freshness}>{line.freshness === 'stale' && <span aria-hidden="true">◷ </span>}{line.text}</p>;
 }
 
-/** A group of outlets on the power path: its heading, its tiles or drawing, and one freshness line. */
-function PowerGroup({ title, label, count, readings, children, meta }: { title: ReactNode; label: string; count?: string; readings: (PowerTelemetry | undefined)[]; children: ReactNode; meta?: ReactNode }) {
+/** A group of outlets on the power path: its heading, its tiles or drawing, and a freshness line when needed. */
+function PowerGroup({ title, label, count, readings, children }: { title: ReactNode; label: string; count?: string; readings: (PowerTelemetry | undefined)[]; children: ReactNode }) {
   return (
     <section className="inventory-power-strip" aria-label={label}>
       <h4>{title}{count && <> <span className="inventory-count">{count}</span></>}</h4>
-      {meta}
       {children}
       <GroupFreshness readings={readings} />
     </section>
@@ -143,10 +146,6 @@ export function DeviceDrawFact({ device }: { device: Device }) {
   </dd></div>;
 }
 
-export function FeedClassBadge({ value }: { value: PathDevice['class'] }) {
-  return <span className="inventory-feed-class" data-class={value}><span aria-hidden="true">{FEED_CLASS_GLYPH[value]} </span>{FEED_CLASS_WORDS[value]}</span>;
-}
-
 // ---- The path ----
 
 export function PowerFeedPath({ feed, inventory, href }: { feed: PhysicalRecord; inventory: Inventory; href: Href }) {
@@ -170,7 +169,9 @@ export function PowerFeedPath({ feed, inventory, href }: { feed: PhysicalRecord;
       <ol className="inventory-power-stages" aria-label="Power path, from upstream to devices">
         <li className="inventory-power-stage" data-stage="upstream">
           <h4>Upstream</h4>
-          <p>{sources.length ? <TabLink tab="upstream">{sources.length === 1 ? '1 source recorded' : `${sources.length} sources recorded`}</TabLink> : <span className="inventory-muted">No upstream source recorded</span>}</p>
+          {!sources.length ? <p className="inventory-muted">Not recorded</p>
+            : sources.length > UPSTREAM_INLINE_LIMIT ? <p><TabLink tab="upstream">{sources.length} sources</TabLink></p>
+              : <ul className="inventory-power-sources">{sources.map((item, index) => { const id = upstreamWords(item); return <li key={index} title={id}>{id}</li>; })}</ul>}
         </li>
         <li className="inventory-power-stage" data-stage="feed">
           <h4>Feed</h4>
@@ -178,7 +179,7 @@ export function PowerFeedPath({ feed, inventory, href }: { feed: PhysicalRecord;
           <CapacityBar feed={feed} reading={source.read({ kind: 'PowerFeed', namespace, name: feed.metadata.name })} now={now} source={source} />
           <PowerGroup title="Power outlets" label="Power outlets" count={`${terminations.length}${connector ? ` · ${connector}` : ''}`} readings={termReadings}>
             {terminations.length
-              ? <OutletTiles label="Power outlets" tiles={terminations} names={names} namespace={namespace} href={href} cablesDenied={cablesDenied} telemetry={feedTelemetry} owner="PowerFeed" />
+              ? <OutletTiles label="Power outlets" tiles={terminations} names={names} namespace={namespace} href={href} cablesDenied={cablesDenied} telemetry={feedTelemetry} />
               : <p className="inventory-muted">No outlets recorded.</p>}
           </PowerGroup>
         </li>
@@ -192,7 +193,7 @@ export function PowerFeedPath({ feed, inventory, href }: { feed: PhysicalRecord;
         <li className="inventory-power-stage" data-stage="devices">
           <h4>Devices <span className="inventory-count">{cablesDenied || path.devicesDenied ? '?' : path.devices.length}</span></h4>
           {cablesDenied || path.devicesDenied ? <p>{cablesDenied ? 'Cable' : 'Device'} details unavailable. Devices on this feed are unknown.</p>
-            : path.devices.length ? <ul className="inventory-power-devices">{path.devices.map(row => <PathDeviceRow key={row.device.metadata.name} row={row} feed={feed} terminations={terminations} href={href} />)}</ul>
+            : path.devices.length ? <PathDevices devices={path.devices} feed={feed} terminations={terminations} pdus={path.pdus.length} href={href} />
               : <p className="inventory-muted">No device PSU is cabled to this feed in the records.</p>}
         </li>
       </ol>
@@ -217,31 +218,60 @@ function PduStrip({ pdu, inventory, names, namespace, href, continuousA }: { pdu
   return <PowerGroup
     title={<Link to={href('Device', namespace, name)}>{pdu.label}</Link>}
     label={label} count={`${outlets.length} outlets${connector ? ` · ${connector}` : ''}`} readings={readings}
-    meta={<p className="inventory-power-strip-meta">Fed by {pdu.fedBy.join(', ')}</p>}
   >
     {drawing.layout.recorded
       ? <FaceplateDrawing drawing={drawing} namespace={namespace} href={href} telemetry={telemetry} fit label={label} />
-      : <OutletTiles label={label} tiles={pdu.tiles} names={names} namespace={namespace} href={href} cablesDenied={false} telemetry={telemetry} owner="Device" />}
+      : <OutletTiles label={label} tiles={pdu.tiles} names={names} namespace={namespace} href={href} cablesDenied={false} telemetry={telemetry} />}
   </PowerGroup>;
 }
 
-function PathDeviceRow({ row, feed, terminations, href }: { row: PathDevice; feed: PhysicalRecord; terminations: PortTile[]; href: Href }) {
+/** "example-colo/Circuit/synthetic-feed-a": an upstream source's id. */
+export const upstreamWords = (source: { system: string; type: string; id: string }) => `${source.system}/${source.type}/${source.id}`;
+
+/**
+ * The devices this feed reaches as one dense table, one row per PSU: the
+ * device (once, spanning its PSUs), the PSU, the PDU outlet or feed it is on,
+ * and its draw. PSUs on another feed or with no recorded path are muted rows.
+ * A device on a single feed, or with a PSU whose feed is unknown, gets an
+ * amber edge; the feed class is the tooltip and accessible text.
+ */
+function PathDevices({ devices, feed, terminations, pdus, href }: { devices: PathDevice[]; feed: PhysicalRecord; terminations: PortTile[]; pdus: number; href: Href }) {
   const { source, now } = useTelemetry();
   const namespace = feed.metadata.namespace;
-  const direct = (psu: PsuFeed) => terminations.find(tile => tile.links.some(link => link.peer?.name === row.device.metadata.name && link.peer.componentID === psu.componentID))?.name;
-  return <li>
-    <p className="inventory-power-device-title"><Link to={href('Device', namespace, row.device.metadata.name)}>{row.label}</Link> <FeedClassBadge value={row.class} /></p>
-    <ul className="inventory-power-psus">
-      {row.psus.map(psu => {
-        const here = psu.feed?.name === feed.metadata.name;
-        return <li key={psu.componentID} data-on-feed={here ? '' : undefined}>
-          <span><strong>{psu.name}</strong>{' '}
-            {here ? (psu.via ? <>via {psu.via.label} · {psu.via.outlet}</> : <>direct from {direct(psu) ?? 'this feed'}</>)
-              : psu.feed ? <>on <Link to={href('PowerFeed', namespace, psu.feed.name)}>{psu.feed.label}</Link></> : <>Feed unknown · {psu.unknown}</>}
-          </span>
-          {here && <ReadingLine reading={source.read({ kind: 'Device', namespace, name: row.device.metadata.name, componentID: psu.componentID })} now={now} />}
-        </li>;
-      })}
-    </ul>
-  </li>;
+  const direct = (row: PathDevice, psu: PsuFeed) => terminations.find(tile => tile.links.some(link => link.peer?.name === row.device.metadata.name && link.peer.componentID === psu.componentID))?.name;
+  return (
+    <div className="inventory-scroll">
+      <Table className="inventory-dense-table inventory-power-devices" aria-label="Devices on this feed">
+        <TableHeader><TableRow><TableHead>Device</TableHead><TableHead>PSU</TableHead><TableHead>Via</TableHead><TableHead>Draw</TableHead></TableRow></TableHeader>
+        <TableBody>{devices.flatMap(row => row.psus.map((psu, index) => {
+          const here = psu.feed?.name === feed.metadata.name;
+          // With one PDU on the path, its name goes without saying: the outlet is enough.
+          const via = psu.via && (pdus === 1 ? psu.via.outlet : `${psu.via.label} · ${psu.via.outlet}`);
+          return <TableRow key={`${row.device.metadata.name}/${psu.componentID}`} data-on-feed={here ? '' : undefined}>
+            {index === 0 && <TableCell rowSpan={row.psus.length} data-class={row.class} title={row.class === 'separate' ? undefined : FEED_CLASS_WORDS[row.class]}>
+              <Link to={href('Device', namespace, row.device.metadata.name)}>{row.label}</Link>
+              {row.class !== 'separate' && <span className="inventory-visually-hidden"> {FEED_CLASS_WORDS[row.class]}</span>}
+            </TableCell>}
+            <TableCell>{psu.name}</TableCell>
+            <TableCell title={psu.via ? `${psu.via.label} · ${psu.via.outlet}` : psu.unknown}>
+              {here ? via ?? <>{direct(row, psu) ?? 'Direct'}</>
+                : psu.feed ? <Link to={href('PowerFeed', namespace, psu.feed.name)}>{psu.feed.label}</Link> : <>Feed unknown<span className="inventory-visually-hidden"> · {psu.unknown}</span></>}
+              {here && via && pdus === 1 && <span className="inventory-visually-hidden"> on {psu.via!.label}</span>}
+            </TableCell>
+            <TableCell className="inventory-numeric">{here ? <PsuDraw reading={source.read({ kind: 'Device', namespace, name: row.device.metadata.name, componentID: psu.componentID })} now={now} /> : null}</TableCell>
+          </TableRow>;
+        }))}</TableBody>
+      </Table>
+    </div>
+  );
+}
+
+/** A PSU's draw: "182 W", with the age as tooltip and accessible text; stale is marked; "?" when not reported. */
+function PsuDraw({ reading, now }: { reading?: PowerTelemetry; now: number }) {
+  const power = valid(reading?.powerW, now);
+  if (!power) return <span className="inventory-muted" title={NOT_REPORTED}><span aria-hidden="true">?</span><span className="inventory-visually-hidden">{NOT_REPORTED}</span></span>;
+  const words = readingWords(reading, now) ?? NOT_REPORTED;
+  return <span className="inventory-telemetry-line" data-freshness={power.state} title={words}>
+    {power.state === 'stale' && <span aria-hidden="true">◷ </span>}<span aria-hidden="true">{formatPower(power.value)}</span><span className="inventory-visually-hidden">{words}</span>
+  </span>;
 }

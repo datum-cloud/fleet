@@ -6,7 +6,7 @@
 // kind reports link state or health.
 
 import { Button } from '@datum-cloud/datum-ui/button';
-import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { Link } from 'react-router';
 import { linkStateWords, shortFaceLabel, shortLabels, type ConnectionGroup, type ConnectionLink, type ConnectorShape, type LayoutFace, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
 import { TEXT_TILE_LIMIT } from '../lib/faceplate-layout';
@@ -85,24 +85,15 @@ export interface PortTelemetry {
   words?: string;
   /** The card's Telemetry section. */
   section?: ReactNode;
-  /** Replaces "No health reported" when health is observed. */
+  /** The card's Health section; the card has none when health is not observed. */
   health?: ReactNode;
-  /** Which collector reported the values, and when: shown behind the card's More. */
-  source?: ReactNode;
-}
-
-/** The record that holds a component: a Device, or a PowerFeed's terminations. */
-export type ComponentOwner = 'Device' | 'PowerFeed';
-
-/** "Recorded on this Device" or "Recorded on this power feed"; a feed has no catalog template. */
-export function recordWords(owner: ComponentOwner, recorded: boolean) {
-  if (owner === 'PowerFeed') return recorded ? 'Recorded on this power feed' : 'Not recorded on this power feed';
-  return recorded ? 'Recorded on this Device' : 'Catalog template only; this Device does not record it';
+  /** Which collector reported the values, and when: the Telemetry section's tooltip. */
+  source?: string;
 }
 
 /** A tile's load tint and mark. Stale is grey and never coloured. */
 export interface TileLoad {
-  tint: 'off' | 'idle' | 'low' | 'mid' | 'strong' | 'high' | 'over' | 'stale' | 'observed';
+  tint: 'off' | 'idle' | 'low' | 'mid' | 'strong' | 'high' | 'over' | 'stale' | 'mismatch' | 'reported';
   /** 0 to 1, the bar's fill. */
   fraction?: number;
   /** A glyph for over-threshold, stale, disagreeing or faulted values. */
@@ -112,72 +103,55 @@ export interface TileLoad {
 
 /**
  * The pinned card for one port. It leads with the answer: each position's
- * record state, its peer and the Cable's display name, then health. Generated
- * resource names, connector and template detail, media and traces sit behind
- * a collapsed More, which is not rendered until it is opened. A denied peer's
- * name and record name appear nowhere, in the answer or in More.
+ * record state, its peer, and the Cable's display name on its own line, with
+ * the medium as its tooltip. Reasons every link shares (two Cables naming one
+ * position) are said once. Then telemetry, health when observed, and the
+ * connector, identity, internal path and onward path. A denied peer's name
+ * appears nowhere.
  */
-export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry, health, telemetrySource, owner = 'Device' }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean; telemetry?: ReactNode; health?: ReactNode; telemetrySource?: ReactNode; owner?: ComponentOwner }) {
-  const [more, setMore] = useState(false);
-  const moreID = useId();
+export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry, health, telemetrySource }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean; telemetry?: ReactNode; health?: ReactNode; telemetrySource?: string }) {
   // A breakout's lanes share one Cable: name it once, then list each position's peer.
   const first = tile.links[0]?.cable;
   const shared = tile.links.length > 1 && first && tile.links.every(link => link.cable?.name === first.name) ? first : undefined;
   const component = tile.links[0]?.component;
   const internal = tile.links[0]?.internal;
-  const cables = [...new Map(tile.links.flatMap(link => link.cable ? [[link.cable.name, link] as const] : [])).values()];
-  const peers = tile.links.filter(link => link.peer && link.peer.access !== 'denied' && link.peer.name);
+  const common = tile.links.length > 1 ? tile.links[0].reasons.filter(reason => tile.links.every(link => link.reasons.includes(reason))) : [];
+  const connector = [tile.connector, tile.positions > 1 ? `${tile.positions} positions` : undefined].filter(Boolean).join(' · ');
+  const traced = !cablesDenied && tile.links.some(link => link.trace.length > 0);
+  const fields = connector || (component && (component.serial || component.assetTag)) || internal || traced;
   return (
     <>
       {cablesDenied ? <p>Cable details unavailable.</p> : <>
-        {shared && <p className="inventory-port-card-answer"><span className="inventory-muted">Cable</span> <Link to={href('Cable', namespace, shared.name)}>{names.cable(shared)}</Link></p>}
+        {shared && <p className="inventory-port-card-answer"><span className="inventory-muted">Cable</span> <Link to={href('Cable', namespace, shared.name)} title={shared.medium}>{names.cable(shared)}</Link></p>}
         <ul className="inventory-port-card-links">
           {tile.links.map(link => {
             const detail = peerDetail(link);
+            const reasons = link.reasons.filter(reason => !common.includes(reason));
             return (
               <li key={link.key} data-state={link.state}>
                 <p><StateText state={link.state} />{tile.positions > 1 || link.position > 1 ? <span className="inventory-muted"> · position {link.position}</span> : null}</p>
-                {link.cable && (
-                  <p className="inventory-port-card-answer">
-                    → <PeerTarget peer={link.peer} namespace={namespace} href={href} names={names} />
-                    {!shared && <> <span className="inventory-muted">via</span> <Link to={href('Cable', namespace, link.cable.name)}>{names.cable(link.cable)}</Link></>}
-                  </p>
-                )}
+                {link.cable && <p className="inventory-port-card-answer">→ <PeerTarget peer={link.peer} namespace={namespace} href={href} names={names} /></p>}
+                {link.cable && !shared && <small><span className="inventory-muted">via</span> <Link to={href('Cable', namespace, link.cable.name)} title={mediumText(link)}>{names.cable(link.cable)}</Link></small>}
                 {detail && <small>{detail}</small>}
-                {link.reasons.length > 0 && <small>{link.reasons.join(' ')}</small>}
+                {reasons.length > 0 && <small>{reasons.join(' ')}</small>}
                 {link.checks.length > 0 && <small className="inventory-connection-check">{link.checks.join(' ')}</small>}
               </li>
             );
           })}
         </ul>
+        {common.length > 0 && <small>{common.join(' ')}</small>}
       </>}
-      {telemetry}
-      <div className="inventory-port-card-health">
-        <p className="inventory-port-card-heading">Health</p>
-        {/* Health comes only from an observation with a source and a time. Never derive it from records. */}
-        {health ?? <p className="inventory-muted">No health reported</p>}
-      </div>
-      <div className="inventory-port-card-more">
-        <button type="button" className="inventory-link-button" aria-expanded={more} aria-controls={more ? moreID : undefined} onClick={() => setMore(value => !value)}>{more ? 'Less' : 'More'}</button>
-        {more && (
-          <dl id={moreID} className="inventory-port-card-fields">
-            <dt>Connector</dt><dd>{[tile.connector ?? 'Not recorded', tile.positions > 1 ? `${tile.positions} positions` : undefined].filter(Boolean).join(' · ')}</dd>
-            <dt>Record</dt><dd>{recordWords(owner, !!component)}</dd>
-            {tile.templateMatch && <><dt>Position</dt><dd>{tile.templateMatch === 'id' ? 'Matched to catalog by id' : 'Matched to catalog by name and type'}</dd></>}
-            {component && (component.serial || component.assetTag) && <><dt>Identity</dt><dd>{[component.serial, component.assetTag].filter(Boolean).join(' · ')}</dd></>}
-            {internal && <><dt>Internal path</dt><dd>{internal.componentName ?? internal.componentID}{internal.position > 1 ? ` · position ${internal.position}` : ''}</dd></>}
-            {/* A shared breakout Cable has one medium; its lanes are the positions above. */}
-            {!cablesDenied && cables.map(link => {
-              const medium = shared ? shared.medium : mediumText(link);
-              return <Fragment key={link.cable!.name}><dt>Cable record</dt><dd><code>{link.cable!.name}</code>{medium && <small>{medium}</small>}</dd></Fragment>;
-            })}
-            {!cablesDenied && peers.map(link => <Fragment key={link.key}><dt>Peer record</dt><dd><code>{link.peer!.name}</code>{tile.positions > 1 ? <small>position {link.position}</small> : null}</dd></Fragment>)}
-            {!cablesDenied && tile.links.some(link => link.trace.length > 0) && <><dt>Path</dt><dd>{tile.links.map(link => <Trace key={link.key} hops={link.trace} namespace={namespace} href={href} names={names} />)}</dd></>}
-            {telemetrySource && <><dt>Telemetry source</dt><dd>{telemetrySource}</dd></>}
-            <dt>Source</dt><dd>Cable records, not live link state</dd>
-          </dl>
-        )}
-      </div>
+      {telemetry && <div title={telemetrySource}>{telemetry}</div>}
+      {/* Health comes only from an observation with a source and a time. Never derive it from records. */}
+      {health && <div className="inventory-port-card-health"><p className="inventory-port-card-heading">Health</p>{health}</div>}
+      {fields && (
+        <dl className="inventory-port-card-fields">
+          {connector && <><dt>Connector</dt><dd>{connector}</dd></>}
+          {component && (component.serial || component.assetTag) && <><dt>Identity</dt><dd>{[component.serial, component.assetTag].filter(Boolean).join(' · ')}</dd></>}
+          {internal && <><dt>Internal path</dt><dd>{internal.componentName ?? internal.componentID}{internal.position > 1 ? ` · position ${internal.position}` : ''}</dd></>}
+          {traced && <><dt>Path</dt><dd>{tile.links.map(link => <Trace key={link.key} hops={link.trace} namespace={namespace} href={href} names={names} />)}</dd></>}
+        </dl>
+      )}
     </>
   );
 }
@@ -327,7 +301,7 @@ export interface PortGridTileOptions {
  * and one card. Tiles are found by `data-tile` inside `container`, in DOM
  * order; arrow keys move by drawn position.
  */
-export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry, owner = 'Device', highlight }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined; owner?: ComponentOwner; highlight?: ComponentHighlight }) {
+export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry, highlight }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined; highlight?: ComponentHighlight }) {
   const container = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -440,7 +414,7 @@ export function usePortGrid({ tiles, names, namespace, href, cablesDenied = fals
             <h5>{card.name}</h5>
             <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={close} aria-label={`Close ${card.name}`}>Close</Button>
           </div>
-          <PortCard key={card.key} tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} telemetrySource={cardTelemetry?.source} owner={owner} />
+          <PortCard key={card.key} tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} telemetrySource={cardTelemetry?.source} />
         </div>
       )}
     </>
