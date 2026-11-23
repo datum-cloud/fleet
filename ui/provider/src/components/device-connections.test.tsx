@@ -9,6 +9,7 @@ import { inventoryHref } from './inventory-location';
 import { PhysicalInventory } from './physical-inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
 import { DIAGRAM_LINK_LIMIT } from '../lib/device-connections';
+import { TEXT_TILE_LIMIT } from './device-faceplate';
 
 // Synthetic records only.
 const NS = 'default';
@@ -143,25 +144,26 @@ describe('DeviceConnections', () => {
     expect(document.activeElement).toBe(items[0]);
   });
 
-  it('previews a card on keyboard focus, pins it on click or Enter, follows the arrow keys, and closes on Escape', () => {
+  it('shows a one-line tooltip on keyboard focus, opens the card on click or Enter, follows the arrow keys, and closes on Escape', () => {
     show(server, data());
     const [psu1, psu2] = tiles();
-    fireEvent.focus(psu1);
-    // The preview repeats the tile's accessible name, so it is hidden from assistive technology.
-    const preview = screen.getByRole('tooltip', { hidden: true });
-    expect(preview).toHaveAttribute('aria-hidden', 'true');
-    expect(preview).toHaveTextContent('PSU 1');
-    expect(preview).toHaveTextContent('Hidden feed · Outlet 7');
-    expect(preview).toHaveTextContent('No health reported');
-    expect(within(preview).queryByRole('link', { hidden: true })).toBeNull();
+    psu1.focus(); fireEvent.focus(psu1);
+    // The tooltip repeats the tile's accessible name, so it is hidden from assistive technology.
+    const tip = screen.getByRole('tooltip', { hidden: true });
+    expect(tip).toHaveAttribute('aria-hidden', 'true');
+    expect(tip).toHaveTextContent(/^PSU 1 · cable recorded → Hidden feed · Outlet 7$/);
+    fireEvent.keyDown(psu1, { key: 'ArrowRight' });
+    expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent(/^PSU 2 · no cable recorded$/);
+    fireEvent.keyDown(psu2, { key: 'ArrowLeft' });
 
     // A native button turns Enter and Space into a click.
-    psu1.focus();
+    psu1.focus(); fireEvent.focus(psu1);
     fireEvent.click(psu1);
     expect(screen.queryByRole('tooltip', { hidden: true })).toBeNull();
     expect(psu1).toHaveAttribute('aria-expanded', 'true');
     expect(psu1).toHaveAttribute('aria-controls', card().id);
-    expect(card()).toHaveAccessibleName('PSU 1');
+    expect(card()).toHaveAccessibleName('PSU 1 details');
+    expect(card()).toHaveAttribute('aria-modal', 'false');
     expect(within(card()).getByText('Health').nextElementSibling).toHaveTextContent('No health reported');
     expect(within(card()).getByRole('link', { name: 'pwr-01' })).toHaveAttribute('href', '/inventory?kind=Cable&record=pwr-01&namespace=default');
     expect(within(card()).getByRole('link', { name: 'Hidden feed · Outlet 7' })).toHaveAttribute('href', '/inventory?kind=PowerFeed&record=feed-hidden&namespace=default');
@@ -170,7 +172,7 @@ describe('DeviceConnections', () => {
 
     fireEvent.keyDown(psu1, { key: 'ArrowRight' });
     expect(document.activeElement).toBe(psu2);
-    expect(card()).toHaveAccessibleName('PSU 2');
+    expect(card()).toHaveAccessibleName('PSU 2 details');
     expect(card()).toHaveTextContent('Unknown · not free');
 
     fireEvent.keyDown(psu2, { key: 'Escape' });
@@ -215,7 +217,7 @@ describe('DeviceConnections', () => {
     expect(psu1).toHaveAttribute('data-state', 'unavailable');
     expect(psu1).toHaveAccessibleName('PSU 1: Peer unavailable, to Power feed unavailable, via pwr-01');
     expect(psu1).toHaveTextContent('PSU 1?');
-    fireEvent.focus(psu1);
+    psu1.focus(); fireEvent.focus(psu1);
     expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent('Power feed unavailable');
     expect(view.container.textContent).not.toMatch(HIDDEN_FEED);
     fireEvent.click(psu1);
@@ -300,6 +302,15 @@ describe('DeviceConnections', () => {
     expect(within(grid()).getByText(/^Network ·/)).toHaveTextContent(`Network · ${ports + 1} · 10 recorded · ${ports - 9} unknown`);
     expect(tiles()).toHaveLength(ports + 1);
     expect(tiles().filter(item => item.tabIndex === 0)).toHaveLength(1);
+    // Above TEXT_TILE_LIMIT the tiles carry no text: faint numbers mark every 8th port and bank edges.
+    expect(ports + 1).toBeGreaterThan(TEXT_TILE_LIMIT);
+    expect(tiles().map(item => item.textContent).filter(Boolean)).toEqual([]);
+    const numbers = [...grid().querySelectorAll('.inventory-port-number')].map(item => item.textContent).filter(Boolean);
+    expect(numbers).toEqual(['1', '9', '17', '25', '99']);
+    expect(grid().querySelector('.inventory-port-number')).toHaveAttribute('aria-hidden', 'true');
+    // The tooltip still names the port.
+    fireEvent.focus(tile(/^swp20:/));
+    expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent(/^swp20 · no cable recorded$/);
     const qsfp = tile(/^swp99:/);
     expect(qsfp).toHaveAttribute('data-shape', 'qsfp');
     expect(qsfp.querySelectorAll('.inventory-port-lanes > span')).toHaveLength(4);

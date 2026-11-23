@@ -540,7 +540,8 @@ classifies nothing.
 
 Views never show a generated resource name (`netbox-ca213d185ea9153b853f295e`,
 or any name with a run of twelve or more hex digits, or a UID) by default.
-`humanName()` uses the display name, or the resource name when it reads as a
+`humanName()` in `ui/provider/src/lib/display-names.ts`, the single home for
+name condensing, uses the display name, or the resource name when it reads as a
 human name (`pdu-a.rk105.yul3`). Without one, a Cable is named by its medium
 ("Copper cable") and a peer by its kind ("Unnamed device"). When two different
 records would read the same, `viewNames()` adds a short suffix from the
@@ -554,15 +555,26 @@ The view opens on **Ports** at every size. `portLayout()` lays the tiles out
 as a faceplate: by chassis face (Front, Rear, or Face unknown), then one
 cluster per type, ordered by the first component of that type, which follows
 the DeviceType's template order. Each face's title states its derived rack
-face once ("Rear · rack rear"); when no port has a recorded face, the tiles
-form one unlabelled faceplate. `portLayout()` is the only place that decides
-placement, so DeviceType layout data (rows, columns, banks) can replace
-template order there later. A cluster that is entirely catalog only is hidden
-behind a "Show … catalog only" button.
+face once ("Rear · rack rear"); when no port has a recorded face, one caption
+reads "Component faces not recorded". `portLayout()` is the only place that
+decides placement, so DeviceType layout data (rows, columns, banks) can
+replace template order there later. A cluster that is entirely catalog only
+is hidden behind a "Show … catalog only" button.
 
-Each tile is one component. It shows a short label (`PSU 1`, `swp49`, `24` for
-"Outlet 24", `FP1` and `RP1` for "Front port 1" and "Rear port 1") that
-`shortLabels()` keeps unique within its cluster. A multi-position component
+The faceplate is the shared `PortFaceplate` component in
+`ui/provider/src/components/device-faceplate.tsx`, which the rack side panel
+uses too. Its pieces are exported for layout rendering: `PortTileButton`
+(state, accessible name, optional short label, optional connector shape and
+lane states), `PortTooltip` and `PortCard`.
+
+Each tile is one component. In a cluster of 12 or fewer
+(`TEXT_TILE_LIMIT`), a tile shows a short label (`PSU 1`, `eth0`, `BMC`) that
+`shortLabels()` keeps unique within its cluster, starting from the shared
+`condensedName()` abbreviations. A larger cluster draws port-shaped squares
+with no text, like a switch faceplate, and prints faint port numbers at the
+first port, every eighth port (`NUMBER_EVERY`), each bank edge where the
+connector changes, and the last port, so port 37 is easy to find. A
+multi-position component
 draws one lane bar per position, and the tile takes its most urgent lane
 state. The outline follows the recorded connector only when the free text
 clearly names a family (RJ45, SFP, QSFP, IEC C13/C14/C19/C20); anything else is
@@ -584,14 +596,15 @@ labels are at least 6.2:1 and outlines at least 3.4:1.
 The tile grid is one tab stop. Arrow keys move between tiles by their drawn
 rows (left and right, up and down, Home and End). Each tile's accessible name
 gives the port, state and every peer and Cable, so nothing hidden visually is
-lost. Hover or keyboard focus shows a preview card that is hidden from
-assistive technology, because it repeats the accessible name. A click, tap,
-Enter or Space pins the card. The pinned card is a non-modal dialog with links
-to the Cable and peer, the reasons records disagree, any trace, the full
-resource names, and a **Health** section that reads "No health reported"
-because no kind reports observed status. On screens 600 px wide or less, the
-pinned card is a bottom sheet. Touch shows no preview. Escape or Close closes
-the card and returns focus to the tile.
+lost. Hover or keyboard focus shows a one-line tooltip ("swp37 · no cable
+recorded"), hidden from assistive technology because it repeats the
+accessible name. A click, tap, Enter or Space opens the port's card, a
+non-modal dialog named "swp37 details" with the connector, any identity, links
+to the Cable and peer, the reasons records disagree, any opposite-face check,
+any trace, the full resource names, and a **Health** section that reads "No
+health reported" because no kind reports observed status. On screens 600 px
+wide or less, the card is a bottom sheet. Touch shows no tooltip. Escape or
+Close closes the card and returns focus to the tile.
 
 The section header is one line: the port counts ("60 ports · 7 recorded · 51
 unknown · 2 disagree"), "Unknown is not free; nothing here is verified", and a
@@ -614,10 +627,11 @@ the same condensed names. Styling uses only the host's tokens
 `--accent`, `--primary`, `--destructive`, `--card`, `--popover`, `--ring` and
 `--radius`), and the diagram stacks into one column below 600 px.
 
-`pnpm screenshots` captures the tiles (`ports-server`, `ports-leaf`) and
-pinned cards (`ports-leaf-card`, `ports-server-conflict-card`,
-`ports-denied-peer-card`) at desktop light, desktop dark and the opt-in
-`phone-dark` viewport.
+`pnpm screenshots` captures the tiles (`ports-server`, `ports-leaf`), open
+cards (`ports-leaf-card`, `ports-server-conflict-card`,
+`ports-denied-peer-card`), and the same faceplate in the rack panel
+(`rack-leaf-faceplate`, `rack-leaf-card`) at desktop light, desktop dark and
+the opt-in `phone-dark` viewport.
 
 In the diagram and list, within each type group, ports are grouped by chassis face (Front, Rear, Face
 unknown) when the Device's DeviceType records a face for at least one of them;
@@ -659,15 +673,13 @@ it.
   move between elevation entries; Enter selects; Escape closes the panel and
   returns focus to the entry. A selection that is not among the readable
   records for this rack says so without repeating the name.
-- **Faceplate.** `device-faceplate.tsx` draws one tile per recorded component
-  (and catalog-only template), clustered by chassis face and then by type,
-  with the connection view's state glyphs and border styles. The chassis
-  face comes from the DeviceType template with the same id; a component
-  without a readable template face is shown under "Component faces not
-  recorded", never guessed from its type. Each tile opens a pop-up card with
-  the component's type, connector, the rack face it lands on (when known),
-  positions, identity, Cables and any opposite-face check. Its Health
-  section reads "No health reported": no inventory kind reports health.
+- **Faceplate.** `DeviceFaceplate` in `device-faceplate.tsx` draws the same
+  port faceplate as the Device connection view (see "Port tiles" above), so
+  the two cannot drift apart. The rack panel also draws a recorded face that
+  has no components ("No component records this face."), and keeps
+  catalog-only clusters visible. When Cables are denied it still draws the
+  recorded components, each named "Cable details unavailable, connections
+  unknown", never "no cable recorded".
 - **Equipment tab.** One condensed table per section (positioned,
   unpositioned, non-racked mounts) with Device, U / face / depth (depth with
   its source), Lifecycle and Claim / registration columns. Facility and rack are not repeated per

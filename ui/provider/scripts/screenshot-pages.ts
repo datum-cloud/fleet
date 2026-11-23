@@ -65,8 +65,8 @@ export const PAGES: CapturePage[] = [
   { name: 'rack-depth-faces', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-faces', element: '.inventory-elevation' },
   // Ports grouped by chassis face, with derived rack faces.
   { name: 'server-connections-by-face', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections', element: '.inventory-connections' },
-  // A Cable whose ends land on opposite rack faces carries a check note.
-  { name: 'opposite-face-check', path: record('Device', 'example-app-a01'), ready: '.inventory-connection-check', element: '.inventory-connections' },
+  // A Cable whose ends land on opposite rack faces carries a check note, shown in the port's card.
+  { name: 'opposite-face-check', path: record('Device', 'example-app-a01'), ready: '.inventory-port-grid', click: tile('net0') },
   // Detail and list pages for each kind, for page-design review.
   { name: 'cable-detail', path: record('Cable', 'example-brk-swp49'), ready: '.inventory-page-title' },
   { name: 'power-feed-detail', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-page-title' },
@@ -85,4 +85,7 @@ export const PAGES: CapturePage[] = [
   { name: 'ports-leaf-card', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', click: tile('swp49'), viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-server-conflict-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('eth1'), viewports: CONNECTION_VIEWPORTS },
   { name: 'ports-denied-peer-card', path: record('Device', 'example-srv-a01-01', '&fixture=power-feeds-denied'), ready: '.inventory-port-grid', click: tile('psu-2'), viewports: CONNECTION_VIEWPORTS },
+  // The same shared faceplate in the rack side panel: the leaf's unlabelled tiles, and an open card.
+  { name: 'rack-leaf-faceplate', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-leaf-a01'), ready: '.inventory-faceplate .inventory-port-grid', element: '.inventory-faceplate', viewports: CONNECTION_VIEWPORTS },
+  { name: 'rack-leaf-card', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-leaf-a01'), ready: '.inventory-faceplate .inventory-port-grid', click: `.inventory-faceplate ${tile('swp37')}`, viewports: CONNECTION_VIEWPORTS },
 ];

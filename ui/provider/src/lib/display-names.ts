@@ -9,6 +9,20 @@ export function displayLabel(record: Named): string {
   return record.spec.displayName || record.metadata.name;
 }
 
+// Names that importers generate (`netbox-ca213d185ea9153b853f295e`), and UIDs.
+// They identify a record but mean nothing to a reader.
+const GENERATED_NAME = /[0-9a-f]{12,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i;
+export const isGeneratedName = (name: string) => GENERATED_NAME.test(name);
+
+/**
+ * The display name, or the resource name when it reads as a human name
+ * (`pdu-a.rk105.yul3`). Never a generated name: undefined when there is none.
+ */
+export function humanName(record: Named): string | undefined {
+  for (const candidate of [record.spec.displayName?.trim(), record.metadata.name]) if (candidate && !isGeneratedName(candidate)) return candidate;
+  return undefined;
+}
+
 const ABBREVIATIONS: [RegExp, string][] = [
   [/^Ethernet\s*/i, 'eth'],
   [/^Management\b\s*/i, 'mgmt'],

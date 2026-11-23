@@ -7,6 +7,7 @@
 
 import type { CableEndpoint, ChassisFace, ComponentPosition, ComponentTemplate, Device, PhysicalComponent, PhysicalRecord, RackFace } from '../../../shared/fleet-api';
 import type { Inventory } from '../inventory';
+import { condensedName, humanName, isGeneratedName } from './display-names';
 import { deviceCatalog } from './hardware-catalog';
 import { componentChassisFace, componentRackFace, deviceMountedFace } from './rack-faces';
 
@@ -40,7 +41,7 @@ export const connectionGroups: { group: ConnectionGroup; title: string }[] = [
   { group: 'unrecorded', title: 'Not on this Device' },
 ];
 
-const groupOf: Record<PhysicalComponent['type'], ConnectionGroup> = {
+export const groupOf: Record<PhysicalComponent['type'], ConnectionGroup> = {
   PowerInlet: 'power', PowerOutlet: 'power',
   NetworkPort: 'network',
   ConsolePort: 'console', ConsoleServerPort: 'console',
@@ -50,7 +51,7 @@ const groupOf: Record<PhysicalComponent['type'], ConnectionGroup> = {
 
 // Modules, items and bays rarely terminate cables. They join the view only
 // when a Cable names them.
-const UNCABLED_TYPES = new Set<PhysicalComponent['type']>(['Module', 'InventoryItem', 'DeviceBay']);
+export const UNCABLED_TYPES = new Set<PhysicalComponent['type']>(['Module', 'InventoryItem', 'DeviceBay']);
 
 // The port tiles are the default view at every size. The line diagram is
 // offered only up to this many links: above it the diagram is many times
@@ -143,17 +144,8 @@ interface Termination {
 
 const positionsOf = (component?: { positions?: number }) => component?.positions ?? 1;
 
-// Names that importers generate (`netbox-ca213d185ea9153b853f295e`), and UIDs.
-// They identify a record but mean nothing to a reader, so views show them
-// only in the detail panel.
-const GENERATED_NAME = /[0-9a-f]{12,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i;
-export const isGeneratedName = (name: string) => GENERATED_NAME.test(name);
-
-/** The display name, or the resource name when it reads as a human name (`pdu-a.rk105.yul3`). */
-export function humanName(record: { metadata: { name: string }; spec: { displayName?: string } }): string | undefined {
-  for (const candidate of [record.spec.displayName?.trim(), record.metadata.name]) if (candidate && !isGeneratedName(candidate)) return candidate;
-  return undefined;
-}
+// Generated resource names are shown only in a port's pinned card; every
+// other label comes from humanName() in display-names.ts.
 
 /** A Device's title, never its generated resource name. */
 export function deviceTitle(device: Device) {
@@ -572,7 +564,10 @@ const MAX_SHORT = 7;
 function labelOptions(tile: PortTile) {
   const words = tile.name.trim().split(/[\s_-]+/).filter(Boolean);
   const number = tile.name.match(/(\d+[a-z]?)$/i)?.[1];
+  // The shared abbreviations (eth0, O3, F1, mgmt) come first, when they give one short word.
+  const condensed = condensedName(tile.name);
   const options = [
+    condensed !== tile.name && condensed.length <= MAX_SHORT && !/\s/.test(condensed) ? condensed : undefined,
     tile.name.length <= MAX_SHORT ? tile.name : undefined,
     tile.componentID.length <= MAX_SHORT ? tile.componentID : undefined,
     number,
@@ -584,10 +579,11 @@ function labelOptions(tile: PortTile) {
 }
 
 /**
- * Short faceplate labels, unique within the tiles given: the name or id when
- * it fits (`PSU 1`, `swp49`, `eth0`), else its trailing number (`24` for
- * "Outlet 24"), else initials and number (`F1` and `R1` for "Front 1" and
- * "Rear 1"), else a trimmed name. A label that would repeat moves on to the
+ * Short faceplate labels, unique within the tiles given: condensedName()
+ * when it gives one short word (`eth0`, `O24`, `F1`), else the name or id when
+ * it fits (`PSU 1`, `swp49`), else its trailing number, else initials and
+ * number (`FP1` and `RP1` for "Front port 1" and "Rear port 1"), else a
+ * trimmed name. A label that would repeat moves on to the
  * next option. The full name is always in the accessible name and details.
  */
 export function shortLabels(tiles: PortTile[]): Map<string, string> {

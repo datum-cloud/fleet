@@ -214,36 +214,9 @@
 .inventory-power-list > li { padding:12px; border:1px solid var(--border); border-radius:var(--radius); display:grid; gap:6px; }
 .inventory-power-list ul { list-style:none; padding:0; margin:0; display:grid; gap:2px; font-size:12px; }
 .inventory-equipment-sections h4 a { font-weight:600; }
-/* Faceplate: recorded components by face, then type. Glyph and border style carry state, not colour alone. */
-.inventory-faceplate { display:grid; gap:8px; padding:10px; border:2px solid var(--border); border-radius:6px; background:var(--muted); min-width:0; }
-.inventory-faceplate-face { display:grid; gap:4px; }
-.inventory-faceplate-face + .inventory-faceplate-face { border-top:1px dashed var(--border); padding-top:6px; }
-.inventory-faceplate-face-title { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted-foreground); }
-.inventory-faceplate-cluster { display:grid; gap:2px; }
-.inventory-faceplate-cluster-title { font-size:11px; font-weight:600; }
-.inventory-faceplate-tiles { display:flex; flex-wrap:wrap; gap:3px; }
-.inventory-faceplate-tile { display:inline-flex; align-items:center; gap:3px; min-width:36px; min-height:28px; padding:0 5px; border:1px solid var(--foreground); border-radius:3px; background:var(--card); color:var(--foreground); font:inherit; font-size:10px; line-height:1; cursor:pointer; }
-.inventory-faceplate-tile:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
-.inventory-faceplate-tile[data-state="none"] { border-style:dotted; border-color:var(--muted-foreground); color:var(--muted-foreground); }
-.inventory-faceplate-tile[data-state="conflict"] { border:2px double var(--destructive); }
-.inventory-faceplate-tile[data-state="unavailable"] { border-style:dashed; border-color:var(--muted-foreground); }
-.inventory-faceplate-tile[data-state="catalog"] { border-style:dashed; border-color:var(--border); background:transparent; color:var(--muted-foreground); }
-.inventory-faceplate-glyph { font-weight:700; }
-[data-state="conflict"] > .inventory-faceplate-glyph { color:var(--destructive); }
-/* The pop-up card is portalled outside .fleet-inventory. */
-.inventory-component-card { width:min(320px,calc(100vw - 24px)); font-size:13px; line-height:1.5; }
-.inventory-component-card-body { display:grid; gap:8px; }
-.inventory-component-card-title { font-weight:600; margin:0; }
-.inventory-component-card-heading { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted-foreground); margin:0; }
-.inventory-component-card dl { display:grid; gap:4px; margin:0; }
-.inventory-component-card dt { font-size:11px; color:var(--muted-foreground); }
-.inventory-component-card dd { margin:0; }
-.inventory-component-card ul { list-style:none; padding:0; margin:0; display:grid; gap:4px; }
-.inventory-component-card small { display:block; font-size:11px; color:var(--muted-foreground); }
-.inventory-component-card a { text-decoration:underline; text-underline-offset:3px; }
-.inventory-component-card p { margin:0; }
+/* Rack panel faceplate: the shared port tiles (.inventory-port-*) below, without a second frame. */
+.inventory-faceplate { display:grid; gap:6px; min-width:0; }
 @media(max-width:900px) { .inventory-rack-stage { grid-template-columns:1fr; } .inventory-elevation { max-width:560px; width:100%; } }
-@media(max-width:600px) { .inventory-rack-panel-fields { grid-template-columns:1fr 1fr; } .inventory-faceplate-tile { min-width:44px; min-height:44px; font-size:12px; } .inventory-rack-stage[data-selected] { padding-bottom:40dvh; } }
 /* Detail page layout: compact header, issues, primary view, tabs, About. See "Page design rules" in docs/development/staff-inventory-ui.md. */
 .inventory-record-header { min-width:0; }
 .inventory-record-header:focus { outline:none; }
@@ -296,6 +269,7 @@
   .inventory-component-groups { grid-template-columns:1fr; }
   .inventory-outlets li { grid-template-columns:1fr; gap:2px; }
 }
+@media(max-width:600px) { .inventory-rack-panel-fields { grid-template-columns:1fr 1fr; } .inventory-rack-stage[data-selected] { padding-bottom:40dvh; } }
 /* Port tiles: a faceplate per chassis face, clustered by type. State is fill or outline plus a glyph, never colour alone:
    recorded = solid fill, no cable recorded = empty outline, records disagree = "!" and the destructive token,
    peer unavailable = "?" and a dashed outline, catalog only = a faint dashed outline. Nothing is styled as verified. */
@@ -313,7 +287,17 @@
 .inventory-port-cluster { display:grid; gap:4px; min-width:0; max-width:100%; }
 .inventory-port-cluster-title { font-size:12px; font-weight:600; }
 .inventory-port-row { display:flex; flex-wrap:wrap; gap:3px; list-style:none; padding:0; margin:0; min-width:0; }
-.inventory-port-row > li { display:flex; }
+.inventory-port-row > li { display:flex; flex-direction:column; align-items:center; }
+/* Large clusters: port-shaped squares with no text, and faint numbers at bank edges, as printed on a switch. */
+.inventory-port-row[data-compact] { gap:2px; }
+.inventory-port-row[data-compact] .inventory-port { min-width:22px; min-height:22px; padding:1px; }
+.inventory-port-row[data-compact] .inventory-port[data-shape] .inventory-port-face { min-width:0; width:16px; height:14px; padding:0; border-radius:2px; font-size:9px; }
+.inventory-port-row[data-compact] .inventory-port[data-shape="sfp"] .inventory-port-face { width:18px; height:12px; }
+.inventory-port-row[data-compact] .inventory-port[data-shape="qsfp"] .inventory-port-face { width:26px; height:14px; }
+.inventory-port-row[data-compact] .inventory-port[data-shape="rj45"] .inventory-port-face { width:16px; height:15px; }
+.inventory-port-row[data-compact] .inventory-port[data-shape="rj45"] .inventory-port-face::after { width:6px; height:3px; }
+.inventory-port-number { min-height:10px; font-size:9px; line-height:10px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.inventory-port-tip { position:absolute; left:var(--card-left,0); top:var(--card-top,0); z-index:21; max-width:calc(100% - 8px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; background:var(--popover); color:var(--popover-foreground); box-shadow:0 4px 12px rgb(0 0 0 / .18); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
 .inventory-port { appearance:none; display:inline-flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; min-width:34px; min-height:32px; padding:2px; margin:0; border:0; border-radius:4px; background:transparent; color:var(--foreground); font:inherit; cursor:pointer; }
 .inventory-port:hover .inventory-port-face { box-shadow:0 0 0 2px var(--ring); }
 .inventory-port:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
@@ -336,10 +320,9 @@
 .inventory-port[data-state="unavailable"] .inventory-port-face,.inventory-port-swatch[data-state="unavailable"],.inventory-port-lanes > [data-state="unavailable"] { border-style:dashed; }
 /* Faint, but its label still meets 4.5:1: muted-foreground alone falls just under in the dark theme. */
 .inventory-port[data-state="catalog"] .inventory-port-face,.inventory-port-swatch[data-state="catalog"],.inventory-port-lanes > [data-state="catalog"] { border:1px dashed var(--muted-foreground); color:color-mix(in oklab,var(--muted-foreground) 70%,var(--foreground)); }
-@media(pointer:coarse) { .inventory-port { min-width:44px; min-height:44px; } }
-/* The pop-up card: a preview on hover or focus, pinned by click, tap or Enter; a bottom sheet on phones. */
-.inventory-port-card { position:absolute; left:var(--card-left,0); top:var(--card-top,0); z-index:20; display:grid; gap:6px; width:min(320px,calc(100% - 8px)); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:0 8px 28px rgb(0 0 0 / .22); font-size:12px; overflow-wrap:anywhere; }
-.inventory-port-card:not([data-pinned]) { pointer-events:none; }
+@media(pointer:coarse) { .inventory-port,.inventory-port-row[data-compact] .inventory-port { min-width:44px; min-height:44px; } .inventory-port-row[data-compact] { gap:0; } }
+/* The port card: opened by click, tap or Enter; a bottom sheet on phones, above the rack panel's own sheet. */
+.inventory-port-card { position:absolute; left:var(--card-left,0); top:var(--card-top,0); z-index:60; display:grid; gap:6px; width:min(320px,calc(100% - 8px)); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:0 8px 28px rgb(0 0 0 / .22); font-size:12px; overflow-wrap:anywhere; }
 .inventory-port-card[data-state="conflict"] { border-color:var(--destructive); }
 .inventory-port-card-title { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .fleet-inventory .inventory-port-card h5 { margin:0; font-size:13px; font-weight:600; }

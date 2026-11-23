@@ -154,7 +154,7 @@ describe('device selection', () => {
     expect(within(panel).getByText('front')).toBeInTheDocument();
     expect(within(panel).getByText('Full depth (catalog)')).toBeInTheDocument();
     // Chassis faces come from the DeviceType templates: server ports are on the chassis rear.
-    expect(within(plate).getByRole('group', { name: 'Rear · Power' })).toHaveTextContent('PSU 1');
+    expect(within(plate).getByRole('group', { name: 'Rear · rack rear · Power' })).toHaveTextContent('PSU 1');
     expect(within(plate).getByText('No component records this face.')).toBeInTheDocument();
     expect(within(panel).getByText('Active')).toBeInTheDocument();
     expect(within(panel).getByRole('list', { name: 'Ports and cables' })).toHaveTextContent(/cable recorded/);
@@ -206,7 +206,7 @@ describe('device selection', () => {
     phoneWidth(false);
     open(RACK('example-rack-a01', '&selectedKind=Device&selected=example-leaf-a01'));
     const panel = screen.getByTestId('rack-device-panel');
-    const tile = within(panel).getByRole('button', { name: /^swp1, Network port, Cable recorded/ });
+    const tile = within(panel).getByRole('button', { name: /^swp1: Cable recorded, to Compute a01-01 · Ethernet 0/ });
     await act(async () => { fireEvent.click(tile); });
     const card = await screen.findByRole('dialog', { name: 'swp1 details' });
     expect(within(card).getByText('No health reported')).toBeInTheDocument();
@@ -221,8 +221,8 @@ describe('device selection', () => {
     phoneWidth(false);
     open(RACK('example-rack-a01', '&selectedKind=Device&selected=example-patch-a01'));
     const plate = within(screen.getByTestId('rack-device-panel')).getByRole('region', { name: 'Faceplate' });
-    expect(within(plate).getByRole('group', { name: 'Front · Pass-through' })).toHaveTextContent('F1');
-    expect(within(plate).getByRole('group', { name: 'Rear · Pass-through' })).toHaveTextContent('R1');
+    expect(within(plate).getByRole('group', { name: /^Front · rack (front|rear) · Pass-through$/ })).toHaveTextContent('F1');
+    expect(within(plate).getByRole('group', { name: /^Rear · rack (front|rear) · Pass-through$/ })).toHaveTextContent('R1');
     expect(within(plate).queryByText('Face not recorded')).not.toBeInTheDocument();
   });
 
@@ -237,7 +237,7 @@ describe('device selection', () => {
     expect(within(plate).queryByText(/^(Front|Rear)$/)).not.toBeInTheDocument();
     expect(within(plate).getByRole('group', { name: 'Component faces not recorded · Power' })).toHaveTextContent('PSU 1');
     // A catalog-only template is a tile, styled and named as such.
-    expect(within(plate).getByRole('button', { name: /^Serial console, Console port, Catalog only/ })).toHaveAttribute('data-state', 'catalog');
+    expect(within(plate).getByRole('button', { name: /^Serial console: Catalog only/ })).toHaveAttribute('data-state', 'catalog');
   });
 });
 
@@ -259,7 +259,7 @@ describe('denied records', () => {
     const panel = screen.getByTestId('rack-device-panel');
     expect(within(panel).getAllByText(/Cable details unavailable/).length).toBeGreaterThan(0);
     expect(within(panel).queryByText(/cable recorded/i)).not.toBeInTheDocument();
-    expect(within(panel).getByRole('button', { name: /^Ethernet 0, Network port, cable details unavailable/ })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /^Ethernet 0: Cable details unavailable, connections unknown$/ })).toBeInTheDocument();
     fireEvent.click(within(screen.getByRole('tablist', { name: 'Rack views' })).getByRole('tab', { name: 'Cables' }));
     expect(screen.getByText(/Cable details unavailable. Connections for this rack are unknown, not absent/)).toBeInTheDocument();
   });

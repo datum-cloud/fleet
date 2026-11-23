@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { CableEndpoint, Device, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import { toInventory, type Inventory } from '../inventory';
 import {
-  connectorShape, deviceConnections, deviceTitle, faceGroups, faceLabel, humanName, isGeneratedName, localLabel, oppositeFaceCheck, peerLabel, portLayout, portTiles, remotePortLabel,
+  connectorShape, deviceConnections, deviceTitle, faceGroups, faceLabel, localLabel, oppositeFaceCheck, peerLabel, portLayout, portTiles, remotePortLabel,
   shortLabels, stateCounts, tileCounts, viewNames,
   type ConnectionLink, type PortTile,
 } from './device-connections';
+import { humanName, isGeneratedName } from './display-names';
 import { depthClaims, depthDevices, depthRecords } from './depth-fixtures';
 
 // Synthetic records only.
@@ -317,7 +318,8 @@ describe('port tiles', () => {
     ]);
     const tiles = ['PSU 1', 'swp49', 'eth0', 'outlet-24', 'front-port-1', 'rear-port-1', 'console', 'management-interface'];
     // "1" would repeat for the front and rear ports, so both take initials.
-    expect(tiles.map(key => labels.get(key))).toEqual(['PSU 1', 'swp49', 'eth0', '24', 'FP1', 'RP1', 'console', 'Manage…']);
+    // condensedName() gives the shared abbreviations (eth0, O24) first.
+    expect(tiles.map(key => labels.get(key))).toEqual(['PSU 1', 'swp49', 'eth0', 'O24', 'FP1', 'RP1', 'console', 'Manage…']);
     // Identical names with nothing else to tell them apart are numbered.
     const same = shortLabels([tile('Uplink port', 'uplink-port-a'), tile('Uplink port', 'uplink-port-b')]);
     expect([same.get('uplink-port-a'), same.get('uplink-port-b')]).toEqual(['Uplink…·1', 'Uplink…·2']);
