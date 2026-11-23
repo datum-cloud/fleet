@@ -759,43 +759,29 @@ transition hold. It never makes the slot free merely because readiness is False.
 
 ### Manual Fleet records: implemented subset versus target
 
-The comparison below is pinned to Fleet PR #90, branch
-`feat/manual-inventory-records`, commit
-`08d6dde8563b7c999ecf839565db2bd37b4dda7e`: its [actual types][manual-types]
-and [operations guide][manual-guide]. It is not a claim about merge status or
-what is deployed. That revision implements operator-written DeviceClaim/Device
-CRDs and access controls, not reservation, enrollment, verification, retirement,
-or capacity-publication controllers. Its empty status types do not establish
-any of the conditions proposed here.
+The comparison below describes the [implemented types][manual-types] and
+[operations guide][manual-guide] in this repository. They implement
+operator-written physical inventory CRDs and access controls, not reservation,
+enrollment, verification, retirement, or capacity-publication controllers.
+Their empty status types do not establish any of the conditions proposed here.
 
-| Reviewed implementation | Proposed target and migration constraint |
+| Implemented subset | Proposed target and remaining constraint |
 | --- | --- |
-| DeviceClaim describes a long-lived slot; a replacement Device names the same claim. Device identity and `claimRef` are immutable. | Retain this proposal's per-installation claim identity: each move/replacement has a successor claim. Keep a stable slot label for operator navigation, not a second binding authority or new Slot kind. This is a proposed resolution, not a schema change already approved in #90. |
-| Placement requires string `facility`/`rack`, numeric position, height and face. | Resolve approved Facility/Rack references. Convert to explicit placement scope; do not treat strings as global IDs or retain fabricated positions as authoritative. |
-| Claimed ports have name/type/speed and embedded `expectedPeer`; Device interfaces may contain `peer`. | Convert approved expected connections into Cable plans once; preserve actual peer reports as sourced observations. Reconcile reciprocal/contradictory entries before creating a single Cable authority. Keep old inline fields read-only during cutover, then remove/deprecate through a versioned migration. |
+| DeviceClaim describes one installation: `lifecycle` is always `Installation` and placement is immutable. A replacement Device names the same claim. Device identity and `claimRef` are immutable. | Each move or replacement has a successor claim. Keep a stable label for operator navigation, not a second binding authority or new Slot kind. |
+| Placement has a required scope: `Facility` with `facilityRef`, or `RackMembership`, `RackUnits` or `NonRackUnitMount` with `rackRef`. Only `RackUnits` carries position, height and face. | Qualify geometry and reservations. Do not treat names as global IDs or recorded positions as verified. |
+| Cable records are the only expected-topology authority. Device interfaces carry a name and MAC address only. | Record actual peer reports as sourced observations, not as a second Cable authority. Reconcile contradictions before verification. |
 | Device carries model, serial/system UUID, interfaces and unmapped MACs. | Preserve original values; adjudicate canonical physical identity and component mappings. Do not coerce provider IDs into chassis serials, or turn interface names/MAC lists into trusted component identity. |
 | Optional BMC endpoint lives on restricted provider-project objects in Milo. | Preserve access restrictions. Endpoint discovery does not authorize access. Transfer endpoint configuration authority explicitly to the provider management surface before exposing only references/read projections; never run two writable copies. |
 | No controller checks binding exclusivity, evidence or `MachineCapacity.deviceRef` resolution. | Resolve duplicate/multiple bindings and protect existing occupancy before enabling automation. Do not infer Accepted, Bound, Ready or allocator eligibility from schema admission. |
 
 **Claim-lifetime decision gate.** The target remains one committed Device binding
 per installation claim, with one active placement authority per Device. A
-long-lived slot is useful for naming and history but must not replace an
-installation incarnation: otherwise a serial swap can inherit old cabling,
-acceptance or verification. Before implementation, approve the successor-claim
-protocol and versioned conversion of the manual API, or explicitly amend this
-proposal to provide equivalent immutable incarnation semantics. Do not automate
-the long-lived-slot convention while presenting it as the target contract.
-
-For a legacy slot with several Devices, retain the original claim and all Device
-records, their immutable bindings, and available registration/retirement history.
-Adjudicate the active asset and create explicit installation-history mappings;
-unknown order or occupancy remains unresolved. Do not choose the newest timestamp
-as proof of physical replacement. The migration must select a versioned storage/
-conversion mechanism that preserves original bindings while representing the
-registry-owned active relationship. A raw patch of immutable `claimRef`, deleting
-and recreating Devices, or renaming them to fit a successor claim is not a safe
-conversion. Existing MachineCapacity/asset-key references must continue to resolve
-to the same asset; a move is not grounds to manufacture a new capacity identity.
+replacement Device that names its predecessor's claim must not inherit old
+cabling, acceptance or verification. Before automating replacement, approve the
+successor-claim protocol, or explicitly amend this proposal to provide
+equivalent immutable incarnation semantics. Existing MachineCapacity and
+asset-key references must continue to resolve to the same asset; a move is not
+grounds to manufacture a new capacity identity.
 
 **Home and authority decision gate.** The reviewed manual API deliberately stores
 records in the provider project's Milo control plane, protected by inventory
@@ -869,5 +855,5 @@ actual consumer projection against its retained input revisions. Unsupported
 hardware or topology stays unavailable for offerings requiring those checks;
 registration alone does not satisfy this gate.
 
-[manual-types]: https://github.com/datum-cloud/fleet/blob/08d6dde8563b7c999ecf839565db2bd37b4dda7e/internal/api/inventory/v1alpha1/types.go
-[manual-guide]: https://github.com/datum-cloud/fleet/blob/08d6dde8563b7c999ecf839565db2bd37b4dda7e/docs/operations/physical-inventory.md
+[manual-types]: ../../../internal/api/inventory/v1alpha1/types.go
+[manual-guide]: ../../operations/physical-inventory.md

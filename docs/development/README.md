@@ -682,11 +682,12 @@ corrupt or uses an unsupported schema version.
 
 `internal/api/inventory/v1alpha1` defines Facility, Rack, DeviceClaim, Device,
 Cable and PowerFeed records, a Manufacturer and DeviceType
-[hardware catalog](hardware-catalog.md), and an observational Site. Legacy slot
-claims coexist with new installation claims; no move or replacement handover is
-automated. Records live in the provider project in Milo.
-`config/components/inventory` holds their CRDs, ProtectedResources, and the
-inventory viewer, editor, manager and importer roles. Only `config/milo`
+[hardware catalog](hardware-catalog.md), and an observational Site. Each
+DeviceClaim is an observational installation claim with typed, immutable
+placement, and Cable records are the only topology authority; no move or
+replacement handover is automated. Records live in the provider project in
+Milo. `config/components/inventory` holds their CRDs, ProtectedResources, and
+the inventory viewer, editor, manager and importer roles. Only `config/milo`
 includes it.
 
 Records carry no attribution fields: resource audit logs record who changed a
