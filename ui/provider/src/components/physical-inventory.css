@@ -108,3 +108,61 @@
 @media(max-width:600px) { .inventory-form { grid-template-columns:1fr; padding:16px; } .inventory-body { padding:0!important; } }
 @media(max-width:1100px) { .inventory-sections { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media(max-width:600px) { .inventory-sections { grid-template-columns:repeat(2,minmax(0,1fr)); } .inventory-fields { grid-template-columns:1fr; } .inventory-body { padding:16px; } .inventory-heading,.inventory-list-heading { align-items:flex-start; flex-direction:column; } .inventory-related li { grid-template-columns:1fr; gap:4px; } }
+/* Device connection view: Cable records joined to components. Every state has a glyph, a line style and words. */
+.inventory-connections { display:grid; gap:12px; min-width:0; }
+.inventory-connections-heading { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; }
+.inventory-connections-heading h4 { margin:0; }
+.inventory-connection-legend { display:flex; flex-wrap:wrap; gap:8px 16px; list-style:none; padding:0; margin:0; font-size:12px; }
+.inventory-connection-legend li { display:flex; align-items:center; gap:6px; }
+.inventory-connection-swatch { display:inline-block; width:24px; border-top:2px solid var(--foreground); }
+.inventory-connection-glyph { display:inline-block; min-width:1ch; font-weight:700; text-align:center; }
+[data-state="conflict"] > .inventory-connection-glyph,[data-state="conflict"] .inventory-connection-cable > .inventory-connection-glyph { color:var(--destructive); }
+.inventory-connection-caveat { font-size:12px; }
+.inventory-connection-diagram { display:grid; grid-template-columns:minmax(150px,200px) minmax(0,1fr); gap:0; padding:16px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); min-width:0; }
+.inventory-connection-diagram[data-left] { grid-template-columns:minmax(0,1fr) minmax(150px,200px) minmax(0,1fr); }
+.inventory-connection-diagram:not([data-left]) > [data-side="left"] { display:none; }
+.inventory-connection-device { align-self:stretch; display:flex; flex-direction:column; justify-content:center; gap:2px; min-height:88px; padding:12px; border:2px solid var(--primary); border-radius:var(--radius); background:var(--accent); text-align:center; overflow-wrap:anywhere; }
+.fleet-inventory .inventory-connection-device small { margin-top:0; }
+.inventory-connection-side,.inventory-connection-rows,.inventory-connection-trace { list-style:none; padding:0; margin:0; min-width:0; }
+.inventory-connection-side { display:grid; gap:12px; align-content:center; }
+.inventory-connection-group-title,.fleet-inventory .inventory-connection-collapse > summary { font-size:12px; font-weight:600; margin:0 0 4px; }
+.fleet-inventory .inventory-connection-collapse { border-top:0; padding-top:0; }
+.fleet-inventory .inventory-connection-collapse[open] > summary { margin-bottom:4px; }
+.inventory-connection-collapse > summary { min-height:24px; }
+.inventory-connection-group-note { font-size:11px; color:var(--muted-foreground); margin-top:4px!important; }
+.inventory-connection-rows { display:grid; gap:6px; }
+.inventory-connection-row { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); align-items:center; min-height:44px; }
+[data-side="left"] .inventory-connection-row { grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); }
+[data-side="left"] .inventory-connection-line { order:2; }
+.inventory-connection-line { display:flex; flex-direction:column; min-width:0; padding:0 0 0 0; }
+.inventory-connection-ports { display:flex; justify-content:space-between; gap:8px; padding:0 6px; font-size:12px; overflow-wrap:anywhere; }
+[data-side="left"] .inventory-connection-ports { flex-direction:row-reverse; }
+.inventory-connection-local { font-weight:500; }
+.inventory-connection-remote { color:var(--muted-foreground); text-align:right; }
+[data-side="left"] .inventory-connection-remote { text-align:left; }
+.inventory-connection-wire { display:block; margin:3px 0; border-top:2px solid var(--foreground); }
+[data-state="unavailable"] .inventory-connection-wire,[data-state="unavailable"] > .inventory-connection-swatch { border-top-style:dashed; border-top-color:var(--muted-foreground); }
+[data-state="conflict"] .inventory-connection-wire,[data-state="conflict"] > .inventory-connection-swatch { border-top:4px double var(--destructive); }
+[data-state="none"] .inventory-connection-wire,[data-state="none"] > .inventory-connection-swatch { border-top-style:dotted; border-top-color:var(--muted-foreground); }
+[data-state="catalog"] .inventory-connection-wire,[data-state="catalog"] > .inventory-connection-swatch { border-top:1px dashed var(--border); }
+.inventory-connection-cable { padding:0 6px; font-size:11px; color:var(--muted-foreground); overflow-wrap:anywhere; }
+.inventory-connection-cable a,.inventory-connection-peer a,.inventory-connection-trace a { display:inline-block; min-height:24px; line-height:24px; }
+.inventory-connection-peer { min-width:0; padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); overflow-wrap:anywhere; }
+.fleet-inventory .inventory-connection-peer small { margin-top:0; }
+[data-state="unavailable"] > .inventory-connection-peer { border-style:dashed; border-color:var(--muted-foreground); }
+[data-state="conflict"] > .inventory-connection-peer { border:2px solid var(--destructive); }
+[data-state="none"] > .inventory-connection-peer { border-style:dotted; color:var(--muted-foreground); background:transparent; }
+[data-state="catalog"] > .inventory-connection-peer { border-style:dashed; color:var(--muted-foreground); background:repeating-linear-gradient(135deg,transparent 0 6px,var(--muted) 6px 9px); }
+.fleet-inventory .inventory-connection-reason { color:var(--foreground); }
+.inventory-connection-trace { margin-top:4px; font-size:11px; display:grid; gap:2px; }
+.inventory-connection-tables { display:grid; gap:12px; }
+.fleet-inventory .inventory-connection-tables caption { caption-side:top; }
+.inventory-connection-group-title,.inventory-connection-collapse > summary,.inventory-connection-group-note { padding:0 8px; }
+@media(max-width:600px) {
+  .inventory-connection-diagram,.inventory-connection-diagram[data-left] { grid-template-columns:1fr; gap:12px; padding:12px; }
+  .inventory-connection-device { order:-1; min-height:0; }
+  .inventory-connection-row,[data-side="left"] .inventory-connection-row { grid-template-columns:1fr; gap:4px; }
+  [data-side="left"] .inventory-connection-line { order:0; }
+  [data-side="left"] .inventory-connection-ports { flex-direction:row; }
+  [data-side="left"] .inventory-connection-remote { text-align:right; }
+}

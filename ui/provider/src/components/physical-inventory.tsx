@@ -30,6 +30,7 @@ import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { InventoryDirectoryHeading, InventoryToolbar } from './inventory-directory-heading';
 import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
+import { DeviceConnections } from './device-connections';
 
 type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -424,6 +425,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           <>
             <Title as="h3" level={5}>Components & connections</Title>
             <Components components={device.spec.components ?? []} />
+            <DeviceConnections key={slotKey(namespace, record.metadata.name)} device={device} inventory={inventory} href={href} />
             {!!device.spec.internalMappings?.length && (
               <>
                 <h4>Internal paths</h4>
