@@ -31,8 +31,8 @@ import (
 const (
 	MachineFinalizer    = "fleet.datumapis.com/machine-protection"
 	recordSchemaVersion = 1
-	// Installation records gained retained public routing identities in v2.
-	// v1 is accepted only by the explicit request-bound upgrader below.
+	// Installation records carry retained public routing identities. Any
+	// other schema version is invalid.
 	installationRecordSchemaVersion = 2
 	assetRecordPrefix               = "fleet-asset-"
 	custodyRecordPrefix             = "fleet-claim-"
@@ -108,37 +108,34 @@ const (
 
 // AssetRecord is private coordination state. It is deliberately retained after
 // release so the next allocation can advance the executor epoch without
-// reconstructing authority from public status. AcceptedRequirements may hold
-// the pre-exact CPU and memory shape for records written before exact
-// requests; such a record decodes only so it can be released (see
-// RetainedRequirements and ErrLegacyRecord).
+// reconstructing authority from public status.
 type AssetRecord struct {
-	SchemaVersion           int                  `json:"schemaVersion"`
-	State                   AssetState           `json:"state"`
-	AssetID                 string               `json:"assetID"`
-	MachineNamespace        string               `json:"machineNamespace"`
-	MachineName             string               `json:"machineName"`
-	MachineUID              types.UID            `json:"machineUID"`
-	ClaimNamespace          string               `json:"claimNamespace"`
-	ClaimName               string               `json:"claimName"`
-	ClaimUID                types.UID            `json:"claimUID"`
-	ClaimScope              ClaimScope           `json:"claimScope"`
-	ClassUID                types.UID            `json:"classUID"`
-	ProfileUID              types.UID            `json:"profileUID"`
-	LocalClassUID           types.UID            `json:"localClassUID"`
-	LocalProfileUID         types.UID            `json:"localProfileUID"`
-	ConsumerProject         ProjectIdentity      `json:"consumerProject,omitempty"`
-	ProviderProject         ProjectIdentity      `json:"providerProject,omitempty"`
-	Authority               AuthorityRef         `json:"authority,omitempty"`
-	ExternalHold            ExternalHoldRef      `json:"externalHold,omitempty"`
-	BindingID               string               `json:"bindingID"`
-	Epoch                   int64                `json:"epoch"`
-	FenceToken              string               `json:"fenceToken"`
-	CurrentInstallationName string               `json:"currentInstallationName"`
-	ActiveOperationID       string               `json:"activeOperationID,omitempty"`
-	AcceptedRequirements    RetainedRequirements `json:"acceptedRequirements"`
-	Hardware                fleetv1.Hardware     `json:"hardware"`
-	Network                 *NetworkRecord       `json:"network,omitempty"`
+	SchemaVersion           int                        `json:"schemaVersion"`
+	State                   AssetState                 `json:"state"`
+	AssetID                 string                     `json:"assetID"`
+	MachineNamespace        string                     `json:"machineNamespace"`
+	MachineName             string                     `json:"machineName"`
+	MachineUID              types.UID                  `json:"machineUID"`
+	ClaimNamespace          string                     `json:"claimNamespace"`
+	ClaimName               string                     `json:"claimName"`
+	ClaimUID                types.UID                  `json:"claimUID"`
+	ClaimScope              ClaimScope                 `json:"claimScope"`
+	ClassUID                types.UID                  `json:"classUID"`
+	ProfileUID              types.UID                  `json:"profileUID"`
+	LocalClassUID           types.UID                  `json:"localClassUID"`
+	LocalProfileUID         types.UID                  `json:"localProfileUID"`
+	ConsumerProject         ProjectIdentity            `json:"consumerProject,omitempty"`
+	ProviderProject         ProjectIdentity            `json:"providerProject,omitempty"`
+	Authority               AuthorityRef               `json:"authority,omitempty"`
+	ExternalHold            ExternalHoldRef            `json:"externalHold,omitempty"`
+	BindingID               string                     `json:"bindingID"`
+	Epoch                   int64                      `json:"epoch"`
+	FenceToken              string                     `json:"fenceToken"`
+	CurrentInstallationName string                     `json:"currentInstallationName"`
+	ActiveOperationID       string                     `json:"activeOperationID,omitempty"`
+	AcceptedRequirements    fleetv1.MachineProfileSpec `json:"acceptedRequirements"`
+	Hardware                fleetv1.Hardware           `json:"hardware"`
+	Network                 *NetworkRecord             `json:"network,omitempty"`
 }
 
 type ResolvedImage struct {
@@ -439,11 +436,6 @@ func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (
 	if custody.ClaimNamespace != request.Claim.Namespace || custody.ClaimName != request.Claim.Name || custody.NamespaceUID != request.NamespaceUID || custody.Admission != request.Admission || custody.State == CustodyReleased || !allocationAuthorityMatches(custody, request) {
 		return nil, fmt.Errorf("%w: claim custody does not authorize allocation", ErrRecordInvalid)
 	}
-	// A selection or binding accepted under the pre-exact requirements is
-	// never resumed, cleared, or reselected; only release may consume it.
-	if custody.ProposedAsset != nil && custody.ProposedAsset.AcceptedRequirements.Legacy() {
-		return nil, ErrLegacyRecord
-	}
 	existing, err := c.recordsForClaimScoped(ctx, request.Claim.UID, custody.ConsumerProject)
 	if err != nil {
 		return nil, err
@@ -560,9 +552,6 @@ func (c *Coordinator) recordCandidateEligible(record *AssetRecord, request Alloc
 }
 
 func validateAssetForRequest(record *AssetRecord, request AllocationRequest) error {
-	if record.AcceptedRequirements.Legacy() {
-		return ErrLegacyRecord
-	}
 	// Specs contain slices, so compare their canonical JSON rather than
 	// allowing a recovered Preparing record to drift across retries.
 	got, _ := json.Marshal(record.AcceptedRequirements)
@@ -809,7 +798,7 @@ func newAssetRecord(request AllocationRequest, machine *fleetv1.MachineCapacity,
 		ClassUID: request.Class.UID, ProfileUID: request.Profile.UID, LocalClassUID: localClassUID(request), LocalProfileUID: localProfileUID(request),
 		ConsumerProject: request.ConsumerProject, ProviderProject: request.ProviderProject, Authority: request.Authority, ExternalHold: request.ExternalHold,
 		BindingID: bindingID, Epoch: epoch,
-		FenceToken: fenceToken, CurrentInstallationName: "None", AcceptedRequirements: ExactRequirements(request.Profile.Spec), Hardware: machine.Status.Hardware}
+		FenceToken: fenceToken, CurrentInstallationName: "None", AcceptedRequirements: request.Profile.Spec, Hardware: machine.Status.Hardware}
 	if request.networkPlan != nil {
 		record.Network = &NetworkRecord{Plan: *request.networkPlan}
 	}
@@ -871,9 +860,6 @@ func (c *Coordinator) reconcileNetwork(ctx context.Context, consumer ProjectIden
 		return fleetnetwork.Observation{}, ErrRecordInvalid
 	}
 	asset := records[0]
-	if asset.AcceptedRequirements.Legacy() {
-		return fleetnetwork.Observation{}, ErrLegacyRecord
-	}
 	if asset.State != AssetCommitted || asset.Network == nil {
 		return fleetnetwork.Observation{}, ErrRecordInvalid
 	}
@@ -1257,9 +1243,6 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 		return InstallationResult{}, fmt.Errorf("%w: claim does not have one retained asset", ErrRecordInvalid)
 	}
 	asset := assets[0]
-	if asset.AcceptedRequirements.Legacy() {
-		return InstallationResult{}, ErrLegacyRecord
-	}
 	if asset.State != AssetCommitted || asset.ClaimNamespace != request.Claim.Namespace || asset.ClaimName != request.Claim.Name || asset.ClaimUID != request.Claim.UID || asset.ClaimScope != scope || asset.ConsumerProject != request.ConsumerProject {
 		return InstallationResult{}, ErrPredecessorConflict
 	}
@@ -1269,9 +1252,6 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	}
 	operationName := operationRecordName(scope, request.Claim.UID, predecessor)
 	operation, _, err := c.getOperation(ctx, operationName)
-	if errors.Is(err, ErrRecordInvalid) {
-		operation, err = c.upgradeLegacyOperation(ctx, operationName, request, asset, scope, predecessor)
-	}
 	if apierrors.IsNotFound(err) {
 		if asset.Network != nil && (!asset.Network.Observation.Prepared(asset.Network.Plan) || asset.Network.Observation.ObservedAt.After(c.now()) || c.now().Sub(asset.Network.Observation.ObservedAt) > c.maxEvidenceAge) {
 			return InstallationResult{}, fleetnetwork.ErrEvidenceStale
@@ -1413,45 +1393,6 @@ func (c *Coordinator) getOperation(ctx context.Context, name string) (*Installat
 	}
 	record, err := decodeOperationSecret(&secret)
 	return record, &secret, err
-}
-
-// upgradeLegacyOperation upgrades a v1 operation only while an exact public
-// request is available to supply the names that v1 failed to retain. A v1
-// record without that request remains quarantined: guessing a name from a UID
-// would retarget admitted provider authority.
-func (c *Coordinator) upgradeLegacyOperation(ctx context.Context, name string, request InstallationRequest, asset *AssetRecord, scope ClaimScope, predecessor string) (*InstallationRecord, error) {
-	var result *InstallationRecord
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var secret corev1.Secret
-		if err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret); err != nil {
-			return err
-		}
-		if current, err := decodeOperationSecret(&secret); err == nil {
-			result = current
-			return nil
-		}
-		legacy, err := decodeLegacyOperationSecret(&secret)
-		if err != nil {
-			return err
-		}
-		if legacy.InstallationUID != request.Installation.UID || legacy.NamespaceUID != request.NamespaceUID || legacy.ClaimUID != request.Claim.UID || legacy.ClaimScope != scope || legacy.ConsumerProject != request.ConsumerProject || legacy.AssetID != asset.AssetID || legacy.BindingID != asset.BindingID || legacy.Epoch != asset.Epoch || legacy.Predecessor != predecessor || legacy.ImageName != request.Installation.Spec.ImageRef.Name || legacy.Admission != request.Admission {
-			return ErrPredecessorConflict
-		}
-		legacy.SchemaVersion = installationRecordSchemaVersion
-		legacy.InstallationNamespace = request.Installation.Namespace
-		legacy.InstallationName = request.Installation.Name
-		legacy.ClaimNamespace = request.Claim.Namespace
-		legacy.ClaimName = request.Claim.Name
-		if err := encodeRecord(&secret, legacy, "installation"); err != nil {
-			return err
-		}
-		if err := c.client.Update(ctx, &secret); err != nil {
-			return err
-		}
-		result = legacy
-		return nil
-	})
-	return result, err
 }
 
 func (c *Coordinator) activateOperation(ctx context.Context, assetID string, claimUID types.UID, predecessor, operationID string) error {
@@ -1996,14 +1937,6 @@ func appendObservationIndexes(route *PrivateRecordRoute, observation fleetnetwor
 	}
 }
 
-func decodeLegacyOperationSecret(secret *corev1.Secret) (*InstallationRecord, error) {
-	var record InstallationRecord
-	if secret.Type != corev1.SecretType("fleet.datumapis.com/private-lifecycle") || secret.Labels[recordTypeLabel] != "installation" || json.Unmarshal(secret.Data[recordDataKey], &record) != nil || validateLegacyInstallationRecord(&record) != nil || secret.Name != operationRecordName(record.ClaimScope, record.ClaimUID, record.Predecessor) || secret.Labels[claimUIDLabel] != string(record.ClaimUID) {
-		return nil, fmt.Errorf("%w: legacy installation secret %s/%s", ErrRecordInvalid, secret.Namespace, secret.Name)
-	}
-	return &record, nil
-}
-
 func validateAssetRecord(r *AssetRecord) error {
 	if r.SchemaVersion != recordSchemaVersion || r.AssetID == "" || r.MachineNamespace == "" || r.MachineName == "" || r.MachineUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.ClassUID == "" || r.ProfileUID == "" || r.LocalClassUID == "" || r.LocalProfileUID == "" || r.BindingID == "" || r.Epoch < 1 || r.FenceToken == "" || r.CurrentInstallationName == "" {
 		return ErrRecordInvalid
@@ -2037,22 +1970,6 @@ func validateInstallationRecord(r *InstallationRecord) error {
 		return ErrRecordInvalid
 	}
 	if r.InstallationNamespace != r.ClaimNamespace {
-		return ErrRecordInvalid
-	}
-	if r.ConsumerProject.Valid() && r.ClaimScope != ProjectClaimScope(r.ConsumerProject) || !r.ConsumerProject.Valid() && r.ClaimScope != LocalClaimScope(r.NamespaceUID) {
-		return ErrRecordInvalid
-	}
-	if r.State != OperationAdmitted && r.State != OperationSucceeded {
-		return ErrRecordInvalid
-	}
-	if r.NetworkInputs != nil && (r.NetworkInputs.Revision == "" || r.NetworkInputs.ObservedAt.IsZero()) {
-		return ErrRecordInvalid
-	}
-	return nil
-}
-
-func validateLegacyInstallationRecord(r *InstallationRecord) error {
-	if r.SchemaVersion != 1 || r.InstallationNamespace != "" || r.InstallationName != "" || r.ClaimNamespace != "" || r.ClaimName != "" || !strings.HasPrefix(r.OperationID, "install-") || r.InstallationUID == "" || r.NamespaceUID == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.AssetID == "" || r.BindingID == "" || r.Epoch < 1 || r.Predecessor == "" || !strings.HasPrefix(r.ResultRevision, "ir-") || r.ImageName == "" || !r.Admission.valid() || r.Image.Validate() != nil || r.Image.CatalogAuthority != r.Admission.CatalogAuthority || r.Image.CatalogRevision != r.Admission.CatalogRevision || r.Image.ImageDecisionID != r.Admission.ImageDecisionID {
 		return ErrRecordInvalid
 	}
 	if r.ConsumerProject.Valid() && r.ClaimScope != ProjectClaimScope(r.ConsumerProject) || !r.ConsumerProject.Valid() && r.ClaimScope != LocalClaimScope(r.NamespaceUID) {

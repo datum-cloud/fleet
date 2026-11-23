@@ -55,7 +55,7 @@ func TestAuthorityRecordConcurrentCreateIsExactAndPrivate(t *testing.T) {
 		Receipt SourceUseReceipt `json:"receipt"`
 	}{request, receipt}
 	contractDigest, _ := digest(contract)
-	record := AuthorityRecord{SchemaVersion: authoritySchemaVersion, RecordID: "record-id", State: StatePrepared, ClaimNamespace: "default", ClaimName: "allocation", ClaimUID: request.ClaimUID, SourceRequest: request, SourceReceipt: receipt, ContractDigest: contractDigest, AcceptedRequirements: controller.ExactRequirements(accepted)}
+	record := AuthorityRecord{SchemaVersion: authoritySchemaVersion, RecordID: "record-id", State: StatePrepared, ClaimNamespace: "default", ClaimName: "allocation", ClaimUID: request.ClaimUID, SourceRequest: request, SourceReceipt: receipt, ContractDigest: contractDigest, AcceptedRequirements: accepted}
 	mismatched := record
 	mismatched.ClaimUID = "other-claim"
 	if !errors.Is(validateAuthorityRecord(&mismatched), ErrAuthorityInvalid) {

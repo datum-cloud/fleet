@@ -358,36 +358,20 @@ fields, or migration logic. A stored profile with the former
 `cores: {min: ...}` or `capacity: {min: ...}` shape no longer decodes and must
 be deleted and recreated with exact values before upgrading the manager.
 
-Allocations accepted before this change can be released after the upgrade,
-but they are never resumed (implemented). Private asset, claim custody, and
-Milo authority records embed the accepted profile requirements. A narrowly
-scoped decoder on those private records only (`RetainedRequirements`) still
-reads the former `cpu.cores` and `memory.capacity` `{min, max, exact}` shape.
-It accepts that shape only when both fields use it and no unknown fields are
-present. The original JSON is kept verbatim, so retained requirement digests
-stay valid when release rewrites the record. The public `MachineProfileSpec`
-and the CRD are unchanged. A record in the former shape:
-
-- never satisfies an allocation retry, selection, installation admission,
-  network refresh, or Milo authority recovery. Those paths return
-  `ErrLegacyRecord`, which wraps the generic invalid-record error, so they
-  fail closed. The record never produces `requestedHardware`,
-  `allocatedHardware`, or readiness. This holds even when the profile UIDs it
-  names still exist;
-- is reported on a live Machine by synthetic staging as `Phase=Pending` with
-  `Bound=False` and `Ready=False`, reason `LegacyCustodyRecord`, without a retry
-  loop. The production Machine handler also stops retrying it;
-- is released by the normal verified release path when the Machine is deleted:
-  cleanup must return correlated evidence, then the asset and custody records
-  become `Released`, the capacity becomes available again, and the finalizer
-  is removed. Release does not consult the profile, so profile UIDs that no
-  longer exist (a deleted and recreated profile) do not block it. Uncertain or
-  malformed cleanup evidence leaves the record `Releasing` and the finalizer in
-  place.
-
-Operators do not edit private records. Delete each affected Machine and wait
-for the finalizer to clear. A released record in the former shape is retained
-for epoch fencing and does not block the next allocation of that machine.
+Private asset, claim custody, and Milo authority records embed the accepted
+requirements as the exact `MachineProfileSpec` (implemented). Fleet keeps no
+decoder for an earlier record shape. A private record whose requirements do
+not decode as the exact shape is invalid: allocation, selection, installation
+admission, network refresh, Milo authority recovery, and release fail closed
+on it through the generic invalid-record path, and it never produces
+`requestedHardware`, `allocatedHardware`, or readiness. Because the
+coordinator decodes every retained asset record when it scans for a claim, one
+invalid asset record, including a `Released` one kept for epoch fencing, stops
+allocation, installation, and release for every claim that coordinator serves
+until it is removed. Release cannot consume an invalid record, so deleting the
+Machine leaves its finalizer in place. Fleet has no automated recovery for this
+state: an environment holding such records discards its private lifecycle
+records and the affected Machines, then recreates the Machines.
 
 GPU, disk, and interface requirements keep numeric constraints with inclusive
 `min` and optional `max`, or `exact` alone. Counts are integers, capacities are
@@ -1455,6 +1439,10 @@ correctness violations.
 - 2026-11-18: Retained private records written before exact CPU and memory
   decode again for release only. Live Machines report `LegacyCustodyRecord`
   instead of looping, and deletion releases them through verified cleanup.
+- 2026-11-23: Removed the decoder and release path for private records written
+  before exact CPU and memory, the `LegacyCustodyRecord` reason, and the
+  installation-record v1 upgrader. Records in older shapes or schema versions
+  are invalid.
 
 ## Drawbacks
 

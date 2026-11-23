@@ -109,7 +109,7 @@ func (h MachineHandler) ReconcileEvent(ctx context.Context, request ProjectReque
 		return Outcome{RetryError: ErrEventWiringUnavailable}
 	}
 	if err := h.Lifecycle.RetainAuthority(ctx, h.Project, &claim, inputs); err != nil {
-		return allocationOutcome(err)
+		return dependencyOutcome(err)
 	}
 	deadline := deadlineFor(inputs.EvidenceExpiresAt)
 	if !containsString(claim.Finalizers, controller.MachineFinalizer) {
@@ -121,7 +121,7 @@ func (h MachineHandler) ReconcileEvent(ctx context.Context, request ProjectReque
 		return Outcome{Deadline: deadline}
 	}
 	if err := h.Lifecycle.Allocate(ctx, h.Project, &claim, inputs); err != nil {
-		outcome := allocationOutcome(err)
+		outcome := dependencyOutcome(err)
 		if outcome.RetryError == nil {
 			outcome.Deadline = deadline
 		}
@@ -152,17 +152,6 @@ func (h MachineHandler) releaseUID(ctx context.Context, uid types.UID, claim *fl
 		return Outcome{RetryError: err}
 	}
 	return Outcome{Deadline: CancelDeadline()}
-}
-
-// allocationOutcome classifies admission and allocation errors for a live
-// Machine. Retained authority accepted under the pre-exact CPU and memory
-// contract is terminal for continued use: retrying cannot make it valid, so it
-// is not requeued. Deleting the Machine is a new primary event that releases it.
-func allocationOutcome(err error) Outcome {
-	if errors.Is(err, controller.ErrLegacyRecord) {
-		return Outcome{}
-	}
-	return dependencyOutcome(err)
 }
 
 func dependencyOutcome(err error) Outcome {

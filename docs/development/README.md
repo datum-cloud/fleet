@@ -64,22 +64,16 @@ removed as a breaking `v1alpha1` change with no conversion or migration. Stored
 profiles with the old shape must be recreated before upgrading. The allocator
 matches capacity only when the observed cores and memory equal the request.
 
-Private records retained before that change still decode, but only so they can
-be released. `controller.RetainedRequirements` is the `acceptedRequirements`
-encoding in asset records, custody proposals, and Milo authority records. It
-reads exact requirements unchanged. It also reads the complete former
-`{min, max, exact}` shape for `cpu.cores` and `memory.capacity` and re-encodes
-that shape verbatim. Allocation retries, selection, `Install`, network refresh,
-and Milo recovery return `controller.ErrLegacyRecord` for such a record. That
-error wraps `ErrRecordInvalid`. Synthetic staging reports it on a live Machine
-as `Bound=False` and `Ready=False` with reason `LegacyCustodyRecord`, and does
-not requeue. Deletion releases the record through the same verified cleanup
-path as any other record, even when the profile UIDs it names were deleted
-and recreated. Tests cover the legacy fixture decode, refusal without record
-changes or provider effects, release with replaced profiles and with
-unverified cleanup, staging status and finalizer removal, and Milo digest
-preservation. See the
-[upgrade notes](../enhancements/machine-lifecycle/README.md#machineprofile).
+Private asset records, custody proposals, and Milo authority records retain
+`acceptedRequirements` as the exact `MachineProfileSpec`. A private record whose
+requirements use any other shape fails to decode and is rejected as
+`ErrRecordInvalid`, like any other malformed record. Fleet keeps no decoder or
+release path for older record shapes. One invalid asset record stops the
+coordinator from allocating, installing, or releasing any claim, and release
+cannot remove a finalizer it guards, so an environment holding such records
+discards its private lifecycle records and recreates the affected Machines. See
+the
+[MachineProfile notes](../enhancements/machine-lifecycle/README.md#machineprofile).
 
 `requestedhardware.Project` is the one projection that writes
 `status.requestedHardware` and `RequestResolved`, and
@@ -539,11 +533,10 @@ provider effect, including the initiating principal and installation decision pl
 the image catalog authority, revision, and image decision. The operation also
 retains the installation and claim namespace, name, and UID, so an informer
 initial Add can route unfinished work after restart even when the public
-Installation has been deleted. This is installation-record schema v2. A v1
-operation is upgraded atomically only when the exact public Installation and
-claim request is still available to supply and verify the names omitted by v1;
-otherwise it is quarantined from event routing and effects rather than guessed
-or treated as ready. Image references must
+Installation has been deleted. This is installation-record schema v2. A record
+in any other schema version is invalid: it is quarantined from event routing
+and effects and is never rewritten, guessed, or treated as ready. Image
+references must
 resolve to canonical lowercase SHA-256 digests. Stable operation and result
 identities include the authority/project claim scope, so equal claim UIDs from
 independent project APIs cannot share an operation record. Installation custody
