@@ -74,7 +74,7 @@ field or view.
    | --- | --- |
    | Device | Identity strip (model, serial, asset tag), component counts, then the connection view |
    | Cable | End A and End B side by side, with one row per lane |
-   | PowerFeed | Supply rating, then outlets and what each one is cabled to |
+   | PowerFeed | The power path: upstream, feed rating and capacity, PDU outlet strips, then device PSUs (see [Power path](#power-path-and-telemetry-implemented-telemetry-mocked)) |
    | Facility | Its racks |
    | Rack | Its elevation |
    | Site | Its linked facilities |
@@ -602,9 +602,13 @@ accessible name. A click, tap, Enter or Space opens the port's card, a
 non-modal dialog named "swp37 details". The card leads with the answer: each
 position's record state, then "→ peer · port via Cable" using display names
 (a breakout names its shared Cable once, then one line per lane), the short
-reason records disagree, and any opposite-face check. A **Health** section
-follows and reads "No health reported", because no kind reports observed
-status. Everything else sits behind a collapsed **More** button, which is not
+reason records disagree, and any opposite-face check. Power tiles (PSUs and
+outlets) then get a **Telemetry** section, and a load tint and words in their
+accessible name when a source reports values; see
+[Power path and telemetry](#power-path-and-telemetry-implemented-telemetry-mocked).
+A **Health** section follows and reads "No health reported" unless a
+telemetry source observes it. Everything else sits behind a collapsed
+**More** button, which is not
 rendered until opened: connector and positions, whether the Device records the
 component or only the catalog does, serial and asset tag, internal path, the
 generated Cable and peer record names with medium and lane, any trace, and
@@ -694,9 +698,13 @@ it.
 - **Cables tab.** Cables grouped by the device in this rack they terminate on,
   with counts, port, peer, record state and the Cable's display name. Record
   names are only in each group's collapsed "Record names" list.
-- **Power tab.** Power feeds that name the rack, with each termination's
-  recorded cable or "no cable recorded", and PDUs (Devices with power
-  outlets) with the outlets that have a cable recorded.
+- **Power tab.** A redundancy view first: the rack's feeds side by side,
+  each with a compact capacity bar, and each device once with its PSUs under
+  the feed their recorded path reaches (see
+  [Power path and telemetry](#power-path-and-telemetry-implemented-telemetry-mocked)).
+  Then each feed's terminations with their recorded cable or "no cable
+  recorded", and PDUs (Devices with power outlets) with the outlets that have
+  a cable recorded.
 - **History tab.** Record history and verification, unchanged in meaning.
 - **Issue banners.** Above the elevation, one short banner per cluster of
   same-face overlapping placements, from the elevation's own face-aware
@@ -713,6 +721,77 @@ toggle; no 3D view exists. `condensedName()` in `lib/display-names.ts`
 shortens component names for tiles (Ethernet 0 → eth0, Outlet 3 → O3); the
 full name stays in the tile's accessible name and card.
 
+## Power path and telemetry (implemented, telemetry mocked)
+
+**PowerFeed page.** The primary view is the recorded power path, read left
+to right and stacked at phone width: **Upstream** (a count linking to the
+Upstream sources tab) → **Feed** (rating, phase, capacity bar, and the feed's
+terminations as an outlet strip) → **PDUs** (each PDU cabled to a termination,
+drawn as a vertical outlet strip: inlet first, then outlets) → **Devices**
+(each Device whose PSUs the path reaches, once, with a feed-class badge and
+where its other PSUs go). `feedPath()` and `psuFeeds()` in
+`ui/provider/src/lib/power-paths.ts` derive this from Cable records and PDU
+internal mappings only; `feedConnections()` in `device-connections.ts` joins
+a feed's terminations with the same record states as Device components.
+
+Outlet strips (`PowerStrip` in `power-feed-path.tsx`) reuse the shared
+`PortTileButton` and `PortCard`, so connector shapes, record states,
+accessible names and cards match the Device faceplate; there is no second
+card. Each row shows the tile, what the outlet is cabled to, and its observed
+reading. A strip is one tab stop: arrow keys, Home and End move; Enter or a
+click opens the card; Escape closes it and returns focus. When a DeviceType
+records a PDU layout, the strip should render through the shared faceplate
+renderer instead.
+
+**Capacity.** `feedCapacity()` in `power-capacity.ts` computes the rated
+apparent power from the recorded supply: single-phase `S = V × I`,
+three-phase `S = √3 × V × I` (recorded line-to-line voltage), DC
+`P = V × I`. The continuous limit is 80% of that, drawn as a line on the bar.
+A missing voltage, current or phase leaves the rating unknown. Measured
+apparent power (or real power, labelled, when apparent is not reported)
+fills the bar; without telemetry it reads "No load reported", never empty or
+0. Load above 80% of the continuous limit is "high" (`↑`), above it "over"
+(`⚠`).
+
+**Rack Power tab.** `RackPowerRedundancy` in `rack-power.tsx` shows the
+rack's feeds as columns (plus any feed reached but recorded on another rack,
+and "Feed unknown"), and each device with a power inlet as one row, its PSUs
+in the column of the feed they reach. `classifyFeeds()` labels a device
+"Separate feeds (recorded)", "Single feed (recorded)" (flagged), "Feed
+unknown for some PSUs" or "Feed unknown". The legend states that separate
+feeds in records do not prove independent supply; nothing claims redundancy.
+Below 700 px each row stacks and names the feed in each cell.
+
+**Telemetry.** Views read observed values through `TelemetrySource`
+(`ui/provider/src/lib/telemetry.ts`), keyed by inventory identity (feed,
+Device, or a component of either). Each value carries its origin, observed
+time, the collector's staleness window and an optional 24-hour series. The
+display rules, in `power-telemetry.tsx`:
+
+- every value shows its age, and accessible names carry value, unit and age;
+- stale values are greyed, dotted and labelled "Stale", never green;
+- a missing value is "Not reported", never 0;
+- over-threshold values get a glyph as well as colour;
+- observed load on a component with no Cable recorded is "observed and
+  recorded disagree": a banner on the PowerFeed page, a `≠` mark on the
+  tile, and a note in the card, each linking to the records, which are not
+  changed. With Cables unreadable nothing is compared;
+- sparklines appear only in cards;
+- the Device page shows "Draws ~X W" (or "Power draw: Not reported"), and
+  PSU cards show input power and observed status.
+
+Every build uses the `none` source: everything reads "Not reported" and "No
+telemetry source configured". Fixture builds load a synthetic mock
+(`telemetry-mock.ts`) behind the same build-time flag as the fixture
+inventory; `?telemetry=normal|high-load|stale|missing|mismatch|none` picks a
+scenario. `src/test/production-bundle.test.ts` builds the production bundle
+and fails if any mock-only string appears in it. The real source is a
+[proposal](inventory-telemetry.md).
+
+`pnpm screenshots` captures `power-feed-normal`, `power-feed-high-load`,
+`power-feed-stale`, `power-feed-mismatch`, `power-feed-no-telemetry`,
+`power-feed-outlet-card`, `rack-power-redundancy` and `device-psu-card`.
+
 ## Deliberate gaps and decisions
 
 | Interaction | Remaining boundary |
@@ -720,7 +799,8 @@ full name stays in the tile's accessible name and card.
 | Other-writer edits | Reported-location correction is available to managers for operator-managed Devices; legacy Flux remains outside the UI. Other edit forms retain their existing restrictions |
 | Rack position entry, move/assign equipment | Reported-location correction supports unknown or explicit geometry; physical moves, installation/binding changes and handovers still require separate workflows |
 | PowerFeed creation; component or endpoint edits | API kinds exist, but these forms are not implemented. Existing records remain browsable; no dead action buttons |
-| Online/active/connected badges, occupancy/free units, power utilization | No verified evidence projection; never infer health/readiness from inventory |
+| Online/active/connected badges, occupancy/free units | No verified evidence projection; never infer health/readiness from inventory |
+| Power utilization | Views accept observed telemetry through `TelemetrySource`; only `none` (every build) and a fixture-only mock exist. The real source is [proposed](inventory-telemetry.md) |
 | Device role/primary IP, cages/maps/address, cable length/color | No matching authoritative fields in the present contract |
 | Hosted infrastructure, circuit/service CRUD, provisioning | Out of scope; networking, IPAM, routing and billing remain with their owners |
 | Cross-object consistency and endpoint exclusivity | Prerequisite re-reads are not backend transactions/reservations; operators must review duplicates and changed references |
