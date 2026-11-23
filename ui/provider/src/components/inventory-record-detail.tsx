@@ -137,15 +137,14 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
     {
       id: 'location', label: 'Location', content: <>
         <Facts items={[
-          { label: 'Placement', value: placementFact, always: true },
+          // The correction action sits on the row it changes.
+          { label: 'Placement', value: locationEditor ? <span className="inventory-placement-row"><span>{placementFact}</span>{locationEditor}</span> : placementFact, always: true },
           { label: 'Placement report', value: report && <>Revision {report.revision} · observed {report.observedAt}<small>Reason: {report.reason} · Evidence: {report.reference}</small></> },
           { label: 'Installation plan', value: inventory.issues?.DeviceClaim ? 'Plan details unavailable' : reference('DeviceClaim', namespace, device.spec.claimRef.name), always: true },
           { label: 'Depth for rack conflicts', value: `${depthLabel(depth)} · ${depth.full ? 'occupies both rack faces' : 'occupies its mounted face only'}`, always: true },
           { label: 'Catalog size', value: shape && (shape.heightUnits !== undefined || shape.fullDepth !== undefined) && `${shape.heightUnits ?? 'Unknown '}U · ${shape.fullDepth === undefined ? 'depth not recorded' : shape.fullDepth ? 'full depth' : 'half depth'}` },
           { label: 'Recorded size', value: device.spec.modelShape && `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'depth not recorded' : device.spec.modelShape.fullDepth ? 'full depth' : 'partial depth'}` },
         ]} />
-        {/* The correction editor states this itself; without it, the legend does. */}
-        {locationEditor}
       </>,
     },
     {

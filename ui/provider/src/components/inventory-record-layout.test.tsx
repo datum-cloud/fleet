@@ -143,8 +143,8 @@ describe('Device page states each fact once', () => {
     expect(container.querySelector('.inventory-primary .inventory-device-draw')).toBeNull();
     const edit = within(header).getByRole('button', { name: 'Edit display name' });
     expect(edit).toBeDisabled();
-    expect(edit).toHaveAccessibleDescription('Display-name editing requires a portal-owned record. Other records need ownership review.');
-    expect(edit.closest('.inventory-management-controls')).toHaveAttribute('title', 'Display-name editing requires a portal-owned record. Other records need ownership review.');
+    expect(edit).toHaveAccessibleDescription('Managed elsewhere — not editable here');
+    expect(edit.closest('.inventory-management-controls')).toHaveAttribute('title', 'Managed elsewhere — not editable here');
     expect(within(header).getByRole('status').textContent).toBe('');
   });
 
@@ -163,7 +163,10 @@ describe('Device page states each fact once', () => {
     expect(container.querySelector('[data-tab="hardware"]')!.textContent).not.toMatch(/00:00:5e:00:53:11/);
     expect(within(location).getByText('Depth for rack conflicts')).toBeInTheDocument();
     // Placement states units, height and face; the header has the facility and rack, and depth has its own fact.
-    expect(within(location).getByText('Placement').nextElementSibling).toHaveTextContent(/^Reported · U2 · 1U · front$/);
+    const placement = within(location).getByText('Placement').nextElementSibling as HTMLElement;
+    expect(placement.querySelector('.inventory-placement-row > span')).toHaveTextContent(/^Reported · U2 · 1U · front$/);
+    // The correction action sits on the Placement row it changes.
+    expect(within(placement).getByRole('button', { name: /Correct location/ })).toBeDisabled();
     expect(location.textContent?.match(/Full depth/g)).toHaveLength(1);
     // The correction editor carries no recordkeeping caveat, and stays permission-gated.
     expect(location).not.toHaveTextContent(/not a physical move/);
