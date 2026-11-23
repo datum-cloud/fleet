@@ -14,7 +14,13 @@ it.each([true, false, undefined])('draws reported Device geometry with explicit 
   expect(rear).toHaveAttribute('href', expect.stringContaining('kind=Device&'));
   expect(rear.parentElement).toHaveStyle({ gridRow: '28 / span 4' });
   const front = within(screen.getByRole('list', { name: 'front recorded placements' })).queryAllByRole('link');
-  expect(front).toHaveLength(fullDepth ? 1 : 0);
+  // Unset reported depth falls back to the Device's recorded full depth.
+  expect(front).toHaveLength(fullDepth === false ? 0 : 1);
+  if (front.length) {
+    expect(front[0]).toHaveAccessibleName(/^Review Rear of Example compute server · U12–U15 · 4U · Reported placement · mounted rear · Full depth/);
+    expect(front[0].parentElement).toHaveAttribute('data-far');
+  }
+  expect(rear).toHaveAccessibleName(new RegExp(fullDepth === false ? 'Half depth \\(reported\\)' : fullDepth ? 'Full depth \\(reported\\)' : 'Full depth \\(recorded on Device\\)'));
   expect(screen.queryByRole('link', { name: /Review Server installation/ })).not.toBeInTheDocument();
 });
 function show(placement = fixturePhysicalClaims[0].spec.placement, issues = {}, height: number | null = 42) {
@@ -33,7 +39,13 @@ it.each([
   expect(links[0]).toHaveAccessibleName(new RegExp(`U${position}–U${position + height - 1}.*${height}U`));
   expect(links[0].parentElement).toHaveStyle({ gridRow: row, gridColumn: '2' });
   expect(within(elevation).getAllByLabelText('Occupancy unverified')).toHaveLength(42 - height);
-  expect(within(screen.getByRole('list', { name: `${face === 'front' ? 'rear' : 'front'} recorded placements` })).queryByRole('link')).not.toBeInTheDocument();
+  // The registered Device records full depth, so the far face shows the
+  // chassis rear, muted, over the same units.
+  const far = within(screen.getByRole('list', { name: `${face === 'front' ? 'rear' : 'front'} recorded placements` })).getAllByRole('link');
+  expect(far).toHaveLength(1);
+  expect(far[0]).toHaveAccessibleName(new RegExp(`^Review Rear of Server installation · U12 · U${position}–U${position + height - 1} · ${height}U · Claim-derived fallback · mounted ${face} · Full depth \\(recorded on Device\\)`));
+  expect(far[0].parentElement).toHaveClass('inventory-rack-plan-far');
+  expect(far[0].parentElement).toHaveStyle({ gridRow: row });
 });
 it.each([1, 2])('keeps overlapping %iU plans identifiable with height-aware labels', height => {
   const claims = [10, 10 + height - 1].map((position, index) => ({ ...fixturePhysicalClaims[0], metadata: { ...fixturePhysicalClaims[0].metadata, name: `overlap-${index}` }, spec: { ...fixturePhysicalClaims[0].spec, displayName: `Plan ${index}`, placement: { scope: 'RackUnits' as const, rackRef: { name: 'rack-01' }, position, height, face: 'front' as const } } }));
@@ -45,10 +57,12 @@ it.each([1, 2])('keeps overlapping %iU plans identifiable with height-aware labe
   expect(links[1].parentElement).toHaveStyle({ gridColumn: '3', gridRow: `${35 - 2 * height} / span ${height}` });
   for (const link of links) {
     expect(within(link).getByText('!')).toHaveClass('inventory-rack-overlap');
-    expect(link.querySelectorAll('small')).toHaveLength(height > 1 ? 1 : 0);
+    // No Device is registered, so depth is unknown and labelled as such.
+    expect(link.querySelector('small')).toHaveTextContent(height > 1 ? /U\d+–U\d+ · 2U · depth unknown/ : /^depth unknown$/);
+    expect(link).toHaveAccessibleName(/Depth unknown · records disagree/);
     expect(link.querySelector('.inventory-rack-plan-name')).toHaveTextContent(/Plan/);
   }
-  expect(screen.getByText(/! indicates overlapping placements requiring review/)).toBeInTheDocument();
+  expect(screen.getByText(/! means records disagree: placements overlap on the same face/)).toBeInTheDocument();
 });
 it('renders recorded front/rear plans, never free units or occupancy percentages', () => {
   show();

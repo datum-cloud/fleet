@@ -31,6 +31,7 @@ import { INVENTORY_NAMESPACE } from '../lib/inventory-namespace';
 import { InventoryDirectoryHeading, InventoryToolbar } from './inventory-directory-heading';
 import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } from './inventory-page-title';
 import { DeviceConnections } from './device-connections';
+import { depthLabel, deviceDepth } from '../lib/device-depth';
 
 type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -330,9 +331,9 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
           {kind === 'DeviceType' && <>
             <Field label="Manufacturer">{physical?.spec.manufacturerRef && reference('Manufacturer', namespace, physical.spec.manufacturerRef.name)}</Field>
             <Field label="Normalized model identity">{physical?.spec.model}</Field>
-            <Field label="Nominal shape">{physical?.spec.modelShape ? `${physical.spec.modelShape.heightUnits ?? 'Unknown'}U · ${physical.spec.modelShape.fullDepth === undefined ? 'Depth unknown' : physical.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}` : 'Unknown'}</Field>
-            <Field label="Component templates">{physical?.spec.componentTemplates?.map(template => <div key={template.id}>{template.name} · {template.type} · {template.connector ?? 'Connector unknown'} · {template.positions ?? 1} position(s)</div>) ?? 'Not recorded'}</Field>
-            <Field label="Template semantics">Reference defaults only. No installed assets, measured geometry, observed occupancy, or automatic materialization.</Field>
+            <Field label="Nominal shape">{`${physical?.spec.modelShape?.heightUnits ?? 'Unknown'}U · ${physical?.spec.modelShape?.fullDepth === false ? 'Half depth' : physical?.spec.modelShape?.fullDepth ? 'Full depth' : 'Depth unknown'}`}</Field>
+            <Field label="Component templates">{physical?.spec.componentTemplates?.map(template => <div key={template.id}>{template.name} · {template.type} · {template.connector ?? 'Connector unknown'} · {template.positions ?? 1} position(s) · {template.face ? `chassis ${template.face.toLowerCase()}` : 'chassis face unknown'}</div>) ?? 'Not recorded'}</Field>
+            <Field label="Template semantics">Reference defaults only. No installed assets, measured geometry, observed occupancy, or automatic materialization. Template faces are relative to the chassis; a Device component with the same id inherits its face.</Field>
           </>}
           {kind === 'Facility' && <>
             <Field label="Provider premises identifiers">{facilityIdentifiers(record as PhysicalRecord)}</Field>
@@ -346,6 +347,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
               <Field label="Recorded hardware observation">{modelLabel(device.spec.identity)}</Field>
               <Field label="Shared catalog">{catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'Not assigned · showing recorded observation'}</Field>
               <Field label="Catalog nominal height">{catalog?.model.spec.modelShape?.heightUnits === undefined ? 'Unknown' : `${catalog.model.spec.modelShape.heightUnits}U · not measured or used for occupancy`}</Field>
+              <Field label="Depth for rack conflicts">{`${depthLabel(deviceDepth(device, inventory))} · ${deviceDepth(device, inventory).full ? 'occupies both rack faces' : 'occupies its mounted face only'} · not measured`}</Field>
               <Field label="Lifecycle">{device.spec.lifecycle ?? 'Active'}</Field>
               <Field label="Serial number">{device.spec.identity.serial}</Field>
               <Field label="Asset tag">{device.spec.assetTag}</Field>

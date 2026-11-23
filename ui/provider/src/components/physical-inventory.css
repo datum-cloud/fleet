@@ -82,6 +82,10 @@
 .inventory-rack-overlap { flex:none; font-weight:700; }
 .inventory-rack-plan a:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
 .inventory-rack-plan small { flex:none; overflow:hidden; text-overflow:ellipsis; font-size:8px; line-height:12px; }
+.inventory-rack-plan-far { border-style:dashed; background:repeating-linear-gradient(135deg,transparent 0 5px,var(--muted) 5px 7px); color:var(--muted-foreground); }
+.inventory-rack-plan-far a { color:var(--muted-foreground); }
+.inventory-rack-plan-side { font-style:italic; }
+.inventory-rack-plan[data-depth="unknown"]:not(.inventory-rack-plan-far) { border-style:dotted; }
 .inventory-face-switch { display:flex; gap:4px; }
 .inventory-face-switch button { flex:1; }
 .inventory-equipment-sections { display:grid; gap:16px; min-width:0; }
@@ -154,6 +158,11 @@
 [data-state="none"] > .inventory-connection-peer { border-style:dotted; color:var(--muted-foreground); background:transparent; }
 [data-state="catalog"] > .inventory-connection-peer { border-style:dashed; color:var(--muted-foreground); background:repeating-linear-gradient(135deg,transparent 0 6px,var(--muted) 6px 9px); }
 .fleet-inventory .inventory-connection-reason { color:var(--foreground); }
+.inventory-connection-ports:has(.inventory-connection-face) { flex-wrap:wrap; row-gap:0; }
+.inventory-connection-face { order:3; flex-basis:100%; font-size:11px; color:var(--muted-foreground); }
+[data-side="left"] .inventory-connection-face { text-align:right; }
+.inventory-connection-face-title { font-size:11px; font-weight:600; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:.04em; margin:6px 0 2px!important; padding:0 8px; }
+.fleet-inventory .inventory-connection-check { display:block; color:var(--foreground); font-style:italic; }
 .inventory-connection-trace { margin-top:4px; font-size:11px; display:grid; gap:2px; }
 .inventory-connection-tables { display:grid; gap:12px; }
 .fleet-inventory .inventory-connection-tables caption { caption-side:top; }

@@ -1,5 +1,6 @@
 import type { Device, DeviceClaim, PhysicalRecord, ReportedPlacement } from '../../../shared/fleet-api';
 import { slotKey, type Inventory } from '../inventory';
+import { depthLabel, equipmentDepth } from './device-depth';
 
 export type Placement = DeviceClaim['spec']['placement'] & { fullDepth?: boolean };
 export interface EquipmentPlacement {
@@ -49,7 +50,7 @@ export function reportedPlacementLabel(entry: EquipmentPlacement, inventory: Inv
   const { placement, record } = entry;
   const facilityName = placementFacility(placement, record.metadata.namespace, inventory);
   const display = (kind: 'Facility' | 'Rack', name?: string) => inventory.issues?.[kind] ? `${kind} unavailable` : inventory.physical.find(item => item.kind === kind && item.metadata.namespace === record.metadata.namespace && item.metadata.name === name)?.spec.displayName || name;
-  return [entry.basis, display('Facility', facilityName), display('Rack', placement.rackRef?.name), placement.mount ? `Mount: ${placement.mount}` : placement.position === undefined ? 'Position not recorded' : `U${placement.position}`, placement.height === undefined ? 'Height unknown' : `${placement.height}U`, placement.face ?? 'Face unknown', placement.fullDepth === true ? 'Full depth' : placement.fullDepth === false ? 'Partial depth' : 'Depth unknown', entry.multipleRegistrations ? 'multiple registrations · active device unknown' : undefined].filter(Boolean).join(' · ');
+  return [entry.basis, display('Facility', facilityName), display('Rack', placement.rackRef?.name), placement.mount ? `Mount: ${placement.mount}` : placement.position === undefined ? 'Position not recorded' : `U${placement.position}`, placement.height === undefined ? 'Height unknown' : `${placement.height}U`, placement.face ?? 'Face unknown', depthLabel(equipmentDepth(entry, inventory)), entry.multipleRegistrations ? 'multiple registrations · active device unknown' : undefined].filter(Boolean).join(' · ');
 }
 
 export function equipmentGeometry(entry: EquipmentPlacement, rack: PhysicalRecord) {

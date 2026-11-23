@@ -4,7 +4,9 @@ import { Title } from '@datum-cloud/datum-ui/typography';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { slotKey, type Inventory, type InventorySlot } from '../inventory';
-import type { PhysicalRecord } from '../../../shared/fleet-api';
+import type { PhysicalRecord, RackFace as RackFaceName } from '../../../shared/fleet-api';
+import { depthLabel } from '../lib/device-depth';
+import { faceOccupancy, rackOccupants, type RackOccupant } from '../lib/rack-faces';
 import { equipmentGeometry, equipmentPlacements, reportedPlacementLabel, type EquipmentPlacement } from '../lib/device-placement';
 
 export function inventoryHref(kind: string, namespace?: string, name?: string) {
@@ -23,11 +25,9 @@ function Equipment({ slots, devicesDenied, inventory }: { slots: EquipmentPlacem
   </TableBody></Table></div>;
 }
 
-function RackFace({ rack, slots, side }: { rack: PhysicalRecord; slots: EquipmentPlacement[]; side: 'front' | 'rear' }) {
-  const height = rack.spec.heightUnits!;
-  const plans = slots.map(slot => ({ slot, ...equipmentGeometry(slot, rack)! }))
-    .filter(plan => plan.face === side || plan.fullDepth === true)
-    .sort((first, second) => first.position - second.position || first.slot.key.localeCompare(second.slot.key));
+function RackFace({ occupants, height, side }: { occupants: RackOccupant[]; height: number; side: RackFaceName }) {
+  const plans = faceOccupancy(occupants, side)
+    .sort((first, second) => first.position - second.position || first.entry.key.localeCompare(second.entry.key));
   const laneEnds: number[] = [];
   const placed = plans.map(plan => {
     let lane = laneEnds.findIndex(end => end < plan.position);
@@ -43,12 +43,16 @@ function RackFace({ rack, slots, side }: { rack: PhysicalRecord; slots: Equipmen
       })}
       {placed.map(plan => {
         const top = plan.position + plan.height - 1;
-        const overlap = plans.some(other => other.slot.key !== plan.slot.key && other.position <= top && other.position + other.height > plan.position);
-        const name = plan.slot.record.spec.displayName || plan.slot.record.metadata.name;
+        const overlap = plan.conflicts.length > 0;
+        const record = plan.entry.record;
+        const recordName = record.spec.displayName || record.metadata.name;
+        // The far face of a full-depth (or unknown-depth) device shows its
+        // chassis rear, whichever rack face it is mounted on.
+        const name = plan.far ? `Rear of ${recordName}` : recordName;
         const range = plan.height === 1 ? `U${plan.position}` : `U${plan.position}–U${top}`;
-        const label = `${name} · ${range} · ${plan.height}U · ${plan.slot.basis}${overlap ? ' · overlapping placements, review required' : ''}`;
-        return <li key={plan.slot.key} className="inventory-rack-plan" style={{ gridRow: `${height - top + 1} / span ${plan.height}`, gridColumn: plan.lane + 2 }}>
-          <Link title={label} to={inventoryHref(plan.slot.kind, plan.slot.record.metadata.namespace, plan.slot.record.metadata.name)} aria-label={`Review ${label}, ${side}`}><span className="inventory-rack-plan-heading">{overlap && <span className="inventory-rack-overlap" aria-hidden="true">!</span>}<span className="inventory-rack-plan-name">{name}</span></span>{plan.height > 1 && <small>{range} · {plan.height}U</small>}</Link>
+        const label = [name, range, `${plan.height}U`, plan.entry.basis, plan.far ? `mounted ${plan.mounted}` : undefined, depthLabel(plan.depth), overlap ? 'records disagree: overlapping placements on this face' : undefined].filter(Boolean).join(' · ');
+        return <li key={plan.entry.key} className={`inventory-rack-plan${plan.far ? ' inventory-rack-plan-far' : ''}`} data-far={plan.far ? '' : undefined} data-depth={plan.depth.source === 'unknown' ? 'unknown' : plan.depth.full ? 'full' : 'half'} style={{ gridRow: `${height - top + 1} / span ${plan.height}`, gridColumn: plan.lane + 2 }}>
+          <Link title={label} to={inventoryHref(plan.entry.kind, record.metadata.namespace, record.metadata.name)} aria-label={`Review ${label}, ${side}`}><span className="inventory-rack-plan-heading">{overlap && <span className="inventory-rack-overlap" aria-hidden="true">!</span>}<span className="inventory-rack-plan-name">{plan.far ? <span className="inventory-rack-plan-side">rear of </span> : null}{recordName}</span></span>{(plan.height > 1 || plan.depth.source === 'unknown') && <small>{[plan.height > 1 ? `${range} · ${plan.height}U` : undefined, plan.depth.source === 'unknown' ? 'depth unknown' : undefined].filter(Boolean).join(' · ')}</small>}</Link>
         </li>;
       })}
     </ol>
@@ -59,6 +63,7 @@ export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; invent
   const [face, setFace] = useState<'both' | 'front' | 'rear'>('both');
   const slots = equipmentPlacements(inventory).filter(slot => slot.record.metadata.namespace === rack.metadata.namespace && slot.placement.rackRef?.name === rack.metadata.name);
   const positioned = slots.filter(slot => equipmentGeometry(slot, rack));
+  const occupants = rackOccupants(positioned, rack, inventory);
   const nonRacked = slots.filter(slot => slot.placement.scope === 'NonRackUnitMount');
   const unpositioned = slots.filter(slot => !equipmentGeometry(slot, rack) && slot.placement.scope !== 'NonRackUnitMount');
   const denied = !!inventory.issues?.DeviceClaim && !slots.length;
@@ -68,8 +73,8 @@ export function RackOverview({ rack, inventory }: { rack: PhysicalRecord; invent
     <aside className="inventory-elevation">
       <div className="inventory-list-heading"><Title as="h3" level={5}>Rack elevation</Title><span>{height ? `${height}U` : 'Height unknown'}</span></div>
       <div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type="secondary" theme={face === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</div>
-      <p className="inventory-muted">Reported placements and explicitly labelled claim-derived fallback, not verified occupancy. Blank units are not available space. ! indicates overlapping placements requiring review. Unknown depth does not establish clearance on the opposite face.</p>
-      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} rack={rack} slots={positioned} side={side} />)}</div>}
+      <p className="inventory-muted">Reported placements and explicitly labelled claim-derived fallback, not verified occupancy. Blank units are not available space. Full-depth equipment appears on both faces, muted on the far side where its chassis rear shows; half-depth equipment appears only on its mounted face. Unknown depth is drawn as full depth and does not establish clearance on the opposite face. ! means records disagree: placements overlap on the same face.</p>
+      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} occupants={occupants} height={height} side={side} />)}</div>}
     </aside>
     <div className="inventory-equipment-sections">
       <Title as="h3" level={5}>Equipment & registration history</Title>
