@@ -2,6 +2,7 @@ import {
   machineStatus,
   machineSteps,
   machinePhase,
+  reasonText,
   toCatalog,
   toCatalogOffering,
   toMachineDetail,
@@ -46,12 +47,22 @@ describe('machinePhase', () => {
 });
 
 describe('toMachine', () => {
-  it('maps the fixtures to Ready, Pending and Releasing', () => {
+  it('maps the fixtures to Ready, Pending, Releasing and Bound', () => {
     expect(FIXTURE_MACHINES.map(toMachine).map((c) => c.phase)).toEqual([
       'Ready',
       'Pending',
       'Releasing',
+      'Bound',
     ]);
+  });
+
+  it('gives every fixture a creation time', () => {
+    expect(FIXTURE_MACHINES.map(toMachine).every((m) => !!m.createdAt)).toBe(true);
+  });
+
+  it('lists every interface address in order', () => {
+    expect(toMachine(FIXTURE_MACHINES[3]).addresses).toEqual(['192.0.2.10', '2001:db8::10']);
+    expect(toMachine(FIXTURE_MACHINES[0]).addresses).toEqual([]);
   });
 
   it('defaults power intent to Off and leaves an unresolved request absent', () => {
@@ -90,7 +101,6 @@ describe('toCatalogOffering', () => {
     const [offering] = toCatalog(FIXTURE_CLASSES.slice(0, 1), FIXTURE_PROFILES);
     expect(offering).toMatchObject({
       className: 'standard-metal',
-      source: 'datum-cloud/standard-metal',
       available: true,
       powerControl: true,
     });
@@ -103,7 +113,6 @@ describe('toCatalogOffering', () => {
   it('keeps an unresolved published class pending, ignoring its spec', () => {
     const offering = toCatalogOffering(FIXTURE_CLASSES[1], FIXTURE_PROFILES);
     expect(offering).toMatchObject({ available: false, failed: false });
-    expect(offering.unavailableReason).toMatch(/Waiting/);
     expect(offering.profiles).toEqual([]);
   });
 
@@ -115,7 +124,6 @@ describe('toCatalogOffering', () => {
       },
       [profile]
     );
-    expect(offering.source).toBeUndefined();
     expect(offering.available).toBe(true);
     expect(offering.profiles[0]).toMatchObject({ published: true, cpu: '24 cores · amd64' });
   });
@@ -128,7 +136,7 @@ describe('toCatalogOffering', () => {
     expect(offering.profiles[0]).toMatchObject({ name: 'gone', published: false });
   });
 
-  it('reports a failed resolution with its message', () => {
+  it('reports a failed resolution without its message', () => {
     const offering = toCatalogOffering(
       {
         metadata: { name: 'c' },
@@ -139,11 +147,8 @@ describe('toCatalogOffering', () => {
       },
       []
     );
-    expect(offering).toMatchObject({
-      available: false,
-      failed: true,
-      unavailableReason: 'No such class.',
-    });
+    expect(offering).toMatchObject({ available: false, failed: true });
+    expect(JSON.stringify(offering)).not.toContain('No such class.');
   });
 });
 
@@ -161,8 +166,6 @@ describe('toMachineDetail', () => {
       ['Bound', 'True'],
       ['NetworkReady', 'True'],
       ['Ready', 'True'],
-      // Extra conditions, such as the request resolver's, follow the four.
-      ['RequestResolved', 'True'],
     ]);
   });
 
@@ -172,12 +175,18 @@ describe('toMachineDetail', () => {
     expect(detail.conditions.every((c) => c.status === 'Unknown')).toBe(true);
   });
 
-  it('keeps conditions Fleet adds beyond the known four', () => {
+  it('drops conditions beyond the known four', () => {
     const detail = toMachineDetail({
       ...FIXTURE_MACHINES[1],
       status: { conditions: [{ type: 'PowerReady', status: 'False', reason: 'Waiting' }] },
     });
-    expect(detail.conditions.at(-1)).toMatchObject({ type: 'PowerReady', status: 'False' });
+    expect(detail.conditions.map((c) => c.type)).toEqual(['Accepted', 'Bound', 'NetworkReady', 'Ready']);
+  });
+
+  it('drops every condition message', () => {
+    const detail = toMachineDetail(FIXTURE_MACHINES[1]);
+    expect(detail.conditions.every((c) => !('message' in c))).toBe(true);
+    expect(JSON.stringify(detail)).not.toContain('another consumer');
   });
 
   it('summarizes network interfaces', () => {
@@ -197,7 +206,7 @@ describe('toMachineDetail', () => {
       },
     });
     expect(detail.interfaces).toEqual([
-      { name: 'primary', network: 'default/production', addresses: ['2001:db8::10'], ready: 'True' },
+      { name: 'primary', network: 'production', addresses: ['2001:db8::10'], ready: 'True' },
     ]);
   });
 });
@@ -206,7 +215,7 @@ describe('machineStatus', () => {
   it('names a pending machine that Fleet accepted as waiting for capacity', () => {
     expect(machineStatus(toMachine(FIXTURE_MACHINES[1]))).toEqual({ tone: 'warning', label: 'Waiting for capacity' });
     expect(machineStatus({ phase: 'Pending', waitingForCapacity: false })).toEqual({ tone: 'muted', label: 'Pending' });
-    expect(machineStatus(toMachine(FIXTURE_MACHINES[0]))).toEqual({ tone: 'success', label: 'Ready' });
+    expect(machineStatus(toMachine(FIXTURE_MACHINES[0]))).toEqual({ tone: 'ok', label: 'Ready' });
   });
 });
 
@@ -214,16 +223,55 @@ describe('machineSteps', () => {
   it('marks the first condition that is not True as current and the rest as upcoming', () => {
     const steps = machineSteps(toMachineDetail(FIXTURE_MACHINES[1]).conditions);
     expect(steps.map((s) => s.state)).toEqual(['done', 'current', 'upcoming', 'upcoming']);
-    expect(steps[1].detail).toMatch(/allocated to another consumer/);
-    expect(steps[2].detail).toBe('After bound');
+    expect(steps.map((s) => s.label)).toEqual(['Requested', 'Server assigned', 'Network', 'Ready']);
+    expect(steps[1].detail).toBe('Waiting for capacity');
+    expect(steps[2].detail).toBeUndefined();
+  });
+
+  it('shows customer words for known reasons on done steps', () => {
+    expect(machineSteps(toMachineDetail(FIXTURE_MACHINES[0]).conditions).map((s) => s.detail)).toEqual([
+      'Accepted',
+      'Dedicated to you',
+      'No network requested',
+      'Handed over',
+    ]);
   });
 
   it('shows a rejected request as a failed first step', () => {
     const steps = machineSteps([{ type: 'Accepted', status: 'False', reason: 'ProfileNotAllowed' }]);
-    expect(steps[0]).toMatchObject({ state: 'failed', detail: 'ProfileNotAllowed' });
+    expect(steps[0]).toMatchObject({ state: 'failed', detail: 'Profile not offered' });
+  });
+
+  it('gives an unmapped reason a generic word and keeps the reason for the tooltip', () => {
+    const steps = machineSteps([
+      { type: 'Accepted', status: 'True', reason: 'SomeNewReason' },
+      { type: 'Bound', status: 'False', reason: 'AnotherNewReason' },
+    ]);
+    expect(steps[0]).toMatchObject({ detail: 'Done', detailTooltip: 'SomeNewReason' });
+    expect(steps[1]).toMatchObject({ detail: 'In progress', detailTooltip: 'AnotherNewReason' });
   });
 
   it('treats a missing condition as still to come, not unknown', () => {
     expect(machineSteps([]).map((s) => s.state)).toEqual(['current', 'upcoming', 'upcoming', 'upcoming']);
+  });
+});
+
+describe('reasonText', () => {
+  it('maps a known reason to its word with no tooltip', () => {
+    expect(reasonText('InsufficientCapacity', 'In progress')).toEqual({ word: 'Waiting for capacity' });
+  });
+
+  it('keeps an unmapped token reason for the tooltip only', () => {
+    expect(reasonText('BrandNewReason', 'Done')).toEqual({ word: 'Done', tooltip: 'BrandNewReason' });
+  });
+
+  it('never passes on a reason that reads like message text', () => {
+    for (const reason of ['Allocated to another consumer.', 'tenant-b holds it', 'Busy: srv1']) {
+      expect(reasonText(reason, 'In progress')).toEqual({ word: 'In progress', tooltip: undefined });
+    }
+  });
+
+  it('falls back with no tooltip when there is no reason', () => {
+    expect(reasonText(undefined, 'In progress')).toEqual({ word: 'In progress', tooltip: undefined });
   });
 });

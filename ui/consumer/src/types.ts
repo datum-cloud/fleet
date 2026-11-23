@@ -30,12 +30,16 @@ export interface Machine {
   cpu?: string;
   /** Requested memory pinned in status.requestedHardware; absent until resolved. */
   memory?: string;
+  /** Every interface address Fleet reports, in interface order. */
+  addresses: string[];
   createdAt?: string;
   /** Accepted but no capacity bound yet: the common Pending case. */
   waitingForCapacity: boolean;
 }
 
-export type StatusTone = 'success' | 'warning' | 'danger' | 'muted';
+// Ready is 'ok', drawn in a neutral colour: green is kept for verified
+// state, which the consumer UI has none of.
+export type StatusTone = 'ok' | 'warning' | 'danger' | 'muted';
 
 /** The label and colour a Machine's phase shows as, in the list and on its page. */
 export function machineStatus(machine: Pick<Machine, 'phase' | 'waitingForCapacity'>): {
@@ -44,7 +48,7 @@ export function machineStatus(machine: Pick<Machine, 'phase' | 'waitingForCapaci
 } {
   switch (machine.phase) {
     case 'Ready':
-      return { tone: 'success', label: 'Ready' };
+      return { tone: 'ok', label: 'Ready' };
     case 'Bound':
       return { tone: 'warning', label: 'Preparing' };
     case 'Releasing':
@@ -56,6 +60,53 @@ export function machineStatus(machine: Pick<Machine, 'phase' | 'waitingForCapaci
         ? { tone: 'warning', label: 'Waiting for capacity' }
         : { tone: 'muted', label: 'Pending' };
   }
+}
+
+// ---- Customer words for Fleet's condition reasons ----
+
+// Condition messages are written for operators and can describe other
+// tenants' capacity ("…allocated to another consumer"), so the consumer UI
+// never renders one. Known reasons map to a short word; any other reason
+// shows a generic word, with the reason itself only in a tooltip.
+const REASON_WORDS: Record<string, string> = {
+  SyntheticFixtureAccepted: 'Accepted',
+  ExclusiveBinding: 'Dedicated to you',
+  MachineAllocationCommitted: 'Dedicated to you',
+  InsufficientCapacity: 'Waiting for capacity',
+  NoAttachmentsRequired: 'No network requested',
+  AttachmentsVerified: 'Connected',
+  NetworkPending: 'Connecting',
+  NetworkNotAvailableInLocation: 'Network not offered here',
+  AddressFamilyNotCarried: 'Address type not offered',
+  PoweredOffHandoff: 'Handed over',
+  SyntheticHandoffReady: 'Handed over',
+  ProfileNotAllowed: 'Profile not offered',
+  ProfileNotFound: 'Profile not offered',
+  ProfileInvalid: 'Profile not offered',
+  ProfileUnsupported: 'Profile not offered',
+  QuotaPending: 'Checking quota',
+  QuotaDenied: 'Over quota',
+  AuthorizationUnavailable: "Couldn't check access",
+  OutcomeUnknown: 'Checking',
+  EvidenceStale: 'Checking',
+  DependenciesPending: 'In progress',
+  CleanupBlocked: 'Release delayed',
+};
+
+// A Kubernetes reason is one CamelCase token. Anything else may be message
+// text, so it is never shown, not even in a tooltip.
+const REASON_TOKEN = /^[A-Za-z][A-Za-z0-9]*$/;
+
+export interface ReasonText {
+  word: string;
+  /** The raw reason, only when it is unmapped and a plain token. */
+  tooltip?: string;
+}
+
+/** The customer word for a condition reason; `fallback` when it has none. */
+export function reasonText(reason: string | undefined, fallback: string): ReasonText {
+  if (reason && REASON_WORDS[reason]) return { word: REASON_WORDS[reason] };
+  return { word: fallback, tooltip: reason && REASON_TOKEN.test(reason) ? reason : undefined };
 }
 
 // Only an explicit True moves a machine past Pending. A deleted machine stays
@@ -90,6 +141,7 @@ export function toMachine(raw: RawMachine): Machine {
     powerObserved: raw.status?.power?.state,
     cpu: requested ? `${requested.cpu.cores} cores · ${requested.cpu.architecture}` : undefined,
     memory: requested?.memory.capacity,
+    addresses: (raw.status?.network?.interfaces ?? []).flatMap((i) => (i.addresses ?? []).map((a) => a.address)),
     createdAt: raw.metadata.creationTimestamp,
     waitingForCapacity: phase === 'Pending' && isConditionTrue(conditions, 'Accepted'),
   };
@@ -110,13 +162,10 @@ export interface CatalogProfile extends ProfileSummary {
 export interface CatalogOffering {
   /** The project-local class name a machine references. */
   className: string;
-  /** "datum-cloud/standard-metal" for a published class; absent for the project's own. */
-  source?: string;
   /** Unavailable offerings are listed so a missing publication is visible, not silent. */
   available: boolean;
   /** Fleet said this class can't resolve or was rejected, as opposed to not having answered yet. */
   failed: boolean;
-  unavailableReason?: string;
   powerControl: boolean;
   profiles: CatalogProfile[];
 }
@@ -138,19 +187,12 @@ export function toCatalogOffering(
     .map((type) => findCondition(conditions, type))
     .find((c) => c?.status === 'False');
   const available = !!policy && !failed;
-  const unavailableReason = failed
-    ? (failed.message ?? failed.reason)
-    : !policy
-      ? "Waiting for the provider's offering to resolve."
-      : undefined;
 
   const byName = new Map(profiles.map((p) => [p.metadata.name, p]));
   return {
     className: raw.metadata.name,
-    source: source && `${source.project}/${source.name}`,
     available,
     failed: !!failed,
-    unavailableReason,
     powerControl: !!access?.powerControl,
     profiles: (policy?.allowedProfiles ?? []).map(({ name }) => {
       const profile = byName.get(name);
@@ -172,16 +214,17 @@ export function toCatalog(classes: RawMachineClass[], profiles: RawMachineProfil
 /** The conditions Fleet writes on a machine, in lifecycle order. */
 export const MACHINE_CONDITIONS = ['Accepted', 'Bound', 'NetworkReady', 'Ready'] as const;
 
+/** A lifecycle condition without its message, which is never shown. */
 export interface MachineCondition {
   type: string;
   status: 'True' | 'False' | 'Unknown';
   reason?: string;
-  message?: string;
   lastTransitionTime?: string;
 }
 
 export interface MachineInterface {
   name: string;
+  /** The network's name; its namespace is internal. */
   network: string;
   addresses: string[];
   ready?: 'True' | 'False' | 'Unknown';
@@ -197,7 +240,7 @@ export interface MachineDetail extends Machine {
   hardware?: { label: string; value: string }[];
   hardwareObservedAt?: string;
   interfaces: MachineInterface[];
-  installation?: string;
+  /** The four lifecycle conditions, in order; others are not shown. */
   conditions: MachineCondition[];
 }
 
@@ -229,7 +272,6 @@ function hardwareLines(hw: NonNullable<NonNullable<RawMachine['status']>['alloca
 export function toMachineDetail(raw: RawMachine): MachineDetail {
   const status = raw.status ?? {};
   const conditions = status.conditions ?? [];
-  const known = new Set<string>(MACHINE_CONDITIONS);
   return {
     ...toMachine(raw),
     deletingSince: raw.metadata.deletionTimestamp,
@@ -239,18 +281,17 @@ export function toMachineDetail(raw: RawMachine): MachineDetail {
     hardwareObservedAt: status.allocatedHardware?.observedAt,
     interfaces: (status.network?.interfaces ?? []).map((i) => ({
       name: i.name,
-      network: i.network.namespace ? `${i.network.namespace}/${i.network.name}` : i.network.name,
+      network: i.network.name,
       addresses: (i.addresses ?? []).map((a) => a.address),
       ready: findCondition(i.conditions ?? [], 'Ready')?.status,
     })),
-    installation: status.currentInstallationRef?.name,
-    // An absent condition is Unknown; extra conditions follow the known ones.
-    conditions: [
-      ...MACHINE_CONDITIONS.map(
-        (type) => findCondition(conditions, type) ?? { type, status: 'Unknown' as const }
-      ),
-      ...conditions.filter((c) => !known.has(c.type)),
-    ],
+    // An absent condition is Unknown. The message is dropped here so no
+    // component can render it.
+    conditions: MACHINE_CONDITIONS.map((type) => {
+      const c = findCondition(conditions, type);
+      if (!c) return { type, status: 'Unknown' as const };
+      return { type, status: c.status, reason: c.reason, lastTransitionTime: c.lastTransitionTime };
+    }),
   };
 }
 
@@ -262,40 +303,39 @@ export interface MachineStep {
   type: string;
   label: string;
   state: StepState;
-  /** The condition's message, or its reason; for upcoming steps, what they wait for. */
+  /** A customer word for the condition's reason; blank on upcoming steps. */
   detail?: string;
+  /** The raw reason, when it has no customer word and is a plain token. */
+  detailTooltip?: string;
   at?: string;
 }
 
 const STEP_LABELS: Record<string, string> = {
-  Accepted: 'Accepted',
-  Bound: 'Bound',
-  NetworkReady: 'Network ready',
+  Accepted: 'Requested',
+  Bound: 'Server assigned',
+  NetworkReady: 'Network',
   Ready: 'Ready',
+};
+
+const STEP_FALLBACK: Record<Exclude<StepState, 'upcoming'>, string> = {
+  done: 'Done',
+  current: 'In progress',
+  failed: 'Not accepted',
 };
 
 // A condition Fleet hasn't written yet is a step still to come, not "Unknown".
 // The first step that isn't True is the current one; a False Accepted means
-// the request was rejected.
+// the request was rejected. Messages are never shown (see reasonText).
 export function machineSteps(conditions: MachineCondition[]): MachineStep[] {
   let reachedCurrent = false;
-  return MACHINE_CONDITIONS.map((type, i) => {
+  return MACHINE_CONDITIONS.map((type) => {
     const c = conditions.find((x) => x.type === type);
     const label = STEP_LABELS[type];
-    if (c?.status === 'True' && !reachedCurrent) {
-      return { type, label, state: 'done', detail: c.message ?? c.reason, at: c.lastTransitionTime };
-    }
-    if (reachedCurrent) {
-      return { type, label, state: 'upcoming', detail: `After ${STEP_LABELS[MACHINE_CONDITIONS[i - 1]].toLowerCase()}` };
-    }
-    reachedCurrent = true;
-    const failed = type === 'Accepted' && c?.status === 'False';
-    return {
-      type,
-      label,
-      state: failed ? 'failed' : 'current',
-      detail: c?.message ?? c?.reason ?? 'In progress',
-      at: c?.lastTransitionTime,
-    };
+    if (reachedCurrent) return { type, label, state: 'upcoming' };
+    const state: StepState =
+      c?.status === 'True' ? 'done' : type === 'Accepted' && c?.status === 'False' ? 'failed' : 'current';
+    if (state !== 'done') reachedCurrent = true;
+    const { word, tooltip } = reasonText(c?.reason, STEP_FALLBACK[state]);
+    return { type, label, state, detail: word, detailTooltip: tooltip, at: c?.lastTransitionTime };
   });
 }

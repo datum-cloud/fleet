@@ -58,8 +58,8 @@ export function MachinesPage({
               </Link>
             </BreadcrumbLink>
           </BreadcrumbItem>
-          {crumbs.map((crumb) => (
-            <Fragment key={crumb.label}>
+          {crumbs.map((crumb, i) => (
+            <Fragment key={i}>
               <BreadcrumbSeparator />
               <BreadcrumbItem className="min-w-0">
                 {crumb.href ? (

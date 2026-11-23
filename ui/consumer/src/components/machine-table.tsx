@@ -1,9 +1,10 @@
-import { MachineStatus } from './machine-status';
+import { MachineStatus, Power } from './machine-status';
 import { usePluginBase } from './machines-page';
 import { ReleaseButton } from './release-dialog';
-import type { Machine } from '../types';
+import { machineStatus, type Machine } from '../types';
 import { DataTable, type DataTableFeatures } from '@datum-cloud/datum-ui/data-table';
 import { DateTime } from '@datum-cloud/datum-ui/date-time';
+import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
 import { Text } from '@datum-cloud/datum-ui/typography';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useMemo } from 'react';
@@ -19,10 +20,18 @@ function Mono({ children }: { children: React.ReactNode }) {
   return <span className="font-mono text-xs whitespace-nowrap">{children}</span>;
 }
 
-function matchesSearch(machine: Machine, search: string): boolean {
+// Search matches what the row shows: the status label, not the phase behind it.
+export function matchesSearch(machine: Machine, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
-  return [machine.name, machine.phase, machine.machineClass, machine.machineProfile, machine.location]
+  return [
+    machine.name,
+    machineStatus(machine).label,
+    machine.machineClass,
+    machine.machineProfile,
+    machine.location,
+    ...machine.addresses,
+  ]
     .join(' ')
     .toLowerCase()
     .includes(needle);
@@ -41,65 +50,106 @@ function MachineLink({ name }: { name: string }) {
   );
 }
 
-const columns: MachineColumn[] = [
-  {
-    id: 'name',
-    accessorKey: 'name',
-    header: 'Name',
-    cell: ({ row }) => <MachineLink name={row.original.name} />,
+// The first address, with the rest behind "+N".
+function Addresses({ addresses }: { addresses: string[] }) {
+  if (addresses.length === 0) return <Muted>—</Muted>;
+  const [first, ...rest] = addresses;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <Mono>{first}</Mono>
+      {rest.length > 0 && (
+        <Tooltip message={<span className="font-mono text-xs">{rest.join(', ')}</span>}>
+          <span className="text-muted-foreground cursor-default text-xs" aria-label={`and ${rest.join(', ')}`}>
+            +{rest.length}
+          </span>
+        </Tooltip>
+      )}
+    </span>
+  );
+}
+
+const nameColumn: MachineColumn = {
+  id: 'name',
+  accessorKey: 'name',
+  header: 'Name',
+  cell: ({ row }) => <MachineLink name={row.original.name} />,
+};
+
+const statusColumn: MachineColumn = {
+  id: 'status',
+  header: 'Status',
+  cell: ({ row }) => <MachineStatus machine={row.original} />,
+};
+
+// The profile name already says the cores and memory; the exact values pinned
+// from it are in the tooltip.
+const profileColumn: MachineColumn = {
+  id: 'profile',
+  header: 'Profile',
+  cell: ({ row }) => {
+    const { machineProfile, cpu, memory } = row.original;
+    const pinned = [cpu, memory].filter(Boolean).join(' · ');
+    return (
+      <Tooltip message={pinned} hidden={!pinned}>
+        <span className="cursor-default">
+          <Mono>{machineProfile}</Mono>
+        </span>
+      </Tooltip>
+    );
   },
-  {
-    id: 'status',
-    header: 'Status',
-    cell: ({ row }) => <MachineStatus machine={row.original} />,
-  },
-  {
-    id: 'profile',
-    header: 'Profile',
-    cell: ({ row }) => <Mono>{row.original.machineProfile}</Mono>,
-  },
-  {
-    id: 'hardware',
-    header: 'Requested',
-    // The exact CPU and memory pinned from the profile, as `datumctl get
-    // machines` shows them. Allocated hardware is on the machine's page.
-    cell: ({ row }) => {
-      const { cpu, memory } = row.original;
-      return cpu || memory ? <Mono>{[cpu, memory].filter(Boolean).join(' · ')}</Mono> : <Muted>—</Muted>;
-    },
-  },
-  { id: 'location', header: 'Location', cell: ({ row }) => <Muted>{row.original.location}</Muted> },
-  {
-    id: 'power',
-    header: 'Power',
-    // Show the observation; intent alone does not mean the machine is on.
-    cell: ({ row }) => {
-      const { powerObserved, powerIntent } = row.original;
-      if (!powerObserved) return <Muted>—</Muted>;
-      return (
-        <Muted>
-          {powerObserved}
-          {powerIntent !== powerObserved ? ` → ${powerIntent}` : ''}
-        </Muted>
-      );
-    },
-  },
-  {
-    id: 'created',
-    header: 'Created',
-    cell: ({ row }) =>
-      row.original.createdAt ? (
-        <DateTime
-          date={row.original.createdAt}
-          variant="relative"
-          addSuffix
-          className="text-muted-foreground text-sm whitespace-nowrap"
-        />
-      ) : (
-        <Muted>—</Muted>
-      ),
-  },
-];
+};
+
+const addressColumn: MachineColumn = {
+  id: 'address',
+  header: 'Address',
+  cell: ({ row }) => <Addresses addresses={row.original.addresses} />,
+};
+
+const locationColumn: MachineColumn = {
+  id: 'location',
+  header: 'Location',
+  cell: ({ row }) => <Muted>{row.original.location}</Muted>,
+};
+
+const powerColumn: MachineColumn = {
+  id: 'power',
+  header: 'Power',
+  cell: ({ row }) => (
+    <Muted>
+      <Power machine={row.original} />
+    </Muted>
+  ),
+};
+
+const createdColumn: MachineColumn = {
+  id: 'created',
+  header: 'Created',
+  cell: ({ row }) =>
+    row.original.createdAt ? (
+      <DateTime
+        date={row.original.createdAt}
+        variant="relative"
+        addSuffix
+        className="text-muted-foreground text-sm whitespace-nowrap"
+      />
+    ) : (
+      <Muted>—</Muted>
+    ),
+};
+
+// Address shows only when some machine has one, and Location only when the
+// machines are in more than one place.
+export function machineColumns(machines: Machine[]): MachineColumn[] {
+  return [
+    nameColumn,
+    statusColumn,
+    profileColumn,
+    ...(machines.some((m) => m.addresses.length > 0) ? [addressColumn] : []),
+    ...(new Set(machines.map((m) => m.location)).size > 1 ? [locationColumn] : []),
+    powerColumn,
+    createdColumn,
+  ];
+}
 
 // A machine already releasing has nothing left to release.
 export function MachineTable({
@@ -111,7 +161,7 @@ export function MachineTable({
 }) {
   const withActions = useMemo<MachineColumn[]>(
     () => [
-      ...columns,
+      ...machineColumns(machines),
       {
         id: 'actions',
         header: '',
@@ -123,7 +173,7 @@ export function MachineTable({
           ),
       },
     ],
-    [onRelease]
+    [machines, onRelease]
   );
 
   return (
