@@ -618,6 +618,11 @@ spec:
                     maximum: 100
                   fullDepth:
                     type: boolean
+                  width:
+                    type: string
+                    enum:
+                    - Full
+                    - Half
           status:
             type: object
 ---
@@ -1219,6 +1224,70 @@ spec:
                     maximum: 100
                   fullDepth:
                     type: boolean
+                  width:
+                    type: string
+                    enum:
+                    - Full
+                    - Half
+              faceplate:
+                type: object
+                required:
+                - banks
+                properties:
+                  banks:
+                    type: array
+                    minItems: 1
+                    maxItems: 32
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - face
+                      - rows
+                      - columns
+                      properties:
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        face:
+                          type: string
+                          enum:
+                          - Front
+                          - Rear
+                        rows:
+                          type: integer
+                          minimum: 1
+                          maximum: 8
+                        columns:
+                          type: integer
+                          minimum: 1
+                          maximum: 64
+                        offset:
+                          type: number
+                          minimum: 0
+                          maximum: 1
+                        cellMM:
+                          type: object
+                          required:
+                          - width
+                          - height
+                          properties:
+                            width:
+                              type: number
+                              minimum: 1
+                              maximum: 450
+                            height:
+                              type: number
+                              minimum: 1
+                              maximum: 400
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys:
+                    - id
+                x-kubernetes-validations:
+                - rule: "['Front', 'Rear'].all(f, self.banks.all(b, b.face != f || has(b.offset))
+                    || self.banks.all(b, b.face != f || !has(b.offset)))"
+                  message: bank offsets must be set on every bank of a face or on none
               componentTemplates:
                 type: array
                 maxItems: 256
@@ -1259,6 +1328,29 @@ spec:
                       enum:
                       - Front
                       - Rear
+                    layout:
+                      type: object
+                      required:
+                      - bank
+                      - row
+                      - column
+                      properties:
+                        bank:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        row:
+                          type: integer
+                          minimum: 1
+                          maximum: 8
+                        column:
+                          type: integer
+                          minimum: 1
+                          maximum: 64
+                        span:
+                          type: integer
+                          minimum: 1
+                          maximum: 64
                   required:
                   - id
                   - name
@@ -1266,7 +1358,32 @@ spec:
                 x-kubernetes-list-type: map
                 x-kubernetes-list-map-keys:
                 - id
+                x-kubernetes-validations:
+                # The overlap rule below compares every pair of templates. This
+                # cap keeps its worst runtime cost near 60% of the per-call CEL
+                # limit; 256 laid-out templates can exceed it. Evaluated first so
+                # an over-cap object reports the cap, not a cost error.
+                - rule: self.filter(t, has(t.layout)).size() <= 128
+                  message: at most 128 templates may carry a layout; leave the rest without
+                    one
+                - rule: 'self.all(t, !has(t.layout) || self.exists_one(u, has(u.layout)
+                    && u.layout.row == t.layout.row && u.layout.column < t.layout.column
+                    + (has(t.layout.span) ? t.layout.span : 1) && t.layout.column < u.layout.column
+                    + (has(u.layout.span) ? u.layout.span : 1) && u.layout.bank == t.layout.bank))'
+                  message: two templates overlap in one bank row; each cell, including a
+                    span, holds one template
             x-kubernetes-validations:
+            - rule: '!has(self.componentTemplates) || self.componentTemplates.all(t, !has(t.layout)
+                || has(t.face) && has(self.faceplate) && self.faceplate.banks.exists(b,
+                b.id == t.layout.bank && b.face == t.face))'
+              message: a template layout must name a faceplate bank on the template's own
+                face
+            - rule: '!has(self.componentTemplates) || !has(self.faceplate) || self.componentTemplates.all(t,
+                !has(t.layout) || self.faceplate.banks.all(b, b.id != t.layout.bank ||
+                t.layout.row <= b.rows && t.layout.column + (has(t.layout.span) ? t.layout.span
+                : 1) - 1 <= b.columns))'
+              message: a template layout, including its span, must fall inside its bank's
+                rows and columns
             - rule: self.manufacturerRef == oldSelf.manufacturerRef && self.model
                 == oldSelf.model
               message: manufacturer and normalized model identity are immutable; displayName

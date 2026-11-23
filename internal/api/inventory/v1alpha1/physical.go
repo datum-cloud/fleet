@@ -13,11 +13,24 @@ type ExternalReference struct {
 
 // ModelShape is a nominal shape, never a measurement. FullDepth means the
 // chassis reaches both the front and rear rails. Unset means unknown and is
-// never defaulted. A Device value overrides its DeviceType's value.
+// never defaulted. Width is Full or Half; unset means unknown, and a reader
+// that draws it assumes Full and says so. A Device value overrides its
+// DeviceType's value.
 type ModelShape struct {
-	HeightUnits *float64 `json:"heightUnits,omitempty"`
-	FullDepth   *bool    `json:"fullDepth,omitempty"`
+	HeightUnits *float64     `json:"heightUnits,omitempty"`
+	FullDepth   *bool        `json:"fullDepth,omitempty"`
+	Width       ChassisWidth `json:"width,omitempty"`
 }
+
+// ChassisWidth is the nominal chassis width: the full rack width, or half,
+// for servers and switches that sit side by side in one unit. Which half a
+// Device occupies is a placement fact and is not recorded here.
+type ChassisWidth string
+
+const (
+	ChassisFullWidth ChassisWidth = "Full"
+	ChassisHalfWidth ChassisWidth = "Half"
+)
 
 type PhysicalMetadata struct {
 	DisplayName string `json:"displayName"`

@@ -269,7 +269,7 @@ export interface Device {
     identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string; unidentified?: boolean; unidentifiedReason?: string };
     assetTag?: string;
     displayName?: string;
-    modelShape?: { heightUnits?: number; fullDepth?: boolean };
+    modelShape?: ModelShape;
     providerHostRef?: ExternalReference;
     topologyAuthority?: 'Cable';
     components?: PhysicalComponent[];
@@ -319,7 +319,24 @@ export type ChassisFace = 'Front' | 'Rear';
 // the template whose id equals the component id.
 export interface ComponentTemplate extends Omit<PhysicalComponent, 'serial' | 'assetTag'> {
   face?: ChassisFace;
+  // Cells of one faceplate bank on the template's own face. Unset means its
+  // position is not recorded.
+  layout?: TemplateLayout;
 }
+// A nominal bank-grid position: 1-based row and column; span counts columns
+// and is 1 when unset.
+export interface TemplateLayout { bank: string; row: number; column: number; span?: number }
+// Nominal cell size in millimetres, for module cells such as PSUs and bays.
+export interface CellSize { width: number; height: number }
+// One grid of cells on one chassis face. offset is the left edge as a
+// fraction of the usable face width; on a face it is set on every bank or
+// none, and with none the banks flow left to right in list order.
+export interface FaceplateBank { id: string; face: ChassisFace; rows: number; columns: number; offset?: number; cellMM?: CellSize }
+// DeviceType only. Unset means the layout is not recorded.
+export interface Faceplate { banks: FaceplateBank[] }
+// Nominal chassis width. Unset is unknown; drawings assume Full and say so.
+export type ChassisWidth = 'Full' | 'Half';
+export interface ModelShape { heightUnits?: number; fullDepth?: boolean; width?: ChassisWidth }
 export interface CableEndpoint extends ComponentPosition {
   deviceRef?: LocalReference;
   powerFeedRef?: LocalReference;
@@ -334,10 +351,11 @@ export interface PhysicalRecord {
     aliases?: string[];
     manufacturerRef?: LocalReference;
     model?: string;
-    modelShape?: { heightUnits?: number; fullDepth?: boolean };
+    modelShape?: ModelShape;
     // DeviceType only. modelShape.fullDepth unset means depth unknown; a
     // Device's own value overrides it.
     componentTemplates?: ComponentTemplate[];
+    faceplate?: Faceplate;
     facilityRefs?: LocalReference[];
     identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];
     facilityRef?: LocalReference;

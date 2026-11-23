@@ -26,6 +26,48 @@ type ComponentTemplate struct {
 	// inherits it from the template whose ID equals the component ID; there
 	// is no Device-level override.
 	Face ChassisFace `json:"face,omitempty"`
+	// Layout places the template in cells of one faceplate bank on its own
+	// face. It needs Face and a DeviceType faceplate. Unset means the
+	// template's position on the face is not recorded; it is never guessed.
+	Layout *TemplateLayout `json:"layout,omitempty"`
+}
+
+// TemplateLayout is a nominal bank-grid position, never a millimetre
+// coordinate. Row and Column are 1-based. Span covers that many columns from
+// Column to the right; unset means 1.
+type TemplateLayout struct {
+	Bank   string `json:"bank"`
+	Row    int32  `json:"row"`
+	Column int32  `json:"column"`
+	Span   int32  `json:"span,omitempty"`
+}
+
+// Faceplate is the nominal physical layout of a model's faces as clusters of
+// identical cells, such as a 2x12 RJ45 block or a PSU bay. It is catalog data
+// only: a Device inherits it through its DeviceType and cannot override it.
+// It carries no state. Whether a port is cabled comes from Cable records.
+type Faceplate struct {
+	Banks []FaceplateBank `json:"banks"`
+}
+
+// FaceplateBank is one grid of cells on one chassis face. Offset is the
+// bank's left edge as a fraction of the usable face width. On each face it is
+// set on every bank or on none; with none, banks flow left to right in list
+// order. CellMM sizes module cells, such as PSUs, drive bays and fans; unset
+// means readers use the nominal size of the cell's connector.
+type FaceplateBank struct {
+	ID      string      `json:"id"`
+	Face    ChassisFace `json:"face"`
+	Rows    int32       `json:"rows"`
+	Columns int32       `json:"columns"`
+	Offset  *float64    `json:"offset,omitempty"`
+	CellMM  *CellSize   `json:"cellMM,omitempty"`
+}
+
+// CellSize is a nominal cell size in millimetres.
+type CellSize struct {
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
 }
 
 // ChassisFace names a side of the chassis itself. The front is whatever the
@@ -43,6 +85,9 @@ type DeviceTypeSpec struct {
 	Model              string              `json:"model"`
 	ModelShape         *ModelShape         `json:"modelShape,omitempty"`
 	ComponentTemplates []ComponentTemplate `json:"componentTemplates,omitempty"`
+	// Faceplate is optional. Unset means the layout is not recorded, and
+	// readers show grouped components instead of a drawing.
+	Faceplate *Faceplate `json:"faceplate,omitempty"`
 }
 
 type Manufacturer struct {
