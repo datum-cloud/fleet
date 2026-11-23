@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { CableEndpoint, Device, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import { toInventory, type Inventory } from '../inventory';
-import { deviceConnections, faceGroups, faceLabel, localLabel, oppositeFaceCheck, peerLabel, remotePortLabel, stateCounts, type ConnectionLink } from './device-connections';
+import {
+  connectorShape, deviceConnections, deviceTitle, faceGroups, faceLabel, humanName, isGeneratedName, localLabel, oppositeFaceCheck, peerLabel, portLayout, portTiles, remotePortLabel,
+  shortLabels, stateCounts, tileCounts, viewNames,
+  type ConnectionLink, type PortTile,
+} from './device-connections';
 import { depthClaims, depthDevices, depthRecords } from './depth-fixtures';
 
 // Synthetic records only.
@@ -243,5 +247,95 @@ describe('component faces in the connection join', () => {
 
   it.each([[undefined, 'rear'], ['front', undefined], ['front', 'front']] as const)('adds no check for %s to %s', (local, far) => {
     expect(oppositeFaceCheck(local, far)).toEqual([]);
+  });
+});
+
+describe('name condensation', () => {
+  const record = (name: string, displayName?: string) => ({ metadata: { name }, spec: { displayName } });
+
+  it('prefers display names and human resource names, never generated ones', () => {
+    expect(isGeneratedName('netbox-ca213d185ea9153b853f295e')).toBe(true);
+    expect(isGeneratedName('00000000-0000-4000-8000-000000000001')).toBe(true);
+    expect(isGeneratedName('pdu-a.rk105.yul3')).toBe(false);
+    expect(humanName(record('netbox-30ba6ae0ee289bda385a7a96', 'Leaf 1'))).toBe('Leaf 1');
+    expect(humanName(record('pdu-a.rk105.yul3'))).toBe('pdu-a.rk105.yul3');
+    // Importers often copy the generated name into displayName.
+    expect(humanName(record('netbox-30ba6ae0ee289bda385a7a96', 'netbox-30ba6ae0ee289bda385a7a96'))).toBeUndefined();
+    const imported = device('netbox-30ba6ae0ee289bda385a7a96', [], { displayName: undefined, identity: { manufacturer: 'Example Networks', model: 'EX-1' } });
+    expect(deviceTitle(imported)).toBe('Example Networks EX-1');
+  });
+
+  it('names unnamed records by kind and medium, and disambiguates records that would read the same', () => {
+    const host = (name: string) => device(name, [C('eth0', 'NetworkPort')], { displayName: undefined });
+    const subject = device('server-09', [C('eth0', 'NetworkPort'), C('eth1', 'NetworkPort'), C('eth2', 'NetworkPort')]);
+    const data = inv([subject, host('netbox-30ba6ae0ee289bda385a7a96'), host('netbox-41cb7bf1ff39acebb496b8a7'), host('rack9-host')], [
+      { ...cable('netbox-ca213d185ea9153b853f295e', 'Copper', [['l1', D('server-09', 'eth0'), D('netbox-30ba6ae0ee289bda385a7a96', 'eth0')]]) },
+      { ...cable('netbox-77aa13d185ea9153b853a1c0', 'Copper', [['l1', D('server-09', 'eth1'), D('netbox-41cb7bf1ff39acebb496b8a7', 'eth0')]]) },
+      { ...cable('netbox-99bb13d185ea9153b853b2d1', 'Fibre', [['l1', D('server-09', 'eth2'), D('rack9-host', 'eth0')]]) },
+    ]);
+    const { links } = deviceConnections(subject, data);
+    const names = viewNames(links);
+    const [eth0, eth1, eth2] = ['eth0', 'eth1', 'eth2'].map(id => link(links, id)[0]);
+    expect(eth0.cable?.label).toBeUndefined();
+    expect([eth0, eth1, eth2].map(item => names.cable(item.cable!))).toEqual(['Copper cable #295e', 'Copper cable #a1c0', 'Fibre cable']);
+    expect([eth0, eth1, eth2].map(item => names.peer(item.peer!))).toEqual(['Unnamed device #7a96', 'Unnamed device #b8a7', 'rack9-host']);
+    expect(peerLabel(eth0.peer, names.peer(eth0.peer!))).toBe('Unnamed device #7a96 · eth0');
+  });
+
+  it('never names or disambiguates a denied peer', () => {
+    const data = inv([server], [feed('feed-a', 8), feed('feed-b', 8),
+      cable('pwr-01', 'Power', [['power', P('feed-a', 'outlet-1'), D('server-01', 'psu-1')]]),
+      cable('pwr-02', 'Power', [['power', P('feed-b', 'outlet-1'), D('server-01', 'psu-2')]]),
+    ], { PowerFeed: { status: 403 } });
+    const { links } = deviceConnections(server, data);
+    const names = viewNames(links);
+    expect(links.filter(item => item.peer).map(item => names.peer(item.peer!))).toEqual(['Power feed unavailable', 'Power feed unavailable']);
+  });
+});
+
+describe('port tiles', () => {
+  const tile = (name: string, componentID = name, extra: Partial<PortTile> = {}): PortTile => ({ key: componentID, group: 'network', componentID, name, shape: 'generic', positions: 1, state: 'none', lanes: [], links: [], ...extra });
+
+  it('groups positions into one tile per component, showing the most urgent lane', () => {
+    const servers = [1, 2].map(n => device(`server-1${n}`, [C('eth0', 'NetworkPort')]));
+    const data = inv([leaf, ...servers], [
+      cable('brk-49', 'Copper', [[`lane-1`, D('leaf-01', 'swp49', 1), D('server-11', 'eth0')]]),
+      cable('brk-49b', 'Copper', [[`lane-1`, D('leaf-01', 'swp49', 2), D('server-12', 'eth0')], [`lane-2`, D('leaf-01', 'swp49', 2), D('server-11', 'eth0')]]),
+    ]);
+    const tiles = portTiles(deviceConnections(leaf, data).links);
+    const swp49 = tiles.find(item => item.componentID === 'swp49')!;
+    expect(swp49.lanes.map(lane => [lane.position, lane.state, lane.links.length])).toEqual([[1, 'conflict', 1], [2, 'conflict', 2], [3, 'none', 1], [4, 'none', 1]]);
+    expect(swp49.state).toBe('conflict');
+    expect(tiles.map(item => item.componentID)).toEqual(['swp1', 'swp2', 'swp49']);
+    expect(tileCounts(tiles)).toEqual({ cabled: 0, none: 2, conflict: 1, unavailable: 0, catalog: 0 });
+  });
+
+  it('derives short faceplate labels that stay unique within a group', () => {
+    const labels = shortLabels([
+      tile('PSU 1'), tile('swp49'), tile('Ethernet 0', 'eth0'), tile('Outlet 24', 'outlet-24'), tile('Front port 1', 'front-port-1'), tile('Rear port 1', 'rear-port-1'),
+      tile('Serial console', 'console'), tile('Management interface', 'management-interface'),
+    ]);
+    const tiles = ['PSU 1', 'swp49', 'eth0', 'outlet-24', 'front-port-1', 'rear-port-1', 'console', 'management-interface'];
+    // "1" would repeat for the front and rear ports, so both take initials.
+    expect(tiles.map(key => labels.get(key))).toEqual(['PSU 1', 'swp49', 'eth0', '24', 'FP1', 'RP1', 'console', 'Manage…']);
+    // Identical names with nothing else to tell them apart are numbered.
+    const same = shortLabels([tile('Uplink port', 'uplink-port-a'), tile('Uplink port', 'uplink-port-b')]);
+    expect([same.get('uplink-port-a'), same.get('uplink-port-b')]).toEqual(['Uplink…·1', 'Uplink…·2']);
+  });
+
+  it('shapes tiles only for connectors that clearly name a family', () => {
+    expect(['RJ45', 'rj-45 keystone', 'SFP28', 'SFP+', 'QSFP28', 'QSFP-DD', 'IEC C14', 'C13', 'IEC C20', 'LC duplex', undefined, 'C130 custom'].map(connectorShape))
+      .toEqual(['rj45', 'rj45', 'sfp', 'sfp', 'qsfp', 'qsfp', 'iec', 'iec', 'iec', 'generic', 'generic', 'generic']);
+  });
+
+  it('lays tiles out by face, then by type in recorded order, with an unknown face when none is recorded', () => {
+    const sw = device('switch-02', [C('swp1', 'NetworkPort'), C('swp2', 'NetworkPort'), C('console', 'ConsolePort'), C('psu-1', 'PowerInlet')]);
+    const { links } = deviceConnections(sw, inv([sw], []));
+    expect(portLayout(links).map(face => [face.title, face.clusters.map(cluster => cluster.title)])).toEqual([['Face unknown', ['Network', 'Console', 'Power']]]);
+    const faces = portLayout(links, item => item.group === 'power' ? 'Rear' : 'Front');
+    expect(faces.map(face => [face.face, face.clusters.map(cluster => cluster.tiles.map(item => item.componentID))])).toEqual([
+      ['Front', [['swp1', 'swp2'], ['console']]],
+      ['Rear', [['psu-1']]],
+    ]);
   });
 });

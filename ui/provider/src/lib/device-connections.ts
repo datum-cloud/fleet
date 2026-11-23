@@ -52,9 +52,10 @@ const groupOf: Record<PhysicalComponent['type'], ConnectionGroup> = {
 // when a Cable names them.
 const UNCABLED_TYPES = new Set<PhysicalComponent['type']>(['Module', 'InventoryItem', 'DeviceBay']);
 
-// Above this many links the diagram stops being readable, so the view
-// defaults to the list and collapses the diagram by group.
-export const DIAGRAM_LINK_LIMIT = 32;
+// The port tiles are the default view at every size. The line diagram is
+// offered only up to this many links: above it the diagram is many times
+// taller than the tiles that already show the same records.
+export const DIAGRAM_LINK_LIMIT = 16;
 
 // Internal-path traces (patch panels, PDUs) stop after this many hops.
 export const MAX_TRACE_HOPS = 4;
@@ -68,7 +69,9 @@ type PeerKind = 'Device' | 'PowerFeed';
 export interface PeerEnd {
   kind: PeerKind;
   access: 'readable' | 'denied' | 'missing';
+  /** The resource name. Views show it only in the detail panel. */
   name?: string;
+  /** A human name, when the record has one. Never a generated resource name. */
   label?: string;
   componentID?: string;
   componentName?: string;
@@ -82,8 +85,10 @@ export interface PeerEnd {
 }
 
 export interface CableRef {
+  /** The resource name. Views show it only in the detail panel. */
   name: string;
-  label: string;
+  /** A human name, when the record has one. Never a generated resource name. */
+  label?: string;
   medium?: string;
   laneID: string;
   laneCount: number;
@@ -137,7 +142,25 @@ interface Termination {
 }
 
 const positionsOf = (component?: { positions?: number }) => component?.positions ?? 1;
-const recordLabel = (record: { metadata: { name: string }; spec: { displayName?: string } }) => record.spec.displayName || record.metadata.name;
+
+// Names that importers generate (`netbox-ca213d185ea9153b853f295e`), and UIDs.
+// They identify a record but mean nothing to a reader, so views show them
+// only in the detail panel.
+const GENERATED_NAME = /[0-9a-f]{12,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i;
+export const isGeneratedName = (name: string) => GENERATED_NAME.test(name);
+
+/** The display name, or the resource name when it reads as a human name (`pdu-a.rk105.yul3`). */
+export function humanName(record: { metadata: { name: string }; spec: { displayName?: string } }): string | undefined {
+  for (const candidate of [record.spec.displayName?.trim(), record.metadata.name]) if (candidate && !isGeneratedName(candidate)) return candidate;
+  return undefined;
+}
+
+/** A Device's title, never its generated resource name. */
+export function deviceTitle(device: Device) {
+  return humanName(device) ?? ([device.spec.identity.manufacturer, device.spec.identity.model].filter(Boolean).join(' ') || 'Unnamed device');
+}
+
+const recordLabel = humanName;
 
 function endKey(endpoint: CableEndpoint) {
   const kind = endpoint.deviceRef ? 'Device' : endpoint.powerFeedRef ? 'PowerFeed' : '';
@@ -350,17 +373,244 @@ export function localLabel(link: Pick<ConnectionLink, 'component' | 'template' |
   return link.positions > 1 || link.position > 1 ? `${name} · position ${link.position}` : name;
 }
 
-/** The far end in words. A denied peer yields no identifying detail. */
-export function peerLabel(peer: PeerEnd | undefined) {
-  if (!peer) return 'Unknown';
+/** The peer record's name in words. Never a generated resource name; nothing at all for a denied peer. */
+export function peerName(peer: PeerEnd) {
   if (peer.access === 'denied') return peer.kind === 'PowerFeed' ? 'Power feed unavailable' : 'Device unavailable';
+  if (peer.label) return peer.label;
+  // A missing record has only the name the Cable gives it.
+  if (peer.access === 'missing' && peer.name && !isGeneratedName(peer.name)) return peer.name;
+  return peer.kind === 'PowerFeed' ? 'Unnamed power feed' : 'Unnamed device';
+}
+
+/** A Cable's name in words. Never a generated resource name. */
+export function cableName(cable: CableRef) {
+  return cable.label ?? (cable.medium ? `${cable.medium} cable` : 'Unnamed cable');
+}
+
+/**
+ * The far end in words. A denied peer yields no identifying detail. `name`
+ * replaces the record's name, for a disambiguated one from viewNames().
+ */
+export function peerLabel(peer: PeerEnd | undefined, name?: string) {
+  if (!peer) return 'Unknown';
+  if (peer.access === 'denied') return peerName(peer);
   const port = peer.componentName ?? peer.componentID;
   const position = peer.multiPosition ? ` · position ${peer.position}` : '';
-  if (peer.access === 'missing') return `${peer.name} · ${peer.componentID}${position} (record not found)`;
-  return `${peer.label} · ${port}${position}`;
+  if (peer.access === 'missing') return `${name ?? peerName(peer)} · ${peer.componentID}${position} (record not found)`;
+  return `${name ?? peerName(peer)} · ${port}${position}`;
 }
 
 export function remotePortLabel(peer: PeerEnd | undefined) {
   if (!peer || peer.access === 'denied') return 'Port unavailable';
   return `${peer.componentName ?? peer.componentID}${peer.multiPosition || (peer.position ?? 1) > 1 ? ` · position ${peer.position}` : ''}`;
+}
+
+/** A short, stable suffix from a resource name, to tell two same-named records apart. */
+export function shortSuffix(name: string) {
+  return name.replace(/[^a-z0-9]/gi, '').slice(-4).toLowerCase();
+}
+
+export interface ViewNames {
+  cable: (cable: CableRef) => string;
+  peer: (peer: PeerEnd) => string;
+}
+
+/**
+ * Names for every Cable and peer in one view. Two different records that
+ * would read the same get a short suffix from their resource names (`Copper
+ * cable #295e`). A denied peer has no name, so it is never disambiguated.
+ */
+export function viewNames(links: ConnectionLink[]): ViewNames {
+  const cables = new Map<string, Set<string>>();
+  const peers = new Map<string, Set<string>>();
+  const add = (map: Map<string, Set<string>>, label: string, name: string) => map.set(label, (map.get(label) ?? new Set()).add(name));
+  const visit = (cable?: CableRef, peer?: PeerEnd) => {
+    if (cable) add(cables, cableName(cable), cable.name);
+    if (peer && peer.access !== 'denied' && peer.name) add(peers, `${peer.kind}/${peerName(peer)}`, peer.name);
+  };
+  for (const link of links) {
+    visit(link.cable, link.peer);
+    for (const hop of link.trace) visit(hop.cable, hop.peer);
+  }
+  return {
+    cable: cable => {
+      const label = cableName(cable);
+      return (cables.get(label)?.size ?? 0) > 1 ? `${label} #${shortSuffix(cable.name)}` : label;
+    },
+    peer: peer => {
+      const label = peerName(peer);
+      if (peer.access === 'denied' || !peer.name) return label;
+      return (peers.get(`${peer.kind}/${label}`)?.size ?? 0) > 1 ? `${label} #${shortSuffix(peer.name)}` : label;
+    },
+  };
+}
+
+// ---- Port tiles ----
+
+/** One position of a port tile, with every link that names it. */
+export interface TileLane {
+  position: number;
+  state: LinkState;
+  links: ConnectionLink[];
+}
+
+/** One component drawn as a port tile. A multi-position component has one lane per position. */
+export interface PortTile {
+  key: string;
+  group: ConnectionGroup;
+  componentID: string;
+  /** The full local name, such as "PSU 1" or "swp49". */
+  name: string;
+  type?: PhysicalComponent['type'];
+  /** The recorded free-text connector, such as "SFP28" or "IEC C14". */
+  connector?: string;
+  shape: ConnectorShape;
+  /** Inherited from the template; unset is unknown. */
+  chassisFace?: ChassisFace;
+  /** Derived from the chassis face and the mounted rack face; unset is unknown. */
+  rackFace?: RackFace;
+  positions: number;
+  state: LinkState;
+  lanes: TileLane[];
+  links: ConnectionLink[];
+}
+
+export type ConnectorShape = 'rj45' | 'sfp' | 'qsfp' | 'iec' | 'generic';
+
+/**
+ * A tile outline for the recorded connector. Only connectors that clearly
+ * name a family get a shape; anything else is a generic tile, so the drawing
+ * never implies more than the free text says.
+ */
+export function connectorShape(connector: string | undefined): ConnectorShape {
+  const text = connector?.toUpperCase() ?? '';
+  const compact = text.replace(/[\s-]+/g, '');
+  if (/QSFP/.test(compact)) return 'qsfp';
+  if (/SFP/.test(compact)) return 'sfp';
+  if (/RJ45|8P8C/.test(compact)) return 'rj45';
+  if (/(^|[^A-Z0-9])C(13|14|19|20)([^0-9]|$)/.test(text)) return 'iec';
+  return 'generic';
+}
+
+/** A face of the drawn chassis, and the type clusters on it in layout order. */
+export interface LayoutFace {
+  face: FaceGroup;
+  /** "Front · rack rear": the chassis face, and the rack face it is mounted toward when known. */
+  title: string;
+  clusters: { group: ConnectionGroup; title: string; tiles: PortTile[] }[];
+}
+
+/**
+ * Lays tiles out as a faceplate: by chassis face (Front, Rear, Face unknown),
+ * then clustered by type, keeping the order the components are recorded in
+ * (which follows the DeviceType's template order). This is the one place that
+ * decides placement, so recorded layout data (rows, columns, banks) can
+ * replace template order here without touching the view. `faceOf` supplies a
+ * tile's chassis face; by default it is the face inherited from the template.
+ */
+export function portLayout(links: ConnectionLink[], faceOf: (tile: PortTile) => ChassisFace | undefined = tile => tile.chassisFace): LayoutFace[] {
+  const tiles = portTiles(links);
+  const faces: LayoutFace[] = [];
+  for (const face of ['Front', 'Rear', 'unknown'] as const) {
+    const onFace = tiles.filter(tile => (faceOf(tile) ?? 'unknown') === face);
+    if (!onFace.length) continue;
+    // Clusters follow the first appearance of their type, so a switch leads
+    // with its ports and a server rear reads PSUs, NICs, BMC.
+    const clusters = connectionGroups
+      .map(({ group, title }) => ({ group, title, tiles: onFace.filter(tile => tile.group === group) }))
+      .filter(cluster => cluster.tiles.length)
+      .sort((a, b) => onFace.indexOf(a.tiles[0]) - onFace.indexOf(b.tiles[0]));
+    // Every port on one chassis face shares the Device's mounted face, so the
+    // derived rack face is stated once, on the face.
+    const rack = face === 'unknown' ? undefined : onFace.find(tile => tile.rackFace)?.rackFace;
+    const title = face === 'unknown' ? faceGroupTitles.unknown : `${faceGroupTitles[face]} · ${rack ? `rack ${rack}` : 'rack face unknown'}`;
+    faces.push({ face, title, clusters });
+  }
+  return faces;
+}
+
+// A tile shows the most urgent state among its lanes: a disagreement or an
+// unreadable peer outranks a recorded lane, and a recorded lane outranks an
+// unknown one. There is no verified state to rise to.
+const TILE_ORDER: LinkState[] = ['conflict', 'unavailable', 'cabled', 'none', 'catalog'];
+
+/** One tile per component, in the order the links list them. */
+export function portTiles(links: ConnectionLink[]): PortTile[] {
+  const tiles = new Map<string, PortTile>();
+  for (const link of links) {
+    const key = `${link.group}/${link.componentID}`;
+    let tile = tiles.get(key);
+    if (!tile) {
+      const source = link.component ?? link.template;
+      tile = {
+        key, group: link.group, componentID: link.componentID, name: source?.name ?? link.componentID, type: source?.type, connector: source?.connector,
+        shape: connectorShape(source?.connector), chassisFace: link.chassisFace, rackFace: link.rackFace, positions: link.positions, state: link.state, lanes: [], links: [],
+      };
+      tiles.set(key, tile);
+    }
+    tile.links.push(link);
+    const lane = tile.lanes.find(item => item.position === link.position);
+    if (lane) lane.links.push(link);
+    else tile.lanes.push({ position: link.position, state: link.state, links: [link] });
+  }
+  for (const tile of tiles.values()) {
+    tile.lanes.sort((a, b) => a.position - b.position);
+    for (const lane of tile.lanes) lane.state = lane.links.length > 1 ? 'conflict' : lane.links[0].state;
+    tile.state = TILE_ORDER.find(state => tile.lanes.some(lane => lane.state === state)) ?? 'none';
+  }
+  return [...tiles.values()];
+}
+
+export function tileCounts(tiles: PortTile[]) {
+  const counts: Record<LinkState, number> = { cabled: 0, none: 0, conflict: 0, unavailable: 0, catalog: 0 };
+  for (const tile of tiles) counts[tile.state]++;
+  return counts;
+}
+
+const MAX_SHORT = 7;
+
+function labelOptions(tile: PortTile) {
+  const words = tile.name.trim().split(/[\s_-]+/).filter(Boolean);
+  const number = tile.name.match(/(\d+[a-z]?)$/i)?.[1];
+  const options = [
+    tile.name.length <= MAX_SHORT ? tile.name : undefined,
+    tile.componentID.length <= MAX_SHORT ? tile.componentID : undefined,
+    number,
+    number && words.length > 1 ? `${words.slice(0, -1).map(word => word[0].toUpperCase()).join('')}${number}` : undefined,
+    words[0] && words[0].length <= MAX_SHORT ? words[0] : undefined,
+    tile.name.length > MAX_SHORT ? `${tile.name.slice(0, MAX_SHORT - 1)}…` : tile.name,
+  ];
+  return [...new Set(options.filter((item): item is string => Boolean(item)))];
+}
+
+/**
+ * Short faceplate labels, unique within the tiles given: the name or id when
+ * it fits (`PSU 1`, `swp49`, `eth0`), else its trailing number (`24` for
+ * "Outlet 24"), else initials and number (`F1` and `R1` for "Front 1" and
+ * "Rear 1"), else a trimmed name. A label that would repeat moves on to the
+ * next option. The full name is always in the accessible name and details.
+ */
+export function shortLabels(tiles: PortTile[]): Map<string, string> {
+  const options = new Map(tiles.map(tile => [tile.key, labelOptions(tile)]));
+  const level = new Map(tiles.map(tile => [tile.key, 0]));
+  const chosen = new Map<string, string>();
+  let pending = tiles.map(tile => tile.key);
+  while (pending.length) {
+    const proposal = new Map(pending.map(key => [key, options.get(key)![level.get(key)!]]));
+    const taken = new Set(chosen.values());
+    const counts = new Map<string, number>();
+    for (const label of proposal.values()) counts.set(label, (counts.get(label) ?? 0) + 1);
+    const next: string[] = [];
+    const exhausted: string[] = [];
+    for (const key of pending) {
+      const label = proposal.get(key)!;
+      if (!taken.has(label) && counts.get(label) === 1) chosen.set(key, label);
+      else if (level.get(key)! < options.get(key)!.length - 1) { level.set(key, level.get(key)! + 1); next.push(key); }
+      else exhausted.push(key);
+    }
+    // Same names with no other option left: number them in order.
+    exhausted.forEach((key, index) => chosen.set(key, `${proposal.get(key)}·${index + 1}`));
+    pending = next;
+  }
+  return chosen;
 }
