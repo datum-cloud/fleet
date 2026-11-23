@@ -59,5 +59,16 @@ export const PAGES: CapturePage[] = [
   { name: 'server-connections-by-face', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections', element: '.inventory-connections' },
   // A Cable whose ends land on opposite rack faces carries a check note.
   { name: 'opposite-face-check', path: record('Device', 'example-app-a01'), ready: '.inventory-connection-check', element: '.inventory-connections' },
+  // Detail and list pages for each kind, for page-design review.
+  { name: 'cable-detail', path: record('Cable', 'example-brk-swp49'), ready: '.inventory-page-title' },
+  { name: 'power-feed-detail', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-page-title' },
+  { name: 'facility-detail', path: record('Facility', 'example-dc1'), ready: '.inventory-page-title' },
+  { name: 'site-detail', path: record('Site', 'example-site-one'), ready: '.inventory-page-title' },
+  { name: 'device-type-detail', path: record('DeviceType', 'example-server-1u'), ready: '.inventory-page-title' },
+  { name: 'manufacturer-detail', path: record('Manufacturer', 'example-compute'), ready: '.inventory-page-title' },
+  { name: 'claim-detail', path: record('DeviceClaim', 'example-srv-a01-01-install'), ready: '.inventory-page-title' },
+  { name: 'devices-list', path: `${INVENTORY}?kind=Device`, ready: '[data-testid="fleet-plugin-inventory-table"]' },
+  { name: 'cables-list', path: `${INVENTORY}?kind=Cable`, ready: '[data-testid="fleet-plugin-inventory-table"]' },
+  { name: 'racks-list', path: `${INVENTORY}?kind=Rack`, ready: '[data-testid="fleet-plugin-inventory-table"]' },
   { name: 'denied-peer-connections', path: record('Device', 'example-srv-a01-01', '&fixture=power-feeds-denied'), ready: '.inventory-connections', element: '.inventory-connections' },
 ];
