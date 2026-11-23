@@ -49,7 +49,7 @@ it.each(['same-url', 'replace', 'back-forward', 'revalidate', 'hidden-return', '
   await open(editing);
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
   await waitFor(() => expect(writes).toEqual([editing ? 'PATCH' : 'POST']));
-  await screen.findByText(editing ? 'Display name saved.' : 'Facility record created.');
+  await screen.findByText(editing ? 'Display name saved.' : 'Facility created.');
 });
 
 it.each(['create-review', 'rack-get', 'edit-review', 'edit-get', 'create-dispatch', 'edit-dispatch'])('same-url navigation retires %s and permits only new work', async mode => {
@@ -80,9 +80,9 @@ it.each(['create-review', 'rack-get', 'edit-review', 'edit-get', 'create-dispatc
   await open(editing, rack);
   await act(async () => release!(response(mode.endsWith('review') ? { status: { allowed: true } } : original)));
   expect(writes).toHaveLength(mode.endsWith('dispatch') ? 1 : 0);
-  expect(screen.queryByText(/Display name saved\.|Facility record created\./)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Display name saved\.|Facility created\./)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Display name')).toHaveValue('New input');
   fireEvent.click(screen.getByRole('button', { name: submit }));
-  await screen.findByText(editing ? 'Display name saved.' : rack ? 'Rack record created.' : 'Facility record created.');
+  await screen.findByText(editing ? 'Display name saved.' : rack ? 'Rack created.' : 'Facility created.');
   expect(writes).toHaveLength(mode.endsWith('dispatch') ? 2 : 1);
 });

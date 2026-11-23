@@ -559,12 +559,11 @@
 /* The legend popover. */
 .inventory-connection-legend-panel { position:absolute; right:8px; top:calc(100% + 4px); z-index:30; display:grid; gap:6px; width:min(380px,calc(100% - 16px)); padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); box-shadow:0 8px 24px rgb(0 0 0 / .18); font-size:12px; }
 
-/* Location tab: the correction editor as one compact block. */
-.inventory-location-editor { display:grid; gap:4px; padding-top:8px; border-top:1px solid var(--border); }
-.inventory-location-editor > p { font-size:12px; }
-.fleet-inventory .inventory-location-editor > h3 { font-size:14px; font-weight:600; }
-.inventory-location-editor > .inventory-management-controls { justify-content:flex-start; }
-.inventory-location-editor > [role="status"] { margin-top:0; min-height:0; }
+/* Location tab: the correction action sits inline on the Placement row, with its save result beside it. */
+.inventory-placement-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; }
+.inventory-location-editor { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+.fleet-inventory .inventory-location-editor .inventory-management-controls,.fleet-inventory .inventory-location-editor .inventory-management-controls > button { min-width:0; }
+.inventory-location-editor > [role="status"] { margin:0; min-height:0; font-size:12px; }
 /* The record header reserves one status line, not three: the display-name reason is now a tooltip. */
 .inventory-record-header .inventory-management-status { min-height:1.5em; }
 /* Tab panels: titled sections of label/value rows, two rows across when wide. */
@@ -590,3 +589,27 @@
 .inventory-dense-table tr[data-attention="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
 .inventory-dense-table tr[data-attention="unavailable"] > td:first-child { box-shadow:inset 3px 0 var(--warning,#d97706); }
 .inventory-dense-table td[data-single] { color:var(--warning,#b45309); font-weight:500; }
+
+/* Create and edit forms: no reserved status band, tight fields, short hints on the field they protect. */
+.inventory-management .inventory-management-status:empty,.fleet-inventory .inventory-management-status:empty,.inventory-dialog .inventory-management-status:empty,.inventory-record-header .inventory-management-status:empty { min-height:0; margin:0; }
+.inventory-dialog .inventory-form-gate > label,.inventory-dialog .inventory-form label { margin:0; }
+.inventory-dialog .inventory-form > fieldset.inventory-form-gate { gap:10px; }
+.inventory-dialog .inventory-form-grid { gap:10px 16px; }
+.inventory-field { display:grid; gap:2px; min-width:0; }
+.inventory-form .inventory-field > label { margin-bottom:0; }
+.inventory-field-hint { font-size:12px; color:var(--muted-foreground); }
+.inventory-form-rule { border-top:1px solid var(--border); padding-top:10px; }
+.inventory-form-actions { border-top:1px solid var(--border); }
+.inventory-attention-note { margin:0; font-size:12px; color:var(--warning,#b45309); }
+.inventory-option-attention { color:var(--warning,#b45309); }
+.inventory-form select[data-attention="cabled"] { border-color:var(--warning,#d97706); box-shadow:inset 3px 0 var(--warning,#d97706); }
+.inventory-form select[data-attention="conflict"] { border-color:var(--destructive); box-shadow:inset 3px 0 var(--destructive); }
+/* Component and lane editors: one dense row per item. */
+.inventory-editor-scroll { position:relative; overflow-x:auto; margin:8px 0; }
+.inventory-editor-table { width:100%; border-collapse:collapse; font-size:13px; }
+.inventory-editor-table th { padding:2px 4px; text-align:left; font-size:12px; font-weight:500; color:var(--muted-foreground); white-space:nowrap; }
+.inventory-editor-table td { padding:2px 4px; vertical-align:middle; }
+.inventory-editor-table td:last-child { width:1%; }
+.inventory-form .inventory-editor-table input,.inventory-form .inventory-editor-table select { height:30px; min-width:72px; padding:2px 8px; font-size:13px; }
+.inventory-endpoint-picker { display:grid; grid-template-columns:minmax(120px,1fr) minmax(96px,1fr); gap:4px; }
+.inventory-lane-table td:first-child { width:110px; }

@@ -43,12 +43,12 @@ describe('hardware catalog readers', () => {
     }));
     render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} claims={[claim]} catalog={[manufacturer, model]} /></QueryClientProvider>);
     fireEvent.click(await findEnabledButton({ name: 'Create device' }));
-    for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Shared catalog model (optional)', 'model-uid']]) {
+    for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Catalog model', 'model-uid']]) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
     fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
     await screen.findByText(/Related inventory is no longer readable/);
-    expect(screen.getByLabelText('Shared catalog model (optional)')).toHaveValue('unavailable');
+    expect(screen.getByLabelText('Catalog model')).toHaveValue('unavailable');
     expect(screen.getByRole('option', { name: /Selected catalog unavailable/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Model')).toHaveValue('Observed model');
     expect(screen.queryByText(/Private canonical vendor/)).not.toBeInTheDocument();
@@ -67,7 +67,7 @@ describe('hardware catalog readers', () => {
     const form = (current: InventoryFormValues, catalog: PhysicalRecord[]) => <InventoryHardwareFields kind="Device" values={current} namespace="default" claims={[]} devices={[]} feeds={[]} locations={[]} catalog={catalog} onChange={change} />;
     const result = render(form(values, [manufacturer, model, other]));
     expect(screen.queryByRole('option', { name: /Other namespace/ })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Shared catalog model (optional)'), { target: { value: 'model-uid' } });
+    fireEvent.change(screen.getByLabelText('Catalog model'), { target: { value: 'model-uid' } });
     const selected = change.mock.calls[0][0];
     expect(selected.catalog).toEqual({ namespace: 'default', name: model.metadata.name, uid: 'model-uid', resourceVersion: '2', manufacturer: { name: manufacturer.metadata.name, uid: 'vendor-uid', resourceVersion: '1' } });
     expect(selected.model).toBe(values.model);

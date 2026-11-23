@@ -1,3 +1,4 @@
+import { chooseEndpoint } from '../test/cable-endpoint';
 import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -42,7 +43,7 @@ it('registers hardware through the real form without changing claim identity', a
   fireEvent.change(screen.getByLabelText('Component 1 id'), { target: { value: 'nic-1' } });
   fireEvent.change(screen.getByLabelText('Component 1 name'), { target: { value: 'NIC port 1' } });
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
-  await screen.findByText('Device record created.');
+  await screen.findByText('Device created.');
   expect(writes).toHaveLength(1);
   expect(writes[0]).toMatchObject({ kind: 'Device', spec: { claimRef: { name: claim.metadata.name }, identity: { serial: 'SYNTHETIC-NEW' }, components: [{ id: 'nic-1', type: 'NetworkPort' }] } });
 });
@@ -55,8 +56,7 @@ it('uses typed feed and device endpoints and retains input on submit denial', as
   }));
   renderForm('Cable'); await open('Cable');
   fireEvent.change(screen.getByLabelText('Cable medium'), { target: { value: 'Power' } });
-  const select = (label: string, contains: string) => { const control = screen.getByLabelText(label) as HTMLSelectElement; const option = [...control.options].find(item => item.text.includes(contains))!; fireEvent.change(control, { target: { value: option.value } }); };
-  select('Lane 1 end A', 'Feed A'); select('Lane 1 end B', 'Power supply 1');
+  chooseEndpoint('Lane 1 end A', 'Feed A'); chooseEndpoint('Lane 1 end B', 'Power supply 1');
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await screen.findByText(/Your management permission changed/);
   expect(screen.getByLabelText('Display name')).toHaveValue('Synthetic record');
@@ -67,21 +67,21 @@ it('does not offer unknown or inaccessible endpoint positions', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ status: { allowed: true } })));
   render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Cable" facilities={[]} devices={[{ ...device, spec: { ...device.spec, components: [{ id: 'unknown', name: 'Unknown positions', type: 'NetworkPort' }] } }]} /></QueryClientProvider>);
   await open('Cable');
-  expect((screen.getByLabelText('Lane 1 end A') as HTMLSelectElement).options).toHaveLength(1);
+  expect((screen.getByLabelText('Lane 1 end A device') as HTMLSelectElement).options).toHaveLength(1);
 });
 it('does not present an unreadable installation collection as an empty device prerequisite', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ status: { allowed: true } })));
   render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} issues={{ DeviceClaim: { status: 403 } }} /></QueryClientProvider>);
-  await waitFor(() => expect(screen.queryByText('Checking management access…')).not.toBeInTheDocument());
-  expect(screen.getByText(/Related records are unavailable, not empty/)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Create device' })).toHaveAccessibleDescription('References unreadable'));
   expect(screen.getByRole('button', { name: 'Create device' })).toBeDisabled();
+  expect(screen.getByRole('status')).toBeEmptyDOMElement();
 });
 it('keeps readable cable endpoint choices with a partial-access explanation', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ status: { allowed: true } })));
   render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Cable" facilities={[]} devices={[device]} issues={{ PowerFeed: { status: 403 } }} /></QueryClientProvider>);
   await open('Cable');
-  expect(screen.getByText(/Some endpoint records are unavailable/)).toBeInTheDocument();
-  expect((screen.getByLabelText('Lane 1 end A') as HTMLSelectElement).options.length).toBeGreaterThan(1);
+  expect(screen.getByText('Some devices or feeds unreadable — list incomplete')).toBeInTheDocument();
+  expect((screen.getByLabelText('Lane 1 end A device') as HTMLSelectElement).options.length).toBeGreaterThan(1);
   expect(screen.queryByRole('option', { name: /Feed A/ })).not.toBeInTheDocument();
 });
 it('revokes a pending cable form on unmount before delayed endpoint validation completes', async () => {
@@ -94,10 +94,7 @@ it('revokes a pending cable form on unmount before delayed endpoint validation c
   }));
   const mounted = renderForm('Cable'); await open('Cable');
   fireEvent.change(screen.getByLabelText('Cable medium'), { target: { value: 'Power' } });
-  for (const [label, text] of [['Lane 1 end A', 'Feed A'], ['Lane 1 end B', 'Power supply 1']]) {
-    const select = screen.getByLabelText(label) as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: [...select.options].find(option => option.text.includes(text))!.value } });
-  }
+  chooseEndpoint('Lane 1 end A', 'Feed A'); chooseEndpoint('Lane 1 end B', 'Power supply 1');
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await waitFor(() => expect(release).toBeDefined()); mounted.unmount();
   await act(async () => { release!(response(feed)); });

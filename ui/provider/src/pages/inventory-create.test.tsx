@@ -37,7 +37,8 @@ it.each([['Device', 'device'], ['Cable', 'cable'], ['DeviceClaim', 'installation
   await screen.findByLabelText('Record name');
   expect(view.router.state.location.pathname).toBe(`/plugins/metal/inventory/create/${route}`);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  // The directory list is not shown; only the form's own lane editor is a table.
+  expect(screen.queryAllByRole('table').filter(table => !table.closest('form'))).toHaveLength(0);
   expect(screen.getByRole('heading', { name: `Create ${route.replace('-', ' ')}` })).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Private draft' } });
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));

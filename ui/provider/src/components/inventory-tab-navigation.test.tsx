@@ -120,7 +120,7 @@ it('fences an in-flight create across a cached tab transition without carrying i
   fireEvent.click(await screen.findByRole('tab', { name: 'Facilities' }));
   fireEvent.click(await findEnabledButton({ name: 'Create facility' }));
   expect(screen.getByLabelText('Display name')).toHaveValue('');
-  expect(screen.queryByText('Facility record created.')).not.toBeInTheDocument();
+  expect(screen.queryByText('Facility created.')).not.toBeInTheDocument();
   view.router.dispose();
 });
 
