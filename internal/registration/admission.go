@@ -1,5 +1,10 @@
 // Package registration admits inert, inventory-backed MachineCapacity records.
 //
+// Only inventory-backed capacity is governed: capacity that carries a
+// registration annotation, or a create under the derived device- name.
+// Other capacity, such as synthetic or hand-made capacity, is allowed without
+// reading Devices, and the packaged webhook does not route it at all.
+//
 // The webhook keeps no state of its own. Every decision is made against live
 // Devices and capacities in the configured provider projects, so the API
 // server remains the only store. One capacity per Device is enforced by the
@@ -26,6 +31,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -35,6 +41,11 @@ const (
 	DeviceUIDAnnotation     = "fleet.datumapis.com/registration-device-uid"
 	DeviceVersionAnnotation = "fleet.datumapis.com/registration-device-version"
 	OperationAnnotation     = "fleet.datumapis.com/registration-operation"
+
+	// RegistrationAnnotationPrefix starts every annotation registration sets.
+	// Any annotation with this prefix marks capacity as inventory-backed, so
+	// adding, changing or removing one is always gated.
+	RegistrationAnnotationPrefix = "fleet.datumapis.com/registration-"
 
 	// CapacityNamePrefix starts every registered capacity name. The rest of
 	// the name is the backing Device's UID.
@@ -111,6 +122,14 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 	if request.Resource.Group != metal.GroupVersion.Group || request.Resource.Resource != "machinecapacities" {
 		return admission.Denied("unsupported registration admission resource")
 	}
+	backed, err := inventoryBacked(request)
+	if err != nil {
+		return admission.Denied("capacity could not be decoded: " + err.Error())
+	}
+	if !backed {
+		// Defence in depth: the packaged webhook does not route this request.
+		return admission.Allowed("capacity is not inventory-backed; registration admission does not govern it")
+	}
 	if request.SubResource != "" || (request.Operation != admissionv1.Create && request.Operation != admissionv1.Update) {
 		return admission.Denied(mutationDisabled)
 	}
@@ -130,7 +149,50 @@ func (handler *Handler) Handle(ctx context.Context, request admission.Request) a
 	return admission.Allowed("inert inventory registration only; no availability or preparation authority")
 }
 
-const mutationDisabled = "capacity mutation and deletion are disabled; registered and legacy capacity require operator reconciliation"
+// inventoryBacked reports whether a request concerns inventory-backed
+// capacity. It matches the packaged webhook's match condition: a create
+// under the derived name, or a registration annotation on the new or the old
+// object. Checking both objects means an update that adds the marker, and an
+// update or delete that removes or changes it, are both governed.
+func inventoryBacked(request admission.Request) (bool, error) {
+	newObject, err := registrationMetadata(request.Object.Raw)
+	if err != nil {
+		return false, err
+	}
+	oldObject, err := registrationMetadata(request.OldObject.Raw)
+	if err != nil {
+		return false, err
+	}
+	if request.Operation == admissionv1.Create && (strings.HasPrefix(request.Name, CapacityNamePrefix) || (newObject != nil && strings.HasPrefix(newObject.Name, CapacityNamePrefix))) {
+		return true, nil
+	}
+	return marked(newObject) || marked(oldObject), nil
+}
+
+func registrationMetadata(raw []byte) (*metav1.PartialObjectMetadata, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	object := &metav1.PartialObjectMetadata{}
+	if err := json.Unmarshal(raw, object); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+func marked(object *metav1.PartialObjectMetadata) bool {
+	if object == nil {
+		return false
+	}
+	for key := range object.Annotations {
+		if strings.HasPrefix(key, RegistrationAnnotationPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+const mutationDisabled = "capacity mutation and deletion are disabled for inventory-backed capacity; registration annotations cannot be added, changed or removed"
 
 // evaluateUpdate explains why a capacity update is denied. Stage 1 denies
 // every update. An update that would move capacity out of Disabled for a

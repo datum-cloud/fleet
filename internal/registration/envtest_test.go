@@ -140,7 +140,8 @@ func (api *liveAPI) installWebhook() *httptest.Server {
 	}
 	operator := api.actor("operator", "system:masters")
 	api.eventually("registration webhook", func() bool {
-		probe := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "webhook-probe", Namespace: "default"}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: "absent"}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
+		// Only marked capacity is routed, so the probe carries the marker.
+		probe := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: CapacityName("webhook-probe"), Namespace: "default", Annotations: map[string]string{DeviceUIDAnnotation: "webhook-probe", DeviceVersionAnnotation: "1", OperationAnnotation: "webhook-probe"}}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: "absent"}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
 		return apierrors.IsForbidden(operator.Create(context.Background(), probe, client.DryRunAll))
 	})
 	return server

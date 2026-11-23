@@ -73,14 +73,16 @@ operation ID is no longer used for deduplication.
 
 An empty cleaning-policy name explicitly means **unconfigured**, not a policy
 named `default`, synthetic cleaning, or authorization to prepare. The CRD
-permits it only while Disabled. The webhook rejects *all* capacity updates,
-status updates and deletes. An update that would move capacity out of
+permits it only while Disabled. The webhook rejects every update and delete
+of [inventory-backed capacity](#scope-inventory-backed-capacity-only). An
+update that would move capacity out of
 `Disabled` while its Device is `Decommissioning` or `Retired` is denied for
 that reason; the webhook first checks that the caller can read the Device. Real policy resolution and policy-use authorization
 are future prerequisites for a separately designed transition; there is no
 stage-1 preparation endpoint.
 
-`cmd/fleet-registration` serves the validating webhook. For each create it:
+`cmd/fleet-registration` serves the validating webhook. For each create of
+inventory-backed capacity it:
 
 1. requires Milo's authenticated `iam.miloapis.com/parent-*` extras naming a
    single Project in the configured provider scope, and an actor UID;
@@ -105,6 +107,84 @@ stage-1 preparation endpoint.
    - any capacity has unresolved physical identity, so non-conflict cannot be
      established; or
    - any capacity is backed by a Device that shares an alias.
+
+## Scope: inventory-backed capacity only
+
+The webhook governs only **inventory-backed** capacity, meaning capacity that
+registration creates from a Device. Other capacity, such as synthetic
+capacity that a GitOps controller applies, capacity whose status a synthetic
+provider writes, and hand-made capacity, is not routed to it at all.
+
+The marker is registration's own metadata:
+
+- any annotation whose key starts with `fleet.datumapis.com/registration-`
+  (the three annotations above), on the new or the old object; or
+- on create only, a name starting with `device-`, the derived name.
+
+The marker is reliable because the webhook admits no create of
+inventory-backed capacity without all three annotations and the derived
+name, and admits no later update or delete of it, so the annotations cannot
+be removed or changed after creation. A label was not used: registration
+sets none, adding one would change the portal's wire contract, and a match
+condition can read annotations directly. The name is part of the marker only
+on create, so that the derived name space is reserved for registration and
+no unannotated create can occupy a Device's derived name. Capacity is not
+renamed, so the annotations alone identify it afterwards.
+
+The packaged webhook routes requests with one rule and one match condition:
+
+```yaml
+rules:
+  - apiGroups: [metal.datumapis.com]
+    apiVersions: [v1alpha1]
+    operations: [CREATE, UPDATE, DELETE]
+    resources: [machinecapacities]
+    scope: Namespaced
+matchConditions:
+  - name: inventory-backed-capacity
+    expression: >-
+      (request.operation == 'CREATE' && object != null
+      && has(object.metadata.name) && object.metadata.name.startsWith('device-'))
+      || (object != null && has(object.metadata.annotations)
+      && object.metadata.annotations.exists(key, key.startsWith('fleet.datumapis.com/registration-')))
+      || (oldObject != null && has(oldObject.metadata.annotations)
+      && oldObject.metadata.annotations.exists(key, key.startsWith('fleet.datumapis.com/registration-')))
+```
+
+`object` is null for a delete and `oldObject` is null for a create. Checking
+both objects routes, and so denies, an update that adds a registration
+annotation to unmarked capacity, which would make it look inventory-backed,
+and an update or delete that removes or changes the annotation on marked
+capacity, which would let it escape the gate. `failurePolicy: Fail` applies
+to a match condition that fails to evaluate.
+
+The handler applies the same test as defence in depth: a request for capacity
+without the marker that reaches it anyway is allowed without reading Devices
+or the provider project. A marked request is handled as before: creates are
+gated in full, and updates, deletes and any routed subresource are denied.
+
+**Status writes are not routed.** `machinecapacities/status` is not in the
+rule. Stage 1 has no status writer for inventory-backed capacity, but a
+provider may need one later, and the webhook would then have to be changed
+first. Status writes are governed by RBAC alone; in the packaged IAM roles
+only the controller role holds `machinecapacities.updateStatus`. This is
+acceptable because a status write cannot widen what capacity offers:
+
+- the CRD's status subresource ignores changes to `metadata` and `spec`, so a
+  status write cannot strip the marker or move capacity out of `Disabled`;
+- allocation requires `spec.allocationPolicy: Enabled`, which status cannot
+  set.
+
+The envtest suite confirms the first point on Kubernetes 1.37.0. A future
+stage that lets status influence availability must revisit this.
+
+**Unmarked capacity is not gated.** Capacity without the marker, including
+legacy capacity created before registration admission, can again be created,
+updated and deleted by any caller RBAC allows, with no Device check and no
+Disabled requirement. It is not inventory-backed and makes no claim about a
+Device. Registration still reads it: a create of inventory-backed capacity is
+denied while any capacity in the provider scope references the Device, or has
+unresolved physical identity.
 
 The webhook writes nothing. Dry-run requests are evaluated like real ones
 (`sideEffects: None`). Controller credentials supply reads and SAR evaluation,
@@ -150,8 +230,8 @@ The duplicate check is a point-in-time list. It does not close this race:
 No reservation store closes this, by decision. The consequences are bounded:
 
 - B can never be registered, because A now exists and shares its alias.
-- A's capacity is `Disabled`, and the webhook denies every capacity update, so
-  it can never become available in stage 1.
+- A's capacity is `Disabled`, and the webhook denies every update of
+  inventory-backed capacity, so it can never become available in stage 1.
 - The staff registration form lists every Device and marks each one that
   shares an alias with another as **Conflicting**, so both A and B show the
   conflict until a person resolves it.
@@ -193,8 +273,8 @@ Registration semantics, enforced by the registration webhook:
 
 - Only an `Active` Device can get new capacity.
 - Capacity whose Device is `Decommissioning` or `Retired` cannot leave
-  `Disabled`. Stage 1 already denies every capacity update, so this states the
-  rule a future enabling transition must keep.
+  `Disabled`. Stage 1 already denies every update of inventory-backed
+  capacity, so this states the rule a future enabling transition must keep.
 - A Retired Device still takes part in the duplicate-identity check for as
   long as it exists. Deleting it removes its identity from that check.
 
@@ -284,7 +364,7 @@ evaluation error also denies.
   This comes from reading the pinned Milo source and from the envtest
   simulation below, not from a live Milo test.
 - **Capacity is not deleted with its Device.** The registration webhook denies
-  capacity deletes, so a namespace or project teardown that removes Devices
+  deletes of inventory-backed capacity, so a namespace or project teardown that removes Devices
   still stops at their capacity; see the next section.
 
 ### Cleanup identity
@@ -382,18 +462,20 @@ being deleted, or the component is not installed, leaves the capacity in
 place, still `Disabled`. The webhook denies every update and delete of it, so
 it cannot become available. No owner reference links the two: the webhook
 rejects owner references on registration, and garbage collection would be
-denied anyway because capacity deletes are fenced. The orphaned capacity keeps
+denied anyway because deletes of inventory-backed capacity are fenced. The orphaned capacity keeps
 its Device UID annotation and name, which also prevents a replacement Device
 with the same name from registering. Clean it up only in environments where
-capacity writes are not fenced, such as synthetic ones.
+the registration webhook is not installed, such as synthetic ones.
 
 ## Production packaging and rollout
 
 - `config/milo` includes the mandatory fail-closed registration webhook
   (`config/components/registration-admission`). Its one entry matches
-  capacity create/update/delete and status in every namespace, with no
-  selectors or match conditions. An unreachable service blocks capacity
-  writes globally and nothing else: Device, namespace and Project writes do
+  capacity create, update and delete in every namespace, narrowed by the
+  [inventory-backed match condition](#scope-inventory-backed-capacity-only)
+  and with no selectors. Status writes are not matched. An unreachable
+  service blocks writes to inventory-backed capacity and nothing else:
+  unmarked capacity, capacity status, Device, namespace and Project writes do
   not pass through the registration webhook.
 - No root in this repository includes Device deletion protection. A
   deploying repository adds `config/components/device-deletion-protection` to
@@ -413,8 +495,9 @@ capacity writes are not fenced, such as synthetic ones.
   actor identity is preserved, and that nested Organization/User contexts do
   not present as a Project. Only a singleton
   `Project`/`resourcemanager.miloapis.com` context is accepted.
-- Legacy capacity writes fail closed; legacy records remain readable and
-  unchanged.
+- Writes to inventory-backed capacity fail closed. Legacy and other unmarked
+  capacity is not governed by the webhook; its writes are subject to RBAC
+  alone.
 
 Environment-owned inputs, none of which this repository supplies:
 
@@ -488,7 +571,22 @@ packaged webhook against a real API server and checks that:
 - a Decommissioning or Retired Device cannot be registered, a Retired Device
   still blocks a duplicate, and capacity cannot leave `Disabled` once its
   Device is Decommissioning or Retired;
-- a webhook outage blocks capacity writes but not Device writes.
+- a webhook outage blocks capacity registration but not Device writes.
+
+`internal/registration/scope_envtest_test.go` installs the same packaged
+webhook and checks that:
+
+- updates and deletes of registered capacity are denied, including by the
+  admin;
+- removing all or one registration annotation, or changing one, is denied by
+  update and by merge patch, and adding one to unmarked capacity is denied;
+- an unannotated create under a `device-` name is denied;
+- with the webhook backend closed, a synthetic capacity's server-side-apply
+  create and spec update, its status write, and the update and delete of
+  hand-made capacity in `default` all succeed, so they are not routed;
+- with the backend closed, a status write on registered capacity succeeds but
+  leaves its annotations and spec unchanged, while its update and delete, and
+  adding the marker to unmarked capacity, fail closed.
 
 `internal/registration/deletion_envtest_test.go` applies the component from
 its manifest and checks that:
@@ -522,7 +620,9 @@ expression offline with the API server's admission CEL compiler, for cases
 envtest cannot produce, such as an empty username: it never matches empty
 entries, and padded, CRLF-separated entries match only exactly.
 
-Unit tests cover the remaining negative cases, normalization, cross-project
+Unit tests cover the remaining negative cases, the handler's own scope test
+(unmarked create, update, status and delete are allowed without reading
+Devices; marker additions, removals and changes are denied), normalization, cross-project
 duplicates, project lifetime and the packaged webhook shape.
 `cmd/fleet-registration` tests reject unauthenticated and untrusted webhook
 transport. `internal/api/inventory/v1alpha1/lifecycle_test.go` runs the

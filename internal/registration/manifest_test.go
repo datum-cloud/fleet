@@ -3,15 +3,28 @@ package registration
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	"sigs.k8s.io/yaml"
 )
 
-// The packaged webhook is the only gate on capacity writes, so it must stay
-// fail-closed over every capacity write and must not reach anything else.
-func TestPackagedWebhookFencesOnlyCapacityWrites(t *testing.T) {
+// inventoryBackedCondition is the packaged webhook's only match condition. It
+// routes a create under the derived name and any request whose new or old
+// object carries a registration annotation, so adding, changing or removing
+// the marker is always gated.
+const inventoryBackedCondition = "(request.operation == 'CREATE' && object != null" +
+	" && has(object.metadata.name) && object.metadata.name.startsWith('device-'))" +
+	" || (object != null && has(object.metadata.annotations)" +
+	" && object.metadata.annotations.exists(key, key.startsWith('fleet.datumapis.com/registration-')))" +
+	" || (oldObject != null && has(oldObject.metadata.annotations)" +
+	" && oldObject.metadata.annotations.exists(key, key.startsWith('fleet.datumapis.com/registration-')))"
+
+// The packaged webhook is fail-closed over writes to inventory-backed
+// capacity only. It must not route status writes, other capacity or any
+// other resource.
+func TestPackagedWebhookFencesOnlyInventoryBackedCapacity(t *testing.T) {
 	data, err := os.ReadFile("../../config/components/registration-admission/webhook.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -27,14 +40,31 @@ func TestPackagedWebhookFencesOnlyCapacityWrites(t *testing.T) {
 	if webhook.FailurePolicy == nil || *webhook.FailurePolicy != admissionregistrationv1.Fail || webhook.SideEffects == nil || *webhook.SideEffects != admissionregistrationv1.SideEffectClassNone || webhook.MatchPolicy == nil || *webhook.MatchPolicy != admissionregistrationv1.Equivalent {
 		t.Fatal("capacity webhook must fail closed, be side-effect free and match equivalent versions")
 	}
-	if webhook.NamespaceSelector != nil || webhook.ObjectSelector != nil || len(webhook.MatchConditions) != 0 {
-		t.Fatal("capacity webhook must not be narrowed by selectors or conditions")
+	if webhook.TimeoutSeconds == nil || *webhook.TimeoutSeconds != 20 {
+		t.Fatal("capacity webhook timeout drifted")
+	}
+	if webhook.NamespaceSelector != nil || webhook.ObjectSelector != nil {
+		t.Fatal("capacity webhook must not be narrowed by selectors")
+	}
+	if len(webhook.MatchConditions) != 1 || webhook.MatchConditions[0].Name != "inventory-backed-capacity" || webhook.MatchConditions[0].Expression != inventoryBackedCondition {
+		t.Fatalf("capacity webhook match conditions drifted: %+v", webhook.MatchConditions)
 	}
 	if len(webhook.Rules) != 1 {
 		t.Fatal("capacity webhook must have exactly one rule")
 	}
 	rule := webhook.Rules[0]
-	if !slices.Equal(rule.APIGroups, []string{"metal.datumapis.com"}) || !slices.Equal(rule.Resources, []string{"machinecapacities", "machinecapacities/status"}) || !slices.Equal(rule.Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}) {
+	if !slices.Equal(rule.APIGroups, []string{"metal.datumapis.com"}) || !slices.Equal(rule.APIVersions, []string{"v1alpha1"}) || !slices.Equal(rule.Resources, []string{"machinecapacities"}) || !slices.Equal(rule.Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}) || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
 		t.Fatalf("capacity webhook rule drifted: %+v", rule)
+	}
+	// The condition's literals must stay in step with the handler's marker.
+	for _, literal := range []string{"'" + CapacityNamePrefix + "'", "'" + RegistrationAnnotationPrefix + "'"} {
+		if !strings.Contains(inventoryBackedCondition, literal) {
+			t.Fatalf("match condition does not use the handler's marker %s", literal)
+		}
+	}
+	for _, annotation := range []string{DeviceUIDAnnotation, DeviceVersionAnnotation, OperationAnnotation} {
+		if !strings.HasPrefix(annotation, RegistrationAnnotationPrefix) {
+			t.Fatalf("registration annotation %s is outside the marker prefix", annotation)
+		}
 	}
 }

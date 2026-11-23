@@ -25,7 +25,9 @@ Devices, one capacity per Device through a Device-derived name, a Device
 lifecycle (`Active`, `Decommissioning`, terminal `Retired`), an opt-in Device
 deletion protection component that admits deletes only for Retired Devices or
 a deleting namespace, and a session-fenced default-namespace Device picker. It admits only Disabled/Retain records with cleaning explicitly
-unconfigured; deployment trust inputs and live Milo acceptance remain required.
+unconfigured, and governs only capacity that carries the registration marker;
+synthetic, hand-made and legacy capacity and all capacity status writes are not
+routed to it. Deployment trust inputs and live Milo acceptance remain required.
 An opt-in [local KVM installation harness](../operations/local-vm.md) implements
 a bounded libvirt executor and guest installer using the same lifecycle library.
 It uses a disposable Kubernetes API and explicit local authority fixtures; it is
