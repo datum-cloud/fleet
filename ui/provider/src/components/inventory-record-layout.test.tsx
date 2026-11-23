@@ -253,23 +253,59 @@ describe('search-first lists', () => {
     show('?kind=Device&q=compute');
     const table = screen.getByRole('table', { name: 'Devices' });
     expect(within(table).queryByText('example-srv-a01-01')).not.toBeInTheDocument();
-    expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Name', 'Model', 'Location', 'Serial number']);
+    // Location first, so it stays in view at phone width; optional columns appear because some device records them.
+    expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Name', 'Rack', 'U', 'Face', 'Model', 'Serial', 'Asset tag', 'Power']);
+    expect(table).toHaveClass('inventory-dense-table');
     fireEvent.click(within(table).getByText('SYNTH-EX-01'));
     expect(url().get('record')).toBe('example-srv-a01-01');
     expect(screen.getByRole('heading', { name: 'Compute a01-01' })).toBeInTheDocument();
   });
 
-  it('keeps unknown and planned locations labelled in the list', () => {
+  it('marks unknown locations with "?", an amber edge and the reason', () => {
     show('?kind=Device');
     const table = screen.getByRole('table', { name: 'Devices' });
-    expect(within(table).getByText('Rack A03 · position unknown')).toBeInTheDocument();
-    expect(within(table).getByText('Claim record not found')).toBeInTheDocument();
+    const unpositioned = within(table).getByRole('link', { name: 'Compute a03-01 (position unknown)' }).closest('tr')!;
+    expect(unpositioned).toHaveAttribute('data-attention', 'unavailable');
+    expect(unpositioned).toHaveAttribute('title', 'Position not recorded');
+    const [, rack, position] = within(unpositioned).getAllByRole('cell');
+    expect(rack).toHaveTextContent('Rack A03');
+    expect(position).toHaveTextContent('?Position not recorded');
+    expect(position.querySelector('[aria-hidden="true"]')).toHaveTextContent('?');
+    const unplaced = within(table).getByRole('link', { name: 'Compute unplaced-01' }).closest('tr')!;
+    expect(unplaced).toHaveAttribute('data-attention', 'unavailable');
+    expect(unplaced).toHaveTextContent('Installation plan not found and no placement reported');
+    // Unplaced equipment sorts after everything with a location; racks run top of rack first.
+    const names = within(table).getAllByRole('row').slice(1).map(row => within(row).getAllByRole('cell')[0].querySelector('a')!.textContent);
+    expect(names.at(-1)).toBe('Compute unplaced-01');
+    expect(names.indexOf('Leaf a01')).toBeLessThan(names.indexOf('Compute a01-01'));
+    expect(within(table).queryByText(/· position unknown|claim-derived|Claim record not found/)).toBeNull();
+  });
+
+  it('shows a non-Active lifecycle as a muted word after the name', () => {
+    show('?kind=Device');
+    const row = screen.getByRole('link', { name: 'Compute retired-01' }).closest('tr')!;
+    expect(within(row).getByTitle('Lifecycle: Retired')).toHaveTextContent('Retired');
   });
 
   it('names a Cable end once when every lane shares it', () => {
     show('?kind=Cable');
     const row = screen.getByRole('link', { name: 'Breakout swp49' }).closest('tr')!;
-    expect(within(row).getAllByText('Leaf a01')).toHaveLength(1);
-    expect(within(row).getByText('swp49 · 4 lanes')).toBeInTheDocument();
+    expect(within(row).getAllByRole('link', { name: 'Leaf a01 · swp49' })).toHaveLength(1);
+    // The four-way end is one line; each lane is in the tooltip.
+    const fanout = within(row).getByText('4 devices · eth0');
+    expect(fanout).toHaveAttribute('title', expect.stringContaining('1: Storage a01-03 · eth0'));
+    expect(row.querySelector('small')).toBeNull();
+    expect(within(row).getAllByRole('cell').at(-1)).toHaveTextContent('4');
+  });
+
+  it('colours cable rows: red for a port two cables record, amber for a missing peer', () => {
+    show('?kind=Cable');
+    const duplicate = screen.getByRole('link', { name: 'DAC a01-01 eth1 (duplicate record)' }).closest('tr')!;
+    expect(duplicate).toHaveAttribute('data-attention', 'conflict');
+    expect(duplicate).toHaveAttribute('title', 'Another cable records the same port');
+    const missing = screen.getByRole('link', { name: 'DAC a01-02 eth1' }).closest('tr')!;
+    expect(missing).toHaveAttribute('data-attention', 'unavailable');
+    expect(within(missing).getByText('example-leaf-missing · swp7')).toHaveAttribute('title', 'Device record not found');
+    expect(screen.queryByText(/record not found\)/)).toBeNull();
   });
 });

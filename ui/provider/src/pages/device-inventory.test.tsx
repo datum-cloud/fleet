@@ -68,8 +68,9 @@ describe('DeviceInventoryList', () => {
   it('shows Devices whose claim is missing', () => {
     mockInventory({ data: inventory });
     renderAt('/plugins/metal-datumapis-com/inventory');
-    expect(within(screen.getByTestId('fleet-plugin-inventory-table')).getByText(/orphan-synthetic-0009/)).toBeInTheDocument();
-    expect(screen.getByText('Claim record not found')).toBeInTheDocument();
+    const row = within(screen.getByTestId('fleet-plugin-inventory-table')).getByText(/orphan-synthetic-0009/).closest('tr')!;
+    expect(row).toHaveAttribute('data-attention', 'unavailable');
+    expect(row).toHaveAttribute('title', 'Installation plan not found and no placement reported');
   });
 
   it('shows the restricted state on a 403', () => {

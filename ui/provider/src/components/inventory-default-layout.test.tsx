@@ -24,7 +24,7 @@ const inventory = toInventory(fixturePhysicalClaims, fixturePhysicalDevices, [..
 beforeEach(() => permission.mockReturnValue({ data: true, isFetching: false, error: null } as never));
 
 function shape(container: HTMLElement) {
-  return [...container.querySelectorAll('.inventory-topline, .inventory-list-heading, .inventory-record-count, .inventory-management-controls, .inventory-management-status, .inventory-toolbar')].map(element => [element.tagName, element.className]);
+  return [...container.querySelectorAll('.inventory-list-heading, .inventory-management-controls, .inventory-management-status, .inventory-toolbar')].map(element => [element.tagName, element.className]);
 }
 
 it.each(sections)('keeps $kind category, heading, action and filter structure across pending/allowed/denied', section => {
@@ -76,7 +76,6 @@ it('retains the same action DOM while permission changes and reserves CSS geomet
     expect(button.hasAttribute('disabled')).toBe(!allowed);
   }
   expect(styles).toContain('.fleet-inventory .inventory-management-controls > button { min-width:180px; }');
-  expect(styles).toContain('.fleet-inventory .inventory-record-count { min-width:130px; min-height:1.5em; }');
   expect(styles).toContain('min-height:3em;');
 });
 

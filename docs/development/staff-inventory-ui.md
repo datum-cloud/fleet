@@ -13,20 +13,34 @@ described in the historical notes below, not inventory contracts or IAM.
 | --- | --- | --- |
 | Equipment | Devices, Cables, Power feeds | Physical assets and recorded connections/supplies |
 | Locations | Operational sites, Facilities, Racks | Site operational membership is distinct from physical Facility premises and rack containment |
-| Installation plans | None | The directory is **Claims & registrations**: installation plans and the devices registered against them. Plans do not allocate capacity |
+| Installation plans | None | Installation plans and the devices registered against them. Plans do not allocate capacity |
 | Hardware catalog | Manufacturers, Device types | Reference descriptions/templates, not installed assets or available capacity |
 
 - Uses the installed Datum `Tabs`, `TabsList variant="line"`, and
   `TabsLinkTrigger` with React Router links, matching the pinned Compute and
   cloud-portal sources. No custom underline imitation, sidebar, or category menu.
   Primary tabs remain mounted; secondary tabs depend only on the selected group,
-  never access results. Each row scrolls horizontally on narrow screens.
+  never access results. A group with one kind (Installation plans) has no
+  second tab row. At phone width the group tabs show short labels (Plans,
+  Catalog, and Sites for Operational sites) so all four fit on one row; the
+  accessible name stays the full title.
+- Kind tabs carry the directory's count ("Devices 18"). A filtered directory
+  shows "shown/total" on its own tab, and a denied collection reads "?". The
+  count is the tab's accessible description; its name stays the title.
+  `PhysicalInventory` reports counts through `InventoryCountsProvider` only
+  after the session boundary resolves, so the public shell, pending and
+  unavailable states render no number.
 - Equipment / Devices is the default. Group links select the first kind unless
   already in that group. `?kind=...` and record/namespace bookmarks and the
-  child create routes are the only inventory URLs. Detail and task breadcrumbs
+  child create routes are the only inventory URLs. Directories have no
+  breadcrumb, visible title or description: the tabs say where the reader is,
+  and an `sr-only` `h1` names the page. Detail and task breadcrumbs
   include group and category, for example Equipment / Devices / record name.
   Protected names appear only after successful access checks, not from URL text.
-- Search, filters, refresh, and Create remain page controls, not navigation.
+- Search, filters, Refresh and Create are page controls, not navigation. They
+  share one toolbar row above the table: search, the facility and model
+  filters, **Clear filters** (only while a filter is set), an icon-only
+  Refresh named "Refresh inventory", then Create.
   Same-category links retain `q`, `location`, and `model`; switching categories
   starts an unfiltered directory, and browser Back/Forward restores prior URLs.
   Clicking the already-current tab is a no-op, not an implicit refresh.
@@ -121,12 +135,43 @@ field or view.
    accessible name. Nothing may look free, available or verified, and when
    a collection is unreadable, counts and states read as unknown, never
    zero or empty.
-7. **List pages are search-first.** Search and filters sit at the top and keep
-   their URL parameters (`q`, `location`, `model`). Rows show only the columns
-   needed to pick the right record (Devices: name, model, location, serial;
-   Cables: name, medium, End A, End B; Racks: name, facility, height) and no
-   generated names, except to tell apart catalog records whose display names
-   collide. Clicking a row opens the record; the name stays the keyboard link.
+7. **List pages are search-first and dense.** Search and filters sit at the
+   top and keep their URL parameters (`q`, `location`, `model`); search
+   matches the text the row shows. Directory tables use `inventory-dense-table`:
+   one line per row, long cells cut with an ellipsis and the full text in the
+   tooltip. Each kind has its own columns (`inventory-directory-rows.ts`):
+
+   | Kind | Columns |
+   | --- | --- |
+   | Devices | Name, Rack, U, Face, Model, Serial, Asset tag, Power (feeds the PSUs reach) |
+   | Cables | Name, Medium, A end, B end, Lanes |
+   | Power feeds | Name, Location, Type, Voltage, Breaker, Capacity, Load |
+   | Operational sites | Name, Code, Facilities, Racks, Devices |
+   | Facilities | Name, Code, Site, Racks, Devices |
+   | Racks | Name, Height, Devices, Used ("12/42U"), Power, Feeds |
+   | Installation plans | Name, Rack, U, Face, Model, Device, State |
+   | Manufacturers | Name, Aliases, Device types, Devices |
+   | Device types | Name, Manufacturer, Model key, Height, Depth, Ports, Devices |
+
+   Facility appears before Rack only when more than one facility exists.
+   Serial, Asset tag, Power, Lanes and Aliases appear only when some row has
+   a value. Devices and plans sort by location (facility, rack, top of rack
+   first), with unplaced devices last; other kinds sort by name. A cable end
+   is "Leaf a01 · swp1", and a breakout end that reaches several devices is
+   "4 devices · eth0" with each lane in the tooltip. Related records show
+   their display names, never record names, except to tell apart catalog
+   records whose display names collide. A non-Active device has its
+   lifecycle as a muted word after the name.
+
+   State is colour, not words in cells. A row whose records disagree
+   (multiple registrations, two cables on one port, overlapping rack
+   placements) has a red edge; a missing or unreadable peer, an unknown
+   position, a planned-only location or a placement that differs from its plan
+   has an amber edge. The reason is the row tooltip and part of the name
+   cell's accessible text. Unknown values read "?", with the reason in the
+   tooltip and accessible text; Used units never show free space and read "?"
+   when any placement lacks a position. Clicking a row opens the record; the
+   name stays the keyboard link.
 8. **Mobile.** At 390 px the header, primary view and tabs must work without
    horizontal page scroll. `pnpm screenshots` fails a page that overflows.
 
@@ -165,11 +210,13 @@ access-dependent navigation descriptions in the historical phase notes below.
   columns and repeated default labels are unnecessary in this UI. Public group
   and selected-group category labels never disappear or change their active default because of
   access results. No private record names or counts appear in the public shell.
-- Pending, allowed, and denied directory states share heading, action, count,
-  status, and search/filter layout slots. Actions remain mounted and disabled
-  until usable; successful authorization adds no “access checked” clutter.
-  Explanations for ownership restrictions, denied access, unavailable references,
-  expired sessions, and uncertain saves remain visible. Long failure explanations
+- Pending, allowed, and denied directory states share the heading and the
+  toolbar's search, filter, action and status slots. Actions remain mounted
+  and disabled until usable; successful authorization adds no “access checked”
+  clutter. Missing management access and ownership restrictions are the
+  disabled button's tooltip and accessible description, not a sentence.
+  Explanations for unavailable references, expired sessions, and uncertain
+  saves remain visible. Long failure explanations
   may wrap rather than being clipped. The composition follow-up below replaces
   expanding forms with focused dialogs and child task pages.
 - Existing immutable edit baselines, submit-time authorization, read/write
@@ -207,8 +254,9 @@ archives (these are source observations, not authenticated visual acceptance):
 | [Cloud portal domain form](https://github.com/datum-cloud/cloud-portal/blob/7456e469a8589d03afe13623b15992e712563d0f/app/features/edge/domain/domain-form-dialog.tsx) | Focused controlled `Form.Dialog`, closing after an acknowledged successful mutation | Separate focused display-name and reported-location dialogs; compact Facility/Rack create dialogs |
 | [Infra configurator part form](https://github.com/datum-cloud/infra-configurator/blob/25e5dc7d26ba892643f7dd7dadbc8711e4b1abe8/src/components/catalog/part-form-dialog.tsx) | Controlled Datum Dialog with an explicit viewport height cap and overflow scrolling | Bound dialog scrolling and keep explicit Cancel / Create record / Save changes actions accessible |
 
-- Directory, details, and task pages use a local composition of Datum Breadcrumb
-  and PageTitle, with explicit accessible headings and stable action/status slots.
+- Details and task pages use a local composition of Datum Breadcrumb and
+  PageTitle, with explicit accessible headings and stable action/status slots.
+  Directories use the route tabs and the toolbar instead.
   Existing line-style Bare Metal tabs remain; the grouped-navigation follow-up
   organizes the nine inventory categories without changing their contracts. No
   new global navigation or unsupported Activity/audit surface is added.
@@ -225,8 +273,10 @@ archives (these are source observations, not authenticated visual acceptance):
   retain only those filters and the relevant kind, not arbitrary redirect targets
   or foreign scope. Same-category record/back links preserve filters. Back/forward
   and direct task URLs work without storing drafts in browser storage or URLs.
-  Search applies on Enter or **Apply search**; keystrokes remain local so host
-  loader revalidation cannot interrupt typing or weaken session fences.
+  Search applies as the reader types, 200 ms after the last keystroke, or at
+  once on Enter. The field keeps its own draft, so URL updates and host loader
+  revalidation never interrupt typing or weaken session fences. The no-match
+  view offers **Clear filters**, which clears `q`, `location` and `model`.
 - Dialogs provide focus trapping/restoration through Datum's Radix-backed primitive,
   viewport-bounded scrolling, and explicit Cancel / Create record / Save changes.
   Native field errors have an accessible summary, field descriptions, and focus
