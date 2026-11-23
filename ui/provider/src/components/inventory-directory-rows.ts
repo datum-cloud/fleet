@@ -306,4 +306,3 @@ export function directoryRows(entries: Entry[], inventory: Inventory, telemetry:
 export function rowText(row: DirectoryRow) {
   return [...Object.values(row.cells).map(cell => cell?.text), row.note?.text].filter(Boolean).join(' ');
 }
-
