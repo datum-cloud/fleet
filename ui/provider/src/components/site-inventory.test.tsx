@@ -17,8 +17,11 @@ function view(query: string, data: Inventory) {
 describe('Site and premises directory', () => {
   it('shows internal identity separately from provider identity', () => {
     render(view('?kind=Site&record=site-stable&namespace=default', inventory));
-    expect(screen.getByText('Site code EX3')).toBeInTheDocument();
-    expect(screen.getByText(/example-provider \/ EX1/)).toBeInTheDocument();
+    expect(screen.getByTitle('Site code')).toHaveTextContent('EX3');
+    // The one facility is a header link; its provider identifiers stay on the Facility page.
+    expect(screen.getByRole('link', { name: 'Physical premises' }).closest('.inventory-record-summary')).not.toBeNull();
+    expect(screen.queryByText(/example-provider/)).toBeNull();
+    expect(screen.queryByText('Operational membership only')).toBeNull();
     expect(screen.queryByText(/Membership grants no placement eligibility/)).toBeNull();
   });
 
@@ -37,7 +40,7 @@ describe('Site and premises directory', () => {
 
   it('redacts denied Facility identifiers and links from Site details', () => {
     render(view('?kind=Site&record=site-stable&namespace=default', { ...inventory, issues: { Facility: { status: 403 } } }));
-    expect(screen.getByText(/Facility details unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Facilities' })).toHaveTextContent('Access denied · Facility details unavailable');
     expect(screen.queryByText(/EX1/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Physical premises' })).not.toBeInTheDocument();
   });

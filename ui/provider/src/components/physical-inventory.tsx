@@ -14,7 +14,7 @@ import {
 } from '../inventory';
 import type { CableEndpoint, PhysicalRecord } from '../../../shared/fleet-api';
 import './physical-inventory.css';
-import { SiteOverview } from './site-overview';
+import { SiteOverview, SiteSummary } from './site-overview';
 import { ManufacturerOverview } from './manufacturer-overview';
 import { catalogLabel } from '../lib/manufacturer-inventory';
 import { InventoryAccessState } from './inventory-access-state';
@@ -254,14 +254,15 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       case 'Site': {
         const site = record as PhysicalRecord;
         return {
-          summary: <RecordSummary><SummaryParts parts={[site.spec.code && `Site code ${site.spec.code}`, 'Operational membership only']} /></RecordSummary>,
+          summary: <SiteSummary site={site} inventory={inventory} />,
           issues: [], tabs: [],
           primary: <SiteOverview site={site} inventory={inventory} />,
         };
       }
       case 'Manufacturer': {
         const manufacturer = record as PhysicalRecord;
-        const aliases = manufacturer.spec.aliases ?? [];
+        // An alias that only repeats the record name is already in the footer.
+        const aliases = (manufacturer.spec.aliases ?? []).filter(alias => alias !== manufacturer.metadata.name);
         return {
           summary: <RecordSummary><SummaryParts parts={[manufacturer.spec.canonicalName && manufacturer.spec.canonicalName !== recordName(entry) && `Canonical name ${manufacturer.spec.canonicalName}`, aliases.length > 0 && `Also recorded as ${aliases.join(', ')}`]} /></RecordSummary>,
           issues: [], tabs: [],

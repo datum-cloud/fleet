@@ -37,6 +37,9 @@ function show(inventory: Inventory, query = '?kind=Manufacturer&namespace=defaul
   return { ...result, update: (data: Inventory) => result.rerender(view(data)) };
 }
 
+// Device types is the first tab; Devices is the second, so its panel starts hidden.
+const openTab = (name: string) => fireEvent.click(within(screen.getByRole('tablist', { name: 'Manufacturer details' })).getByRole('tab', { name: new RegExp(`^${name}`) }));
+
 describe('manufacturer detail', () => {
   it('shows linked models, deduplicated device counts and real reported-location links', () => {
     const { inventory, manufacturer, model, device } = fixture();
@@ -48,15 +51,22 @@ describe('manufacturer detail', () => {
     const models = within(screen.getByRole('region', { name: 'Manufacturer device types table' }));
     expect(models.getAllByRole('row')).toHaveLength(2);
     expect(models.getByRole('cell', { name: '1' })).toBeInTheDocument();
+    expect(models.getByRole('cell', { name: '8U' })).toBeInTheDocument();
+    openTab('Devices');
     const devices = within(screen.getByRole('region', { name: 'Manufacturer devices table' }));
     expect(devices.getAllByRole('row')).toHaveLength(2);
-    for (const [label, kind, name] of [['Physical server', 'Device', 'device-key'], ['Compute model', 'DeviceType', 'model-key'], ['Reported premises', 'Facility', 'premises-key'], ['Reported rack', 'Rack', 'rack-key']]) {
+    for (const [label, kind, name] of [['Physical server', 'Device', 'device-key'], ['Compute model', 'DeviceType', 'model-key'], ['Reported rack', 'Rack', 'rack-key']]) {
       const params = new URL(devices.getByRole('link', { name: label }).getAttribute('href')!, 'https://inventory.test').searchParams;
       expect(params.get('kind')).toBe(kind);
       expect(params.get('record')).toBe(name);
       expect(params.get('namespace')).toBe('default');
     }
     expect(devices.getByText(/U4/)).toBeInTheDocument();
+    // One facility: the rack names it, so the facility is not repeated on every row.
+    expect(devices.queryByRole('link', { name: 'Reported premises' })).not.toBeInTheDocument();
+    // An alias equal to the record name is not repeated in the header.
+    expect(screen.queryByText(/Also recorded as .*vendor-key/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Also recorded as Old Acme/)).toBeInTheDocument();
     expect(screen.queryByText(/Manufacturers \/ vendor-key/)).not.toBeInTheDocument();
     expect(screen.getByText('vendor-key').closest('.inventory-record-footer')).toHaveTextContent('Record');
   });
@@ -72,8 +82,11 @@ describe('manufacturer detail', () => {
     ];
     expect(manufacturerInventory(manufacturer, inventory).devices).toEqual([]);
     show(inventory);
-    expect(screen.getByText(/Some device type references are missing/)).toBeInTheDocument();
-    expect(screen.getByText('No resolved device relationships found.')).toBeInTheDocument();
+    // The unresolved references are an amber "0+" count, with the reason as its tooltip and accessible text.
+    const tab = within(screen.getByRole('tablist', { name: 'Manufacturer details' })).getByRole('tab', { name: /^Devices 0\+ · Some device type references are missing/ });
+    expect(tab.querySelector('[data-tone="warning"]')).toHaveAttribute('title', expect.stringMatching(/missing or deleting/));
+    openTab('Devices');
+    expect(screen.getByText('No resolved devices.')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Physical server' })).not.toBeInTheDocument();
     expect(screen.queryByText('missing-secret-model')).not.toBeInTheDocument();
   });
@@ -86,10 +99,20 @@ describe('manufacturer detail', () => {
     expect(screen.queryByRole('link', { name: 'Physical server' })).not.toBeInTheDocument();
     expect(screen.queryByRole('cell', { name: '0' })).not.toBeInTheDocument();
     if (kind === 'DeviceType') expect(screen.queryByRole('link', { name: 'Compute model' })).not.toBeInTheDocument();
-    else expect(screen.getByRole('cell', { name: 'Unknown' })).toBeInTheDocument();
+    else expect(screen.getByRole('cell', { name: '?' })).toBeInTheDocument();
     result.update({ ...inventory, issues: { [kind]: { status: 502 } } });
     expect(screen.getByText(/Records unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/No devices explicitly/)).not.toBeInTheDocument();
+  });
+
+  it('reads a deleting manufacturer as unknown counts with the reason as their tooltip, not a paragraph', () => {
+    const { inventory, manufacturer } = fixture();
+    manufacturer.metadata.deletionTimestamp = '2026-11-22T00:00:00Z';
+    show(inventory);
+    const tabs = within(screen.getByRole('tablist', { name: 'Manufacturer details' }));
+    for (const name of ['Device types', 'Devices']) expect(tabs.getByRole('tab', { name: new RegExp(`^${name} \\? · Manufacturer is deleting`) })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Physical server', hidden: true })).not.toBeInTheDocument();
+    expect(screen.queryByText(/catalog relationships are unavailable, not empty/)).toBeNull();
   });
 
   it('redacts a denied manufacturer and its dependent catalog entirely', () => {
@@ -101,16 +124,22 @@ describe('manufacturer detail', () => {
   });
 
   it('retains linked devices when locations are denied, unavailable or missing', () => {
-    const { inventory } = fixture();
+    const { inventory, device } = fixture();
     inventory.issues = { Facility: { status: 403 }, Rack: { status: 502 } };
     const result = show(inventory);
-    expect(screen.getByText('Facility access denied')).toBeInTheDocument();
+    openTab('Devices');
     expect(screen.getByText('Rack unavailable')).toBeInTheDocument();
     expect(result.container.textContent).not.toMatch(/Reported premises|Reported rack|premises-key|rack-key/);
     expect(screen.getByRole('link', { name: 'Physical server' })).toBeInTheDocument();
     result.update({ ...inventory, issues: {}, physical: inventory.physical.filter(record => record.kind !== 'Facility' && record.kind !== 'Rack') });
-    expect(screen.getByText('Facility reference missing')).toBeInTheDocument();
     expect(screen.getByText('Rack reference missing')).toBeInTheDocument();
+    // Without a rack the row names the facility, with the same redaction.
+    delete device.spec.reportedPlacement!.rackRef;
+    result.update({ ...inventory, issues: { Facility: { status: 403 } } });
+    expect(screen.getByText('Facility access denied')).toBeInTheDocument();
+    expect(result.container.textContent).not.toMatch(/Reported premises|premises-key/);
+    result.update({ ...inventory, issues: {}, physical: inventory.physical.filter(record => record.kind !== 'Facility') });
+    expect(screen.getByText('Facility reference missing')).toBeInTheDocument();
   });
 
   it('never substitutes claim placement or nominal model geometry', () => {
@@ -118,6 +147,7 @@ describe('manufacturer detail', () => {
     delete device.spec.reportedPlacement;
     inventory.slots.push({ key: `default/${device.spec.claimRef.name}`, claim: structuredClone(fixturePhysicalClaims[0]), devices: [device] });
     show(inventory);
+    openTab('Devices');
     const devices = within(screen.getByRole('region', { name: 'Manufacturer devices table' }));
     expect(devices.getByRole('cell', { name: 'Not recorded' })).toBeInTheDocument();
     expect(devices.queryByText(/8U|Claim-derived/)).not.toBeInTheDocument();
@@ -128,7 +158,7 @@ describe('manufacturer detail', () => {
     inventory.unboundDevices = [];
     const result = show(inventory);
     expect(screen.getByRole('cell', { name: '0' })).toBeInTheDocument();
-    expect(screen.getByText('No devices explicitly linked to these device types.')).toBeInTheDocument();
+    expect(screen.getByText('No devices of these types.')).toBeInTheDocument();
     result.update({ ...inventory, physical: [manufacturer] });
     expect(screen.getByText('No device types linked to this manufacturer.')).toBeInTheDocument();
     const fresh = fixture();
@@ -143,10 +173,11 @@ describe('manufacturer detail', () => {
     inventory.physical.push({ ...model, metadata: { ...model.metadata, name: 'second-model' } });
     inventory.unboundDevices.push({ ...device, metadata: { ...device.metadata, name: 'second-device' } });
     show(inventory);
+    openTab('Devices');
     expect(screen.getByRole('link', { name: 'Physical server (device-key)' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Physical server (second-device)' })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Compute model (model-key)' }).length).toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: 'Compute model (second-model)' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Compute model (second-model)', hidden: true })).toBeInTheDocument();
   });
 
   it('uses fallback labels in the overview and picker without canonical-name substitution', () => {
@@ -155,7 +186,7 @@ describe('manufacturer detail', () => {
     model.spec.displayName = '';
     show(inventory);
     expect(screen.getByRole('heading', { name: 'vendor-key' })).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: 'model-key' })).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: 'model-key', hidden: true })).toHaveLength(2);
     render(<InventoryHardwareFields kind="Device" values={{ name: '', namespace: 'default', displayName: '', height: '', facility: '' }} onChange={() => {}} namespace="default" claims={[]} devices={[]} feeds={[]} locations={[]} catalog={[manufacturer, model]} />);
     expect(screen.getByRole('option', { name: 'vendor-key · model-key' })).toBeInTheDocument();
   });
@@ -169,6 +200,7 @@ describe('manufacturer detail', () => {
     expect(screen.getByRole('searchbox')).toHaveValue('Acme');
     expect(screen.queryByText('vendor-key')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Acme hardware' }));
+    openTab('Devices');
     fireEvent.click(screen.getByRole('link', { name: 'Physical server' }));
     fireEvent.click(screen.getByRole('button', { name: 'History back' }));
     expect(screen.getByRole('region', { name: 'Manufacturer devices table' })).toBeInTheDocument();
@@ -196,6 +228,7 @@ describe('manufacturer detail', () => {
     inventory.slots.push({ key: 'default/plan', claim: structuredClone(fixturePhysicalClaims[0]), devices: [device] });
     inventory.issues = { DeviceClaim: { status: 403 } };
     const result = show(inventory);
+    openTab('Devices');
     expect(screen.getByRole('link', { name: 'Physical server' })).toBeInTheDocument();
     result.unmount();
     show(inventory, '?kind=Manufacturer&namespace=elsewhere&record=vendor-key');
