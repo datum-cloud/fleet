@@ -33,7 +33,10 @@ Operations in the navigation. The page has four tabs:
   Facilities lead to racks and installation plans; claims lead to all registered
   devices; cable endpoints lead to devices or feeds. Identity, typed components,
   internal paths, external service references, legacy peers, and creation times
-  remain visible. Missing claims do not hide hardware, and historical
+  remain visible. Device detail adds a connection view of Cable records
+  (diagram and list), not live link state; see the
+  [connection view](../../docs/development/staff-inventory-ui.md#device-connection-view-implemented).
+  Missing claims do not hide hardware, and historical
   registrations do not establish an active device. The original `inventory/:namespace/:claim`
   route remains available for existing `default` links. Authorized manual management uses
   focused Datum dialogs for Facility/Rack creation, display-name editing, and

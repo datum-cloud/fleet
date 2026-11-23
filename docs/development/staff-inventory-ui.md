@@ -422,6 +422,54 @@ inventory across principals. The existing plugin boundary provides the isolated
 cache and synchronous router invalidation. Source support does not prove the
 deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 
+## Device connection view (implemented)
+
+Device detail shows a **Connections** section under the component table. It
+is labelled "Cable records, not live link state". It joins the Device's typed
+components to the Cable lanes that name them, using the Cables, Devices,
+PowerFeeds and DeviceTypes the Inventory tab already lists. It adds no
+requests, API fields or permissions.
+
+`deviceConnections()` in `ui/provider/src/lib/device-connections.ts` is a
+pure join. It returns one link per component position and per claiming lane,
+grouped as power, network, console, pass-through, modules and items, or not
+on this Device. Each link has one of five record states:
+
+| State | Glyph | Meaning |
+| --- | --- | --- |
+| Cable recorded | ● | Exactly one Cable lane names the position, and the readable peer records the far component and position. |
+| No cable recorded | ○ | No readable Cable names the position. This means unknown, not free. |
+| Records disagree | ! | Two or more lanes name the position or the far port, or a Cable names a component or position that this Device or the peer does not record. Every claiming Cable is shown, and none is treated as current. |
+| Peer unavailable | ? | The peer collection is denied, or the named peer record is not in the namespace. A denied peer shows no name, component, position or rating. A missing peer shows only what the Cable records, marked "record not found". |
+| Catalog only | ◇ | A DeviceType template whose id (matched by convention) is not recorded on the Device. |
+
+A breakout lane maps to its own component position. PowerFeed peers show
+their recorded supply rating, and the power group always states that power
+redundancy is unknown. When a peer Device records an internal mapping
+(FrontPort to RearPort, or PowerOutlet to PowerInlet), the link traces onward
+for up to four hops, stopping at the first hop that is unrecorded, disputed
+or unreadable. A Device's own internal mapping is shown on its local port.
+When Cables cannot be read, the view says that connections are unknown and
+classifies nothing.
+
+The **Diagram** view puts the Device in the centre, power peers on the left
+and network, console and other peers on the right. Each line is labelled with
+the local and remote port and the Cable, and its style (solid, dotted, double,
+dashed, or faint dashed with a hatched peer) repeats the state glyph and
+words. The diagram's markup is a nested list. It has one tab stop, the arrow
+keys, Home and End move between Cable and peer links, and Enter or a click
+opens the record. The **List** view is a table per group with the same links,
+states, reasons and traces. Above 32 links (`DIAGRAM_LINK_LIMIT`) the view
+opens on the list, and the diagram collapses each group to a disclosure with
+its state counts. Styling uses only the host's tokens (`--foreground`,
+`--muted`, `--muted-foreground`, `--border`, `--accent`, `--primary`,
+`--destructive`, `--card` and `--radius`), and the diagram stacks into one
+column below 600 px.
+
+Not shown, because the model does not record them: link speed, Cable label,
+colour or length, component faces, live or observed link state, and any
+verified state. Shared-failure or redundancy analysis is not attempted.
+
 ## Deliberate gaps and decisions
 
 | Interaction | Remaining boundary |
