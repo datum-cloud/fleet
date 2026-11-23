@@ -108,6 +108,34 @@ inventory-backed capacity it:
      established; or
    - any capacity is backed by a Device that shares an alias.
 
+### Provider-project scope
+
+Step 1 is the only check that decides which project a request is judged in.
+Nothing after it is limited to the provider projects on its own: `Resolve`
+resolves whatever project name it is given, the webhook match conditions do
+not look at the project, and the SubjectAccessReviews carry the request's own
+user and extras. If step 1 let a project through, every later check would run
+against that project. So a request whose project is outside
+`--provider-projects` is denied before any project is resolved, any Device or
+capacity is read, or any SubjectAccessReview is sent. The same holds for an
+update that would leave `Disabled`. Separately, if `Resolve` returns a project
+whose route name differs from the one requested, the request is denied before
+that project's client is used. `internal/registration/tenancy_test.go` and
+`tenancy_envtest_test.go` pin both checks with project clients and
+SubjectAccessReview stubs that fail the test if they are called.
+
+**The scope check is currently the only limit on what a certificate holder can
+learn.** The webhook does not yet check who is calling it
+([#149](https://github.com/datum-cloud/fleet/issues/149)). Any holder of a
+client certificate from the webhook's client CA can post an AdmissionReview
+directly and read the verdict, and a verdict can name Devices and their
+lifecycle. Such a caller writes the review's user and extras itself, so the
+SubjectAccessReviews do not limit it: it can claim any identity. Until #149 is
+fixed, the provider-project scope check is the only thing that bounds what it
+learns, and it bounds it to the configured provider projects. Treat every
+certificate from that CA as read access to Device names and lifecycle across
+the provider scope.
+
 ## Scope: inventory-backed capacity only
 
 The webhook governs only **inventory-backed** capacity, meaning capacity that
@@ -237,6 +265,14 @@ No reservation store closes this, by decision. The consequences are bounded:
   conflict until a person resolves it.
 - Any future transition that enables capacity must recheck duplicates against
   live Devices at that time.
+
+**This race is open, and it blocks stage 2.** The bounds above hold only while
+inventory-backed capacity stays `Disabled`. Allocation must not be enabled for
+inventory-backed capacity, by the webhook allowing an update out of
+`Disabled` or by any other path, until this race is closed. A recheck at
+enable time narrows the window but does not close it, because a duplicate
+Device can still appear after the recheck. See
+[Stage 2 blockers](#stage-2-blockers).
 
 Two registrations racing for two already-existing Devices that share an alias
 both fail, because each sees the other Device. Device status has no writer
@@ -462,10 +498,51 @@ being deleted, or the component is not installed, leaves the capacity in
 place, still `Disabled`. The webhook denies every update and delete of it, so
 it cannot become available. No owner reference links the two: the webhook
 rejects owner references on registration, and garbage collection would be
-denied anyway because deletes of inventory-backed capacity are fenced. The orphaned capacity keeps
-its Device UID annotation and name, which also prevents a replacement Device
-with the same name from registering. Clean it up only in environments where
-the registration webhook is not installed, such as synthetic ones.
+denied anyway because deletes of inventory-backed capacity are fenced.
+
+The deletion policy narrows when this happens but does not prevent it: a
+Retired Device, a Device in a deleting namespace, and a delete by a cleanup
+identity are all still admitted. No root in this repository installs the
+policy, so in an environment built from these roots alone any authorized
+caller can delete a Device, including one that a registration checked just
+before its capacity was admitted.
+
+The resulting orphaned capacity is in this state:
+
+- It stays `Disabled` and is immutable. The webhook denies every update and
+  delete of inventory-backed capacity for every caller, administrators
+  included, and an update out of `Disabled` is denied with
+  `its Device does not exist`.
+- It keeps its Device UID annotation and its `spec.deviceRef` name. A
+  replacement Device created under the same name cannot register, because
+  the capacity already references that name.
+- Its Device reference no longer resolves, so it has unresolved physical
+  identity. Registration denies **every** create in the provider scope while
+  such capacity exists, not only the same-name replacement, with
+  `capacity default/<name> has unresolved physical identity`.
+  `TestOrphanedCapacityBlocksUnrelatedRegistration` pins this.
+
+Remediation, in stage 1:
+
+1. Re-record the deleted machine as a Device under its **old name**, with its
+   original serial and system UUID, created directly in `Retired` (a Device
+   may be created in any lifecycle). The capacity's reference resolves again,
+   so other Devices can register. The Retired Device cannot register, the
+   capacity stays `Disabled`, and the machine's identity is back in the
+   duplicate check. The same test pins this.
+2. Register the real replacement machine under a **new** Device name. The old
+   name stays bound to the old capacity.
+3. Where the deletion policy is installed, do not delete the re-recorded
+   Retired Device: the policy admits that delete, and the capacity would be
+   orphaned again.
+
+There is no stage-1 path that removes the orphaned capacity itself in an
+environment where the registration webhook is installed. Removing it would
+mean taking the webhook out of the admission path, which unfences every
+inventory-backed capacity write while it is out, so it needs a separately
+reviewed change, not an operator action. Clean up orphaned capacity directly
+only in environments where the registration webhook is not installed, such as
+synthetic ones.
 
 ## Production packaging and rollout
 
@@ -529,6 +606,24 @@ old `fleet-capacity-registration-v1` Secret, its segments, the
 `fleet-registration-control` ConfigMap, or the old retention policies keeps
 those objects until its owner removes them; the new service ignores them.
 
+## Stage 2 blockers
+
+Stage 1 is safe because inventory-backed capacity never leaves `Disabled`.
+These must be resolved before any stage lets it:
+
+1. **Close the duplicate race.** Allocation must not be enabled for
+   inventory-backed capacity until the
+   [same-serial race](#the-documented-duplicate-race) is closed. A recheck at
+   enable time is not enough on its own.
+2. **Give orphaned capacity a way out.** Capacity whose Device was deleted
+   [cannot be removed](#deleting-a-device) while the webhook is installed, and
+   it blocks every registration in the provider scope until its Device is
+   re-recorded.
+3. **Authenticate the webhook's caller**
+   ([#149](https://github.com/datum-cloud/fleet/issues/149)). Until then the
+   [provider-project scope check](#provider-project-scope) is the only limit
+   on what a certificate holder can learn.
+
 ## UI
 
 The Datum dialog uses the existing host-session boundary and isolated read
@@ -587,6 +682,19 @@ webhook and checks that:
 - with the backend closed, a status write on registered capacity succeeds but
   leaves its annotations and spec unchanged, while its update and delete, and
   adding the marker to unmarked capacity, fail closed.
+
+`internal/registration/tenancy_envtest_test.go` installs the same packaged
+webhook with a handler whose project client and SubjectAccessReview fail the
+test if they are reached, and checks that:
+
+- a cluster-admin caller routed through a project outside the provider scope
+  cannot register, and cannot learn why registered capacity stays `Disabled`;
+- when `Resolve` returns a different route name than the one requested, a
+  registration and an update that would leave `Disabled` are both denied.
+
+`internal/registration/tenancy_test.go` checks the same two cases on the
+handler directly. Disabling the scope check, or either route-name check, fails
+these tests.
 
 `internal/registration/deletion_envtest_test.go` applies the component from
 its manifest and checks that:

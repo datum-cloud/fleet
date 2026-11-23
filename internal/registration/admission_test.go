@@ -355,6 +355,43 @@ func TestReplacementDeviceUnderSameNameCannotRegister(t *testing.T) {
 	}
 }
 
+// Capacity whose Device was deleted has no resolvable identity, so it blocks
+// every registration in the provider scope, not only a same-name
+// replacement. The operator guide documents this and its remediation.
+func TestOrphanedCapacityBlocksUnrelatedRegistration(t *testing.T) {
+	handler, device := fixture(t)
+	api := providerClient(t, handler)
+	registered := &metal.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: CapacityName(device.UID), Namespace: "default", Annotations: map[string]string{DeviceUIDAnnotation: string(device.UID)}}, Spec: metal.MachineCapacitySpec{DeviceRef: metal.LocalReference{Name: device.Name}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"}}
+	if err := api.Create(context.Background(), registered); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Delete(context.Background(), device); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "default", UID: "device-unrelated"}, Spec: inventory.DeviceSpec{Identity: inventory.DeviceIdentity{Serial: "unrelated-serial", SystemUUID: "55555555-5555-5555-5555-555555555555", Model: "test"}}}
+	if err := api.Create(context.Background(), unrelated); err != nil {
+		t.Fatal(err)
+	}
+	response := handler.Handle(context.Background(), registrationRequest(t, unrelated))
+	if response.Allowed || !strings.Contains(response.Result.Message, "capacity "+registered.Namespace+"/"+registered.Name+" has unresolved physical identity") {
+		t.Fatalf("registration beside orphaned capacity: %+v", response.Result)
+	}
+
+	// Remediation: re-record the deleted machine under its old name and
+	// identity as Retired. The capacity resolves again and stays Disabled,
+	// the re-recorded Device cannot register, and other Devices can.
+	restored := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: device.Name, Namespace: "default", UID: "device-restored"}, Spec: inventory.DeviceSpec{Lifecycle: inventory.DeviceRetired, Identity: device.Spec.Identity}}
+	if err := api.Create(context.Background(), restored); err != nil {
+		t.Fatal(err)
+	}
+	if response := handler.Handle(context.Background(), registrationRequest(t, unrelated)); !response.Allowed {
+		t.Fatalf("registration still blocked after re-recording the Device: %s", response.Result.Message)
+	}
+	if handler.Handle(context.Background(), registrationRequest(t, restored)).Allowed {
+		t.Fatal("re-recorded Retired Device registered")
+	}
+}
+
 func TestNonConflictingLegacyCapacityAndAllocationRemainUntouched(t *testing.T) {
 	handler, device := fixture(t)
 	ctx := context.Background()
