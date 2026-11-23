@@ -333,6 +333,12 @@ its own and no override. A component's rack face is derived:
 
 If either face is unknown, the rack face is unknown.
 
+**Faceplate layout.** A DeviceType may also record where each template sits on
+its face, as cells of named port banks (`spec.faceplate.banks[]` and
+`componentTemplates[].layout`), plus an optional `modelShape.width`. Layout
+needs the template's `face`, is catalog data only, and has no Device override.
+See [faceplate layout](../development/hardware-catalog.md#faceplate-layout-implemented).
+
 **Conflicts.** Two placements whose units overlap on the same rack face are
 shown as "records disagree". Two half-depth devices on opposite faces of the
 same units do not disagree. Admission never blocks an overlap, because

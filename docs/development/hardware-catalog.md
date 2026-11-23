@@ -37,6 +37,8 @@ shape pinning, physical qualification, reservations, or component reconciliation
   A template may set a chassis-relative `face` (`Front` or `Rear`; absent means
   unknown), which a Device component with the same id inherits. See
   [rack faces, depth and component faces](../operations/physical-inventory.md#rack-faces-depth-and-component-faces).
+  `modelShape.width` (`Full` or `Half`) is optional on both kinds and follows
+  the same rules; see [faceplate layout](#faceplate-layout-implemented).
 - Both kinds use `metadata.creationTimestamp` and resource audit logs, not
   spec provenance, imported source identities, or synthetic timestamp advances.
   A catalog edit changes no Device, claim, installed component, recorded hardware
@@ -46,6 +48,107 @@ shape pinning, physical qualification, reservations, or component reconciliation
   manufacturer/model, serial, system UUID and claimRef remain unchanged and
   immutable. Catalog edits never overwrite recorded observations. Neither catalog
   nor physical records accept the removed provenance/source-identity fields.
+
+## Faceplate layout (implemented)
+
+These fields were proposed in the faceplate design and are now implemented in
+the Go types, the CRD and `ui/shared/fleet-api.ts`. Every field is optional,
+none is defaulted, and absence means "not recorded".
+
+Layout is nominal catalog data on DeviceType only. A Device inherits it through
+`deviceTypeRef` and the template-id convention, and cannot override it. It
+carries no state: whether a port is cabled comes from Cable records, and there
+is still no observed health.
+
+Positions are cells of a **bank grid**, never millimetres. A bank is one
+cluster of identical cells on one face, such as a 2×12 RJ45 block or a PSU
+bay. Row and column inside a bank give the usual odd-top, even-bottom switch
+numbering.
+
+| Field | Status | Meaning |
+| --- | --- | --- |
+| `spec.faceplate.banks[]` | Implemented (was proposal) | Up to 32 banks, a list map keyed by `id` (1 to 63 characters). |
+| `banks[].face` | Implemented (was proposal) | `Front` or `Rear`, chassis-relative. Required. |
+| `banks[].rows`, `banks[].columns` | Implemented (was proposal) | The grid, 1 to 8 rows and 1 to 64 columns. Required. |
+| `banks[].offset` | Implemented (was proposal) | The bank's left edge as a fraction (0 to 1) of the usable face width. All or none per face. With none, banks flow left to right in list order. |
+| `banks[].cellMM {width, height}` | Implemented (was proposal) | Nominal module cell size in millimetres (width 1 to 450, height 1 to 400), for PSUs, drive bays and fans. With none, readers use the nominal size of the cell's connector. |
+| `componentTemplates[].layout {bank, row, column}` | Implemented (was proposal) | The template's cell. 1-based. Required together. |
+| `componentTemplates[].layout.span` | Implemented (was proposal) | Columns covered to the right, 1 to 64. Unset means 1. There is no row span. |
+| `modelShape.width` | Implemented (was proposal) | `Full` or `Half`, on DeviceType and Device, as for `fullDepth`. Unset is unknown; drawings assume full width and say so. Which half a Device occupies is a placement fact and is not recorded. |
+
+**Decorative marks are not implemented.** The design's optional `marks[]`
+(power buttons, LEDs, vents, labels) were dropped to keep the schema to the
+fields above. Drawings show only components, and empty space stays empty.
+
+### Admission rules
+
+The CRD's CEL rules reject:
+
+- a template `layout` without a template `face`, without a `faceplate`, or
+  naming a bank that is missing or on the other face;
+- a row past the bank's rows, or a column plus span past its columns
+  (minimums are schema bounds);
+- two templates whose cells overlap in one bank row, spans included;
+- offsets set on some banks of a face but not all;
+- more than 128 templates with a layout.
+
+Banks are per face, so a cell that is unique in its bank is unique on its face.
+CEL cannot check physical fit, such as banks that together are wider than the
+face or that overlap each other. A drawing reader must scale it and warn,
+not reject it.
+
+**CEL cost outcome.** The overlap rule compares every pair of templates. Its
+static estimate is about 4.4M against the 10M per-expression limit, so the CRD
+installs, and the layout rules total about 5.2M against the 100M CRD limit.
+At runtime, though, 256 laid-out templates can exceed the 1M per-call limit.
+Measured on the costliest valid shape found (32 one-row banks with 63-character
+IDs, every template in row 1), the cost passes 1M between 176 and 192 laid-out
+templates. The smallest safe change was a cheap cap: at most 128 templates may
+carry a layout. That keeps the worst case at about 627K. `componentTemplates`
+keeps its 256-item limit. Templates past the cap simply have no layout and no
+position on the drawing.
+
+The cap rule runs before the overlap rule, so an over-cap object reports the
+cap rather than a cost error. `faceplate_test.go` pins the estimates and the
+worst-case runtime cost with 25% headroom. `faceplate_envtest_test.go` checks
+every rule and the worst case against a Kubernetes 1.37.0 API server. If real
+hardware needs more than 128 laid-out templates, such as a 2U 96-port patch
+panel with front and rear ports, move overlap detection to a reviewed
+admission webhook rather than raising the cap.
+
+### Example (synthetic)
+
+```yaml
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: DeviceType
+metadata:
+  name: example-1u-server
+  namespace: example-inventory
+spec:
+  displayName: Example 1U server
+  manufacturerRef: {name: example-vendor}
+  model: example-1u
+  modelShape: {heightUnits: 1, fullDepth: true, width: Full}
+  faceplate:
+    banks:
+      - {id: bays, face: Front, rows: 1, columns: 8, cellMM: {width: 40, height: 18}}
+      - {id: psu-1, face: Rear, rows: 1, columns: 1, offset: 0, cellMM: {width: 40, height: 38}}
+      - {id: ocp, face: Rear, rows: 1, columns: 2, offset: 0.13}
+      - {id: mgmt, face: Rear, rows: 1, columns: 1, offset: 0.34}
+      - {id: psu-2, face: Rear, rows: 1, columns: 1, offset: 0.89, cellMM: {width: 40, height: 38}}
+  componentTemplates:
+    - {id: bay-1, name: Bay 1, type: Module, connector: 2.5in bay, face: Front, layout: {bank: bays, row: 1, column: 1}}
+    - {id: eth0, name: Ethernet 0, type: NetworkPort, connector: SFP28, face: Rear, layout: {bank: ocp, row: 1, column: 1}}
+    - {id: eth1, name: Ethernet 1, type: NetworkPort, connector: SFP28, face: Rear, layout: {bank: ocp, row: 1, column: 2}}
+    - {id: bmc, name: BMC, type: NetworkPort, connector: RJ45, face: Rear, layout: {bank: mgmt, row: 1, column: 1}}
+    - {id: psu-1, name: PSU 1, type: PowerInlet, connector: IEC C14, face: Rear, layout: {bank: psu-1, row: 1, column: 1}}
+    - {id: psu-2, name: PSU 2, type: PowerInlet, connector: IEC C14, face: Rear, layout: {bank: psu-2, row: 1, column: 1}}
+    # Recorded, not laid out: its position on the face is not recorded.
+    - {id: console, name: Console, type: ConsolePort, connector: RJ45, face: Rear}
+```
+
+The front bank flows because none of its face's banks sets `offset`. The rear
+banks are placed because all of them do.
 
 ## Scope, guarantees, and reader safety
 

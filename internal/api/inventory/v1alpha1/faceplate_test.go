@@ -3,6 +3,8 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	celconfig "k8s.io/apiserver/pkg/apis/cel"
 	"k8s.io/apiserver/pkg/cel/environment"
+	"sigs.k8s.io/yaml"
 )
 
 func ptr[T any](value T) *T { return &value }
@@ -264,5 +267,29 @@ func TestFaceplateRulesFitTheCELBudget(t *testing.T) {
 		if errs := admit(t, "DeviceType", object(t, worstCaseLayout(laidOut)), nil); len(errs) == 0 || !strings.Contains(errs.ToAggregate().Error(), "at most 128 templates") {
 			t.Fatalf("%d laid-out templates: %v", laidOut, errs)
 		}
+	}
+}
+
+// The hardware catalog doc's synthetic example must stay admissible.
+func TestHardwareCatalogDocExampleIsAdmitted(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "development", "hardware-catalog.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, found := strings.Cut(string(data), "### Example (synthetic)\n\n```yaml\n")
+	example, _, closed := strings.Cut(after, "```")
+	if !found || !closed {
+		t.Fatal("hardware-catalog.md has no synthetic faceplate example")
+	}
+	var record map[string]any
+	if err := yaml.Unmarshal([]byte(example), &record); err != nil {
+		t.Fatal(err)
+	}
+	if errs := admit(t, "DeviceType", object(t, record), nil); len(errs) > 0 {
+		t.Fatalf("documented example rejected: %v", errs)
+	}
+	spec := record["spec"].(map[string]any)
+	if len(spec["faceplate"].(map[string]any)["banks"].([]any)) != 5 || len(spec["componentTemplates"].([]any)) != 7 {
+		t.Fatal("example changed shape; update this test with it")
 	}
 }
