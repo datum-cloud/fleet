@@ -56,6 +56,14 @@ async function capture(browser: Browser, base: string, entry: CapturePage, viewp
     await page.goto(url.href, { waitUntil: 'networkidle' });
     await page.locator(entry.ready).first().waitFor({ state: 'visible', timeout: 15_000 });
     await page.evaluate(() => document.fonts.ready);
+    if (entry.click) {
+      // Bring the target to the middle of the viewport, open it, and capture what is on screen.
+      const target = page.locator(entry.click).first();
+      await target.evaluate(element => element.scrollIntoView({ block: 'center' }));
+      if (viewport.mobile) await target.tap();
+      else await target.click();
+      await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    }
     const state = await page.evaluate(banner => ({
       dark: document.documentElement.classList.contains('dark'),
       fixtures: document.body.innerText.includes(banner),
@@ -73,7 +81,7 @@ async function capture(browser: Browser, base: string, entry: CapturePage, viewp
       problems.push(`horizontal overflow at ${viewport.width}px: document is ${state.scrollWidth}px wide${state.wide.length ? `; widest: ${state.wide.join(', ')}` : ''}`);
     }
     const target = entry.element ? page.locator(entry.element).first() : page;
-    await target.screenshot({ path, animations: 'disabled', ...(entry.element ? {} : { fullPage: true }) });
+    await target.screenshot({ path, animations: 'disabled', ...(entry.element || entry.click ? {} : { fullPage: true }) });
     file = path;
   } catch (error) {
     problems.push(error instanceof Error ? error.message.split('\n')[0] : String(error));
@@ -101,7 +109,7 @@ async function main() {
     await mkdir(OUT, { recursive: true });
     for (const name of await readdir(OUT)) if (PAGES.some(page => name.startsWith(`${page.name}-`)) && name.endsWith('.png')) await rm(resolve(OUT, name));
     for (const entry of pages) {
-      for (const viewport of VIEWPORTS.filter(item => !entry.viewports || entry.viewports.includes(item.name))) {
+      for (const viewport of VIEWPORTS.filter(item => entry.viewports ? entry.viewports.includes(item.name) : !item.optIn)) {
         const { file, problems } = await capture(browser, base, entry, viewport);
         failures.push(...[...new Set(problems)].map(problem => `${entry.name} @ ${viewport.name}: ${problem}`));
         if (file) written.push(file);

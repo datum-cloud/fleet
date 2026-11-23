@@ -17,6 +17,8 @@ export interface Viewport {
   mobile?: boolean;
   /** Phone-width checks: the page must not scroll horizontally. */
   checkOverflow?: boolean;
+  /** Captured only for pages that list it in `viewports`. */
+  optIn?: boolean;
 }
 
 export interface CapturePage {
@@ -28,15 +30,21 @@ export interface CapturePage {
   ready: string;
   /** Capture only this element instead of the full page. */
   element?: string;
-  /** Viewport names to capture; defaults to all. */
+  /** Viewport names to capture; defaults to every viewport that is not opt-in. */
   viewports?: string[];
+  /** A selector to click (tap, on touch viewports) after `ready`, such as a port tile to open its card. */
+  click?: string;
 }
 
 export const VIEWPORTS: Viewport[] = [
   { name: 'desktop-light', width: 1280, height: 900, theme: 'light' },
   { name: 'desktop-dark', width: 1280, height: 900, theme: 'dark' },
   { name: 'phone', width: 390, height: 844, theme: 'light', mobile: true, checkOverflow: true },
+  { name: 'phone-dark', width: 390, height: 844, theme: 'dark', mobile: true, checkOverflow: true, optIn: true },
 ];
+
+const CONNECTION_VIEWPORTS = ['desktop-light', 'desktop-dark', 'phone-dark'];
+const tile = (componentID: string) => `.inventory-port[data-tile$="/${componentID}"]`;
 
 const INVENTORY = '/plugins/metal-datumapis-com/inventory';
 const record = (kind: string, name: string, extra = '') => `${INVENTORY}?kind=${kind}&record=${name}&namespace=default${extra}`;
@@ -71,4 +79,10 @@ export const PAGES: CapturePage[] = [
   { name: 'cables-list', path: `${INVENTORY}?kind=Cable`, ready: '[data-testid="fleet-plugin-inventory-table"]' },
   { name: 'racks-list', path: `${INVENTORY}?kind=Rack`, ready: '[data-testid="fleet-plugin-inventory-table"]' },
   { name: 'denied-peer-connections', path: record('Device', 'example-srv-a01-01', '&fixture=power-feeds-denied'), ready: '.inventory-connections', element: '.inventory-connections' },
+  // Port tiles: the 1U server, the 48+8-port leaf, an open card, and a denied peer's card.
+  { name: 'ports-server', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
+  { name: 'ports-leaf', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
+  { name: 'ports-leaf-card', path: record('Device', 'example-leaf-a01'), ready: '.inventory-port-grid', click: tile('swp49'), viewports: CONNECTION_VIEWPORTS },
+  { name: 'ports-server-conflict-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('eth1'), viewports: CONNECTION_VIEWPORTS },
+  { name: 'ports-denied-peer-card', path: record('Device', 'example-srv-a01-01', '&fixture=power-feeds-denied'), ready: '.inventory-port-grid', click: tile('psu-2'), viewports: CONNECTION_VIEWPORTS },
 ];

@@ -172,7 +172,11 @@ pinned devDependency; if its Chromium is missing, run
 To capture a new view, append an entry to `PAGES` in
 `scripts/screenshot-pages.ts`: a `name` (the file stem), a preview `path`
 (without `theme`), a `ready` selector to wait for, and optionally an `element`
-selector to capture instead of the full page or a `viewports` subset. Name
+selector to capture instead of the full page or a `viewports` subset. A
+`click` selector is clicked (tapped at phone width) after `ready`, and the
+visible viewport is captured, which is how the port-card pages open a card.
+The opt-in `phone-dark` viewport (390px, dark) is captured only for pages
+that list it in `viewports`. Name
 records from `inventory-fixtures.ts`, adding any the view needs there; a unit
 test fails if a page names a record or scenario the dataset lacks.
 

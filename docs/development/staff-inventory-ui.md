@@ -536,32 +536,102 @@ or unreadable. A Device's own internal mapping is shown on its local port.
 When Cables cannot be read, the view says that connections are unknown and
 classifies nothing.
 
-The **Diagram** view puts the Device in the centre, power peers on the left
-and network, console and other peers on the right. Each line is labelled with
-the local and remote port and the Cable, and its style (solid, dotted, double,
-dashed, or faint dashed with a hatched peer) repeats the state glyph and
-words. The diagram's markup is a nested list. It has one tab stop, the arrow
-keys, Home and End move between Cable and peer links, and Enter or a click
-opens the record. The **List** view is a table per group with the same links,
-states, reasons and traces. Above 32 links (`DIAGRAM_LINK_LIMIT`) the view
-opens on the list, and the diagram collapses each group to a disclosure with
-its state counts. Styling uses only the host's tokens (`--foreground`,
-`--muted`, `--muted-foreground`, `--border`, `--accent`, `--primary`,
-`--destructive`, `--card` and `--radius`), and the diagram stacks into one
-column below 600 px.
+### Names
 
-Within each type group, ports are grouped by chassis face (Front, Rear, Face
+Views never show a generated resource name (`netbox-ca213d185ea9153b853f295e`,
+or any name with a run of twelve or more hex digits, or a UID) by default.
+`humanName()` uses the display name, or the resource name when it reads as a
+human name (`pdu-a.rk105.yul3`). Without one, a Cable is named by its medium
+("Copper cable") and a peer by its kind ("Unnamed device"). When two different
+records would read the same, `viewNames()` adds a short suffix from the
+resource name ("Copper cable #295e"). A denied peer is never named or
+disambiguated. Full resource names appear only in a port's pinned card. Type
+words ("Device", "Power", "NetworkPort") appear only in group headers.
+
+### Port tiles (default view)
+
+The view opens on **Ports** at every size. `portLayout()` lays the tiles out
+as a faceplate: by chassis face (Front, Rear, or Face unknown), then one
+cluster per type, ordered by the first component of that type, which follows
+the DeviceType's template order. Each face's title states its derived rack
+face once ("Rear · rack rear"); when no port has a recorded face, the tiles
+form one unlabelled faceplate. `portLayout()` is the only place that decides
+placement, so DeviceType layout data (rows, columns, banks) can replace
+template order there later. A cluster that is entirely catalog only is hidden
+behind a "Show … catalog only" button.
+
+Each tile is one component. It shows a short label (`PSU 1`, `swp49`, `24` for
+"Outlet 24", `FP1` and `RP1` for "Front port 1" and "Rear port 1") that
+`shortLabels()` keeps unique within its cluster. A multi-position component
+draws one lane bar per position, and the tile takes its most urgent lane
+state. The outline follows the recorded connector only when the free text
+clearly names a family (RJ45, SFP, QSFP, IEC C13/C14/C19/C20); anything else is
+a generic tile. State never relies on colour:
+
+| State | Tile |
+| --- | --- |
+| Cable recorded | Solid foreground fill |
+| No cable recorded | Empty outline |
+| Records disagree | `!` and a 2 px destructive outline |
+| Peer unavailable | `?` and a dashed outline |
+| Catalog only | Faint dashed outline |
+
+The label stays in the foreground colour on disagreeing tiles, because the
+destructive token measures 3.4:1 (dark) to 3.9:1 (light) against the card,
+which is under the 4.5:1 that 11 px text needs. Measured in both themes, tile
+labels are at least 6.2:1 and outlines at least 3.4:1.
+
+The tile grid is one tab stop. Arrow keys move between tiles by their drawn
+rows (left and right, up and down, Home and End). Each tile's accessible name
+gives the port, state and every peer and Cable, so nothing hidden visually is
+lost. Hover or keyboard focus shows a preview card that is hidden from
+assistive technology, because it repeats the accessible name. A click, tap,
+Enter or Space pins the card. The pinned card is a non-modal dialog with links
+to the Cable and peer, the reasons records disagree, any trace, the full
+resource names, and a **Health** section that reads "No health reported"
+because no kind reports observed status. On screens 600 px wide or less, the
+pinned card is a bottom sheet. Touch shows no preview. Escape or Close closes
+the card and returns focus to the tile.
+
+The section header is one line: the port counts ("60 ports · 7 recorded · 51
+unknown · 2 disagree"), "Unknown is not free; nothing here is verified", and a
+**Legend** toggle. It does not repeat the Device's name, which the page heading
+already shows.
+
+### Diagram and list
+
+**Diagram** is offered only up to 16 links (`DIAGRAM_LINK_LIMIT`), because
+the tiles show larger devices in a fraction of the height. It puts the Device
+in the centre, power peers on the left, and network, console and other peers
+on the right. Each line shows the local and remote port and the Cable. Its
+style (solid, dotted, double, dashed, or faint dashed with a hatched peer)
+repeats the state glyph. State words appear only for lines that are not
+recorded. The diagram has one tab stop; the arrow keys, Home and End move
+between Cable and peer links, and Enter or a click opens the record. **List**
+is a table per group with the same links, states, reasons and traces, using
+the same condensed names. Styling uses only the host's tokens
+(`--foreground`, `--background`, `--muted`, `--muted-foreground`, `--border`,
+`--accent`, `--primary`, `--destructive`, `--card`, `--popover`, `--ring` and
+`--radius`), and the diagram stacks into one column below 600 px.
+
+`pnpm screenshots` captures the tiles (`ports-server`, `ports-leaf`) and
+pinned cards (`ports-leaf-card`, `ports-server-conflict-card`,
+`ports-denied-peer-card`) at desktop light, desktop dark and the opt-in
+`phone-dark` viewport.
+
+In the diagram and list, within each type group, ports are grouped by chassis face (Front, Rear, Face
 unknown) when the Device's DeviceType records a face for at least one of them;
 otherwise the group stays flat. A port's chassis face comes from the DeviceType
 template with the same id and is unknown without a readable catalog. When the
 Device's mounted face is known, each port also shows its derived rack face
 (for example "Chassis front · rack rear" on a reversed switch). A Cable whose
-two ends land on opposite rack faces gets a soft "Check" note in the row. The
-note does not change the record state.
+two ends land on opposite rack faces gets a soft "Check" note in the row and
+in the port's card. The note does not change the record state.
 
 Not shown, because the model does not record them: link speed, Cable label,
-colour or length, x/y port positions, live or observed link state, and any
-verified state. Shared-failure or redundancy analysis is not attempted.
+colour or length, x/y port positions and port layout, live or observed link
+state, health, and any verified state. Shared-failure or redundancy analysis
+is not attempted.
 
 ## Rack page (implemented)
 
