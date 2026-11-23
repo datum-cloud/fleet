@@ -10,12 +10,12 @@ import type { CableEndpoint, ComponentTemplate, PhysicalComponent, PhysicalRecor
 import { devicePlacement, placementFacility, type EquipmentPlacement } from '../lib/device-placement';
 import { deviceCatalog, deviceModelLabel } from '../lib/hardware-catalog';
 import { depthLabel, deviceDepth } from '../lib/device-depth';
-import { deviceConnections, stateCounts } from '../lib/device-connections';
+import { componentTypes, deviceConnections, stateCounts, typeTitle } from '../lib/device-connections';
 import { facilityIdentifiers, facilitySites } from '../lib/site-membership';
 import { displayLabel, sharedValue } from '../lib/display-names';
 import { DeviceConnections } from './device-connections';
 import { FacilityRacks, FacilityUnrackedEquipment, unrackedCount } from './inventory-location';
-import { Facts, RecordSummary, TabLink, SummaryParts, ViewLegend, historyTab, type FactItem, type RecordIssue, type RecordTab, type SummaryBadge } from './inventory-record-layout';
+import { Facts, RecordSummary, SummaryParts, ViewLegend, historyTab, type FactItem, type RecordIssue, type RecordTab, type SummaryBadge } from './inventory-record-layout';
 import { observedDisagrees, type TelemetryContextValue } from '../lib/telemetry';
 import { feedPath } from '../lib/power-paths';
 import { DeviceDraw, PowerFeedPath } from './power-feed-path';
@@ -46,51 +46,8 @@ export interface DetailView {
 
 const recordLabel = displayLabel;
 
-const TYPE_TITLES: Record<PhysicalComponent['type'], [string, string]> = {
-  NetworkPort: ['Network port', 'Network ports'],
-  PowerInlet: ['Power inlet', 'Power inlets'],
-  PowerOutlet: ['Power outlet', 'Power outlets'],
-  ConsolePort: ['Console port', 'Console ports'],
-  ConsoleServerPort: ['Console server port', 'Console server ports'],
-  FrontPort: ['Front pass-through port', 'Front pass-through ports'],
-  RearPort: ['Rear pass-through port', 'Rear pass-through ports'],
-  Module: ['Module', 'Modules'],
-  InventoryItem: ['Inventory item', 'Inventory items'],
-  DeviceBay: ['Device bay', 'Device bays'],
-};
-const typeOrder = Object.keys(TYPE_TITLES) as PhysicalComponent['type'][];
-export const typeTitle = (type: PhysicalComponent['type'], count = 2) => (TYPE_TITLES[type] ?? [type, type])[count === 1 ? 0 : 1];
-
 function byType<T extends { type: PhysicalComponent['type'] }>(items: T[]) {
-  return typeOrder.map(type => ({ type, items: items.filter(item => item.type === type) })).filter(group => group.items.length);
-}
-
-/** "2 power inlets · 3 network ports". */
-export function componentCounts(items: { type: PhysicalComponent['type'] }[]) {
-  return byType(items).map(group => `${group.items.length} ${typeTitle(group.type, group.items.length).toLowerCase()}`).join(' · ');
-}
-
-/** Components grouped by type; the type word and a shared connector are said once in the group header. */
-export function ComponentGroups({ components, label }: { components: PhysicalComponent[]; label: string }) {
-  if (!components.length) return <p className="inventory-muted">No components recorded.</p>;
-  return <div className="inventory-component-groups" aria-label={label} role="group">
-    {byType(components).map(group => {
-      const connector = sharedValue(group.items.map(item => item.connector));
-      const multi = group.items.some(item => (item.positions ?? 1) > 1);
-      const identity = group.items.some(item => item.serial || item.assetTag);
-      return <section key={group.type} className="inventory-component-group" aria-label={typeTitle(group.type)}>
-        <h4>{typeTitle(group.type, group.items.length)} <span className="inventory-count">{group.items.length}{connector ? ` · ${connector}` : ''}</span></h4>
-        <ul>
-          {group.items.map(item => <li key={item.id}>
-            <span className="inventory-component-name">{item.name}{item.name !== item.id && <small>{item.id}</small>}</span>
-            {!connector && <span>{item.connector ?? 'Connector not recorded'}</span>}
-            {multi && <span>{item.positions ?? 1} positions</span>}
-            {identity && <span>{[item.serial && `Serial ${item.serial}`, item.assetTag && `Asset tag ${item.assetTag}`].filter(Boolean).join(' · ') || 'No serial or asset tag recorded'}</span>}
-          </li>)}
-        </ul>
-      </section>;
-    })}
-  </div>;
+  return componentTypes.map(type => ({ type, items: items.filter(item => item.type === type) })).filter(group => group.items.length);
 }
 
 /** Facility › Rack · position, with links, for a placement. */
@@ -110,11 +67,6 @@ function PlacementLinks({ placement, namespace, helpers, omitFacility }: { place
 
 const lifecycleBadge = (lifecycle?: string): SummaryBadge[] => !lifecycle || lifecycle === 'Active' ? [] : [{ label: lifecycle, tone: lifecycle === 'Retired' ? 'muted' : 'warning' }];
 
-function cablesAt(inventory: Inventory, namespace: string | undefined, match: (endpoint: CableEndpoint) => boolean) {
-  if (inventory.issues?.Cable) return [];
-  return inventory.physical.filter(record => record.kind === 'Cable' && record.metadata.namespace === namespace && record.spec.lanes?.some(lane => match(lane.a) || match(lane.b)));
-}
-
 function RecordLinks({ kind, records, helpers, empty }: { kind: DetailKind; records: { metadata: { name: string; namespace?: string }; spec: { displayName?: string } }[]; helpers: DetailHelpers; empty: string }) {
   if (!records.length) return <p className="inventory-muted">{empty}</p>;
   return <ul className="inventory-link-list">{records.map(record => <li key={record.metadata.name}><Link to={helpers.href(kind, record.metadata.namespace, record.metadata.name)}>{recordLabel(record)}</Link></li>)}</ul>;
@@ -131,7 +83,6 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
   const join = deviceConnections(device, inventory);
   const counts = stateCounts(join.links);
   const components = device.spec.components ?? [];
-  const cables = cablesAt(inventory, namespace, endpoint => endpoint.deviceRef?.name === device.metadata.name);
   const depth = deviceDepth(device, inventory);
   const report = device.spec.reportedPlacement;
 
@@ -144,7 +95,7 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
   else if (!projected) issues.push({ id: 'location', text: slot ? 'Location unknown: no reported placement or planned location.' : 'Location unknown: no reported placement, and the claim record was not found.', tab: 'location' });
   else if (projected.placement.rackRef && projected.placement.position === undefined && !projected.placement.mount) issues.push({ id: 'position', text: 'Position in the rack is unknown.', tab: 'location' });
   if (slot && slot.devices.length > 1) issues.push({ id: 'registrations', text: 'Multiple devices reference this claim. All registrations are retained; the active device and its placement are unknown.', tab: 'registration' });
-  if (device.spec.deviceTypeRef && !catalog) issues.push({ id: 'catalog', text: 'Catalog unavailable · showing recorded observation.', tab: 'registration' });
+  if (device.spec.deviceTypeRef && !catalog) issues.push({ id: 'catalog', text: 'Catalog unavailable · showing recorded observation.' });
 
   const summary = <RecordSummary badges={lifecycleBadge(device.spec.lifecycle)}>
     {projected ? <>
@@ -153,34 +104,29 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
     </> : <span>Location unknown</span>}
   </RecordSummary>;
 
-  const model = catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : deviceModelLabel(device, inventory);
+  // The model is stated once, here. Without a readable catalog it is the
+  // recorded observation, so Registration does not repeat it.
+  const model = catalog
+    ? <>{recordLabel(catalog.manufacturer)} {reference('DeviceType', namespace, catalog.model.metadata.name)}</>
+    : <>{deviceModelLabel(device, inventory)} · <span className="inventory-muted">{device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'recorded observation, no shared catalog model'}</span></>;
+  const shape = catalog?.model.spec.modelShape;
   const primary = <>
     <Facts label="Identity" items={[
-      { label: 'Model', value: catalog ? <>{recordLabel(catalog.manufacturer)} {model}</> : model, always: true },
+      { label: 'Model', value: model, always: true },
       { label: 'Serial number', value: device.spec.identity.serial },
       { label: 'Asset tag', value: device.spec.assetTag },
     ]} />
-    {components.length > 0 && <p className="inventory-muted">{componentCounts(components)} · <TabLink tab="components">All components</TabLink></p>}
     {components.some(component => component.type === 'PowerInlet') && <p className="inventory-device-draw"><DeviceDraw device={device} /></p>}
     <div id="device-connections"><DeviceConnections key={slotKey(namespace, device.metadata.name)} device={device} inventory={inventory} href={href} /></div>
   </>;
 
   const tabs: RecordTab[] = [
-    { id: 'components', label: 'Components', count: components.length, content: <ComponentGroups components={components} label="Physical components" /> },
-    {
-      id: 'cables', label: 'Cable records', count: inventory.issues?.Cable ? '?' : cables.length, content: inventory.issues?.Cable
-        ? <p>Cable records are unavailable to you. This does not mean the Device has no cables.</p>
-        : <><RecordLinks kind="Cable" records={cables} helpers={helpers} empty="No Cable records name this Device. That does not establish that it has no cables." />
-          <ViewLegend>Cable records, not live link state.</ViewLegend></>,
-    },
     {
       id: 'location', label: 'Location', content: <>
         <Facts items={[
           { label: 'Location / Reported placement', value: helpers.placement({ kind: 'Device', record: device }), always: true },
           { label: 'Placement report', value: report && `Revision ${report.revision} · ${report.observedAt}, not physically verified · Reason: ${report.reason} · Evidence: ${report.reference}` },
           { label: 'Depth for rack conflicts', value: `${depthLabel(depth)} · ${depth.full ? 'occupies both rack faces' : 'occupies its mounted face only'} · not measured`, always: true },
-          { label: 'Catalog nominal height', value: catalog?.model.spec.modelShape?.heightUnits !== undefined && `${catalog.model.spec.modelShape.heightUnits}U · not measured or used for occupancy` },
-          { label: 'Recorded nominal dimensions', value: device.spec.modelShape && `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'Depth not recorded' : device.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}` },
         ]} />
         <ViewLegend>Recordkeeping is not a physical move or a capacity reservation.</ViewLegend>
         {locationEditor}
@@ -190,8 +136,9 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
       id: 'registration', label: 'Registration', content: <>
         <Facts items={[
           { label: 'Claim / registration history', value: inventory.issues?.DeviceClaim ? 'Claim details unavailable' : reference('DeviceClaim', namespace, device.spec.claimRef.name), always: true },
-          { label: 'Shared catalog', value: catalog ? reference('DeviceType', namespace, catalog.model.metadata.name) : device.spec.deviceTypeRef ? 'Catalog unavailable · showing recorded observation' : 'Not assigned · showing recorded observation', always: true },
-          { label: 'Recorded hardware observation', value: modelLabel(device.spec.identity) },
+          { label: 'Recorded hardware observation', value: catalog && modelLabel(device.spec.identity) },
+          { label: 'Catalog nominal size', value: shape && (shape.heightUnits !== undefined || shape.fullDepth !== undefined) && `${shape.heightUnits ?? 'Unknown '}U · ${shape.fullDepth === undefined ? 'depth not recorded' : shape.fullDepth ? 'full depth' : 'half depth'} · not measured` },
+          { label: 'Recorded nominal dimensions', value: device.spec.modelShape && `${device.spec.modelShape.heightUnits ?? 'Unknown'}U · ${device.spec.modelShape.fullDepth === undefined ? 'Depth not recorded' : device.spec.modelShape.fullDepth ? 'Full depth' : 'Partial depth'}` },
           { label: 'System UUID', value: device.spec.identity.systemUUID },
           { label: 'Management endpoint', value: device.spec.bmc?.endpoint },
           { label: 'Provider host reference', value: device.spec.providerHostRef && `${device.spec.providerHostRef.system}/${device.spec.providerHostRef.type}/${device.spec.providerHostRef.id}` },

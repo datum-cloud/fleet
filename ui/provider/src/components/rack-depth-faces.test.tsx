@@ -88,12 +88,11 @@ describe('connection view by chassis face', () => {
     expect(within(rows[0]).queryByText(/^Check:/)).not.toBeInTheDocument();
     expect(within(diagram).getByRole('list', { name: 'Console · Front links' })).toHaveTextContent('Chassis front · rack front');
 
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    expect(screen.getByRole('table', { name: /Network · Rear · 3 links/ })).toBeInTheDocument();
-    expect(screen.getByRole('table', { name: /Power · Rear · 2 links/ })).toBeInTheDocument();
-    const network = within(screen.getByRole('table', { name: /Network · Rear/ })).getAllByRole('row').slice(1);
-    expect(within(network[1]).getByText(/^Check:/)).toBeInTheDocument();
-    expect(within(network[1]).getByText(/SFP28 · Chassis rear · rack rear/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Table' }));
+    const tableRows = within(screen.getByRole('table', { name: 'Components and Cables' })).getAllByRole('row').slice(1);
+    const eth1 = tableRows.find(row => within(row).getAllByRole('cell')[0].textContent?.startsWith('Ethernet 1'))!;
+    expect(within(eth1).getByText(/^Check:/)).toBeInTheDocument();
+    expect(within(eth1).getAllByRole('cell').slice(1, 3).map(cell => cell.textContent)).toEqual(['Network portSFP28', 'Chassis rear · rack rear']);
   });
 
   it('puts ports without a recorded face under Face unknown only when the group has known faces', () => {

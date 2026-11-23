@@ -46,7 +46,7 @@ function isPresentationNavigation(current: Location, next: Location | undefined)
   if (!next || current.pathname !== next.pathname || current.search === next.search) return false;
   const currentParams = new URLSearchParams(current.search);
   const nextParams = new URLSearchParams(next.search);
-  for (const key of ['kind', 'record', 'namespace', 'q', 'location', 'model', 'tab', 'selectedKind', 'selected']) {
+  for (const key of ['kind', 'record', 'namespace', 'q', 'location', 'model', 'tab', 'view', 'selectedKind', 'selected']) {
     currentParams.delete(key);
     nextParams.delete(key);
   }
