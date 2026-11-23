@@ -16,6 +16,9 @@ import { displayLabel, sharedValue } from '../lib/display-names';
 import { DeviceConnections } from './device-connections';
 import { FacilityRacks, FacilityUnrackedEquipment, unrackedCount } from './inventory-location';
 import { Facts, RecordSummary, TabLink, SummaryParts, ViewLegend, historyTab, type FactItem, type RecordIssue, type RecordTab, type SummaryBadge } from './inventory-record-layout';
+import { observedDisagrees, type TelemetryContextValue } from '../lib/telemetry';
+import { feedPath } from '../lib/power-paths';
+import { DeviceDraw, PowerFeedPath } from './power-feed-path';
 
 export type DetailKind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 export type DetailEntry = { kind: DetailKind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -29,6 +32,8 @@ export interface DetailHelpers {
   find: (kind: DetailKind, namespace: string | undefined, name: string) => DetailEntry | undefined;
   placement: (entry: DetailEntry) => string;
   slotFor: (entry: DetailEntry) => InventorySlot | undefined;
+  /** Observed telemetry; absent means none is configured. */
+  telemetry?: TelemetryContextValue;
 }
 
 export interface DetailView {
@@ -156,6 +161,7 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
       { label: 'Asset tag', value: device.spec.assetTag },
     ]} />
     {components.length > 0 && <p className="inventory-muted">{componentCounts(components)} · <TabLink tab="components">All components</TabLink></p>}
+    {components.some(component => component.type === 'PowerInlet') && <p className="inventory-device-draw"><DeviceDraw device={device} /></p>}
     <div id="device-connections"><DeviceConnections key={slotKey(namespace, device.metadata.name)} device={device} inventory={inventory} href={href} /></div>
   </>;
 
@@ -260,56 +266,45 @@ export function cableDetail(cable: PhysicalRecord, helpers: DetailHelpers): Deta
 // ---- PowerFeed ----
 
 export function powerFeedDetail(feed: PhysicalRecord, helpers: DetailHelpers): DetailView {
-  const { inventory, reference, href } = helpers;
+  const { inventory, reference, href, telemetry } = helpers;
   const namespace = feed.metadata.namespace;
-  const supply = feed.spec.supply;
-  const outlets = feed.spec.terminations ?? [];
-  const cables = cablesAt(inventory, namespace, endpoint => endpoint.powerFeedRef?.name === feed.metadata.name);
-  const connected = (outlet: PhysicalComponent) => cables.flatMap(cable => (cable.spec.lanes ?? []).flatMap(lane => {
-    const at = (endpoint: CableEndpoint) => endpoint.powerFeedRef?.name === feed.metadata.name && endpoint.componentID === outlet.id;
-    return at(lane.a) ? [{ cable, far: lane.b }] : at(lane.b) ? [{ cable, far: lane.a }] : [];
-  }));
+  const path = feedPath(feed, inventory);
   const issues: RecordIssue[] = [];
   if (inventory.issues?.Cable) issues.push({ id: 'cables', text: 'Cable records are unavailable to you, so outlet use is unknown, not free.' });
-  const conflicted = outlets.filter(outlet => connected(outlet).length > 1);
-  if (conflicted.length) issues.push({ id: 'conflict', tone: 'danger', text: `Records disagree: more than one Cable names ${conflicted.map(outlet => outlet.name).join(', ')}.` });
+  const conflicted = path.terminations.filter(tile => tile.state === 'conflict');
+  if (conflicted.length) issues.push({ id: 'conflict', tone: 'danger', text: `Records disagree: more than one Cable names ${conflicted.map(tile => tile.name).join(', ')}.` });
+  // Observed load where no Cable is recorded. Records are not changed; the banner links to them.
+  if (telemetry && path.cableAccess === 'readable') {
+    const { source, now } = telemetry;
+    const feedLabel = recordLabel(feed);
+    const seen = [
+      ...path.terminations.filter(tile => observedDisagrees(tile.state, source.read({ kind: 'PowerFeed', namespace, name: feed.metadata.name, componentID: tile.componentID }), now))
+        .map(tile => ({ key: `feed/${tile.key}`, what: tile.name, holder: feedLabel, link: href('PowerFeed', namespace, feed.metadata.name), q: feed.metadata.name })),
+      ...path.pdus.flatMap(pdu => pdu.tiles.filter(tile => observedDisagrees(tile.state, source.read({ kind: 'Device', namespace, name: pdu.device.metadata.name, componentID: tile.componentID }), now))
+        .map(tile => ({ key: `${pdu.device.metadata.name}/${tile.key}`, what: tile.name, holder: pdu.label, link: href('Device', namespace, pdu.device.metadata.name), q: pdu.device.metadata.name }))),
+    ];
+    if (seen.length) issues.push({
+      id: 'observed-mismatch', tone: 'danger', href: '#power-path',
+      text: <><strong>Observed and recorded disagree:</strong> load is observed on {seen.map((item, index) => <span key={item.key}>{index > 0 && ', '}{item.what} of <Link to={item.link}>{item.holder}</Link></span>)}, but no Cable records {seen.length === 1 ? 'it' : 'them'}. <Link to={`?kind=Cable&q=${encodeURIComponent(seen[0].q)}`}>Cable records</Link></>,
+    });
+  }
   const summary = <RecordSummary>
     <SummaryParts parts={[
       feed.spec.facilityRef && (inventory.issues?.Facility ? 'Facility unavailable' : reference('Facility', namespace, feed.spec.facilityRef.name)),
       feed.spec.rackRef && (inventory.issues?.Rack ? 'Rack unavailable' : reference('Rack', namespace, feed.spec.rackRef.name)),
     ]} />
   </RecordSummary>;
-  const farLabel = (far: CableEndpoint) => {
-    const target = endTarget(far);
-    if (!target) return 'Endpoint not recorded';
-    if (inventory.issues?.[target.kind]) return 'Related endpoint unavailable';
-    return <>{reference(target.kind, namespace, target.name)} · {far.componentID}</>;
-  };
+  const source = telemetry?.source;
   const primary = <>
-    <Facts label="Supply" items={[
-      { label: 'Supply', value: supply && `${supply.type} · ${supply.voltageV ?? 'Unknown'} V · ${supply.currentA ?? 'Unknown'} A`, always: true, empty: 'Supply not recorded' },
-      { label: 'Phase', value: supply?.phase },
-      { label: 'Usable budget / redundancy', value: 'Unknown — supply ratings do not establish available power.', always: true },
-    ]} />
-    {byType(outlets).map(group => {
-      const connector = sharedValue(group.items.map(item => item.connector));
-      return <section key={group.type} className="inventory-outlets" aria-label={typeTitle(group.type)}>
-        <h4>{typeTitle(group.type, group.items.length)} <span className="inventory-count">{group.items.length}{connector ? ` · ${connector}` : ''}</span></h4>
-        <ul>{group.items.map(outlet => {
-          const links = connected(outlet);
-          return <li key={outlet.id} data-state={links.length > 1 ? 'conflict' : links.length ? 'cabled' : 'none'}>
-            <span className="inventory-component-name">{outlet.name}{!connector && outlet.connector && <small>{outlet.connector}</small>}</span>
-            <span>{inventory.issues?.Cable ? 'Unknown' : links.length ? links.map(({ cable, far }) => <span key={cable.metadata.name} className="inventory-outlet-link">{farLabel(far)} <small>via <Link to={href('Cable', namespace, cable.metadata.name)}>{recordLabel(cable)}</Link></small></span>) : <span className="inventory-muted">No cable recorded</span>}</span>
-          </li>;
-        })}</ul>
-      </section>;
-    })}
-    {!outlets.length && <p className="inventory-muted">No outlets or terminations recorded.</p>}
-    <ViewLegend>Cable records, not live link state. No cable recorded means unknown, not free.</ViewLegend>
+    <PowerFeedPath feed={feed} inventory={inventory} href={href} />
+    <ViewLegend>
+      Cable records and observed telemetry, not verified state. No cable recorded means unknown, not free; supply ratings do not establish available power, and separate feeds in records do not prove independent supply.
+      {' '}Marks: ↑ above 80% of the continuous limit · ⚠︎ over it · ◷ stale · ≠ observed and recorded disagree. Telemetry: {source ? source.description : 'No telemetry source configured'}.
+    </ViewLegend>
   </>;
   const sources = feed.spec.upstreamSources ?? [];
   const tabs: RecordTab[] = [
-    { id: 'upstream', label: 'Upstream sources', count: sources.length, content: sources.length ? <ul>{sources.map((source, index) => <li key={index}>{source.system}/{source.type}/{source.id}</li>)}</ul> : <p className="inventory-muted">No upstream sources recorded.</p> },
+    { id: 'upstream', label: 'Upstream sources', count: sources.length, content: sources.length ? <ul>{sources.map((item, index) => <li key={index}>{item.system}/{item.type}/{item.id}</li>)}</ul> : <p className="inventory-muted">No upstream sources recorded.</p> },
     historyTab(feed.metadata),
   ];
   return { summary, issues, primary, tabs };

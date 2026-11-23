@@ -12,6 +12,7 @@ import {
   cableText, countsText, Glyph, linkLabel, linksWord, LocalDetail, peerDetail, PeerTarget, peerText, portsWord, STATES, StateText, TILE_GLYPH, tileSummary, Trace, type Href,
 } from './connection-parts';
 import { PortFaceplate } from './device-faceplate';
+import { usePortTelemetry } from './power-telemetry';
 
 type View = 'ports' | 'diagram' | 'list';
 type Group = { group: ConnectionGroup; title: string; links: ConnectionLink[]; tiles: PortTile[] };
@@ -186,11 +187,12 @@ export function DeviceConnections({ device, inventory, href }: { device: Device;
   const views: View[] = diagramFits ? ['ports', 'diagram', 'list'] : ['ports', 'list'];
   const [legend, setLegend] = useState(false);
   const legendID = useId();
+  const telemetry = usePortTelemetry({ kind: 'Device', namespace: device.metadata.namespace, name: device.metadata.name, label: title }, { cablesDenied: join.cableAccess === 'denied' });
 
   let body: ReactNode;
   if (join.cableAccess === 'denied') body = <p className="inventory-note">Cable records are unavailable to you, so this Device&rsquo;s connections are unknown. This does not mean its ports are free.</p>;
   else if (!join.links.length) body = <p className="inventory-muted">No typed components or Cable terminations are recorded for this Device, so there is nothing to join.</p>;
-  else if (view === 'ports') body = <PortFaceplate faces={faces} namespace={namespace} href={href} names={names} collapseCatalogOnly />;
+  else if (view === 'ports') body = <PortFaceplate faces={faces} namespace={namespace} href={href} names={names} collapseCatalogOnly telemetry={telemetry} />;
   else if (view === 'diagram') body = <Diagram title={title} summary={summary} groups={groups} namespace={namespace} href={href} names={names} />;
   else body = <LinkTable groups={groups} namespace={namespace} href={href} names={names} />;
 

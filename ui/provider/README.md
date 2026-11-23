@@ -114,6 +114,16 @@ Add `?fixture=<scenario>` to a preview URL to deny whole collections, as a
 403 would: `power-feeds-denied`, `devices-denied` or `cables-denied`
 (`FIXTURE_SCENARIOS`). The scenario is read once per page load.
 
+Power telemetry is mocked the same way. Normal builds use the `none`
+telemetry source, so power views read "Not reported" and "No telemetry
+source configured". A fixture build loads synthetic telemetry
+(`src/lib/telemetry-mock.ts`) lazily behind the same flag; add
+`?telemetry=<scenario>` to pick `normal` (the default), `high-load`,
+`stale`, `missing`, `mismatch`, or `none` for the production view.
+`src/test/production-bundle.test.ts` builds the production and fixture
+bundles and fails if a mock-only string reaches the production one. The real
+source is [proposed](../../docs/development/inventory-telemetry.md).
+
 Fixture data can never reach a production build. `VITE_FLEET_FIXTURES` is
 baked into the bundle at build time and is only honoured in Vite's `fixtures`
 mode, which the `*:fixtures` and `screenshots` scripts pass. `vite.config.ts`
@@ -140,6 +150,8 @@ staff-portal mounts, with no login and no session boundary. Stable URLs:
 | Server detail and connections | `/plugins/metal-datumapis-com/inventory?kind=Device&record=example-srv-a01-01&namespace=default` |
 | Large switch (list fallback) | `/plugins/metal-datumapis-com/inventory?kind=Device&record=example-leaf-a01&namespace=default`   |
 | Denied peer                  | the server URL plus `&fixture=power-feeds-denied`                                                |
+| Power path                   | `/plugins/metal-datumapis-com/inventory?kind=PowerFeed&record=example-feed-a&namespace=default`  |
+| Rack power redundancy        | the rack elevation URL plus `&tab=power`                                                         |
 
 The banner's button switches light and dark; `?theme=light` or `?theme=dark`
 on any URL sets it directly. The choice is remembered in local storage. The

@@ -33,6 +33,7 @@ import { InventoryPageTitle, inventoryDirectoryPath, inventoryReturnSearch } fro
 import { AboutRecord, IssueBanners, RecordSummary, RecordTabs, SummaryParts } from './inventory-record-layout';
 import { cableDetail, claimDetail, deviceDetail, deviceTypeDetail, facilityDetail, powerFeedDetail, type DetailHelpers, type DetailView } from './inventory-record-detail';
 import { sharedValue } from '../lib/display-names';
+import { useTelemetry } from './power-telemetry';
 
 type Kind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 type RecordEntry = { kind: Kind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -46,6 +47,7 @@ function recordName(entry: RecordEntry) {
 
 export function PhysicalInventory({ inventory: source, onRetry, showNavigation = true }: { inventory: Inventory; onRetry?: () => void; showNavigation?: boolean }) {
   const [readIssues, setReadIssues] = useState<Inventory['issues']>({});
+  const telemetry = useTelemetry();
   const inventory = redactInventory(source, readIssues);
   const [params, setParams] = useSearchParams();
   const { pathname } = useLocation();
@@ -236,7 +238,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
   const slotFor = (entry: RecordEntry) => entry.kind === 'Device'
     ? claimFor(entry.record as RawDevice)
     : entry.kind === 'DeviceClaim' ? inventory.slots.find(item => item.key === slotKey(entry.record.metadata.namespace, entry.record.metadata.name)) : undefined;
-  const helpers: DetailHelpers = { inventory, entries, href, reference, find, placement, slotFor };
+  const helpers: DetailHelpers = { inventory, entries, href, reference, find, placement, slotFor, telemetry };
 
   function detailView(entry: RecordEntry, locationEditor: ReactNode): DetailView {
     const record = entry.record;

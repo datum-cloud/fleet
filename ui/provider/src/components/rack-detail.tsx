@@ -25,6 +25,7 @@ import { faceOccupancy, RACK_FACES, rackOccupants, type RackOccupant } from '../
 import { deviceModelLabel } from '../lib/hardware-catalog';
 import { DeviceFaceplate } from './device-faceplate';
 import { inventoryHref, rackPlacements, RackOverview } from './inventory-location';
+import { RackPowerRedundancy } from './rack-power';
 
 export const RACK_TABS = [
   { tab: 'elevation', title: 'Elevation' },
@@ -262,14 +263,16 @@ function PowerTab({ rack, slots, inventory }: { rack: PhysicalRecord; slots: Equ
   const feeds = rackFeeds(rack, inventory);
   const cablesDenied = !!inventory.issues?.Cable;
   const pdus = inventory.issues?.Device ? undefined : rackDevices(slots).filter(device => device.spec.components?.some(component => component.type === 'PowerOutlet'));
+  const devices = inventory.issues?.Device ? undefined : rackDevices(slots);
   return <div className="inventory-equipment-sections">
-    <p className="inventory-muted">Ratings and recorded cables only; budget and draw are unknown. No cable recorded means unknown, not free.</p>
-    <section aria-label="Power feeds"><h4>Power feeds <span className="inventory-count">{feeds ? feeds.length : 'unavailable'}</span></h4>
+    <p className="inventory-muted">Ratings, recorded cables and observed load; available power is unknown. No cable recorded means unknown, not free.</p>
+    {!feeds ? null : <RackPowerRedundancy rack={rack} feeds={feeds} devices={devices} inventory={inventory} />}
+    <section aria-label="Power feeds"><h4>Feed outlets <span className="inventory-count">{feeds ? feeds.length : 'unavailable'}</span></h4>
       {!feeds ? <p>Power feed details unavailable.</p> : feeds.length ? <ul className="inventory-power-list">{feeds.map(feed => {
         const uses = cablesDenied ? undefined : feedUse(feed, inventory);
         const supply = feed.spec.supply;
         return <li key={feed.metadata.name}>
-          <p><Link to={inventoryHref('PowerFeed', feed.metadata.namespace, feed.metadata.name)}>{displayLabel(feed)}</Link> <small>{supply ? `${supply.type} · ${supply.voltageV ?? 'Unknown'} V · ${supply.currentA ?? 'Unknown'} A${supply.phase ? ` · ${supply.phase} phase` : ''}` : 'Supply not recorded'}</small></p>
+          <p><strong>{displayLabel(feed)}</strong> <small>{supply ? `${supply.type} · ${supply.voltageV ?? 'Unknown'} V · ${supply.currentA ?? 'Unknown'} A${supply.phase ? ` · ${supply.phase} phase` : ''}` : 'Supply not recorded'}</small></p>
           {!uses ? <p>Cable details unavailable. Outlet use is unknown.</p> : <ul aria-label={`${displayLabel(feed)} outlets`}>{(feed.spec.terminations ?? []).flatMap(termination => Array.from({ length: termination.positions ?? 1 }, (_, index) => {
             const key = `${termination.id}/${index + 1}`;
             const used = uses.get(key);

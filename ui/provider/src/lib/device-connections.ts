@@ -200,7 +200,11 @@ class Join {
   }
 
   terminationsOn(device: Device) {
-    const prefix = `Device/${device.metadata.name}/`;
+    return this.terminationsFor('Device', device.metadata.name);
+  }
+
+  terminationsFor(kind: PeerKind, name: string) {
+    const prefix = `${kind}/${name}/`;
     return [...this.index.entries()].filter(([key]) => key.startsWith(prefix)).flatMap(([, value]) => value);
   }
 
@@ -325,6 +329,43 @@ export function deviceConnections(device: Device, inventory: Inventory): DeviceC
   }
 
   return { cableAccess: 'readable', catalog: catalogState, links };
+}
+
+/**
+ * A PowerFeed's terminations joined to the Cable lanes that name them, with
+ * the same record states as a Device's components. Traces are not followed:
+ * a feed fans out through PDUs, which the power path draws as their own
+ * strips. Cables that name a termination the feed does not record disagree.
+ */
+export function feedConnections(feed: PhysicalRecord, inventory: Inventory): DeviceConnections {
+  if (inventory.issues?.Cable) return { cableAccess: 'denied', catalog: 'unassigned', links: [] };
+  const join = new Join(inventory, feed.metadata.namespace);
+  const terminations = feed.spec.terminations ?? [];
+  const byID = new Map(terminations.map(component => [component.id, component]));
+  const links: ConnectionLink[] = [];
+  const add = (base: Omit<ConnectionLink, 'key' | 'state' | 'cable' | 'peer' | 'trace' | 'reasons' | 'checks'>, claim: Termination, claims: number, local: string[], index: number) => {
+    const resolved = join.peer(claim.far);
+    const reasons = [...local, ...(claims > 1 ? [`${claims} Cable lanes name this position. Neither is treated as current.`] : []), ...resolved.reasons];
+    const state: LinkState = local.length || claims > 1 ? 'conflict' : resolved.peer.access !== 'readable' ? 'unavailable' : resolved.reasons.length ? 'conflict' : 'cabled';
+    links.push({ ...base, key: `${base.componentID}/${base.position}/${claim.cable.metadata.name}/${claim.laneID}/${index}`, state, cable: cableRef(claim.cable, claim.laneID), peer: resolved.peer, trace: [], reasons, checks: [] });
+  };
+  for (const component of terminations) {
+    const positions = positionsOf(component);
+    for (let position = 1; position <= positions; position++) {
+      const base = { group: groupOf[component.type] ?? 'power', componentID: component.id, component, position, positions };
+      const claims = join.terminationsAt('PowerFeed', feed.metadata.name, component.id, position);
+      if (!claims.length) links.push({ ...base, key: `${component.id}/${position}`, state: 'none', trace: [], reasons: [], checks: [] });
+      claims.forEach((claim, index) => add(base, claim, claims.length, [], index));
+    }
+  }
+  join.terminationsFor('PowerFeed', feed.metadata.name)
+    .filter(claim => !byID.has(claim.mine.componentID) || claim.mine.position > positionsOf(byID.get(claim.mine.componentID)))
+    .forEach((claim, index) => {
+      const component = byID.get(claim.mine.componentID);
+      const reason = component ? `The Cable names position ${claim.mine.position}; this feed records ${positionsOf(component)} for "${component.id}".` : `The Cable names termination "${claim.mine.componentID}", which this feed does not record.`;
+      add({ group: component ? groupOf[component.type] : 'unrecorded', componentID: claim.mine.componentID, component, position: claim.mine.position, positions: positionsOf(component) }, claim, 1, [reason], index);
+    });
+  return { cableAccess: 'readable', catalog: 'unassigned', links };
 }
 
 /**

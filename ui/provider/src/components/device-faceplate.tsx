@@ -14,6 +14,7 @@ import { linkStateWords, shortLabels, viewNames, type ConnectionGroup, type Conn
 import { faceplate } from '../lib/device-faceplate';
 import { cableText, peerDetail, PeerTarget, peerText, portsWord, StateText, TILE_GLYPH, tileSummary, Trace, type Href } from './connection-parts';
 import { inventoryHref } from './inventory-location';
+import { usePortTelemetry } from './power-telemetry';
 
 /**
  * Above this many tiles a cluster draws port-shaped squares with no text, as
@@ -77,13 +78,38 @@ function numbering(tiles: PortTile[], labels: Map<string, string>) {
 }
 
 /**
+ * Observed telemetry for one tile, prepared by the caller (see
+ * power-telemetry.tsx). The renderer only draws it: a load tint and a mark on
+ * the tile, words in the accessible name, and sections in the card.
+ */
+export interface PortTelemetry {
+  load?: TileLoad;
+  /** Appended to the tile's accessible name: value, unit and age. */
+  words?: string;
+  /** The card's Telemetry section. */
+  section?: ReactNode;
+  /** Replaces "No health reported" when health is observed. */
+  health?: ReactNode;
+}
+
+/** A tile's load tint and mark. Stale is grey and never coloured. */
+export interface TileLoad {
+  tint: 'off' | 'idle' | 'low' | 'mid' | 'strong' | 'high' | 'over' | 'stale' | 'observed';
+  /** 0 to 1, the bar's fill. */
+  fraction?: number;
+  /** A glyph for over-threshold, stale, disagreeing or faulted values. */
+  mark?: string;
+  markKind?: 'high' | 'over' | 'stale' | 'mismatch' | 'fault';
+}
+
+/**
  * The pinned card for one port. It leads with the answer: each position's
  * record state, its peer and the Cable's display name, then health. Generated
  * resource names, connector and template detail, media and traces sit behind
  * a collapsed More, which is not rendered until it is opened. A denied peer's
  * name and record name appear nowhere, in the answer or in More.
  */
-export function PortCard({ tile, namespace, href, names, cablesDenied }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean }) {
+export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry, health }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean; telemetry?: ReactNode; health?: ReactNode }) {
   const [more, setMore] = useState(false);
   const moreID = useId();
   // A breakout's lanes share one Cable: name it once, then list each position's peer.
@@ -117,10 +143,11 @@ export function PortCard({ tile, namespace, href, names, cablesDenied }: { tile:
           })}
         </ul>
       </>}
+      {telemetry}
       <div className="inventory-port-card-health">
         <p className="inventory-port-card-heading">Health</p>
-        {/* No inventory kind has observed status yet. Do not derive any. */}
-        <p className="inventory-muted">No health reported</p>
+        {/* Health comes only from an observation with a source and a time. Never derive it from records. */}
+        {health ?? <p className="inventory-muted">No health reported</p>}
       </div>
       <div className="inventory-port-card-more">
         <button type="button" className="inventory-link-button" aria-expanded={more} aria-controls={more ? moreID : undefined} onClick={() => setMore(value => !value)}>{more ? 'Less' : 'More'}</button>
@@ -156,6 +183,8 @@ export interface PortTileButtonProps extends Omit<ButtonHTMLAttributes<HTMLButto
   shape?: ConnectorShape;
   /** One state per position, drawn as lane bars under a multi-position tile. */
   lanes?: LinkState[];
+  /** Observed load: a tint bar and an optional mark. Omit when nothing is observed. */
+  load?: TileLoad;
   /** A stable key; roving focus and card placement find tiles by it. */
   tileKey?: string;
   expanded?: boolean;
@@ -167,7 +196,7 @@ export interface PortTileButtonProps extends Omit<ButtonHTMLAttributes<HTMLButto
  * the tooltip and the card. Visible content is hidden from assistive
  * technology because `accessibleName` carries it all.
  */
-export function PortTileButton({ state, accessibleName, label, shape = 'generic', lanes, tileKey, expanded, controls, className, ...rest }: PortTileButtonProps) {
+export function PortTileButton({ state, accessibleName, label, shape = 'generic', lanes, load, tileKey, expanded, controls, className, ...rest }: PortTileButtonProps) {
   return (
     <button
       type="button"
@@ -186,6 +215,8 @@ export function PortTileButton({ state, accessibleName, label, shape = 'generic'
         {TILE_GLYPH[state] && <span className="inventory-port-glyph">{TILE_GLYPH[state]}</span>}
       </span>
       {lanes && lanes.length > 1 && <span className="inventory-port-lanes" aria-hidden="true">{lanes.map((lane, index) => <span key={index} data-state={lane} />)}</span>}
+      {load && <span className="inventory-port-load" aria-hidden="true" data-tint={load.tint} style={{ '--load': String(load.fraction ?? 0) } as CSSProperties} />}
+      {load?.mark && <span className="inventory-port-mark" aria-hidden="true" data-mark={load.markKind}>{load.mark}</span>}
     </button>
   );
 }
@@ -245,9 +276,11 @@ export interface PortFaceplateProps {
   collapseCatalogOnly?: boolean;
   /** Draw a recorded face even when no component is on it, as the rack panel does. */
   showEmptyFaces?: boolean;
+  /** Observed telemetry for a tile, when any source reports it. */
+  telemetry?: (tile: PortTile) => PortTelemetry | undefined;
 }
 
-export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenied = false, collapseCatalogOnly = false, showEmptyFaces = false }: PortFaceplateProps) {
+export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenied = false, collapseCatalogOnly = false, showEmptyFaces = false, telemetry }: PortFaceplateProps) {
   const container = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -317,12 +350,15 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
     target.focus();
   };
 
-  const renderTile = (tile: PortTile, compact: boolean) => (
+  const renderTile = (tile: PortTile, compact: boolean) => {
+    const observed = telemetry?.(tile);
+    return (
     <li key={tile.key}>
       <PortTileButton
         tileKey={tile.key}
         state={cablesDenied ? 'unavailable' : tile.state}
-        accessibleName={tileLabel(tile, names, cablesDenied)}
+        accessibleName={[tileLabel(tile, names, cablesDenied), observed?.words].filter(Boolean).join('; ')}
+        load={observed?.load}
         label={compact ? undefined : labels.get(tile.key)}
         shape={tile.shape}
         lanes={tile.positions > 1 && !cablesDenied ? tile.lanes.map(lane => lane.state) : undefined}
@@ -342,7 +378,9 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
       />
       {compact && <span className="inventory-port-number" aria-hidden="true">{marks.get(tile.key) ?? ''}</span>}
     </li>
-  );
+    );
+  };
+  const cardTelemetry = card ? telemetry?.(card) : undefined;
 
   return (
     <div
@@ -397,7 +435,7 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
             <h5>{card.name}</h5>
             <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={close} aria-label={`Close ${card.name}`}>Close</Button>
           </div>
-          <PortCard tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} />
+          <PortCard tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} />
         </div>
       )}
     </div>
@@ -413,10 +451,11 @@ export function DeviceFaceplate({ device, inventory }: { device: Device; invento
   const plate = useMemo(() => faceplate(device, inventory), [device, inventory]);
   const names = useMemo(() => viewNames(plate.links), [plate]);
   const cablesDenied = plate.cableAccess === 'denied';
+  const telemetry = usePortTelemetry({ kind: 'Device', namespace: device.metadata.namespace, name: device.metadata.name }, { cablesDenied });
   return (
     <section className="inventory-faceplate" aria-label="Faceplate">
       {plate.faces.length
-        ? <PortFaceplate faces={plate.faces} names={names} namespace={device.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} showEmptyFaces />
+        ? <PortFaceplate faces={plate.faces} names={names} namespace={device.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} showEmptyFaces telemetry={telemetry} />
         : <p className="inventory-muted">No ports are recorded for this Device.</p>}
       {cablesDenied && <p className="inventory-muted">Cable details unavailable. Component states are unknown.</p>}
     </section>

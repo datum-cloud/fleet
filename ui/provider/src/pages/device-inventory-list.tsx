@@ -7,6 +7,7 @@ import { InventorySessionBoundary } from '../components/inventory-session-bounda
 import { InventoryNavigation } from '../components/inventory-navigation';
 import { Text } from '@datum-cloud/datum-ui/typography';
 import { InventoryPendingShell } from '../components/inventory-directory-heading';
+import { TelemetryProvider } from '../components/power-telemetry';
 
 export default function DeviceInventoryList() {
   return <FleetPage testId="fleet-plugin-inventory-list">
@@ -22,6 +23,6 @@ function InventoryListContent() {
   return <>
     {isLoading && <InventoryPendingShell><LoadingState /></InventoryPendingShell>}
     {!isLoading && error && <InventoryPendingShell><InventoryAccessState status={error.status} onRetry={() => void refetch()} /></InventoryPendingShell>}
-    {!isLoading && !error && data && <PhysicalInventory inventory={data} showNavigation={false} onRetry={() => void refetch()} />}
+    {!isLoading && !error && data && <TelemetryProvider pending={<InventoryPendingShell><LoadingState /></InventoryPendingShell>}><PhysicalInventory inventory={data} showNavigation={false} onRetry={() => void refetch()} /></TelemetryProvider>}
   </>;
 }

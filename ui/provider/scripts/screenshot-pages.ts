@@ -56,6 +56,7 @@ export const PAGES: CapturePage[] = [
   { name: 'rack-page-elevation', path: record('Rack', 'example-rack-a01'), ready: '.inventory-rack-stage' },
   { name: 'rack-page-selected', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-leaf-a01'), ready: '.inventory-rack-panel[data-variant="side"] .inventory-faceplate', viewports: ['desktop-light', 'desktop-dark'] },
   { name: 'rack-page-equipment', path: record('Rack', 'example-rack-a01', '&tab=equipment'), ready: '.inventory-rack-tab[data-tab="equipment"] table' },
+  { name: 'rack-power-redundancy', path: record('Rack', 'example-rack-a01', '&tab=power'), ready: '.inventory-rack-tab[data-tab="power"]' },
   { name: 'rack-page-cables', path: record('Rack', 'example-rack-a01', '&tab=cables'), ready: '.inventory-rack-tab[data-tab="cables"] table' },
   { name: 'rack-page-phone-sheet', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-srv-a01-01'), ready: '.inventory-rack-panel[data-variant="sheet"] .inventory-faceplate', viewports: ['phone'] },
   { name: 'server-detail', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections' },
@@ -90,4 +91,16 @@ export const PAGES: CapturePage[] = [
   // The same shared faceplate in the rack side panel: the leaf's unlabelled tiles, and an open card.
   { name: 'rack-leaf-faceplate', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-leaf-a01'), ready: '.inventory-faceplate .inventory-port-grid', element: '.inventory-faceplate', viewports: CONNECTION_VIEWPORTS },
   { name: 'rack-leaf-card', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-leaf-a01'), ready: '.inventory-faceplate .inventory-port-grid', click: `.inventory-faceplate ${tile('swp37')}`, viewports: CONNECTION_VIEWPORTS },
+  // Power: the feed's power path with synthetic telemetry (`telemetry=` picks a
+  // mock scenario; fixture builds only), and the production-like view with none.
+  { name: 'power-feed-normal', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path' },
+  { name: 'power-feed-high-load', path: record('PowerFeed', 'example-feed-a', '&telemetry=high-load'), ready: '.inventory-power-path' },
+  { name: 'power-feed-stale', path: record('PowerFeed', 'example-feed-a', '&telemetry=stale'), ready: '.inventory-power-path' },
+  { name: 'power-feed-mismatch', path: record('PowerFeed', 'example-feed-a', '&telemetry=mismatch'), ready: '.inventory-power-path' },
+  { name: 'power-feed-no-telemetry', path: record('PowerFeed', 'example-feed-a', '&telemetry=none'), ready: '.inventory-power-path' },
+  { name: 'power-feed-outlet-card', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path', click: `.inventory-power-strip[aria-label="PDU a01 (rear left) outlets"] ${tile('outlet-1')}` },
+  { name: 'device-psu-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('psu-1') },
 ];
+
+/** The `telemetry=` values pages may use: the mock scenarios and `none`. */
+export const TELEMETRY_SCENARIOS = ['normal', 'high-load', 'stale', 'missing', 'mismatch', 'none'];
