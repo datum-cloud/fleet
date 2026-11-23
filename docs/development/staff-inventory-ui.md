@@ -32,7 +32,7 @@ described in the historical notes below, not inventory contracts or IAM.
   Clicking the already-current tab is a no-op, not an implicit refresh.
 - Same-principal presentation navigation reuses authorized default-namespace
   collection data, including changes to the three known client-side filters
-  and the detail pages' `tab`, `selectedKind` and `selected` parameters.
+  and the detail pages' `tab`, `view`, `selectedKind` and `selected` parameters.
   The narrow presentation allowlist does not include unknown query parameters,
   route changes, form submissions, or explicit revalidation. Host loaders still
   verify navigations; changed principal, logout, real denial, hidden/pagehide,
@@ -72,7 +72,7 @@ field or view.
 
    | Kind | Primary view |
    | --- | --- |
-   | Device | Identity strip (model, serial, asset tag), component counts, then the connection view |
+   | Device | Identity strip (model, serial, asset tag), then the connection view |
    | Cable | End A and End B side by side, with one row per lane |
    | PowerFeed | The power path: upstream, feed rating and capacity, outlet tiles for the feed and each PDU, then device PSUs (see [Power path](#power-path-and-telemetry-implemented-telemetry-mocked)) |
    | Facility | Its racks |
@@ -83,8 +83,8 @@ field or view.
    | Claim | Planned placement, expected hardware and registered devices |
 
 3. **Secondary detail goes in tabs held in the URL** (`?tab=`), for example
-   Components, Cable records, Location, Registration and History &
-   verification. A tab label carries its count, or `?` when the collection is
+   a Device's Location, Registration and History & verification. Tabs hold
+   only what the primary view does not already show. A tab label carries its count, or `?` when the collection is
    unreadable. Every panel stays mounted and inactive panels are `hidden`, so
    open dialogs and permission checks keep their state. `tab` is in the session
    boundary's presentation allowlist, so switching tabs never refetches
@@ -126,7 +126,8 @@ The building blocks are in `ui/provider/src/components/inventory-record-layout.t
 (`RecordSummary`, `IssueBanners`, `RecordTabs`, `Facts`, `ViewLegend`,
 `AboutRecord`), and the per-kind views are in `inventory-record-detail.tsx`.
 `inventory-record-layout.test.tsx` covers the disclosure, tab URL state, issue
-banners, hidden empty fields and list columns.
+banners, hidden empty fields, list columns, and the Device page's one
+picture, one count line and tab contents.
 
 ## Default-only directory and stable controls
 
@@ -509,7 +510,9 @@ deployed revision, upstream SSAR permission, or authenticated runtime behavior.
 ## Device connection view (implemented)
 
 Device detail shows a **Connections** section in its primary view, under the
-identity strip; the component list is on the Components tab. It is labelled "Cable records, not live link state". It joins the Device's typed
+identity strip. It is the one place the page lists the Device's components
+and what each is cabled to. It is labelled "Cable records, not live link
+state". It joins the Device's typed
 components to the Cable lanes that name them, using the Cables, Devices,
 PowerFeeds and DeviceTypes the Inventory tab already lists. It adds no
 requests, API fields or permissions.
@@ -534,7 +537,48 @@ redundancy is unknown. When a peer Device records an internal mapping
 for up to four hops, stopping at the first hop that is unrecorded, disputed
 or unreadable. A Device's own internal mapping is shown on its local port.
 When Cables cannot be read, the view says that connections are unknown and
-classifies nothing.
+classifies nothing; the table still lists the components, without state,
+Cable or peer columns.
+
+### One picture, one table, one count line
+
+The section has one toggle, **Picture / Table / Diagram**, held in the URL as
+`?view=` (`table` or `diagram`; unset is the picture). `view` is in the
+session boundary's presentation allowlist, so switching never refetches
+inventory. A value the Device does not offer falls back to the picture.
+
+- **Picture.** The drawn faceplate when the DeviceType records a layout
+  (see [Faceplate drawing](#faceplate-drawing)), with its "Not on the
+  faceplate" tray. Otherwise the grouped port tiles, captioned "Layout not
+  recorded". The other picture is never offered.
+- **Table.** One row per component: name, type and connector, face and
+  position, record state, Cable, and peer. Serial and asset tag columns
+  appear only when some component records one. A multi-position component
+  is one row; its Cable and peer cells list each position. Rows follow the
+  picture's groups (power, network, console, pass-through, modules and
+  items), then components that only a Cable names. Modules and items that
+  no Cable names read "Component recorded".
+- **Diagram.** The optional link view described below, offered up to 16
+  links.
+
+`deviceConnections()` drops a Cable lane end that names a recorded component
+at a position below 1, or with no position (an omitted position decodes as
+0). `unmatchedLinks()` returns those ends with their peer resolved under the
+same access rules, and the table lists them last as "Records disagree" rows
+with the reason. So every Cable that names the Device appears in the table.
+
+The section header holds the one count line ("9 ports · 4 recorded · 1
+disagree · 4 catalog only"). The identity strip carries no component counts,
+the tabs carry no badges, and the drawn Device in the diagram shows only its
+name.
+
+The Device's tabs are **Location** (placement, the placement report, and
+depth for rack conflicts), **Registration** (claim, the recorded hardware
+observation when a catalog model is assigned, the catalog's nominal size,
+any recorded nominal dimensions, system UUID, management endpoint, provider
+reference, internal paths and legacy interfaces) and **History &
+verification**. The model is stated once, in the identity strip; without a
+readable catalog model it is the recorded observation and says so.
 
 ### Names
 
@@ -551,9 +595,8 @@ words ("Device", "Power", "NetworkPort") appear only in group headers.
 
 ### Port tiles
 
-The view opens on **Faceplate** when the Device's model records a layout
-(see [Faceplate drawing](#faceplate-drawing)), and on **Ports** otherwise.
-Without a layout, the tiles carry a "Layout not recorded" caption: they are
+The tiles are the picture when the Device's model records no layout.
+They carry a "Layout not recorded" caption: they are
 grouped, not placed. `portLayout()` lays the tiles out
 as a faceplate: by chassis face (Front, Rear, or Face unknown), then one
 cluster per type, ordered by the first component of that type, which follows
@@ -633,7 +676,7 @@ already shows.
 
 **Implemented.** When the Device's DeviceType records a
 [faceplate layout](hardware-catalog.md#faceplate-layout-implemented), Device
-detail opens on **Faceplate** and the rack side panel shows the same drawing.
+detail's picture is the drawing, and the rack side panel shows the same one.
 `faceplate-drawing.tsx` draws each recorded face from one pure geometry
 function, `faceGeometry()` in `lib/faceplate-layout.ts`, in millimetres at
 1.9 px/mm. The drawing never invents a position:
@@ -675,8 +718,8 @@ function, `faceGeometry()` in `lib/faceplate-layout.ts`, in millimetres at
   (`interface-templates-34`), so no ids match. The card's More says
   "Matched to catalog by id" or "Matched to catalog by name and type". A
   name match only positions the component on the drawing. Record state,
-  Cable joins, chassis faces (and so opposite-face checks), the Ports view
-  and every other view still join by id, so a name-matched template still
+  Cable joins, chassis faces (and so opposite-face checks), the grouped
+  tiles, the table and the diagram still join by id, so a name-matched template still
   appears there as catalog only. The long-term fix is for the importer to
   record each component's template id (gap P7). Changing component ids is
   not the fix, because Cables reference component ids.
@@ -792,7 +835,7 @@ face ("on either face" or "on the front face") and "Show each unit".
 - `rack-mini-reduced`, `rack-mini-full` and `rack-mini-silhouette`;
 - `rack-panel-faceplate`, which includes a 390 px phone.
 
-### Diagram and list
+### Diagram
 
 **Diagram** is offered only up to 16 links (`DIAGRAM_LINK_LIMIT`), because
 the tiles show larger devices in a fraction of the height. It puts the Device
@@ -801,9 +844,8 @@ on the right. Each line shows the local and remote port and the Cable. Its
 style (solid, dotted, double, dashed, or faint dashed with a hatched peer)
 repeats the state glyph. State words appear only for lines that are not
 recorded. The diagram has one tab stop; the arrow keys, Home and End move
-between Cable and peer links, and Enter or a click opens the record. **List**
-is a table per group with the same links, states, reasons and traces, using
-the same condensed names. Styling uses only the host's tokens
+between Cable and peer links, and Enter or a click opens the record. The
+table uses the same states, reasons, traces and condensed names. Styling uses only the host's tokens
 (`--foreground`, `--background`, `--muted`, `--muted-foreground`, `--border`,
 `--accent`, `--primary`, `--destructive`, `--card`, `--popover`, `--ring` and
 `--radius`), and the diagram stacks into one column below 600 px.
@@ -812,9 +854,11 @@ the same condensed names. Styling uses only the host's tokens
 cards (`ports-leaf-card`, `ports-server-conflict-card`,
 `ports-denied-peer-card`), and the same faceplate in the rack panel
 (`rack-leaf-faceplate`, `rack-leaf-card`) at desktop light, desktop dark and
-the opt-in `phone-dark` viewport.
+the opt-in `phone-dark` viewport. `device-table` captures the table, and
+`server-detail` and `device-detail-no-layout` capture a whole Device page
+with and without a recorded layout.
 
-In the diagram and list, within each type group, ports are grouped by chassis face (Front, Rear, Face
+In the diagram, within each type group, ports are grouped by chassis face (Front, Rear, Face
 unknown) when the Device's DeviceType records a face for at least one of them;
 otherwise the group stays flat. A port's chassis face comes from the DeviceType
 template with the same id and is unknown without a readable catalog. When the
