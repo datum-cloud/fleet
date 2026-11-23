@@ -13,8 +13,9 @@ import {
 } from './connection-parts';
 import { PortFaceplate } from './device-faceplate';
 import { usePortTelemetry } from './power-telemetry';
+import { deviceDrawingModel, FaceplateDrawing, LayoutNotRecorded } from './faceplate-drawing';
 
-type View = 'ports' | 'diagram' | 'list';
+type View = 'faceplate' | 'ports' | 'diagram' | 'list';
 type Group = { group: ConnectionGroup; title: string; links: ConnectionLink[]; tiles: PortTile[] };
 
 const LEFT: ConnectionGroup[] = ['power'];
@@ -167,7 +168,7 @@ function Legend({ id }: { id: string }) {
   );
 }
 
-const VIEW_WORDS: Record<View, string> = { ports: 'Ports', diagram: 'Diagram', list: 'List' };
+const VIEW_WORDS: Record<View, string> = { faceplate: 'Faceplate', ports: 'Ports', diagram: 'Diagram', list: 'List' };
 
 export function DeviceConnections({ device, inventory, href }: { device: Device; inventory: Inventory; href: Href }) {
   const headingID = useId();
@@ -178,13 +179,16 @@ export function DeviceConnections({ device, inventory, href }: { device: Device;
     .filter(item => item.links.length), [join]);
   const faces = useMemo(() => portLayout(join.links), [join]);
   const diagramFits = join.links.length <= DIAGRAM_LINK_LIMIT;
-  const [chosen, setView] = useState<View>('ports');
-  const view = chosen === 'diagram' && !diagramFits ? 'ports' : chosen;
+  // The drawing leads when the model records a layout; otherwise grouped tiles.
+  const drawing = useMemo(() => deviceDrawingModel(device, inventory), [device, inventory]);
+  const drawn = drawing.layout.recorded;
+  const [chosen, setView] = useState<View>(drawn ? 'faceplate' : 'ports');
+  const view = (chosen === 'diagram' && !diagramFits) || (chosen === 'faceplate' && !drawn) ? 'ports' : chosen;
   const namespace = device.metadata.namespace;
   const tiles = groups.flatMap(group => group.tiles);
   const title = deviceTitle(device);
   const summary = `${portsWord(tiles.length)} · ${tileSummary(tiles)}`;
-  const views: View[] = diagramFits ? ['ports', 'diagram', 'list'] : ['ports', 'list'];
+  const views: View[] = [...(drawn ? ['faceplate' as const] : []), 'ports', ...(diagramFits ? ['diagram' as const] : []), 'list'];
   const [legend, setLegend] = useState(false);
   const legendID = useId();
   const telemetry = usePortTelemetry({ kind: 'Device', namespace: device.metadata.namespace, name: device.metadata.name, label: title }, { cablesDenied: join.cableAccess === 'denied' });
@@ -192,7 +196,8 @@ export function DeviceConnections({ device, inventory, href }: { device: Device;
   let body: ReactNode;
   if (join.cableAccess === 'denied') body = <p className="inventory-note">Cable records are unavailable to you, so this Device&rsquo;s connections are unknown. This does not mean its ports are free.</p>;
   else if (!join.links.length) body = <p className="inventory-muted">No typed components or Cable terminations are recorded for this Device, so there is nothing to join.</p>;
-  else if (view === 'ports') body = <PortFaceplate faces={faces} namespace={namespace} href={href} names={names} collapseCatalogOnly telemetry={telemetry} />;
+  else if (view === 'faceplate') body = <FaceplateDrawing drawing={drawing} namespace={namespace} href={href} telemetry={telemetry} />;
+  else if (view === 'ports') body = <>{!drawn && <LayoutNotRecorded />}<PortFaceplate faces={faces} namespace={namespace} href={href} names={names} collapseCatalogOnly telemetry={telemetry} /></>;
   else if (view === 'diagram') body = <Diagram title={title} summary={summary} groups={groups} namespace={namespace} href={href} names={names} />;
   else body = <LinkTable groups={groups} namespace={namespace} href={href} names={names} />;
 

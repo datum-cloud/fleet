@@ -53,9 +53,22 @@ type Template = NonNullable<PhysicalRecord['spec']['componentTemplates']>[number
 type Face = 'Front' | 'Rear';
 
 /** One component template. `face` is the side of the chassis, not the rack. */
-function template(id: string, name: string, type: PhysicalComponent['type'], connector: string, face: Face, positions?: number): Template {
-  return { id, name, type, connector, face, ...(positions ? { positions } : {}) };
+function template(id: string, name: string, type: PhysicalComponent['type'], connector: string, face: Face, positions?: number, layout?: Template['layout']): Template {
+  return { id, name, type, connector, face, ...(positions ? { positions } : {}), ...(layout ? { layout } : {}) };
 }
+
+/** Lays templates into a bank: row-major, or odd-top/even-bottom as switches number ports. */
+function laid(templates: Template[], bank: string, rows: number, order: 'row' | 'odd-top' = 'row', start = 0): Template[] {
+  return templates.map((item, index) => {
+    const at = index + start;
+    const columns = Math.ceil((templates.length + start) / rows);
+    const layout = order === 'odd-top' ? { bank, row: (at % 2) + 1, column: Math.floor(at / 2) + 1 } : { bank, row: Math.floor(at / columns) + 1, column: (at % columns) + 1 };
+    return { ...item, layout };
+  });
+}
+
+type Bank = NonNullable<PhysicalRecord['spec']['faceplate']>['banks'][number];
+const bank = (id: string, face: Face, rows: number, columns: number, extra: Partial<Bank> = {}): Bank => ({ id, face, rows, columns, ...extra });
 
 function range(count: number, start = 1) {
   return Array.from({ length: count }, (_, index) => index + start);
@@ -65,47 +78,96 @@ const manufacturer = (name: string, displayName: string): PhysicalRecord => ({
   kind: 'Manufacturer', metadata: meta(name), spec: { displayName, canonicalName: displayName, aliases: [name] },
 });
 
-function deviceType(name: string, displayName: string, maker: string, model: string, shape: { heightUnits: number; fullDepth?: boolean }, componentTemplates: Template[]): PhysicalRecord {
-  return { kind: 'DeviceType', metadata: meta(name), spec: { displayName, manufacturerRef: { name: maker }, model, modelShape: shape, componentTemplates } };
+function deviceType(name: string, displayName: string, maker: string, model: string, shape: NonNullable<PhysicalRecord['spec']['modelShape']>, componentTemplates: Template[], banks?: Bank[]): PhysicalRecord {
+  return { kind: 'DeviceType', metadata: meta(name), spec: { displayName, manufacturerRef: { name: maker }, model, modelShape: shape, componentTemplates, ...(banks ? { faceplate: { banks } } : {}) } };
 }
 
-const serverPorts = (network: number): Template[] => [
-  template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear'),
-  template('psu-2', 'PSU 2', 'PowerInlet', 'IEC C14', 'Rear'),
-  ...range(network).map(index => template(`eth${index - 1}`, `Ethernet ${index - 1}`, 'NetworkPort', 'SFP28', 'Rear')),
-  template('bmc', 'BMC', 'NetworkPort', 'RJ45', 'Rear'),
+// Faceplate layouts are synthetic but shaped like real hardware: PSUs at the
+// rear edges, ganged SFP cages numbered odd-top, a QSFP block, drive bays.
+// Module cells (PSUs, bays, fans) record their size in millimetres.
+const PSU = { width: 40, height: 38 };
+
+// A 1U server. Front: eight 2.5in bays. Rear: PSUs at the edges, two SFP28,
+// the BMC, three accessory ports. The console has no layout, so it is drawn
+// in the "Not on the faceplate" tray.
+const server1UTemplates: Template[] = [
+  ...laid(range(8).map(index => template(`bay-${index}`, `Bay ${index}`, 'Module', '2.5in drive bay', 'Front')), 'bays', 1),
+  template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear', undefined, { bank: 'psu-1', row: 1, column: 1 }),
+  template('psu-2', 'PSU 2', 'PowerInlet', 'IEC C14', 'Rear', undefined, { bank: 'psu-2', row: 1, column: 1 }),
+  ...laid(range(2).map(index => template(`eth${index - 1}`, `Ethernet ${index - 1}`, 'NetworkPort', 'SFP28', 'Rear')), 'ocp', 1),
+  template('bmc', 'BMC', 'NetworkPort', 'RJ45', 'Rear', undefined, { bank: 'mgmt', row: 1, column: 1 }),
+  ...laid([template('usb-1', 'USB 1', 'InventoryItem', 'USB-A', 'Rear'), template('usb-2', 'USB 2', 'InventoryItem', 'USB-A', 'Rear'), template('vga', 'VGA', 'InventoryItem', 'VGA', 'Rear')], 'io', 1),
   template('console', 'Serial console', 'ConsolePort', 'RJ45', 'Rear'),
+];
+const server1UBanks: Bank[] = [
+  bank('bays', 'Front', 1, 8, { cellMM: { width: 46, height: 14 } }),
+  bank('psu-1', 'Rear', 1, 1, { offset: 0, cellMM: PSU }),
+  bank('ocp', 'Rear', 1, 2, { offset: 0.14 }),
+  bank('mgmt', 'Rear', 1, 1, { offset: 0.24 }),
+  bank('io', 'Rear', 1, 3, { offset: 0.33 }),
+  bank('psu-2', 'Rear', 1, 1, { offset: 0.9, cellMM: PSU }),
+];
+
+// A 2U storage server. Front: twelve 3.5in bays in three rows. Rear: stacked
+// PSUs, four SFP28, BMC and console, two boot bays.
+const server2UTemplates: Template[] = [
+  ...laid(range(12).map(index => template(`bay-${index}`, `Bay ${index}`, 'Module', '3.5in drive bay', 'Front')), 'bays', 3),
+  ...laid([template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear'), template('psu-2', 'PSU 2', 'PowerInlet', 'IEC C14', 'Rear')], 'psu', 2),
+  ...laid(range(4).map(index => template(`eth${index - 1}`, `Ethernet ${index - 1}`, 'NetworkPort', 'SFP28', 'Rear')), 'nic', 1),
+  ...laid([template('bmc', 'BMC', 'NetworkPort', 'RJ45', 'Rear'), template('console', 'Serial console', 'ConsolePort', 'RJ45', 'Rear')], 'mgmt', 1),
+  ...laid(range(2).map(index => template(`boot-${index}`, `Boot ${index}`, 'Module', 'M.2 boot bay', 'Rear')), 'boot', 2),
+];
+const server2UBanks: Bank[] = [
+  bank('bays', 'Front', 3, 4, { cellMM: { width: 100, height: 26 } }),
+  bank('psu', 'Rear', 2, 1, { offset: 0, cellMM: PSU }),
+  bank('nic', 'Rear', 1, 4, { offset: 0.2 }),
+  bank('mgmt', 'Rear', 1, 2, { offset: 0.37 }),
+  bank('boot', 'Rear', 2, 1, { offset: 0.86, cellMM: { width: 30, height: 14 } }),
 ];
 
 const TYPES = {
-  server1U: deviceType('example-server-1u', 'Example 1U compute', 'example-compute', 'EX-C1', { heightUnits: 1, fullDepth: true }, serverPorts(2)),
-  server2U: deviceType('example-server-2u', 'Example 2U storage', 'example-compute', 'EX-S2', { heightUnits: 2, fullDepth: true }, serverPorts(4)),
-  leaf: deviceType('example-leaf-48x25-8x100', 'Example 48×25G + 8×100G leaf', 'example-networks', 'EX-L4856', { heightUnits: 1, fullDepth: true }, [
-    ...range(48).map(index => template(`swp${index}`, `swp${index}`, 'NetworkPort', 'SFP28', 'Front')),
+  server1U: deviceType('example-server-1u', 'Example 1U compute', 'example-compute', 'EX-C1', { heightUnits: 1, fullDepth: true, width: 'Full' }, server1UTemplates, server1UBanks),
+  server2U: deviceType('example-server-2u', 'Example 2U storage', 'example-compute', 'EX-S2', { heightUnits: 2, fullDepth: true, width: 'Full' }, server2UTemplates, server2UBanks),
+  // 48 SFP28 in two 2×12 blocks, 8 QSFP28 in a 2×4 block, then management
+  // and console stacked; PSUs and fans at the rear.
+  leaf: deviceType('example-leaf-48x25-8x100', 'Example 48×25G + 8×100G leaf', 'example-networks', 'EX-L4856', { heightUnits: 1, fullDepth: true, width: 'Full' }, [
+    ...laid(range(24).map(index => template(`swp${index}`, `swp${index}`, 'NetworkPort', 'SFP28', 'Front')), 'sfp-a', 2, 'odd-top'),
+    ...laid(range(24, 25).map(index => template(`swp${index}`, `swp${index}`, 'NetworkPort', 'SFP28', 'Front')), 'sfp-b', 2, 'odd-top'),
     // Each 100G port carries four lanes, so it can break out to 4×25G.
-    ...range(8, 49).map(index => template(`swp${index}`, `swp${index}`, 'NetworkPort', 'QSFP28', 'Front', 4)),
-    template('mgmt0', 'Management', 'NetworkPort', 'RJ45', 'Front'),
-    template('console', 'Console', 'ConsolePort', 'RJ45', 'Front'),
-    template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear'),
-    template('psu-2', 'PSU 2', 'PowerInlet', 'IEC C14', 'Rear'),
+    ...laid(range(8, 49).map(index => template(`swp${index}`, `swp${index}`, 'NetworkPort', 'QSFP28', 'Front', 4)), 'qsfp', 2, 'odd-top'),
+    ...laid([template('mgmt0', 'Management', 'NetworkPort', 'RJ45', 'Front'), template('console', 'Console', 'ConsolePort', 'RJ45', 'Front')], 'oob', 2),
+    template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear', undefined, { bank: 'psu-1', row: 1, column: 1 }),
+    ...laid(range(4).map(index => template(`fan-${index}`, `Fan ${index}`, 'Module', 'Fan tray', 'Rear')), 'fans', 1),
+    template('psu-2', 'PSU 2', 'PowerInlet', 'IEC C14', 'Rear', undefined, { bank: 'psu-2', row: 1, column: 1 }),
+  ], [
+    bank('sfp-a', 'Front', 2, 12, { offset: 0 }),
+    bank('sfp-b', 'Front', 2, 12, { offset: 0.39 }),
+    bank('qsfp', 'Front', 2, 4, { offset: 0.78 }),
+    bank('oob', 'Front', 2, 1, { offset: 0.96 }),
+    bank('psu-1', 'Rear', 1, 1, { offset: 0, cellMM: PSU }),
+    bank('fans', 'Rear', 1, 4, { offset: 0.3, cellMM: { width: 34, height: 34 } }),
+    bank('psu-2', 'Rear', 1, 1, { offset: 0.9, cellMM: PSU }),
   ]),
   mgmt: deviceType('example-mgmt-24x1g', 'Example 24×1G management switch', 'example-networks', 'EX-M24', { heightUnits: 1, fullDepth: false }, [
-    ...range(24).map(index => template(`ge${index}`, `ge${index}`, 'NetworkPort', 'RJ45', 'Front')),
-    template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear'),
-  ]),
-  patch: deviceType('example-patch-12', 'Example 12-port patch panel', 'example-cabling', 'EX-PP12', { heightUnits: 1, fullDepth: false }, [
-    ...range(12).map(index => template(`front-${index}`, `Front ${index}`, 'FrontPort', 'RJ45', 'Front')),
-    ...range(12).map(index => template(`rear-${index}`, `Rear ${index}`, 'RearPort', 'RJ45 keystone', 'Rear')),
-  ]),
+    ...laid(range(24).map(index => template(`ge${index}`, `ge${index}`, 'NetworkPort', 'RJ45', 'Front')), 'rj45', 2, 'odd-top'),
+    template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear', undefined, { bank: 'psu', row: 1, column: 1 }),
+  ], [bank('rj45', 'Front', 2, 12), bank('psu', 'Rear', 1, 1, { cellMM: PSU })]),
+  // 24 RJ45 jacks at the front, 24 keystones at the rear, mapped one to one.
+  patch: deviceType('example-patch-24', 'Example 24-port patch panel', 'example-cabling', 'EX-PP24', { heightUnits: 1, fullDepth: false, width: 'Full' }, [
+    ...laid(range(24).map(index => template(`front-${index}`, `Front ${index}`, 'FrontPort', 'RJ45', 'Front')), 'jacks', 1),
+    ...laid(range(24).map(index => template(`rear-${index}`, `Rear ${index}`, 'RearPort', 'RJ45 keystone', 'Rear')), 'keystones', 1),
+  ], [bank('jacks', 'Front', 1, 24), bank('keystones', 'Rear', 1, 24)]),
+  // No layout: shown as grouped tiles labelled "Layout not recorded".
   // fullDepth is unset: depth unknown, drawn as full depth and labelled.
   appliance: deviceType('example-appliance-2u', 'Example 2U appliance', 'example-compute', 'EX-A2', { heightUnits: 2 }, [
     template('net0', 'net0', 'NetworkPort', 'SFP28', 'Front'),
     template('psu-1', 'PSU 1', 'PowerInlet', 'IEC C14', 'Rear'),
   ]),
+  // A zero-U PDU: drawn as a one-unit strip, because its length is not recorded.
   pdu: deviceType('example-pdu-8', 'Example 8-outlet PDU', 'example-power', 'EX-PDU8', { heightUnits: 0, fullDepth: false }, [
-    template('inlet', 'Inlet', 'PowerInlet', 'IEC C20', 'Rear'),
-    ...range(8).map(index => template(`outlet-${index}`, `Outlet ${index}`, 'PowerOutlet', 'IEC C13', 'Rear')),
-  ]),
+    template('inlet', 'Inlet', 'PowerInlet', 'IEC C20', 'Rear', undefined, { bank: 'inlet', row: 1, column: 1 }),
+    ...laid(range(8).map(index => template(`outlet-${index}`, `Outlet ${index}`, 'PowerOutlet', 'IEC C13', 'Rear')), 'outlets', 1),
+  ], [bank('inlet', 'Rear', 1, 1, { offset: 0.02 }), bank('outlets', 'Rear', 1, 8, { offset: 0.2 })]),
 };
 
 const catalog: PhysicalRecord[] = [
@@ -207,8 +269,8 @@ const devices: Device[] = [
   // Rack A01: the fully described rack.
   server(FIXTURE_NAMES.server, 'example-rack-a01', 2, {
     displayName: 'Compute a01-01',
-    // The record omits the console port, so it appears as catalog only.
-    omit: ['console'],
+    // The record omits the console port, two drive bays and a USB port, so they appear as catalog only.
+    omit: ['console', 'bay-7', 'bay-8', 'usb-2'],
     extra: {
       bmc: { endpoint: 'https://192.0.2.11:443' },
       interfaces: [{ name: 'eth0', macAddress: '00:00:5e:00:53:11' }, { name: 'eth1', macAddress: '00:00:5e:00:53:12' }],

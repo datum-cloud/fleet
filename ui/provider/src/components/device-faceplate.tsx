@@ -8,20 +8,17 @@
 import { Button } from '@datum-cloud/datum-ui/button';
 import { Fragment, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { Link } from 'react-router';
-import type { Device } from '../../../shared/fleet-api';
-import type { Inventory } from '../inventory';
-import { linkStateWords, shortLabels, viewNames, type ConnectionGroup, type ConnectionLink, type ConnectorShape, type LayoutFace, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
-import { faceplate } from '../lib/device-faceplate';
+import { linkStateWords, shortLabels, type ConnectionGroup, type ConnectionLink, type ConnectorShape, type LayoutFace, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
+import { TEXT_TILE_LIMIT } from '../lib/faceplate-layout';
 import { cableText, peerDetail, PeerTarget, peerText, portsWord, StateText, TILE_GLYPH, tileSummary, Trace, type Href } from './connection-parts';
-import { inventoryHref } from './inventory-location';
-import { usePortTelemetry } from './power-telemetry';
 
 /**
- * Above this many tiles a cluster draws port-shaped squares with no text, as
- * a switch faceplate does, and prints faint numbers at bank edges instead.
- * Smaller clusters keep short labels (eth0, PSU 1, BMC).
+ * Above TEXT_TILE_LIMIT tiles a cluster (or a drawn bank) shows port-shaped
+ * squares with no text, as a switch faceplate does, and prints faint numbers
+ * at bank edges instead. Smaller clusters keep short labels (eth0, PSU 1,
+ * BMC). It is defined once, in faceplate-layout.ts, for both views.
  */
-export const TEXT_TILE_LIMIT = 12;
+export { TEXT_TILE_LIMIT };
 /** In a large cluster, a faint port number every this many tiles. */
 export const NUMBER_EVERY = 8;
 
@@ -280,24 +277,25 @@ export interface PortFaceplateProps {
   telemetry?: (tile: PortTile) => PortTelemetry | undefined;
 }
 
-export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenied = false, collapseCatalogOnly = false, showEmptyFaces = false, telemetry }: PortFaceplateProps) {
+/** Everything a port grid needs to make one tile interactive. */
+export interface PortGridTileOptions {
+  /** A short label drawn on the tile; omit for an unlabelled square. */
+  label?: string;
+  className?: string;
+}
+
+/**
+ * Roving focus, the one-line tooltip and the pinned card for a set of port
+ * tiles. Both the grouped tiles (PortFaceplate) and the drawn faceplate
+ * (FaceplateDrawing) use it, so they share one keyboard model, one tooltip
+ * and one card. Tiles are found by `data-tile` inside `container`, in DOM
+ * order; arrow keys move by drawn position.
+ */
+export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined }) {
   const container = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const cardID = useId();
-  const [expanded, setExpanded] = useState<Set<ConnectionGroup>>(() => new Set());
-  const known = laid.some(face => face.face !== 'unknown');
-  // Without any recorded face, one caption says so instead of guessing.
-  const faces = useMemo<LayoutFace[]>(() => {
-    if (!known) return laid.map(face => ({ ...face, title: 'Component faces not recorded' }));
-    if (!showEmptyFaces) return laid;
-    return (['Front', 'Rear', 'unknown'] as const).flatMap(side => laid.find(face => face.face === side) ?? (side === 'unknown' ? [] : [{ face: side, title: side, clusters: [] }]));
-  }, [laid, known, showEmptyFaces]);
-  const hidden = (cluster: LayoutFace['clusters'][number]) => collapseCatalogOnly && catalogOnly(cluster.tiles) && !expanded.has(cluster.group);
-  const tiles = useMemo(() => faces.flatMap(face => face.clusters.filter(cluster => !hidden(cluster)).flatMap(cluster => cluster.tiles)), [faces, expanded, collapseCatalogOnly]);
-  // Labels are unique within a cluster: its header carries the type.
-  const labels = useMemo(() => new Map(faces.flatMap(face => face.clusters.flatMap(cluster => [...shortLabels(cluster.tiles)]))), [faces]);
-  const marks = useMemo(() => new Map(faces.flatMap(face => face.clusters.filter(cluster => cluster.tiles.length > TEXT_TILE_LIMIT).flatMap(cluster => [...numbering(cluster.tiles, labels)]))), [faces, labels]);
   const [active, setActive] = useState(tiles[0]?.key);
   const [open, setOpen] = useState<string>();
   const [tip, setTip] = useState<string>();
@@ -312,13 +310,16 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
   const items = () => [...(container.current?.querySelectorAll<HTMLElement>('[data-tile]') ?? [])];
   const element = (key?: string) => key ? items().find(item => item.dataset.tile === key) : undefined;
 
-  // Cards and tooltips sit under their tile, kept inside the faceplate's width.
+  // Cards and tooltips sit under their tile, kept inside the grid's width.
+  // Rects, not offsets, so tiles inside a scrolled drawing place correctly.
   const place = (key: string | undefined, box: HTMLElement | null, set: (value: { left: number; top: number }) => void) => {
     const tile = element(key);
     const host = container.current;
     if (!tile || !host || !box) return;
-    const left = Math.max(0, Math.min(tile.offsetLeft, host.clientWidth - box.offsetWidth));
-    set({ left, top: tile.offsetTop + tile.offsetHeight + 4 });
+    const at = tile.getBoundingClientRect();
+    const origin = host.getBoundingClientRect();
+    const left = Math.max(0, Math.min(at.left - origin.left, host.clientWidth - box.offsetWidth));
+    set({ left, top: at.bottom - origin.top + 4 });
   };
   const same = (next: { left: number; top: number }) => (previous?: { left: number; top: number }) => previous?.left === next.left && previous.top === next.top ? previous : next;
   useLayoutEffect(() => place(open, cardRef.current, next => setCardAt(same(next))), [open]);
@@ -350,45 +351,96 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
     target.focus();
   };
 
-  const renderTile = (tile: PortTile, compact: boolean) => {
+  const tileButton = (tile: PortTile, { label, className }: PortGridTileOptions = {}) => {
     const observed = telemetry?.(tile);
     return (
-    <li key={tile.key}>
-      <PortTileButton
-        tileKey={tile.key}
-        state={cablesDenied ? 'unavailable' : tile.state}
-        accessibleName={[tileLabel(tile, names, cablesDenied), observed?.words].filter(Boolean).join('; ')}
-        load={observed?.load}
-        label={compact ? undefined : labels.get(tile.key)}
-        shape={tile.shape}
-        lanes={tile.positions > 1 && !cablesDenied ? tile.lanes.map(lane => lane.state) : undefined}
-        tabIndex={tile.key === current ? 0 : -1}
-        expanded={open === tile.key}
-        controls={open === tile.key ? cardID : undefined}
-        onPointerDown={event => { pointer.current = event.pointerType; }}
-        onPointerEnter={event => { if (event.pointerType === 'mouse') setTip(tile.key); }}
-        onPointerLeave={event => { if (event.pointerType === 'mouse') setTip(value => value === tile.key ? undefined : value); }}
-        onFocus={() => {
-          setActive(tile.key);
-          // Touch has no hover: a tap opens the card through the click, not a tooltip.
-          if (pointer.current !== 'touch' && pointer.current !== 'pen') setTip(tile.key);
-        }}
-        onBlur={() => { pointer.current = undefined; setTip(value => value === tile.key ? undefined : value); }}
-        onClick={() => { setActive(tile.key); setTip(undefined); setOpen(value => value === tile.key ? undefined : tile.key); }}
-      />
-      {compact && <span className="inventory-port-number" aria-hidden="true">{marks.get(tile.key) ?? ''}</span>}
-    </li>
+    <PortTileButton
+      tileKey={tile.key}
+      className={className}
+      state={cablesDenied ? 'unavailable' : tile.state}
+      accessibleName={[tileLabel(tile, names, cablesDenied), observed?.words].filter(Boolean).join('; ')}
+      load={observed?.load}
+      label={label}
+      shape={tile.shape}
+      lanes={tile.positions > 1 && !cablesDenied ? tile.lanes.map(lane => lane.state) : undefined}
+      tabIndex={tile.key === current ? 0 : -1}
+      expanded={open === tile.key}
+      controls={open === tile.key ? cardID : undefined}
+      onPointerDown={event => { pointer.current = event.pointerType; }}
+      onPointerEnter={event => { if (event.pointerType === 'mouse') setTip(tile.key); }}
+      onPointerLeave={event => { if (event.pointerType === 'mouse') setTip(value => value === tile.key ? undefined : value); }}
+      onFocus={() => {
+        setActive(tile.key);
+        // Touch has no hover: a tap opens the card through the click, not a tooltip.
+        if (pointer.current !== 'touch' && pointer.current !== 'pen') setTip(tile.key);
+      }}
+      onBlur={() => { pointer.current = undefined; setTip(value => value === tile.key ? undefined : value); }}
+      onClick={() => { setActive(tile.key); setTip(undefined); setOpen(value => value === tile.key ? undefined : tile.key); }}
+    />
     );
   };
   const cardTelemetry = card ? telemetry?.(card) : undefined;
 
+  const overlay = (
+    <>
+      {tipTile && <PortTooltip ref={tipRef} text={tileTip(tipTile, names, cablesDenied)} at={tipAt} />}
+      {card && (
+        <div
+          ref={cardRef}
+          id={cardID}
+          className="inventory-port-card"
+          data-state={cablesDenied ? 'unavailable' : card.state}
+          data-pinned=""
+          data-component-card=""
+          role="dialog"
+          aria-modal={false}
+          aria-label={`${card.name} details`}
+          style={cardAt ? { '--card-left': `${cardAt.left}px`, '--card-top': `${cardAt.top}px` } as CSSProperties : { visibility: 'hidden' }}
+          onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}
+        >
+          <div className="inventory-port-card-title">
+            <h5>{card.name}</h5>
+            <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={close} aria-label={`Close ${card.name}`}>Close</Button>
+          </div>
+          <PortCard key={card.key} tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} />
+        </div>
+      )}
+    </>
+  );
+
+  return { container, onKeyDown, tileButton, overlay };
+}
+
+export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenied = false, collapseCatalogOnly = false, showEmptyFaces = false, telemetry }: PortFaceplateProps) {
+  const [expanded, setExpanded] = useState<Set<ConnectionGroup>>(() => new Set());
+  const known = laid.some(face => face.face !== 'unknown');
+  // Without any recorded face, one caption says so instead of guessing.
+  const faces = useMemo<LayoutFace[]>(() => {
+    if (!known) return laid.map(face => ({ ...face, title: 'Component faces not recorded' }));
+    if (!showEmptyFaces) return laid;
+    return (['Front', 'Rear', 'unknown'] as const).flatMap(side => laid.find(face => face.face === side) ?? (side === 'unknown' ? [] : [{ face: side, title: side, clusters: [] }]));
+  }, [laid, known, showEmptyFaces]);
+  const hidden = (cluster: LayoutFace['clusters'][number]) => collapseCatalogOnly && catalogOnly(cluster.tiles) && !expanded.has(cluster.group);
+  const tiles = useMemo(() => faces.flatMap(face => face.clusters.filter(cluster => !hidden(cluster)).flatMap(cluster => cluster.tiles)), [faces, expanded, collapseCatalogOnly]);
+  // Labels are unique within a cluster: its header carries the type.
+  const labels = useMemo(() => new Map(faces.flatMap(face => face.clusters.flatMap(cluster => [...shortLabels(cluster.tiles)]))), [faces]);
+  const marks = useMemo(() => new Map(faces.flatMap(face => face.clusters.filter(cluster => cluster.tiles.length > TEXT_TILE_LIMIT).flatMap(cluster => [...numbering(cluster.tiles, labels)]))), [faces, labels]);
+  const grid = usePortGrid({ tiles, names, namespace, href, cablesDenied, telemetry });
+
+  const renderTile = (tile: PortTile, compact: boolean) => (
+    <li key={tile.key}>
+      {grid.tileButton(tile, { label: compact ? undefined : labels.get(tile.key) })}
+      {compact && <span className="inventory-port-number" aria-hidden="true">{marks.get(tile.key) ?? ''}</span>}
+    </li>
+  );
+
   return (
     <div
-      ref={container}
+      ref={grid.container}
       className="inventory-port-grid"
       role="group"
       aria-label="Port tiles. Arrow keys move between ports; Enter opens a port's card; Escape closes it."
-      onKeyDown={onKeyDown}
+      onKeyDown={grid.onKeyDown}
     >
       {faces.map(face => (
         <div key={face.face} className="inventory-port-face-group" data-face={face.face} role="group" aria-label={face.title}>
@@ -416,48 +468,7 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
           )}
         </div>
       ))}
-      {tipTile && <PortTooltip ref={tipRef} text={tileTip(tipTile, names, cablesDenied)} at={tipAt} />}
-      {card && (
-        <div
-          ref={cardRef}
-          id={cardID}
-          className="inventory-port-card"
-          data-state={cablesDenied ? 'unavailable' : card.state}
-          data-pinned=""
-          data-component-card=""
-          role="dialog"
-          aria-modal={false}
-          aria-label={`${card.name} details`}
-          style={cardAt ? { '--card-left': `${cardAt.left}px`, '--card-top': `${cardAt.top}px` } as CSSProperties : { visibility: 'hidden' }}
-          onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}
-        >
-          <div className="inventory-port-card-title">
-            <h5>{card.name}</h5>
-            <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={close} aria-label={`Close ${card.name}`}>Close</Button>
-          </div>
-          <PortCard tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} />
-        </div>
-      )}
+      {grid.overlay}
     </div>
-  );
-}
-
-/**
- * A Device's faceplate for the rack side panel: the same tiles and cards as
- * the connection view. When Cables are denied, the recorded components are
- * still drawn, with every state unknown.
- */
-export function DeviceFaceplate({ device, inventory }: { device: Device; inventory: Inventory }) {
-  const plate = useMemo(() => faceplate(device, inventory), [device, inventory]);
-  const names = useMemo(() => viewNames(plate.links), [plate]);
-  const cablesDenied = plate.cableAccess === 'denied';
-  const telemetry = usePortTelemetry({ kind: 'Device', namespace: device.metadata.namespace, name: device.metadata.name }, { cablesDenied });
-  return (
-    <section className="inventory-faceplate" aria-label="Faceplate">
-      {plate.faces.length
-        ? <PortFaceplate faces={plate.faces} names={names} namespace={device.metadata.namespace} href={inventoryHref} cablesDenied={cablesDenied} showEmptyFaces telemetry={telemetry} />
-        : <p className="inventory-muted">No ports are recorded for this Device.</p>}
-      {cablesDenied && <p className="inventory-muted">Cable details unavailable. Component states are unknown.</p>}
-    </section>
   );
 }

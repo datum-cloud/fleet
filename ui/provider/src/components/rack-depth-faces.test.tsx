@@ -24,7 +24,7 @@ describe('rack elevation by face', () => {
     expect(blocks('front')).toContainEqual({ name: 'Example compute 07', far: false, depth: 'full', overlap: false });
     expect(blocks('rear')).toContainEqual({ name: 'rear of Example compute 07', far: true, depth: 'full', overlap: false });
     const far = within(face('rear')).getByRole('link', { name: /^Review Rear of Example compute 07/ });
-    expect(far).toHaveAccessibleName('Review Rear of Example compute 07 · U10 · 1U · Reported placement · mounted front · Full depth (catalog), rear');
+    expect(far).toHaveAccessibleName('Review Rear of Example compute 07 · U10 · 1U · Reported placement · mounted front · Full depth (catalog), rear, layout not recorded');
     expect(far.parentElement).toHaveClass('inventory-rack-plan-far');
     expect(far.parentElement).toHaveStyle({ gridRow: '33 / span 1' });
   });

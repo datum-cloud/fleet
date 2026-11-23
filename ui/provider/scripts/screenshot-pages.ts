@@ -100,6 +100,20 @@ export const PAGES: CapturePage[] = [
   { name: 'power-feed-no-telemetry', path: record('PowerFeed', 'example-feed-a', '&telemetry=none'), ready: '.inventory-power-path' },
   { name: 'power-feed-outlet-card', path: record('PowerFeed', 'example-feed-a'), ready: '.inventory-power-path', click: `.inventory-power-strip[aria-label="PDU a01 (rear left) outlets"] ${tile('outlet-1')}` },
   { name: 'device-psu-card', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-port-grid', click: tile('psu-1') },
+  // Faceplates drawn from DeviceType layouts: the 1U server and the 48+8 leaf,
+  // an open card on a dense face, the no-layout fallback, mini faceplates in
+  // the elevation at each level of detail, and the drawing in the rack panel.
+  { name: 'faceplate-server', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
+  { name: 'faceplate-storage', path: record('Device', 'example-sto-a01-03'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: ['desktop-light'] },
+  { name: 'faceplate-switch', path: record('Device', 'example-leaf-a01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
+  { name: 'faceplate-switch-card', path: record('Device', 'example-leaf-a01'), ready: '.inventory-drawing', click: `.inventory-drawing ${tile('swp49')}`, viewports: CONNECTION_VIEWPORTS },
+  { name: 'faceplate-patch-pdu', path: record('Device', 'example-patch-a01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: ['desktop-light'] },
+  { name: 'faceplate-pdu', path: record('Device', 'example-pdu-a01'), ready: '.inventory-drawing', element: '.inventory-connections', viewports: ['desktop-dark'] },
+  { name: 'faceplate-fallback', path: record('Device', 'example-app-a01'), ready: '.inventory-faceplate-fallback', element: '.inventory-connections', viewports: CONNECTION_VIEWPORTS },
+  { name: 'rack-mini-reduced', path: record('Rack', 'example-rack-a01'), ready: '.inventory-mini-faceplate', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
+  { name: 'rack-mini-full', path: record('Rack', 'example-rack-a01', '&detail=full'), ready: '.inventory-mini-faceplate[data-level="full"]', element: '.inventory-elevation', viewports: ['desktop-light', 'desktop-dark'] },
+  { name: 'rack-mini-silhouette', path: record('Rack', 'example-rack-a01', '&detail=silhouette'), ready: '.inventory-mini-faceplate[data-level="silhouette"]', element: '.inventory-elevation', viewports: ['desktop-dark'] },
+  { name: 'rack-panel-faceplate', path: record('Rack', 'example-rack-a01', '&selectedKind=Device&selected=example-srv-a01-01'), ready: '.inventory-faceplate .inventory-drawing', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
 ];
 
 /** The `telemetry=` values pages may use: the mock scenarios and `none`. */

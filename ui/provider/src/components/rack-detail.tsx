@@ -23,7 +23,7 @@ import { displayLabel } from '../lib/display-names';
 import { depthLabel, equipmentDepth } from '../lib/device-depth';
 import { faceOccupancy, RACK_FACES, rackOccupants, type RackOccupant } from '../lib/rack-faces';
 import { deviceModelLabel } from '../lib/hardware-catalog';
-import { DeviceFaceplate } from './device-faceplate';
+import { DeviceFaceplate } from './faceplate-drawing';
 import { inventoryHref, rackPlacements, RackOverview } from './inventory-location';
 import { RackPowerRedundancy } from './rack-power';
 

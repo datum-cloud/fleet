@@ -2,10 +2,11 @@ import { Button } from '@datum-cloud/datum-ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@datum-cloud/datum-ui/table';
 import { Title } from '@datum-cloud/datum-ui/typography';
 import { useState, type ReactNode } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { slotKey, type Inventory, type InventorySlot } from '../inventory';
 import type { PhysicalRecord, RackFace as RackFaceName } from '../../../shared/fleet-api';
 import { depthLabel } from '../lib/device-depth';
+import { detailLevel, type DetailLevel } from '../lib/faceplate-layout';
 import { faceOccupancy, rackOccupants, type RackOccupant } from '../lib/rack-faces';
 import { equipmentGeometry, equipmentPlacements, reportedPlacementLabel, type EquipmentPlacement } from '../lib/device-placement';
 import { RackSlotDevice } from './rack-slot-device';
@@ -29,7 +30,7 @@ function Equipment({ slots, devicesDenied, inventory }: { slots: EquipmentPlacem
   </TableBody></Table></div>;
 }
 
-function RackFace({ occupants, height, side, selection }: { occupants: RackOccupant[]; height: number; side: RackFaceName; selection?: RackSelection }) {
+function RackFace({ occupants, height, side, selection, inventory, unit }: { occupants: RackOccupant[]; height: number; side: RackFaceName; selection?: RackSelection; inventory: Inventory; unit: number }) {
   const plans = faceOccupancy(occupants, side)
     .sort((first, second) => first.position - second.position || first.entry.key.localeCompare(second.entry.key));
   const laneEnds: number[] = [];
@@ -40,7 +41,7 @@ function RackFace({ occupants, height, side, selection }: { occupants: RackOccup
     return { ...plan, lane };
   });
   return <div><h4>{side === 'front' ? 'Front' : 'Rear'}</h4>
-    <ol className="inventory-rack-units" aria-label={`${side} recorded placements`} style={{ gridTemplateRows: `repeat(${height}, 16px)`, gridTemplateColumns: `28px repeat(${Math.max(1, laneEnds.length)}, minmax(0, 1fr))` }}>
+    <ol className="inventory-rack-units" aria-label={`${side} recorded placements`} data-detail={detailLevel(unit)} style={{ gridTemplateRows: `repeat(${height}, ${unit}px)`, gridTemplateColumns: `28px repeat(${Math.max(1, laneEnds.length)}, minmax(0, 1fr))` }}>
       {Array.from({ length: height }, (_, index) => height - index).map(unit => {
         const recorded = plans.some(plan => unit >= plan.position && unit < plan.position + plan.height);
         return <li key={unit} className="inventory-rack-unit" style={{ gridRow: height - unit + 1, gridColumn: '1 / -1' }}><span>U{unit}</span>{!recorded && <span className="inventory-muted" aria-label="Occupancy unverified">—</span>}</li>;
@@ -57,7 +58,7 @@ function RackFace({ occupants, height, side, selection }: { occupants: RackOccup
         const label = [name, range, `${plan.height}U`, plan.entry.basis, plan.far ? `mounted ${plan.mounted}` : undefined, depthLabel(plan.depth), overlap ? 'records disagree: overlapping placements on this face' : undefined].filter(Boolean).join(' · ');
         const selected = selection?.selectedKey === plan.entry.key;
         return <li key={plan.entry.key} className={`inventory-rack-plan${plan.far ? ' inventory-rack-plan-far' : ''}`} data-far={plan.far ? '' : undefined} data-depth={plan.depth.source === 'unknown' ? 'unknown' : plan.depth.full ? 'full' : 'half'} data-selected={selected ? '' : undefined} style={{ gridRow: `${height - top + 1} / span ${plan.height}`, gridColumn: plan.lane + 2 }}>
-          <RackSlotDevice slot={plan.entry} name={recordName} range={range} height={plan.height} label={label} side={side} overlap={overlap} far={plan.far} depthUnknown={plan.depth.source === 'unknown'} to={selection ? selection.href(plan.entry) : inventoryHref(plan.entry.kind, record.metadata.namespace, record.metadata.name)} selected={selected} />
+          <RackSlotDevice slot={plan.entry} name={recordName} range={range} height={plan.height} label={label} side={side} overlap={overlap} far={plan.far} depthUnknown={plan.depth.source === 'unknown'} to={selection ? selection.href(plan.entry) : inventoryHref(plan.entry.kind, record.metadata.namespace, record.metadata.name)} selected={selected} inventory={inventory} pxPerUnit={unit} />
         </li>;
       })}
     </ol>
@@ -74,8 +75,17 @@ export function rackPlacements(rack: PhysicalRecord, inventory: Inventory) {
  * banners live in rack-detail.tsx. `toolbar` sits beside the face switch,
  * where a later 2D/3D view toggle belongs.
  */
+/** Pixels per rack unit for each level of detail the elevation offers. */
+export const UNIT_PX: Record<DetailLevel, number> = { silhouette: 12, reduced: 16, full: 44 };
+const DETAIL_WORDS: Record<DetailLevel, string> = { silhouette: 'Outline', reduced: 'Ports', full: 'Full' };
+
 export function RackOverview({ rack, inventory, selection, toolbar }: { rack: PhysicalRecord; inventory: Inventory; selection?: RackSelection; toolbar?: ReactNode }) {
   const [face, setFace] = useState<'both' | 'front' | 'rear'>('both');
+  // The level of detail is held in the URL (?detail=), so a zoomed rack can be linked.
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('detail');
+  const detail: DetailLevel = requested === 'silhouette' || requested === 'full' ? requested : 'reduced';
+  const setDetail = (value: DetailLevel) => setParams(current => { const next = new URLSearchParams(current); if (value === 'reduced') next.delete('detail'); else next.set('detail', value); return next; }, { replace: true });
   const slots = rackPlacements(rack, inventory);
   const positioned = slots.filter(slot => equipmentGeometry(slot, rack));
   const occupants = rackOccupants(positioned, rack, inventory);
@@ -84,9 +94,9 @@ export function RackOverview({ rack, inventory, selection, toolbar }: { rack: Ph
   return <section className="inventory-rack-layout" aria-label="Rack layout">
     <aside className="inventory-elevation">
       <div className="inventory-list-heading"><Title as="h3" level={5}>Rack elevation</Title><span>{height ? `${height}U` : 'Height unknown'}</span></div>
-      <div className="inventory-elevation-toolbar"><div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type="secondary" theme={face === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</div>{toolbar}</div>
-      <p className="inventory-muted">Reported, not verified. Blank units are not free space. Full-depth equipment shows on both faces, muted where its chassis rear shows; half-depth only on its mounted face. Unknown depth is drawn as full depth. ! means records disagree: placements overlap on the same face.</p>
-      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} occupants={occupants} height={height} side={side} selection={selection} />)}</div>}
+      <div className="inventory-elevation-toolbar"><div className="inventory-face-switch" role="group" aria-label="Rack faces">{(['both', 'front', 'rear'] as const).map(value => <Button type="secondary" theme={face === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={face === value} onClick={() => setFace(value)}>{value === 'both' ? 'Front + rear' : value === 'front' ? 'Front' : 'Rear'}</Button>)}</div><div className="inventory-face-switch" role="group" aria-label="Elevation detail">{(['silhouette', 'reduced', 'full'] as const).map(value => <Button type="secondary" theme={detail === value ? 'light' : 'outline'} size="small" key={value} htmlType="button" aria-pressed={detail === value} onClick={() => setDetail(value)}>{DETAIL_WORDS[value]}</Button>)}</div>{toolbar}</div>
+      <p className="inventory-muted">Reported, not verified. Blank units are not free space. Full-depth equipment shows on both faces, muted where its chassis rear shows; half-depth only on its mounted face. Unknown depth is drawn as full depth. ! means records disagree: placements overlap on the same face. Beside a name, ! and ? count ports whose records disagree or whose peer is unavailable. Faceplates are drawn from each model's recorded layout.</p>
+      {denied ? <p>Installation details unavailable. Rack positions cannot be shown.</p> : !height ? <p>Rack height is not recorded. Equipment remains listed without invented slots.</p> : <div className="inventory-rack-faces">{(['front', 'rear'] as const).filter(value => face === 'both' || face === value).map(side => <RackFace key={side} occupants={occupants} height={height} side={side} selection={selection} inventory={inventory} unit={UNIT_PX[detail]} />)}</div>}
     </aside>
   </section>;
 }

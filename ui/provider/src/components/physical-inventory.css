@@ -448,3 +448,62 @@
   .inventory-redundancy-cell[data-empty] { display:none; }
   .inventory-redundancy-cell-feed { display:block; font-size:11px; font-weight:600; color:var(--muted-foreground); }
 }
+/* Drawn faceplate (faceplate-drawing.tsx): chassis faces from the DeviceType layout. The
+   shared port tiles fill their cells; the drawing keeps its width and scrolls inside its own
+   frame, so the page never scrolls sideways. */
+.inventory-drawing { gap:10px; }
+.inventory-drawing-note { margin:0; font-size:12px; }
+.inventory-drawn-face { display:grid; gap:4px; min-width:0; }
+.inventory-chassis-scroll { min-width:0; max-width:100%; overflow-x:auto; overflow-y:hidden; padding:14px 2px; overscroll-behavior-x:contain; }
+.inventory-chassis { position:relative; box-sizing:content-box; border:1.5px solid var(--muted-foreground); border-radius:3px; background:color-mix(in oklab,var(--muted) 55%,var(--card)); }
+.inventory-chassis[data-strip] { border-style:dashed; }
+.inventory-chassis-bank { position:absolute; box-sizing:content-box; margin:-2px 0 0 -2px; padding:2px; border-radius:2px; background:var(--card); }
+.inventory-chassis-cell { position:absolute; }
+.inventory-chassis .inventory-chassis-cell > .inventory-port { position:absolute; inset:0; min-width:0; min-height:0; padding:0; border-radius:2px; }
+.inventory-chassis .inventory-chassis-cell > .inventory-port[data-shape] .inventory-port-face { min-width:0; width:100%; height:100%; padding:0 1px; font-size:9px; }
+.inventory-chassis .inventory-chassis-cell[data-module] > .inventory-port[data-shape] .inventory-port-face { font-size:10px; border-radius:3px; }
+.inventory-chassis .inventory-chassis-cell .inventory-port-lanes { position:absolute; left:3px; right:3px; bottom:2px; width:auto; padding:0; }
+.inventory-chassis .inventory-chassis-cell .inventory-port-lanes > span { height:3px; box-shadow:0 0 0 1px var(--card); }
+.inventory-chassis-cell[data-kind="DB9"] .inventory-port-face,.inventory-chassis-cell[data-kind="VGA"] .inventory-port-face { border-radius:3px 3px 9px 9px / 3px 3px 7px 7px; }
+.inventory-chassis-cell[data-kind="USB"] .inventory-port-face { border-radius:1px; }
+.inventory-chassis-module { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; border:1.5px solid var(--muted-foreground); border-radius:3px; background:var(--card); color:var(--foreground); font-size:10px; font-weight:600; line-height:1; white-space:nowrap; overflow:hidden; }
+.inventory-chassis-module[data-state="catalog"] { border:1px dashed var(--muted-foreground); background:repeating-linear-gradient(135deg,transparent 0 4px,var(--muted) 4px 6px); }
+.inventory-chassis-module-glyph { margin-left:2px; color:var(--muted-foreground); }
+.inventory-chassis-print { position:absolute; left:-8px; right:-8px; text-align:center; font-size:9px; line-height:10px; color:var(--muted-foreground); white-space:nowrap; pointer-events:none; }
+.inventory-chassis-print[data-where="above"] { bottom:100%; margin-bottom:1px; }
+.inventory-chassis-print[data-where="below"] { top:100%; margin-top:1px; }
+.inventory-chassis-number { position:absolute; font-size:8px; line-height:9px; text-align:center; color:var(--muted-foreground); font-variant-numeric:tabular-nums; pointer-events:none; }
+.inventory-chassis-number[data-where="above"] { transform:translateY(calc(-100% - 1px)); }
+.inventory-chassis-number[data-where="below"] { margin-top:1px; }
+.fleet-inventory .inventory-faceplate-warning { margin:0; font-size:12px; }
+.inventory-faceplate-warning > span { color:var(--destructive); font-weight:700; }
+.fleet-inventory .inventory-faceplate-fallback { margin:0 0 6px; font-size:12px; }
+.inventory-faceplate-fallback-label { display:inline-block; padding:1px 6px; border:1px dashed var(--muted-foreground); border-radius:4px; font-weight:600; }
+.inventory-faceplate-tray { display:grid; gap:4px; border-top:1px solid var(--border); padding-top:8px; min-width:0; }
+.inventory-faceplate-tray-list { display:flex; flex-wrap:wrap; gap:6px 16px; list-style:none; margin:0; padding:0; min-width:0; }
+.inventory-faceplate-tray-list > li { display:flex; align-items:center; gap:6px; min-width:0; }
+.inventory-faceplate-tray-list small { color:var(--muted-foreground); font-size:11px; }
+.inventory-faceplate-tray-name { font-size:12px; font-weight:600; }
+.inventory-faceplate-tray-list .inventory-chassis-module { position:static; display:inline-flex; min-width:34px; height:24px; padding:0 4px; }
+
+/* Mini faceplates in the elevation: visual only. Strokes do not scale, so outlines stay 1px at
+   every level, and cells are drawn in --foreground on --background so they keep contrast in
+   both themes (the prototype's muted blocks were too faint in dark mode). */
+.inventory-rack-plan a.inventory-rack-slot-device { flex-direction:row; align-items:stretch; justify-content:flex-start; gap:4px; padding:1px 3px; }
+.inventory-rack-plan-text { display:flex; flex-direction:column; justify-content:center; flex:0 1 auto; min-width:0; max-width:48%; }
+.inventory-rack-slot-device[data-level="full"] .inventory-rack-plan-text { max-width:34%; }
+.inventory-rack-counts { display:inline-flex; gap:3px; flex:none; font-weight:700; }
+.inventory-rack-counts > [data-state="conflict"] { color:var(--destructive); }
+.inventory-mini-faceplate { display:block; flex:1 1 0; min-width:0; height:100%; }
+.inventory-mini-faceplate * { vector-effect:non-scaling-stroke; }
+.inventory-mini-chassis { fill:var(--background); stroke:var(--muted-foreground); stroke-width:1px; }
+.inventory-mini-bank { fill:color-mix(in oklab,var(--foreground) 22%,var(--background)); stroke:var(--foreground); stroke-width:1px; }
+.inventory-mini-cell { fill:var(--background); stroke:var(--foreground); stroke-width:1px; }
+.inventory-mini-cell[data-state="cabled"] { fill:var(--foreground); }
+.inventory-mini-cell[data-state="recorded"] { fill:color-mix(in oklab,var(--foreground) 60%,var(--background)); }
+.inventory-mini-cell[data-state="conflict"] { fill:var(--destructive); stroke:var(--destructive); }
+.inventory-mini-cell[data-state="unavailable"] { stroke-dasharray:2 1.5; }
+.inventory-mini-cell[data-state="catalog"] { stroke:var(--muted-foreground); stroke-dasharray:1 1.5; }
+.inventory-mini-faceplate[data-level="reduced"] .inventory-mini-cell { stroke-width:0.75px; }
+.inventory-mini-glyph { fill:var(--background); font-weight:800; }
+.inventory-mini-cell[data-state="unavailable"] + .inventory-mini-glyph { fill:var(--foreground); }

@@ -153,9 +153,13 @@ describe('device selection', () => {
     expect(within(panel).getByText('U2 · 1U')).toBeInTheDocument();
     expect(within(panel).getByText('front')).toBeInTheDocument();
     expect(within(panel).getByText('Full depth (catalog)')).toBeInTheDocument();
-    // Chassis faces come from the DeviceType templates: server ports are on the chassis rear.
-    expect(within(plate).getByRole('group', { name: 'Rear · rack rear · Power' })).toHaveTextContent('PSU 1');
-    expect(within(plate).getByText('No component records this face.')).toBeInTheDocument();
+    // The model records a layout, so the panel draws it: ports on the chassis
+    // rear, drive bays on the front, and the unplaced console in the tray.
+    const rear = within(plate).getByRole('group', { name: 'Rear · rack rear face' });
+    expect(within(rear).getByRole('button', { name: /^PSU 1: / })).toHaveTextContent('PSU 1');
+    const front = within(plate).getByRole('group', { name: 'Front · rack front face' });
+    expect(within(front).getByRole('img', { name: 'Bay 7, module, Catalog only' })).toBeInTheDocument();
+    expect(within(plate).getByRole('group', { name: 'Not on the faceplate' })).toHaveTextContent('Serial console');
     expect(within(panel).getByText('Active')).toBeInTheDocument();
     expect(within(panel).getByRole('list', { name: 'Ports and cables' })).toHaveTextContent(/cable recorded/);
     expect(within(panel).getByRole('link', { name: 'Open device page' })).toHaveAttribute('href', expect.stringContaining('kind=Device&record=example-srv-a01-01'));
@@ -217,22 +221,32 @@ describe('device selection', () => {
     expect(screen.getByTestId('rack-device-panel')).toBeInTheDocument();
   });
 
-  it('places only pass-through ports on a recorded face and labels the rest', () => {
+  it('draws a patch panel on both recorded faces, its dense jacks without text', () => {
     phoneWidth(false);
     open(RACK('example-rack-a01', '&selectedKind=Device&selected=example-patch-a01'));
     const plate = within(screen.getByTestId('rack-device-panel')).getByRole('region', { name: 'Faceplate' });
-    expect(within(plate).getByRole('group', { name: /^Front · rack (front|rear) · Pass-through$/ })).toHaveTextContent('F1');
-    expect(within(plate).getByRole('group', { name: /^Rear · rack (front|rear) · Pass-through$/ })).toHaveTextContent('R1');
+    const front = within(plate).getByRole('group', { name: /^Front · rack (front|rear) face$/ });
+    const rear = within(plate).getByRole('group', { name: /^Rear · rack (front|rear) face$/ });
+    expect(within(front).getAllByRole('button')).toHaveLength(24);
+    expect(within(rear).getByRole('button', { name: /^Rear 1: / })).toBeInTheDocument();
+    // 24 jacks is above the dense threshold: no labels on ports, numbers at the edges.
+    expect(within(front).getAllByRole('button').filter(tile => tile.hasAttribute('data-labelled'))).toEqual([]);
+    expect([...front.querySelectorAll('.inventory-chassis-number')].map(item => item.textContent)).toEqual(['1', '24']);
     expect(within(plate).queryByText('Face not recorded')).not.toBeInTheDocument();
   });
 
   it('says once that faces are not recorded rather than drawing two empty faces', () => {
     phoneWidth(false);
-    // Template faces are optional on the wire; without them nothing is guessed from the type.
+    // Template faces are optional on the wire; without them nothing is guessed
+    // from the type. Layout needs a face, so the models record none here.
     const inventory = structuredClone(fixtureInventory());
-    for (const record of inventory.physical) for (const template of record.spec.componentTemplates ?? []) delete template.face;
+    for (const record of inventory.physical) {
+      delete record.spec.faceplate;
+      for (const template of record.spec.componentTemplates ?? []) { delete template.face; delete template.layout; }
+    }
     open(RACK('example-rack-a01', '&selectedKind=Device&selected=example-srv-a01-01'), undefined, inventory);
     const plate = within(screen.getByTestId('rack-device-panel')).getByRole('region', { name: 'Faceplate' });
+    expect(within(plate).getByText('Layout not recorded')).toBeInTheDocument();
     expect(within(plate).getByText('Component faces not recorded')).toBeInTheDocument();
     expect(within(plate).queryByText(/^(Front|Rear)$/)).not.toBeInTheDocument();
     expect(within(plate).getByRole('group', { name: 'Component faces not recorded · Power' })).toHaveTextContent('PSU 1');

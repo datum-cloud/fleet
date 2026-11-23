@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import type { Device } from '../../../shared/fleet-api';
 import { faceplate } from '../lib/device-faceplate';
 import { FIXTURE_NAMES, fixtureInventory } from '../lib/inventory-fixtures';
-import { DeviceFaceplate, PortTileButton, PortTooltip, TEXT_TILE_LIMIT } from './device-faceplate';
+import { PortTileButton, PortTooltip, TEXT_TILE_LIMIT } from './device-faceplate';
+import { DeviceFaceplate } from './faceplate-drawing';
 
 // Synthetic fixture records only.
 const named = (name: string, scenario?: string) => {
@@ -42,10 +43,22 @@ describe('PortTileButton', () => {
   });
 });
 
+/** The same fixtures with every recorded layout removed: the no-layout fallback. */
+function withoutLayouts(name: string) {
+  const { inventory, device } = named(name);
+  const copy = structuredClone(inventory);
+  for (const record of copy.physical) {
+    delete record.spec.faceplate;
+    for (const template of record.spec.componentTemplates ?? []) delete template.layout;
+  }
+  return { inventory: copy, device };
+}
+
 describe('DeviceFaceplate', () => {
-  it('draws the leaf as unlabelled tiles above the dense threshold, with faint bank numbers', () => {
-    const { inventory, device } = named(FIXTURE_NAMES.leaf);
+  it('without a layout, groups the leaf as unlabelled tiles above the dense threshold, with faint bank numbers', () => {
+    const { inventory, device } = withoutLayouts(FIXTURE_NAMES.leaf);
     render(<MemoryRouter><DeviceFaceplate device={device} inventory={inventory} /></MemoryRouter>);
+    expect(screen.getByText('Layout not recorded')).toBeInTheDocument();
     const network = screen.getByRole('list', { name: 'Network ports' });
     const tiles = within(network).getAllByRole('button');
     expect(tiles.length).toBeGreaterThan(TEXT_TILE_LIMIT);
