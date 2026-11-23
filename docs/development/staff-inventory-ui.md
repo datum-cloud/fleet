@@ -234,6 +234,16 @@ pixel identity or completed authenticated staging acceptance.
   Multi-unit plans render as one continuous block spanning their recorded unit
   range, with one detail link; overlapping plans occupy separate visual columns.
   Model height alone never supplies missing placement geometry.
+  Occupancy is face-aware
+  ([semantics](../operations/physical-inventory.md#rack-faces-depth-and-component-faces)):
+  full-depth equipment, and equipment of unknown depth, is drawn on both
+  elevations, muted and hatched on the far face and labelled "rear of" the
+  equipment; half-depth equipment is drawn only on its mounted face, so the
+  other face keeps its unverified dashes. Each block carries its depth source
+  (reported, recorded on Device, catalog, or "depth unknown"). Overlaps on the
+  same face are marked `!` and labelled "records disagree"; they are never
+  blocked. The logic is in `ui/provider/src/lib/rack-faces.ts` and
+  `device-depth.ts`.
 - Create Facility/Rack facts; rack height is optional. Create an Installation
   plan at a known Facility or Rack with unknown unit position, then separately
   register a Device with a real serial or system UUID and typed components.
@@ -466,8 +476,17 @@ its state counts. Styling uses only the host's tokens (`--foreground`,
 `--destructive`, `--card` and `--radius`), and the diagram stacks into one
 column below 600 px.
 
+Within each type group, ports are grouped by chassis face (Front, Rear, Face
+unknown) when the Device's DeviceType records a face for at least one of them;
+otherwise the group stays flat. A port's chassis face comes from the DeviceType
+template with the same id and is unknown without a readable catalog. When the
+Device's mounted face is known, each port also shows its derived rack face
+(for example "Chassis front · rack rear" on a reversed switch). A Cable whose
+two ends land on opposite rack faces gets a soft "Check" note in the row. The
+note does not change the record state.
+
 Not shown, because the model does not record them: link speed, Cable label,
-colour or length, component faces, live or observed link state, and any
+colour or length, x/y port positions, live or observed link state, and any
 verified state. Shared-failure or redundancy analysis is not attempted.
 
 ## Deliberate gaps and decisions

@@ -27,11 +27,16 @@ shape pinning, physical qualification, reservations, or component reconciliation
   identity key (`[a-z0-9]+(-[a-z0-9]+)*`). `displayName` is its mutable human model
   label. Stable metadata names are operator-selected, not regenerated from labels.
   Distinct hardware variants need distinct reviewed model keys.
-- Shared `modelShape` reuses the existing height-in-rack-units/full-depth shape;
-  absent values mean unknown. It is **nominal**, never a measured installation or
-  observed occupancy. `componentTemplates` reuse the component type, connector,
+- Shared `modelShape` reuses the existing height-in-rack-units/full-depth shape.
+  Absent values mean unknown and are never defaulted; a Device's
+  `fullDepth` overrides its DeviceType's. It is **nominal**, never a measured
+  installation or observed occupancy, but rack elevations use `fullDepth` to
+  decide which faces a Device occupies. `componentTemplates` reuse the component type, connector,
   position, name and stable local-ID vocabulary, but have no serial, asset tag or
   source-instance identity. They do not create installed ports, topology or assets.
+  A template may set a chassis-relative `face` (`Front` or `Rear`; absent means
+  unknown), which a Device component with the same id inherits. See
+  [rack faces, depth and component faces](../operations/physical-inventory.md#rack-faces-depth-and-component-faces).
 - Both kinds use `metadata.creationTimestamp` and resource audit logs, not
   spec provenance, imported source identities, or synthetic timestamp advances.
   A catalog edit changes no Device, claim, installed component, recorded hardware

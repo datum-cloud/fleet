@@ -277,6 +277,69 @@ go test ./internal/api/inventory/v1alpha1 -run TestManualInventoryRecordsPassAdm
   -count=1 -v -args -inventory-records /private/tmp/reviewed-inventory.yaml
 ```
 
+## Rack faces, depth and component faces
+
+Three fields together describe where equipment sits in a rack and which way it
+points. None is measured or verified; each is a record.
+
+**Mounted rack face.** `face` (`front` or `rear`) on
+`Device.spec.reportedPlacement` and on `DeviceClaim.spec.placement` is the rack
+face that the chassis front points toward. This is the meaning NetBox gives its
+`face` field. It also fixes the rails:
+
+| Depth | Mounted face | Rails and occupancy |
+| --- | --- | --- |
+| Half depth | `front` | Front rails. Occupies its units on the front face only. |
+| Half depth | `rear` | Rear rails. Occupies its units on the rear face only. |
+| Full depth | either | Both rails. Occupies its units on both faces. `face` says which way the chassis points. |
+
+A switch mounted reversed, with its ports toward the rack rear, has
+`face: rear` when its DeviceType puts the ports on the chassis front. A
+half-depth device mounted on one face's rails but pointing into the rack is
+not representable. That mount is rare, and adding a second field for it would
+make every other record ambiguous until both fields were set.
+
+**Depth.** Depth uses the existing optional `modelShape.fullDepth` boolean on
+both Device and DeviceType. It has no default on either kind: unset means
+unknown. A Device value overrides its DeviceType. Readers resolve a Device's
+depth in this order:
+
+1. `Device.spec.reportedPlacement.fullDepth`, the depth reported for this
+   installation;
+2. `Device.spec.modelShape.fullDepth`;
+3. the DeviceType's `modelShape.fullDepth`, read through `deviceTypeRef`;
+4. otherwise unknown. This includes a Device with no DeviceType, and a
+   DeviceType or Manufacturer that is missing or unreadable.
+
+Unknown depth counts as full depth only when computing occupancy and
+conflicts, so it never makes the far face look clear, and it is labelled
+"Depth unknown" wherever it is shown. A default would hide that and make
+conflict checks overconfident. NetBox's `is_full_depth` defaults to true; an
+importer, of which none exists today, should copy an explicit NetBox value
+directly but should not write a value NetBox only defaulted. A claim-derived
+fallback uses the depth of its registered Devices only when all of them
+agree.
+
+**Component faces.** A `DeviceType.spec.componentTemplates[]` entry may set
+`face` to `Front` or `Rear`. This face is relative to the chassis, never to the
+rack, and unset means unknown. A Device component inherits the face of the
+template whose `id` equals the component `id`; the Device has no face field of
+its own and no override. A component's rack face is derived:
+
+| Chassis face | Mounted `front` | Mounted `rear` |
+| --- | --- | --- |
+| `Front` | rack front | rack rear |
+| `Rear` | rack rear | rack front |
+
+If either face is unknown, the rack face is unknown.
+
+**Conflicts.** Two placements whose units overlap on the same rack face are
+shown as "records disagree". Two half-depth devices on opposite faces of the
+same units do not disagree. Admission never blocks an overlap, because
+placement is reported and not verified. A Cable whose two ends land on
+opposite rack faces gets a soft "Check" note in the connection view, never an
+error: a pass-through panel or a reversed peer can make that correct.
+
 ## Historical legacy example
 
 The following representation remains supported for existing long-lived slots.
@@ -443,3 +506,27 @@ Remove the fields from GitOps sources and other writers.
 Retirement happened in two steps so that GitOps-applied records could drop the
 fields first: provenance became optional and stopped gating edits, then the
 fields were removed.
+
+### Rack face and depth semantics
+
+The mounted-face meaning above is a clarification of the existing `face`
+field, not a new field or value. Stored values stay `front` and `rear` and are
+not rewritten. The meaning changes nothing for half-depth equipment, which sits
+on the rails of the face it is recorded on either way, or for occupancy of
+full-depth equipment, which covers both faces either way. The only new reading
+is the rack face of a component, which needs a component template face, and
+no stored template has one yet. Before adding template faces to a model,
+review the recorded `face` of each reversed full-depth device, usually a
+switch, of that model: if it was recorded as the face its rails are reached
+from, rather than the face its chassis front points toward, correct it with
+an ordinary report revision.
+
+`modelShape.fullDepth` is unchanged in the schema and still has no default,
+so no stored record is reinterpreted. Readers now also consult the Device's
+and the DeviceType's model shape when the report omits depth. Before this
+change the elevation used only `reportedPlacement.fullDepth` and drew any
+Device without it on its mounted face only, with a note that unknown depth
+did not establish clearance. It now draws unknown depth on both faces, labelled
+"depth unknown", and draws a Device whose model shape says half depth on its
+mounted face only. Set `fullDepth: false` on half-depth models so that two
+half-depth devices on opposite faces stop disagreeing.

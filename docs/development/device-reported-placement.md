@@ -22,7 +22,10 @@ per-Device history or bespoke correction service, are the history integration.
 
 Reports have `observedAt`, a required `reason` and evidence `reference`, optional
 `facilityRef`/`rackRef`, and independently optional `position`, `height`, `face`,
-`fullDepth`, or a non-unit `mount`. Omission means unknown. The editor does not
+`fullDepth`, or a non-unit `mount`. Omission means unknown. `face` is the
+mounted rack face, the face the chassis front points toward; readers fall back
+from an absent `fullDepth` to the Device and then the DeviceType model shape
+([semantics](../operations/physical-inventory.md#rack-faces-depth-and-component-faces)). The editor does not
 infer actual geometry from a model or claim. Positive
 fractional position/height is valid but only complete integral in-range geometry
 is drawn in an elevation. Position is 1–100; height is greater than zero and at
