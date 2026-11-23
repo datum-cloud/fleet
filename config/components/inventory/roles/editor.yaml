@@ -1,0 +1,48 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-inventory-editor
+  annotations:
+    kubernetes.io/display-name: Fleet Inventory Editor
+    kubernetes.io/description: Plan slots and register devices in provider inventory
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-inventory-viewer
+  includedPermissions:
+    - fleet.datumapis.com/manufacturers.create
+    - fleet.datumapis.com/manufacturers.update
+    - fleet.datumapis.com/manufacturers.patch
+    - fleet.datumapis.com/manufacturers.delete
+    - fleet.datumapis.com/devicetypes.create
+    - fleet.datumapis.com/devicetypes.update
+    - fleet.datumapis.com/devicetypes.patch
+    - fleet.datumapis.com/devicetypes.delete
+    - fleet.datumapis.com/sites.create
+    - fleet.datumapis.com/sites.update
+    - fleet.datumapis.com/sites.patch
+    - fleet.datumapis.com/sites.delete
+    - fleet.datumapis.com/deviceclaims.create
+    - fleet.datumapis.com/deviceclaims.update
+    - fleet.datumapis.com/deviceclaims.patch
+    - fleet.datumapis.com/deviceclaims.delete
+    - fleet.datumapis.com/devices.create
+    - fleet.datumapis.com/devices.update
+    - fleet.datumapis.com/devices.patch
+    - fleet.datumapis.com/devices.delete
+    - fleet.datumapis.com/facilities.create
+    - fleet.datumapis.com/facilities.update
+    - fleet.datumapis.com/facilities.patch
+    - fleet.datumapis.com/facilities.delete
+    - fleet.datumapis.com/racks.create
+    - fleet.datumapis.com/racks.update
+    - fleet.datumapis.com/racks.patch
+    - fleet.datumapis.com/racks.delete
+    - fleet.datumapis.com/cables.create
+    - fleet.datumapis.com/cables.update
+    - fleet.datumapis.com/cables.patch
+    - fleet.datumapis.com/cables.delete
+    - fleet.datumapis.com/powerfeeds.create
+    - fleet.datumapis.com/powerfeeds.update
+    - fleet.datumapis.com/powerfeeds.patch
+    - fleet.datumapis.com/powerfeeds.delete
