@@ -1,4 +1,4 @@
-import { fixtureClasses, fixtureCapacities, fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords, fixtureProfiles } from './fixtures';
+import { fixtureClasses, fixtureCapacities, fixtureProfiles } from './fixtures';
 import { toInventory, inventoryResources, type InventoryKind, type Inventory, type RawDeviceClaimList, type RawDeviceList } from '../inventory';
 import { useInventoryRead } from './inventory-read';
 import { INVENTORY_NAMESPACE, inInventoryNamespace } from './inventory-namespace';
@@ -244,7 +244,9 @@ export function useDeleteMachineClass(): UseMutationResult<void, ApiError, strin
 // fleet.datumapis.com-inventory-viewer.
 
 export async function fetchInventory(): Promise<Inventory> {
-  if (USE_FIXTURES) return toInventory(fixturePhysicalClaims.filter(inInventoryNamespace), fixturePhysicalDevices.filter(inInventoryNamespace), fixturePhysicalRecords.filter(inInventoryNamespace));
+  // The preview dataset; `?fixture=<scenario>` selects a read-denial scenario.
+  // Imported lazily so production bundles, where USE_FIXTURES is false, drop it.
+  if (USE_FIXTURES) return (await import('./inventory-fixtures')).fixtureInventory(new URLSearchParams(globalThis.location?.search).get('fixture'));
   const issues: Inventory['issues'] = {};
   const results = await Promise.all(Object.entries(inventoryResources).map(async ([kind, plural]) => {
     try { return { kind, records: await fetchInventoryCollection<PhysicalRecord>(plural) }; }
