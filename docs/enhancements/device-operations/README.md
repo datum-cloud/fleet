@@ -230,9 +230,9 @@ plus `Pending`:
 | `OutcomeUnknown` | A command may have reached the server, and Fleet cannot prove the result. |
 
 Custody holds the phase, result, and result evidence of the active operation,
-and operation status copies them. The coordinator admits the next operation only after it
-copies the previous result to the previous operation's status. If that
-operation no longer exists, the coordinator skips the copy.
+and operation status copies them. The coordinator admits the next operation
+only after it copies the previous result to the previous operation's status.
+If that operation no longer exists, the coordinator skips the copy.
 
 ### Admission
 
@@ -247,7 +247,7 @@ only if all of these hold:
 4. No operation is active.
 5. The Device UID matches `deviceRef.uid`, and its identity matches current
    discovery.
-6. No other Device records the same BMC key digest.
+6. No other Device that is not retired records the same BMC key digest.
 
 Under a recovery hold, only the operations in [Unknown
 outcomes](#unknown-outcomes) are admitted.
@@ -301,8 +301,8 @@ result only if its fence matches the active operation's fence.
 
 Each kind defines the evidence its result carries, such as the power state
 before and after a reset. The coordinator records the evidence in custody with
-the result. The site deletes its copy after the coordinator accepts the
-result.
+the result. The site deletes its copy after the coordinator accepts or rejects
+the result.
 
 ### Unknown outcomes
 
