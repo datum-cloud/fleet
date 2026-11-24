@@ -2,7 +2,9 @@ import { FleetPage } from '../components/fleet-page';
 import { PhysicalInventory } from '../components/physical-inventory';
 import { LoadingState } from '../components/states';
 import { InventoryAccessState } from '../components/inventory-access-state';
+import { useQueryClient } from '@tanstack/react-query';
 import { useInventory } from '../lib/api';
+import { recheckInventoryPermission } from '../lib/inventory-management';
 import { InventorySessionBoundary } from '../components/inventory-session-boundary';
 import { InventoryCountsProvider, InventoryNavigation } from '../components/inventory-navigation';
 import { Text } from '@datum-cloud/datum-ui/typography';
@@ -19,7 +21,10 @@ export default function DeviceInventoryList() {
 }
 
 function InventoryListContent() {
-  const { data, isLoading, error, refetch } = useInventory();
+  const { data, isLoading, error, refetch: refetchInventory } = useInventory();
+  const client = useQueryClient();
+  // Refresh is the explicit way to check management access again before its cache expires.
+  const refetch = () => Promise.all([refetchInventory(), recheckInventoryPermission(client)]);
   return <>
     {isLoading && <InventoryPendingShell><LoadingState /></InventoryPendingShell>}
     {!isLoading && error && <InventoryPendingShell><InventoryAccessState status={error.status} onRetry={() => void refetch()} /></InventoryPendingShell>}

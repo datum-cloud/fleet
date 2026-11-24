@@ -135,7 +135,9 @@ function HostedInventory({ children, retainPresentationData = false, pending: pe
   const presentationPending = retainPresentationData && !navigation.formMethod && isPresentationNavigation(location, navigation.location);
   if (checking || revalidator.state !== 'idle' || navigation.state !== 'idle' && !presentationPending) return <>{pendingContent}</>;
   if (!principal) return unavailable(401);
-  return <SessionQueries key={JSON.stringify([principal, retainPresentationData ? null : location.key, sessionGeneration])} principal={principal} authority={navigation.state === 'idle'} generation={operationGeneration}>{navigation.state !== 'idle' ? pendingContent : children}</SessionQueries>;
+  // During a presentation navigation the location has not changed yet, so the children are the page
+  // already on screen; keep it while the host verifies, with writes withheld until it is idle.
+  return <SessionQueries key={JSON.stringify([principal, retainPresentationData ? null : location.key, sessionGeneration])} principal={principal} authority={navigation.state === 'idle'} generation={operationGeneration}>{navigation.state !== 'idle' && !presentationPending ? pendingContent : children}</SessionQueries>;
 }
 
 export function InventorySessionBoundary({ children, retainPresentationData, pending, unavailable }: { children: ReactNode; retainPresentationData?: boolean; pending?: ReactNode; unavailable?: (status: number) => ReactNode }) {

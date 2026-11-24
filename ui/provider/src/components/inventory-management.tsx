@@ -57,7 +57,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   const [baseline, setBaseline] = useState<ManagedRecord>();
   const namespace = INVENTORY_NAMESPACE;
   const editable = !record || canEditInventoryLabel(record);
-  const permission = useInventoryPermission(kind, editable && !issues[kind] ? namespace : '', record ? 'patch' : 'create', record?.metadata.name);
+  const permission = useInventoryPermission(kind, editable && !issues[kind] ? namespace : '', record ? 'patch' : 'create');
   const dependenciesUnavailable = !record && ((kind === 'Device' && !!issues?.DeviceClaim) || (kind === 'Rack' && !!issues?.Facility) || (kind === 'DeviceClaim' && !!issues?.Facility && !!issues?.Rack) || (kind === 'Cable' && !!issues?.Device && !!issues?.PowerFeed));
   const visible = permission.data === true && !permission.error && editable && !dependenciesUnavailable && !issues[kind];
   const allowed = ready && visible && !permission.isFetching;

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { ApiError, PLUGIN_ID, PROVIDER_PROJECT, proxyFetch } from './api';
 import type { Device, DeviceClaim, PhysicalRecord } from '../../../shared/fleet-api';
 import type { InventoryOperation } from './inventory-operation';
@@ -23,9 +23,25 @@ export async function inventoryPermission(kind: ManagedKind, namespace: string, 
   return review?.status?.allowed === true && review.status.denied !== true && !review.status.evaluationError;
 }
 
-export function useInventoryPermission(kind: ManagedKind, namespace: string, verb: 'create' | 'patch', name?: string) {
-  const read = useInventoryRead(() => inventoryPermission(kind, namespace, verb, name));
-  return useQuery({ queryKey: [PLUGIN_ID, 'inventory-permission', PROVIDER_PROJECT, kind, namespace, verb, name], queryFn: read, enabled: !!namespace, retry: false, gcTime: 0, staleTime: 0, refetchOnMount: 'always' });
+/** Permission is checked once per kind and verb, not per record, and reused for ten minutes: it rarely changes. */
+export const PERMISSION_QUERY_KEY = [PLUGIN_ID, 'inventory-permission', PROVIDER_PROJECT] as const;
+const PERMISSION_TTL = 10 * 60_000;
+
+/**
+ * Whether the signed-in user may create or edit records of `kind`. The answer
+ * is shared by every record of that kind for PERMISSION_TTL. A new principal
+ * gets a new query client, so it never sees another user's answer, and
+ * Refresh inventory checks again at once (`recheckInventoryPermission`).
+ * Every write is still checked at submit time and authorized by the server.
+ */
+export function useInventoryPermission(kind: ManagedKind, namespace: string, verb: 'create' | 'patch') {
+  const read = useInventoryRead(() => inventoryPermission(kind, namespace, verb));
+  return useQuery({ queryKey: [...PERMISSION_QUERY_KEY, kind, namespace, verb], queryFn: read, enabled: !!namespace, retry: false, gcTime: PERMISSION_TTL, staleTime: PERMISSION_TTL });
+}
+
+/** Drops every cached permission answer so the next render checks again. */
+export function recheckInventoryPermission(client: QueryClient) {
+  return client.invalidateQueries({ queryKey: PERMISSION_QUERY_KEY });
 }
 
 export function canEditInventoryLabel(record: ManagedRecord): boolean {

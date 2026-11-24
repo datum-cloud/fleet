@@ -37,7 +37,7 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
   const unavailable = { ...issues, ...denied };
   const namespace = device.metadata.namespace ?? '';
   const editable = canCorrectPlacement(device);
-  const permission = useInventoryPermission('Device', editable ? namespace : '', 'patch', device.metadata.name);
+  const permission = useInventoryPermission('Device', editable ? namespace : '', 'patch');
   const permitted = editable && permission.data === true && !permission.error && !unavailable.Device && !(device.spec.reportedPlacement?.facilityRef && unavailable.Facility) && !(device.spec.reportedPlacement?.rackRef && unavailable.Rack);
   const allowed = ready && permitted && !permission.isFetching;
   const visible = locations.filter(record => !unavailable[record.kind] && record.metadata.namespace === namespace && !record.metadata.deletionTimestamp);
