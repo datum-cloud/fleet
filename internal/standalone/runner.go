@@ -23,24 +23,26 @@ import (
 )
 
 const (
-	PhaseAllocate = "allocate"
-	PhaseInstall  = "install"
-	PhaseRelease  = "release"
+	PhaseAllocate  = "allocate"
+	PhaseInstall   = "install"
+	PhaseReinstall = "reinstall"
+	PhaseRelease   = "release"
 )
 
 type Options struct {
-	PrivateNamespace  string
-	ProviderNamespace string
-	FirstNamespace    string
-	SecondNamespace   string
-	ClassName         string
-	ProfileName       string
-	MachineName       string
-	ClaimName         string
-	InstallationName  string
-	ImageName         string
-	LocationName      string
-	EvidenceAge       time.Duration
+	PrivateNamespace   string
+	ProviderNamespace  string
+	FirstNamespace     string
+	SecondNamespace    string
+	ClassName          string
+	ProfileName        string
+	MachineName        string
+	ClaimName          string
+	InstallationName   string
+	ReinstallationName string
+	ImageName          string
+	LocationName       string
+	EvidenceAge        time.Duration
 }
 
 func DefaultOptions() Options {
@@ -49,7 +51,8 @@ func DefaultOptions() Options {
 		FirstNamespace: "fleet-project-a", SecondNamespace: "fleet-project-b",
 		ClassName: "standard-metal", ProfileName: "general-purpose-24c-128g",
 		MachineName: "central1-baremetal-01", ClaimName: "allocation",
-		InstallationName: "debian-12", ImageName: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb",
+		ReinstallationName: "debian-12-reinstall",
+		InstallationName:   "debian-12", ImageName: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb",
 		LocationName: "us-central-1", EvidenceAge: 5 * time.Minute,
 	}
 }
@@ -89,7 +92,12 @@ func (r Runner) Run(ctx context.Context, phase string) error {
 	case PhaseAllocate:
 		return r.allocate(ctx, coordinator)
 	case PhaseInstall:
-		return r.install(ctx, coordinator)
+		return r.install(ctx, coordinator, r.Options.InstallationName)
+	case PhaseReinstall:
+		if r.Options.ReinstallationName == "" || r.Options.ReinstallationName == r.Options.InstallationName {
+			return errors.New("reinstall requires a distinct installation name")
+		}
+		return r.install(ctx, coordinator, r.Options.ReinstallationName)
 	case PhaseRelease:
 		return r.release(ctx, coordinator)
 	default:
@@ -140,19 +148,30 @@ func (r Runner) allocate(ctx context.Context, coordinator *controller.Coordinato
 	return r.projectPendingClaim(ctx, second, profile, "InsufficientCapacity", "The only synthetic machine is allocated to another consumer.")
 }
 
-func (r Runner) install(ctx context.Context, coordinator *controller.Coordinator) error {
+func (r Runner) install(ctx context.Context, coordinator *controller.Coordinator, installationName string) error {
 	claim, namespace, admission, err := r.claim(ctx, r.Options.FirstNamespace)
 	if err != nil {
 		return err
 	}
 	var installation fleetv1.Installation
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: claim.Namespace, Name: r.Options.InstallationName}, &installation); err != nil {
+	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: claim.Namespace, Name: installationName}, &installation); err != nil {
+		return err
+	}
+	if installationName == r.Options.ReinstallationName && installation.Spec.ExpectedPredecessor != (fleetv1.InstallationPredecessor{Type: "Installation", Name: r.Options.InstallationName}) {
+		return errors.New("synthetic reinstall must name the configured initial installation as predecessor")
+	}
+	apiMeta.SetStatusCondition(&claim.Status.Conditions, condition("Ready", metav1.ConditionUnknown, claim.Generation, "SyntheticInstallationUnverified", "The synthetic installation request has not yet returned verified completion."))
+	if err := r.Client.Status().Update(ctx, claim); err != nil {
 		return err
 	}
 	imageDecision := "local-test-" + imageDigest(r.Options.ImageName)
-	_, err = coordinator.Install(ctx, controller.InstallationRequest{Claim: claim, Installation: &installation, NamespaceUID: namespace.UID, Admission: controller.InstallationAdmissionAuthority{PrincipalUID: admission.PrincipalUID, DecisionID: "standalone-install-" + string(installation.UID), CatalogAuthority: "local-test-catalog", CatalogRevision: "local-test-v1", ImageDecisionID: imageDecision}})
+	result, err := coordinator.Install(ctx, controller.InstallationRequest{Claim: claim, Installation: &installation, NamespaceUID: namespace.UID, Admission: controller.InstallationAdmissionAuthority{PrincipalUID: admission.PrincipalUID, DecisionID: "standalone-install-" + string(installation.UID), CatalogAuthority: "local-test-catalog", CatalogRevision: "local-test-v1", ImageDecisionID: imageDecision}})
 	if err != nil {
 		return fmt.Errorf("install synthetic image: %w", err)
+	}
+	retained, found, err := r.Executor.Lookup(ctx, result.Record.OperationID)
+	if err != nil || !found || retained.ID != result.Record.OperationID || retained.Kind != "install" || retained.Phase != "Succeeded" || retained.Result != "installed" || retained.CompletedAt == nil || result.RequestDigest == "" || retained.InputDigest != result.RequestDigest {
+		return fmt.Errorf("%w: simulator installation history is missing or does not match retained authority and inputs", executor.ErrOutcomeUnknown)
 	}
 	now := metav1.NewTime(r.Now().UTC())
 	installation.Status = fleetv1.InstallationStatus{Phase: "Ready", CompletedAt: &now, Conditions: []metav1.Condition{condition("Accepted", metav1.ConditionTrue, installation.Generation, "SyntheticFixtureAccepted", "The standalone fixture admitted this request; this is not Milo authorization."), condition("Executing", metav1.ConditionFalse, installation.Generation, "Completed", "The persistent simulator returned a verified terminal result."), condition("Ready", metav1.ConditionTrue, installation.Generation, "Installed", "The synthetic provider verified installation completion.")}}

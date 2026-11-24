@@ -1,0 +1,40 @@
+# Synthetic snippet: discovery as one extra container in a pod that already
+# reaches the BMC network (for example a VPN gateway pod). Merge it into that
+# pod's spec.template.spec. It shares only the network namespace; it needs no
+# privilege, capability or other container. The pod's service account needs
+# the Role in ../rbac.yaml bound to it, or set localKubeconfig in the config
+# and mount a kubeconfig instead.
+containers:
+  - name: bmc-discovery
+    image: ghcr.io/datum-cloud/fleet@sha256:<digest>
+    command: [/fleet-bmc-discovery]
+    args: [--config=/etc/fleet/bmc-discovery/config.yaml]
+    env:
+      - name: POD_NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {memory: 256Mi}
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+    volumeMounts:
+      - {name: bmc-discovery-config, mountPath: /etc/fleet/bmc-discovery, readOnly: true}
+      - {name: bmc-discovery-milo, mountPath: /var/run/fleet/milo, readOnly: true}
+volumes:
+  - name: bmc-discovery-config
+    configMap:
+      name: fleet-bmc-discovery-config
+  - name: bmc-discovery-milo
+    secret:
+      secretName: fleet-bmc-discovery-milo-kubeconfig
+      defaultMode: 0440
+      items: [{key: kubeconfig, path: kubeconfig}]

@@ -35,16 +35,14 @@ export function RestrictedState({ message }: { message: string }) {
   );
 }
 
-export function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => void }) {
-  const message = error instanceof Error ? error.message : 'An unknown error occurred';
+// The API's message names paths and API groups, so the card says only what
+// failed.
+export function ErrorState({ title, onRetry }: { title: string; onRetry: () => void }) {
   return (
     <Card className="max-w-md" data-testid="fleet-plugin-error">
       <CardContent className="flex flex-col items-start gap-3">
         <Icon icon={ServerCrashIcon} size={24} className="text-destructive" />
-        <div>
-          <Text as="p" weight="semibold">Failed to load</Text>
-          <Text as="p" textColor="muted" className="mt-1">{message}</Text>
-        </div>
+        <Text as="p" weight="semibold">{title}</Text>
         <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>
           Retry
         </Button>
@@ -55,15 +53,17 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry: () => 
 
 export function ErrorOrRestrictedState({
   error,
+  errorTitle,
   restrictedMessage,
   onRetry,
 }: {
   error: unknown;
+  errorTitle: string;
   restrictedMessage: string;
   onRetry: () => void;
 }) {
   if (error instanceof ApiError && error.status === 403) {
     return <RestrictedState message={restrictedMessage} />;
   }
-  return <ErrorState error={error} onRetry={onRetry} />;
+  return <ErrorState title={errorTitle} onRetry={onRetry} />;
 }

@@ -19,6 +19,8 @@ import (
 // private custody.
 var ErrProjectConflict = errors.New("project lifetime is already engaged under another cluster name")
 
+var ErrProjectEngagementReentrant = errors.New("nested project engagement cannot wait on an active route")
+
 // ProjectBinding is what the handler factory receives for one engaged
 // project: its cluster name, its immutable identity, and the client bound to
 // that project's control plane. Nothing in it reaches another project.
@@ -41,6 +43,41 @@ type ProjectRuntime struct {
 	Mappers      Mappers
 	Machine      *LifecycleOwner
 	Installation *LifecycleOwner
+
+	reconcileMu sync.RWMutex
+	stopped     bool
+	drainOnce   sync.Once
+	drained     chan struct{}
+	cancel      context.CancelFunc
+}
+
+func (r *ProjectRuntime) acquire() bool {
+	r.reconcileMu.RLock()
+	if r.stopped {
+		r.reconcileMu.RUnlock()
+		return false
+	}
+	return true
+}
+
+func (r *ProjectRuntime) stop() {
+	<-r.drain()
+}
+
+func (r *ProjectRuntime) drain() <-chan struct{} {
+	r.drainOnce.Do(func() {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		r.drained = make(chan struct{})
+		go func() {
+			r.reconcileMu.Lock()
+			r.stopped = true
+			r.reconcileMu.Unlock()
+			close(r.drained)
+		}()
+	})
+	return r.drained
 }
 
 // ProjectResolver resolves an engaged cluster name to its immutable project
@@ -60,6 +97,21 @@ type Projects struct {
 	aware     multicluster.Aware
 	byCluster map[multicluster.ClusterName]*ProjectRuntime
 	byProject map[projectKey]multicluster.ClusterName
+	engaging  map[multicluster.ClusterName]*engagementGate
+}
+
+type engagementGate struct {
+	token chan struct{}
+	users int
+}
+
+type engagementContextKey struct{}
+
+type heldEngagement struct {
+	projects *Projects
+	name     multicluster.ClusterName
+	done     <-chan struct{}
+	parent   *heldEngagement
 }
 
 type projectKey struct {
@@ -68,7 +120,52 @@ type projectKey struct {
 }
 
 func newProjects(resolve ProjectResolver, verifierFor func(controller.ProjectIdentity) ProjectVerifier, build func(ProjectBinding, client.Reader, ProjectVerifier) (*ProjectRuntime, error)) *Projects {
-	return &Projects{resolve: resolve, verifierFor: verifierFor, build: build, byCluster: map[multicluster.ClusterName]*ProjectRuntime{}, byProject: map[projectKey]multicluster.ClusterName{}}
+	return &Projects{resolve: resolve, verifierFor: verifierFor, build: build, byCluster: map[multicluster.ClusterName]*ProjectRuntime{}, byProject: map[projectKey]multicluster.ClusterName{}, engaging: map[multicluster.ClusterName]*engagementGate{}}
+}
+
+func (p *Projects) lockEngagement(ctx context.Context, name multicluster.ClusterName) (func(), error) {
+	p.mu.Lock()
+	gate := p.engaging[name]
+	if gate == nil {
+		gate = &engagementGate{token: make(chan struct{}, 1)}
+		p.engaging[name] = gate
+	}
+	gate.users++
+	p.mu.Unlock()
+	forget := func() {
+		p.mu.Lock()
+		gate.users--
+		if gate.users == 0 {
+			delete(p.engaging, name)
+		}
+		p.mu.Unlock()
+	}
+	unlock := func() { <-gate.token; forget() }
+	held, _ := ctx.Value(engagementContextKey{}).(*heldEngagement)
+	for ; held != nil; held = held.parent {
+		if held.projects != p {
+			continue
+		}
+		select {
+		case <-held.done:
+			continue
+		default:
+		}
+		select {
+		case gate.token <- struct{}{}:
+			return unlock, nil
+		default:
+			forget()
+			return nil, ErrProjectEngagementReentrant
+		}
+	}
+	select {
+	case gate.token <- struct{}{}:
+		return unlock, nil
+	case <-ctx.Done():
+		forget()
+		return nil, ctx.Err()
+	}
 }
 
 // bindAware sets the downstream Aware (the multicluster manager).
@@ -79,9 +176,20 @@ func (p *Projects) bindAware(aware multicluster.Aware) {
 }
 
 // Engage resolves the project's identity, builds its runtime, registers it,
-// and only then engages the controllers. Any failure leaves the project
-// unregistered and is returned so discovery retries.
+// and only then engages the controllers. Replacement drains the prior runtime
+// first. Failure removes only this engagement's registration; a prior drain is
+// not reversed. Errors are returned so discovery retries.
 func (p *Projects) Engage(ctx context.Context, name multicluster.ClusterName, cl cluster.Cluster) error {
+	parent, _ := ctx.Value(engagementContextKey{}).(*heldEngagement)
+	for held := parent; held != nil; held = held.parent {
+		if held.projects == p && held.name == name {
+			select {
+			case <-held.done:
+			default:
+				return ErrProjectEngagementReentrant
+			}
+		}
+	}
 	p.mu.RLock()
 	aware := p.aware
 	p.mu.RUnlock()
@@ -100,31 +208,88 @@ func (p *Projects) Engage(ctx context.Context, name multicluster.ClusterName, cl
 	if err != nil {
 		return err
 	}
-	key := projectKey{identity.AuthorityID, identity.UID}
-	p.mu.Lock()
-	if existing, ok := p.byProject[key]; ok && existing != name {
-		p.mu.Unlock()
-		return fmt.Errorf("%w: %q and %q", ErrProjectConflict, existing, name)
-	}
-	if previous := p.byCluster[name]; previous != nil {
-		delete(p.byProject, projectKey{previous.Binding.Project.AuthorityID, previous.Binding.Project.UID})
-	}
-	p.byCluster[name] = runtime
-	p.byProject[key] = name
-	p.mu.Unlock()
-
-	if err := aware.Engage(ctx, name, cl); err != nil {
-		p.unbind(name, runtime)
+	unlock, err := p.lockEngagement(ctx, name)
+	if err != nil {
 		return err
 	}
+	done := make(chan struct{})
+	defer func() { close(done); unlock() }()
+	ctx = context.WithValue(ctx, engagementContextKey{}, &heldEngagement{projects: p, name: name, done: done, parent: parent})
+	ctx, cancel := context.WithCancel(ctx)
+	runtime.cancel = cancel
+	engaged := false
+	defer func() {
+		if !engaged {
+			cancel()
+		}
+	}()
+	key := projectKey{identity.AuthorityID, identity.UID}
+	for {
+		p.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return err
+		}
+		if existing, ok := p.byProject[key]; ok && existing != name {
+			p.mu.Unlock()
+			return fmt.Errorf("%w: %q and %q", ErrProjectConflict, existing, name)
+		}
+		previous := p.byCluster[name]
+		if previous != nil {
+			p.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				go p.unbind(name, previous)
+				return ctx.Err()
+			case <-previous.drain():
+			}
+			p.mu.Lock()
+			if p.byCluster[name] != previous {
+				p.mu.Unlock()
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				p.mu.Unlock()
+				p.unbindLocked(name, previous)
+				return err
+			}
+			if existing, ok := p.byProject[key]; ok && existing != name {
+				p.mu.Unlock()
+				return fmt.Errorf("%w: %q and %q", ErrProjectConflict, existing, name)
+			}
+			delete(p.byProject, projectKey{previous.Binding.Project.AuthorityID, previous.Binding.Project.UID})
+		}
+		p.byCluster[name] = runtime
+		p.byProject[key] = name
+		p.mu.Unlock()
+		break
+	}
+
 	go func() {
 		<-ctx.Done()
 		p.unbind(name, runtime)
 	}()
+	if err := aware.Engage(ctx, name, cl); err != nil {
+		p.unbindLocked(name, runtime)
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		p.unbindLocked(name, runtime)
+		return err
+	}
+	engaged = true
 	return nil
 }
 
 func (p *Projects) unbind(name multicluster.ClusterName, runtime *ProjectRuntime) {
+	runtime.drain()
+	unlock, _ := p.lockEngagement(context.Background(), name)
+	defer unlock()
+	p.unbindLocked(name, runtime)
+}
+
+func (p *Projects) unbindLocked(name multicluster.ClusterName, runtime *ProjectRuntime) {
+	runtime.stop()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.byCluster[name] != runtime {

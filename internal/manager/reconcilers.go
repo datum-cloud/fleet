@@ -97,9 +97,10 @@ func (r ClusterProjectReconciler) Reconcile(ctx context.Context, request Project
 		return reconcile.Result{}, ErrEventWiringUnavailable
 	}
 	runtime := r.Projects.For(request)
-	if runtime == nil {
+	if runtime == nil || !runtime.acquire() {
 		return reconcile.Result{}, nil
 	}
+	defer runtime.reconcileMu.RUnlock()
 	return ProjectReconciler{Project: runtime.Binding.Project, Handler: r.Owner(runtime), Verifier: runtime.Verifier}.Reconcile(ctx, request)
 }
 
@@ -115,8 +116,9 @@ func (r ClusterRouteReconciler) Reconcile(ctx context.Context, request RouteRequ
 		return reconcile.Result{}, ErrEventWiringUnavailable
 	}
 	runtime := r.Projects.Get(request.ClusterName)
-	if runtime == nil {
+	if runtime == nil || !runtime.acquire() {
 		return reconcile.Result{}, nil
 	}
+	defer runtime.reconcileMu.RUnlock()
 	return RouteReconciler{Project: runtime.Binding.Project, Verifier: runtime.Verifier, Mappers: runtime.Mappers, Handler: r.Owner(runtime)}.Reconcile(ctx, request)
 }

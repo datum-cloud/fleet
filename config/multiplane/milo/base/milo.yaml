@@ -1,0 +1,112 @@
+# One independent Milo project API process and its own etcd. Each overlay
+# places this in its own namespace, with its own PVC and NodePort. The
+# milo-apiserver-private Secret (static tokens and a self-signed serving key)
+# is a local credential seam written by bootstrap; it is never in the source.
+apiVersion: v1
+kind: Service
+metadata: {name: milo-etcd}
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: milo-etcd}
+  ports:
+    - {name: client, port: 2379, targetPort: 2379}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: milo-etcd}
+spec:
+  serviceName: milo-etcd
+  replicas: 1
+  # Project storage outlives the Pod and the StatefulSet.
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  selector:
+    matchLabels: {app.kubernetes.io/name: milo-etcd}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: milo-etcd}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: etcd
+          image: registry.k8s.io/etcd:3.5.16-0@sha256:c6a9d11cc5c04b114ccdef39a9265eeef818e3d02f5359be035ae784097fdec5
+          command: [/usr/local/bin/etcd]
+          args:
+            - --name=milo-etcd-0
+            - --data-dir=/var/lib/etcd/data
+            - --listen-client-urls=http://0.0.0.0:2379
+            - --advertise-client-urls=http://milo-etcd-0.milo-etcd:2379
+          ports:
+            - {name: client, containerPort: 2379}
+          resources:
+            requests: {cpu: 25m, memory: 48Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/etcd}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: milo-apiserver}
+spec:
+  type: NodePort
+  selector: {app.kubernetes.io/name: milo-apiserver}
+  ports:
+    - {name: https, port: 6443, targetPort: 6443, nodePort: 30440}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: milo-apiserver}
+spec:
+  # Fault injection suspends this namespace's Kustomization before scaling;
+  # otherwise Flux restores this value.
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: milo-apiserver}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: milo-apiserver}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      containers:
+        - name: apiserver
+          # Milo v0.32.5 (go.mod pin), native arm64 image.
+          image: ghcr.io/milo-os/milo@sha256:ec90618ecc723d6e175fbf49bc14292fd930be3e0251acb161c1166e6224279f
+          args:
+            - apiserver
+            - --etcd-servers=http://milo-etcd-0.milo-etcd:2379
+            - --etcd-prefix=/registry
+            - --authorization-mode=RBAC
+            - --token-auth-file=/private/tokens.csv
+            - --tls-cert-file=/private/tls.crt
+            - --tls-private-key-file=/private/tls.key
+            - --service-account-key-file=/private/tls.crt
+            - --service-account-signing-key-file=/private/tls.key
+            - --service-account-issuer=https://fleet-local.invalid
+            - --client-ca-file=/private/tls.crt
+            - --secure-port=6443
+            - --bind-address=0.0.0.0
+            - --anonymous-auth=false
+            - --v=0
+          ports:
+            - {name: https, containerPort: 6443}
+          readinessProbe:
+            tcpSocket: {port: 6443}
+            periodSeconds: 5
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {memory: 384Mi}
+          volumeMounts:
+            - {name: private, mountPath: /private, readOnly: true}
+      volumes:
+        - name: private
+          secret: {secretName: milo-apiserver-private, defaultMode: 0400}

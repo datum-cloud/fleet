@@ -25,7 +25,11 @@ type executor struct {
 
 func (e *executor) Execute(_ context.Context, request simulator.Request) (simulator.OperationResult, error) {
 	now := time.Now().UTC()
-	result := simulator.OperationResult{ID: request.ID, Kind: request.Kind, Phase: "Succeeded", Result: "clean", CreatedAt: now, CompletedAt: &now}
+	digest, err := simulator.RequestDigest(request)
+	if err != nil {
+		return simulator.OperationResult{}, err
+	}
+	result := simulator.OperationResult{ID: request.ID, Kind: request.Kind, Phase: "Succeeded", Result: "clean", InputDigest: digest, CreatedAt: now, CompletedAt: &now}
 	e.results[request.ID] = result
 	return result, nil
 }

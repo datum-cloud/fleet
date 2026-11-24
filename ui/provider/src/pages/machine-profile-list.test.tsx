@@ -16,6 +16,7 @@ vi.mock('../lib/api', async () => {
     useMachineProfiles: vi.fn(),
     useCreateMachineProfile: vi.fn(),
     useMachineClasses: vi.fn(),
+    useMachineCapacities: vi.fn(),
     useDeleteMachineProfile: vi.fn(),
   };
 });
@@ -88,17 +89,21 @@ beforeEach(() => {
   vi.mocked(api.useMachineClasses).mockReturnValue({
     data: fixtureClasses.list().map(toMachineClass),
   } as never);
+  vi.mocked(api.useMachineCapacities).mockReturnValue({ data: [], error: null } as never);
 });
 
 describe('MachineProfileList', () => {
   it('links the Capacity and Profiles tabs under the plugin mount', () => {
     mockList({ data: [] });
     renderPage();
-    expect(screen.getByRole('tab', { name: 'Capacity' }).closest('a')).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: /^Capacity/ }).closest('a')).toHaveAttribute(
       'href',
       '/plugins/metal-datumapis-com'
     );
-    expect(screen.getByRole('tab', { name: 'Profiles' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: /^Profiles/ })).toHaveAttribute('data-state', 'active');
+    // An empty list that was read is a real zero.
+    expect(screen.getByRole('tab', { name: /^Capacity/ })).toHaveTextContent('Capacity0');
+    expect(screen.getByRole('tab', { name: /^Classes/ })).toHaveTextContent('Classes1');
   });
 
   it('shows the restricted state on a 403', () => {

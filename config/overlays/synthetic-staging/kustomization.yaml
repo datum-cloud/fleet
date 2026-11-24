@@ -4,6 +4,7 @@ resources:
   - ../management-plane
   - provider.yaml
 patches:
+  - path: registration-exclusion.yaml
   - target:
       group: apps
       version: v1

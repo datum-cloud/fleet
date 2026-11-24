@@ -1,0 +1,100 @@
+# The namespace exists before the release so the environment ConfigMap that
+# Karmada-API Kustomizations substitute from can live beside their kubeconfig.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: karmada-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+---
+# Karmada chart on the host. wait covers the HelmRelease and its source.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: karmada, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 20m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/karmada
+---
+# Private custody namespace and the custodian identity on the host API.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-host, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/host
+---
+# Handoff CRD and namespace on the Karmada API. prune false: never
+# garbage-collect a CRD with retained intent (as datum-cloud/infra karmada-crds).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-karmada-coordination, namespace: karmada-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: false
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/coordination
+  dependsOn:
+    - {name: karmada, namespace: flux-system}
+  # Applied to the Karmada API, not the host, with the chart-generated
+  # in-cluster admin kubeconfig Secret.
+  kubeConfig:
+    secretRef: {name: karmada-kubeconfig, key: kubeconfig}
+---
+# Management intent role, the status interpreter and the member Secret namespace.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-karmada-api, namespace: karmada-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/karmada-api
+  dependsOn:
+    - {name: fleet-karmada-coordination, namespace: karmada-system}
+  # Applied to the Karmada API, not the host, with the chart-generated
+  # in-cluster admin kubeconfig Secret.
+  kubeConfig:
+    secretRef: {name: karmada-kubeconfig, key: kubeconfig}
+---
+# Member registration and placement. The member credential Secret is
+# enrolled by bootstrap; this waits until Karmada reports the member Ready.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: fleet-karmada-members, namespace: karmada-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/karmada-members
+  dependsOn:
+    - {name: fleet-karmada-api, namespace: karmada-system}
+  # Applied to the Karmada API, not the host, with the chart-generated
+  # in-cluster admin kubeconfig Secret.
+  kubeConfig:
+    secretRef: {name: karmada-kubeconfig, key: kubeconfig}
+  postBuild:
+    substituteFrom:
+      - {kind: ConfigMap, name: fleet-environment}
+  healthCheckExprs:
+    - apiVersion: cluster.karmada.io/v1alpha1
+      kind: Cluster
+      current: status.conditions.exists(e, e.type == 'Ready' && e.status == 'True')

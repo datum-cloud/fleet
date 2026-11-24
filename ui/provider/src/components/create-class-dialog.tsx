@@ -1,3 +1,4 @@
+import type { ClassCapacities } from './class-table';
 import { CAPACITY_POOL_LABEL, type MachineProfile, type RawMachineClass } from '../types';
 import { useCreateMachineClass, useMachineProfiles } from '../lib/api';
 import { Alert, AlertDescription } from '@datum-cloud/datum-ui/alert';
@@ -22,20 +23,17 @@ const NAME_MESSAGE =
 export const classFormSchema = z.object({
   name: z.string({ error: 'Name is required.' }).max(63, 'At most 63 characters.').regex(NAME_PATTERN, NAME_MESSAGE),
   allowedProfiles: z.array(z.string(), { error: 'Choose at least one profile.' }).min(1, 'Choose at least one profile.'),
-  capacityNamespace: z
-    .string({ error: 'Namespace is required.' })
-    .max(63, 'At most 63 characters.')
-    .regex(NAME_PATTERN, NAME_MESSAGE),
-  capacityPool: z
-    .string({ error: 'Capacity pool is required.' })
-    .max(63, 'At most 63 characters.')
-    .regex(NAME_PATTERN, NAME_MESSAGE),
+  // "<namespace>/<pool>", chosen from the pools that MachineCapacities carry.
+  capacity: z
+    .string({ error: 'Choose a capacity pool.' })
+    .regex(/^[^/]+\/[^/]+$/, 'Choose a capacity pool.'),
   powerControl: z.boolean().optional(),
 });
 
 export type ClassFormValues = z.infer<typeof classFormSchema>;
 
 export function toRawMachineClass(values: ClassFormValues): RawMachineClass {
+  const [namespace, pool] = values.capacity.split('/');
   return {
     metadata: { name: values.name },
     spec: {
@@ -46,8 +44,8 @@ export function toRawMachineClass(values: ClassFormValues): RawMachineClass {
       access: { consoleModes: [], powerControl: !!values.powerControl },
       capacity: {
         machineCapacities: {
-          namespace: values.capacityNamespace,
-          selector: { matchLabels: { [CAPACITY_POOL_LABEL]: values.capacityPool } },
+          namespace,
+          selector: { matchLabels: { [CAPACITY_POOL_LABEL]: pool } },
         },
       },
     },
@@ -78,9 +76,46 @@ function ProfileChoices({ profiles }: { profiles: MachineProfile[] | undefined }
   );
 }
 
+export interface CapacityPool { namespace: string; pool: string; count: number }
+
+// The pools that existing MachineCapacities carry, with how many each holds.
+// A class picks one of these, so a typo cannot select nothing.
+export function capacityPools(capacities: ClassCapacities): CapacityPool[] {
+  if (!Array.isArray(capacities)) return [];
+  const pools = new Map<string, CapacityPool>();
+  for (const c of capacities) {
+    if (!c.pool || !c.namespace) continue;
+    const key = `${c.namespace}/${c.pool}`;
+    pools.set(key, { namespace: c.namespace, pool: c.pool, count: (pools.get(key)?.count ?? 0) + 1 });
+  }
+  return [...pools.values()].sort((a, b) => a.pool.localeCompare(b.pool) || a.namespace.localeCompare(b.namespace));
+}
+
+function PoolChoices({ capacities }: { capacities: ClassCapacities }) {
+  const pools = capacityPools(capacities);
+  if (!pools.length) {
+    return (
+      <Text as="p" textColor="muted">
+        {capacities === 'unknown' ? 'Capacity pools are unknown: capacity could not be read.' : 'No capacity carries a pool label yet.'}
+      </Text>
+    );
+  }
+  // The namespace shows only when two namespaces share a pool name.
+  const shared = (pool: string) => pools.filter((p) => p.pool === pool).length > 1;
+  return (
+    <Form.Select placeholder="Choose a pool">
+      {pools.map((p) => (
+        <Form.SelectItem key={`${p.namespace}/${p.pool}`} value={`${p.namespace}/${p.pool}`}>
+          {p.pool}{shared(p.pool) ? ` (${p.namespace})` : ''} · {p.count}
+        </Form.SelectItem>
+      ))}
+    </Form.Select>
+  );
+}
+
 // Errors render in the dialog because staff-portal does not share its toast
 // module with plugins.
-export function CreateClassDialog() {
+export function CreateClassDialog({ capacities }: { capacities: ClassCapacities }) {
   const [open, setOpen] = useState(false);
   const mutation = useCreateMachineClass();
   const { data: profiles } = useMachineProfiles();
@@ -109,7 +144,7 @@ export function CreateClassDialog() {
           title="Create a machine class"
           description="An offering consumers can deploy from: the profiles it allows and the capacity that serves it."
           schema={classFormSchema}
-          defaultValues={{ capacityNamespace: 'default', powerControl: true }}
+          defaultValues={{ powerControl: true }}
           onSubmit={(values) =>
             mutation.mutate(toRawMachineClass(values), { onSuccess: () => setOpen(false) })
           }
@@ -129,19 +164,8 @@ export function CreateClassDialog() {
             <Form.Field name="allowedProfiles" label="Allowed profiles" required>
               <ProfileChoices profiles={profiles} />
             </Form.Field>
-            <Form.Field
-              name="capacityNamespace"
-              label="Capacity namespace"
-              description="Where this class's MachineCapacities live in the provider project."
-              required>
-              <Form.Input />
-            </Form.Field>
-            <Form.Field
-              name="capacityPool"
-              label="Capacity pool"
-              description={`MachineCapacities labelled ${CAPACITY_POOL_LABEL} with this value can serve the class.`}
-              required>
-              <Form.Input placeholder="e.g. central-metal" />
+            <Form.Field name="capacity" label="Capacity pool" required>
+              <PoolChoices capacities={capacities} />
             </Form.Field>
             <Form.Field name="powerControl">
               <Form.Checkbox label="Let consumers turn machines on and off" />

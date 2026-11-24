@@ -6,9 +6,12 @@
   "description": "Fleet Staff Portal Plugin: a Module Federation remote listing the provider project's Machines through staff-portal's Milo control-plane proxy.",
   "scripts": {
     "dev": "vite",
+    "dev:fixtures": "VITE_FLEET_FIXTURES=true vite --mode fixtures",
     "preview": "vite preview",
+    "preview:fixtures": "pnpm build:fixtures && vite preview",
     "build": "vite build",
-    "build:fixtures": "VITE_FLEET_FIXTURES=true vite build",
+    "build:fixtures": "VITE_FLEET_FIXTURES=true vite build --mode fixtures",
+    "screenshots": "node scripts/screenshots.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -34,6 +37,7 @@
   },
   "devDependencies": {
     "@module-federation/vite": "^1.16.16",
+    "@tailwindcss/vite": "4.2.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^26.6.5",
@@ -41,6 +45,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
     "jsdom": "^25.0.1",
+    "playwright": "1.65.1",
+    "tailwindcss": "4.2.1",
     "typescript": "^6.0.3",
     "vite": "^7.3.5",
     "vitest": "^4.1.12"

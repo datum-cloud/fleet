@@ -1,0 +1,489 @@
+// The port faceplate shared by the Device connection view and the rack side
+// panel, so the two never drift apart. Tiles are drawn per chassis face, then
+// per type, in the order portLayout() gives. State is a fill, outline or
+// glyph as well as colour. Hover or focus shows a one-line tooltip; click,
+// tap or Enter pins the port's card. Nothing here is observed: no inventory
+// kind reports link state or health.
+
+import { Button } from '@datum-cloud/datum-ui/button';
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { Link } from 'react-router';
+import { linkStateWords, shortFaceLabel, shortLabels, type ConnectionGroup, type ConnectionLink, type ConnectorShape, type LayoutFace, type LinkState, type PortTile, type ViewNames } from '../lib/device-connections';
+import { TEXT_TILE_LIMIT } from '../lib/faceplate-layout';
+import { cableText, peerDetail, PeerTarget, peerText, portsWord, StateText, TILE_GLYPH, tileSummary, Trace, type Href } from './connection-parts';
+
+/**
+ * Above TEXT_TILE_LIMIT tiles a cluster (or a drawn bank) shows port-shaped
+ * squares with no text, as a switch faceplate does, and prints faint numbers
+ * at bank edges instead. Smaller clusters keep short labels (eth0, PSU 1,
+ * BMC). It is defined once, in faceplate-layout.ts, for both views.
+ */
+export { TEXT_TILE_LIMIT };
+/** In a large cluster, a faint port number every this many tiles. */
+export const NUMBER_EVERY = 8;
+
+const catalogOnly = (tiles: PortTile[]) => tiles.every(tile => tile.state === 'catalog');
+
+function laneWords(link: ConnectionLink, names: ViewNames) {
+  if (!link.cable) return '';
+  return `to ${peerText(link.peer, names)}, via ${names.cable(link.cable)}`;
+}
+
+/** Everything the tile hides visually: port, state, and each peer and Cable. */
+function tileLabel(tile: PortTile, names: ViewNames, cablesDenied: boolean) {
+  if (cablesDenied) return `${tile.name}: Cable details unavailable, connections unknown`;
+  const state = `${tile.name}: ${linkStateWords[tile.state]}`;
+  if (tile.lanes.length === 1 && tile.links.length === 1 && tile.positions <= 1) return [state, laneWords(tile.links[0], names)].filter(Boolean).join(', ');
+  if (tile.lanes.length === 1 && tile.positions <= 1) return `${state}; ${tile.links.length} Cables: ${tile.links.map(link => laneWords(link, names)).join('; ')}`;
+  return `${state}; ${tile.lanes.map(lane => `position ${lane.position} ${linkStateWords[lane.state].toLowerCase()}${lane.links.some(link => link.cable) ? ` ${lane.links.map(link => laneWords(link, names)).join(' and ')}` : ''}`).join('; ')}`;
+}
+
+/** The one-line hover and focus tooltip, e.g. "swp37 · no cable recorded". */
+function tileTip(tile: PortTile, names: ViewNames, cablesDenied: boolean) {
+  if (cablesDenied) return `${tile.name} · cable details unavailable`;
+  const state = linkStateWords[tile.state].toLowerCase();
+  const [link] = tile.links;
+  const peer = tile.links.length === 1 && link.cable ? ` → ${peerText(link.peer, names)}` : tile.links.length > 1 ? ` · ${tile.links.length} links` : '';
+  return `${tile.name} · ${state}${peer}`;
+}
+
+/** The Cable's medium, unless the group already says it ("Power" under Power). */
+function mediumText(link: ConnectionLink) {
+  const text = cableText(link);
+  return link.group === 'power' && /^power$/i.test(link.cable?.medium ?? '') ? text.replace(/^Power( · )?/i, '') : text;
+}
+
+/**
+ * Faint faceplate numbering for a large cluster: the port number at the
+ * first tile, every NUMBER_EVERY tiles, where the connector changes (a bank
+ * edge) and at the last tile. A tile outside the cluster's main name series
+ * (mgmt0 among swp1–swp56) shows its short label instead.
+ */
+export function numbering(tiles: PortTile[], labels: Map<string, string>) {
+  const series = (name: string) => name.match(/^(.*?)(\d+)$/);
+  const prefixes = new Map<string, number>();
+  for (const tile of tiles) { const prefix = series(tile.name)?.[1]; if (prefix !== undefined) prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1); }
+  const main = [...prefixes].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const marks = new Map<string, string>();
+  tiles.forEach((tile, index) => {
+    const edge = index === 0 || index === tiles.length - 1 || index % NUMBER_EVERY === 0 || tile.shape !== tiles[index - 1].shape;
+    if (!edge) return;
+    const match = series(tile.name);
+    marks.set(tile.key, match && match[1] === main ? match[2] : labels.get(tile.key) ?? tile.name);
+  });
+  return marks;
+}
+
+/**
+ * Observed telemetry for one tile, prepared by the caller (see
+ * power-telemetry.tsx). The renderer only draws it: a load tint and a mark on
+ * the tile, words in the accessible name, and sections in the card.
+ */
+export interface PortTelemetry {
+  load?: TileLoad;
+  /** Appended to the tile's accessible name: value, unit and age. */
+  words?: string;
+  /** The card's Telemetry section. */
+  section?: ReactNode;
+  /** The card's Health section; the card has none when health is not observed. */
+  health?: ReactNode;
+  /** Which collector reported the values, and when: the Telemetry section's tooltip. */
+  source?: string;
+}
+
+/** A tile's load tint and mark. Stale is grey and never coloured. */
+export interface TileLoad {
+  tint: 'off' | 'idle' | 'low' | 'mid' | 'strong' | 'high' | 'over' | 'stale' | 'mismatch' | 'reported';
+  /** 0 to 1, the bar's fill. */
+  fraction?: number;
+  /** A glyph for over-threshold, stale, disagreeing or faulted values. */
+  mark?: string;
+  markKind?: 'high' | 'over' | 'stale' | 'mismatch' | 'fault';
+}
+
+/**
+ * The pinned card for one port. It leads with the answer: each position's
+ * record state, its peer, and the Cable's display name on its own line, with
+ * the medium as its tooltip. Reasons every link shares (two Cables naming one
+ * position) are said once. Then telemetry, health when observed, and the
+ * connector, identity, internal path and onward path. A denied peer's name
+ * appears nowhere.
+ */
+export function PortCard({ tile, namespace, href, names, cablesDenied, telemetry, health, telemetrySource }: { tile: PortTile; namespace?: string; href: Href; names: ViewNames; cablesDenied: boolean; telemetry?: ReactNode; health?: ReactNode; telemetrySource?: string }) {
+  // A breakout's lanes share one Cable: name it once, then list each position's peer.
+  const first = tile.links[0]?.cable;
+  const shared = tile.links.length > 1 && first && tile.links.every(link => link.cable?.name === first.name) ? first : undefined;
+  const component = tile.links[0]?.component;
+  const internal = tile.links[0]?.internal;
+  const common = tile.links.length > 1 ? tile.links[0].reasons.filter(reason => tile.links.every(link => link.reasons.includes(reason))) : [];
+  const connector = [tile.connector, tile.positions > 1 ? `${tile.positions} positions` : undefined].filter(Boolean).join(' · ');
+  const traced = !cablesDenied && tile.links.some(link => link.trace.length > 0);
+  const fields = connector || (component && (component.serial || component.assetTag)) || internal || traced;
+  return (
+    <>
+      {cablesDenied ? <p>Cable details unavailable.</p> : <>
+        {shared && <p className="inventory-port-card-answer"><span className="inventory-muted">Cable</span> <Link to={href('Cable', namespace, shared.name)} title={shared.medium}>{names.cable(shared)}</Link></p>}
+        <ul className="inventory-port-card-links">
+          {tile.links.map(link => {
+            const detail = peerDetail(link);
+            const reasons = link.reasons.filter(reason => !common.includes(reason));
+            return (
+              <li key={link.key} data-state={link.state}>
+                <p><StateText state={link.state} />{tile.positions > 1 || link.position > 1 ? <span className="inventory-muted"> · position {link.position}</span> : null}</p>
+                {link.cable && <p className="inventory-port-card-answer">→ <PeerTarget peer={link.peer} namespace={namespace} href={href} names={names} /></p>}
+                {link.cable && !shared && <small><span className="inventory-muted">via</span> <Link to={href('Cable', namespace, link.cable.name)} title={mediumText(link)}>{names.cable(link.cable)}</Link></small>}
+                {detail && <small>{detail}</small>}
+                {reasons.length > 0 && <small>{reasons.join(' ')}</small>}
+                {link.checks.length > 0 && <small className="inventory-connection-check">{link.checks.join(' ')}</small>}
+              </li>
+            );
+          })}
+        </ul>
+        {common.length > 0 && <small>{common.join(' ')}</small>}
+      </>}
+      {telemetry && <div title={telemetrySource}>{telemetry}</div>}
+      {/* Health comes only from an observation with a source and a time. Never derive it from records. */}
+      {health && <div className="inventory-port-card-health"><p className="inventory-port-card-heading">Health</p>{health}</div>}
+      {fields && (
+        <dl className="inventory-port-card-fields">
+          {connector && <><dt>Connector</dt><dd>{connector}</dd></>}
+          {component && (component.serial || component.assetTag) && <><dt>Identity</dt><dd>{[component.serial, component.assetTag].filter(Boolean).join(' · ')}</dd></>}
+          {internal && <><dt>Internal path</dt><dd>{internal.componentName ?? internal.componentID}{internal.position > 1 ? ` · position ${internal.position}` : ''}</dd></>}
+          {traced && <><dt>Path</dt><dd>{tile.links.map(link => <Trace key={link.key} hops={link.trace} namespace={namespace} href={href} names={names} />)}</dd></>}
+        </dl>
+      )}
+    </>
+  );
+}
+
+export interface PortTileButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'aria-label' | 'aria-expanded' | 'aria-controls' | 'children'> {
+  /** Record state. Drawn as fill, outline or glyph as well as colour. */
+  state: LinkState;
+  /** Port name, state and every peer and Cable: everything the tile hides. */
+  accessibleName: string;
+  /** A short label (eth0, PSU 1). Omit for an unlabelled, port-shaped square. */
+  label?: string;
+  /** The connector family, for a shaped outline; generic when omitted. */
+  shape?: ConnectorShape;
+  /** One state per position, drawn as lane bars under a multi-position tile. */
+  lanes?: LinkState[];
+  /** Observed load: a tint bar and an optional mark. Omit when nothing is observed. */
+  load?: TileLoad;
+  /** A stable key; roving focus and card placement find tiles by it. */
+  tileKey?: string;
+  expanded?: boolean;
+  controls?: string;
+  /** Outlined because the same component is hovered or focused elsewhere, such as its table row. */
+  highlighted?: boolean;
+}
+
+/**
+ * One port tile. It is a button: the caller owns roving focus (tabIndex),
+ * the tooltip and the card. Visible content is hidden from assistive
+ * technology because `accessibleName` carries it all.
+ */
+export function PortTileButton({ state, accessibleName, label, shape = 'generic', lanes, load, tileKey, expanded, controls, highlighted, className, ...rest }: PortTileButtonProps) {
+  return (
+    <button
+      type="button"
+      {...rest}
+      className={['inventory-port', className].filter(Boolean).join(' ')}
+      data-tile={tileKey}
+      data-state={state}
+      data-shape={shape}
+      data-labelled={label ? '' : undefined}
+      data-highlight={highlighted ? '' : undefined}
+      aria-label={accessibleName}
+      aria-expanded={expanded}
+      aria-controls={controls}
+    >
+      <span className="inventory-port-face" aria-hidden="true">
+        {label && <span className="inventory-port-label">{label}</span>}
+        {TILE_GLYPH[state] && <span className="inventory-port-glyph">{TILE_GLYPH[state]}</span>}
+      </span>
+      {lanes && lanes.length > 1 && <span className="inventory-port-lanes" aria-hidden="true">{lanes.map((lane, index) => <span key={index} data-state={lane} />)}</span>}
+      {load && <span className="inventory-port-load" aria-hidden="true" data-tint={load.tint} style={{ '--load': String(load.fraction ?? 0) } as CSSProperties} />}
+      {load?.mark && <span className="inventory-port-mark" aria-hidden="true" data-mark={load.markKind}>{load.mark}</span>}
+    </button>
+  );
+}
+
+/**
+ * The one-line tooltip for a tile, positioned by the caller with
+ * `--card-left` and `--card-top`. Hidden from assistive technology: it
+ * repeats the tile's accessible name.
+ */
+export function PortTooltip({ text, at, ref }: { text: string; at?: { left: number; top: number }; ref?: Ref<HTMLDivElement> }) {
+  return (
+    <div ref={ref} className="inventory-port-tip" role="tooltip" aria-hidden="true" style={at ? { '--card-left': `${at.left}px`, '--card-top': `${at.top}px` } as CSSProperties : { visibility: 'hidden' }}>
+      {text}
+    </div>
+  );
+}
+
+/** Which tile an arrow key moves to, by the tiles' drawn positions when there is layout to read. */
+function nextTile(items: HTMLElement[], index: number, key: string) {
+  if (key === 'Home') return 0;
+  if (key === 'End') return items.length - 1;
+  if (key === 'ArrowRight') return index + 1;
+  if (key === 'ArrowLeft') return index - 1;
+  if (key !== 'ArrowDown' && key !== 'ArrowUp') return undefined;
+  const step = key === 'ArrowDown' ? 1 : -1;
+  const rects = items.map(item => item.getBoundingClientRect());
+  const here = rects[index];
+  if (!here.height) return index + step;
+  const centre = (rect: DOMRect) => rect.left + rect.width / 2;
+  const rows = rects.map((rect, at) => ({ at, rect })).filter(({ rect }) => step > 0 ? rect.top >= here.bottom - 1 : rect.bottom <= here.top + 1);
+  if (!rows.length) return index;
+  const rowTop = step > 0 ? Math.min(...rows.map(({ rect }) => rect.top)) : Math.max(...rows.map(({ rect }) => rect.top));
+  const row = rows.filter(({ rect }) => Math.abs(rect.top - rowTop) < 1);
+  return row.reduce((best, item) => Math.abs(centre(item.rect) - centre(here)) < Math.abs(centre(best.rect) - centre(here)) ? item : best).at;
+}
+
+function PortCluster({ label, group, title, tiles, compact, cablesDenied, powerNote = true, children }: { label: string; group: ConnectionGroup; title: string; tiles: PortTile[]; compact: boolean; cablesDenied: boolean; powerNote?: boolean; children: ReactNode }) {
+  return (
+    <div className="inventory-port-cluster" role="group" aria-label={label} data-group={group}>
+      <p className="inventory-port-cluster-title">
+        {title} · {tiles.length} <span className="inventory-count">· {cablesDenied ? 'cable details unavailable' : tileSummary(tiles)}</span>
+      </p>
+      <ul className="inventory-port-row" aria-label={`${title} ports`} data-compact={compact ? '' : undefined}>{children}</ul>
+      {group === 'power' && powerNote && <p className="inventory-connection-group-note">Power redundancy unknown. Separate inlets or feeds do not prove independent supply.</p>}
+    </div>
+  );
+}
+
+export interface PortFaceplateProps {
+  faces: LayoutFace[];
+  names: ViewNames;
+  namespace?: string;
+  href: Href;
+  /** Cables are unreadable: every state is unknown, never "no cable". */
+  cablesDenied?: boolean;
+  /** Hide clusters that are entirely catalog only behind a count. */
+  collapseCatalogOnly?: boolean;
+  /** Draw a recorded face even when no component is on it, as the rack panel does. */
+  showEmptyFaces?: boolean;
+  /** Observed telemetry for a tile, when any source reports it. */
+  telemetry?: (tile: PortTile) => PortTelemetry | undefined;
+  /**
+   * The Device page's picture: short face labels ("Front", "Rear"), faces
+   * side by side when they fit, and the power redundancy note left to the
+   * page's legend.
+   */
+  dense?: boolean;
+  /** The component outlined here and in the page's component table. */
+  highlight?: ComponentHighlight;
+}
+
+/**
+ * One component outlined in two views at once: hovering or focusing a tile
+ * outlines its table row, and the row outlines its tile. `id` is the
+ * component id; `clear` only clears the id it is given, so leaving one tile
+ * after entering the next does not undo the newer highlight.
+ */
+export interface ComponentHighlight {
+  id?: string;
+  set: (id: string) => void;
+  clear: (id: string) => void;
+}
+
+/** Everything a port grid needs to make one tile interactive. */
+export interface PortGridTileOptions {
+  /** A short label drawn on the tile; omit for an unlabelled square. */
+  label?: string;
+  className?: string;
+}
+
+/**
+ * Roving focus, the one-line tooltip and the pinned card for a set of port
+ * tiles. Both the grouped tiles (PortFaceplate) and the drawn faceplate
+ * (FaceplateDrawing) use it, so they share one keyboard model, one tooltip
+ * and one card. Tiles are found by `data-tile` inside `container`, in DOM
+ * order; arrow keys move by drawn position.
+ */
+export function usePortGrid({ tiles, names, namespace, href, cablesDenied = false, telemetry, highlight }: { tiles: PortTile[]; names: ViewNames; namespace?: string; href: Href; cablesDenied?: boolean; telemetry?: (tile: PortTile) => PortTelemetry | undefined; highlight?: ComponentHighlight }) {
+  const container = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const cardID = useId();
+  const [active, setActive] = useState(tiles[0]?.key);
+  const [open, setOpen] = useState<string>();
+  const [tip, setTip] = useState<string>();
+  const [cardAt, setCardAt] = useState<{ left: number; top: number }>();
+  const [tipAt, setTipAt] = useState<{ left: number; top: number }>();
+  const pointer = useRef<string | undefined>(undefined);
+  const current = tiles.some(tile => tile.key === active) ? active : tiles[0]?.key;
+  const card = tiles.find(tile => tile.key === open);
+  // The tooltip never shows over the tile whose card is open.
+  const tipTile = tip !== open ? tiles.find(tile => tile.key === tip) : undefined;
+
+  const items = () => [...(container.current?.querySelectorAll<HTMLElement>('[data-tile]') ?? [])];
+  const element = (key?: string) => key ? items().find(item => item.dataset.tile === key) : undefined;
+
+  // Cards and tooltips sit under their tile, kept inside the grid's width.
+  // Rects, not offsets, so tiles inside a scrolled drawing place correctly.
+  const place = (key: string | undefined, box: HTMLElement | null, set: (value: { left: number; top: number }) => void) => {
+    const tile = element(key);
+    const host = container.current;
+    if (!tile || !host || !box) return;
+    const at = tile.getBoundingClientRect();
+    const origin = host.getBoundingClientRect();
+    const left = Math.max(0, Math.min(at.left - origin.left, host.clientWidth - box.offsetWidth));
+    set({ left, top: at.bottom - origin.top + 4 });
+  };
+  const same = (next: { left: number; top: number }) => (previous?: { left: number; top: number }) => previous?.left === next.left && previous.top === next.top ? previous : next;
+  useLayoutEffect(() => place(open, cardRef.current, next => setCardAt(same(next))), [open]);
+  useLayoutEffect(() => place(tipTile?.key, tipRef.current, next => setTipAt(same(next))), [tipTile?.key]);
+
+  const close = () => {
+    const key = open;
+    setOpen(undefined);
+    setTip(undefined);
+    element(key)?.focus();
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      if (open || tip) { event.preventDefault(); event.stopPropagation(); if (open) close(); else setTip(undefined); }
+      return;
+    }
+    const list = items();
+    const index = list.indexOf(document.activeElement as HTMLElement);
+    if (index === -1) return;
+    const next = nextTile(list, index, event.key);
+    if (next === undefined) return;
+    event.preventDefault();
+    const target = list[Math.max(0, Math.min(list.length - 1, next))];
+    const key = target.dataset.tile!;
+    setActive(key);
+    // A pinned card follows the focused tile; otherwise focus shows the tooltip.
+    if (open) setOpen(key);
+    else setTip(key);
+    target.focus();
+  };
+
+  const tileButton = (tile: PortTile, { label, className }: PortGridTileOptions = {}) => {
+    const observed = telemetry?.(tile);
+    return (
+    <PortTileButton
+      tileKey={tile.key}
+      className={className}
+      state={cablesDenied ? 'unavailable' : tile.state}
+      accessibleName={[tileLabel(tile, names, cablesDenied), observed?.words].filter(Boolean).join('; ')}
+      load={observed?.load}
+      label={label}
+      shape={tile.shape}
+      lanes={tile.positions > 1 && !cablesDenied ? tile.lanes.map(lane => lane.state) : undefined}
+      tabIndex={tile.key === current ? 0 : -1}
+      expanded={open === tile.key}
+      controls={open === tile.key ? cardID : undefined}
+      highlighted={highlight?.id === tile.componentID}
+      onPointerDown={event => { pointer.current = event.pointerType; }}
+      onPointerEnter={event => { if (event.pointerType === 'mouse') { setTip(tile.key); highlight?.set(tile.componentID); } }}
+      onPointerLeave={event => { if (event.pointerType === 'mouse') { setTip(value => value === tile.key ? undefined : value); highlight?.clear(tile.componentID); } }}
+      onFocus={() => {
+        setActive(tile.key);
+        highlight?.set(tile.componentID);
+        // Touch has no hover: a tap opens the card through the click, not a tooltip.
+        if (pointer.current !== 'touch' && pointer.current !== 'pen') setTip(tile.key);
+      }}
+      onBlur={() => { pointer.current = undefined; setTip(value => value === tile.key ? undefined : value); highlight?.clear(tile.componentID); }}
+      onClick={() => { setActive(tile.key); setTip(undefined); setOpen(value => value === tile.key ? undefined : tile.key); }}
+    />
+    );
+  };
+  const cardTelemetry = card ? telemetry?.(card) : undefined;
+
+  const overlay = (
+    <>
+      {tipTile && <PortTooltip ref={tipRef} text={tileTip(tipTile, names, cablesDenied)} at={tipAt} />}
+      {card && (
+        <div
+          ref={cardRef}
+          id={cardID}
+          className="inventory-port-card"
+          data-state={cablesDenied ? 'unavailable' : card.state}
+          data-pinned=""
+          data-component-card=""
+          role="dialog"
+          aria-modal={false}
+          aria-label={`${card.name} details`}
+          style={cardAt ? { '--card-left': `${cardAt.left}px`, '--card-top': `${cardAt.top}px` } as CSSProperties : { visibility: 'hidden' }}
+          onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}
+        >
+          <div className="inventory-port-card-title">
+            <h5>{card.name}</h5>
+            <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={close} aria-label={`Close ${card.name}`}>Close</Button>
+          </div>
+          <PortCard key={card.key} tile={card} namespace={namespace} href={href} names={names} cablesDenied={cablesDenied} telemetry={cardTelemetry?.section} health={cardTelemetry?.health} telemetrySource={cardTelemetry?.source} />
+        </div>
+      )}
+    </>
+  );
+
+  return { container, onKeyDown, tileButton, overlay };
+}
+
+export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenied = false, collapseCatalogOnly = false, showEmptyFaces = false, telemetry, dense = false, highlight }: PortFaceplateProps) {
+  const [expanded, setExpanded] = useState<Set<ConnectionGroup>>(() => new Set());
+  const known = laid.some(face => face.face !== 'unknown');
+  // Without any recorded face, one caption says so instead of guessing.
+  const faces = useMemo<LayoutFace[]>(() => {
+    if (!known) return laid.map(face => ({ ...face, title: 'Component faces not recorded' }));
+    if (!showEmptyFaces) return laid;
+    return (['Front', 'Rear', 'unknown'] as const).flatMap(side => laid.find(face => face.face === side) ?? (side === 'unknown' ? [] : [{ face: side, title: side, clusters: [] }]));
+  }, [laid, known, showEmptyFaces]);
+  const hidden = (cluster: LayoutFace['clusters'][number]) => collapseCatalogOnly && catalogOnly(cluster.tiles) && !expanded.has(cluster.group);
+  const tiles = useMemo(() => faces.flatMap(face => face.clusters.filter(cluster => !hidden(cluster)).flatMap(cluster => cluster.tiles)), [faces, expanded, collapseCatalogOnly]);
+  // Labels are unique within a cluster: its header carries the type.
+  const labels = useMemo(() => new Map(faces.flatMap(face => face.clusters.flatMap(cluster => [...shortLabels(cluster.tiles)]))), [faces]);
+  const marks = useMemo(() => new Map(faces.flatMap(face => face.clusters.filter(cluster => cluster.tiles.length > TEXT_TILE_LIMIT).flatMap(cluster => [...numbering(cluster.tiles, labels)]))), [faces, labels]);
+  const grid = usePortGrid({ tiles, names, namespace, href, cablesDenied, telemetry, highlight });
+  // Dense: "Front", or "Front · rack rear" when mounted reversed. The full title stays the group's name.
+  const label = (face: LayoutFace) => !dense || !known ? face.title : shortFaceLabel(face.face, face.clusters.flatMap(cluster => cluster.tiles).find(tile => tile.rackFace)?.rackFace);
+
+  const renderTile = (tile: PortTile, compact: boolean) => (
+    <li key={tile.key}>
+      {grid.tileButton(tile, { label: compact ? undefined : labels.get(tile.key) })}
+      {compact && <span className="inventory-port-number" aria-hidden="true">{marks.get(tile.key) ?? ''}</span>}
+    </li>
+  );
+
+  return (
+    <div
+      ref={grid.container}
+      className="inventory-port-grid"
+      role="group"
+      aria-label="Port tiles. Arrow keys move between ports; Enter opens a port's card; Escape closes it."
+      onKeyDown={grid.onKeyDown}
+      data-dense={dense ? '' : undefined}
+    >
+      {faces.map(face => (
+        <div key={face.face} className="inventory-port-face-group" data-face={face.face} role="group" aria-label={face.title}>
+          <p className="inventory-port-face-title">{label(face)}</p>
+          {face.clusters.length ? (
+            <div className="inventory-port-plate">
+              {face.clusters.filter(cluster => !hidden(cluster)).map(cluster => {
+                const compact = cluster.tiles.length > TEXT_TILE_LIMIT;
+                return (
+                  <PortCluster key={cluster.group} label={`${face.title} · ${cluster.title}`} group={cluster.group} title={cluster.title} tiles={cluster.tiles} compact={compact} cablesDenied={cablesDenied} powerNote={!dense}>
+                    {cluster.tiles.map(tile => renderTile(tile, compact))}
+                  </PortCluster>
+                );
+              })}
+            </div>
+          ) : <p className="inventory-muted">No component records this face.</p>}
+          {face.clusters.some(hidden) && (
+            <p className="inventory-port-hidden">
+              {face.clusters.filter(hidden).map(cluster => (
+                <button key={cluster.group} type="button" className="inventory-link-button" aria-expanded={false} onClick={() => setExpanded(value => new Set(value).add(cluster.group))}>
+                  Show {cluster.title} · {portsWord(cluster.tiles.length)}, catalog only
+                </button>
+              ))}
+            </p>
+          )}
+        </div>
+      ))}
+      {grid.overlay}
+    </div>
+  );
+}

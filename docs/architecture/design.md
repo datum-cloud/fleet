@@ -18,6 +18,12 @@ proposal plus the extension. The [combined proposal](../proposals/fleet-manageme
 examples, and diagrams now live in this repository. The [migration record](../proposals/fleet-management/MIGRATION.md)
 preserves provenance and outstanding review points; the original discussions remain in `infra`.
 
+The implemented [stage-1 registration decision](../development/inventory-capacity-registration.md)
+allows explicitly unconfigured cleaning only for inert Disabled/Retain records.
+It uses stateless project-plane admission against live Devices, plus optional
+Device deletion protection, not allocation custody or provider enrollment. Enabling and preparation remain forbidden until
+their policy resolution and authorization contracts are implemented.
+
 ## Problem and intended outcome
 
 Operators currently repeat infrastructure facts across inventory, provisioning,
@@ -56,6 +62,25 @@ operational placement policy over eligible Facilities. Networking/IPAM owns
 logical attachments, address allocation, and switch configuration. Galactic owns
 fabric and routing intent. DNS, certificates, and service addresses stay with
 their owning services. Fleet consumes these contracts and their evidence.
+
+The implemented [Site identity and Facility membership subset](../development/site-facility-relationship.md)
+is observational only. Proposed Site placement policy remains unimplemented;
+membership does not change the actual Location/ServiceAvailability authority.
+
+The [PXE enhancement](../enhancements/pxe-installation/README.md) defines the target
+Metal installation contract, with Fleet as an optional provider implementation.
+It supersedes older image-only examples for current design work without rewriting
+the pinned source history. Installation has exactly one managedImage/delegatedPXE
+source, consumes its predecessor atomically, and retains explicit completion mode,
+assurance and one execution driver. Provisioning Redfish sessions attach to that
+admitted operation, never independent boot authority. Installation, runtime power,
+and release share serialization/fencing; session closure or callbacks do not prove
+executor shutdown. Managed consumers require QualifiedImage assurance.
+
+For Fleet execution, management writes hub intent, the selected cell writes only
+local results, Karmada reflects them, management validates exact identity, fence
+and freshness, and the projector publishes public status. Cells have no hub
+credentials. Partitions or uncertain results never imply readiness or settlement.
 
 ## Lifecycle and authority contracts
 

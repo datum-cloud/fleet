@@ -57,7 +57,8 @@ function getProjectScopedBase(projectId: string): string {
 }
 
 // The portal proxy returns the upstream body unwrapped; a Kubernetes failure
-// is a Status object whose `message` says what went wrong.
+// is a Status object whose `message` says what went wrong. The pages show
+// their own words, not this message.
 async function proxyFetch<T>(
   projectId: string,
   path: string,
@@ -73,7 +74,7 @@ async function proxyFetch<T>(
   });
   if (!res.ok) {
     const status = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new ApiError(res.status, status.message || `Request failed (${res.status}): ${path}`);
+    throw new ApiError(res.status, status.message || `Request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
 }

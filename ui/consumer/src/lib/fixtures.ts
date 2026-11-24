@@ -7,7 +7,9 @@ import type { RawMachine, RawMachineClass, RawMachineProfile } from '../types';
 // config/standalone/fixtures.yaml, and each status is what Fleet's standalone
 // runner writes (internal/standalone/runner.go): a powered-off handoff, a machine
 // waiting for capacity, and a deleted machine still held by the release
-// finalizer.
+// finalizer. A fourth machine is still connecting a second network interface,
+// so the list's Address column and the detail page's network have data.
+// Addresses are documentation ranges (RFC 5737, RFC 3849).
 
 const SPEC = {
   machineClassRef: { name: 'standard-metal' },
@@ -56,12 +58,22 @@ const BOUND_STATUS: RawMachine['status'] = {
 
 export const FIXTURE_MACHINES: RawMachine[] = [
   {
-    metadata: { name: 'example', namespace: 'default', finalizers: [MACHINE_FINALIZER] },
+    metadata: {
+      name: 'example',
+      namespace: 'default',
+      creationTimestamp: '2026-11-05T11:58:00Z',
+      finalizers: [MACHINE_FINALIZER],
+    },
     spec: SPEC,
     status: BOUND_STATUS,
   },
   {
-    metadata: { name: 'build-runner', namespace: 'default', finalizers: [MACHINE_FINALIZER] },
+    metadata: {
+      name: 'build-runner',
+      namespace: 'default',
+      creationTimestamp: '2026-11-06T09:15:00Z',
+      finalizers: [MACHINE_FINALIZER],
+    },
     spec: SPEC,
     status: {
       phase: 'Pending',
@@ -84,11 +96,50 @@ export const FIXTURE_MACHINES: RawMachine[] = [
     metadata: {
       name: 'old-worker',
       namespace: 'default',
+      creationTimestamp: '2026-10-20T08:00:00Z',
       deletionTimestamp: '2026-11-05T12:30:00Z',
       finalizers: [MACHINE_FINALIZER],
     },
     spec: SPEC,
     status: BOUND_STATUS,
+  },
+  {
+    metadata: {
+      name: 'web-1',
+      namespace: 'default',
+      creationTimestamp: '2026-11-04T16:40:00Z',
+      finalizers: [MACHINE_FINALIZER],
+    },
+    spec: { ...SPEC, powerState: 'On' },
+    status: {
+      ...BOUND_STATUS,
+      phase: 'Pending',
+      network: {
+        interfaces: [
+          {
+            name: 'primary',
+            network: { apiGroup: 'networking.datumapis.com', kind: 'Network', namespace: 'default', name: 'production' },
+            addresses: [
+              { address: '192.0.2.10', family: 'IPv4', primary: true },
+              { address: '2001:db8::10', family: 'IPv6' },
+            ],
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+          {
+            name: 'storage',
+            network: { apiGroup: 'networking.datumapis.com', kind: 'Network', namespace: 'default', name: 'storage' },
+            conditions: [{ type: 'Ready', status: 'False', reason: 'NetworkPending' }],
+          },
+        ],
+      },
+      conditions: [
+        { type: 'Accepted', status: 'True', reason: 'SyntheticFixtureAccepted' },
+        { type: 'Bound', status: 'True', reason: 'ExclusiveBinding' },
+        { type: 'NetworkReady', status: 'False', reason: 'NetworkPending', message: 'Interface storage is waiting for an address.' },
+        { type: 'Ready', status: 'False', reason: 'NetworkPending' },
+        REQUEST_RESOLVED,
+      ],
+    },
   },
 ];
 

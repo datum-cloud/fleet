@@ -1,0 +1,17 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-inventory-discoverer
+  annotations:
+    kubernetes.io/display-name: Fleet Inventory Discoverer
+    kubernetes.io/description: Read Devices and write only what their BMCs report into Device status
+spec:
+  launchStage: Alpha
+  # Deliberately not the viewer role: discovery reads Devices only.
+  includedPermissions:
+    - fleet.datumapis.com/devices.get
+    - fleet.datumapis.com/devices.list
+    - fleet.datumapis.com/devices.watch
+    - fleet.datumapis.com/devices.updateStatus
+    - fleet.datumapis.com/devices/status.update
+    - fleet.datumapis.com/devices/status.patch

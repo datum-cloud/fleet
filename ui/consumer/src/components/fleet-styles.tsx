@@ -8,18 +8,16 @@ const FLEET_CSS = `
 .fleet-fact-label { font-size: 0.625rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 .fleet-accent { color: var(--btn-primary); }
 .fleet-dot { display: inline-block; width: 8px; height: 8px; flex-shrink: 0; border-radius: 9999px; background: var(--muted-foreground); }
-.fleet-dot[data-tone="success"] { background: var(--success); }
+.fleet-dot[data-tone="ok"] { background: var(--foreground); }
 .fleet-dot[data-tone="warning"] { background: var(--warning); }
 .fleet-dot[data-tone="danger"] { background: var(--destructive); }
-.fleet-note { border-radius: 8px; padding: 10px 12px; background: var(--muted); }
-.fleet-note[data-tone="warning"] { background: color-mix(in srgb, var(--warning) 12%, transparent); }
-.fleet-note[data-tone="danger"] { background: color-mix(in srgb, var(--destructive) 10%, transparent); }
+.fleet-warn { color: var(--warning); }
 .fleet-step-mark { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex-shrink: 0; border-radius: 9999px; border: 1px solid var(--border); background: var(--card); color: var(--muted-foreground); }
-.fleet-step-mark[data-state="done"] { border-color: var(--success); background: var(--success); color: var(--card); }
+.fleet-step-mark[data-state="done"] { border-color: var(--foreground); background: var(--foreground); color: var(--card); }
 .fleet-step-mark[data-state="current"] { border-color: var(--warning); color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, var(--card)); }
 .fleet-step-mark[data-state="failed"] { border-color: var(--destructive); background: var(--destructive); color: var(--card); }
 .fleet-step-line { height: 2px; flex: 1; border-radius: 1px; background: var(--border); }
-.fleet-step-line[data-state="done"] { background: var(--success); }
+.fleet-step-line[data-state="done"] { background: var(--foreground); }
 .fleet-flow { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); align-items: stretch; }
 .fleet-arrow { display: none; }
 .fleet-steps { display: grid; gap: 1.25rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }

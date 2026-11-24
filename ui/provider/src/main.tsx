@@ -1,30 +1,43 @@
 import MachineClassList from './pages/machine-class-list';
 import CapacityList from './pages/capacity-list';
 import MachineProfileList from './pages/machine-profile-list';
+import DeviceInventoryList from './pages/device-inventory-list';
+import InventoryCreatePage from './pages/inventory-create';
+import './preview.css';
+import { InventoryPreviewContext } from './components/inventory-session-boundary';
+import { applyPreviewTheme, initialPreviewTheme, PreviewThemeToggle } from './preview-theme';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
+
+// Standalone harness (index.html). The portal never loads this file. It uses
+// the browser's URL so every view has a stable, bookmarkable address under
+// the same /plugins/<slug>/ paths staff-portal mounts.
+const SLUG = 'metal-datumapis-com';
+const fixtures = import.meta.env.VITE_FLEET_FIXTURES === 'true';
+
+applyPreviewTheme(initialPreviewTheme());
 
 const queryClient = new QueryClient();
+const router = createBrowserRouter([
+  { path: '/', element: <Navigate to={`/plugins/${SLUG}${fixtures ? '/inventory' : ''}`} replace /> },
+  { path: '/plugins/:slug', element: <CapacityList /> },
+  { path: '/plugins/:slug/profiles', element: <MachineProfileList /> },
+  { path: '/plugins/:slug/classes', element: <MachineClassList /> },
+  { path: '/plugins/:slug/inventory', element: <DeviceInventoryList /> },
+  { path: '/plugins/:slug/inventory/create/:kind', element: <InventoryCreatePage /> },
+]);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <div style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1rem', fontFamily: 'system-ui' }}>
-        <p style={{ opacity: 0.6 }}>
-          Standalone preview. staff-portal loads this plugin through
-          <code> /plugin-manifest.json</code> and <code>/remoteEntry.js</code>, not this page.
-          Without the staff-portal proxy the list shows its error state unless
-          <code> VITE_FLEET_FIXTURES=true</code>.
-        </p>
-        <MemoryRouter initialEntries={['/plugins/metal-datumapis-com']}>
-          <Routes>
-            <Route path="/plugins/:slug" element={<CapacityList />} />
-            <Route path="/plugins/:slug/profiles" element={<MachineProfileList />} />
-            <Route path="/plugins/:slug/classes" element={<MachineClassList />} />
-          </Routes>
-        </MemoryRouter>
+      <div className="fleet-preview">
+        <div className="fleet-preview-notice">
+          <p>Local plugin preview · {fixtures ? 'Synthetic example data — not live inventory' : 'Requires the staff-portal API proxy'}</p>
+          <PreviewThemeToggle />
+        </div>
+        <InventoryPreviewContext.Provider value={true}><RouterProvider router={router} /></InventoryPreviewContext.Provider>
       </div>
     </QueryClientProvider>
   </StrictMode>

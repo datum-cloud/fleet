@@ -32,7 +32,6 @@ export default function MachineList() {
     <MachinesPage
       testId="fleet-plugin-machine-list"
       title="Machines"
-      description="Dedicated bare-metal servers, allocated to this project."
       crumbs={[{ label: 'Machines' }]}
       actions={
         machines &&
@@ -55,6 +54,7 @@ export default function MachineList() {
       {!isLoading && error && (
         <ErrorOrRestrictedState
           error={error}
+          errorTitle="Couldn't load machines"
           restrictedMessage="You don't have permission to view this project's machines."
           onRetry={() => void refetch()}
         />

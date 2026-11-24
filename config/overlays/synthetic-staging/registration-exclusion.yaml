@@ -1,0 +1,22 @@
+# The synthetic Milo root (config/milo-synthetic) installs no registration
+# webhook, so the registration workload has nothing to serve here.
+$patch: delete
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-registration
+  namespace: fleet-system
+---
+$patch: delete
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-registration
+  namespace: fleet-system
+---
+$patch: delete
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-registration
+  namespace: fleet-system

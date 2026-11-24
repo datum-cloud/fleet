@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Read-only BMC discovery for one Milo project. Apply it to a cluster from
+# which the BMC network is reachable, in the namespace that holds the
+# credential Secrets; the deploying repository sets that namespace, the
+# image digest, the Milo kubeconfig Secret and the config values.
+# See docs/operations/bmc-discovery.md.
+resources:
+  - rbac.yaml
+  - deployment.yaml
+configMapGenerator:
+  - name: fleet-bmc-discovery-config
+    files:
+      - config.yaml

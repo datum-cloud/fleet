@@ -1,0 +1,223 @@
+# kro ResourceGraphDefinition for one selected local cell. For each delivered
+# MachineAllocationHandoff it creates one bounded worker Job with its own
+# ServiceAccount, Role and RoleBinding, and nothing else. The shared site
+# services, their boot Service and the journal volume are owned by the cell's
+# Flux (config/site/services, config/site/base); this graph only references
+# them, so deleting the instance or the graph cannot delete them.
+#
+# Every resource here is derived execution state: none of it allocates, admits,
+# completes or releases anything. Management trusts only Karmada-reflected,
+# journal-derived handoff status.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: fleet-handoff-dispatcher
+  annotations:
+    # Deleting the graph orphans the dispatcher; retiring it is a manual procedure.
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: HandoffDispatcher
+    group: site.fleet.datumapis.com
+    spec:
+      cell: string | required=true
+      scopedAsset: string | required=true
+      # Workers are created only after dispatch is enabled. The acceptance uses
+      # this to prove delivery and retention before any effect can start.
+      dispatch: boolean | default=false
+    status:
+      bootOrigin: ${"http://" + bootService.spec.clusterIP + ":8080"}
+      workerImage: ${hypervisor.spec.template.spec.containers[0].image}
+      runtimeAvailable: ${hypervisor.status.?availableReplicas.orValue(0)}
+      bootAvailable: ${boot.status.?availableReplicas.orValue(0)}
+      observerAvailable: ${observer.status.?availableReplicas.orValue(0)}
+      deliveredHandoffs: ${size(handoffs)}
+  resources:
+    # Flux-owned site infrastructure, referenced and never managed by kro. A
+    # reference that is missing or not ready blocks new worker objects and
+    # disables pruning; existing Jobs are left alone.
+    - id: state
+      externalRef:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: fleet-site-state
+    - id: bootService
+      readyWhen:
+        - ${bootService.spec.?clusterIP.orValue("") != ""}
+      externalRef:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: fleet-site-boot
+    - id: hypervisor
+      readyWhen:
+        - ${hypervisor.status.?availableReplicas.orValue(0) == 1}
+      externalRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: fleet-site-runtime
+    - id: boot
+      readyWhen:
+        - ${boot.status.?availableReplicas.orValue(0) == 1}
+      externalRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: fleet-site-boot
+    - id: observer
+      readyWhen:
+        - ${observer.status.?availableReplicas.orValue(0) == 1}
+      externalRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: fleet-site-observer
+    # Delivered intent for this cell, watched by kro. The workers re-validate
+    # the cell, name and exact request; selection here is not authority.
+    - id: handoffs
+      externalRef:
+        apiVersion: coordination.fleet.datumapis.com/v1alpha1
+        kind: MachineAllocationHandoff
+        metadata:
+          namespace: fleet-coordination
+          selector:
+            matchExpressions:
+              - key: coordination.fleet.datumapis.com/cell
+                operator: In
+                values: ["${schema.spec.cell}"]
+    # Per-operation identity and policy: each worker may read exactly its own
+    # handoff and nothing else. It has no status, list or Secret permission.
+    # The fleet-site-kro-worker-identity admission policy enforces this shape.
+    - id: workerAccounts
+      includeWhen:
+        - ${schema.spec.dispatch}
+      forEach:
+        - handoff: ${handoffs}
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${"w-" + handoff.metadata.name}
+          labels: {app.kubernetes.io/name: fleet-site-worker}
+    - id: workerRoles
+      includeWhen:
+        - ${schema.spec.dispatch}
+      forEach:
+        - handoff: ${handoffs}
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: ${"w-" + handoff.metadata.name}
+          namespace: fleet-coordination
+          labels: {app.kubernetes.io/name: fleet-site-worker}
+        rules:
+          - apiGroups: [coordination.fleet.datumapis.com]
+            resources: [machineallocationhandoffs]
+            resourceNames: ["${handoff.metadata.name}"]
+            verbs: [get]
+    - id: workerBindings
+      includeWhen:
+        - ${schema.spec.dispatch}
+      forEach:
+        - handoff: ${handoffs}
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: ${"w-" + handoff.metadata.name}
+          namespace: fleet-coordination
+          labels: {app.kubernetes.io/name: fleet-site-worker}
+          annotations:
+            fleet.datumapis.com/accounts: ${string(size(workerAccounts))}
+            fleet.datumapis.com/roles: ${string(size(workerRoles))}
+        subjects:
+          - kind: ServiceAccount
+            name: ${"w-" + handoff.metadata.name}
+            namespace: fleet-site
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: ${"w-" + handoff.metadata.name}
+    # One bounded Job per delivered operation. The Job controller retries and
+    # replaces Pods; every Pod replays the same retained operation from the
+    # journal. Job completion is not readiness: only the observer publishes,
+    # and only management validates the reflected result. The Job runs the
+    # runtime's image (the fleet-site-kro-worker-jobs admission policy also
+    # requires it) and reaches the runtime only through its libvirt socket.
+    - id: workers
+      includeWhen:
+        - ${schema.spec.dispatch}
+      forEach:
+        - handoff: ${handoffs}
+      template:
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: ${"w-" + handoff.metadata.name}
+          labels:
+            app.kubernetes.io/name: fleet-site-worker
+            fleet.datumapis.com/handoff: ${handoff.metadata.name}
+          annotations:
+            # Dependency edges: workers start only after the Flux-owned runtime,
+            # boot service and observer are ready and this operation's RBAC exists.
+            fleet.datumapis.com/runtime: ${hypervisor.metadata.name}
+            fleet.datumapis.com/boot: ${boot.metadata.name}
+            fleet.datumapis.com/observer: ${observer.metadata.name}
+            fleet.datumapis.com/bindings: ${string(size(workerBindings))}
+        spec:
+          backoffLimit: 6
+          activeDeadlineSeconds: 3600
+          # A replacement Pod starts only after the previous Pod is terminal,
+          # so two workers for one operation never overlap; the journal lock
+          # is the second guard.
+          podReplacementPolicy: Failed
+          podFailurePolicy:
+            rules:
+              # Exit 65: fenced, conflicting or invalid authority. Retrying
+              # cannot change it; fail without another attempt.
+              - action: FailJob
+                onExitCodes: {containerName: worker, operator: In, values: [65]}
+              - action: Ignore
+                onPodConditions: [{type: DisruptionTarget}]
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: fleet-site-worker
+                fleet.datumapis.com/handoff: ${handoff.metadata.name}
+            spec:
+              restartPolicy: Never
+              serviceAccountName: ${"w-" + handoff.metadata.name}
+              terminationGracePeriodSeconds: 10
+              containers:
+                - name: worker
+                  image: ${hypervisor.spec.template.spec.containers[0].image}
+                  imagePullPolicy: IfNotPresent
+                  command: [fleet-multiplane, site-worker, --handoff, "${handoff.metadata.name}", --cell, "${schema.spec.cell}", --scoped-asset, "${schema.spec.scopedAsset}"]
+                  env:
+                    - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+                    - {name: FLEET_BOOT_ORIGIN, value: "${'http://' + bootService.spec.clusterIP + ':8080'}"}
+                    - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
+                    - {name: FLEET_LIBVIRT_URI, value: "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock"}
+                    - {name: HOME, value: /tmp}
+                  securityContext:
+                    runAsUser: 0
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    capabilities: {drop: [ALL]}
+                  resources:
+                    requests: {cpu: 50m, memory: 32Mi}
+                    limits: {memory: 192Mi}
+                  volumeMounts:
+                    - {name: state, mountPath: /var/lib/fleet-local, subPath: journal}
+                    - {name: state, mountPath: /var/lib/fleet-boot, subPath: boot-evidence, readOnly: true}
+                    - {name: state, mountPath: /run/fleet-libvirt, subPath: libvirt-socket}
+                    - {name: tmp, mountPath: /tmp}
+              volumes:
+                - name: state
+                  persistentVolumeClaim: {claimName: "${state.metadata.name}"}
+                - name: tmp
+                  emptyDir: {}

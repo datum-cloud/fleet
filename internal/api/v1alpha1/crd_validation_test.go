@@ -41,6 +41,25 @@ func TestCRDsPassAPIServerDefinitionValidation(t *testing.T) {
 	}
 }
 
+func TestCapacityUnconfiguredCleaningIsDisabledOnly(t *testing.T) {
+	crd := loadCRDs(t)["machinecapacities.metal.datumapis.com"]
+	for _, test := range []struct {
+		name, policy, cleaning string
+		allowed                bool
+	}{
+		{"inert registration", "Disabled", "", true},
+		{"legacy synthetic", "Enabled", "synthetic-tenant-reuse-v1", true},
+		{"unconfigured enabled", "Enabled", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			object := map[string]any{"apiVersion": "metal.datumapis.com/v1alpha1", "kind": "MachineCapacity", "metadata": map[string]any{"name": "record", "namespace": "default"}, "spec": map[string]any{"deviceRef": map[string]any{"name": "device"}, "allocationPolicy": test.policy, "cleaningPolicyRef": map[string]any{"name": test.cleaning}, "reclaimPolicy": "Retain"}}
+			if errs := validateObject(t, crd, object, nil); (len(errs) == 0) != test.allowed {
+				t.Fatalf("unexpected cleaning contract result: %v", errs)
+			}
+		})
+	}
+}
+
 func validateObject(t *testing.T, crd *extensionsv1.CustomResourceDefinition, object, old map[string]any) field.ErrorList {
 	t.Helper()
 	schema := internalSchema(t, crd)

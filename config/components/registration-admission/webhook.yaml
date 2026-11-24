@@ -1,0 +1,36 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: fleet-capacity-registration
+webhooks:
+  # Only inventory-backed capacity is routed here, and it is fail-closed.
+  # Creates are checked against live Devices; updates and deletes are always
+  # denied. Capacity is inventory-backed when it carries a registration
+  # annotation (fleet.datumapis.com/registration-*) on the new or old object,
+  # or when a create uses the derived device- name. Adding, changing or
+  # removing a registration annotation is therefore always routed. Capacity
+  # without the marker, such as synthetic or hand-made capacity, and every
+  # status write are not routed and are governed by RBAC alone.
+  - name: registration.fleet.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: None
+    timeoutSeconds: 20
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-registration
+    rules:
+      - apiGroups: [metal.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [machinecapacities]
+        scope: Namespaced
+    matchConditions:
+      - name: inventory-backed-capacity
+        expression: >-
+          (request.operation == 'CREATE' && object != null
+          && has(object.metadata.name) && object.metadata.name.startsWith('device-'))
+          || (object != null && has(object.metadata.annotations)
+          && object.metadata.annotations.exists(key, key.startsWith('fleet.datumapis.com/registration-')))
+          || (oldObject != null && has(oldObject.metadata.annotations)
+          && oldObject.metadata.annotations.exists(key, key.startsWith('fleet.datumapis.com/registration-')))

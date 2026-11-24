@@ -70,7 +70,7 @@ export function ConfirmDeleteDialog({
               id={inputId}
               type="text"
               autoComplete="off"
-              placeholder="Type in here..."
+              placeholder={confirmValue}
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
               onKeyDown={(e) => {

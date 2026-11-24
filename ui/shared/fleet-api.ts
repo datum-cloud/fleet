@@ -27,6 +27,7 @@ export interface ObjectMeta {
   deletionTimestamp?: string;
   labels?: Record<string, string>;
   annotations?: Record<string, string>;
+  managedFields?: { manager?: string; subresource?: string }[];
   finalizers?: string[];
 }
 
@@ -142,7 +143,7 @@ export type AllocationPolicy = 'Enabled' | 'Disabled';
 export interface MachineCapacity {
   metadata: ObjectMeta;
   spec: {
-    /** Immutable. Names the physical Device; nothing resolves it yet. */
+    /** Immutable Device name. Registration records the Device UID and version in annotations. */
     deviceRef: LocalReference;
     /** Defaults to Disabled. */
     allocationPolicy: AllocationPolicy;
@@ -227,3 +228,207 @@ export interface Machine {
 
 /** Held on a Machine until Fleet's release and cleanup complete. */
 export const MACHINE_FINALIZER = 'fleet.datumapis.com/machine-protection';
+
+// Physical inventory: fleet.datumapis.com/v1alpha1 DeviceClaim and Device,
+// transcribed from internal/api/inventory/v1alpha1/types.go and
+// config/components/inventory/crds/fleet.datumapis.com.yaml. Operators write
+// both specs. DeviceClaim status is reserved; Device status is written only by
+// BMC discovery, through the status subresource.
+
+export const INVENTORY_API_GROUP = 'fleet.datumapis.com';
+export const INVENTORY_API_VERSION = 'v1alpha1';
+
+export interface DeviceClaim {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec: {
+    expectedIdentity: { manufacturer?: string; model: string; serial?: string };
+    lifecycle: 'Installation';
+    displayName?: string;
+    cableRefs?: LocalReference[];
+    placement: { scope: 'Facility' | 'RackMembership' | 'RackUnits' | 'NonRackUnitMount'; facilityRef?: LocalReference; rackRef?: LocalReference; position?: number; height?: number; face?: RackFace; mount?: string };
+  };
+}
+
+export interface Device {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta;
+  spec: {
+    reportedPlacement?: ReportedPlacement;
+    deviceTypeRef?: LocalReference;
+    claimRef: LocalReference;
+    // unidentified records deliberately that no serial or system UUID exists;
+    // it excludes both and requires unidentifiedReason.
+    identity: { manufacturer?: string; model: string; serial?: string; systemUUID?: string; unidentified?: boolean; unidentifiedReason?: string };
+    assetTag?: string;
+    displayName?: string;
+    modelShape?: ModelShape;
+    providerHostRef?: ExternalReference;
+    topologyAuthority?: 'Cable';
+    components?: PhysicalComponent[];
+    internalMappings?: { from: ComponentPosition; to: ComponentPosition }[];
+    serviceAssociations?: { serviceRef: ExternalReference; componentID: string }[];
+    bmc?: { endpoint: string };
+    interfaces?: { name: string; macAddress?: string }[];
+    unmappedMACAddresses?: string[];
+    // lifecycle defaults to Active. Active and Decommissioning move between
+    // each other, Decommissioning moves to Retired, and Retired is terminal.
+    lifecycle?: DeviceLifecycle;
+  };
+  status?: DeviceStatus;
+}
+
+/** What read-only BMC discovery observed. spec.identity stays authoritative. */
+export interface DeviceStatus {
+  observedGeneration?: number;
+  /** A failed attempt never clears it: each observation keeps its own time and endpoint. */
+  discovery?: DeviceDiscovery;
+  /** Reachable, Authenticated, Discovered, IdentityMatched and PublicKeyUnique. */
+  conditions?: Condition[];
+}
+
+export interface DeviceDiscovery {
+  lastAttemptAt?: string;
+  lastAttemptEndpoint?: string;
+  tls?: ObservedTLS;
+  serviceRoot?: ObservedServiceRoot;
+  inventory?: ObservedInventory;
+}
+
+export interface ObservedTLS {
+  observedAt: string;
+  endpoint: string;
+  /** Lowercase hex SHA-256 of the leaf public key. */
+  publicKeySHA256: string;
+  notAfter?: string;
+  selfSigned?: boolean;
+}
+
+export interface ObservedServiceRoot {
+  observedAt: string;
+  endpoint: string;
+  redfishVersion?: string;
+  uuid?: string;
+  vendor?: string;
+  product?: string;
+}
+
+export interface ObservedInventory {
+  observedAt: string;
+  endpoint: string;
+  managers?: ObservedManager[];
+  systems?: ObservedSystem[];
+}
+
+export interface ObservedManager {
+  id: string;
+  model?: string;
+  firmwareVersion?: string;
+  networkInterfaces?: ObservedNetworkInterface[];
+}
+
+export interface ObservedSystem {
+  id: string;
+  uuid?: string;
+  manufacturer?: string;
+  model?: string;
+  serialNumber?: string;
+  sku?: string;
+  powerState?: string;
+  networkInterfaces?: ObservedNetworkInterface[];
+}
+
+export interface ObservedNetworkInterface {
+  id: string;
+  macAddress?: string;
+  linkStatus?: string;
+  speedMbps?: number;
+}
+
+export type DeviceLifecycle = 'Active' | 'Decommissioning' | 'Retired';
+
+export interface ReportedPlacement {
+  revision: number;
+  observedAt: string;
+  reason: string;
+  reference: string;
+  facilityRef?: LocalReference;
+  rackRef?: LocalReference;
+  position?: number;
+  height?: number;
+  face?: RackFace;
+  fullDepth?: boolean;
+  mount?: string;
+}
+
+export interface ExternalReference { system: string; type: string; id: string }
+export interface ComponentPosition { componentID: string; position: number }
+export interface PhysicalComponent {
+  id: string;
+  name: string;
+  type: 'NetworkPort' | 'PowerInlet' | 'PowerOutlet' | 'ConsolePort' | 'ConsoleServerPort' | 'FrontPort' | 'RearPort' | 'Module' | 'InventoryItem' | 'DeviceBay';
+  connector?: string;
+  positions?: number;
+  serial?: string;
+  assetTag?: string;
+}
+// The mounted rack face: the rack face the chassis front points toward.
+export type RackFace = 'front' | 'rear';
+// A side of the chassis itself, never of the rack. Unset means unknown.
+export type ChassisFace = 'Front' | 'Rear';
+// A DeviceType component template. A Device component inherits its face from
+// the template whose id equals the component id.
+export interface ComponentTemplate extends Omit<PhysicalComponent, 'serial' | 'assetTag'> {
+  face?: ChassisFace;
+  // Cells of one faceplate bank on the template's own face. Unset means its
+  // position is not recorded.
+  layout?: TemplateLayout;
+}
+// A nominal bank-grid position: 1-based row and column; span counts columns
+// and is 1 when unset.
+export interface TemplateLayout { bank: string; row: number; column: number; span?: number }
+// Nominal cell size in millimetres, for module cells such as PSUs and bays.
+export interface CellSize { width: number; height: number }
+// One grid of cells on one chassis face. offset is the left edge as a
+// fraction of the usable face width; on a face it is set on every bank or
+// none, and with none the banks flow left to right in list order.
+export interface FaceplateBank { id: string; face: ChassisFace; rows: number; columns: number; offset?: number; cellMM?: CellSize }
+// DeviceType only. Unset means the layout is not recorded.
+export interface Faceplate { banks: FaceplateBank[] }
+// Nominal chassis width. Unset is unknown; drawings assume Full and say so.
+export type ChassisWidth = 'Full' | 'Half';
+export interface ModelShape { heightUnits?: number; fullDepth?: boolean; width?: ChassisWidth }
+export interface CableEndpoint extends ComponentPosition {
+  deviceRef?: LocalReference;
+  powerFeedRef?: LocalReference;
+}
+export interface PhysicalRecord {
+  metadata: ObjectMeta;
+  kind: 'Site' | 'Facility' | 'Rack' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
+  spec: {
+    displayName: string;
+    code?: string;
+    canonicalName?: string;
+    aliases?: string[];
+    manufacturerRef?: LocalReference;
+    model?: string;
+    modelShape?: ModelShape;
+    // DeviceType only. modelShape.fullDepth unset means depth unknown; a
+    // Device's own value overrides it.
+    componentTemplates?: ComponentTemplate[];
+    faceplate?: Faceplate;
+    facilityRefs?: LocalReference[];
+    identifiers?: { provider: string; type: 'PremisesCode' | 'PremisesAlias' | 'PremisesID'; value: string }[];
+    facilityRef?: LocalReference;
+    rackRef?: LocalReference;
+    locationRef?: LocalReference;
+    heightUnits?: number;
+    medium?: string;
+    lanes?: { id: string; a: CableEndpoint; b: CableEndpoint }[];
+    supply?: { type: string; voltageV?: number; currentA?: number; phase?: string };
+    terminations?: PhysicalComponent[];
+    upstreamSources?: ExternalReference[];
+  };
+}

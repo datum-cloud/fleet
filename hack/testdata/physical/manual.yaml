@@ -1,0 +1,70 @@
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Facility
+metadata:
+  name: example-facility
+  namespace: default
+spec:
+  displayName: Example premises
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Rack
+metadata:
+  name: example-rack
+  namespace: default
+spec:
+  displayName: Example rack
+  facilityRef: {name: example-facility}
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: DeviceClaim
+metadata:
+  name: example-installation
+  namespace: default
+spec:
+  lifecycle: Installation
+  expectedIdentity: {manufacturer: Example Vendor, model: Example server}
+  placement:
+    scope: RackMembership
+    rackRef: {name: example-rack}
+  cableRefs: [{name: example-power-cable}]
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Device
+metadata:
+  name: example-server
+  namespace: default
+spec:
+  claimRef: {name: example-installation}
+  identity:
+    manufacturer: Example Vendor
+    model: Example server
+    serial: SYNTHETIC-MANUAL-0001
+  topologyAuthority: Cable
+  components:
+    - {id: psu-a, name: PSU A input, type: PowerInlet}
+    - {id: eth0, name: Ethernet 0, type: NetworkPort}
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: PowerFeed
+metadata:
+  name: example-feed
+  namespace: default
+spec:
+  displayName: Example feed
+  facilityRef: {name: example-facility}
+  rackRef: {name: example-rack}
+  terminations:
+    - {id: outlet-a, name: Outlet A, type: PowerOutlet}
+---
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: Cable
+metadata:
+  name: example-power-cable
+  namespace: default
+spec:
+  displayName: Example power cable
+  medium: Power
+  lanes:
+    - id: power
+      a: {powerFeedRef: {name: example-feed}, componentID: outlet-a, position: 1}
+      b: {deviceRef: {name: example-server}, componentID: psu-a, position: 1}

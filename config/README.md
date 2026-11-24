@@ -9,17 +9,43 @@ entitlements, ServiceAvailability resources, and publication rules must referenc
 `metal`. See the [API architecture](../docs/architecture/README.md) for group separation
 and breaking alpha rename constraints.
 
-The repository publishes two production manifest roots. They target different
-API servers and must be reconciled independently.
+The repository publishes Milo and management-cluster manifest roots. They
+target different API servers and must be reconciled independently.
 
 | Root | Destination | Contents |
 | --- | --- | --- |
-| `config/milo` | Milo root control plane | Fleet CRDs, IAM protected resources and roles, service registration, and machine quota registration |
-| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, the manager workload and RBAC, private-record namespaces, and admission fences |
+| `config/milo` | Milo root control plane | Fleet CRDs (including the `fleet.datumapis.com` inventory kinds), IAM protected resources and roles, service/quota registration, and the mandatory capacity-registration webhook. Devices can be deleted. |
+| `config/overlays/management-plane` | Fleet management cluster | Fleet CRDs, manager and inert-registration workloads and RBAC, private-record namespaces, and admission fences |
 | `config/overlays/synthetic-staging` | Fleet management cluster (non-production only) | Management-plane resources plus an explicit synthetic allocator/provider integration |
+
+`config/components/device-deletion-protection` is a reusable component: a
+ValidatingAdmissionPolicy and binding that deny a Device `DELETE` unless the
+Device is `Retired` or its namespace is being deleted, with no exemptions.
+Production-specific configuration lives in the deploying repository, which
+opts in by adding the component to the root it applies to Milo. No root in this
+repository includes it, and `hack/validate-overlay-isolation.sh` fails if one
+does or if the component's policy is weakened. See
+[Device deletion protection](../docs/development/inventory-capacity-registration.md#device-deletion-protection).
+
+The synthetic staging overlay excludes the inert-registration service. Pair it
+with `config/milo-synthetic` in a **separate non-production Milo control
+plane**, not production `config/milo`. That root preserves the
+pre-registration synthetic API contract. There is no request field, actor
+exemption, or runtime switch that bypasses production registration admission.
 
 The one `fleet-manager` Deployment serves every Milo project that consumes the
 `metal` service; see [project discovery](#project-discovery).
+
+The separate `fleet-registration` Deployment serves inert inventory-backed
+capacity admission only. It keeps no state: each capacity create is checked
+against live Devices and capacities in the provider projects. Its TLS trust,
+read/SAR credentials and webhook serving CA are environment-owned; it has no
+host RBAC and mounts no service account token. Read the
+[registration rollout contract](../docs/development/inventory-capacity-registration.md#production-packaging-and-rollout)
+before applying either root: an unavailable service blocks capacity writes
+globally, and nothing else. Pod TCP readiness is transport-only; it must not
+enable UI registration. This does not enable production allocation or
+provisioning.
 
 `config/components/service-catalog-staging` is a Kustomize component with
 staging's Bare Metal prices: committed servers and server setup, which
@@ -27,8 +53,30 @@ contracts charge, as billing ServicePricings for `metal.datumapis.com`. Staging'
 on `config/milo`; production doesn't, so production has no Bare Metal prices.
 A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
 
+`config/components/inventory` registers the operator-written `DeviceClaim` and
+`Device` kinds of `fleet.datumapis.com` in Milo: their CRDs, ProtectedResources,
+and inventory viewer, editor, manager, importer and discoverer roles. The production `config/milo` and isolated
+non-production `config/milo-synthetic` roots include it; records
+live in the provider project. `config/inventory` renders the CRDs alone for a
+legacy management-cluster install and will be removed. See
+[Planning and registering physical devices](../docs/operations/physical-inventory.md).
+
+`config/base/bmc-discovery` runs read-only BMC discovery for one Milo project
+in a cluster that can reach the BMC network: one replica, no leader election,
+unprivileged. It is in no root here; the deploying repository applies it with
+its namespace, image digest, Milo kubeconfig Secret and configuration.
+`examples/` holds a synthetic credential Secret and a sidecar container
+snippet. See [BMC discovery](../docs/operations/bmc-discovery.md).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
+
+`config/multiplane` and `config/site` are the Flux source for the local
+multi-plane acceptance only: Flux definitions per local cluster, Milo test
+workloads, Karmada and kro releases, the coordination API and the kro site
+graph. The harness stages them into an OCI artifact; see
+[Flux-reconciled local environment](../docs/operations/gitops.md). They are not
+production roots, and neither production root may reference them.
 
 `config/overlays/synthetic-staging` is the temporary Milo-routed acceptance
 environment. It uses the real private custody, exclusivity, cleanup, and reuse
@@ -78,10 +126,11 @@ synthetic claim before treating persistent-state recovery as verified in staging
 Do not delete the PVC as a recovery shortcut.
 
 
-Render both production roots before publishing the Kustomize bundle:
+Render the Milo and management-cluster roots before publishing the Kustomize bundle:
 
 ```sh
 kustomize build config/milo >/dev/null
+kustomize build config/milo-synthetic >/dev/null
 kustomize build config/overlays/management-plane >/dev/null
 kustomize build config/overlays/synthetic-staging >/dev/null
 ```

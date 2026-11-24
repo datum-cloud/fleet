@@ -1,0 +1,1434 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: deviceclaims.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceClaim
+    listKind: DeviceClaimList
+    plural: deviceclaims
+    singular: deviceclaim
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Scope
+      type: string
+      jsonPath: .spec.placement.scope
+    - name: Facility
+      type: string
+      jsonPath: .spec.placement.facilityRef.name
+    - name: Rack
+      type: string
+      jsonPath: .spec.placement.rackRef.name
+    - name: Position
+      type: integer
+      jsonPath: .spec.placement.position
+    - name: Model
+      type: string
+      jsonPath: .spec.expectedIdentity.model
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - lifecycle
+            - expectedIdentity
+            - placement
+            x-kubernetes-validations:
+            - rule: self.placement == oldSelf.placement
+              message: installation placement is immutable; migration requires an explicit handover
+            properties:
+              expectedIdentity:
+                type: object
+                required:
+                - model
+                properties:
+                  manufacturer:
+                    type: string
+                    maxLength: 253
+                  model:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  serial:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+              placement:
+                type: object
+                required:
+                - scope
+                properties:
+                  position:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  height:
+                    type: integer
+                    format: int32
+                    minimum: 1
+                    maximum: 100
+                  face:
+                    type: string
+                    enum:
+                    - front
+                    - rear
+                  scope:
+                    type: string
+                    enum:
+                    - Facility
+                    - RackMembership
+                    - RackUnits
+                    - NonRackUnitMount
+                  facilityRef: &id001
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        maxLength: 253
+                        pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    required:
+                    - name
+                  rackRef: *id001
+                  mount:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                x-kubernetes-validations:
+                - rule: 'self.scope == ''Facility'' ? (has(self.facilityRef) && !has(self.rackRef)) : (has(self.rackRef)
+                    && !has(self.facilityRef))'
+                  message: typed placement requires exactly the reference appropriate to its scope
+                - rule: 'self.scope == ''RackUnits'' ? (has(self.position) && has(self.height) && has(self.face) && !has(self.mount))
+                    : (!has(self.position) && !has(self.height) && !has(self.face) && (self.scope == ''NonRackUnitMount''
+                    ? has(self.mount) : !has(self.mount)))'
+                  message: partial placement cannot assert rack units; non-unit mounts require a mount identifier
+              lifecycle:
+                type: string
+                enum:
+                - Installation
+              cableRefs:
+                type: array
+                maxItems: 256
+                items: *id001
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - name
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+          status:
+            type: object
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devices.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Device
+    listKind: DeviceList
+    plural: devices
+    singular: device
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Claim
+      type: string
+      jsonPath: .spec.claimRef.name
+    - name: Model
+      type: string
+      jsonPath: .spec.identity.model
+    - name: Serial
+      type: string
+      jsonPath: .spec.identity.serial
+    - name: Lifecycle
+      type: string
+      jsonPath: .spec.lifecycle
+    - name: System UUID
+      type: string
+      priority: 1
+      jsonPath: .spec.identity.systemUUID
+    - name: Unidentified
+      type: boolean
+      priority: 1
+      jsonPath: .spec.identity.unidentified
+    - name: Discovered
+      type: string
+      priority: 1
+      jsonPath: .status.conditions[?(@.type=="Discovered")].status
+    - name: Identity
+      type: string
+      priority: 1
+      jsonPath: .status.conditions[?(@.type=="IdentityMatched")].reason
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - claimRef
+            - identity
+            x-kubernetes-validations:
+            - rule: self.claimRef == oldSelf.claimRef
+              message: claimRef is immutable; bind replacement hardware as a new Device
+            - rule: self.identity == oldSelf.identity
+              message: identity is immutable; a hardware swap is a new Device
+            - rule: '!has(self.identity.unidentified) || !has(self.bmc)'
+              message: a device without hardware identity cannot record a BMC endpoint; it cannot be enrolled as machine capacity
+            - rule: '!has(oldSelf.deviceTypeRef) || (has(self.deviceTypeRef) && self.deviceTypeRef == oldSelf.deviceTypeRef)'
+              message: an assigned catalog reference cannot be removed or rebound
+            - rule: '!has(oldSelf.reportedPlacement) || has(self.reportedPlacement)'
+              message: retain a report; omit unknown location fields rather than removing the report
+            - rule: '!has(self.reportedPlacement) || (oldSelf.hasValue() && has(oldSelf.value().reportedPlacement) ? (self.reportedPlacement == oldSelf.value().reportedPlacement || self.reportedPlacement.revision == oldSelf.value().reportedPlacement.revision + 1) : self.reportedPlacement.revision == 1)'
+              optionalOldSelf: true
+              message: first report revision must be 1; every changed report must increment revision exactly once
+            - rule: '!has(self.interfaces) || self.interfaces.all(a, !has(a.macAddress) || (self.interfaces.filter(b,
+                has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 && (!has(self.unmappedMACAddresses)
+                || !(a.macAddress in self.unmappedMACAddresses))))'
+              message: a MAC address may be recorded only once
+            - rule: '!has(self.components) || has(self.topologyAuthority)'
+              message: typed components require Cable topology
+            - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, (m.from.componentID
+                != m.to.componentID || m.from.position != m.to.position) && self.components.exists(c, c.id == m.from.componentID
+                && m.from.position <= (has(c.positions) ? c.positions : 1)) && self.components.exists(c, c.id ==
+                m.to.componentID && m.to.position <= (has(c.positions) ? c.positions : 1))))'
+              message: internal mappings must reference present component positions
+            - rule: '!has(self.internalMappings) || self.internalMappings.all(m, self.internalMappings.filter(n,
+                n.from == m.from).size() == 1)'
+              message: each internal source position maps once
+            - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, self.components.exists(c,
+                c.id == m.from.componentID && c.type == ''FrontPort'') ? self.components.exists(c, c.id == m.to.componentID
+                && c.type == ''RearPort'') : (self.components.exists(c, c.id == m.from.componentID && c.type ==
+                ''PowerOutlet'') && self.components.exists(c, c.id == m.to.componentID && c.type == ''PowerInlet''))))'
+              message: internal paths must map front to rear or power outlet to inlet
+            - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, !self.components.exists(c,
+                c.id == m.from.componentID && c.type == ''FrontPort'') || self.internalMappings.filter(n, n.to.componentID
+                == m.to.componentID && n.to.position == m.to.position).size() == 1))'
+              message: a pass-through rear position can be mapped only once
+            - rule: '!has(self.serviceAssociations) || (has(self.components) && self.serviceAssociations.all(a,
+                self.components.exists(c, c.id == a.componentID)))'
+              message: service associations must reference present components
+            - rule: '!has(oldSelf.lifecycle) || oldSelf.lifecycle != ''Retired'' || (has(self.lifecycle) && self.lifecycle
+                == ''Retired'')'
+              message: Retired is terminal; a Retired Device cannot change lifecycle
+            - rule: '!has(self.lifecycle) || self.lifecycle != ''Retired'' || (has(oldSelf.lifecycle) && oldSelf.lifecycle
+                in [''Decommissioning'', ''Retired''])'
+              message: move an Active Device to Decommissioning before Retired
+            properties:
+              lifecycle:
+                type: string
+                enum: [Active, Decommissioning, Retired]
+                default: Active
+              deviceTypeRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                    pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
+              reportedPlacement:
+                type: object
+                required: [revision, observedAt, reason, reference]
+                x-kubernetes-validations:
+                - rule: '(!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth) && !has(self.mount)) || has(self.rackRef)'
+                  message: rack geometry requires a reported rack
+                - rule: '!has(self.mount) || (!has(self.position) && !has(self.height) && !has(self.face) && !has(self.fullDepth))'
+                  message: non-unit mounts cannot also report unit geometry
+                - rule: '!has(self.position) || !has(self.height) || self.position + self.height <= 101.0'
+                  message: reported geometry exceeds supported rack bounds
+                properties:
+                  revision:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
+                  reason:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                    pattern: '\S'
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                    pattern: '\S'
+                  observedAt:
+                    type: string
+                    format: date-time
+                  facilityRef:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                  rackRef:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                  position:
+                    type: number
+                    minimum: 1
+                    maximum: 100
+                  height:
+                    type: number
+                    minimum: 0
+                    exclusiveMinimum: true
+                    maximum: 100
+                  face:
+                    type: string
+                    enum: [front, rear]
+                  fullDepth:
+                    type: boolean
+                  mount:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+              claimRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+              identity:
+                type: object
+                required:
+                - model
+                x-kubernetes-validations:
+                - rule: has(self.serial) || has(self.systemUUID) || has(self.unidentified)
+                  message: a device needs a serial or system UUID, or unidentified set to true with a reason
+                - rule: '!has(self.unidentified) || self.unidentified'
+                  message: unidentified may only be true; omit it when the device has a serial or system UUID
+                - rule: has(self.unidentified) == has(self.unidentifiedReason)
+                  message: unidentified and unidentifiedReason must be set together
+                - rule: '!has(self.unidentified) || (!has(self.serial) && !has(self.systemUUID))'
+                  message: an unidentified device cannot carry a serial or system UUID; record identified hardware as a new Device
+                properties:
+                  manufacturer:
+                    type: string
+                    maxLength: 253
+                  model:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  serial:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  systemUUID:
+                    type: string
+                    pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+                  unidentified:
+                    type: boolean
+                  unidentifiedReason:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                    pattern: '\S'
+              bmc:
+                type: object
+                required:
+                - endpoint
+                properties:
+                  endpoint:
+                    type: string
+                    maxLength: 2048
+                    x-kubernetes-validations:
+                    - rule: isURL(self) && url(self).getScheme() == 'https' && !self.contains('@') && url(self).getHostname()
+                        != ''
+                      message: bmc.endpoint must be an https URL without credentials
+              interfaces:
+                type: array
+                maxItems: 32
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - name
+                items:
+                  type: object
+                  required:
+                  - name
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    macAddress:
+                      type: string
+                      maxLength: 17
+                      pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
+              unmappedMACAddresses:
+                type: array
+                maxItems: 32
+                x-kubernetes-list-type: set
+                items:
+                  type: string
+                  maxLength: 17
+                  pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
+              assetTag:
+                type: string
+                minLength: 1
+                maxLength: 253
+              providerHostRef:
+                type: object
+                properties:
+                  system:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  type:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  id:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                required:
+                - system
+                - type
+                - id
+              components:
+                type: array
+                maxItems: 256
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    type:
+                      type: string
+                      enum:
+                      - NetworkPort
+                      - PowerInlet
+                      - PowerOutlet
+                      - ConsolePort
+                      - ConsoleServerPort
+                      - FrontPort
+                      - RearPort
+                      - Module
+                      - InventoryItem
+                      - DeviceBay
+                    connector:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    positions:
+                      type: integer
+                      minimum: 1
+                      maximum: 256
+                    serial:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    assetTag:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                  required:
+                  - id
+                  - name
+                  - type
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+              internalMappings:
+                type: array
+                maxItems: 256
+                items:
+                  type: object
+                  properties:
+                    from: &id002
+                      type: object
+                      properties:
+                        componentID:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        position:
+                          type: integer
+                          minimum: 1
+                          maximum: 256
+                      required:
+                      - componentID
+                      - position
+                    to: *id002
+                  required:
+                  - from
+                  - to
+              serviceAssociations:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  properties:
+                    serviceRef:
+                      type: object
+                      properties:
+                        system:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        type:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                      required:
+                      - system
+                      - type
+                      - id
+                    componentID:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                  required:
+                  - serviceRef
+                  - componentID
+              topologyAuthority:
+                type: string
+                enum:
+                - Cable
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              modelShape:
+                type: object
+                properties:
+                  heightUnits:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+                  fullDepth:
+                    type: boolean
+                  width:
+                    type: string
+                    enum:
+                    - Full
+                    - Half
+          status:
+            type: object
+            description: Written only by read-only BMC discovery through the status subresource. Observations are evidence; spec stays authoritative.
+            properties:
+              observedGeneration:
+                type: integer
+                format: int64
+                minimum: 0
+              discovery:
+                type: object
+                properties:
+                  lastAttemptAt: {type: string, format: date-time}
+                  lastAttemptEndpoint: {type: string, maxLength: 2048}
+                  tls:
+                    type: object
+                    required: [observedAt, endpoint, publicKeySHA256]
+                    properties:
+                      observedAt: {type: string, format: date-time}
+                      endpoint: {type: string, maxLength: 2048}
+                      publicKeySHA256: {type: string, pattern: '^[0-9a-f]{64}$'}
+                      notAfter: {type: string, format: date-time}
+                      selfSigned: {type: boolean}
+                  serviceRoot:
+                    type: object
+                    required: [observedAt, endpoint]
+                    properties:
+                      observedAt: {type: string, format: date-time}
+                      endpoint: {type: string, maxLength: 2048}
+                      redfishVersion: {type: string, maxLength: 63}
+                      uuid: {type: string, maxLength: 36}
+                      vendor: {type: string, maxLength: 253}
+                      product: {type: string, maxLength: 253}
+                  inventory:
+                    type: object
+                    required: [observedAt, endpoint]
+                    properties:
+                      observedAt: {type: string, format: date-time}
+                      endpoint: {type: string, maxLength: 2048}
+                      managers:
+                        type: array
+                        maxItems: 16
+                        items:
+                          type: object
+                          required: [id]
+                          properties:
+                            id: {type: string, minLength: 1, maxLength: 253}
+                            model: {type: string, maxLength: 253}
+                            firmwareVersion: {type: string, maxLength: 253}
+                            networkInterfaces:
+                              type: array
+                              maxItems: 32
+                              items:
+                                type: object
+                                required: [id]
+                                properties:
+                                  id: {type: string, minLength: 1, maxLength: 253}
+                                  macAddress: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
+                                  linkStatus: {type: string, maxLength: 63}
+                                  speedMbps: {type: integer, minimum: 0, maximum: 100000000}
+                      systems:
+                        type: array
+                        maxItems: 16
+                        items:
+                          type: object
+                          required: [id]
+                          properties:
+                            id: {type: string, minLength: 1, maxLength: 253}
+                            uuid: {type: string, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
+                            manufacturer: {type: string, maxLength: 253}
+                            model: {type: string, maxLength: 253}
+                            serialNumber: {type: string, maxLength: 253}
+                            sku: {type: string, maxLength: 253}
+                            powerState: {type: string, maxLength: 63}
+                            networkInterfaces:
+                              type: array
+                              maxItems: 32
+                              items:
+                                type: object
+                                required: [id]
+                                properties:
+                                  id: {type: string, minLength: 1, maxLength: 253}
+                                  macAddress: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
+                                  linkStatus: {type: string, maxLength: 63}
+                                  speedMbps: {type: integer, minimum: 0, maximum: 100000000}
+              conditions:
+                type: array
+                maxItems: 8
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [type]
+                items:
+                  type: object
+                  required: [type, status, lastTransitionTime, reason, message]
+                  properties:
+                    type: {type: string, minLength: 1, maxLength: 316, pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$'}
+                    status: {type: string, enum: ['True', 'False', 'Unknown']}
+                    observedGeneration: {type: integer, format: int64, minimum: 0}
+                    lastTransitionTime: {type: string, format: date-time}
+                    reason: {type: string, minLength: 1, maxLength: 1024, pattern: '^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$'}
+                    message: {type: string, maxLength: 32768}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: facilities.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Facility
+    listKind: FacilityList
+    plural: facilities
+    singular: facility
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              identifiers:
+                type: array
+                maxItems: 64
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [provider, type, value]
+                items:
+                  type: object
+                  required: [provider, type, value]
+                  properties:
+                    provider:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type:
+                      type: string
+                      enum: [PremisesCode, PremisesAlias, PremisesID]
+                    value:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+              locationRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                required:
+                - name
+            required:
+            - displayName
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sites.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Site
+    listKind: SiteList
+    plural: sites
+    singular: site
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              code:
+                type: string
+                minLength: 1
+                maxLength: 64
+              facilityRefs:
+                type: array
+                maxItems: 64
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+            required:
+            - displayName
+            - code
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: racks.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Rack
+    listKind: RackList
+    plural: racks
+    singular: rack
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              facilityRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                required:
+                - name
+              heightUnits:
+                type: integer
+                minimum: 1
+                maximum: 100
+            required:
+            - displayName
+            - facilityRef
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: cables.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Cable
+    listKind: CableList
+    plural: cables
+    singular: cable
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              medium:
+                type: string
+                enum:
+                - Copper
+                - Fiber
+                - Power
+                - Console
+                - Unknown
+              lanes:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    a: &id002
+                      type: object
+                      properties:
+                        deviceRef: &id001
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                              maxLength: 253
+                              pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                          required:
+                          - name
+                        powerFeedRef: *id001
+                        componentID:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        position:
+                          type: integer
+                          minimum: 1
+                          maximum: 256
+                      required:
+                      - componentID
+                      - position
+                      x-kubernetes-validations:
+                      - rule: has(self.deviceRef) != has(self.powerFeedRef)
+                        message: exactly one local endpoint owner is required
+                    b: *id002
+                  required:
+                  - id
+                  - a
+                  - b
+                  x-kubernetes-validations:
+                  - rule: '!(self.a.componentID == self.b.componentID && self.a.position == self.b.position && ((has(self.a.deviceRef)
+                      && has(self.b.deviceRef) && self.a.deviceRef.name == self.b.deviceRef.name) || (has(self.a.powerFeedRef)
+                      && has(self.b.powerFeedRef) && self.a.powerFeedRef.name == self.b.powerFeedRef.name)))'
+                    message: a cable lane must have different endpoints
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                minItems: 1
+            required:
+            - displayName
+            - medium
+            - lanes
+            x-kubernetes-validations:
+            - rule: self.lanes.all(l, self.lanes.filter(m, (m.a.componentID == l.a.componentID && m.a.position ==
+                l.a.position && ((has(m.a.deviceRef) && has(l.a.deviceRef) && m.a.deviceRef.name == l.a.deviceRef.name)
+                || (has(m.a.powerFeedRef) && has(l.a.powerFeedRef) && m.a.powerFeedRef.name == l.a.powerFeedRef.name)))
+                || (m.b.componentID == l.a.componentID && m.b.position == l.a.position && ((has(m.b.deviceRef) &&
+                has(l.a.deviceRef) && m.b.deviceRef.name == l.a.deviceRef.name) || (has(m.b.powerFeedRef) && has(l.a.powerFeedRef)
+                && m.b.powerFeedRef.name == l.a.powerFeedRef.name)))).size() == 1 && self.lanes.filter(m, (m.a.componentID
+                == l.b.componentID && m.a.position == l.b.position && ((has(m.a.deviceRef) && has(l.b.deviceRef)
+                && m.a.deviceRef.name == l.b.deviceRef.name) || (has(m.a.powerFeedRef) && has(l.b.powerFeedRef)
+                && m.a.powerFeedRef.name == l.b.powerFeedRef.name))) || (m.b.componentID == l.b.componentID && m.b.position
+                == l.b.position && ((has(m.b.deviceRef) && has(l.b.deviceRef) && m.b.deviceRef.name == l.b.deviceRef.name)
+                || (has(m.b.powerFeedRef) && has(l.b.powerFeedRef) && m.b.powerFeedRef.name == l.b.powerFeedRef.name)))).size()
+                == 1)
+              message: each termination position can occur only once in a cable
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: powerfeeds.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: PowerFeed
+    listKind: PowerFeedList
+    plural: powerfeeds
+    singular: powerfeed
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              facilityRef: &id001
+                type: object
+                properties:
+                  name:
+                    type: string
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                required:
+                - name
+              rackRef: *id001
+              supply:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum:
+                    - AC
+                    - DC
+                    - Unknown
+                  voltageV:
+                    type: integer
+                    minimum: 1
+                    maximum: 100000
+                  currentA:
+                    type: integer
+                    minimum: 1
+                    maximum: 100000
+                  phase:
+                    type: string
+                    enum:
+                    - single-phase
+                    - three-phase
+                    - Unknown
+                required:
+                - type
+              terminations:
+                type: array
+                maxItems: 256
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    type:
+                      type: string
+                      enum:
+                      - NetworkPort
+                      - PowerInlet
+                      - PowerOutlet
+                      - ConsolePort
+                      - ConsoleServerPort
+                      - FrontPort
+                      - RearPort
+                      - Module
+                      - InventoryItem
+                      - DeviceBay
+                    connector:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    positions:
+                      type: integer
+                      minimum: 1
+                      maximum: 256
+                    serial:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    assetTag:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                  required:
+                  - id
+                  - name
+                  - type
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                minItems: 1
+              upstreamSources:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  properties:
+                    system:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    type:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                  required:
+                  - system
+                  - type
+                  - id
+            required:
+            - displayName
+            - facilityRef
+            - terminations
+            x-kubernetes-validations:
+            - rule: self.terminations.all(t, t.type == 'PowerOutlet')
+              message: feed terminations must be power outlets
+          status:
+            type: object
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: manufacturers.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: Manufacturer
+    listKind: ManufacturerList
+    plural: manufacturers
+    singular: manufacturer
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - displayName
+            - canonicalName
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              canonicalName: &id001
+                type: string
+                minLength: 1
+                maxLength: 253
+                pattern: '^[A-Za-z0-9]([ -~]*[!-~])?$'
+              aliases:
+                type: array
+                maxItems: 32
+                x-kubernetes-list-type: set
+                items: *id001
+            x-kubernetes-validations:
+            - rule: '!has(self.aliases) || self.aliases.all(a, a.lowerAscii() != self.canonicalName.lowerAscii()
+                && self.aliases.filter(b, a.lowerAscii() == b.lowerAscii()).size()
+                == 1)'
+              message: aliases must be distinct ignoring ASCII case and cannot repeat
+                the canonical name
+          status:
+            type: object
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicetypes.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceType
+    listKind: DeviceTypeList
+    plural: devicetypes
+    singular: devicetype
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - displayName
+            - manufacturerRef
+            - model
+            properties:
+              displayName:
+                type: string
+                minLength: 1
+                maxLength: 253
+              manufacturerRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                    pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
+              model:
+                type: string
+                minLength: 1
+                maxLength: 253
+                pattern: ^[a-z0-9]+(-[a-z0-9]+)*$
+              modelShape:
+                type: object
+                properties:
+                  heightUnits:
+                    type: number
+                    minimum: 0
+                    maximum: 100
+                  fullDepth:
+                    type: boolean
+                  width:
+                    type: string
+                    enum:
+                    - Full
+                    - Half
+              faceplate:
+                type: object
+                required:
+                - banks
+                properties:
+                  banks:
+                    type: array
+                    minItems: 1
+                    maxItems: 32
+                    items:
+                      type: object
+                      required:
+                      - id
+                      - face
+                      - rows
+                      - columns
+                      properties:
+                        id:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        face:
+                          type: string
+                          enum:
+                          - Front
+                          - Rear
+                        rows:
+                          type: integer
+                          minimum: 1
+                          maximum: 8
+                        columns:
+                          type: integer
+                          minimum: 1
+                          maximum: 64
+                        offset:
+                          type: number
+                          minimum: 0
+                          maximum: 1
+                        cellMM:
+                          type: object
+                          required:
+                          - width
+                          - height
+                          properties:
+                            width:
+                              type: number
+                              minimum: 1
+                              maximum: 450
+                            height:
+                              type: number
+                              minimum: 1
+                              maximum: 400
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys:
+                    - id
+                x-kubernetes-validations:
+                - rule: "['Front', 'Rear'].all(f, self.banks.all(b, b.face != f || has(b.offset))
+                    || self.banks.all(b, b.face != f || !has(b.offset)))"
+                  message: bank offsets must be set on every bank of a face or on none
+              componentTemplates:
+                type: array
+                maxItems: 256
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    type:
+                      type: string
+                      enum:
+                      - NetworkPort
+                      - PowerInlet
+                      - PowerOutlet
+                      - ConsolePort
+                      - ConsoleServerPort
+                      - FrontPort
+                      - RearPort
+                      - Module
+                      - InventoryItem
+                      - DeviceBay
+                    connector:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    positions:
+                      type: integer
+                      minimum: 1
+                      maximum: 256
+                    face:
+                      type: string
+                      enum:
+                      - Front
+                      - Rear
+                    layout:
+                      type: object
+                      required:
+                      - bank
+                      - row
+                      - column
+                      properties:
+                        bank:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        row:
+                          type: integer
+                          minimum: 1
+                          maximum: 8
+                        column:
+                          type: integer
+                          minimum: 1
+                          maximum: 64
+                        span:
+                          type: integer
+                          minimum: 1
+                          maximum: 64
+                  required:
+                  - id
+                  - name
+                  - type
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-validations:
+                # The overlap rule below compares every pair of templates. This
+                # cap keeps its worst runtime cost near 60% of the per-call CEL
+                # limit; 256 laid-out templates can exceed it. Evaluated first so
+                # an over-cap object reports the cap, not a cost error.
+                - rule: self.filter(t, has(t.layout)).size() <= 128
+                  message: at most 128 templates may carry a layout; leave the rest without
+                    one
+                - rule: 'self.all(t, !has(t.layout) || self.exists_one(u, has(u.layout)
+                    && u.layout.row == t.layout.row && u.layout.column < t.layout.column
+                    + (has(t.layout.span) ? t.layout.span : 1) && t.layout.column < u.layout.column
+                    + (has(u.layout.span) ? u.layout.span : 1) && u.layout.bank == t.layout.bank))'
+                  message: two templates overlap in one bank row; each cell, including a
+                    span, holds one template
+            x-kubernetes-validations:
+            - rule: '!has(self.componentTemplates) || self.componentTemplates.all(t, !has(t.layout)
+                || has(t.face) && has(self.faceplate) && self.faceplate.banks.exists(b,
+                b.id == t.layout.bank && b.face == t.face))'
+              message: a template layout must name a faceplate bank on the template's own
+                face
+            - rule: '!has(self.componentTemplates) || !has(self.faceplate) || self.componentTemplates.all(t,
+                !has(t.layout) || self.faceplate.banks.all(b, b.id != t.layout.bank ||
+                t.layout.row <= b.rows && t.layout.column + (has(t.layout.span) ? t.layout.span
+                : 1) - 1 <= b.columns))'
+              message: a template layout, including its span, must fall inside its bank's
+                rows and columns
+            - rule: self.manufacturerRef == oldSelf.manufacturerRef && self.model
+                == oldSelf.model
+              message: manufacturer and normalized model identity are immutable; displayName
+                is mutable
+          status:
+            type: object

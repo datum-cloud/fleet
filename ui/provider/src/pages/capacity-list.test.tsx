@@ -1,9 +1,8 @@
 import CapacityList from './capacity-list';
-import { capacityTargets, toRawCapacity } from '../components/create-capacity-dialog';
 import * as api from '../lib/api';
 import { ApiError } from '../lib/api';
-import { FIXTURE_CAPACITIES, fixtureClasses } from '../lib/fixtures';
-import { toMachineCapacity, toMachineClass } from '../types';
+import { FIXTURE_CAPACITIES } from '../lib/fixtures';
+import { toMachineCapacity } from '../types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -11,12 +10,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof api>('../lib/api');
-  return { ...actual, useMachineCapacities: vi.fn(), useMachineClasses: vi.fn(), useCreateMachineCapacity: vi.fn(), useDeleteMachineCapacity: vi.fn() };
+  return { ...actual, useMachineCapacities: vi.fn(), useMachineProfiles: vi.fn(), useMachineClasses: vi.fn(), useDeleteMachineCapacity: vi.fn() };
 });
 
 const useCapacitiesMock = vi.mocked(api.useMachineCapacities);
-const mutate = vi.fn();
-const CLASSES = fixtureClasses.list().map(toMachineClass);
 
 const remove = vi.fn();
 
@@ -51,13 +48,14 @@ function mockResult(result: { data?: unknown; isLoading?: boolean; error?: unkno
   } as never);
 }
 
-function renderPage() {
+function renderPage(entry = '/plugins/metal-datumapis-com') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/plugins/metal-datumapis-com']}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/plugins/:slug" element={<CapacityList />} />
+          <Route path="/plugins/:slug/inventory" element={<p>Inventory route</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
@@ -72,29 +70,57 @@ function row(table: HTMLElement, name: string): HTMLElement {
 
 beforeEach(() => {
   useCapacitiesMock.mockReset();
-  mutate.mockReset();
   remove.mockReset();
   mockDelete(api.useDeleteMachineCapacity);
-  vi.mocked(api.useMachineClasses).mockReturnValue({ data: CLASSES } as never);
-  vi.mocked(api.useCreateMachineCapacity).mockReturnValue({
-    mutate,
-    reset: vi.fn(),
-    error: null,
-    isPending: false,
-  } as never);
+  vi.mocked(api.useMachineProfiles).mockReturnValue({ data: [{ name: 'p' }], error: null } as never);
+  vi.mocked(api.useMachineClasses).mockReturnValue({ data: undefined, error: new ApiError(403, 'forbidden') } as never);
 });
 
 describe('CapacityList', () => {
-  it('names the provider project', () => {
+  it('heads the page with the tab row alone, the action at its end', () => {
     mockResult({ data: [] });
     renderPage();
-    expect(screen.getByText('Provider resources in datum-cloud')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Bare Metal' })).toBeInTheDocument();
+    expect(screen.queryByText(/Provider resources in/)).toBeNull();
+    const row = screen.getByRole('tablist').parentElement!.parentElement!;
+    expect(row).toHaveClass('fleet-tab-row');
+    expect(within(row).getByRole('button', { name: 'Register capacity' })).toBeDisabled();
   });
 
   it('keeps Capacity active at the plugin root', () => {
     mockResult({ data: [] });
     renderPage();
-    expect(screen.getByRole('tab', { name: 'Capacity' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: /^Capacity/ })).toHaveAttribute('data-state', 'active');
+  });
+
+  it('counts each list on its tab, with ? for an unreadable one and none while loading', () => {
+    mockResult({ data: FIXTURE_CAPACITIES.map(toMachineCapacity) });
+    renderPage();
+    expect(screen.getByRole('tab', { name: /^Capacity/ })).toHaveTextContent('Capacity3');
+    expect(screen.getByRole('tab', { name: /^Profiles/ })).toHaveTextContent('Profiles1');
+    expect(screen.getByRole('tab', { name: /^Classes/ })).toHaveTextContent('Classes?');
+    expect(screen.getByRole('tab', { name: /^Inventory/ })).toHaveTextContent(/^Inventory$/);
+  });
+
+  it('shows no capacity count while the list loads or after it fails', () => {
+    mockResult({ isLoading: true });
+    const { unmount } = renderPage();
+    expect(screen.getByRole('tab', { name: /^Capacity/ })).toHaveTextContent(/^Capacity$/);
+    unmount();
+    mockResult({ error: new ApiError(403, 'forbidden') });
+    renderPage();
+    expect(screen.getByRole('tab', { name: /^Capacity/ })).toHaveTextContent('Capacity?');
+  });
+
+  it('shows search only for a list long enough to need it', () => {
+    mockResult({ data: FIXTURE_CAPACITIES.map(toMachineCapacity) });
+    const { unmount } = renderPage();
+    expect(screen.queryByPlaceholderText('Search machine capacity')).toBeNull();
+    unmount();
+    const many = Array.from({ length: 10 }, (_, i) => ({ ...toMachineCapacity(FIXTURE_CAPACITIES[0]), name: `capacity-${i}` }));
+    mockResult({ data: many });
+    renderPage();
+    expect(screen.getByPlaceholderText('Search machine capacity')).toBeInTheDocument();
   });
 
   it('shows the loading state while fetching', () => {
@@ -121,72 +147,99 @@ describe('CapacityList', () => {
     expect(screen.getByTestId('fleet-plugin-capacity-empty')).toBeInTheDocument();
   });
 
-  it('lists the fixture capacity with policy and conditions', () => {
+  it('lists the fixture capacity with one state word, its Device and policy', () => {
     mockResult({ data: FIXTURE_CAPACITIES.map(toMachineCapacity) });
     renderPage();
     const table = screen.getByTestId('fleet-plugin-capacity-table');
+    expect(within(table).queryByText('Namespace')).toBeNull();
+    expect(within(table).queryByText('fleet-provider')).toBeNull();
+    expect(within(table).getAllByRole('columnheader').map((th) => th.textContent).slice(0, 3)).toEqual(['Name', 'State', 'Device']);
 
     const free = row(table, 'central1-baremetal-01');
-    expect(within(free).getByText('fleet-provider')).toBeInTheDocument();
+    expect(within(free).getByLabelText('Available: Prepared True (SyntheticEvidence) · Healthy True (SyntheticEvidence) · Available True (SyntheticEvidence)')).not.toHaveAttribute('data-attention');
     expect(within(free).getByText('Enabled')).toBeInTheDocument();
-    expect(within(free).getAllByText('Yes')).toHaveLength(3);
+    expect(within(free).getByText('synthetic-device-central-01')).toBeInTheDocument();
+    expect(within(free).queryByText(/^(Yes|No)$/)).toBeNull();
 
     const allocated = row(table, 'central1-baremetal-02');
-    expect(within(allocated).getAllByText('Yes')).toHaveLength(2);
-    expect(within(allocated).getByText('No')).toBeInTheDocument();
+    expect(within(allocated).getByLabelText(/^Allocated: .*Available False \(Allocated\)$/)).not.toHaveAttribute('data-attention');
 
     const enrolled = row(table, 'central1-baremetal-03');
-    expect(within(enrolled).getByText('Disabled')).toBeInTheDocument();
-    expect(within(enrolled).queryByText('Yes')).toBeNull();
+    expect(within(enrolled).getByLabelText(/^Disabled: Prepared Unknown · Healthy Unknown · Available Unknown$/)).not.toHaveAttribute('data-attention');
     expect(within(enrolled).getAllByText('—').length).toBeGreaterThan(0); // nothing observed
   });
 
-  it('creates capacity in the namespace and pool of the chosen class', async () => {
-    mockResult({ data: [] });
+  it('colours only capacity that needs attention, and never reads unknown as available', () => {
+    const base = toMachineCapacity(FIXTURE_CAPACITIES[0]);
+    mockResult({ data: [
+      { ...base, name: 'sick', healthy: { state: 'False', reason: 'BMCUnreachable' } },
+      { ...base, name: 'unreported', prepared: { state: 'Unknown' } },
+    ] });
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /Create capacity/ }));
-    const form = await screen.findByTestId('fleet-plugin-create-capacity-form');
-    const input = (name: string) => form.querySelector(`[name="${name}"]`) as HTMLInputElement;
-    fireEvent.change(input('name'), { target: { value: 'central1-baremetal-04' } });
-    // Radix renders a hidden native select alongside its combobox.
-    fireEvent.change(form.querySelector('select') as HTMLSelectElement, {
-      target: { value: 'standard-metal' },
-    });
-    expect(await within(form).findByTestId('fleet-plugin-capacity-placement')).toHaveTextContent(
-      'Created in namespace fleet-provider with capacity pool central-metal.'
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => expect(mutate).toHaveBeenCalled());
-    expect(mutate.mock.calls[0][0]).toEqual({
-      metadata: {
-        name: 'central1-baremetal-04',
-        namespace: 'fleet-provider',
-        labels: { 'fleet.datumapis.com/capacity-pool': 'central-metal' },
-      },
-      spec: {
-        deviceRef: { name: 'central1-baremetal-04' },
-        allocationPolicy: 'Disabled',
-        cleaningPolicyRef: { name: 'synthetic-tenant-reuse-v1' },
-        reclaimPolicy: 'Retain',
-      },
-    });
+    const table = screen.getByTestId('fleet-plugin-capacity-table');
+    expect(within(row(table, 'sick')).getByLabelText(/^Unhealthy: .*Healthy False \(BMCUnreachable\)/)).toHaveAttribute('data-attention', 'conflict');
+    const unknown = within(row(table, 'unreported')).getByLabelText(/^Unknown: Prepared Unknown/);
+    expect(unknown).toHaveTextContent('?');
+    expect(unknown).toHaveAttribute('data-attention', 'unavailable');
   });
 
-  it('asks for a class with a capacity pool when there is none', async () => {
-    vi.mocked(api.useMachineClasses).mockReturnValue({ data: [] } as never);
-    mockResult({ data: [] });
+  it('links a Device in the inventory namespace to its inventory record', () => {
+    const base = toMachineCapacity(FIXTURE_CAPACITIES[0]);
+    mockResult({ data: [base, { ...base, name: 'device-uid-1', namespace: 'default', device: 'server-a' }, { ...base, name: 'unbacked', device: undefined }] });
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /Create capacity/ }));
-    const form = await screen.findByTestId('fleet-plugin-create-capacity-form');
-    expect(within(form).getByText(/No classes with a capacity pool yet/)).toBeInTheDocument();
+    const table = screen.getByTestId('fleet-plugin-capacity-table');
+    expect(within(row(table, 'device-uid-1')).getByRole('link', { name: 'server-a' })).toHaveAttribute('href', '/plugins/metal-datumapis-com/inventory?kind=Device&record=server-a&namespace=default');
+    // Inventory holds only the default namespace, so other Devices are named, not linked.
+    expect(within(row(table, 'central1-baremetal-01')).getByText('synthetic-device-central-01').closest('a')).toBeNull();
+    expect(within(row(table, 'unbacked')).queryByRole('link')).toBeNull();
+  });
+
+  it('filters to the pool a class links to', () => {
+    const base = toMachineCapacity(FIXTURE_CAPACITIES[0]);
+    mockResult({ data: [...FIXTURE_CAPACITIES.map(toMachineCapacity), { ...base, name: 'other-pool', pool: 'edge-metal' }, { ...base, name: 'other-namespace', namespace: 'default' }] });
+    renderPage('/plugins/metal-datumapis-com?namespace=fleet-provider&pool=central-metal');
+    const table = screen.getByTestId('fleet-plugin-capacity-table');
+    expect(within(table).getAllByRole('row')).toHaveLength(4);
+    expect(within(table).queryByText('other-pool')).toBeNull();
+    expect(within(table).queryByText('other-namespace')).toBeNull();
+    expect(screen.getByTestId('fleet-plugin-capacity-filter')).toHaveTextContent('Pool central-metal');
+    expect(screen.getByRole('tab', { name: /^Capacity/ })).toHaveTextContent('Capacity5');
+    fireEvent.click(screen.getByRole('link', { name: 'Show all' }));
+    expect(within(screen.getByTestId('fleet-plugin-capacity-table')).getAllByRole('row')).toHaveLength(6);
+  });
+
+  it('says a filtered pool is empty rather than that no capacity exists', () => {
+    mockResult({ data: FIXTURE_CAPACITIES.map(toMachineCapacity) });
+    renderPage('/plugins/metal-datumapis-com?pool=missing');
+    expect(screen.getByTestId('fleet-plugin-capacity-empty')).toHaveTextContent('No machine capacity in this pool');
+  });
+
+  it.each([
+    { data: [] },
+    { data: FIXTURE_CAPACITIES.map(toMachineCapacity) },
+    { isLoading: true },
+    { error: new ApiError(403, 'forbidden') },
+    { error: new ApiError(503, 'unavailable') },
+  ])('does not offer registration without a verified host session: %j', (result) => {
+    mockResult(result);
+    renderPage();
+    // The trigger is disabled and opens nothing; the reason is its description.
+    const trigger = screen.getByRole('button', { name: 'Register capacity' });
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAccessibleDescription('Registration unavailable: a verified staff session is required.');
+    fireEvent.click(trigger);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Create capacity|Register Disabled capacity/ })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /Offer for allocation/ })).toBeNull();
+    expect(screen.queryByTestId('fleet-plugin-create-capacity-form')).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it('deletes capacity once its name is typed', async () => {
     mockResult({ data: FIXTURE_CAPACITIES.map(toMachineCapacity) });
     renderPage();
     const form = await confirmDelete('central1-baremetal-03');
-    expect(within(form).getByText(/removed from fleet-provider straight away/)).toBeInTheDocument();
+    expect(within(form).getByText(/Deletion in fleet-provider is subject to server lifecycle fences/)).toBeInTheDocument();
     await waitFor(() => expect(remove).toHaveBeenCalled());
     expect(remove.mock.calls[0][0]).toMatchObject({
       name: 'central1-baremetal-03',
@@ -202,6 +255,13 @@ describe('CapacityList', () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
+  it('shows registration retention instead of an unsafe rollback action', () => {
+    mockResult({ data: [{ ...toMachineCapacity(FIXTURE_CAPACITIES[0]), registrationProtected: true }] });
+    renderPage();
+    expect(screen.getByText('Retained registration')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: `Delete ${FIXTURE_CAPACITIES[0].metadata.name}` })).toBeNull();
+  });
+
   it('shows a failed delete in the dialog', async () => {
     mockDelete(api.useDeleteMachineCapacity, { error: new ApiError(403, 'machinecapacities "x" is forbidden') });
     mockResult({ data: FIXTURE_CAPACITIES.map(toMachineCapacity) });
@@ -209,30 +269,5 @@ describe('CapacityList', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete central1-baremetal-03' }));
     const form = await screen.findByTestId('fleet-plugin-delete-form');
     expect(within(form).getByText('machinecapacities "x" is forbidden')).toBeInTheDocument();
-  });
-});
-
-describe('capacityTargets', () => {
-  it('skips published classes and classes without a capacity pool', () => {
-    const targets = capacityTargets([
-      ...CLASSES,
-      toMachineClass({ metadata: { name: 'no-pool' }, spec: {} }),
-      toMachineClass({
-        metadata: { name: 'published' },
-        spec: { source: { project: 'provider', name: 'standard-metal' } },
-      }),
-    ]);
-    expect(targets.map((t) => t.name)).toEqual(['standard-metal']);
-  });
-});
-
-describe('toRawCapacity', () => {
-  it('enables allocation only when asked', () => {
-    const [target] = capacityTargets(CLASSES);
-    const values = { name: 'm', machineClass: 'standard-metal' };
-    expect(toRawCapacity(values, target).spec.allocationPolicy).toBe('Disabled');
-    expect(toRawCapacity({ ...values, allocationEnabled: true }, target).spec.allocationPolicy).toBe(
-      'Enabled'
-    );
   });
 });
