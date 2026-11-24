@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-device-power-dispatcher
+spec:
+  # One replica and no leader election. Acceptance, the per-Device lock, the
+  # stage record and the worker Job are each written once or optimistically,
+  # so an accidental second replica starts no second worker.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-device-power-dispatcher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-device-power-dispatcher
+    spec:
+      serviceAccountName: fleet-device-power-dispatcher
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dispatcher
+          image: ghcr.io/datum-cloud/fleet:latest
+          command: [/fleet-device-power, dispatcher]
+          args:
+            - --config=/etc/fleet/device-power/config.yaml
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet: {path: /healthz, port: probes}
+          readinessProbe:
+            httpGet: {path: /readyz, port: probes}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: config, mountPath: /etc/fleet/device-power, readOnly: true}
+            - {name: milo, mountPath: /var/run/fleet/milo, readOnly: true}
+      volumes:
+        - name: config
+          configMap:
+            name: fleet-device-power-config
+        # A kubeconfig for the one Milo project, bound to the
+        # fleet.datumapis.com-device-power-dispatcher role. Environment-owned.
+        - name: milo
+          secret:
+            secretName: fleet-device-power-milo-kubeconfig
+            defaultMode: 0440
+            items: [{key: kubeconfig, path: kubeconfig}]

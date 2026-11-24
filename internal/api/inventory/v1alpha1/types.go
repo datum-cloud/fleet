@@ -2,6 +2,9 @@
 // fleet.datumapis.com. A DeviceClaim describes one planned installation by
 // typed placement without accepting it.
 //
+// DevicePowerOperation (power.go) is the one kind here that asks for a
+// hardware effect; only the site dispatcher writes its status.
+//
 // All are operator-written records. Registering a Device authorizes no
 // hardware effect and creates or changes no MachineCapacity. Device status has
 // one writer, read-only BMC discovery (internal/bmcdiscovery); every other
@@ -293,6 +296,7 @@ type DeviceList struct {
 func addKnown(s *runtime.Scheme) error {
 	s.AddKnownTypes(GroupVersion, &Manufacturer{}, &ManufacturerList{}, &DeviceType{}, &DeviceTypeList{})
 	s.AddKnownTypes(GroupVersion, &Site{}, &SiteList{}, &DeviceClaim{}, &DeviceClaimList{}, &Device{}, &DeviceList{}, &Facility{}, &FacilityList{}, &Rack{}, &RackList{}, &Cable{}, &CableList{}, &PowerFeed{}, &PowerFeedList{})
+	s.AddKnownTypes(GroupVersion, &DevicePowerOperation{}, &DevicePowerOperationList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }

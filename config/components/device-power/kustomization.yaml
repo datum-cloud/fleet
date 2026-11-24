@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# DevicePowerOperation in Milo: its CRD, ProtectedResource, the power operator
+# and dispatcher roles, and the admission policy that binds the requester to
+# the creating user. No root in this repository includes it yet; a deploying
+# repository adds it next to config/milo. Without a site dispatcher an
+# operation is never accepted and has no effect.
+# See docs/operations/device-power.md.
+resources:
+  - crds
+  - protected-resources
+  - roles
+  - admission

@@ -1,0 +1,9 @@
+# The image every worker Job must run, read by the dispatcher-writes policy.
+# The deploying repository sets it to the same digest as the dispatcher's
+# workerImage.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-device-power-worker-policy
+data:
+  workerImage: ghcr.io/datum-cloud/fleet:latest

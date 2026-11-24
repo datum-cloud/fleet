@@ -1,0 +1,115 @@
+# One staff power action on one Device. The whole spec is fixed at creation;
+# the status has one writer, the site dispatcher, and its result is set once.
+# See docs/operations/device-power.md and the proposal in
+# https://github.com/datum-cloud/fleet/pull/173.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicepoweroperations.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DevicePowerOperation
+    listKind: DevicePowerOperationList
+    plural: devicepoweroperations
+    singular: devicepoweroperation
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Device
+      type: string
+      jsonPath: .spec.deviceRef.name
+    - name: Action
+      type: string
+      jsonPath: .spec.action
+    - name: Result
+      type: string
+      jsonPath: .status.result
+    - name: Reason
+      type: string
+      jsonPath: .status.conditions[?(@.type=="Finished")].reason
+    - name: Requester
+      type: string
+      priority: 1
+      jsonPath: .spec.requester
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema:
+      openAPIV3Schema:
+        type: object
+        required: [spec]
+        properties:
+          apiVersion: {type: string}
+          kind: {type: string}
+          metadata: {type: object}
+          spec:
+            type: object
+            required: [deviceRef, action, expectedSystemUUID, requester, reason]
+            # A changed request is a new operation.
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: spec is immutable; create a new operation instead
+            properties:
+              deviceRef:
+                type: object
+                required: [name]
+                properties:
+                  name: {type: string, minLength: 1, maxLength: 253}
+              action:
+                type: string
+                enum: ['On', ForceOff, ForceRestart, PowerCycle]
+              expectedSystemUUID:
+                type: string
+                pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+              requester: {type: string, minLength: 1, maxLength: 253}
+              reason: {type: string, minLength: 1, maxLength: 1024}
+          status:
+            type: object
+            # The result is set once and never changed or removed.
+            x-kubernetes-validations:
+            - rule: '!has(oldSelf.result) || (has(self.result) && self.result == oldSelf.result)'
+              message: status.result is set once
+            properties:
+              conditions:
+                type: array
+                maxItems: 8
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [type]
+                items:
+                  type: object
+                  required: [type, status, lastTransitionTime, reason, message]
+                  properties:
+                    type: {type: string, enum: [Accepted, Executing, Finished]}
+                    status: {type: string, enum: ['True', 'False', 'Unknown']}
+                    observedGeneration: {type: integer, format: int64, minimum: 0}
+                    lastTransitionTime: {type: string, format: date-time}
+                    reason: {type: string, minLength: 1, maxLength: 1024, pattern: '^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$'}
+                    message: {type: string, maxLength: 1024}
+              result:
+                type: string
+                enum: [Succeeded, Failed, Unknown]
+              requestSentAt: {type: string, format: date-time}
+              power:
+                type: object
+                properties:
+                  before:
+                    type: object
+                    required: [state, observedAt]
+                    properties:
+                      state: {type: string, maxLength: 63}
+                      observedAt: {type: string, format: date-time}
+                  after:
+                    type: object
+                    required: [state, observedAt]
+                    properties:
+                      state: {type: string, maxLength: 63}
+                      observedAt: {type: string, format: date-time}
+              finishedAt: {type: string, format: date-time}

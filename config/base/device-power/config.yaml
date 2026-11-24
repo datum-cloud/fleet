@@ -1,0 +1,14 @@
+# Synthetic values; the deploying repository replaces them.
+project: example-provider-project
+miloKubeconfig: /var/run/fleet/milo/kubeconfig
+deviceNamespaces: [default]
+# workerNamespace defaults to the pod's namespace ($POD_NAMESPACE). It must
+# be the namespace that holds the BMC credential Secrets.
+# The image worker Jobs run. Keep it equal to workerImage in
+# worker-policy.yaml's parameter, which admission enforces.
+workerImage: ghcr.io/datum-cloud/fleet:latest
+discoveryMaxAge: 2h
+observeTimeout: 3m
+requestTimeout: 20s
+retention: 24h
+healthProbeAddress: ":8081"

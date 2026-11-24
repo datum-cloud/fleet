@@ -1,0 +1,32 @@
+# The requester on an operation is the user who created it. The CRD fixes the
+# spec after creation, so this check on CREATE covers the operation's life.
+# A standard API server enforces it. Milo v0.32.5 does not evaluate policies
+# stored in a project, and at Milo's root this policy rejects every project
+# create; see docs/operations/device-power.md#the-requester-check-is-not-enforced-in-milo.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fleet-device-power-requester
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [fleet.datumapis.com]
+        apiVersions: ['*']
+        operations: [CREATE]
+        resources: [devicepoweroperations]
+  validations:
+    - expression: >-
+        request.userInfo.username != '' &&
+        object.spec.requester == request.userInfo.username
+      reason: Forbidden
+      message: spec.requester must be the username of the user creating the operation.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fleet-device-power-requester
+spec:
+  policyName: fleet-device-power-requester
+  validationActions: [Deny]

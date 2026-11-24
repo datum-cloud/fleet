@@ -1,0 +1,19 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-power-operator
+  annotations:
+    kubernetes.io/display-name: Fleet Device Power Operator
+    kubernetes.io/description: Request power actions on unallocated Devices and read their results
+spec:
+  launchStage: Alpha
+  # No update, patch or delete: an operation is a permanent request, and its
+  # status belongs to the dispatcher.
+  includedPermissions:
+    - fleet.datumapis.com/devicepoweroperations.create
+    - fleet.datumapis.com/devicepoweroperations.get
+    - fleet.datumapis.com/devicepoweroperations.list
+    - fleet.datumapis.com/devicepoweroperations.watch
+    - fleet.datumapis.com/devices.get
+    - fleet.datumapis.com/devices.list
+    - fleet.datumapis.com/devices.watch

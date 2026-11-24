@@ -9,7 +9,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpat
  && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/fleet-registration ./cmd/fleet-registration \
  && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/fleet-simulator ./cmd/fleet-simulator \
  && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/fleet-dhcp-sync ./cmd/fleet-dhcp-sync \
- && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/fleet-bmc-discovery ./cmd/fleet-bmc-discovery
+ && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/fleet-bmc-discovery ./cmd/fleet-bmc-discovery \
+ && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/fleet-device-power ./cmd/fleet-device-power
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /out/fleet-manager /fleet-manager
@@ -17,4 +18,5 @@ COPY --from=build /out/fleet-registration /fleet-registration
 COPY --from=build /out/fleet-simulator /fleet-simulator
 COPY --from=build /out/fleet-dhcp-sync /fleet-dhcp-sync
 COPY --from=build /out/fleet-bmc-discovery /fleet-bmc-discovery
+COPY --from=build /out/fleet-device-power /fleet-device-power
 ENTRYPOINT ["/fleet-manager"]

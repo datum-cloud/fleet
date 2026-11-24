@@ -1,0 +1,192 @@
+# Admission in the site cluster for what the dispatcher and its workers may
+# write. RBAC lets the dispatcher create Jobs, ServiceAccounts, Roles and
+# RoleBindings in its namespace; these policies pin each write to the one
+# worker shape. They apply only in namespaces labelled
+# fleet.datumapis.com/device-power-site=true, and match only the dispatcher's
+# own ServiceAccount and the per-operation worker ServiceAccounts there. Label
+# the site namespace; unlabelled, the dispatcher's writes are unchecked.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fleet-device-power-dispatcher-writes
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [configmaps, serviceaccounts]
+      - apiGroups: [batch]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [jobs]
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [roles, rolebindings]
+      - apiGroups: [coordination.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [leases]
+  matchConditions:
+    - name: dispatcher
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:' + request.namespace + ':fleet-device-power-dispatcher'
+  variables:
+    - name: target
+      expression: 'request.operation == "DELETE" ? oldObject : object'
+    - name: name
+      expression: variables.target.metadata.name
+    - name: isJob
+      expression: request.resource.resource == 'jobs'
+    - name: pod
+      expression: 'variables.isJob && request.operation != "DELETE" ? object.spec.template.spec : null'
+    - name: container
+      expression: 'variables.pod != null && size(variables.pod.containers) == 1 ? variables.pod.containers[0] : null'
+    - name: credential
+      expression: >-
+        variables.isJob && request.operation != "DELETE" && has(object.metadata.annotations) &&
+        'fleet.datumapis.com/device-namespace' in object.metadata.annotations &&
+        'fleet.datumapis.com/device-name' in object.metadata.annotations ?
+        'bmc.' + object.metadata.annotations['fleet.datumapis.com/device-namespace'] + '.' + object.metadata.annotations['fleet.datumapis.com/device-name'] : ''
+  validations:
+    - expression: variables.name.startsWith('pwr-')
+      reason: Forbidden
+      message: The dispatcher writes only pwr- objects.
+    - expression: >-
+        request.operation == 'DELETE' ||
+        (has(object.metadata.labels) && 'app.kubernetes.io/part-of' in object.metadata.labels &&
+        object.metadata.labels['app.kubernetes.io/part-of'] == 'fleet-device-power')
+      reason: Forbidden
+      message: Dispatcher objects carry app.kubernetes.io/part-of=fleet-device-power.
+    - expression: >-
+        request.operation != 'DELETE' ||
+        request.resource.resource == 'configmaps' || request.resource.resource == 'leases'
+      reason: Forbidden
+      message: The dispatcher deletes only stage records and Device locks.
+    - expression: >-
+        request.resource.resource != 'leases' || variables.name.startsWith('pwr-lock-')
+      reason: Forbidden
+      message: Device locks are named pwr-lock-.
+    - expression: >-
+        request.resource.resource != 'configmaps' || request.operation != 'UPDATE' ||
+        (has(oldObject.data) && 'inputs' in oldObject.data && has(object.data) && 'inputs' in object.data &&
+        object.data['inputs'] == oldObject.data['inputs'])
+      reason: Forbidden
+      message: A stage record's inputs are fixed when it is created.
+    - expression: >-
+        request.resource.resource != 'roles' || request.operation == 'DELETE' ||
+        (size(object.rules) == 1 && object.rules[0].apiGroups == [''] && object.rules[0].resources == ['configmaps'] &&
+        has(object.rules[0].resourceNames) && object.rules[0].resourceNames == [object.metadata.name] &&
+        object.rules[0].verbs.all(v, v == 'get' || v == 'update') &&
+        (!has(object.rules[0].nonResourceURLs) || size(object.rules[0].nonResourceURLs) == 0))
+      reason: Forbidden
+      message: A worker Role grants only get and update on its own stage record.
+    - expression: >-
+        request.resource.resource != 'rolebindings' || request.operation == 'DELETE' ||
+        (object.roleRef.kind == 'Role' && object.roleRef.name == object.metadata.name && size(object.subjects) == 1 &&
+        object.subjects[0].kind == 'ServiceAccount' && object.subjects[0].name == object.metadata.name &&
+        object.subjects[0].namespace == request.namespace)
+      reason: Forbidden
+      message: A worker RoleBinding binds its own Role to its own ServiceAccount.
+    - expression: >-
+        !variables.isJob || request.operation == 'DELETE' ||
+        (object.spec.backoffLimit == 0 &&
+        variables.pod.serviceAccountName == object.metadata.name &&
+        variables.pod.restartPolicy == 'Never' &&
+        (!has(variables.pod.hostNetwork) || !variables.pod.hostNetwork) &&
+        (!has(variables.pod.hostPID) || !variables.pod.hostPID) &&
+        (!has(variables.pod.hostIPC) || !variables.pod.hostIPC) &&
+        !has(variables.pod.initContainers) && !has(variables.pod.ephemeralContainers) &&
+        has(variables.pod.securityContext) && has(variables.pod.securityContext.runAsNonRoot) && variables.pod.securityContext.runAsNonRoot)
+      reason: Forbidden
+      message: A worker Job runs one Pod, never retried, as its own ServiceAccount, without host namespaces, as non-root.
+    - expression: >-
+        !variables.isJob || request.operation == 'DELETE' ||
+        (variables.container != null &&
+        params != null && has(params.data) && 'workerImage' in params.data &&
+        variables.container.image == params.data.workerImage &&
+        variables.container.command == ['/fleet-device-power', 'worker'] &&
+        (!has(variables.container.args) || size(variables.container.args) == 0) &&
+        !has(variables.container.envFrom) &&
+        (!has(variables.container.env) || variables.container.env.all(e, !has(e.valueFrom) || has(e.valueFrom.fieldRef))) &&
+        has(variables.container.securityContext) &&
+        (!has(variables.container.securityContext.privileged) || !variables.container.securityContext.privileged) &&
+        has(variables.container.securityContext.allowPrivilegeEscalation) && !variables.container.securityContext.allowPrivilegeEscalation &&
+        has(variables.container.securityContext.capabilities) && !has(variables.container.securityContext.capabilities.add) &&
+        'ALL' in variables.container.securityContext.capabilities.drop)
+      reason: Forbidden
+      message: A worker runs the approved image's worker command, unprivileged, with no Secret or ConfigMap environment.
+    - expression: >-
+        !variables.isJob || request.operation == 'DELETE' ||
+        (variables.credential != '' && has(variables.pod.volumes) && size(variables.pod.volumes) == 1 &&
+        has(variables.pod.volumes[0].secret) && variables.pod.volumes[0].secret.secretName == variables.credential &&
+        (!has(variables.container.volumeMounts) || variables.container.volumeMounts.all(m, m.name == variables.pod.volumes[0].name)))
+      reason: Forbidden
+      message: A worker mounts exactly one volume, the named Device's credential Secret bmc.<namespace>.<device>.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fleet-device-power-dispatcher-writes
+spec:
+  policyName: fleet-device-power-dispatcher-writes
+  validationActions: [Deny]
+  # Only the labelled site namespace. The parameter is looked up before match
+  # conditions run, so without this selector every write in a namespace that
+  # lacks the parameter would be denied, including system leader election.
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        fleet.datumapis.com/device-power-site: "true"
+  # The parameter lives in the request's namespace; without it every
+  # dispatcher write there is denied.
+  paramRef:
+    name: fleet-device-power-worker-policy
+    parameterNotFoundAction: Deny
+---
+# A worker may change only the progress of its own stage record.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: fleet-device-power-worker-writes
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [configmaps]
+  matchConditions:
+    - name: worker
+      expression: >-
+        request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':pwr-')
+  validations:
+    - expression: >-
+        request.operation == 'UPDATE' &&
+        request.userInfo.username == 'system:serviceaccount:' + request.namespace + ':' + object.metadata.name &&
+        has(oldObject.data) && 'inputs' in oldObject.data && has(object.data) && 'inputs' in object.data &&
+        object.data['inputs'] == oldObject.data['inputs'] &&
+        object.metadata.labels == oldObject.metadata.labels &&
+        object.metadata.annotations == oldObject.metadata.annotations
+      reason: Forbidden
+      message: A worker only updates the progress of its own stage record.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: fleet-device-power-worker-writes
+spec:
+  policyName: fleet-device-power-worker-writes
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        fleet.datumapis.com/device-power-site: "true"
