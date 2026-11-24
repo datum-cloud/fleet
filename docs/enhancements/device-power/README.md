@@ -37,10 +37,10 @@ stage: alpha
 command. Staff use it on servers that no customer holds. Fleet's Metal provider
 uses it when a customer changes `Machine.spec.powerState`.
 
-This document specifies the power kind only. The [device custody and
-operations proposal][ops] defines custody, the operation envelope, admission,
-site execution, recovery and authorization. Both documents are proposals.
-Nothing in either is implemented.
+This document is the per-kind specification of `DevicePowerOperation` under
+the [device custody and operations proposal][ops], which defines custody, the
+operation envelope, admission, site execution and recovery. Both documents are
+proposals. Nothing in either is implemented.
 
 ## Motivation
 
@@ -51,8 +51,6 @@ Customer power intent on a Machine has no executor yet.
 
 ### Goals
 
-- Staff and customer power changes use one kind, one executor and one set of
-  outcome rules.
 - Each operation sends at most one command, to the exact server named.
 - Each staff operation records why it ran and the power state before and after.
 
@@ -95,9 +93,9 @@ The Fleet provider for Metal maps a Machine's `powerState` to an action:
 | `Off` | `ForceOff` |
 
 The provider creates an operation only when `powerState` differs from the
-server's observed power. Its name comes from the Machine generation, so a
-refused operation is not retried until the Machine generation changes. The
-provider reports the refusal reason on the Machine.
+server's observed power. Provider power operations are [named from the Machine
+generation][operations], so a refused one is not retried until the generation
+changes. The provider reports the refusal reason on the Machine.
 
 ### Who takes part
 
@@ -159,12 +157,11 @@ The evidence never carries a credential or BMC response content.
 ### Admission
 
 Disabled capacity on a Device does not block staff power, because it leaves
-the holder `None`. Power reports two [custody admission][admission] refusals
-under its own names: a shared BMC key as `SharedPublicKey`, which ends
-`Failed`, and an expired staff operation as `Expired`, which ends `Cancelled`.
+the holder `None`. Power names two outcomes of [custody
+admission][admission]: the shared BMC key refusal is `SharedPublicKey`, and an
+expired staff operation is `Expired`.
 
-Power adds these refusals. Each ends the operation as `Failed` with nothing
-sent:
+Power adds these refusals. None sends a command:
 
 | Reason | Refused by | When |
 | --- | --- | --- |
@@ -199,11 +196,19 @@ anyway, which gives `OutcomeUnknown`.
 
 ![How a power result is decided, and how a power recovery hold settles](diagrams/power-outcomes.svg)
 
-A power [recovery hold][unknown] settles with a `DeviceRecovery` whose evidence
-is a power state that discovery read after the operation ended. This proposal
-also requires the [machine lifecycle](../machine-lifecycle/README.md)
-projector to report a held Machine's power as `Unknown` until the hold
-settles.
+An `OutcomeUnknown` power operation becomes a [recovery hold][unknown]. The
+`DeviceRecovery` that settles it must cite discovery evidence that:
+
+- was read after the operation ended;
+- came from the Device's current BMC endpoint; and
+- reports a settled power state, `On` or `Off`.
+
+The recovery decisions are defined in the device operations proposal. `Retry`
+does not apply, because only a `DeviceRecovery` settles a power hold.
+
+This proposal also requires the [machine
+lifecycle](../machine-lifecycle/README.md) projector to report a held
+Machine's power as `Unknown` until the hold settles.
 
 ### Delivery phases
 
@@ -229,8 +234,9 @@ number of commands at the BMC:
 - A staff operation on a Device with disabled capacity and holder `None`.
 - A refused customer operation is not retried until the Machine generation
   changes.
-- A power hold settles only with discovery evidence read after the operation
-  ended, and the held Machine reports power as `Unknown` until then.
+- A power hold settles only with discovery evidence that meets the
+  [Recovery](#recovery) rules, and the held Machine reports power as `Unknown`
+  until then.
 
 ## Production readiness review questionnaire
 
@@ -267,8 +273,6 @@ See [Recovery](#recovery).
 
 ## Alternatives
 
-- **Separate kinds for staff and customer power.** Rejected. Both need the same
-  executor and outcome rules.
 - **Machine power intent for unallocated Devices.** Rejected. A Machine is a
   customer allocation, and creating one for staff would expose capacity.
 
@@ -282,6 +286,10 @@ See [Recovery](#recovery).
   test, or ship earlier on test hardware only?
 - **Customer power off.** `Off` maps to `ForceOff`, which cuts power without
   warning the operating system. Should Metal offer a graceful power off?
+- **Customer power after a hold.** After `Settle`, the server's power can still
+  differ from `powerState`. The provider cannot create a new operation under
+  the same Machine generation, and `Retry` does not cover power. Should power
+  holds allow `Retry`, or should provider names change?
 
 ## Infrastructure needed
 
