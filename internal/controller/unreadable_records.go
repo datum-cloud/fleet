@@ -78,3 +78,29 @@ func ReportUndecodableRecord(ctx context.Context, recordType string, secret *cor
 	undecodablePrivateRecords.WithLabelValues(recordType).Inc()
 	log.FromContext(ctx).Error(err, "private lifecycle record cannot be decoded; remove it to unblock its claim", "recordType", recordType, "secret", secret.Namespace+"/"+secret.Name, "claimUID", secret.Labels[claimUIDLabel])
 }
+
+// decodeCustodySecret, decodeAssetSecret, and decodeOperationSecret are the
+// only decoders lifecycle code calls. Each reports a record that fails to
+// decode, so no read path can skip the log and counter. Route decoding for
+// event mapping uses the parse functions directly: it runs on every Secret
+// event outside any lifecycle call, and the lifecycle call it wakes reports
+// the record.
+func decodeCustodySecret(ctx context.Context, secret *corev1.Secret) (*ClaimCustodyRecord, error) {
+	return reportedDecode(ctx, "custody", secret, parseCustodySecret)
+}
+
+func decodeAssetSecret(ctx context.Context, secret *corev1.Secret) (*AssetRecord, error) {
+	return reportedDecode(ctx, "asset", secret, parseAssetSecret)
+}
+
+func decodeOperationSecret(ctx context.Context, secret *corev1.Secret) (*InstallationRecord, error) {
+	return reportedDecode(ctx, "installation", secret, parseOperationSecret)
+}
+
+func reportedDecode[T any](ctx context.Context, recordType string, secret *corev1.Secret, parse func(*corev1.Secret) (*T, error)) (*T, error) {
+	record, err := parse(secret)
+	if err != nil {
+		ReportUndecodableRecord(ctx, recordType, secret, err)
+	}
+	return record, err
+}
