@@ -258,7 +258,8 @@ proposal][ops].
 ### What must operators monitor?
 
 Power recovery holds, most urgently on allocated servers, `Expired`
-cancellations, `Stale` refusals, and restarts that end `OutcomeUnknown` on each BMC model.
+cancellations, `Stale` refusals, and restarts that end `OutcomeUnknown` on each
+BMC model.
 
 ### How are failures recovered?
 
