@@ -164,9 +164,9 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   consumer set. It does not release custody, call a provider, delete records,
   or rewrite status, including for a project with active custody. Its
   deadlines and queued events are dropped, and re-engagement resumes from the
-  retained private records. Unbinding drains direct and dependency-route
-  reconciliations that already acquired the runtime before removing it from the
-  registry; a retained runtime pointer cannot start work after that barrier.
+  retained private records. Unbinding drains direct, dependency-route,
+  provider-event, and synthetic-publisher reconciliations that already acquired
+  the runtime before removing it from the registry; a retained runtime pointer cannot start work after that barrier.
   A blocked in-flight handler therefore delays completed departure rather than
   falsely reporting it. This fixes an inherited race where informer removal and
   registry removal could finish while a handler could still write. It does not

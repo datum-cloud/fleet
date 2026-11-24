@@ -60,6 +60,16 @@ func (r *ProjectRuntime) acquire() bool {
 	return true
 }
 
+// Acquire admits one unit of work that may write through the runtime. It
+// reports false once the runtime has begun draining; otherwise departure and
+// re-engagement wait until release is called.
+func (r *ProjectRuntime) Acquire() (release func(), ok bool) {
+	if !r.acquire() {
+		return nil, false
+	}
+	return r.reconcileMu.RUnlock, true
+}
+
 func (r *ProjectRuntime) stop() {
 	<-r.drain()
 }

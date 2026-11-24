@@ -135,8 +135,9 @@ func (r ClusterProviderEventReconciler) Reconcile(ctx context.Context, request P
 		return reconcile.Result{}, ErrEventWiringUnavailable
 	}
 	runtime := r.Projects.Get(r.Consumer)
-	if runtime == nil {
+	if runtime == nil || !runtime.acquire() {
 		return reconcile.Result{}, nil
 	}
+	defer runtime.reconcileMu.RUnlock()
 	return ProviderEventReconciler{ConsumerCluster: r.Consumer, Consumer: runtime.Binding.Project, Provider: r.Provider, ConsumerVerifier: runtime.Verifier, ProviderVerifier: r.ProviderVerifier, Reader: runtime.Reader, Handler: runtime.Machine}.Reconcile(ctx, request)
 }

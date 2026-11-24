@@ -13,12 +13,8 @@ import (
 )
 
 func TestProjectDepartureDrainsReconciliation(t *testing.T) {
-	for _, routed := range []bool{false, true} {
-		name := "direct"
-		if routed {
-			name = "dependency route"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, path := range []string{"direct", "dependency route", "provider event"} {
+		t.Run(path, func(t *testing.T) {
 			identity := controller.ProjectIdentity{AuthorityID: testAuthority, RouteName: "east", UID: "east-project"}
 			consumer := newConsumer(t, "east", mcMachine("m", "machine", "general"))
 			started, release := make(chan struct{}), make(chan struct{})
@@ -35,6 +31,7 @@ func TestProjectDepartureDrainsReconciliation(t *testing.T) {
 			}), BlockedHandler, nil)
 			runtime := &ProjectRuntime{
 				Binding:  ProjectBinding{ClusterName: "east", Project: identity},
+				Reader:   consumer.Client,
 				Verifier: ProjectVerifierFunc(func(context.Context, controller.ProjectIdentity) error { return nil }),
 				Mappers:  Mappers{Reader: consumer.Client, Project: identity, ClusterName: "east"},
 				Machine:  owner,
@@ -44,8 +41,13 @@ func TestProjectDepartureDrainsReconciliation(t *testing.T) {
 			projects.byProject[projectKey{identity.AuthorityID, identity.UID}] = multicluster.ClusterName("east")
 			selectOwner := func(runtime *ProjectRuntime) *LifecycleOwner { return runtime.Machine }
 			reconcile := func() error {
-				if routed {
+				switch path {
+				case "dependency route":
 					_, err := (ClusterRouteReconciler{Projects: projects, Owner: selectOwner}).Reconcile(context.Background(), RouteRequest{ClusterName: "east", AuthorityID: identity.AuthorityID, ProjectUID: identity.UID, Kind: RouteProfile, Name: "general", UID: "profile", Deleted: true})
+					return err
+				case "provider event":
+					provider := controller.ProjectIdentity{AuthorityID: testAuthority, RouteName: "datum-cloud", UID: "provider-project"}
+					_, err := (ClusterProviderEventReconciler{Projects: projects, Consumer: "east", Provider: provider, ProviderVerifier: runtime.Verifier}).Reconcile(context.Background(), ProviderEventRequest{AuthorityID: provider.AuthorityID, ProjectUID: provider.UID, Namespace: "default", Name: "capacity", UID: "capacity-uid"})
 					return err
 				}
 				_, err := (ClusterProjectReconciler{Projects: projects, Owner: selectOwner}).Reconcile(context.Background(), ProjectRequest{ClusterName: "east", AuthorityID: identity.AuthorityID, ProjectUID: identity.UID, Namespace: "default", Name: "m", UID: "machine"})
