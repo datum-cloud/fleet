@@ -138,7 +138,7 @@ is registered; the kinds are provider-internal, not a catalog offering.
 | Interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
 | `bmc.endpoint` is an `https` host and optional port, with no credentials, path, query, or fragment | Device | Every inventory viewer can read it, so nothing secret can live in it. |
-| `lifecycle` is `Active` (default), `Decommissioning` or `Retired`; `Active` and `Decommissioning` move between each other, only `Decommissioning` moves to `Retired`, and `Retired` is terminal | Device | Retirement is deliberate and one-way. Nothing reads the lifecycle yet. |
+| `lifecycle` is `Active` (default), `Decommissioning` or `Retired`; `Active` and `Decommissioning` move between each other, only `Decommissioning` moves to `Retired`, and `Retired` is terminal | Device | Retirement is deliberate and one-way. Only the opt-in [Device deletion protection](#device-deletion-protection) reads the lifecycle. |
 | `status` is a separate subresource that declares no fields | All nine | Reserved for future collectors and verifiers to report drift and mismatch. Status never carries identity, and nothing writes it yet. |
 
 The CRDs cannot check that `claimRef` names an existing DeviceClaim, because
@@ -342,6 +342,71 @@ To replace the hardware, create a new Device with its own name and identity
 that names the same claim. Leave the old Device in place and move its
 `spec.lifecycle` from `Active` to `Decommissioning`, then to `Retired`.
 Retired is terminal.
+
+## Device deletion protection
+
+The `device-deletion-protection` component under `config/components` is a
+ValidatingAdmissionPolicy and binding that keep an in-service Device from
+being deleted, so its identity stays visible to duplicate-hardware checks. It
+is opt-in: no root in this repository includes it. A deploying repository that
+must keep in-service Devices adds it to the root it applies to the control
+plane where Devices are admitted.
+
+A `DELETE` of a Device is admitted only when:
+
+1. the Device's namespace is being deleted;
+2. the Device is `Retired`; or
+3. the request's username is listed exactly in a configured cleanup identity.
+   This is off as shipped; see [Cleanup identity](#cleanup-identity).
+
+Every other delete is denied with `Forbidden`, and the message says to move
+the Device to `Decommissioning`, then `Retired`, first. The policy fails
+closed: an evaluation error or a missing namespace object denies the request.
+Cluster administrators are held to the same rule.
+
+- **Collection deletes and garbage collection.** The API server admits each
+  object individually, so a collection delete that reaches a Device that is
+  not `Retired` leaves it in place. Retired Devices reached first may already
+  be gone, so repeat the delete per Device. A denied Device gets no deletion
+  timestamp, so its finalizers never run.
+- **Namespace deletion is the escape hatch.** Once a namespace is marked for
+  deletion, its Devices can be deleted whatever their lifecycle, and their
+  identities leave the duplicate check. The policy observes the mark shortly
+  after it is set.
+- **Project deletion.** Milo's project cleanup deletes the contents of every
+  namespace, `default` included, before it marks any namespace for deletion,
+  and it never deletes `default`. The namespace exception therefore does not
+  cover project teardown, and a denied delete stops the cleanup. Either
+  retire every Device first or configure the cleanup identity.
+- **Validation.** `hack/validate-overlay-isolation.sh` renders the component on
+  its own and fails unless it is exactly this policy. It also fails if any
+  other root in this repository renders a Device deletion policy, or if the
+  inventory component exists without this one.
+
+### Cleanup identity
+
+The cleanup identity is a stopgap. Milo should mark every namespace it purges,
+`default` included, before deleting its contents. The policy can then rely on
+the namespace signal and drop the identity exemption.
+
+The binding ships without a `paramRef`, so the third exception is off. A
+deploying repository turns it on by:
+
+1. Adding a ConfigMap with a `cleanupUsernames` key listing usernames, one per
+   line or separated by commas. Entries are trimmed and empty entries are
+   ignored. Matching is exact and case-sensitive; groups, prefixes and
+   wildcards never match, and an empty username never matches. List only the
+   identity that runs project cleanup.
+2. Patching the binding with a `paramRef` that names the ConfigMap, sets its
+   `namespace` explicitly, and sets `parameterNotFoundAction: Deny`.
+
+A missing ConfigMap then denies every Device `DELETE`, including Retired
+Devices and deletes in a deleting namespace, so teardown stops until the
+ConfigMap exists. The API server reports this as `422 Invalid` rather than
+`403`. Never set `parameterNotFoundAction: Allow`: a missing ConfigMap would
+skip the policy and admit every delete. Anyone who can impersonate a listed
+username, or who can write the ConfigMap or the binding, is outside the
+guarantee; restrict them as tightly as the cleanup controller itself.
 
 ## Relationship to the inventory proposal
 
