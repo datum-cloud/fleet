@@ -101,13 +101,11 @@ matches capacity only when the observed cores and memory equal the request.
 
 Private asset records, custody proposals, and Milo authority records retain
 `acceptedRequirements` as the exact `MachineProfileSpec`. A private record whose
-requirements use any other shape fails to decode and is rejected as
-`ErrRecordInvalid`, like any other malformed record. Fleet keeps no decoder or
-release path for older record shapes. One invalid asset record stops the
-coordinator from allocating, installing, or releasing any claim, and release
-cannot remove a finalizer it guards, so an environment holding such records
-discards its private lifecycle records and recreates the affected Machines. See
-the
+requirements use any other shape fails to decode, like a version 1
+installation record or any other malformed record. Fleet keeps no decoder or
+release path for older record shapes. How the coordinator contains such a
+record, and how an operator removes it, is described in
+[Undecodable private records](#undecodable-private-records). See the
 [MachineProfile notes](../enhancements/machine-lifecycle/README.md#machineprofile).
 
 `requestedhardware.Project` is the one projection that writes
@@ -133,6 +131,68 @@ validation and CEL pinning with the API server's validators, resolver
 provenance, missing and invalid profiles, post-acceptance profile changes,
 inert-mode wiring, and staging and standalone carry-forward. See
 [requested hardware](../enhancements/machine-lifecycle/README.md#requested-hardware).
+
+## Undecodable private records
+
+A private lifecycle record that does not decode into the current shape returns
+`controller.ErrRecordUnreadable`, which wraps `ErrRecordInvalid`. This covers
+asset, claim custody, installation, and Milo authority records. The record
+blocks only the claim it belongs to (implemented):
+
+- **Attribution.** The coordinator does not trust the body of a record it cannot
+  decode. It attributes the record by the `fleet.datumapis.com/claim-uid`
+  label, which `encodeRecord` and the Milo record store write on every record.
+- **Scans across claims.** The asset scan behind allocation, installation,
+  network refresh, and release, and the installation scan by binding, skip a
+  record labeled for another claim. A record labeled for the scanning claim
+  fails that claim closed. A record with no claim label might belong to any
+  claim, so it fails every claim-scoped scan closed. Fleet never writes an
+  unlabeled record, so this case means the Secret was edited by hand.
+- **Capacity and epoch fencing.** Allocation reads each candidate asset's
+  record by name. If that record, or the custody record of the claim that last
+  held the asset, cannot be decoded, the asset is never proposed and allocation
+  tries the next candidate. Nothing proves that asset was released or what
+  epoch it reached, so treating it as free could double-bind it or restart its
+  epoch below a stale operation. A retained `Released` record that cannot be
+  decoded therefore keeps its asset out of allocation. It does not admit any
+  operation for its former claim either, because that claim's own scans fail
+  closed on it.
+- **The claim's own work.** Allocation, installation, and release for the
+  attributed claim return `ErrRecordUnreadable`. They do not treat the claim as
+  having no record, and they never rewrite the record. Synthetic staging
+  reports the Machine as `Phase=Pending` with `Bound=False` and `Ready=False`,
+  reason `UnreadablePrivateRecord`, and does not requeue it. The managed
+  Machine handler also stops requeueing. Release never removes the finalizer
+  through such a record.
+- **Signals.** Each record is logged once per lifecycle call at error level.
+  The log names the Secret and the attributed claim UID, never record
+  contents. The counter `fleet_private_lifecycle_record_undecodable_total`
+  counts the same events, labeled only by `record_type` (`asset`, `custody`,
+  `installation`, or `milo-authority`).
+
+Fleet has no automated release for an undecodable record. To clear an affected
+Machine, an operator does the following:
+
+1. Find the Machine's UID. List the Secrets in `fleet-system-private` that
+   carry `fleet.datumapis.com/claim-uid=<UID>`. The error log names the
+   undecodable one.
+2. If the Machine held an asset, set that MachineCapacity's
+   `allocationPolicy` to `Disabled`. Removing the records discards the binding,
+   its epoch, and any pending cleanup, so the physical machine's state is
+   unknown. Re-enable allocation only after the machine has been verified clean.
+   The next binding starts again at epoch 1, and an executor that retained a
+   higher epoch refuses it until its own fence is reset.
+3. Delete the Machine. Release stops at the undecodable record and leaves the
+   finalizer in place.
+4. Remove the `fleet.datumapis.com/machine-protection` finalizer from the
+   Machine by hand. Fleet cannot release through the record, so it never
+   removes the finalizer itself.
+5. Delete every listed private record Secret for that claim UID, not only the
+   undecodable one. The claim no longer exists, and a record left behind keeps
+   describing authority that nothing will ever release.
+
+A retained `Released` asset record whose Machine is already gone affects only
+that asset. Delete that Secret after step 2 to return the asset to allocation.
 
 ## Multi-project discovery
 

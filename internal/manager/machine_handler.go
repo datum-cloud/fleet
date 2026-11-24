@@ -109,7 +109,7 @@ func (h MachineHandler) ReconcileEvent(ctx context.Context, request ProjectReque
 		return Outcome{RetryError: ErrEventWiringUnavailable}
 	}
 	if err := h.Lifecycle.RetainAuthority(ctx, h.Project, &claim, inputs); err != nil {
-		return dependencyOutcome(err)
+		return recordOutcome(err)
 	}
 	deadline := deadlineFor(inputs.EvidenceExpiresAt)
 	if !containsString(claim.Finalizers, controller.MachineFinalizer) {
@@ -121,7 +121,7 @@ func (h MachineHandler) ReconcileEvent(ctx context.Context, request ProjectReque
 		return Outcome{Deadline: deadline}
 	}
 	if err := h.Lifecycle.Allocate(ctx, h.Project, &claim, inputs); err != nil {
-		outcome := dependencyOutcome(err)
+		outcome := recordOutcome(err)
 		if outcome.RetryError == nil {
 			outcome.Deadline = deadline
 		}
@@ -140,7 +140,7 @@ func (h MachineHandler) releaseUID(ctx context.Context, uid types.UID, claim *fl
 		if errors.Is(err, ErrMachineAuthorityNotFound) {
 			return Outcome{Deadline: CancelDeadline()}
 		}
-		return dependencyOutcome(err)
+		return recordOutcome(err)
 	}
 	if !result.SafeToRemoveFinalizer {
 		return Outcome{RetryError: ErrEventWiringUnavailable}
@@ -152,6 +152,17 @@ func (h MachineHandler) releaseUID(ctx context.Context, uid types.UID, claim *fl
 		return Outcome{RetryError: err}
 	}
 	return Outcome{Deadline: CancelDeadline()}
+}
+
+// recordOutcome does not requeue a Machine whose own private record cannot be
+// decoded: retrying cannot make it readable, and the coordinator has already
+// logged and counted it. The finalizer stays until an operator removes the
+// record. Every other error is classified by dependencyOutcome.
+func recordOutcome(err error) Outcome {
+	if errors.Is(err, controller.ErrRecordUnreadable) {
+		return Outcome{}
+	}
+	return dependencyOutcome(err)
 }
 
 func dependencyOutcome(err error) Outcome {
