@@ -5,7 +5,7 @@ stage: alpha
 
 # Device power operations
 
-[Documentation overview](../../README.md) · [Architecture guide](../../architecture/README.md)
+[Documentation overview](../../README.md) · [Functionality guide](../../functionality/README.md)
 
 - [Summary](#summary)
 - [Motivation](#motivation)
@@ -16,6 +16,7 @@ stage: alpha
   - [Requesting staff power](#requesting-staff-power)
   - [Customer power](#customer-power)
   - [Who takes part](#who-takes-part)
+  - [Risks and mitigations](#risks-and-mitigations)
 - [Design details](#design-details)
   - [API design](#api-design)
   - [Admission](#admission)
@@ -106,6 +107,13 @@ BMC discovery reads each BMC without sending it commands. It reports on the
 Device which power actions the server offers and its current power state.
 Admission uses both, and recovery uses the power state as evidence.
 
+### Risks and mitigations
+
+- **Resetting the wrong server:** staff name the expected system UUID, and the
+  worker checks it against the BMC. See [Admission](#admission).
+- **An unproven customer power change:** the server is held until staff
+  record a recovery. See [Recovery](#recovery).
+
 ## Design details
 
 ### API design
@@ -152,8 +160,8 @@ The evidence never carries a credential or BMC response content.
 
 Disabled capacity on a Device does not block staff power, because it leaves
 the holder `None`. Power reports two [custody admission][admission] refusals
-under its own names: a shared BMC key as `SharedPublicKey`, and an expired
-staff operation as `Expired`.
+under its own names: a shared BMC key as `SharedPublicKey`, which ends
+`Failed`, and an expired staff operation as `Expired`, which ends `Cancelled`.
 
 Power adds these refusals. Each ends the operation as `Failed` with nothing
 sent:
@@ -193,8 +201,9 @@ anyway, which gives `OutcomeUnknown`.
 
 A power [recovery hold][unknown] settles with a `DeviceRecovery` whose evidence
 is a power state that discovery read after the operation ended. This proposal
-also requires the Metal projector to report a held Machine's power as
-`Unknown` until the hold settles.
+also requires the [machine lifecycle](../machine-lifecycle/README.md)
+projector to report a held Machine's power as `Unknown` until the hold
+settles.
 
 ### Delivery phases
 
@@ -212,10 +221,11 @@ also requires the Metal projector to report a held Machine's power as
 These tests are required and not written. Each checks the result and the
 number of commands at the BMC:
 
-- Each refusal reason in the [admission](#admission) table, with no command.
+- Each refusal reason in [Admission](#admission), including `SharedPublicKey`
+  and `Expired`, with no command.
 - On, off, restart and power cycle against the outcome table, including a lost
   response.
-- A server already in the requested state, with no command.
+- `On` or `ForceOff` on a server already in that state, with no command.
 - A staff operation on a Device with disabled capacity and holder `None`.
 - A refused customer operation is not retried until the Machine generation
   changes.
