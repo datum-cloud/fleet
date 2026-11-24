@@ -108,12 +108,12 @@ reach the server's BMC:
 - **The worker** is a short-lived process started for one operation. It can read
   only the target Device's BMC credential, and it cannot reach the provider
   project.
-- **BMC discovery** already reads each BMC and records what it reports on the
-  Device. It stays read-only. It will also record which power actions each
-  server offers.
+- **BMC discovery** reads each BMC and records what it reports on the Device.
+  It is built but not yet on `main`. It stays read-only, and will also record
+  which power actions each server offers.
 
 Every connection to a BMC checks the BMC's approved TLS key before it sends a
-credential, the same check discovery uses today.
+credential, the same check discovery makes.
 
 ### Risks and mitigations
 
