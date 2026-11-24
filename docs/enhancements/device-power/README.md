@@ -34,8 +34,8 @@ stage: alpha
 ## Summary
 
 `DevicePowerOperation` powers a server on or off, or resets it, with one
-command. Staff use it from the Device page. Fleet's Metal provider uses it when
-a customer changes `Machine.spec.powerState`.
+command. Staff use it from the Device page. The Fleet provider for Metal uses
+it when a customer changes `Machine.spec.powerState`.
 
 This document is the per-kind specification of `DevicePowerOperation` under
 the [device custody and operations proposal][ops], which defines custody, the
@@ -78,11 +78,10 @@ Customer power intent on a Machine has no executor yet.
 Staff use a power button on the Device page, next to the observed power state.
 Its menu lists the actions the server offers. An action that cannot run now is
 disabled, with the reason in a tooltip, for example that a customer holds the
-server. Confirming asks
-for a reason and creates the operation. A badge shows progress and the result.
-An **Operations** tab lists past operations with their time, action, creator,
-result, and power before and after. Users without the power operator role do
-not see the button.
+server. Confirming asks for a reason and creates the operation. A badge shows
+progress and the result. An **Operations** tab lists past operations with their
+time, action, creator, result, and power before and after. Users without the
+power operator role do not see the button.
 
 ### Customer power
 
@@ -267,9 +266,8 @@ See [Recovery](#recovery).
 
 ## Implementation history
 
-- 2026-11-24: Proposed as a standalone staff feature.
-- 2026-11-24: Revised as the power kind of the device custody and operations
-  proposal, covering customer power.
+- 2026-11-24: Proposed as the power kind of the device custody and operations
+  proposal.
 
 ## Drawbacks
 
