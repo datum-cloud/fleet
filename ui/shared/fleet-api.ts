@@ -232,7 +232,8 @@ export const MACHINE_FINALIZER = 'fleet.datumapis.com/machine-protection';
 // Physical inventory: fleet.datumapis.com/v1alpha1 DeviceClaim and Device,
 // transcribed from internal/api/inventory/v1alpha1/types.go and
 // config/components/inventory/crds/fleet.datumapis.com.yaml. Operators write
-// both; status is reserved and has no fields yet.
+// both specs. DeviceClaim status is reserved; Device status is written only by
+// BMC discovery, through the status subresource.
 
 export const INVENTORY_API_GROUP = 'fleet.datumapis.com';
 export const INVENTORY_API_VERSION = 'v1alpha1';
@@ -276,6 +277,74 @@ export interface Device {
     // each other, Decommissioning moves to Retired, and Retired is terminal.
     lifecycle?: DeviceLifecycle;
   };
+  status?: DeviceStatus;
+}
+
+/** What read-only BMC discovery observed. spec.identity stays authoritative. */
+export interface DeviceStatus {
+  observedGeneration?: number;
+  /** A failed attempt never clears it: each observation keeps its own time and endpoint. */
+  discovery?: DeviceDiscovery;
+  /** Reachable, Authenticated, Discovered, IdentityMatched and PublicKeyUnique. */
+  conditions?: Condition[];
+}
+
+export interface DeviceDiscovery {
+  lastAttemptAt?: string;
+  lastAttemptEndpoint?: string;
+  tls?: ObservedTLS;
+  serviceRoot?: ObservedServiceRoot;
+  inventory?: ObservedInventory;
+}
+
+export interface ObservedTLS {
+  observedAt: string;
+  endpoint: string;
+  /** Lowercase hex SHA-256 of the leaf public key. */
+  publicKeySHA256: string;
+  notAfter?: string;
+  selfSigned?: boolean;
+}
+
+export interface ObservedServiceRoot {
+  observedAt: string;
+  endpoint: string;
+  redfishVersion?: string;
+  uuid?: string;
+  vendor?: string;
+  product?: string;
+}
+
+export interface ObservedInventory {
+  observedAt: string;
+  endpoint: string;
+  managers?: ObservedManager[];
+  systems?: ObservedSystem[];
+}
+
+export interface ObservedManager {
+  id: string;
+  model?: string;
+  firmwareVersion?: string;
+  networkInterfaces?: ObservedNetworkInterface[];
+}
+
+export interface ObservedSystem {
+  id: string;
+  uuid?: string;
+  manufacturer?: string;
+  model?: string;
+  serialNumber?: string;
+  sku?: string;
+  powerState?: string;
+  networkInterfaces?: ObservedNetworkInterface[];
+}
+
+export interface ObservedNetworkInterface {
+  id: string;
+  macAddress?: string;
+  linkStatus?: string;
+  speedMbps?: number;
 }
 
 export type DeviceLifecycle = 'Active' | 'Decommissioning' | 'Retired';

@@ -23,7 +23,8 @@
 // one, otherwise from the DeviceType. One model leaves fullDepth unset, so its
 // Device's depth is unknown.
 
-import type { Device, DeviceClaim, DeviceLifecycle, PhysicalComponent, PhysicalRecord, ReportedPlacement } from '../../../shared/fleet-api';
+import type { Condition } from '../../../shared/conditions';
+import type { Device, DeviceClaim, DeviceStatus, DeviceLifecycle, PhysicalComponent, PhysicalRecord, ReportedPlacement } from '../../../shared/fleet-api';
 import { toInventory, type Inventory, type InventoryKind } from '../inventory';
 
 const NS = 'default';
@@ -312,7 +313,13 @@ const devices: Device[] = [
       providerHostRef: { system: 'example-provider', type: 'Host', id: 'synthetic-host-0001' },
     },
   }),
-  server('example-srv-a01-02', 'example-rack-a01', 3),
+  server('example-srv-a01-02', 'example-rack-a01', 3, {
+    extra: {
+      bmc: { endpoint: 'https://192.0.2.100:443' },
+      // eth1 records a MAC no host NIC reports; eth2 is not in the component list.
+      interfaces: [{ name: 'eth0', macAddress: '00:00:5e:00:53:21' }, { name: 'eth1', macAddress: '00:00:5e:00:53:22' }, { name: 'eth2', macAddress: '00:00:5e:00:53:23' }],
+    },
+  }),
   // Both PSUs are cabled to the same PDU, so both reach Feed A: a single feed in the records.
   server(FIXTURE_NAMES.singleFeedServer, 'example-rack-a01', 4, { displayName: 'Compute a01-05' }),
   storage('example-sto-a01-03', 'example-rack-a01', 5),
@@ -367,6 +374,80 @@ const devices: Device[] = [
     placement: placed({}), extra: { components: importedComponents },
   }),
 ];
+
+// ---- BMC discovery status ----
+//
+// Synthetic Device.status as BMC discovery writes it, relative to page load
+// so ages and certificate expiry read the same on every capture:
+//   example-srv-a01-01  matched, powered on, every NIC up, key approved
+//   example-srv-a01-02  IdentityMatched False: the System reports another serial
+//   example-srv-a01-05  key not approved (PinNotApproved), certificate expiring
+//                       soon, one host NIC down; inventory retained from an
+//                       earlier read
+// Every other Device has no status: discovery has not run.
+
+const LOADED = Date.now();
+const at = (offsetMs: number) => new Date(LOADED + offsetMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const MINUTE = 60_000;
+const DAY = 86_400_000;
+const condition = (type: string, status: Condition['status'], reason: string, message: string): Condition => ({ type, status, reason, message, observedGeneration: 1, lastTransitionTime: at(-2 * MINUTE) });
+const nic = (id: string, macAddress: string, linkStatus = 'LinkUp', speedMbps = 25000) => ({ id, macAddress, linkStatus, speedMbps });
+const key = (byte: string) => byte.repeat(32);
+
+function discovery(device: Device, { serial, key: publicKeySHA256, notAfter, nics, managerNic, conditions }: { serial: string; key: string; notAfter: string; nics: ReturnType<typeof nic>[]; managerNic: ReturnType<typeof nic>; conditions: Condition[] }): DeviceStatus {
+  const endpoint = device.spec.bmc!.endpoint;
+  return {
+    observedGeneration: 1,
+    discovery: {
+      lastAttemptAt: at(-2 * MINUTE), lastAttemptEndpoint: endpoint,
+      tls: { observedAt: at(-2 * MINUTE), endpoint, publicKeySHA256, notAfter, selfSigned: true },
+      serviceRoot: { observedAt: at(-2 * MINUTE), endpoint, redfishVersion: '1.11.0', uuid: device.spec.identity.systemUUID, vendor: 'Example Compute', product: 'Example Integrated BMC' },
+      inventory: {
+        observedAt: at(-2 * MINUTE), endpoint,
+        managers: [{ id: 'BMC', model: 'Example BMC 9', firmwareVersion: '7.10.30', networkInterfaces: [managerNic] }],
+        systems: [{
+          id: 'System.Embedded.1', uuid: device.spec.identity.systemUUID, manufacturer: 'Example Compute', model: `Example ${device.spec.identity.model}`,
+          serialNumber: serial, sku: 'SYNTH-SKU-1', powerState: 'On', networkInterfaces: nics,
+        }],
+      },
+    },
+    conditions,
+  };
+}
+
+const reachable = condition('Reachable', 'True', 'ServiceRootRead', 'TLS handshake completed and the anonymous service root was read');
+const accepted = condition('Authenticated', 'True', 'CredentialAccepted', 'the BMC accepted the credential over the pinned connection');
+const read = condition('Discovered', 'True', 'InventoryRead', 'managers, systems and their Ethernet interfaces were read');
+const unique = condition('PublicKeyUnique', 'True', 'Unique', 'no other discovered Device presents this TLS public key');
+const matched = condition('IdentityMatched', 'True', 'Matched', 'System System.Embedded.1 matches spec.identity (systemUUID, serial, model)');
+
+const DISCOVERED: Record<string, (device: Device) => DeviceStatus> = {
+  [FIXTURE_NAMES.server]: device => discovery(device, {
+    serial: device.spec.identity.serial!, key: key('3f'), notAfter: at(400 * DAY),
+    nics: [nic('EthernetInterface0', '00:00:5e:00:53:11'), nic('EthernetInterface1', '00:00:5e:00:53:12'), nic('EthernetInterface2', '00:00:5e:00:53:13', 'LinkUp', 1000)],
+    managerNic: nic('eth0', '00:00:5e:00:53:a1', 'LinkUp', 1000),
+    conditions: [reachable, accepted, read, matched, unique],
+  }),
+  'example-srv-a01-02': device => discovery(device, {
+    serial: 'SYNTH-OTHER-99', key: key('5c'), notAfter: at(200 * DAY),
+    nics: [nic('EthernetInterface0', '00:00:5e:00:53:21'), nic('EthernetInterface1', '00:00:5e:00:53:29'), nic('EthernetInterface2', '00:00:5e:00:53:23')],
+    managerNic: nic('eth0', '00:00:5e:00:53:a2', 'LinkUp', 1000),
+    conditions: [reachable, accepted, read, condition('IdentityMatched', 'False', 'SerialMismatch', 'the System with spec.identity.systemUUID reports another serial; spec is not changed'), unique],
+  }),
+  [FIXTURE_NAMES.singleFeedServer]: device => discovery(device, {
+    serial: device.spec.identity.serial!, key: key('9d'), notAfter: at(12 * DAY),
+    nics: [nic('EthernetInterface0', '00:00:5e:00:53:31'), nic('EthernetInterface1', '00:00:5e:00:53:32', 'LinkDown', 0)],
+    managerNic: nic('eth0', '00:00:5e:00:53:a3', 'LinkUp', 1000),
+    conditions: [reachable,
+      condition('Authenticated', 'False', 'PinNotApproved', 'the observed public key is in status.discovery.tls; verify it out of band and approve it as tlsPublicKeySHA256 in the credential Secret'),
+      condition('Discovered', 'False', 'PinNotApproved', 'the observed public key is in status.discovery.tls; verify it out of band and approve it as tlsPublicKeySHA256 in the credential Secret'),
+      matched, unique],
+  }),
+};
+for (const item of devices) {
+  const status = DISCOVERED[item.metadata.name];
+  if (status) item.status = status(item);
+}
 
 // Claims for the racked equipment. Devices with a reported placement use it;
 // the claim is the installation plan and history.

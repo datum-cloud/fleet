@@ -66,6 +66,11 @@ export const PAGES: CapturePage[] = [
   { name: 'server-detail', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-connections' },
   // The secondary tab and the Record section that closes every record page.
   { name: 'device-hardware', path: record('Device', 'example-srv-a01-01', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-fact-section', element: '.inventory-record-tabs', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
+  // BMC discovery in the Hardware & management tab: matched, identity mismatch, key not approved.
+  { name: 'device-discovery-matched', path: record('Device', 'example-srv-a01-01', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-discovery-chips', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
+  { name: 'device-discovery-mismatch', path: record('Device', 'example-srv-a01-02', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-discovery-chips', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
+  { name: 'device-discovery-pin', path: record('Device', 'example-srv-a01-05', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-discovery-chips', viewports: ['desktop-light', 'phone'] },
+  { name: 'device-discovery-none', path: record('Device', 'example-srv-a02-02', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-fact-section', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
   { name: 'device-location', path: record('Device', 'example-srv-a01-01', '&tab=location'), ready: '[data-tab="location"] .inventory-fields', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
   { name: 'record-footer', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-record-footer', element: '.inventory-record-footer', viewports: ['desktop-light', 'phone'] },
   // Device detail for a model without a layout (grouped tiles), and the one component table.

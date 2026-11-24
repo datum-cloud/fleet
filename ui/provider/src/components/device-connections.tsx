@@ -14,6 +14,7 @@ import {
   type ConnectionGroup, type ConnectionLink, type DeviceConnections as JoinResult, type LinkState, type TraceHop, type ViewNames,
 } from '../lib/device-connections';
 import { faceplate } from '../lib/device-faceplate';
+import { unobservedMacs } from '../lib/device-discovery';
 import { componentChassisFace, componentRackFace, deviceMountedFace } from '../lib/rack-faces';
 import { cableText, peerDetail, PeerTarget, peerText, portsWord, StateText, TileSummary, type Href } from './connection-parts';
 import { PortFaceplate, type ComponentHighlight } from './device-faceplate';
@@ -41,6 +42,8 @@ interface ComponentRow {
   assetTag?: string;
   /** The recorded interface MAC address for a port of the same name. */
   mac?: string;
+  /** Why the MAC needs checking: discovery read the host NICs and none reports it. */
+  macNote?: string;
   /** The position the Cable names, for a lane end that matches no recorded position. */
   unmatched?: { position?: number };
 }
@@ -56,6 +59,7 @@ const GROUP_ORDER = connectionGroups.map(item => item.group);
 function componentRows(device: Device, inventory: Inventory, join: JoinResult, unmatched: ConnectionLink[]): ComponentRow[] {
   const tiles = new Map(portTiles(join.links).map(tile => [tile.key, tile]));
   const macs = interfaceAddresses(device).byComponent;
+  const unobserved = unobservedMacs(device);
   const mounted = deviceMountedFace(device, inventory);
   const used = new Set<string>();
   const rows: (ComponentRow & { group: ConnectionGroup })[] = (device.spec.components ?? []).map((component, index) => {
@@ -67,6 +71,7 @@ function componentRows(device: Device, inventory: Inventory, join: JoinResult, u
       key: `component/${index}`, group, name: component.name, id: component.id, type: component.type, connector: component.connector,
       chassisFace, rackFace: componentRackFace(mounted, chassisFace), positions: component.positions ?? 1,
       state: tile?.state, links: tile?.links ?? [], serial: component.serial, assetTag: component.assetTag, mac: macs.get(component.id),
+      macNote: (device.spec.interfaces ?? []).filter(iface => iface.name === component.name || iface.name === component.id).map(iface => unobserved.get(iface.name)).find(Boolean),
     };
   });
   for (const tile of tiles.values()) {
@@ -192,7 +197,7 @@ function ComponentTable({ rows, cablesDenied, namespace, href, names, highlight,
                 <TableCell><StateCell row={row} /></TableCell>
                 <TableCell><ConnectedCell row={row} namespace={namespace} href={href} names={names} /></TableCell>
               </>}
-              {macs && <TableCell className="inventory-numeric">{row.mac}</TableCell>}
+              {macs && <TableCell className="inventory-numeric">{row.macNote ? <span data-tone="warning" title={row.macNote}>{row.mac}<span className="inventory-visually-hidden">. Check: {row.macNote}</span></span> : row.mac}</TableCell>}
               {serials && <TableCell className="inventory-numeric">{row.serial}</TableCell>}
               {tags && <TableCell className="inventory-numeric">{row.assetTag}</TableCell>}
             </TableRow>
