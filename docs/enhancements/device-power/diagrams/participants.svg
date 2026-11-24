@@ -8,9 +8,9 @@
 <text x="480" y="68" class="detail" text-anchor="middle">Power operator role</text>
 <rect x="20" y="110" width="920" height="210" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
 <text x="44" y="146" class="heading" text-anchor="start">Provider project</text>
-<rect x="60" y="170" width="230" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="175" y="199" class="label" text-anchor="middle">Device</text>
-<text x="175" y="223" class="detail" text-anchor="middle">Identity and discovery</text>
+<rect x="60" y="170" width="210" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="165" y="199" class="label" text-anchor="middle">Device</text>
+<text x="165" y="223" class="detail" text-anchor="middle">Identity and discovery</text>
 <rect x="345" y="170" width="270" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
 <text x="480" y="199" class="label" text-anchor="middle">DevicePowerOperation</text>
 <text x="480" y="223" class="detail" text-anchor="middle">One action, fixed at creation</text>
@@ -19,8 +19,8 @@
 <text x="790" y="223" class="detail" text-anchor="middle">Blocks power operations</text>
 <path d="M 480 84 L 480 170" class="line"/>
 <text x="492" y="133" class="edge" text-anchor="start">creates</text>
-<path d="M 345 206 L 290 206" class="line"/>
-<text x="318" y="164" class="edge" text-anchor="middle">names</text>
+<path d="M 345 206 L 270 206" class="line"/>
+<text x="307" y="196" class="edge" text-anchor="middle">names</text>
 <rect x="20" y="380" width="680" height="260" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
 <text x="44" y="416" class="heading" text-anchor="start">Site</text>
 <rect x="60" y="440" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="680" viewBox="0 0 960 680" role="img" aria-labelledby="title description">
-<title id="title">Device power operation lifecycle and outcomes</title><desc id="description">An operation is created with its spec fixed and its requester checked. The dispatcher either refuses it, which ends as Failed with nothing sent, or marks it Accepted. An accepted operation moves to Executing, where one worker sends at most one command. It finishes with one of three results. Succeeded means the requested power state or a reset was observed. Failed means Fleet knows nothing was sent, or the BMC refused and power did not change. Unknown means a command may have been sent and the outcome is unproven. The result is set once and never changes.</desc>
+<title id="title">Device power operation lifecycle and outcomes</title><desc id="description">An operation is created with its spec fixed and its requester checked. The dispatcher either refuses it at acceptance, which ends as Failed with nothing sent, or marks it Accepted. An accepted operation moves to Executing, where one worker sends at most one command. A worker that stops before its command also ends as Failed. It finishes with one of three results. Succeeded means the requested power state or a reset was observed. Failed means Fleet knows nothing was sent, or the BMC refused and power did not change. Unknown means a command may have been sent and the outcome is unproven. The result is set once and never changes.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
 <rect width="960" height="680" fill="white"/>
@@ -15,7 +15,7 @@
 <text x="292" y="322.5" class="label" text-anchor="middle">Executing</text>
 <text x="292" y="345.5" class="label" text-anchor="middle">One worker; at most one command</text>
 <rect x="622" y="165" width="300" height="76" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="772" y="197.5" class="label" text-anchor="middle">Refused</text>
+<text x="772" y="197.5" class="label" text-anchor="middle">Refused at acceptance</text>
 <text x="772" y="220.5" class="label" text-anchor="middle">Failed; nothing sent</text>
 <path d="M 542 78 L 772 78 L 772 165" class="line"/>
 <path d="M 292 366 L 292 420" stroke="#475569" stroke-width="2"/>

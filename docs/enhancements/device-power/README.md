@@ -26,6 +26,7 @@ stage: alpha
   - [Delivery phases](#delivery-phases)
   - [Acceptance tests](#acceptance-tests)
 - [Production readiness review questionnaire](#production-readiness-review-questionnaire)
+- [Implementation history](#implementation-history)
 - [Drawbacks](#drawbacks)
 - [Alternatives](#alternatives)
 - [Open design questions](#open-design-questions)
@@ -329,6 +330,11 @@ dispatcher restarts.
 An `Unknown` operation needs a person. Check the next discovery result, then
 create a new operation if one is still needed. Nothing retries automatically.
 
+## Implementation history
+
+- 2026-11-24: Proposed. The design builds on BMC discovery, TLS key pinning
+  and the per-operation worker pattern already used for installation.
+
 ## Drawbacks
 
 - A site process and a worker per action add seconds of delay over a direct
@@ -363,7 +369,7 @@ create a new operation if one is still needed. Nothing retries automatically.
   option reports `Unknown`.
 - **Restart evidence.** A restart can be proven only when the BMC reports that
   a reset happened. Should restart and power cycle wait for the real-hardware
-  test, or ship earlier for the lab only?
+  test, or ship earlier for test hardware only?
 - **Graceful actions.** They are excluded because an unallocated server often
   has no trusted operating system. Does anyone need them?
 - **Retention.** How long are finished operations kept, and who may delete
