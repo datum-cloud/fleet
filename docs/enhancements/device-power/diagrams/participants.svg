@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720" role="img" aria-labelledby="title description">
+<title id="title">Who takes part in a Device power operation</title><desc id="description">Staff with the power operator role create a DevicePowerOperation in the provider project. The operation names a Device. MachineCapacity on a Device blocks power operations. In the site that can reach the BMC, the dispatcher reads the operation, the Device and capacity, and writes the operation's status. It starts one worker per operation. The worker holds one Device's BMC credential and sends at most one command to that BMC. BMC discovery reads BMCs, never changes them, and writes Device status. Only the worker and discovery read BMC credentials, and the worker has no access to the provider project.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 24px; font-weight: 700; } .label { font-size: 20px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .edge { font-size: 17px; fill: #334155; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="720" fill="white"/>
+<rect x="355" y="16" width="250" height="68" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="44" class="label" text-anchor="middle">Staff</text>
+<text x="480" y="68" class="detail" text-anchor="middle">Power operator role</text>
+<rect x="20" y="110" width="920" height="210" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="44" y="146" class="heading" text-anchor="start">Provider project</text>
+<rect x="60" y="170" width="230" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="175" y="199" class="label" text-anchor="middle">Device</text>
+<text x="175" y="223" class="detail" text-anchor="middle">Identity and discovery</text>
+<rect x="345" y="170" width="270" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="199" class="label" text-anchor="middle">DevicePowerOperation</text>
+<text x="480" y="223" class="detail" text-anchor="middle">One action, fixed at creation</text>
+<rect x="670" y="170" width="240" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="790" y="199" class="label" text-anchor="middle">MachineCapacity</text>
+<text x="790" y="223" class="detail" text-anchor="middle">Blocks power operations</text>
+<path d="M 480 84 L 480 170" class="line"/>
+<text x="492" y="133" class="edge" text-anchor="start">creates</text>
+<path d="M 345 206 L 290 206" class="line"/>
+<text x="318" y="164" class="edge" text-anchor="middle">names</text>
+<rect x="20" y="380" width="680" height="260" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+<text x="44" y="416" class="heading" text-anchor="start">Site</text>
+<rect x="60" y="440" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="190" y="469" class="label" text-anchor="middle">Dispatcher</text>
+<text x="190" y="493" class="detail" text-anchor="middle">Checks, starts workers</text>
+<rect x="380" y="440" width="290" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="525" y="469" class="label" text-anchor="middle">Worker</text>
+<text x="525" y="493" class="detail" text-anchor="middle">One operation, one credential</text>
+<rect x="60" y="548" width="260" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="190" y="577" class="label" text-anchor="middle">BMC discovery</text>
+<text x="190" y="601" class="detail" text-anchor="middle">Read-only</text>
+<rect x="740" y="440" width="200" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="840" y="469" class="label" text-anchor="middle">BMC</text>
+<text x="840" y="493" class="detail" text-anchor="middle">One per server</text>
+<path d="M 250 440 L 250 350 L 480 350 L 480 242" class="line"/>
+<text x="492" y="290" class="edge" text-anchor="start">reads, writes status</text>
+<path d="M 130 440 L 130 242" class="line"/>
+<text x="142" y="290" class="edge" text-anchor="start">reads</text>
+<path d="M 250 350 L 790 350 L 790 242" class="line"/>
+<text x="802" y="290" class="edge" text-anchor="start">reads</text>
+<path d="M 60 584 L 40 584 L 40 206 L 60 206" class="line"/>
+<text x="52" y="370" class="edge" text-anchor="start">writes status</text>
+<path d="M 320 476 L 380 476" class="line"/>
+<text x="350" y="464" class="edge" text-anchor="middle">starts</text>
+<path d="M 670 476 L 740 476" class="line"/>
+<text x="705" y="534" class="edge" text-anchor="middle">one command</text>
+<path d="M 320 584 L 840 584 L 840 512" class="line" stroke-dasharray="6 4"/>
+<text x="580" y="572" class="edge" text-anchor="middle">reads, never changes</text>
+<text x="480" y="688" class="detail" text-anchor="middle">Only the worker and discovery read BMC credentials. The worker cannot reach the provider project.</text>
+</svg>
