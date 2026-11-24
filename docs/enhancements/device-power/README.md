@@ -38,9 +38,8 @@ uses it when a customer changes `Machine.spec.powerState`.
 
 This document specifies the power kind only. The [device custody and
 operations proposal][ops] defines custody, the operation envelope, admission,
-site execution, recovery and authorization. Both documents are proposals, and
-the device operations proposal is not yet merged. Nothing in either is
-implemented.
+site execution, recovery and authorization. Both documents are proposals.
+Nothing in either is implemented.
 
 ## Motivation
 
@@ -103,9 +102,9 @@ provider reports the refusal reason on the Machine.
 
 ![Staff and the Metal provider create power operations; discovery facts gate them; one worker sends the command](diagrams/participants.svg)
 
-BMC discovery is read-only. It reports which power actions each server offers
-and the server's current power state. Admission uses both, and recovery uses
-the power state as evidence.
+BMC discovery reads each BMC without sending it commands. It reports on the
+Device which power actions the server offers and its current power state.
+Admission uses both, and recovery uses the power state as evidence.
 
 ## Design details
 
@@ -118,13 +117,11 @@ adds the power fields. Identifiers and timestamps are synthetic.
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DevicePowerOperation
 metadata:
-  name: device-a-restart-1
+  name: device-a-power-7k2pq
   namespace: default
 # Envelope fields other than the device and authority are omitted.
 spec:
   deviceRef: {name: device-a, uid: 4b8e2f10-0000-4000-8000-0000000000a1}
-  # Staff use a service request, and the reason is required. The Metal
-  # provider uses allocationRef instead.
   authority:
     serviceRequest: {reason: "Hung in firmware during qualification"}
   # On, ForceOff, ForceRestart or PowerCycle.
@@ -153,33 +150,31 @@ The evidence never carries a credential or BMC response content.
 
 ### Admission
 
-[Custody admission][admission] decides which creator, authority and holder may
-run a power operation. A staff operation needs holder `None`, so disabled
-capacity on the Device does not block it. A customer operation runs under the
-Machine's allocation.
+Disabled capacity on a Device does not block staff power, because it leaves
+the holder `None`. Power reports two [custody admission][admission] refusals
+under its own names: a shared BMC key as `SharedPublicKey`, and an expired
+staff operation as `Expired`.
 
-Power adds these refusals. Each ends the operation with nothing sent:
-`Expired` as `Cancelled`, and the others as `Failed`.
+Power adds these refusals. Each ends the operation as `Failed` with nothing
+sent:
 
 | Reason | Refused by | When |
 | --- | --- | --- |
 | `SystemUUIDNotRecorded` | Coordinator | A staff operation targets a Device with no system UUID on record. |
 | `SystemUUIDMismatch` | Coordinator or worker | `expectedSystemUUID` differs from the Device record, discovery or the BMC. |
 | `DiscoveryNotCurrent` | Coordinator | Discovery has not read the BMC within twice its interval. |
-| `SharedPublicKey` | Coordinator | The shared-key rule of [custody admission][admission] fails. |
 | `ResetTypeNotOffered` | Coordinator or worker | Discovery or the BMC does not offer the action. |
-| `Expired` | Coordinator | A staff operation was not admitted within five minutes. |
 | `Stale` | Worker | The worker started more than two minutes after admission. |
 | `NotPoweredOn` | Worker | A restart or power cycle targets a server that is off. |
-| `PowerStateNotSettled` | Worker | The power state is still changing. |
+| `PowerStateNotSettled` | Worker | The BMC reports a transition state, such as `PoweringOn` or `PoweringOff`. |
 
 ### Execution and outcomes
 
 ![What a site worker does for one power operation](diagrams/worker-sequence.svg)
 
 The [site worker][site] re-checks that the action is offered, then reads the
-power state. If the server is already in the requested state, it sends nothing
-and reports success. Otherwise it sends one command.
+power state. For `On` and `ForceOff`, if the server is already in the requested
+state, it sends nothing and reports success. Otherwise it sends one command.
 
 HTTP success from the BMC is not proof. The result depends on what the worker
 observes after the command, including after a lost response:
@@ -197,8 +192,9 @@ anyway, which gives `OutcomeUnknown`.
 ![How a power result is decided, and how a power recovery hold settles](diagrams/power-outcomes.svg)
 
 A power [recovery hold][unknown] settles with a `DeviceRecovery` whose evidence
-is a power state that discovery read after the operation ended. The Machine of
-a held allocated server reports power as `Unknown` until then.
+is a power state that discovery read after the operation ended. This proposal
+also requires the Metal projector to report a held Machine's power as
+`Unknown` until the hold settles.
 
 ### Delivery phases
 
@@ -224,11 +220,12 @@ number of commands at the BMC:
 - A refused customer operation is not retried until the Machine generation
   changes.
 - A power hold settles only with discovery evidence read after the operation
-  ended.
+  ended, and the held Machine reports power as `Unknown` until then.
 
 ## Production readiness review questionnaire
 
-These controls are proposed, not implemented.
+These controls are proposed, not implemented. This section covers only what
+power adds to the [device operations proposal][ops].
 
 ### How do operators enable or disable the feature?
 
