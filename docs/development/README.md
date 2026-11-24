@@ -166,7 +166,8 @@ service catalog's consumer provider (`internal/projectdiscovery`). There is no
   deadlines and queued events are dropped, and re-engagement resumes from the
   retained private records. Unbinding drains direct, dependency-route,
   provider-event, and synthetic-publisher reconciliations that already acquired
-  the runtime before removing it from the registry; a retained runtime pointer cannot start work after that barrier.
+  the runtime before removing it from the registry; a retained runtime pointer
+  cannot start work after that barrier.
   A blocked in-flight handler therefore delays completed departure rather than
   falsely reporting it. This fixes an inherited race where informer removal and
   registry removal could finish while a handler could still write. It does not
