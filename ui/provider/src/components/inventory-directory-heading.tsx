@@ -59,8 +59,8 @@ export function InventoryToolbar({ section, search = '', onSearch, location = ''
   const hasModel = ['Device', 'Cable'].includes(section.kind);
   return <div className="inventory-toolbar">
     <SearchField section={section} search={search} onSearch={onSearch} />
-    {hasLocation && <FieldSelect className="inventory-filter" aria-label="Filter by facility" value={location} disabled={!onLocation} onValueChange={value => onLocation?.(value)} none="All facilities" options={facilities} />}
-    {hasModel && <FieldSelect className="inventory-filter" aria-label={section.kind === 'Cable' ? 'Filter by medium' : 'Filter by model'} value={model} disabled={!onModel} onValueChange={value => onModel?.(value)} none={section.kind === 'Cable' ? 'All media' : 'All models'} options={models.map(value => ({ value, label: value }))} />}
+    {hasLocation && <FieldSelect aria-label="Filter by facility" value={location} disabled={!onLocation} onValueChange={value => onLocation?.(value)} none="All facilities" options={facilities} />}
+    {hasModel && <FieldSelect aria-label={section.kind === 'Cable' ? 'Filter by medium' : 'Filter by model'} value={model} disabled={!onModel} onValueChange={value => onModel?.(value)} none={section.kind === 'Cable' ? 'All media' : 'All models'} options={models.map(value => ({ value, label: value }))} />}
     {(location || model) && onClear && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onClear}>Clear filters</Button>}
     <div className="inventory-toolbar-actions">
       <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!onRetry} onClick={onRetry} aria-label="Refresh inventory" title="Refresh inventory"><RefreshCw size={16} aria-hidden="true" /></Button>
