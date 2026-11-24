@@ -102,9 +102,9 @@ reach the server's BMC:
 
 ![Staff create the operation; the site dispatcher checks it and starts one worker that holds one credential](diagrams/participants.svg)
 
-- **The dispatcher** runs in the site, next to the existing BMC discovery
-  process. It accepts or refuses each request, starts a worker, and is the only
-  writer of the operation's status. It holds no BMC credential.
+- **The dispatcher** runs in the site, next to the BMC discovery process. It
+  accepts or refuses each request, starts a worker, and is the only writer of
+  the operation's status. It holds no BMC credential.
 - **The worker** is a short-lived process started for one operation. It can read
   only the target Device's BMC credential, and it cannot reach the provider
   project.
@@ -381,7 +381,7 @@ create a new operation if one is still needed. Nothing retries automatically.
   the Device, which changes how discovery credentials are named. The
   alternatives are a dispatcher that can read credentials, or a credential
   broker. Which should Fleet use?
-- **Installation server list.** The installation system keeps its own list of
+- **Installation server list.** The installation work keeps its own list of
   servers. Should it derive that list from Devices, so the capacity check
   covers it?
 - **Requester source.** Should the requester come from Milo's audit record
