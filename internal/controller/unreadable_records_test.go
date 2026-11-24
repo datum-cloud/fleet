@@ -438,3 +438,27 @@ func TestUndecodableRecordsAreReportedOnEveryDecodePath(t *testing.T) {
 		})
 	}
 }
+
+// A claim whose own custody record cannot be decoded is not allocated or
+// released through it, and both calls report the record as unreadable so
+// callers stop retrying.
+func TestUndecodableOwnCustodyBlocksAllocateAndRelease(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	request := f.request("a")
+	f.allocate(t, request)
+	_, secret, err := f.coordinator.getCustody(ctx, request.Claim.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret.Data[recordDataKey] = []byte(`{"schemaVersion":99}`)
+	if err := f.coordinator.client.Update(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.coordinator.Release(ctx, request.Claim.UID); !errors.Is(err, ErrRecordUnreadable) {
+		t.Fatalf("release error = %v, want ErrRecordUnreadable", err)
+	}
+	if _, err := f.coordinator.Allocate(ctx, request); !errors.Is(err, ErrRecordUnreadable) {
+		t.Fatalf("allocate error = %v, want ErrRecordUnreadable", err)
+	}
+}

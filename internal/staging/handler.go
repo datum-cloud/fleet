@@ -284,6 +284,9 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 	if crossProject && result.ExternalSettlementRequired {
 		authority, hold := syntheticCrossProjectAuthority(uid, namespace, h.Project, h.ProviderProject)
 		result, err = h.Coordinator.CompleteExternalRelease(ctx, uid, authority, hold, h.Project)
+		if errors.Is(err, controller.ErrRecordUnreadable) {
+			return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
+		}
 		if err != nil {
 			return manager.Outcome{RetryError: err}
 		}

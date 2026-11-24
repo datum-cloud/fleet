@@ -968,7 +968,7 @@ func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID ty
 		custody, _, err = c.getCustody(ctx, claimUID)
 	}
 	if err != nil {
-		return ReleaseResult{}, fmt.Errorf("%w: claim custody is missing or invalid: %v", ErrRecordInvalid, err)
+		return ReleaseResult{}, fmt.Errorf("%w: claim custody is missing or invalid: %w", ErrRecordInvalid, err)
 	}
 	// Released custody is the terminal authority for this claim lifetime. The
 	// asset record may already belong to a later epoch and another claim by the

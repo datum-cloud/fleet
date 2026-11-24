@@ -20,10 +20,17 @@ import (
 	"go.datum.net/fleet/internal/simulator"
 )
 
-// An asset record in the older CPU and memory shape is reported on its own
-// Machine only. Other Machines still allocate and release, and the affected
-// Machine keeps its finalizer until an operator removes the record.
+// An unreadable asset record, in the older CPU and memory shape, or an
+// unreadable custody record is reported on its own Machine only. Other
+// Machines still allocate and release, and the affected Machine keeps its
+// finalizer until an operator removes the record.
 func TestUnreadablePrivateRecordIsReportedOnlyOnItsMachine(t *testing.T) {
+	for record, corrupt := range map[string]func(*testing.T, context.Context, client.Client, types.UID){"asset": writeOlderAssetShape, "custody": writeUnreadableCustody} {
+		t.Run(record, func(t *testing.T) { testUnreadablePrivateRecord(t, corrupt) })
+	}
+}
+
+func testUnreadablePrivateRecord(t *testing.T, corrupt func(*testing.T, context.Context, client.Client, types.UID)) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -65,7 +72,7 @@ func TestUnreadablePrivateRecordIsReportedOnlyOnItsMachine(t *testing.T) {
 		}
 	}
 	assertPhase(t, ctx, public, staleKey, "Ready")
-	writeOlderAssetShape(t, ctx, private, stale.UID)
+	corrupt(t, ctx, private, stale.UID)
 
 	assertUnreadable := func() {
 		t.Helper()
@@ -133,6 +140,22 @@ func writeOlderAssetShape(t *testing.T, ctx context.Context, private client.Clie
 		t.Fatal(err)
 	}
 	secret.Data["record.json"] = data
+	if err := private.Update(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeUnreadableCustody(t *testing.T, ctx context.Context, private client.Client, claimUID types.UID) {
+	t.Helper()
+	var secrets corev1.SecretList
+	if err := private.List(ctx, &secrets, client.MatchingLabels{"fleet.datumapis.com/private-record": "custody", "fleet.datumapis.com/claim-uid": string(claimUID)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(secrets.Items) != 1 {
+		t.Fatalf("custody records for %s = %d, want 1", claimUID, len(secrets.Items))
+	}
+	secret := &secrets.Items[0]
+	secret.Data["record.json"] = []byte(`{"schemaVersion":99}`)
 	if err := private.Update(ctx, secret); err != nil {
 		t.Fatal(err)
 	}
