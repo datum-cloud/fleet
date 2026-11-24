@@ -175,9 +175,8 @@ result.
 Every operation has a device, an authority, and inputs. A Fleet admission
 webhook records the authenticated creator on each operation when it is
 created. Clients cannot set or change that field. Milo calls the webhook from
-its root API server for project resources, the same way it calls capacity
-registration, because Milo does not apply admission policies stored in a
-project.
+its root API server, because Milo does not apply admission policies stored in
+a project.
 
 | Kind | Creator | Authority | Required holder | Inputs |
 | --- | --- | --- | --- | --- |
@@ -230,8 +229,8 @@ plus `Pending`:
 | `Cancelled` | Ended before admission: replaced, expired, or no longer matching the holder. |
 | `OutcomeUnknown` | A command may have reached the server, and Fleet cannot prove the result. |
 
-Custody holds the phase and result of the active operation, and operation
-status copies them. The coordinator admits the next operation only after it
+Custody holds the phase, result, and result evidence of the active operation,
+and operation status copies them. The coordinator admits the next operation only after it
 copies the previous result to the previous operation's status. If that
 operation no longer exists, the coordinator skips the copy.
 
@@ -248,6 +247,7 @@ only if all of these hold:
 4. No operation is active.
 5. The Device UID matches `deviceRef.uid`, and its identity matches current
    discovery.
+6. No other Device records the same BMC key digest.
 
 Under a recovery hold, only the operations in [Unknown
 outcomes](#unknown-outcomes) are admitted.
@@ -278,7 +278,8 @@ The federation layer delivers each admitted operation, its device snapshot,
 and its sealed inputs to the site. The snapshot holds the BMC endpoint, system
 UUID, boot MAC address, and BMC key digest that the coordinator captured at
 admission. Sites hold no credentials that can change custody, operations, or
-allocations. BMC discovery runs in the site and can write only Device status.
+allocations. BMC discovery runs in the site and can write only the status of
+the Devices that site serves.
 
 Each site stores the highest fence it has seen for each Device. When an
 operation arrives with a higher fence, the site raises its stored fence and
@@ -288,7 +289,7 @@ The site runs one worker per operation. The worker:
 
 1. reads that Device's BMC credential from the site;
 2. checks the BMC's TLS key and the system identity, and fails without sending
-   anything on a mismatch or if another Device's BMC uses the same key;
+   anything on a mismatch;
 3. records each step in the site journal before sending it, and the journal
    refuses a step whose fence is below the stored fence;
 4. after a crash or lost response, queries the server instead of sending again;
@@ -299,9 +300,9 @@ The site returns results with the operation's fence. The coordinator accepts a
 result only if its fence matches the active operation's fence.
 
 Each kind defines the evidence its result carries, such as the power state
-before and after a reset. The coordinator copies that evidence to the
-operation's status, and the site keeps each result until the coordinator has
-copied it.
+before and after a reset. The coordinator records the evidence in custody with
+the result. The site deletes its copy after the coordinator accepts the
+result.
 
 ### Unknown outcomes
 
@@ -365,12 +366,9 @@ operation and cannot be allocated. The coordinator rebuilds custody from:
 
 The coordinator marks custody `Verified` only after every site that serves the
 Device reports its fence. Custody stays `Unverified` until an operator resolves
-the conflict if the Device UID differs from `deviceRef.uid`, or if a live
-MachineAllocation exists alongside any of these:
-
-- `Retired` in inventory or a `Retire` recovery;
-- an unfinished staff operation; or
-- a second live MachineAllocation.
+the conflict if two sources set different holders, if two live
+MachineAllocations name the Device, or if the Device UID differs from
+`deviceRef.uid`.
 
 ### Customer data
 
