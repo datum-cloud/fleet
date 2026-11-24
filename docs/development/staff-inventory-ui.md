@@ -226,14 +226,22 @@ the exemptions below.
 - **Observed at.** The location correction picks the observation time with
   the datum-ui date-time picker: a calendar, a typed `HH:mm` time, and the
   browser time zone shown. It opens set to the time the form was opened,
-  cannot be cleared, and cannot pick a future date. The save still rejects
-  a time later than now.
+  cannot be cleared, and cannot pick a future date. The picker greys out
+  later days only, so a later time today shows "Observation time cannot be
+  later than now." under the field at once, marks the trigger invalid, and
+  disables Save until the time is earlier. The save still rejects a time
+  later than now.
 - **Tables.** The component and lane editors are datum-ui Tables.
+- **Copy.** The TLS key fingerprint's Copy button on the Device page is a
+  datum-ui Button. Its tooltip and text change to "Copied" for 1.5 s.
 - **Exemptions.** Port tiles (`PortTileButton` in `device-faceplate.tsx`)
   stay native buttons. They are drawn faceplate tiles, and their look is the
   drawing. Rack slot links are links, not form controls.
 - **Guard.** `src/test/native-controls.test.ts` in each plugin fails when a
-  component adds one of those native elements outside its allowlist.
+  component uses a native `<select>`, `<input>`, `<textarea>`, `<button>` or
+  `<table>`. The only exemption is the `<button>` inside the `PortTileButton`
+  function; a native control anywhere else in `device-faceplate.tsx` still
+  fails, and the guard tests that.
 - **Tests.** `ui/provider/src/test/field-select.ts` opens a Select from the
   keyboard and picks an option by value (`chooseValue`), lists the options a
   reader would see (`selectOptions`) and reads the chosen value
