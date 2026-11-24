@@ -356,8 +356,12 @@ operation and cannot be allocated. The coordinator rebuilds custody from:
 
 The coordinator marks custody `Verified` only after every site that serves the
 Device reports its fence. Custody stays `Unverified` until an operator resolves
-the conflict if these sources disagree, or if the Device UID differs from
-`deviceRef.uid`.
+the conflict if the Device UID differs from `deviceRef.uid`, or if a live
+MachineAllocation exists alongside any of these:
+
+- `Retired` in inventory or a `Retire` recovery;
+- an unfinished staff operation; or
+- a second live MachineAllocation.
 
 ### Customer data
 
