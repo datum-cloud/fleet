@@ -34,8 +34,8 @@ stage: alpha
 ## Summary
 
 `DevicePowerOperation` powers a server on or off, or resets it, with one
-command. Staff use it on servers that no customer holds. Fleet's Metal provider
-uses it when a customer changes `Machine.spec.powerState`.
+command. Staff use it from the Device page. Fleet's Metal provider uses it when
+a customer changes `Machine.spec.powerState`.
 
 This document is the per-kind specification of `DevicePowerOperation` under
 the [device custody and operations proposal][ops], which defines custody, the
@@ -76,8 +76,9 @@ Customer power intent on a Machine has no executor yet.
 ### Requesting staff power
 
 Staff use a power button on the Device page, next to the observed power state.
-Its menu lists only the actions the server offers. An unavailable action shows
-why in a tooltip, for example that a customer holds the server. Confirming asks
+Its menu lists the actions the server offers. An action that cannot run now is
+disabled, with the reason in a tooltip, for example that a customer holds the
+server. Confirming asks
 for a reason and creates the operation. A badge shows progress and the result.
 An **Operations** tab lists past operations with their time, action, creator,
 result, and power before and after. Users without the power operator role do
@@ -93,9 +94,9 @@ The Fleet provider for Metal maps a Machine's `powerState` to an action:
 | `Off` | `ForceOff` |
 
 The provider creates an operation only when `powerState` differs from the
-server's observed power. Provider power operations are [named from the Machine
-generation][operations], so a refused one is not retried until the generation
-changes. The provider reports the refusal reason on the Machine.
+server's observed power. Because of how the [operations][operations] section
+names provider operations, a refused one is not retried until the Machine
+generation changes. The provider reports the refusal reason on the Machine.
 
 ### Who takes part
 
@@ -129,10 +130,11 @@ metadata:
 spec:
   deviceRef: {name: device-a, uid: 4b8e2f10-0000-4000-8000-0000000000a1}
   authority:
-    serviceRequest: {reason: "Hung in firmware during qualification"}
+    serviceRequest: {}
   # On, ForceOff, ForceRestart or PowerCycle.
   action: ForceRestart
-  # Staff only: the server staff expect behind the BMC.
+  # Staff only: why staff ran it, and the server they expect behind the BMC.
+  reason: Hung in firmware during qualification
   expectedSystemUUID: 00000000-0000-4000-8000-0000000000a1
 status:
   # Power result evidence, recorded in custody with the result.
@@ -142,6 +144,9 @@ status:
     after: {state: "On", observedAt: "2026-01-02T03:04:41Z"}
   resetEvidence: LastResetTime
 ```
+
+A staff operation requires `reason` and `expectedSystemUUID`. A provider
+operation must omit both.
 
 A power result carries this evidence. The coordinator records it in custody
 with the result, as [site execution][site] describes:
@@ -157,9 +162,10 @@ The evidence never carries a credential or BMC response content.
 ### Admission
 
 Disabled capacity on a Device does not block staff power, because it leaves
-the holder `None`. Power names two outcomes of [custody
-admission][admission]: the shared BMC key refusal is `SharedPublicKey`, and an
-expired staff operation is `Expired`.
+the holder `None`. This document names two outcomes of [custody
+admission][admission] for power: the shared BMC key refusal is
+`SharedPublicKey`, and the cancellation of an expired staff operation is
+`Expired`.
 
 Power adds these refusals. None sends a command:
 
@@ -206,9 +212,9 @@ An `OutcomeUnknown` power operation becomes a [recovery hold][unknown]. The
 The recovery decisions are defined in the device operations proposal. `Retry`
 does not apply, because only a `DeviceRecovery` settles a power hold.
 
-This proposal also requires the [machine
-lifecycle](../machine-lifecycle/README.md) projector to report a held
-Machine's power as `Unknown` until the hold settles.
+A held Machine's power is unverified, so the [machine
+lifecycle](../machine-lifecycle/README.md#machine) rule reports it as `Unknown`
+until the hold settles.
 
 ### Delivery phases
 
@@ -226,8 +232,8 @@ Machine's power as `Unknown` until the hold settles.
 These tests are required and not written. Each checks the result and the
 number of commands at the BMC:
 
-- Each refusal reason in [Admission](#admission), including `SharedPublicKey`
-  and `Expired`, with no command.
+- Each refusal reason in [Admission](#admission), including `SharedPublicKey`,
+  and an `Expired` cancellation, with no command.
 - On, off, restart and power cycle against the outcome table, including a lost
   response.
 - `On` or `ForceOff` on a server already in that state, with no command.
@@ -251,8 +257,8 @@ proposal][ops].
 
 ### What must operators monitor?
 
-Power recovery holds, most urgently on allocated servers, `Expired` and `Stale`
-refusals, and restarts that end `OutcomeUnknown` on each BMC model.
+Power recovery holds, most urgently on allocated servers, `Expired`
+cancellations, `Stale` refusals, and restarts that end `OutcomeUnknown` on each BMC model.
 
 ### How are failures recovered?
 

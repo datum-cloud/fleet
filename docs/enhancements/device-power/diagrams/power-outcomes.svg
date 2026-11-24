@@ -31,5 +31,4 @@
 <text x="768" y="396" class="heading" text-anchor="middle">Power recovery hold</text>
 <text x="768" y="422" class="label" text-anchor="middle">Settled by a DeviceRecovery</text>
 <text x="768" y="445" class="label" text-anchor="middle">citing a later, settled power read</text>
-<text x="331" y="420" class="detail" text-anchor="middle">The result is set once.</text>
 </svg>

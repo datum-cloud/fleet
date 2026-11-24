@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" aria-labelledby="title description">
-<title id="title">What a site worker does for one power operation</title><desc id="description">The worker receives an admitted power operation with its admission time. It reads the offered power actions and the current power state from the BMC. Unless the server is already in the requested state, it sends one command. It then reads the power state until the requested state or reset evidence appears, or three minutes pass. It returns a result with the power state before and after. Before sending, the worker refuses with no command if it started more than two minutes after admission, if a restart or power cycle targets a server that is off, or if the power state is still changing.</desc>
+<title id="title">What a site worker does for one power operation</title><desc id="description">The worker receives an admitted power operation with its admission time. It reads the offered power actions and the current power state from the BMC. Unless the server is already in the requested state, it sends one command. It then reads the power state until the requested state or reset evidence appears, or three minutes pass. It returns a result with the power state before and after. Before sending, the worker refuses with no command if it started more than two minutes after admission, if the system UUID differs, if the action is not offered, if a restart or power cycle targets a server that is off, or if the power state is still changing.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
 <rect width="960" height="660" fill="white"/>
@@ -20,7 +20,7 @@
 <text x="640" y="190" class="label" text-anchor="middle">Read offered actions</text>
 <text x="640" y="213" class="label" text-anchor="middle">and power state</text>
 <path d="M 480 225 L 800 225" class="line"/>
-<text x="640" y="272" class="label" text-anchor="middle">Power state</text>
+<text x="640" y="272" class="label" text-anchor="middle">Offered actions, power state</text>
 <path d="M 800 284 L 480 284" class="line" stroke-dasharray="5 4"/>
 <text x="640" y="320" class="label" text-anchor="middle">One command, unless</text>
 <text x="640" y="343" class="label" text-anchor="middle">already in that state</text>
@@ -32,5 +32,6 @@
 <text x="320" y="503" class="label" text-anchor="middle">and after</text>
 <path d="M 480 515 L 160 515" class="line" stroke-dasharray="5 4"/>
 <rect x="28" y="590" width="904" height="52" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="480" y="622" class="label" text-anchor="middle">No command if late, if a restart targets an off server, or if power is changing.</text>
+<text x="480" y="613" class="label" text-anchor="middle">No command if late, on a UUID mismatch, an action not offered,</text>
+<text x="480" y="634" class="label" text-anchor="middle">a restart of an off server, or a power state still changing.</text>
 </svg>
