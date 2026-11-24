@@ -1,7 +1,7 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PhysicalInventory } from './physical-inventory';
 import { fixtureInventory, FIXTURE_NAMES } from '../lib/inventory-fixtures';
 import { redactInventory } from '../lib/inventory-read-access';
@@ -69,6 +69,20 @@ describe('Device page: discovery health', () => {
     expect(code).toHaveAttribute('title', '3f'.repeat(32));
     expect(within(fact('TLS key')).getByRole('button', { name: 'Copy TLS key fingerprint' })).toBeInTheDocument();
     expect(fact('Key expiry').querySelector('[data-tone]')).toBeNull();
+  });
+
+  it('copies the full fingerprint and says so in the button and its tooltip', async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      show(MATCHED);
+      const copy = within(fact('TLS key')).getByRole('button', { name: 'Copy TLS key fingerprint' });
+      expect(copy).toHaveAttribute('title', 'Copy TLS key fingerprint');
+      fireEvent.click(copy);
+      await waitFor(() => expect(copy).toHaveTextContent(/^Copied$/));
+      expect(copy).toHaveAttribute('title', 'Copied');
+      expect(writeText).toHaveBeenCalledWith('3f'.repeat(32));
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it('shows PinNotApproved as not approved, amber, with the reason in the tooltip, and an expiring key amber', () => {

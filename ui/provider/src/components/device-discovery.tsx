@@ -1,6 +1,7 @@
 // The Device page's view of BMC discovery: Device.status, next to the spec it
 // is compared with. See "Device page" in docs/development/staff-inventory-ui.md.
 // Red is a disagreement or failure, amber needs checking, and OK stays plain.
+import { Button } from '@datum-cloud/datum-ui/button';
 import { useState, type ReactNode } from 'react';
 import type { Device } from '../../../shared/fleet-api';
 import {
@@ -40,10 +41,10 @@ export function ConditionChips({ device }: { device: Device }) {
 
 function CopyValue({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
-  return <button type="button" className="inventory-copy" aria-label={`Copy ${label}`} title={copied ? 'Copied' : `Copy ${label}`}
+  return <Button type="secondary" theme="outline" size="xs" htmlType="button" className="inventory-copy" aria-label={`Copy ${label}`} title={copied ? 'Copied' : `Copy ${label}`}
     onClick={() => { void navigator.clipboard?.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined); }}>
     {copied ? 'Copied' : 'Copy'}
-  </button>;
+  </Button>;
 }
 
 /** Discovery health: conditions, last attempt, TLS key, expiry and approval. */

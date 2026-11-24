@@ -603,8 +603,7 @@
 .inventory-fact-strip .inventory-discovery-chip { line-height:18px; }
 .inventory-discovery-mark[data-tone="danger"] { color:var(--destructive); font-weight:500; }
 .inventory-discovery-key { display:inline-flex; flex-wrap:wrap; align-items:baseline; gap:6px; min-width:0; }
-.inventory-copy { padding:0 6px; border:1px solid var(--border); border-radius:4px; background:transparent; color:var(--muted-foreground); font-size:11px; line-height:18px; cursor:pointer; }
-.inventory-copy:hover,.inventory-copy:focus-visible { color:var(--foreground); }
+.inventory-copy { height:20px; padding:0 6px; font-size:11px; }
 .inventory-discovery-pair { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px 24px; min-width:0; }
 .inventory-discovery-pair > * { min-width:0; }
 .inventory-discovery-identity .inventory-dense-table td:not(:first-child) { white-space:normal; overflow-wrap:anywhere; }
