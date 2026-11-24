@@ -138,6 +138,12 @@ func (p EngagedPublisher) Reconcile(ctx context.Context, request mcreconcile.Req
 		// Not engaged: its engagement replays the consumer objects.
 		return reconcile.Result{}, nil
 	}
+	release, ok := runtime.Acquire()
+	if !ok {
+		// Departing: its next engagement replays the consumer objects.
+		return reconcile.Result{}, nil
+	}
+	defer release()
 	if !runtime.Binding.Project.SameLifetime(p.Options.ConsumerProject) {
 		return reconcile.Result{}, fmt.Errorf("%w: publication consumer %q is engaged as a different project lifetime", manager.ErrProjectIdentityUnavailable, request.ClusterName)
 	}
