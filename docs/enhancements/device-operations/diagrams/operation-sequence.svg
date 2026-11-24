@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="700" viewBox="0 0 960 700" role="img" aria-labelledby="title description">
+<title id="title">One Device operation from request to outcome</title><desc id="description">A requester, either the Fleet provider for Metal or a staff member, creates an operation with an immutable spec. The Fleet coordinator checks the holder and the creator, then claims the custody slot with one conditional update that names the operation and advances the fence. A conflict means another writer changed custody first, and the coordinator reevaluates. The coordinator delivers the admitted operation to its site. The site executor checks the BMC key pin and server identity, acts, and returns a local result carrying the fence. The coordinator records the outcome on custody, releasing the slot or placing a recovery hold, and reports Succeeded, Failed, or Unknown.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="700" fill="white"/>
+<rect x="15" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="120.0" y="53.0" class="heading" text-anchor="middle">Requester</text>
+<path d="M 120 74 L 120 605" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="255" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="360.0" y="53.0" class="heading" text-anchor="middle">Fleet coordinator</text>
+<path d="M 360 74 L 360 605" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="495" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="600" y="42" class="heading" text-anchor="middle">DeviceCustody</text>
+<text x="600" y="64" class="detail" text-anchor="middle">One per Device</text>
+<path d="M 600 74 L 600 605" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="735" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="840.0" y="53.0" class="heading" text-anchor="middle">Site executor</text>
+<path d="M 840 74 L 840 605" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="240.0" y="110" class="label" text-anchor="middle">Create operation</text>
+<text x="240.0" y="133" class="label" text-anchor="middle">with immutable spec</text>
+<path d="M 120 145 L 360 145" class="line"/>
+<text x="480.0" y="180" class="label" text-anchor="middle">Check holder and creator;</text>
+<text x="480.0" y="203" class="label" text-anchor="middle">claim slot, advance fence</text>
+<path d="M 360 215 L 600 215" class="line"/>
+<text x="480.0" y="258" class="label" text-anchor="middle">Committed, or conflict</text>
+<path d="M 600 270 L 360 270" class="line" stroke-dasharray="5 4"/>
+<text x="600.0" y="328" class="label" text-anchor="middle">Deliver the admitted operation to its site</text>
+<path d="M 360 340 L 840 340" class="line"/>
+<text x="600.0" y="390" class="label" text-anchor="middle">Check key pin and identity, act once</text>
+<text x="600.0" y="413" class="label" text-anchor="middle">Local result with the matching fence</text>
+<path d="M 840 425 L 360 425" class="line" stroke-dasharray="5 4"/>
+<text x="480.0" y="465" class="label" text-anchor="middle">Record outcome;</text>
+<text x="480.0" y="488" class="label" text-anchor="middle">release slot, or hold</text>
+<path d="M 360 500 L 600 500" class="line"/>
+<text x="240.0" y="545" class="label" text-anchor="middle">Succeeded, Failed,</text>
+<text x="240.0" y="568" class="label" text-anchor="middle">or Unknown</text>
+<path d="M 360 580 L 120 580" class="line" stroke-dasharray="5 4"/>
+<rect x="28" y="625" width="904" height="52" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480.0" y="657.0" class="label" text-anchor="middle">A lost response is queried, never resent. Unknown keeps custody until recovery.</text>
+</svg>

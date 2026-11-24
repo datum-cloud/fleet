@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="650" viewBox="0 0 960 650" role="img" aria-labelledby="title description">
+<title id="title">Device custody holders and transitions</title><desc id="description">A Device with no holder can be claimed by the allocator for a customer allocation, by an admitted staff operation, or retired. An allocation moves to release when its Machine is deleted. Release returns the Device to no holder only after cleaning and the other release gates are verified. A staff holder returns to no holder when its operation succeeds or fails. An unknown outcome keeps the current holder under a recovery hold. Only an operation that can settle the hold runs, and the server cannot return to no holder until it is settled.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 19px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="650" fill="white"/>
+<rect x="380" y="60" width="200" height="80" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="480" y="95" class="label" text-anchor="middle">Allocation</text>
+<text x="480" y="120" class="detail" text-anchor="middle">Customer holds it</text>
+<rect x="720" y="60" width="200" height="80" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="820" y="95" class="label" text-anchor="middle">Release</text>
+<text x="820" y="120" class="detail" text-anchor="middle">Cleaning runs</text>
+<rect x="380" y="250" width="200" height="80" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="285" class="label" text-anchor="middle">None</text>
+<text x="480" y="310" class="detail" text-anchor="middle">No holder</text>
+<rect x="40" y="250" width="200" height="80" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="140" y="285" class="label" text-anchor="middle">Retired</text>
+<text x="140" y="310" class="detail" text-anchor="middle">Terminal</text>
+<rect x="380" y="440" width="200" height="80" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="475" class="label" text-anchor="middle">Service</text>
+<text x="480" y="500" class="detail" text-anchor="middle">Staff operation runs</text>
+<path d="M 480 250 V 140" class="line"/>
+<text x="492" y="200" class="detail" text-anchor="start">Allocator claims it</text>
+<path d="M 580 100 H 720" class="line"/>
+<text x="650" y="88" class="detail" text-anchor="middle">Machine deleted</text>
+<path d="M 820 140 V 290 H 580" class="line"/>
+<text x="700" y="280" class="detail" text-anchor="middle">Release gates verified</text>
+<path d="M 380 290 H 240" class="line"/>
+<text x="310" y="278" class="detail" text-anchor="middle">Retired</text>
+<path d="M 460 330 V 440" class="line"/>
+<text x="450" y="390" class="detail" text-anchor="end">Staff operation admitted</text>
+<path d="M 500 440 V 330" class="line"/>
+<text x="510" y="390" class="detail" text-anchor="start">Succeeded or Failed</text>
+<rect x="20" y="560" width="920" height="75" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="480" y="590" class="label" text-anchor="middle">An Unknown outcome keeps the holder under a recovery hold.</text>
+<text x="480" y="617" class="detail" text-anchor="middle">Only a settling operation runs, and the server cannot return to None.</text>
+</svg>
