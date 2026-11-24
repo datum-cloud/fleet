@@ -172,11 +172,10 @@ result.
 
 #### Operations
 
-Every operation has a device, an authority, and inputs. A Fleet admission
-webhook records the authenticated creator on each operation when it is
-created. Clients cannot set or change that field. Milo calls the webhook from
-its root API server, because Milo does not apply admission policies stored in
-a project.
+Every operation has a device, an authority, inputs, and a creator. The creator
+must equal the authenticated caller. A Fleet validating webhook rejects any
+other value and any change to it. Milo calls the webhook from its root API
+server, because Milo does not apply admission policies stored in a project.
 
 | Kind | Creator | Authority | Required holder | Inputs |
 | --- | --- | --- | --- | --- |
@@ -185,7 +184,7 @@ a project.
 | `DevicePowerOperation` | Staff power operator | `serviceRequest` | `None` | Power action, reason, expected system UUID |
 | `DeviceWipe` | Release controller | `allocationRef` | `Release` | Cleaning policy digest pinned at allocation, target disks |
 | `DeviceCommissioning` | Staff commissioning operator | `serviceRequest` | `None`, or `Service` under a commissioning hold | Commissioning plan and digest |
-| `DeviceRecovery` | Staff recovery operator | `serviceRequest` | Any, with a recovery hold | Held operation, evidence, and a decision: `Settle` or `Retire` |
+| `DeviceRecovery` | Staff recovery operator | `serviceRequest` | Any with a recovery hold, or `Unverified` custody | Evidence and a decision: `Settle`, `Retry`, `Retire`, or `Resolve` |
 
 No other creator and authority pairs are valid. Staff roles can read custody,
 operations, and MachineAllocations.
@@ -199,7 +198,7 @@ metadata:
   name: alloc-3b9d61c2-install-1
   namespace: default
 spec:
-  creator: system:serviceaccount:fleet-system:metal-provider   # set by the webhook
+  creator: system:serviceaccount:fleet-system:metal-provider   # must be the caller
   deviceRef: {name: server-example-001}
   authority:
     allocationRef: {name: alloc-3b9d61c2}
@@ -225,7 +224,7 @@ plus `Pending`:
 | `Dispatched` | The site accepted the operation. |
 | `Verifying` | The site is checking the success test. |
 | `Succeeded` | The success test passed. |
-| `Failed` | Nothing was sent, or the server refused and did not change. |
+| `Failed` | Admission refused it, nothing was sent, or the server refused and did not change. |
 | `Cancelled` | Ended before admission: replaced, expired, or no longer matching the holder. |
 | `OutcomeUnknown` | A command may have reached the server, and Fleet cannot prove the result. |
 
@@ -241,7 +240,8 @@ If that operation no longer exists, the coordinator skips the copy.
 The coordinator admits an operation with one conditional update to custody,
 only if all of these hold:
 
-1. Custody is `Verified`.
+1. Custody is `Verified`, or the operation is a `DeviceRecovery` with
+   `Resolve`.
 2. The creator, authority, and holder match a row of the operations table.
 3. An `allocationRef` names the holder's allocation.
 4. No operation is active.
@@ -308,28 +308,38 @@ the result.
 
 An operation ends as `OutcomeUnknown` when its deadline passes without a
 proven result, or when the site cannot prove what the server did. The
-coordinator then sets a recovery hold on custody, and the holder stays.
+coordinator then moves it from `activeOperation` to `recoveryHold`. The holder
+stays.
 
 While a hold exists:
 
 - the server cannot return to `None`;
 - a held `Allocation` can still move to `Release`, and the hold moves with it;
   and
-- the coordinator admits only the settling operations in this table, and only
-  after the site confirms that the held operation's worker has stopped.
+- the coordinator admits only the settling operations in this table.
+
+Admitting a settling operation raises the fence, so the site stops the held
+worker before it starts newer work. A `DeviceRecovery` sends nothing to the
+server, but it is delivered the same way. The coordinator applies it only after
+the site reports the raised fence.
 
 | Held operation | Settled by |
 | --- | --- |
 | Power | A `DeviceRecovery` with fresh discovery evidence of the power state |
 | Installation | A later `DeviceInstallation` that succeeds, or a `DeviceWipe` that succeeds after release |
-| Wipe | A later `DeviceWipe` that succeeds |
+| Wipe | A `DeviceRecovery` with `Retry`, then a later `DeviceWipe` that succeeds |
 | Commissioning | A later `DeviceCommissioning` that succeeds |
 
-Settling a hold returns a `Service` holder to `None` and leaves an
-`Allocation` or `Release` holder in place. A `DeviceRecovery` with decision
-`Retire` sets a `Service` or `Release` holder to `Retired`. Retiring from
-`Release` records how the disks were disposed of. Fleet never retries an
-operation automatically.
+`DeviceRecovery` decisions:
+
+- `Settle` clears the hold. It returns a `Service` holder to `None` and leaves
+  an `Allocation` or `Release` holder in place.
+- `Retry` lets the held operation's requester create one settling operation.
+  Fleet never retries an operation automatically.
+- `Retire` sets a `Service` or `Release` holder to `Retired`. Retiring from
+  `Release` records how the disks were disposed of.
+- `Resolve` names the holder of `Unverified` custody. See [Rebuilding
+  custody](#rebuilding-custody).
 
 ### Write order and crash recovery
 
@@ -351,16 +361,16 @@ history after that.
 ### Rebuilding custody
 
 If custody is missing for an existing Device, for example after a restore, the
-coordinator creates it as `Unverified`. An `Unverified` server admits no
-operation and cannot be allocated. The coordinator rebuilds custody from:
+coordinator creates it as `Unverified`. An `Unverified` server cannot be
+allocated and admits only a `DeviceRecovery` with `Resolve`. The coordinator rebuilds custody from:
 
 - the Device's inventory lifecycle and `Retire` recoveries, which set
   `Retired`;
 - live MachineAllocations for the Device, which set `Allocation` or `Release`.
   A rebuilt `Release` reopens every release gate, and the release controller
   verifies each again;
-- unfinished operations, which set a recovery hold, and set `Service` for a
-  staff operation; and
+- operations that have not ended, even if their status still says `Pending`,
+  which set a recovery hold, and set `Service` for a staff operation; and
 - each site's stored fence, which sets the new fence above every fence already
   used.
 
@@ -368,7 +378,8 @@ The coordinator marks custody `Verified` only after every site that serves the
 Device reports its fence. Custody stays `Unverified` until an operator resolves
 the conflict if two sources set different holders, if two live
 MachineAllocations name the Device, or if the Device UID differs from
-`deviceRef.uid`.
+`deviceRef.uid`. If a site is lost, an operator removes it from the Device's
+sites in inventory, and the rebuild continues without it.
 
 ### Customer data
 
