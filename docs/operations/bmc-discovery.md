@@ -115,6 +115,33 @@ no role. Discovery writes with a JSON merge patch on `devices/status` and an
 optimistic lock. If an authorizer were to check `devices.patch` for a status
 patch, the write would be denied, so a misconfiguration fails closed.
 
+### Client certificate rotation
+
+Discovery loads the Milo kubeconfig once, at start. It picks up a renewed
+client certificate without a restart only when the kubeconfig names the
+certificate and key by path:
+
+```yaml
+users:
+  - name: discovery
+    user:
+      client-certificate: /var/run/fleet/milo/tls.crt
+      client-key: /var/run/fleet/milo/tls.key
+```
+
+client-go then rereads both files every five minutes and, when they change,
+closes its connections so the next request presents the new certificate.
+Renew well before expiry to cover that delay. A kubeconfig that
+embeds `client-certificate-data` keeps the certificate it started with, and
+discovery fails once that certificate expires, even if the Secret behind it
+was renewed.
+
+To rotate in place, mount one projected volume at `/var/run/fleet/milo` that
+combines the kubeconfig and the certificate Secret's `ca.crt`, `tls.crt` and
+`tls.key`. Mount the whole volume, not individual files with `subPath`,
+because Kubernetes does not update `subPath` mounts. Set `miloKubeconfig` to
+the kubeconfig's path in that volume.
+
 ### First run with `--once`
 
 `--once` contacts each eligible BMC once, prints the statuses it would write
