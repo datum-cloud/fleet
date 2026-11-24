@@ -45,7 +45,7 @@ func TestManualInventoryRecordsPassAdmission(t *testing.T) {
 			if spec["provenance"] != nil || record["status"] != nil {
 				t.Fatal("manual example must carry no provenance or status assertion")
 			}
-			if kind == "DeviceClaim" && spec["lifecycle"] != "Installation" || kind == "Device" && spec["topologyAuthority"] != "Cable" {
+			if kind == "DeviceClaim" && spec["lifecycle"] != ClaimInstallation || kind == "Device" && spec["topologyAuthority"] != "Cable" {
 				t.Fatal("new manual records must use typed installation and Cable topology")
 			}
 		}
@@ -65,10 +65,8 @@ func TestManualInventoryRecordsPassAdmission(t *testing.T) {
 	t.Logf("validated %d records for create and unchanged update; no API writes", count)
 }
 
-func TestTypedPlacementAndLegacyBinding(t *testing.T) {
+func TestTypedPlacementScopes(t *testing.T) {
 	claim := syntheticClaim()
-	claim.Spec.Lifecycle = "Installation"
-	claim.Spec.Ports = nil
 	claim.Spec.Placement = Placement{Scope: "RackMembership", RackRef: &LocalReference{Name: "rack-a"}}
 	if errs := admit(t, "DeviceClaim", object(t, claim), nil); len(errs) != 0 {
 		t.Fatal(errs)
@@ -91,14 +89,6 @@ func TestTypedPlacementAndLegacyBinding(t *testing.T) {
 	candidate.Spec.Placement.Position = 1
 	if errs := admit(t, "DeviceClaim", object(t, candidate), nil); len(errs) == 0 {
 		t.Fatal("accepted synthetic units on rack membership")
-	}
-	candidate = claim
-	if errs := admit(t, "DeviceClaim", object(t, candidate), object(t, syntheticClaim())); len(errs) == 0 {
-		t.Fatal("converted a legacy slot in place")
-	}
-	candidate.Spec.Ports = syntheticClaim().Spec.Ports
-	if errs := admit(t, "DeviceClaim", object(t, candidate), nil); len(errs) == 0 {
-		t.Fatal("accepted competing inline topology")
 	}
 }
 
@@ -163,8 +153,8 @@ func TestComponentSafety(t *testing.T) {
 		t.Fatal("accepted incompatible pass-through component types")
 	}
 	candidate = device.DeepCopyObject().(*Device)
-	candidate.Spec.Interfaces = syntheticDevice().Spec.Interfaces
+	candidate.Spec.TopologyAuthority = ""
 	if errs := admit(t, "Device", object(t, candidate), nil); len(errs) == 0 {
-		t.Fatal("accepted Cable and inline topology writers")
+		t.Fatal("accepted typed components without Cable topology")
 	}
 }

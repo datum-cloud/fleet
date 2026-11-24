@@ -19,12 +19,15 @@ spec:
     subresources:
       status: {}
     additionalPrinterColumns:
+    - name: Scope
+      type: string
+      jsonPath: .spec.placement.scope
     - name: Facility
       type: string
-      jsonPath: .spec.placement.facility
+      jsonPath: .spec.placement.facilityRef.name
     - name: Rack
       type: string
-      jsonPath: .spec.placement.rack
+      jsonPath: .spec.placement.rackRef.name
     - name: Position
       type: integer
       jsonPath: .spec.placement.position
@@ -49,17 +52,12 @@ spec:
           spec:
             type: object
             required:
+            - lifecycle
             - expectedIdentity
             - placement
             x-kubernetes-validations:
-            - rule: has(self.lifecycle) == has(oldSelf.lifecycle)
-              message: legacy claims cannot be reinterpreted as installations
-            - rule: '!has(self.lifecycle) || self.placement == oldSelf.placement'
+            - rule: self.placement == oldSelf.placement
               message: installation placement is immutable; migration requires an explicit handover
-            - rule: '!has(self.lifecycle) || !has(self.ports) || self.ports.all(p, !has(p.expectedPeer))'
-              message: Cable is the only expected topology authority for installations
-            - rule: has(self.lifecycle) == has(self.placement.scope)
-              message: typed placement requires an installation lifecycle; legacy slots keep their text placement
             properties:
               expectedIdentity:
                 type: object
@@ -79,15 +77,9 @@ spec:
                     maxLength: 253
               placement:
                 type: object
+                required:
+                - scope
                 properties:
-                  facility:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
-                  rack:
-                    type: string
-                    minLength: 1
-                    maxLength: 253
                   position:
                     type: integer
                     format: int32
@@ -125,52 +117,13 @@ spec:
                     minLength: 1
                     maxLength: 253
                 x-kubernetes-validations:
-                - rule: 'has(self.scope) ? (!has(self.facility) && !has(self.rack)) : (has(self.facility) && has(self.rack)
-                    && has(self.position) && has(self.face) && !has(self.facilityRef) && !has(self.rackRef) && !has(self.mount))'
-                  message: choose legacy text placement or typed placement, never both
-                - rule: '!has(self.scope) || (self.scope == ''Facility'' ? (has(self.facilityRef) && !has(self.rackRef))
-                    : (has(self.rackRef) && !has(self.facilityRef)))'
+                - rule: 'self.scope == ''Facility'' ? (has(self.facilityRef) && !has(self.rackRef)) : (has(self.rackRef)
+                    && !has(self.facilityRef))'
                   message: typed placement requires exactly the reference appropriate to its scope
-                - rule: '!has(self.scope) || (self.scope == ''RackUnits'' ? (has(self.position) && has(self.height)
-                    && has(self.face) && !has(self.mount)) : (!has(self.position) && !has(self.height) && !has(self.face)
-                    && (self.scope == ''NonRackUnitMount'' ? has(self.mount) : !has(self.mount))))'
+                - rule: 'self.scope == ''RackUnits'' ? (has(self.position) && has(self.height) && has(self.face) && !has(self.mount))
+                    : (!has(self.position) && !has(self.height) && !has(self.face) && (self.scope == ''NonRackUnitMount''
+                    ? has(self.mount) : !has(self.mount)))'
                   message: partial placement cannot assert rack units; non-unit mounts require a mount identifier
-              ports:
-                type: array
-                maxItems: 128
-                x-kubernetes-list-type: map
-                x-kubernetes-list-map-keys:
-                - name
-                items:
-                  type: object
-                  required:
-                  - name
-                  properties:
-                    name:
-                      type: string
-                      minLength: 1
-                      maxLength: 63
-                    type:
-                      type: string
-                      maxLength: 253
-                    speedMbps:
-                      type: integer
-                      format: int64
-                      minimum: 1
-                    expectedPeer:
-                      type: object
-                      required:
-                      - device
-                      - port
-                      properties:
-                        device:
-                          type: string
-                          minLength: 1
-                          maxLength: 253
-                        port:
-                          type: string
-                          minLength: 1
-                          maxLength: 253
               lifecycle:
                 type: string
                 enum:
@@ -276,8 +229,6 @@ spec:
                 has(b.macAddress) && b.macAddress == a.macAddress).size() == 1 && (!has(self.unmappedMACAddresses)
                 || !(a.macAddress in self.unmappedMACAddresses))))'
               message: a MAC address may be recorded only once
-            - rule: '!has(self.topologyAuthority) || !has(self.interfaces) || self.interfaces.all(p, !has(p.peer))'
-              message: Cable topology excludes inline peers
             - rule: '!has(self.components) || has(self.topologyAuthority)'
               message: typed components require Cable topology
             - rule: '!has(self.internalMappings) || (has(self.components) && self.internalMappings.all(m, (m.from.componentID
@@ -458,20 +409,6 @@ spec:
                       type: string
                       maxLength: 17
                       pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
-                    peer:
-                      type: object
-                      required:
-                      - device
-                      - port
-                      properties:
-                        device:
-                          type: string
-                          minLength: 1
-                          maxLength: 253
-                        port:
-                          type: string
-                          minLength: 1
-                          maxLength: 253
               unmappedMACAddresses:
                 type: array
                 maxItems: 32

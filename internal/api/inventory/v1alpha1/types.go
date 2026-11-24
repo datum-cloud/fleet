@@ -1,6 +1,6 @@
 // Package v1alpha1 holds the six observational physical inventory kinds in
-// fleet.datumapis.com. Legacy slot claims retain their historical bindings;
-// new typed claims describe individual installations without accepting them.
+// fleet.datumapis.com. A DeviceClaim describes one planned installation by
+// typed placement without accepting it.
 //
 // All are operator-written records. Registering a Device authorizes no
 // hardware effect and creates or changes no MachineCapacity. Device status has
@@ -18,7 +18,7 @@ import (
 
 var GroupVersion = schema.GroupVersion{Group: "fleet.datumapis.com", Version: "v1alpha1"}
 
-// DeviceClaim retains legacy slot plans and typed observational installations.
+// DeviceClaim records one typed observational installation.
 type DeviceClaim struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -27,13 +27,16 @@ type DeviceClaim struct {
 }
 
 type DeviceClaimSpec struct {
-	DisplayName      string           `json:"displayName,omitempty"`
-	Lifecycle        string           `json:"lifecycle,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	// Lifecycle is required and is always ClaimInstallation.
+	Lifecycle        string           `json:"lifecycle"`
 	CableRefs        []LocalReference `json:"cableRefs,omitempty"`
 	ExpectedIdentity ExpectedIdentity `json:"expectedIdentity"`
 	Placement        Placement        `json:"placement"`
-	Ports            []ExpectedPort   `json:"ports,omitempty"`
 }
+
+// ClaimInstallation is the only DeviceClaim lifecycle.
+const ClaimInstallation = "Installation"
 
 // ExpectedIdentity is the planned equipment. Serial is usually unknown at plan
 // time and is optional.
@@ -43,34 +46,19 @@ type ExpectedIdentity struct {
 	Serial       string `json:"serial,omitempty"`
 }
 
-// Placement retains legacy text placement or an explicit typed scope.
+// Placement is the typed installation scope. Facility scope names a
+// FacilityRef; the rack scopes name a RackRef. RackUnits also needs Position,
+// Height and Face, and NonRackUnitMount needs Mount. Placement is immutable.
 type Placement struct {
-	Scope       string          `json:"scope,omitempty"`
+	Scope       string          `json:"scope"`
 	FacilityRef *LocalReference `json:"facilityRef,omitempty"`
 	RackRef     *LocalReference `json:"rackRef,omitempty"`
 	Mount       string          `json:"mount,omitempty"`
-	Facility    string          `json:"facility,omitempty"`
-	Rack        string          `json:"rack,omitempty"`
 	Position    int32           `json:"position,omitempty"`
 	Height      int32           `json:"height,omitempty"`
 	// Face is the mounted rack face: the rack face the chassis front points
 	// toward. See ReportedPlacement.Face.
 	Face string `json:"face,omitempty"`
-}
-
-// ExpectedPort is a planned physical port and the cable peer it should reach.
-// Logical LAGs and VLANs are not ports.
-type ExpectedPort struct {
-	Name         string    `json:"name"`
-	Type         string    `json:"type,omitempty"`
-	SpeedMbps    int64     `json:"speedMbps,omitempty"`
-	ExpectedPeer *PortPeer `json:"expectedPeer,omitempty"`
-}
-
-// PortPeer names the far end of a cable by device name and port.
-type PortPeer struct {
-	Device string `json:"device"`
-	Port   string `json:"port"`
 }
 
 // DeviceClaimStatus is reserved for verifiers. Nothing writes it yet.
@@ -183,10 +171,11 @@ type BMC struct {
 	Endpoint string `json:"endpoint"`
 }
 
+// Interface names a detected network interface and its MAC address. Cable
+// records carry what it connects to.
 type Interface struct {
-	Name       string    `json:"name"`
-	MACAddress string    `json:"macAddress,omitempty"`
-	Peer       *PortPeer `json:"peer,omitempty"`
+	Name       string `json:"name"`
+	MACAddress string `json:"macAddress,omitempty"`
 }
 
 // DeviceStatus is what read-only BMC discovery observed, and how it compares
