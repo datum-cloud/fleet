@@ -132,15 +132,24 @@ spec:
   # Staff only: the server staff expect behind the BMC.
   expectedSystemUUID: 00000000-0000-4000-8000-0000000000a1
 status:
-  # When the one command was sent. Absent if none was sent.
+  # Power result evidence, copied from the site's result.
   requestSentAt: "2026-01-02T03:04:06Z"
   power:
     before: {state: "On", observedAt: "2026-01-02T03:04:05Z"}
     after: {state: "On", observedAt: "2026-01-02T03:04:41Z"}
+  resetEvidence: LastResetTime
 ```
 
-The coordinator records the power fields with the site's result. They never
-carry a credential or BMC response content.
+A power result carries this evidence, which the coordinator copies to status as
+[site execution][site] describes:
+
+| Field | Meaning |
+| --- | --- |
+| `requestSentAt` | When the one command was sent. Absent if none was sent. |
+| `power.before`, `power.after` | The power state the worker read before the command and at the end. |
+| `resetEvidence` | For a restart or power cycle: `LastResetTime` if the BMC reported a reset after the request, or `ObservedOff` if the worker saw the server off. |
+
+The evidence never carries a credential or BMC response content.
 
 ### Admission
 
@@ -149,17 +158,17 @@ run a power operation. A staff operation needs holder `None`, so disabled
 capacity on the Device does not block it. A customer operation runs under the
 Machine's allocation.
 
-Power adds these refusals. Each ends the operation as `Failed` with nothing
-sent:
+Power adds these refusals. Each ends the operation with nothing sent:
+`Expired` as `Cancelled`, and the others as `Failed`.
 
 | Reason | Refused by | When |
 | --- | --- | --- |
 | `SystemUUIDNotRecorded` | Coordinator | A staff operation targets a Device with no system UUID on record. |
 | `SystemUUIDMismatch` | Coordinator or worker | `expectedSystemUUID` differs from the Device record, discovery or the BMC. |
 | `DiscoveryNotCurrent` | Coordinator | Discovery has not read the BMC within twice its interval. |
-| `SharedPublicKey` | Coordinator | The BMC shares its TLS key with another BMC, so the key cannot tell them apart. |
+| `SharedPublicKey` | Worker | The [site execution][site] shared-key check fails. |
 | `ResetTypeNotOffered` | Coordinator or worker | Discovery or the BMC does not offer the action. |
-| `Expired` | Coordinator | A staff operation stayed pending for five minutes. |
+| `Expired` | Coordinator | A staff operation was not admitted within five minutes. |
 | `Stale` | Worker | The worker started more than two minutes after admission. |
 | `NotPoweredOn` | Worker | A restart or power cycle targets a server that is off. |
 | `PowerStateNotSettled` | Worker | The power state is still changing. |
@@ -178,7 +187,7 @@ observes after the command, including after a lost response:
 | Action | `Succeeded` when | Otherwise |
 | --- | --- | --- |
 | `On`, `ForceOff` | The requested power state appears within three minutes. | `OutcomeUnknown` |
-| `ForceRestart`, `PowerCycle` | The BMC shows a reset after the request, and the server is on again. | `OutcomeUnknown` |
+| `ForceRestart`, `PowerCycle` | `resetEvidence` is set within three minutes, and the server is on again. | `OutcomeUnknown` |
 
 A BMC that refuses the command gives `Failed`, unless the power state changed
 anyway, which gives `OutcomeUnknown`.
@@ -266,11 +275,6 @@ See [Recovery](#recovery).
   test, or ship earlier on test hardware only?
 - **Customer power off.** `Off` maps to `ForceOff`, which cuts power without
   warning the operating system. Should Metal offer a graceful power off?
-- **Shared TLS keys.** The refusal protects every kind that contacts a BMC.
-  Should the device operations proposal apply it to all kinds?
-- **Result detail.** The device operations proposal makes operation status a
-  copy of custody, which has no room for the power fields. Should custody's
-  last result carry kind-specific detail?
 
 ## Infrastructure needed
 
