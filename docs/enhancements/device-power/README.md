@@ -333,7 +333,8 @@ create a new operation if one is still needed. Nothing retries automatically.
 ## Implementation history
 
 - 2026-11-24: Proposed. The design builds on BMC discovery, TLS key pinning
-  and the per-operation worker pattern already used for installation.
+  and per-operation workers from the installation work, which exist on an
+  integration branch and are not yet on `main`.
 
 ## Drawbacks
 
