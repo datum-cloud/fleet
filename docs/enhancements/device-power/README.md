@@ -26,8 +26,9 @@ This is a proposal. None of it is implemented.
 
 Staff who build and maintain hardware need to power servers on and off, and to
 reset them. Today they do it by hand in each server's management controller
-(BMC). Fleet keeps no record of who did it, the action uses credentials Fleet
-does not manage, and nothing stops a reset of a server a customer is using.
+(BMC). Fleet keeps no record of who did it, the action bypasses the per-Device
+credentials and TLS checks Fleet already uses, and nothing stops a reset of a
+server a customer is using.
 
 This proposal adds a `DevicePowerOperation` resource. A staff member creates one
 to ask for a single power action on one unallocated Device. Fleet checks the
@@ -159,14 +160,21 @@ sends nothing, when any of these holds:
 | `SystemUUIDNotRecorded` | The Device has no system UUID on record. |
 | `SystemUUIDMismatch` | The expected UUID differs from the Device record. |
 | `DiscoveryNotCurrent` | Discovery has not recently read the BMC and matched its identity. |
+| `SystemNotObserved` | Discovery did not see exactly one server with the expected UUID. |
+| `SharedPublicKey` | The BMC shares its TLS key with another BMC, so the key cannot tell them apart. |
 | `ResetTypeNotOffered` | The server does not offer the requested action. |
+| `DeviceNotFound` | The Device does not exist in the namespace. |
 | `DeviceRetired` | The Device is retired. |
 | `Expired` | The operation waited more than five minutes to be accepted. |
 
-**Execution.** The worker re-checks the server's identity and offered actions,
-reads the power state, and sends one command. If the server is already in the
-requested state, the worker sends nothing and reports success. A restart or
-power cycle of a server that is off is refused.
+**Execution.** Just before it starts the worker, the dispatcher checks again
+that no capacity is defined on the Device. A worker that starts more than two
+minutes after that check, for example because its image was slow to pull,
+refuses with reason `Stale` and sends nothing. The worker then re-checks the
+server's identity and offered actions, reads the power state, and sends one
+command. If the server is already in the requested state, it sends nothing and
+reports success. It refuses a restart or power cycle of a server that is off,
+and any action while the power state is still changing.
 
 **Result.** HTTP success from the BMC is not proof. The result depends on what
 the worker observes afterwards:
@@ -176,8 +184,9 @@ the worker observes afterwards:
 | `On`, `ForceOff` | The requested power state appears within three minutes. | `Unknown` |
 | `ForceRestart`, `PowerCycle` | The BMC shows that a reset happened after the request, and the server is on again. | `Unknown` |
 
-A BMC that refuses the command gives `Failed`. A command whose response is lost
-is never resent, and its result follows the table above.
+A BMC that refuses the command gives `Failed`, unless the power state has
+changed anyway, which gives `Unknown`. A command whose response is lost is
+never resent, and its result follows the table above.
 
 **What staff see when something breaks.** If Fleet knows nothing was sent, the
 result is `Failed`. If a command may have been sent and Fleet cannot prove the
@@ -205,8 +214,9 @@ command already sent.
 The dispatcher could, in principle, start a worker with any credential in its
 site. Admission policies in the site limit every worker to the approved image,
 one credential, and no extra privileges. A worker pointed at the wrong BMC fails
-the TLS key check before it sends the credential. A worker given the wrong
-credential fails the identity check before it sends a command.
+the TLS key check before it sends the credential. Fleet refuses Devices whose
+BMCs share a TLS key, because the check cannot tell those BMCs apart. A worker
+given the wrong credential fails the identity check before it sends a command.
 
 ## Design decisions
 
@@ -273,8 +283,10 @@ button.
    cycle stay disabled on real hardware until this test shows a restart can be
    proven.
 5. **Allocator gate.** The allocator refuses capacity whose Device has a running
-   operation. This closes a window of about two minutes between acceptance and
-   the command, in which new capacity could be defined.
+   operation. This closes the window of up to two minutes between the
+   dispatcher's last capacity check and the command. New capacity is disabled
+   for allocation by default, so using that window would also take a second
+   operator action.
 
 ## Open design questions
 
@@ -283,7 +295,8 @@ button.
 - **Lost response, then the right state.** The proposal reports `Succeeded`
   when the requested power state appears after a lost response. The stricter
   option reports `Unknown`.
-- **When restarts ship.** Should restart and power cycle wait for the
+- **Restart evidence.** A restart can be proven only when the BMC reports
+  that a reset happened. Should restart and power cycle wait for the
   real-hardware test, or ship earlier for the lab only?
 - **Graceful actions.** They are excluded because an unallocated server often
   has no trusted operating system. Does anyone need them?
@@ -292,8 +305,9 @@ button.
 - **Unserved operations.** An operation for a Device that no site serves is
   never accepted. Should something expire it?
 - **Credential naming.** Workers find their credential by a name derived from
-  the Device, which changes how discovery credentials are named. Is that
-  acceptable, or should a credential broker handle it?
+  the Device, which changes how discovery credentials are named. The
+  alternatives are a dispatcher that can read credentials, or a credential
+  broker. Which should Fleet use?
 - **Installation server list.** The installation system keeps its own list of
   servers. Should it derive that list from Devices, so the capacity check
   covers it?
