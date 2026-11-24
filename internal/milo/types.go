@@ -196,30 +196,27 @@ const (
 )
 
 // AuthorityRecord is the private Milo authority state for one claim lifetime.
-// AcceptedRequirements may hold the pre-exact CPU and memory shape for records
-// written before exact requests. It re-encodes verbatim, so the retained
-// requirements digest stays valid; see controller.RetainedRequirements.
 type AuthorityRecord struct {
-	SchemaVersion        int                             `json:"schemaVersion"`
-	RecordID             string                          `json:"recordID"`
-	State                AuthorityState                  `json:"state"`
-	ClaimNamespace       string                          `json:"claimNamespace"`
-	ClaimName            string                          `json:"claimName"`
-	ClaimUID             types.UID                       `json:"claimUID"`
-	SourceRequest        SourceUseRequest                `json:"sourceRequest"`
-	SourceReceipt        SourceUseReceipt                `json:"sourceReceipt"`
-	ContractDigest       string                          `json:"contractDigest"`
-	AcceptedRequirements controller.RetainedRequirements `json:"acceptedRequirements"`
-	Entitlement          *EntitlementEvidence            `json:"entitlement,omitempty"`
-	QuotaIntent          *QuotaIntent                    `json:"quotaIntent,omitempty"`
-	QuotaHold            *QuotaHold                      `json:"quotaHold,omitempty"`
-	FenceReceipt         *AdmissionCommitReceipt         `json:"fenceReceipt,omitempty"`
-	AssetID              string                          `json:"assetID,omitempty"`
-	BindingID            string                          `json:"bindingID,omitempty"`
-	Settlement           *SettlementReceipt              `json:"settlement,omitempty"`
-	LastSettledHold      *QuotaHold                      `json:"lastSettledHold,omitempty"`
-	LastSettlement       *SettlementReceipt              `json:"lastSettlement,omitempty"`
-	NoHold               *NoHoldReceipt                  `json:"noHold,omitempty"`
+	SchemaVersion        int                        `json:"schemaVersion"`
+	RecordID             string                     `json:"recordID"`
+	State                AuthorityState             `json:"state"`
+	ClaimNamespace       string                     `json:"claimNamespace"`
+	ClaimName            string                     `json:"claimName"`
+	ClaimUID             types.UID                  `json:"claimUID"`
+	SourceRequest        SourceUseRequest           `json:"sourceRequest"`
+	SourceReceipt        SourceUseReceipt           `json:"sourceReceipt"`
+	ContractDigest       string                     `json:"contractDigest"`
+	AcceptedRequirements fleetv1.MachineProfileSpec `json:"acceptedRequirements"`
+	Entitlement          *EntitlementEvidence       `json:"entitlement,omitempty"`
+	QuotaIntent          *QuotaIntent               `json:"quotaIntent,omitempty"`
+	QuotaHold            *QuotaHold                 `json:"quotaHold,omitempty"`
+	FenceReceipt         *AdmissionCommitReceipt    `json:"fenceReceipt,omitempty"`
+	AssetID              string                     `json:"assetID,omitempty"`
+	BindingID            string                     `json:"bindingID,omitempty"`
+	Settlement           *SettlementReceipt         `json:"settlement,omitempty"`
+	LastSettledHold      *QuotaHold                 `json:"lastSettledHold,omitempty"`
+	LastSettlement       *SettlementReceipt         `json:"lastSettlement,omitempty"`
+	NoHold               *NoHoldReceipt             `json:"noHold,omitempty"`
 }
 
 func digest(value any) (string, error) {

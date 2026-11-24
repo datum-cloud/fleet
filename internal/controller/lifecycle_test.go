@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
@@ -523,7 +526,7 @@ func TestInstallReplayRejectsRetainedRoutingIdentitySubstitution(t *testing.T) {
 	}
 }
 
-func TestInstallUpgradesAndRecoversLegacyV1Operation(t *testing.T) {
+func TestInstallRejectsOperationRecordFromOlderSchema(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	request := f.request("claim")
@@ -538,21 +541,65 @@ func TestInstallUpgradesAndRecoversLegacyV1Operation(t *testing.T) {
 	installRequest := InstallationRequest{Claim: request.Claim, Installation: installation, NamespaceUID: request.NamespaceUID, Admission: installAdmission()}
 	image, _ := f.coordinator.images.ResolveImage(ctx, ImageRequest{NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, InstallationUID: installation.UID, ImageName: installation.Spec.ImageRef.Name})
 	scope := LocalClaimScope(request.NamespaceUID)
-	legacy := &InstallationRecord{SchemaVersion: 1, State: OperationAdmitted, OperationID: "install-legacy", InstallationUID: installation.UID, NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, ClaimScope: scope, AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, Predecessor: "None", ResultRevision: "ir-legacy", Image: image, ImageName: installation.Spec.ImageRef.Name, Admission: installAdmission()}
+	// A schema-version-1 operation record lacks the retained routing names. It
+	// is invalid like any other malformed record and is never rewritten.
+	older := &InstallationRecord{SchemaVersion: 1, State: OperationAdmitted, OperationID: "install-older", InstallationUID: installation.UID, NamespaceUID: request.NamespaceUID, ClaimUID: request.Claim.UID, ClaimScope: scope, AssetID: asset.AssetID, BindingID: asset.BindingID, Epoch: asset.Epoch, Predecessor: "None", ResultRevision: "ir-older", Image: image, ImageName: installation.Spec.ImageRef.Name, Admission: installAdmission()}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "private", Name: operationRecordName(scope, request.Claim.UID, "None")}}
-	if err := encodeRecord(secret, legacy, "installation"); err != nil {
+	if err := encodeRecord(secret, older, "installation"); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.coordinator.client.Create(ctx, secret); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.coordinator.Install(ctx, installRequest)
-	if err != nil || result.Revision != "ir-legacy" || len(f.executor.requests) != 1 {
-		t.Fatalf("result=%#v err=%v requests=%#v", result, err, f.executor.requests)
+	before := append([]byte(nil), secret.Data[recordDataKey]...)
+	if _, err := f.coordinator.Install(ctx, installRequest); !errors.Is(err, ErrRecordInvalid) {
+		t.Fatalf("error=%v, want ErrRecordInvalid", err)
 	}
-	upgraded, _, err := f.coordinator.getOperation(ctx, secret.Name)
-	if err != nil || upgraded.SchemaVersion != installationRecordSchemaVersion || upgraded.InstallationNamespace != installation.Namespace || upgraded.InstallationName != installation.Name || upgraded.ClaimNamespace != request.Claim.Namespace || upgraded.ClaimName != request.Claim.Name {
-		t.Fatalf("upgraded=%#v err=%v", upgraded, err)
+	if len(f.executor.requests) != 0 {
+		t.Fatalf("older operation record reached executor: %#v", f.executor.requests)
+	}
+	var stored corev1.Secret
+	if err := f.coordinator.client.Get(ctx, client.ObjectKeyFromObject(secret), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored.Data[recordDataKey], before) {
+		t.Fatalf("older operation record was rewritten: %s", stored.Data[recordDataKey])
+	}
+}
+
+func TestAssetRecordWithPreExactRequirementsIsInvalid(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	request := f.request("claim")
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	asset, err := f.coordinator.Allocate(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secret corev1.Secret
+	if err := f.coordinator.client.Get(ctx, client.ObjectKey{Namespace: "private", Name: assetRecordName(asset.AssetID)}, &secret); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(secret.Data[recordDataKey], &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["acceptedRequirements"] = json.RawMessage(`{"cpu":{"architecture":"amd64","cores":{"min":4}},"memory":{"capacity":{"min":"16Gi"}}}`)
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret.Data[recordDataKey] = data
+	if err := f.coordinator.client.Update(ctx, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseAssetSecret(&secret); !errors.Is(err, ErrRecordInvalid) {
+		t.Fatalf("decode error=%v, want ErrRecordInvalid", err)
+	}
+	if _, err := f.coordinator.Allocate(ctx, request); !errors.Is(err, ErrRecordInvalid) {
+		t.Fatalf("allocate error=%v, want ErrRecordInvalid", err)
 	}
 }
 
