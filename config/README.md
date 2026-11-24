@@ -68,6 +68,16 @@ its namespace, image digest, Milo kubeconfig Secret and configuration.
 `examples/` holds a synthetic credential Secret and a sidecar container
 snippet. See [BMC discovery](../docs/operations/bmc-discovery.md).
 
+`config/components/device-power` registers `DevicePowerOperation` in Milo: its
+CRD, ProtectedResource, power operator and dispatcher roles, and an admission
+policy that binds the requester to the creating user. Milo v0.32.5 does not
+enforce that policy in a project. No root includes the component.
+`config/base/device-power` runs the power dispatcher for one Milo project in
+the site namespace that holds BMC credential Secrets, with the site admission
+policies that pin every worker Job to one image, one credential and no
+privilege. It is in no root either. See
+[Device power operations](../docs/operations/device-power.md).
+
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.
 

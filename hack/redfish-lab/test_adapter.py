@@ -99,7 +99,37 @@ class AdapterTest(unittest.TestCase):
         self.assertNotIn('synthetic-test-password', text)
         self.assertNotIn('Authorization', text)
 
-    def test_6_lost_libvirt_definitions_are_redefined_with_the_same_identity(self):
+    def test_6_power_operation_lab_features(self):
+        reset = '/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset'
+        system = '/redfish/v1/Systems/System-1'
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceOff'})
+        before = self.app.get(system, headers=AUTH).json.get('LastResetTime')
+        self.assertIsNotNone(before)  # set by the earlier power-ons
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'On'})
+        after = self.app.get(system, headers=AUTH).json['LastResetTime']
+        self.assertGreaterEqual(after, before)
+        starts = len(virsh_state()['domains']['fleet-lab-target-a']['starts'])
+        self.assertEqual(self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceRestart'}).status_code, 204)
+        self.assertEqual(len(virsh_state()['domains']['fleet-lab-target-a']['starts']), starts + 1)
+        self.assertGreaterEqual(self.app.get(system, headers=AUTH).json['LastResetTime'], after)
+        adapter.fault_cli(['hide-reset-time'])
+        self.assertNotIn('LastResetTime', self.app.get(system, headers=AUTH).json)
+        adapter.fault_cli(['swap-identity', 'System-1', '00000000-0000-4000-8000-0000000000ff'])
+        self.assertEqual(self.app.get(system, headers=AUTH).json['UUID'], '00000000-0000-4000-8000-0000000000ff')
+        adapter.fault_cli(['clear'])
+        self.assertEqual(self.app.get(system, headers=AUTH).json['UUID'], '7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a')
+        # A dropped request is audited and has no effect.
+        adapter.fault_cli(['drop-request', 'System-1', 'ForceOff', '0'])
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceOff'})
+        self.assertEqual(self.audit()[-1]['fault'], 'drop-request-before-effect')
+        self.assertEqual(self.app.get(system, headers=AUTH).json['PowerState'], 'On')
+        # A dropped response after a power-off: the effect is applied.
+        adapter.fault_cli(['drop-response', 'System-1', 'ForceOff', '0'])
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceOff'})
+        self.assertEqual(self.audit()[-1]['fault'], 'drop-response-after-effect')
+        self.assertEqual(self.app.get(system, headers=AUTH).json['PowerState'], 'Off')
+
+    def test_7_lost_libvirt_definitions_are_redefined_with_the_same_identity(self):
         s = virsh_state()
         s['domains'].pop('fleet-lab-target-a')
         s['networks'].clear()

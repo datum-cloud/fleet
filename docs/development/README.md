@@ -47,6 +47,13 @@ cleanup. [Redfish-mode acceptance](../operations/redfish-lab.md)
 Interface Emulator and a lab-only libvirt adapter. It is not qualified against a
 physical BMC or server, and the production manager does not use it.
 
+`internal/devicepower` is a prototype of staff power operations on unallocated
+Devices: the `DevicePowerOperation` API, a site dispatcher, and one worker Job
+per operation that sends at most one Redfish reset. It runs end to end against
+a Milo project API and TLS lab BMCs with `task device-power:acceptance`. It is
+in no deployment root and has not run on real hardware; see
+[Device power operations](../operations/device-power.md).
+
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 

@@ -76,7 +76,10 @@ does not fork or patch upstream files.
 | Definition of the lab domains and the provisioning network, re-created with the same identity if the runtime loses them | Adapter |
 | Append-only request audit: method, path, status, principal class, ResetType, boot override, effect and fault. It never records bodies or credentials. | Adapter |
 | `DELETE /redfish/v1/reset` and non-Redfish paths | Refused by the adapter |
+| `LastResetTime` on each System, set when a reset starts its domain | Adapter |
+| Optional TLS from a mounted lab certificate (`FLEET_BMC_TLS_CERT`, `FLEET_BMC_TLS_KEY`), TLS 1.2 or later | Adapter, used by the [device power acceptance](device-power.md#end-to-end-acceptance) |
 | Bounded, one-shot lab faults (`reject-auth`, `hide-reset`, `drop-response`) from a fault file | Adapter, lab only |
+| Power-operation lab faults: `drop-request` (accepted, never applied, response withheld), `swap-identity` (the System reports another UUID), `hide-reset-time` (no `LastResetTime`). `drop-response` now also applies after a power-off. | Adapter, lab only |
 
 `hack/redfish-lab/test_adapter.py` runs inside the built image, with the real
 upstream emulator and a fake `virsh`, in the `bmc-self-test` phase.

@@ -48,6 +48,11 @@ tasks:
     cmds:
       - bash hack/local-vm/run.sh
 
+  device-power:acceptance:
+    desc: "DevicePowerOperation end to end: Milo project API, BMC discovery, the dispatcher and worker Jobs against two TLS lab BMCs in a disposable kind cluster (exit 0 pass, 1 fail)."
+    cmds:
+      - ./hack/device-power/run.sh {{.CLI_ARGS}}
+
   manifests:validate:
     desc: Render and validate the production Fleet and Milo manifest roots.
     cmds:

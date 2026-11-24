@@ -12,6 +12,8 @@ authentication. This module, loaded into the same Flask process, adds only:
     persistent libvirt domain per System, and PowerState read from libvirt;
   * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
+  * LastResetTime on each System, recorded when a reset starts its domain;
+  * optional TLS from a mounted lab certificate (FLEET_BMC_TLS_CERT/KEY);
   * an append-only request audit log (no bodies, no credentials);
   * bounded, one-shot lab fault injection driven by a state file.
 
@@ -135,6 +137,10 @@ class Lab:
         self.targets, self.state, self.boot_ip = targets, state, boot_ip
         self.nvram_path = os.path.join(state, 'nvram.json')
         self.nvram = read_json(self.nvram_path, {})
+        # When each System last came out of a reset, like a BMC's
+        # ComputerSystem.LastResetTime. Persisted with the NVRAM.
+        self.resets_path = os.path.join(state, 'last-reset.json')
+        self.resets = read_json(self.resets_path, {})
         for sid in targets:
             self.nvram.setdefault(sid, {'BootSourceOverrideEnabled': 'Disabled', 'BootSourceOverrideTarget': 'None'})
         atomic_write(self.nvram_path, self.nvram)
@@ -178,6 +184,8 @@ class Lab:
             self.save()
         virsh('define', '/dev/stdin', input=domain_xml(t, boot))
         virsh('start', t['domain'])
+        self.resets[sid] = now()
+        atomic_write(self.resets_path, self.resets)
         return boot
 
 
@@ -207,7 +215,14 @@ def create_app(targets, state, credentials, boot_ip):
 
     def publish(sid, power=None):
         m = cs.members[sid]
-        m['UUID'] = targets[sid]['uuid']
+        current = faults.read()
+        # swap-identity: the BMC now reports another server, as after a
+        # board or BMC replacement behind the same address.
+        m['UUID'] = current.get('swapIdentity', {}).get(sid, targets[sid]['uuid'])
+        if sid in lab.resets and not current.get('hideResetTime'):
+            m['LastResetTime'] = lab.resets[sid]
+        else:
+            m.pop('LastResetTime', None)
         m['Name'] = targets[sid]['name']
         m['Manufacturer'] = 'DMTF Redfish Interface Emulator (Fleet lab adapter)'
         m['Model'] = 'libvirt/QEMU lab target'
@@ -216,7 +231,7 @@ def create_app(targets, state, credentials, boot_ip):
             'BootSourceOverrideEnabled@Redfish.AllowableValues': list(BOOT_ENABLED)})
         if power:
             m['PowerState'] = power
-        hidden = set(faults.read().get('hideResetTypes', []))
+        hidden = set(current.get('hideResetTypes', []))
         rai.members[sid]['Parameters'][0]['AllowableValues'] = [v for v in RESET_TYPES if v not in hidden]
 
     for sid in targets:
@@ -314,6 +329,13 @@ def create_app(targets, state, credentials, boot_ip):
         if kind not in allowed:
             return error(400, 'unsupported ResetType')
         domain = targets[sid]['domain']
+        lost = take('dropRequest', lambda f: f.get('system') == sid and f.get('resetType') == kind)
+        if lost:
+            # Lab fault: the request is accepted but never applied, and the
+            # response is withheld past the client timeout.
+            request_context.detail = {'resetType': kind, 'effect': 'none', 'fault': 'drop-request-before-effect'}
+            time.sleep(min(int(lost.get('seconds', 45)), 120))
+            return '', 204
         try:
             with LOCK:
                 power = lab.power(sid)
@@ -327,7 +349,7 @@ def create_app(targets, state, credentials, boot_ip):
         except LibvirtError as e:
             return error(503, 'lab hardware unavailable: %s' % e)
         request_context.detail = {'resetType': kind, 'effect': effect}
-        drop = take('dropResponse', lambda f: f.get('system') == sid and f.get('resetType') == kind) if effect.startswith('started') else None
+        drop = take('dropResponse', lambda f: f.get('system') == sid and f.get('resetType') == kind) if effect != 'none' else None
         if drop:
             # Lab fault: the effect is applied, the response is withheld past the client timeout.
             request_context.detail['fault'] = 'drop-response-after-effect'
@@ -362,12 +384,19 @@ def fault_cli(args):
         faults.update(lambda v: v.__setitem__('rejectAuth', int(args[1])))
     elif args[:1] == ['hide-reset'] and len(args) == 2:
         faults.update(lambda v: v.setdefault('hideResetTypes', []).append(args[1]))
+    elif args[:1] == ['drop-request'] and len(args) == 4:
+        faults.update(lambda v: v.setdefault('dropRequest', []).append({'system': args[1], 'resetType': args[2], 'seconds': int(args[3])}))
+    elif args[:1] == ['swap-identity'] and len(args) == 3:
+        faults.update(lambda v: v.setdefault('swapIdentity', {}).__setitem__(args[1], args[2].lower()))
+    elif args == ['hide-reset-time']:
+        faults.update(lambda v: v.__setitem__('hideResetTime', True))
     elif args == ['clear']:
         faults.update(lambda v: v.clear())
     elif args == ['show']:
         pass
     else:
-        raise SystemExit('usage: fault drop-response SYSTEM RESETTYPE SECONDS [SKIP] | reject-auth COUNT | hide-reset TYPE | clear | show')
+        raise SystemExit('usage: fault drop-response SYSTEM RESETTYPE SECONDS [SKIP] | drop-request SYSTEM RESETTYPE SECONDS | reject-auth COUNT | '
+                         'hide-reset TYPE | hide-reset-time | swap-identity SYSTEM UUID | clear | show')
     print(json.dumps(faults.read(), sort_keys=True))
 
 
@@ -376,7 +405,16 @@ def main():
         boot_ip = os.environ.get('FLEET_BOOT_IP', '')
         if not re.fullmatch(r'\d+\.\d+\.\d+\.\d+', boot_ip):
             raise SystemExit('FLEET_BOOT_IP must be the boot Service IPv4 address')
-        create_app(load_targets(), STATE, CREDENTIALS, boot_ip).run(host='0.0.0.0', port=PORT, threaded=True)
+        cert, key = os.environ.get('FLEET_BMC_TLS_CERT', ''), os.environ.get('FLEET_BMC_TLS_KEY', '')
+        if bool(cert) != bool(key):
+            raise SystemExit('set both FLEET_BMC_TLS_CERT and FLEET_BMC_TLS_KEY, or neither')
+        tls = None
+        if cert:
+            import ssl
+            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls.minimum_version = ssl.TLSVersion.TLSv1_2
+            tls.load_cert_chain(cert, key)
+        create_app(load_targets(), STATE, CREDENTIALS, boot_ip).run(host='0.0.0.0', port=PORT, threaded=True, ssl_context=tls)
     elif sys.argv[1:2] == ['fault']:
         fault_cli(sys.argv[2:])
     else:
