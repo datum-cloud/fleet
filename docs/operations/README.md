@@ -16,6 +16,7 @@ integrations. Real provider support and live Milo acceptance tests are incomplet
 | Render deployment bundles and supply environment inputs | [Deployment manifests](../../config/README.md) | Packaging and security boundaries, not runtime readiness |
 | Run the manager across consuming projects | [Project discovery](../../config/README.md#project-discovery) | Discovery, per-project isolation, departure, role bindings, and readiness |
 | Exercise Milo-routed synthetic staging | [Synthetic staging configuration](../../config/README.md#environment-owned-inputs) | Restricted synthetic publication and lifecycle behavior, not production authority |
+| Plan an installation and register the server bound to it | [Planning and registering physical devices](physical-inventory.md) | Operator-written inventory records in the provider project in Milo, with immutable identity and binding; no capacity or hardware effect; unit tested |
 | Validate Milo acceptance packaging and evidence | [Milo acceptance harness](../../test/acceptance/milo/README.md) | Fail-closed preflight and sanitized evidence; live acceptance remains blocked |
 | Configure protected acceptance workflow access | [GitHub execution boundary](../../test/acceptance/milo/github-environment.md) | Required environment and runner-group controls |
 
