@@ -1,5 +1,5 @@
 // Form controls come from datum-ui so every control looks and behaves the
-// same. A native <select>, <input>, <textarea> or <button> in a component
+// same. A native <select>, <input>, <textarea>, <button> or <table> in a component
 // fails this check unless it is listed below with the reason it is exempt.
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -7,7 +7,7 @@ import { join, relative, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 
 const SRC = resolve(import.meta.dirname, '..');
-const NATIVE = /<(select|input|textarea|button)\b/g;
+const NATIVE = /<(select|input|textarea|button|table)\b/g;
 /** File (relative to src) → native elements it may use, and why. */
 const ALLOWED: Record<string, { elements: string[]; reason: string }> = {};
 
@@ -17,7 +17,7 @@ async function components(directory: string): Promise<string[]> {
   return files.flat();
 }
 
-it('uses datum-ui controls instead of native form elements', async () => {
+it('uses datum-ui controls instead of native form elements and tables', async () => {
   const found: string[] = [];
   for (const file of await components(SRC)) {
     const name = relative(SRC, file);
