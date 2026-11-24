@@ -591,7 +591,7 @@ func TestAssetRecordWithPreExactRequirementsIsInvalid(t *testing.T) {
 	if err := f.coordinator.client.Update(ctx, &secret); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeAssetSecret(&secret); !errors.Is(err, ErrRecordInvalid) {
+	if _, err := parseAssetSecret(&secret); !errors.Is(err, ErrRecordInvalid) {
 		t.Fatalf("decode error=%v, want ErrRecordInvalid", err)
 	}
 	if _, err := f.coordinator.Allocate(ctx, request); !errors.Is(err, ErrRecordInvalid) {

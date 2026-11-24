@@ -368,7 +368,12 @@ rewritten. It blocks only the claim it belongs to (implemented):
 - The coordinator attributes an undecodable record by its
   `fleet.datumapis.com/claim-uid` label, never by its body. Scans across
   claims skip a record labeled for another claim. A record with no claim label
-  could belong to any claim, so it fails every claim-scoped scan closed.
+  could belong to any claim, so it fails every claim-scoped scan closed: one
+  hand-edited Secret with no label halts allocation, installation, and release
+  for every claim until it is removed.
+- A claim released while it only proposes an asset whose undecodable record
+  is labeled for another claim never held that asset, so it is released and
+  the record is left in place to keep fencing the asset.
 - Allocation, installation admission, network refresh, Milo authority recovery,
   and release fail closed for the attributed claim. Synthetic staging reports
   the Machine as `Bound=False` and `Ready=False`, reason
@@ -1462,6 +1467,9 @@ correctness violations.
   `claim-uid` label names, plus the asset it fences, instead of every claim on
   the coordinator. It is reported as `UnreadablePrivateRecord` and counted in
   `fleet_private_lifecycle_record_undecodable_total`.
+- 2026-11-24: Release from a selection skips an undecodable proposed asset
+  record labeled for another claim. Every lifecycle decode reports through one
+  decoder.
 
 ## Drawbacks
 

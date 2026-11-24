@@ -288,3 +288,153 @@ func TestUndecodableRecordsAreCountedOncePerCall(t *testing.T) {
 		t.Fatalf("asset counter advanced by %v after two calls, want 2", got)
 	}
 }
+
+// selectingOn leaves request's claim in Selecting custody with a proposal for
+// the asset another claim already holds, as when two claims race for the
+// same free asset and the other claim's exclusive create wins.
+func (f *fixture) selectingOn(t *testing.T, request AllocationRequest, held *AssetRecord) {
+	t.Helper()
+	ctx := context.Background()
+	if err := f.coordinator.EnsureClaimCustody(ctx, request.Claim, request.NamespaceUID, request.Admission); err != nil {
+		t.Fatal(err)
+	}
+	binding, fence, err := f.coordinator.authorityIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal := newAssetRecord(request, &request.MachineCapacities[0], held.AssetID, held.Epoch, binding, fence)
+	if err := f.coordinator.selectCustody(ctx, request, proposal); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A claim releasing from Selecting reads its proposed asset's record by name.
+// An undecodable record labeled for another claim is that claim's binding, so
+// the releasing claim never held the asset: it releases without touching the
+// record. A record labeled for the releasing claim, or with no label, might be
+// its binding, so release fails closed and keeps the finalizer.
+func TestReleaseFromSelectionAttributesAnUndecodableProposedAsset(t *testing.T) {
+	cases := []struct {
+		name     string
+		labels   func(releasing types.UID) func(map[string]string)
+		released bool
+	}{
+		{name: "labeled for another claim", released: true},
+		{name: "labeled for the releasing claim", labels: func(releasing types.UID) func(map[string]string) {
+			return func(l map[string]string) { l[claimUIDLabel] = string(releasing) }
+		}},
+		{name: "label missing", labels: func(types.UID) func(map[string]string) {
+			return func(l map[string]string) { delete(l, claimUIDLabel) }
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFixture(t)
+			holder, releasing := f.request("holder"), f.request("releasing")
+			held := f.allocate(t, holder)
+			f.selectingOn(t, releasing, held)
+			var labels func(map[string]string)
+			if tc.labels != nil {
+				labels = tc.labels(releasing.Claim.UID)
+			}
+			stored := f.writeOlderAssetShape(t, held.AssetID, labels)
+			executed := len(f.executor.requests)
+
+			result, err := f.coordinator.Release(ctx, releasing.Claim.UID)
+			custody, _, custodyErr := f.coordinator.getCustody(ctx, releasing.Claim.UID)
+			if custodyErr != nil {
+				t.Fatal(custodyErr)
+			}
+			if tc.released {
+				if err != nil || !result.SafeToRemoveFinalizer || custody.State != CustodyReleased {
+					t.Fatalf("release = %#v, %v, custody %s; want released", result, err, custody.State)
+				}
+			} else if !errors.Is(err, ErrRecordUnreadable) || result.SafeToRemoveFinalizer || custody.State != CustodySelecting {
+				t.Fatalf("release = %#v, %v, custody %s; want ErrRecordUnreadable with custody kept", result, err, custody.State)
+			}
+			if !tc.released {
+				// The claim's own asset scan stops Release first, so check the
+				// selection path directly as well.
+				if err := f.coordinator.materializeSelectionForRelease(ctx, custody); !errors.Is(err, ErrRecordUnreadable) {
+					t.Fatalf("materialize selection error = %v, want ErrRecordUnreadable", err)
+				}
+			}
+			if got := f.storedAsset(t, held.AssetID); !bytes.Equal(got, stored) {
+				t.Fatalf("undecodable proposed asset record was rewritten: %s", got)
+			}
+			if len(f.executor.requests) != executed {
+				t.Fatalf("release sent executor work: %#v", f.executor.requests[executed:])
+			}
+			// The holder's binding is still fenced by its undecodable record.
+			if tc.released {
+				if released, err := f.coordinator.Release(ctx, holder.Claim.UID); !errors.Is(err, ErrRecordUnreadable) || released.SafeToRemoveFinalizer {
+					t.Fatalf("holder release = %#v, %v, want ErrRecordUnreadable", released, err)
+				}
+			}
+		})
+	}
+}
+
+// Every lifecycle read that decodes a private record by name reports a record
+// that cannot be decoded, not only the scans across claims.
+func TestUndecodableRecordsAreReportedOnEveryDecodePath(t *testing.T) {
+	undecodable := func(name, recordType string, claimUID types.UID) *corev1.Secret {
+		return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "private", Name: name, Labels: map[string]string{recordTypeLabel: recordType, claimUIDLabel: string(claimUID)}}, Type: corev1.SecretType("fleet.datumapis.com/private-lifecycle"), Data: map[string][]byte{recordDataKey: []byte(`{"schemaVersion":1}`)}}
+	}
+	cases := []struct {
+		name       string
+		recordType string
+		run        func(t *testing.T, f *fixture) error
+		// released is set where the record belongs to another claim, so the
+		// call succeeds after reporting it.
+		released bool
+	}{
+		{name: "EnsureClaimCustody", recordType: "custody", run: func(t *testing.T, f *fixture) error {
+			request := f.request("claim")
+			name := custodyRecordName(LocalClaimScope(request.NamespaceUID), request.Claim.UID)
+			if err := f.coordinator.client.Create(context.Background(), undecodable(name, "custody", request.Claim.UID)); err != nil {
+				t.Fatal(err)
+			}
+			return f.coordinator.EnsureClaimCustody(context.Background(), request.Claim, request.NamespaceUID, request.Admission)
+		}},
+		{name: "getOrCreateOperation", recordType: "installation", run: func(t *testing.T, f *fixture) error {
+			if err := f.coordinator.client.Create(context.Background(), undecodable(operationPrefix+"existing", "installation", "claim")); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := f.coordinator.getOrCreateOperation(context.Background(), operationPrefix+"existing", InstallationRequest{}, &AssetRecord{}, "None", ResolvedImage{})
+			return err
+		}},
+		{name: "markOperationSucceeded", recordType: "installation", run: func(t *testing.T, f *fixture) error {
+			if err := f.coordinator.client.Create(context.Background(), undecodable(operationPrefix+"running", "installation", "claim")); err != nil {
+				t.Fatal(err)
+			}
+			_, err := f.coordinator.markOperationSucceeded(context.Background(), operationPrefix+"running", &InstallationRecord{})
+			return err
+		}},
+		{name: "materializeSelectionForRelease", recordType: "asset", released: true, run: func(t *testing.T, f *fixture) error {
+			holder, releasing := f.request("holder"), f.request("releasing")
+			held := f.allocate(t, holder)
+			f.selectingOn(t, releasing, held)
+			f.writeOlderAssetShape(t, held.AssetID, nil)
+			custody, _, err := f.coordinator.getCustody(context.Background(), releasing.Claim.UID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return f.coordinator.materializeSelectionForRelease(context.Background(), custody)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			before := undecodableCount(t, tc.recordType)
+			err := tc.run(t, f)
+			if tc.released && err != nil || !tc.released && !errors.Is(err, ErrRecordUnreadable) {
+				t.Fatalf("error = %v, want released=%v", err, tc.released)
+			}
+			if got := undecodableCount(t, tc.recordType) - before; got != 1 {
+				t.Fatalf("%s counter advanced by %v, want 1", tc.recordType, got)
+			}
+		})
+	}
+}

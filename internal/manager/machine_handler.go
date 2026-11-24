@@ -157,7 +157,9 @@ func (h MachineHandler) releaseUID(ctx context.Context, uid types.UID, claim *fl
 // recordOutcome does not requeue a Machine whose own private record cannot be
 // decoded: retrying cannot make it readable, and the coordinator has already
 // logged and counted it. The finalizer stays until an operator removes the
-// record. Every other error is classified by dependencyOutcome.
+// record. The handler sets no condition because it writes no Machine status;
+// synthetic staging is the only writer of Machine lifecycle conditions. Every
+// other error is classified by dependencyOutcome.
 func recordOutcome(err error) Outcome {
 	if errors.Is(err, controller.ErrRecordUnreadable) {
 		return Outcome{}

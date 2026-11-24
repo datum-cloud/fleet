@@ -112,7 +112,15 @@ blocks only the claim it belongs to (implemented):
   record labeled for another claim. A record labeled for the scanning claim
   fails that claim closed. A record with no claim label might belong to any
   claim, so it fails every claim-scoped scan closed. Fleet never writes an
-  unlabeled record, so this case means the Secret was edited by hand.
+  unlabeled record, so this case means the Secret was edited by hand. One such
+  Secret halts allocation, installation, and release for every claim on the
+  coordinator until an operator removes it.
+- **Release from a selection.** A claim released while its custody only
+  proposes an asset reads that asset's record by name. If the record is
+  labeled for another claim, that claim holds the asset and the releasing
+  claim never did, so its custody is released without touching the record.
+  The record keeps fencing the asset's epoch. A record labeled for the
+  releasing claim, or with no label, fails release closed.
 - **Capacity and epoch fencing.** Allocation reads each candidate asset's
   record by name. If that record, or the custody record of the claim that last
   held the asset, cannot be decoded, the asset is never proposed and allocation
@@ -127,9 +135,13 @@ blocks only the claim it belongs to (implemented):
   having no record, and they never rewrite the record. Synthetic staging
   reports the Machine as `Phase=Pending` with `Bound=False` and `Ready=False`,
   reason `UnreadablePrivateRecord`, and does not requeue it. The managed
-  Machine handler also stops requeueing. Release never removes the finalizer
-  through such a record.
-- **Signals.** Each record is logged once per lifecycle call at error level.
+  Machine handler also stops requeueing, and sets no condition: it writes no
+  Machine status at all, so synthetic staging is the only writer of Machine
+  lifecycle conditions. Release never removes the finalizer through such a
+  record.
+- **Signals.** Every lifecycle decode goes through one reporting decoder, so
+  each record is logged once per lifecycle call at error level, whichever read
+  found it.
   The log names the Secret and the attributed claim UID, never record
   contents. The counter `fleet_private_lifecycle_record_undecodable_total`
   counts the same events, labeled only by `record_type` (`asset`, `custody`,
@@ -158,6 +170,12 @@ Machine, an operator does the following:
 
 A retained `Released` asset record whose Machine is already gone affects only
 that asset. Delete that Secret after step 2 to return the asset to allocation.
+
+Event routing reads only records that decode, so editing or deleting an
+undecodable Secret wakes no claim. This is why the procedure deletes the
+Machine and removes its finalizer before deleting the records. A claim blocked
+by an unlabeled record is reconciled again on its next own event, or when the
+manager restarts.
 
 ## Multi-project discovery
 
