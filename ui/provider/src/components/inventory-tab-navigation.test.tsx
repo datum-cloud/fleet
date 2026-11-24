@@ -18,10 +18,12 @@ function host(query = '', management = false) {
   let release: (() => void) | undefined;
   let holdReview = false;
   let releaseReview: (() => void) | undefined;
+  const reviews = vi.fn();
   const collections = vi.fn();
   const writes = vi.fn();
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
     if (url.includes('selfsubjectaccessreviews')) {
+      reviews();
       if (holdReview) {
         holdReview = false;
         await new Promise<void>(resolve => { releaseReview = resolve; });
@@ -41,7 +43,7 @@ function host(query = '', management = false) {
   });
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ path: 'plugins/:slug/inventory', element: <DeviceInventoryList /> }] }], { initialEntries: [`/plugins/metal/inventory${query}`] });
   render(<RouterProvider router={router} />);
-  return { router, loader, collections, writes,
+  return { router, loader, collections, writes, reviews,
     hold: () => { held = true; release = undefined; },
     holdReview: () => { holdReview = true; },
     releaseReview: async () => { await waitFor(() => expect(releaseReview).toBeDefined()); await act(async () => releaseReview!()); },
@@ -57,14 +59,19 @@ it('keeps actual tab DOM through host checks, reuses collections, and preserves 
   expect(view.collections).toHaveBeenCalledTimes(9);
   const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
   const facilities = within(navigation).getByRole('tab', { name: 'Facilities' });
+  // Wait for the loaded page: until then the search box belongs to the loading shell.
+  await screen.findByRole('table');
+  const search = screen.getByRole('searchbox', { name: 'Search operational sites' });
   view.hold();
   fireEvent.click(facilities);
-  await screen.findByText('Checking inventory access…');
+  // A same-user presentation navigation keeps the page on screen while the host checks: no placeholder, no rebuild.
+  await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
+  expect(screen.queryByText('Checking inventory access…')).not.toBeInTheDocument();
+  expect(screen.getByRole('searchbox', { name: 'Search operational sites' })).toBe(search);
   expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
   expect(within(navigation).getByRole('tab', { name: 'Facilities' })).toBe(facilities);
   expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
   expect(screen.queryByTestId('fleet-plugin-loading')).not.toBeInTheDocument();
-  expect(navigation.textContent).not.toMatch(/\d/);
   await view.release();
   await screen.findByRole('searchbox', { name: 'Search facilities' });
   expect(view.router.state.location.search).toBe('?kind=Facility');
@@ -91,7 +98,8 @@ it.each([['Manufacturers', 'Search manufacturers'], ['Device types', 'Search dev
   const tab = within(navigation).getByRole('tab', { name: title });
   view.hold();
   fireEvent.click(tab);
-  await screen.findByText('Checking inventory access…');
+  await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
+  expect(screen.queryByText('Checking inventory access…')).not.toBeInTheDocument();
   expect(within(navigation).getByRole('tab', { name: title })).toBe(tab);
   expect(view.collections).toHaveBeenCalledTimes(9);
   await view.release();
@@ -209,8 +217,10 @@ it('defaults to Equipment / Devices and navigates group defaults without extra c
   const tabs = within(groups).getAllByRole('tab');
   for (const group of [...inventoryGroups.slice(1), inventoryGroups[0]]) {
     fireEvent.click(within(groups).getByRole('tab', { name: group.title }));
+    // The current page stays during the host check, so wait for the navigation itself.
+    await waitFor(() => expect(view.router.state.location.search).toBe(`?kind=${group.kinds[0]}`));
+    await waitFor(() => expect(view.router.state.navigation.state).toBe('idle'));
     await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
-    expect(view.router.state.location.search).toBe(`?kind=${group.kinds[0]}`);
     expect(within(groups).getAllByRole('tab')).toEqual(tabs);
     expect(view.collections).toHaveBeenCalledTimes(9);
   }
@@ -310,10 +320,18 @@ it.each(['principal', 'logout', 'denial', 'hidden', 'pagehide', 'revalidation', 
   } else if (transition === 'unknown-query') {
     act(() => { void view.router.navigate('?kind=Device&scope=other'); });
   } else act(() => { void view.router.revalidate(); });
-  await screen.findByText('Checking inventory access…');
-  expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
+  if (transition === 'principal' || transition === 'logout') {
+    // A tab click is a presentation navigation: the page already on screen stays while the host checks,
+    // nothing new is shown, and the check's answer (another user, or none) clears it when it returns.
+    await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
+    expect(screen.queryByText('Checking inventory access…')).not.toBeInTheDocument();
+    expect(view.router.state.location.search).not.toContain('kind=Site');
+  } else {
+    await screen.findByText('Checking inventory access…');
+    expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
+    expect(navigation.textContent).not.toMatch(/\d/);
+  }
   expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
-  expect(navigation.textContent).not.toMatch(/\d/);
   await view.release();
   if (transition === 'logout') {
     await screen.findByText('Your session has expired');
@@ -342,6 +360,28 @@ it('switches record detail tabs as presentation navigation without extra collect
   await waitFor(() => expect(tabs().getByRole('tab', { name: 'Location' })).toHaveAttribute('aria-selected', 'true'));
   expect(view.collections).toHaveBeenCalledTimes(9);
   expect(screen.getByRole('table', { name: 'Components and Cables' })).toBeInTheDocument();
+  expect(view.writes).not.toHaveBeenCalled();
+  view.router.dispose();
+});
+
+it('checks management access once per kind, not on every navigation, and again on Refresh', async () => {
+  const [first, second] = fixturePhysicalDevices;
+  const view = host('?kind=Device', true);
+  await screen.findByRole('table');
+  await waitFor(() => expect(view.reviews).toHaveBeenCalled());
+  await waitFor(() => expect(view.router.state.navigation.state).toBe('idle'));
+  const checks = view.reviews.mock.calls.length;
+  // Records, a filter and the way back to the directory reuse the answer for Device creation.
+  for (const search of [`?kind=Device&record=${first.metadata.name}&namespace=default`, `?kind=Device&record=${second.metadata.name}&namespace=default`, '?kind=Device&q=compute', '?kind=Device']) {
+    await act(async () => { await view.router.navigate(search); });
+    await waitFor(() => expect(view.router.state.location.search).toBe(search));
+    await waitFor(() => expect(view.router.state.navigation.state).toBe('idle'));
+  }
+  await screen.findByRole('table');
+  expect(view.reviews).toHaveBeenCalledTimes(checks);
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
+  await waitFor(() => expect(view.reviews.mock.calls.length).toBeGreaterThan(checks));
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });

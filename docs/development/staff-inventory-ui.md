@@ -49,8 +49,11 @@ described in the historical notes below, not inventory contracts or IAM.
   and the detail pages' `tab`, `view`, `selectedKind` and `selected` parameters.
   The narrow presentation allowlist does not include unknown query parameters,
   route changes, form submissions, or explicit revalidation. Host loaders still
-  verify navigations; changed principal, logout, real denial, hidden/pagehide,
-  and unknown-scope boundaries still fence/clear private data. Operation
+  verify navigations. During a presentation navigation the page already on
+  screen stays (the location has not changed yet, so nothing new is shown) and
+  writes are withheld until the host check finishes; other navigations show the
+  pending shell. Changed principal, logout, real denial, hidden/pagehide, and
+  unknown-scope boundaries still fence/clear private data. Operation
   generations restart independently of retained read caches.
 - Route tabs use manual activation: arrows/Home/End move focus, Enter or Space
   activates the focused link. Lists are named and selected tabs expose their
@@ -437,9 +440,13 @@ additive contract and ordinary authorized corrections, including first reports
 on existing Devices. Immutable identity and claim binding remain intact.
 
 The existing `fleet.datumapis.com-inventory-manager` role inherits the viewer and
-adds create/update/patch for six kinds, project-wide. The UI uses exact-resource
+adds create/update/patch for six kinds, project-wide. The UI uses
 SelfSubjectAccessReviews and the signed-in principal's API request, never group
-names or staff membership. Role/binding deployment and membership are separate
+names or staff membership. The answer that enables a Create or Edit control is
+checked once per kind and verb, shared by every record of that kind, and reused
+for ten minutes: management access rarely changes. A new principal gets a new
+query cache, and **Refresh inventory** checks again at once. Every write is
+still checked at submit time and authorized by the server. Role/binding deployment and membership are separate
 work; nothing here asserts their live state. There are no delete/status grants.
 
 Inventory is direct API/operator-managed, not GitOps-only. Flux- or Argo-managed
