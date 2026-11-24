@@ -132,7 +132,7 @@ spec:
   # Staff only: the server staff expect behind the BMC.
   expectedSystemUUID: 00000000-0000-4000-8000-0000000000a1
 status:
-  # Power result evidence, copied from the site's result.
+  # Power result evidence, recorded in custody with the result.
   requestSentAt: "2026-01-02T03:04:06Z"
   power:
     before: {state: "On", observedAt: "2026-01-02T03:04:05Z"}
@@ -140,8 +140,8 @@ status:
   resetEvidence: LastResetTime
 ```
 
-A power result carries this evidence, which the coordinator copies to status as
-[site execution][site] describes:
+A power result carries this evidence. The coordinator records it in custody
+with the result, as [site execution][site] describes:
 
 | Field | Meaning |
 | --- | --- |
@@ -166,7 +166,7 @@ Power adds these refusals. Each ends the operation with nothing sent:
 | `SystemUUIDNotRecorded` | Coordinator | A staff operation targets a Device with no system UUID on record. |
 | `SystemUUIDMismatch` | Coordinator or worker | `expectedSystemUUID` differs from the Device record, discovery or the BMC. |
 | `DiscoveryNotCurrent` | Coordinator | Discovery has not read the BMC within twice its interval. |
-| `SharedPublicKey` | Worker | The [site execution][site] shared-key check fails. |
+| `SharedPublicKey` | Coordinator | The shared-key rule of [custody admission][admission] fails. |
 | `ResetTypeNotOffered` | Coordinator or worker | Discovery or the BMC does not offer the action. |
 | `Expired` | Coordinator | A staff operation was not admitted within five minutes. |
 | `Stale` | Worker | The worker started more than two minutes after admission. |
