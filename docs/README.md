@@ -71,7 +71,7 @@ Each topic folder has a `README.md` entry point:
 | [Operations](operations/README.md) | Deployment, validation, and local smoke tests |
 | [Troubleshooting](troubleshooting/README.md) | Common problems and safe recovery |
 | [Development](development/README.md) | Implementation status, local commands, and roadmap |
-| [Enhancements](enhancements/machine-lifecycle/README.md) | Focused machine lifecycle contracts and acceptance requirements |
+| [Enhancements](enhancements/machine-lifecycle/README.md) | Focused machine lifecycle contracts and acceptance requirements, plus [Device power operations](enhancements/device-power/README.md) |
 | [Proposals](proposals/fleet-management/README.md) | Broader service proposals, examples, diagrams, and provenance |
 
 ## Read implementation and design separately
