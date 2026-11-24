@@ -1,0 +1,11 @@
+# Synthetic values; the deploying repository replaces them.
+project: example-provider-project
+miloKubeconfig: /var/run/fleet/milo/kubeconfig
+deviceNamespaces: [default]
+# credentialNamespace defaults to the pod's namespace ($POD_NAMESPACE).
+interval: 1h
+retryBase: 30s
+minContactInterval: 1m
+requestTimeout: 20s
+concurrency: 4
+healthProbeAddress: ":8081"

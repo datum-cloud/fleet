@@ -2,10 +2,10 @@
 // fleet.datumapis.com. Legacy slot claims retain their historical bindings;
 // new typed claims describe individual installations without accepting them.
 //
-// All are operator-written records. None has a controller. Registering a
-// Device authorizes no hardware effect and creates or changes no
-// MachineCapacity. Status is reserved for future collectors and verifiers and
-// has no writer.
+// All are operator-written records. Registering a Device authorizes no
+// hardware effect and creates or changes no MachineCapacity. Device status has
+// one writer, read-only BMC discovery (internal/bmcdiscovery); every other
+// kind's status is reserved and has no writer.
 package v1alpha1
 
 import (
@@ -189,9 +189,103 @@ type Interface struct {
 	Peer       *PortPeer `json:"peer,omitempty"`
 }
 
-// DeviceStatus is reserved for collectors and verifiers to report drift and
-// mismatch. It never carries identity. Nothing writes it yet.
-type DeviceStatus struct{}
+// DeviceStatus is what read-only BMC discovery observed, and how it compares
+// with spec. BMC discovery is its only writer, through the status subresource;
+// it never writes spec. Observed identity here is evidence only: spec.identity
+// stays the authoritative, immutable record, and a mismatch is reported as a
+// condition, never corrected.
+type DeviceStatus struct {
+	// ObservedGeneration is the spec generation the conditions were computed
+	// against.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// Discovery holds the latest observations. A failed attempt never clears
+	// them: each keeps its own time and endpoint.
+	Discovery *DeviceDiscovery `json:"discovery,omitempty"`
+	// Conditions are Reachable, Authenticated, Discovered, IdentityMatched and
+	// PublicKeyUnique.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// Device status condition types and reasons.
+const (
+	ConditionReachable       = "Reachable"
+	ConditionAuthenticated   = "Authenticated"
+	ConditionDiscovered      = "Discovered"
+	ConditionIdentityMatched = "IdentityMatched"
+	ConditionPublicKeyUnique = "PublicKeyUnique"
+)
+
+// DeviceDiscovery is the retained BMC observation of a Device.
+type DeviceDiscovery struct {
+	// LastAttemptAt is when discovery last contacted the BMC.
+	LastAttemptAt *metav1.Time `json:"lastAttemptAt,omitempty"`
+	// LastAttemptEndpoint is the spec.bmc.endpoint of that attempt.
+	LastAttemptEndpoint string `json:"lastAttemptEndpoint,omitempty"`
+	// TLS is the certificate the BMC last presented in an unauthenticated
+	// handshake.
+	TLS *ObservedTLS `json:"tls,omitempty"`
+	// ServiceRoot is the last anonymous read of /redfish/v1.
+	ServiceRoot *ObservedServiceRoot `json:"serviceRoot,omitempty"`
+	// Inventory is the last complete authenticated read.
+	Inventory *ObservedInventory `json:"inventory,omitempty"`
+}
+
+// ObservedTLS identifies the BMC's TLS key. PublicKeySHA256 is the value an
+// operator verifies out of band and approves in the credential Secret.
+type ObservedTLS struct {
+	ObservedAt      metav1.Time  `json:"observedAt"`
+	Endpoint        string       `json:"endpoint"`
+	PublicKeySHA256 string       `json:"publicKeySHA256"`
+	NotAfter        *metav1.Time `json:"notAfter,omitempty"`
+	SelfSigned      bool         `json:"selfSigned,omitempty"`
+}
+
+// ObservedServiceRoot is the unauthenticated Redfish service root.
+type ObservedServiceRoot struct {
+	ObservedAt     metav1.Time `json:"observedAt"`
+	Endpoint       string      `json:"endpoint"`
+	RedfishVersion string      `json:"redfishVersion,omitempty"`
+	UUID           string      `json:"uuid,omitempty"`
+	Vendor         string      `json:"vendor,omitempty"`
+	Product        string      `json:"product,omitempty"`
+}
+
+// ObservedInventory is one complete, authenticated, read-only inventory.
+type ObservedInventory struct {
+	ObservedAt metav1.Time       `json:"observedAt"`
+	Endpoint   string            `json:"endpoint"`
+	Managers   []ObservedManager `json:"managers,omitempty"`
+	Systems    []ObservedSystem  `json:"systems,omitempty"`
+}
+
+// ObservedManager is one Redfish Manager, the BMC itself.
+type ObservedManager struct {
+	ID                string                     `json:"id"`
+	Model             string                     `json:"model,omitempty"`
+	FirmwareVersion   string                     `json:"firmwareVersion,omitempty"`
+	NetworkInterfaces []ObservedNetworkInterface `json:"networkInterfaces,omitempty"`
+}
+
+// ObservedSystem is one Redfish ComputerSystem. PowerState is an observation
+// only; discovery never changes power.
+type ObservedSystem struct {
+	ID                string                     `json:"id"`
+	UUID              string                     `json:"uuid,omitempty"`
+	Manufacturer      string                     `json:"manufacturer,omitempty"`
+	Model             string                     `json:"model,omitempty"`
+	SerialNumber      string                     `json:"serialNumber,omitempty"`
+	SKU               string                     `json:"sku,omitempty"`
+	PowerState        string                     `json:"powerState,omitempty"`
+	NetworkInterfaces []ObservedNetworkInterface `json:"networkInterfaces,omitempty"`
+}
+
+// ObservedNetworkInterface is one Redfish EthernetInterface.
+type ObservedNetworkInterface struct {
+	ID         string `json:"id"`
+	MACAddress string `json:"macAddress,omitempty"`
+	LinkStatus string `json:"linkStatus,omitempty"`
+	SpeedMbps  int64  `json:"speedMbps,omitempty"`
+}
 
 type DeviceClaimList struct {
 	metav1.TypeMeta `json:",inline"`

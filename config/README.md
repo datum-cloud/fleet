@@ -55,11 +55,18 @@ A price change is a new `-v2` pricing, since a ServicePricing can't be changed.
 
 `config/components/inventory` registers the operator-written `DeviceClaim` and
 `Device` kinds of `fleet.datumapis.com` in Milo: their CRDs, ProtectedResources,
-and inventory viewer and editor roles. The production `config/milo` and isolated
+and inventory viewer, editor, manager, importer and discoverer roles. The production `config/milo` and isolated
 non-production `config/milo-synthetic` roots include it; records
 live in the provider project. `config/inventory` renders the CRDs alone for a
 legacy management-cluster install and will be removed. See
 [Planning and registering physical devices](../docs/operations/physical-inventory.md).
+
+`config/base/bmc-discovery` runs read-only BMC discovery for one Milo project
+in a cluster that can reach the BMC network: one replica, no leader election,
+unprivileged. It is in no root here; the deploying repository applies it with
+its namespace, image digest, Milo kubeconfig Secret and configuration.
+`examples/` holds a synthetic credential Secret and a sidecar container
+snippet. See [BMC discovery](../docs/operations/bmc-discovery.md).
 
 `config/standalone` remains a synthetic, same-cluster test environment. It must
 not be referenced by either production root.

@@ -71,8 +71,12 @@ func TestInventoryCRDContract(t *testing.T) {
 		if version.Subresources == nil || version.Subresources.Status == nil {
 			t.Fatalf("%s must reserve status as a separate subresource", kind)
 		}
-		if status := version.Schema.OpenAPIV3Schema.Properties["status"]; len(status.Properties) != 0 || status.XPreserveUnknownFields != nil {
+		status := version.Schema.OpenAPIV3Schema.Properties["status"]
+		if status.XPreserveUnknownFields != nil || (kind != "Device" && len(status.Properties) != 0) {
 			t.Fatalf("%s status must stay empty until a collector or verifier owns it", kind)
+		}
+		if kind == "Device" && (len(status.Properties) != 3 || status.Properties["discovery"].Type != "object" || status.Properties["conditions"].Type != "array") {
+			t.Fatalf("Device status must hold exactly observedGeneration, discovery and conditions")
 		}
 		if crd.Annotations["discovery.miloapis.com/parent-contexts"] != "Project" {
 			t.Fatalf("%s must be served in Milo project control planes", kind)
@@ -396,12 +400,48 @@ func TestReplacementBindsANewDeviceToTheSameClaim(t *testing.T) {
 	}
 }
 
-func TestStatusAcceptsNoFieldsYet(t *testing.T) {
-	device := object(t, syntheticDevice())
-	device["status"] = map[string]any{"identity": map[string]any{"serial": "SYNTHETIC-0009"}}
-	if errs := admit(t, "Device", device, nil); len(errs) > 0 {
-		t.Fatal(errs)
+func discoveredDevice() Device {
+	device := syntheticDevice()
+	at := metav1.NewTime(baseTime)
+	nic := []ObservedNetworkInterface{{ID: "1", MACAddress: "00:00:5e:00:53:01", LinkStatus: "LinkUp", SpeedMbps: 25000}}
+	device.Status = DeviceStatus{
+		ObservedGeneration: 1,
+		Discovery: &DeviceDiscovery{
+			LastAttemptAt: &at, LastAttemptEndpoint: "https://192.0.2.100:443",
+			TLS:         &ObservedTLS{ObservedAt: at, Endpoint: "https://192.0.2.100:443", PublicKeySHA256: strings.Repeat("ab", 32), NotAfter: &at, SelfSigned: true},
+			ServiceRoot: &ObservedServiceRoot{ObservedAt: at, Endpoint: "https://192.0.2.100:443", RedfishVersion: "1.15.0"},
+			Inventory: &ObservedInventory{ObservedAt: at, Endpoint: "https://192.0.2.100:443",
+				Managers: []ObservedManager{{ID: "BMC", Model: "Example BMC", FirmwareVersion: "1.0", NetworkInterfaces: nic}},
+				Systems: []ObservedSystem{{ID: "1", UUID: "00000000-0000-4000-8000-000000000001", Model: "Example 1U", SerialNumber: "SYNTHETIC-0001",
+					PowerState: "On", NetworkInterfaces: nic}}},
+		},
+		Conditions: []metav1.Condition{{Type: ConditionDiscovered, Status: metav1.ConditionTrue, Reason: "InventoryRead", Message: "read", LastTransitionTime: at}},
 	}
+	return device
+}
+
+func TestDeviceStatusSchema(t *testing.T) {
+	if errs := admit(t, "Device", object(t, discoveredDevice()), nil); len(errs) > 0 {
+		t.Fatalf("discovered status rejected: %v", errs)
+	}
+	for name, mutate := range map[string]func(*Device){
+		"pin not a sha256": func(d *Device) { d.Status.Discovery.TLS.PublicKeySHA256 = "AB" },
+		"uppercase uuid":   func(d *Device) { d.Status.Discovery.Inventory.Systems[0].UUID = "00000000-0000-4000-8000-00000000000A" },
+		"mac not canonical": func(d *Device) {
+			d.Status.Discovery.Inventory.Systems[0].NetworkInterfaces[0].MACAddress = "00-00-5E-00-53-01"
+		},
+		"condition reason":     func(d *Device) { d.Status.Conditions[0].Reason = "" },
+		"duplicate conditions": func(d *Device) { d.Status.Conditions = append(d.Status.Conditions, d.Status.Conditions[0]) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			device := discoveredDevice()
+			mutate(&device)
+			if errs := admit(t, "Device", object(t, device), nil); len(errs) == 0 {
+				t.Fatal("accepted")
+			}
+		})
+	}
+	// Status cannot carry identity: an unknown status field is pruned.
 	var schema apiextensions.JSONSchemaProps
 	if err := extensionsv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(loadCRDs(t)["Device"].Spec.Versions[0].Schema.OpenAPIV3Schema, &schema, nil); err != nil {
 		t.Fatal(err)
@@ -410,8 +450,11 @@ func TestStatusAcceptsNoFieldsYet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if structural.Properties["status"].Properties != nil {
-		t.Fatal("status declares fields")
+	device := object(t, discoveredDevice())
+	device["status"].(map[string]any)["identity"] = map[string]any{"serial": "SYNTHETIC-0009"}
+	pruning.Prune(device, structural, true)
+	if _, ok := device["status"].(map[string]any)["identity"]; ok {
+		t.Fatal("status identity was not pruned")
 	}
 }
 

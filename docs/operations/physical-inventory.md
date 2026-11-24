@@ -40,8 +40,8 @@ where facts came from on its own labels and annotations.
 | Home | Milo. `config/milo` registers six CRDs, six ProtectedResources and three IAM roles. Management and synthetic-staging overlays install none of them. |
 | Staff portal | Six-kind hardware directory in the Bare Metal provider plugin (`ui/provider`), with permission-aware browsing and limited authorized Facility/Rack creation and portal-owned name edits. See [implementation scope](../development/staff-inventory-ui.md). |
 | Tests | Unit tests run API-server schema, list-type and CEL validation offline for the six kinds, including pruning of retired fields. IAM tests check ProtectedResource and role shape and that no metal role grants inventory access. Plugin tests cover browse/detail, partial placement, reconciliation, restricted, pagination and empty states. |
-| Controllers | None for inventory. Staff browsing is read-only; no reconciler accepts plans, verifies hardware, discovers or synchronizes external inventory, or publishes eligibility. Flux applies only operator-reviewed Git records. |
-| Hardware qualification | None. Records hold operator-entered facts, not verified hardware state. |
+| Controllers | [BMC discovery](bmc-discovery.md) writes Device `status` only, from read-only Redfish reads. Nothing else reconciles inventory: staff browsing is read-only, and no reconciler accepts plans, synchronizes external inventory, or publishes eligibility. Flux applies only operator-reviewed Git records. |
+| Hardware qualification | None. Spec holds operator-entered facts. Device status holds what a BMC reported, compared with spec; BMC discovery is not qualified on vendor hardware. |
 
 ## What registration does and does not do
 
@@ -77,12 +77,14 @@ project control plane serves the kinds. Access is what keeps consumers out:
 | `fleet.datumapis.com-inventory-editor` | The viewer role plus `create`, `update`, `patch`, `delete` |
 | `fleet.datumapis.com-inventory-manager` | The viewer role plus `create`, `update`, `patch`; no deletion or status writes |
 | `fleet.datumapis.com-inventory-importer` | The viewer role plus `create` and `patch`, for server-side apply; no `update`, deletion or status writes |
+| `fleet.datumapis.com-inventory-discoverer` | `get`, `list`, `watch` on Devices and Device status writes only; no spec write and no other kind. For [BMC discovery](bmc-discovery.md). |
 
 No `metal.datumapis.com` role includes or inherits any inventory role. The consumer,
 claimant, and viewer roles that reach customer projects therefore grant no
 inventory access, and the provider role does not either. Bind the inventory
-roles explicitly, scoped to the provider project. No role grants status
-writes, because status has no writer yet.
+roles explicitly, scoped to the provider project. Only the discoverer role
+grants status writes, and only for Devices; every other kind's status has no
+writer.
 
 The manager is a separate least-privilege role for explicitly authorized inventory
 staff; it does not change the existing editor or give staff viewers write access.
@@ -144,7 +146,7 @@ in the provider project. The plugin never writes.
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
 | `bmc.endpoint` is an `https` URL without credentials | Device | Credentials never live in inventory records. |
 | `lifecycle` is `Active` (default), `Decommissioning` or `Retired`; `Active` and `Decommissioning` move between each other, only `Decommissioning` moves to `Retired`, and `Retired` is terminal | Device | Retirement is deliberate and one-way. Only an Active Device can be registered as capacity. See [Device lifecycle](../development/inventory-capacity-registration.md#device-lifecycle). |
-| `status` is a separate subresource that declares no fields | All six | Reserved for future collectors and verifiers to report drift and mismatch. Status never carries identity, and nothing writes it yet. |
+| `status` is a separate subresource | All six | Device status holds BMC discovery's observations and conditions; see [BMC discovery](bmc-discovery.md#status). Observed identity there is evidence; `spec.identity` stays authoritative. Every other kind's status declares no fields and has no writer. |
 
 The CRDs cannot check that `claimRef` names an existing DeviceClaim, because
 CEL cannot read other objects. Until a registrar enforces it, the operator

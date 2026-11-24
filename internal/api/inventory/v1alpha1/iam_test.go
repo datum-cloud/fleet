@@ -20,7 +20,11 @@ type protectedResource struct {
 		Plural      string                `json:"plural"`
 		Singular    string                `json:"singular"`
 		Permissions []string              `json:"permissions"`
-		Parents     []struct {
+		Subresource []struct {
+			Name        string   `json:"name"`
+			Permissions []string `json:"permissions"`
+		} `json:"subresources"`
+		Parents []struct {
 			APIGroup string `json:"apiGroup"`
 			Kind     string `json:"kind"`
 		} `json:"parentResources"`
@@ -86,8 +90,15 @@ func TestProtectedResourcesMatchTheCRDs(t *testing.T) {
 		if len(resource.Spec.Parents) != 1 || resource.Spec.Parents[0].APIGroup != "resourcemanager.miloapis.com" || resource.Spec.Parents[0].Kind != "Project" {
 			t.Fatalf("%s must be project-scoped", resource.Metadata.Name)
 		}
-		if slices.Contains(resource.Spec.Permissions, "updateStatus") {
-			t.Fatalf("%s grants status writes; status has no writer yet", resource.Metadata.Name)
+		// Device status has one writer, BMC discovery; every other kind's
+		// status is reserved.
+		statusWritable := slices.Contains(resource.Spec.Permissions, "updateStatus") || len(resource.Spec.Subresource) != 0
+		if resource.Spec.Kind != "Device" && statusWritable {
+			t.Fatalf("%s grants status writes; its status has no writer", resource.Metadata.Name)
+		}
+		if resource.Spec.Kind == "Device" && (!slices.Contains(resource.Spec.Permissions, "updateStatus") || len(resource.Spec.Subresource) != 1 ||
+			resource.Spec.Subresource[0].Name != "status" || !slices.Equal(resource.Spec.Subresource[0].Permissions, []string{"update", "patch"})) {
+			t.Fatalf("%s must declare updateStatus and the status subresource's update and patch", resource.Metadata.Name)
 		}
 	}
 }
@@ -97,6 +108,11 @@ func TestInventoryRolesSplitReadFromWrite(t *testing.T) {
 	for _, resource := range decodeDir[protectedResource](t, filepath.Join(inventoryRoot, "protected-resources")) {
 		for _, verb := range resource.Spec.Permissions {
 			declared[GroupVersion.Group+"/"+resource.Spec.Plural+"."+verb] = true
+		}
+		for _, sub := range resource.Spec.Subresource {
+			for _, verb := range sub.Permissions {
+				declared[GroupVersion.Group+"/"+resource.Spec.Plural+"/"+sub.Name+"."+verb] = true
+			}
 		}
 	}
 	roles := map[string]role{}
@@ -109,9 +125,32 @@ func TestInventoryRolesSplitReadFromWrite(t *testing.T) {
 		"fleet.datumapis.com-inventory-manager":  {"create", "update", "patch"},
 		"fleet.datumapis.com-inventory-importer": {"create", "patch"},
 	}
-	if len(roles) != len(wantVerbs) {
-		t.Fatalf("want exactly viewer, editor, manager and importer roles, got %v", roles)
+	if len(roles) != len(wantVerbs)+1 {
+		t.Fatalf("want exactly viewer, editor, manager, importer and discoverer roles, got %v", roles)
 	}
+	t.Run("fleet.datumapis.com-inventory-discoverer", func(t *testing.T) {
+		current, ok := roles["fleet.datumapis.com-inventory-discoverer"]
+		if !ok {
+			t.Fatal("missing discoverer role")
+		}
+		// Reads Devices and writes only their status: no spec verb, no other
+		// kind, and no inherited role that could add one.
+		expected := []string{"devices.get", "devices.list", "devices.watch", "devices.updateStatus", "devices/status.update", "devices/status.patch"}
+		for i := range expected {
+			expected[i] = GroupVersion.Group + "/" + expected[i]
+		}
+		actual := slices.Clone(current.Spec.Included)
+		slices.Sort(expected)
+		slices.Sort(actual)
+		if !slices.Equal(actual, expected) || len(current.Spec.Inherited) != 0 {
+			t.Fatalf("discoverer permissions = %v inherited %v, want exactly %v", actual, current.Spec.Inherited, expected)
+		}
+		for _, permission := range actual {
+			if !declared[permission] {
+				t.Fatalf("role permission %s has no ProtectedResource", permission)
+			}
+		}
+	})
 	for name, verbs := range wantVerbs {
 		t.Run(name, func(t *testing.T) {
 			current, ok := roles[name]

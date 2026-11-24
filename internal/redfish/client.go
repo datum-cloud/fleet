@@ -16,6 +16,7 @@ package redfish
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +78,12 @@ func NewClient(endpoint, user, password string, timeout time.Duration) (*Client,
 	if err != nil {
 		return nil, err
 	}
+	return newClient(endpoint, user, password, timeout, nil)
+}
+
+// newClient builds the guarded client for a canonical endpoint. A nil
+// tlsConfig keeps the system trust store.
+func newClient(endpoint, user, password string, timeout time.Duration, tlsConfig *tls.Config) (*Client, error) {
 	u, _ := url.Parse(endpoint)
 	if user == "" || password == "" || strings.ContainsAny(user, ":\r\n") || strings.ContainsAny(password, "\r\n") {
 		return nil, errors.New("redfish credential must be a nonempty single-line username and password")
@@ -86,6 +93,9 @@ func NewClient(endpoint, user, password string, timeout time.Duration) (*Client,
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	if tlsConfig != nil {
+		transport.TLSClientConfig = tlsConfig
+	}
 	return &Client{config: gofish.ClientConfig{
 		Endpoint: u.Scheme + "://" + u.Host, Username: user, Password: password,
 		// Basic authentication: creating a session would itself be a BMC
@@ -169,6 +179,8 @@ func classify(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, ErrPinMismatch):
+		return ErrPinMismatch
 	case errors.Is(err, ErrIdentity):
 		return fmt.Errorf("%w: unexpected resource path", ErrIdentity)
 	case errors.As(err, &rf) && (rf.HTTPReturnedStatusCode == http.StatusUnauthorized || rf.HTTPReturnedStatusCode == http.StatusForbidden):
