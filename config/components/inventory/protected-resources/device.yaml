@@ -8,7 +8,13 @@ spec:
   kind: Device
   plural: devices
   singular: device
-  permissions: [list, get, watch, create, update, patch, delete]
+  # updateStatus is held only by the discoverer role. With subresource
+  # authorization enabled, status writes use devices/status.update and
+  # devices/status.patch instead.
+  permissions: [list, get, watch, create, update, patch, delete, updateStatus]
+  subresources:
+    - name: status
+      permissions: [update, patch]
   parentResources:
     - apiGroup: resourcemanager.miloapis.com
       kind: Project

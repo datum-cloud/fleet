@@ -5,3 +5,4 @@ resources:
   - editor.yaml
   - manager.yaml
   - importer.yaml
+  - discoverer.yaml
