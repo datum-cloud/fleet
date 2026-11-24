@@ -47,8 +47,8 @@ This is a proposal. Nothing in it is implemented.
 Staff who build and maintain hardware need basic power control. Today they use
 each server's baseboard management controller (BMC) by hand. Fleet keeps no
 record of who did it, the action bypasses the per-Device credentials and TLS
-checks Fleet already uses, and nothing stops a reset of a server a customer is
-using.
+checks that BMC discovery uses, and nothing stops a reset of a server a
+customer is using.
 
 ### Goals
 
