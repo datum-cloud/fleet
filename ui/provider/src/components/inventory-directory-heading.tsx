@@ -4,6 +4,7 @@ import { Label } from '@datum-cloud/datum-ui/label';
 import { RefreshCw, Search } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
+import { FieldSelect } from './field-select';
 import { sections } from './inventory-navigation';
 import './physical-inventory.css';
 
@@ -58,8 +59,8 @@ export function InventoryToolbar({ section, search = '', onSearch, location = ''
   const hasModel = ['Device', 'Cable'].includes(section.kind);
   return <div className="inventory-toolbar">
     <SearchField section={section} search={search} onSearch={onSearch} />
-    {hasLocation && <select aria-label="Filter by facility" value={location} disabled={!onLocation} onChange={event => onLocation?.(event.target.value)}><option value="">All facilities</option>{facilities.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select>}
-    {hasModel && <select aria-label={section.kind === 'Cable' ? 'Filter by medium' : 'Filter by model'} value={model} disabled={!onModel} onChange={event => onModel?.(event.target.value)}><option value="">{section.kind === 'Cable' ? 'All media' : 'All models'}</option>{models.map(value => <option key={value}>{value}</option>)}</select>}
+    {hasLocation && <FieldSelect aria-label="Filter by facility" value={location} disabled={!onLocation} onValueChange={value => onLocation?.(value)} none="All facilities" options={facilities} />}
+    {hasModel && <FieldSelect aria-label={section.kind === 'Cable' ? 'Filter by medium' : 'Filter by model'} value={model} disabled={!onModel} onValueChange={value => onModel?.(value)} none={section.kind === 'Cable' ? 'All media' : 'All models'} options={models.map(value => ({ value, label: value }))} />}
     {(location || model) && onClear && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onClear}>Clear filters</Button>}
     <div className="inventory-toolbar-actions">
       <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={!onRetry} onClick={onRetry} aria-label="Refresh inventory" title="Refresh inventory"><RefreshCw size={16} aria-hidden="true" /></Button>

@@ -1,3 +1,4 @@
+import { selectOptions } from '../test/field-select';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useNavigate } from 'react-router';
@@ -188,7 +189,7 @@ describe('manufacturer detail', () => {
     expect(screen.getByRole('heading', { name: 'vendor-key' })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'model-key', hidden: true })).toHaveLength(2);
     render(<InventoryHardwareFields kind="Device" values={{ name: '', namespace: 'default', displayName: '', height: '', facility: '' }} onChange={() => {}} namespace="default" claims={[]} devices={[]} feeds={[]} locations={[]} catalog={[manufacturer, model]} />);
-    expect(screen.getByRole('option', { name: 'vendor-key · model-key' })).toBeInTheDocument();
+    expect(selectOptions(screen.getByLabelText('Catalog model')).map(option => option.text)).toContain('vendor-key · model-key');
   });
 
   it('preserves filters and history and adds no network reads or visible-focus effects', () => {
@@ -217,9 +218,10 @@ describe('manufacturer detail', () => {
     const secondModel = { ...model, metadata: { ...model.metadata, name: 'other-model', uid: 'other-model-uid' } };
     const otherVendorModel = { ...model, metadata: { ...model.metadata, name: 'third-model', uid: 'third-model-uid' }, spec: { ...model.spec, manufacturerRef: { name: 'other-vendor' } } };
     render(<InventoryHardwareFields kind="Device" values={{ name: '', namespace: 'default', displayName: '', height: '', facility: '' }} onChange={() => {}} namespace="default" claims={[]} devices={[]} feeds={[]} locations={[]} catalog={[manufacturer, secondManufacturer, model, secondModel, otherVendorModel]} />);
-    expect(screen.getByRole('option', { name: 'Acme hardware (vendor-key) · Compute model (model-key)' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Acme hardware (vendor-key) · Compute model (other-model)' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Acme hardware (other-vendor) · Compute model' })).toBeInTheDocument();
+    const choices = selectOptions(screen.getByLabelText('Catalog model')).map(option => option.text);
+    expect(choices).toContain('Acme hardware (vendor-key) · Compute model (model-key)');
+    expect(choices).toContain('Acme hardware (vendor-key) · Compute model (other-model)');
+    expect(choices).toContain('Acme hardware (other-vendor) · Compute model');
   });
 
   it('retains authorized devices when claims are denied and rejects foreign deep links', () => {

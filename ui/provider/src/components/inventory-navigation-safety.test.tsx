@@ -162,7 +162,8 @@ it.each([401, 403, 404, 503])('submit-time SSAR HTTP %s fails closed for both cr
     render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Facility" record={editing ? original : undefined} facilities={[]} /></QueryClientProvider>);
     await open(editing);
     fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
-    await screen.findByRole('status');
+    // The status line is always rendered; wait for the outcome in it, not for the element.
+    await waitFor(() => expect(screen.getByRole('status')).not.toBeEmptyDOMElement());
     expect(writes).toEqual([]);
     expect(screen.getByLabelText('Display name')).toHaveValue('Independent safe input');
     expect(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' })).toBeDisabled();

@@ -1,6 +1,7 @@
 import { Eyebrow } from './fact';
 import { Dot } from './machine-status';
 import type { CatalogOffering, CatalogProfile } from '../types';
+import { Button } from '@datum-cloud/datum-ui/button';
 import { Icon } from '@datum-cloud/datum-ui/icons';
 import { Tooltip } from '@datum-cloud/datum-ui/tooltip';
 import { ArrowRightIcon, CpuIcon, WarehouseIcon } from 'lucide-react';
@@ -62,12 +63,14 @@ export function ProfileCard({
 }) {
   const { className, profile } = option;
   return (
-    <button
-      type="button"
+    <Button
+      type="secondary"
+      theme="outline"
+      htmlType="button"
       data-testid="fleet-plugin-profile-card"
       aria-label={`Deploy ${profile.name} from ${className}`}
       onClick={() => onDeploy(option)}
-      className="border-border bg-card hover:bg-muted flex h-full w-full flex-col gap-3 rounded-lg border p-4 text-left transition-colors">
+      className="border-border bg-card hover:bg-muted h-full w-full flex-col items-stretch justify-start gap-3 rounded-lg p-4 text-left font-normal whitespace-normal text-foreground">
       <span className="flex items-center gap-2">
         <Icon icon={CpuIcon} size={16} className="fleet-accent shrink-0" />
         <span className="min-w-0 flex-1 truncate font-mono text-xs font-semibold">{profile.name}</span>
@@ -80,7 +83,7 @@ export function ProfileCard({
           <Icon icon={ArrowRightIcon} size={13} />
         </span>
       </span>
-    </button>
+    </Button>
   );
 }
 

@@ -1,3 +1,4 @@
+import { setField } from '../test/field-select';
 import { chooseEndpoint } from '../test/cable-endpoint';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -39,7 +40,7 @@ function setup(kind: ManagedKind = 'Facility', record?: management.ManagedRecord
   if (!task) fireEvent.click(screen.getByRole('button', { name: record ? 'Edit display name' : `Create ${kind.toLowerCase()}` }));
   return router;
 }
-function change(label: string, value: string) { fireEvent.change(screen.getByLabelText(label), { target: { value } }); }
+function change(label: string, value: string) { setField(screen.getByLabelText(label), value); }
 function fill(kind: ManagedKind) {
   change('Record name', 'synthetic-record'); change('Display name', 'Synthetic record');
   if (kind === 'Rack') change('Facility', facilities[0].metadata.name);
@@ -168,7 +169,7 @@ it('keeps reported-location correction separate and confirms dirty dismissal', a
   fireEvent.click(screen.getByRole('button', { name: /Correct location|Add reported location/ }));
   expect(screen.getByRole('dialog', { name: 'Correct reported location' })).toBeInTheDocument();
   expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
-  change('Observation time (ISO 8601)', '2026-01-01T00:00:00Z'); change('Correction reason', 'Correct record'); change('Evidence reference', 'ticket/synthetic');
+  change('Correction reason', 'Correct record'); change('Evidence reference', 'ticket/synthetic');
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));

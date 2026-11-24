@@ -12,7 +12,8 @@ list; the layout follows network-services-operator's NLB pages.
   behind "+N") appears only when some Machine has an address, and **Location**
   only when the Machines are in more than one location. Search matches the
   status labels shown and the addresses. Under the table, **Available to
-  deploy** shows a card for each profile the project can deploy, and a muted,
+  deploy** shows a card for each profile the project can deploy (each card is
+  a datum-ui Button that opens the deploy dialog), and a muted,
   disabled card for each class that isn't usable yet, with the reason in its
   tooltip. A class published from another project (with `spec.source`) is read
   from `status.resolvedClass` and stays unusable until Fleet resolves it; the

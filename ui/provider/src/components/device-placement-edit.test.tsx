@@ -1,3 +1,4 @@
+import { chooseValue } from '../test/field-select';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,7 +20,6 @@ function setup(record = device, session = new InventoryOperationScope()) {
 }
 function openAndFill(existing = false) {
   fireEvent.click(screen.getByRole('button', { name: existing ? 'Correct location' : 'Add reported location' }));
-  fireEvent.change(screen.getByLabelText('Observation time (ISO 8601)'), { target: { value: '2026-01-02T00:00:00Z' } });
   fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Correct recorded location' } });
   fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/example' } });
 }
@@ -29,6 +29,59 @@ beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('reported location editor', () => {
+  it('picks the observation time with the datum-ui date-time picker, defaulting to when the form opened', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    setup(); openAndFill();
+    expect(screen.queryByRole('textbox', { name: /Observ/ })).not.toBeInTheDocument();
+    const observed = screen.getByRole('combobox', { name: /^Observed at/ });
+    expect(observed).toHaveTextContent(String(new Date().getFullYear()));
+    expect(observed).toBeEnabled();
+  });
+  describe('observation time', () => {
+    // A fixed local noon, so an earlier and a later time on the same day are both known.
+    const now = new Date(2026, 2, 10, 12, 0);
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now); });
+    afterEach(() => vi.useRealTimers());
+    function pickTime(time: string) {
+      fireEvent.click(screen.getByRole('combobox', { name: /^Observed at/ }));
+      fireEvent.change(screen.getByRole('textbox', { name: 'Select time' }), { target: { value: time } });
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    }
+    it('submits the exact past time that was picked', async () => {
+      const fetch = vi.fn().mockImplementation(async (_url: string, request: RequestInit) => {
+        if (request.method === 'POST') return response({ status: { allowed: true } });
+        if (request.method === 'PATCH') return response({ ...device, metadata: { ...device.metadata, resourceVersion: '8' }, spec: { ...device.spec, reportedPlacement: JSON.parse(request.body as string)[2].value } });
+        return response(device);
+      });
+      vi.stubGlobal('fetch', fetch);
+      setup(); openAndFill();
+      pickTime('09:30');
+      expect(screen.queryByText(/later than now/)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Location saved'));
+      const patch = JSON.parse(fetch.mock.calls.find(([, request]) => request.method === 'PATCH')![1].body as string);
+      expect(patch[2].value.observedAt).toBe(new Date(2026, 2, 10, 9, 30).toISOString());
+    });
+    it('flags a later time today at once and sends no PATCH', async () => {
+      const fetch = vi.fn().mockResolvedValue(response({ status: { allowed: true } }));
+      vi.stubGlobal('fetch', fetch);
+      setup(); openAndFill();
+      pickTime('15:45');
+      const observed = screen.getByRole('combobox', { name: /^Observed at/ });
+      expect(screen.getByRole('alert')).toHaveTextContent('Observation time cannot be later than now.');
+      expect(observed).toHaveAttribute('aria-invalid', 'true');
+      expect(observed).toHaveAccessibleDescription('Observation time cannot be later than now.');
+      const save = screen.getByRole('button', { name: 'Save changes' });
+      expect(save).toBeDisabled();
+      fireEvent.submit(save.closest('form')!);
+      await new Promise(done => setTimeout(done, 0));
+      expect(fetch.mock.calls.some(([, request]) => request?.method === 'PATCH')).toBe(false);
+      pickTime('11:15');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(observed).not.toHaveAttribute('aria-invalid');
+      expect(save).toBeEnabled();
+    });
+  });
   it.each([false, true])('adds/edits a Device reported location and refreshes projections: %s', async existing => {
     const record = structuredClone(device);
     if (existing) record.spec.reportedPlacement = { revision: 1, observedAt: '2026-01-01T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: 'rack' }, position: 12, height: 4, face: 'rear', fullDepth: true };
@@ -62,7 +115,7 @@ describe('reported location editor', () => {
   it.each([401, 403, 404, 503])('purges denied rack references and choices: %s', async status => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({}, status));
     vi.stubGlobal('fetch', fetch); setup(); openAndFill();
-    fireEvent.change(screen.getByLabelText('Rack'), { target: { value: 'rack' } });
+    chooseValue(screen.getByLabelText('Rack'), 'rack');
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Restricted names and choices were removed'));
     expect(screen.queryByText('Restricted rack name')).not.toBeInTheDocument();
@@ -102,7 +155,7 @@ describe('reported location editor', () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
     const view = setup(); openAndFill();
-    fireEvent.change(screen.getByLabelText('Rack'), { target: { value: 'rack' } });
+    chooseValue(screen.getByLabelText('Rack'), 'rack');
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(resolve).toBeDefined());
     if (event === 'session') view.session.invalidate();

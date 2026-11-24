@@ -1,7 +1,9 @@
 import { Input } from '@datum-cloud/datum-ui/input';
 import { Label } from '@datum-cloud/datum-ui/label';
 import { Button } from '@datum-cloud/datum-ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@datum-cloud/datum-ui/table';
 import { useId, type ReactNode } from 'react';
+import { FieldSelect } from './field-select';
 import { catalogLabel } from '../lib/manufacturer-inventory';
 import type { Device, DeviceClaim, PhysicalComponent, PhysicalRecord } from '../../../shared/fleet-api';
 import { cabledEndpoints, cableMedia, componentTypes, deviceIdentityProblems, endpointKey, isTermination, systemUUIDPattern, type ReferencedEndpoint } from '../lib/inventory-hardware';
@@ -28,9 +30,8 @@ export function InventoryHardwareFields({ kind, values, onChange, namespace, cla
   const places = locations.filter(current);
   if (kind === 'DeviceClaim') return <>
     <div className="inventory-field">
-      <Label>Location<select required aria-describedby={`${id}-location`} value={values.planLocation?.uid ?? ''} onChange={event => { const location = places.find(record => record.metadata.uid === event.target.value); field('planLocation', location ? { kind: location.kind, name: location.metadata.name, uid: location.metadata.uid!, resourceVersion: location.metadata.resourceVersion! } : undefined); }}><option value="">Choose a facility or rack</option>
-        {([['Facility', 'Facilities'], ['Rack', 'Racks']] as const).map(([group, label]) => places.some(record => record.kind === group) && <optgroup key={group} label={label}>{places.filter(record => record.kind === group).map(record => <option key={record.metadata.uid} value={record.metadata.uid}>{record.spec.displayName}</option>)}</optgroup>)}
-      </select></Label>
+      <Label>Location<FieldSelect required aria-describedby={`${id}-location`} value={values.planLocation?.uid ?? ''} onValueChange={value => { const location = places.find(record => record.metadata.uid === value); field('planLocation', location ? { kind: location.kind, name: location.metadata.name, uid: location.metadata.uid!, resourceVersion: location.metadata.resourceVersion! } : undefined); }} placeholder="Choose a facility or rack"
+        groups={([['Facility', 'Facilities'], ['Rack', 'Racks']] as const).map(([group, label]) => ({ label, options: places.filter(record => record.kind === group).map(record => ({ value: record.metadata.uid!, label: record.spec.displayName })) }))} /></Label>
       <Hint id={`${id}-location`}>Location can't be changed later.</Hint>
     </div>
     <div className="inventory-form-grid">{([['manufacturer', 'Expected manufacturer'], ['model', 'Expected model'], ['serial', 'Expected serial']] as const).map(([name, label]) => <Label key={name}>{label}<Input required={name === 'model'} maxLength={253} value={values[name] ?? ''} onChange={event => field(name, event.target.value)} /></Label>)}</div>
@@ -44,22 +45,24 @@ export function InventoryHardwareFields({ kind, values, onChange, namespace, cla
     return <>
       <fieldset><legend>Installation & identity</legend>
         <div className="inventory-field">
-          <Label>Installation plan<select required aria-describedby={`${id}-plan`} value={values.claim?.uid ?? ''} onChange={event => { const claim = plans.find(item => item.metadata.uid === event.target.value); field('claim', claim ? { name: claim.metadata.name, uid: claim.metadata.uid!, resourceVersion: claim.metadata.resourceVersion! } : undefined); }}><option value="">Choose an installation plan</option>
-            {plans.map(claim => {
+          <Label>Installation plan<FieldSelect required aria-describedby={`${id}-plan`} value={values.claim?.uid ?? ''} onValueChange={value => { const claim = plans.find(item => item.metadata.uid === value); field('claim', claim ? { name: claim.metadata.name, uid: claim.metadata.uid!, resourceVersion: claim.metadata.resourceVersion! } : undefined); }} placeholder="Choose an installation plan"
+            options={plans.map(claim => {
               // A plan with a device keeps it; marking it here stops a second registration by mistake.
               // Device creation needs the Device collection, so an unmarked plan is known to have none.
               const taken = registered.has(claim.metadata.name);
-              return <option key={claim.metadata.uid} value={claim.metadata.uid} className={taken ? 'inventory-option-attention' : undefined} title={taken ? 'A device is already registered to this plan' : undefined}>{claim.spec.displayName || claim.metadata.name}{taken && ' · has device'}</option>;
-            })}
-          </select></Label>
+              return { value: claim.metadata.uid!, attention: taken, hint: taken ? 'A device is already registered to this plan' : undefined, label: <>{claim.spec.displayName || claim.metadata.name}{taken && ' · has device'}</> };
+            })} /></Label>
           <Hint id={`${id}-plan`}>Can't be changed later.</Hint>
         </div>
         {names}
         <div className="inventory-field">
-          <Label>Catalog model<select aria-describedby={`${id}-catalog`} value={models.some(({ model }) => model.metadata.uid === values.catalog?.uid) ? values.catalog?.uid ?? '' : values.catalog ? 'unavailable' : ''} onChange={event => {
-            const choice = models.find(({ model }) => model.metadata.uid === event.target.value);
+          <Label>Catalog model<FieldSelect aria-describedby={`${id}-catalog`} value={models.some(({ model }) => model.metadata.uid === values.catalog?.uid) ? values.catalog?.uid ?? '' : values.catalog ? 'unavailable' : ''} onValueChange={value => {
+            const choice = models.find(({ model }) => model.metadata.uid === value);
             field('catalog', choice ? { namespace, name: choice.model.metadata.name, uid: choice.model.metadata.uid!, resourceVersion: choice.model.metadata.resourceVersion!, manufacturer: { name: choice.manufacturer.metadata.name, uid: choice.manufacturer.metadata.uid!, resourceVersion: choice.manufacturer.metadata.resourceVersion! } } : undefined);
-          }}><option value="">No catalog assignment</option>{values.catalog && !models.some(({ model }) => model.metadata.uid === values.catalog?.uid) && <option value="unavailable" disabled>Selected catalog unavailable · clear or refresh</option>}{models.map(({ model, manufacturer }) => <option key={model.metadata.uid} value={model.metadata.uid}>{catalogLabel(manufacturer, models.map(choice => choice.manufacturer))} · {catalogLabel(model, models.filter(choice => choice.manufacturer.metadata.name === manufacturer.metadata.name).map(choice => choice.model))}</option>)}</select></Label>
+          }} none="No catalog assignment" options={[
+            ...values.catalog && !models.some(({ model }) => model.metadata.uid === values.catalog?.uid) ? [{ value: 'unavailable', disabled: true, label: 'Selected catalog unavailable · clear or refresh' }] : [],
+            ...models.map(({ model, manufacturer }) => ({ value: model.metadata.uid!, label: `${catalogLabel(manufacturer, models.map(choice => choice.manufacturer))} · ${catalogLabel(model, models.filter(choice => choice.manufacturer.metadata.name === manufacturer.metadata.name).map(choice => choice.model))}` })),
+          ]} /></Label>
           <Hint id={`${id}-catalog`}>Can't be changed later.</Hint>
         </div>
         <div className="inventory-form-grid">
@@ -72,17 +75,17 @@ export function InventoryHardwareFields({ kind, values, onChange, namespace, cla
         </div>
       </fieldset>
       <fieldset><legend>Physical components</legend><Hint id={`${id}-components`}>Physical ports and parts only — no interfaces or IPs.</Hint>
-        {components.length > 0 && <div className="inventory-editor-scroll"><table className="inventory-editor-table" aria-describedby={`${id}-components`}>
-          <thead><tr><th scope="col">ID</th><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Connector</th><th scope="col">Positions</th><th scope="col"><span className="inventory-visually-hidden">Remove</span></th></tr></thead>
-          <tbody>{components.map((item, index) => <tr key={index}>
-            <td><Input aria-label={`Component ${index + 1} id`} required maxLength={63} data-problem={item.id && components.findIndex(other => other.id === item.id) < index ? 'Component IDs must be unique.' : ''} value={item.id} onChange={event => component(index, { id: event.target.value })} /></td>
-            <td><Input aria-label={`Component ${index + 1} name`} required maxLength={253} value={item.name} onChange={event => component(index, { name: event.target.value })} /></td>
-            <td><select aria-label={`Component ${index + 1} type`} value={item.type} onChange={event => component(index, { type: event.target.value as PhysicalComponent['type'] })}>{componentTypes.map(type => <option key={type}>{type}</option>)}</select></td>
-            <td><Input aria-label={`Component ${index + 1} connector`} maxLength={253} value={item.connector ?? ''} onChange={event => component(index, { connector: event.target.value || undefined })} /></td>
-            <td><Input aria-label={`Component ${index + 1} positions`} required type="number" min={1} max={256} value={item.positions ?? ''} onChange={event => component(index, { positions: Number(event.target.value) })} /></td>
-            <td><Button type="secondary" theme="outline" size="small" htmlType="button" aria-label={`Remove component ${index + 1}`} onClick={() => field('components', components.filter((_, position) => position !== index))}>×</Button></td>
-          </tr>)}</tbody>
-        </table></div>}
+        {components.length > 0 && <div className="inventory-editor-scroll"><Table className="inventory-editor-table" aria-describedby={`${id}-components`}>
+          <TableHeader><TableRow><TableHead scope="col">ID</TableHead><TableHead scope="col">Name</TableHead><TableHead scope="col">Type</TableHead><TableHead scope="col">Connector</TableHead><TableHead scope="col">Positions</TableHead><TableHead scope="col"><span className="inventory-visually-hidden">Remove</span></TableHead></TableRow></TableHeader>
+          <TableBody>{components.map((item, index) => <TableRow key={index}>
+            <TableCell><Input aria-label={`Component ${index + 1} id`} required maxLength={63} data-problem={item.id && components.findIndex(other => other.id === item.id) < index ? 'Component IDs must be unique.' : ''} value={item.id} onChange={event => component(index, { id: event.target.value })} /></TableCell>
+            <TableCell><Input aria-label={`Component ${index + 1} name`} required maxLength={253} value={item.name} onChange={event => component(index, { name: event.target.value })} /></TableCell>
+            <TableCell><FieldSelect aria-label={`Component ${index + 1} type`} value={item.type} onValueChange={value => component(index, { type: value as PhysicalComponent['type'] })} options={componentTypes.map(type => ({ value: type, label: type }))} /></TableCell>
+            <TableCell><Input aria-label={`Component ${index + 1} connector`} maxLength={253} value={item.connector ?? ''} onChange={event => component(index, { connector: event.target.value || undefined })} /></TableCell>
+            <TableCell><Input aria-label={`Component ${index + 1} positions`} required type="number" min={1} max={256} value={item.positions ?? ''} onChange={event => component(index, { positions: Number(event.target.value) })} /></TableCell>
+            <TableCell><Button type="secondary" theme="outline" size="small" htmlType="button" aria-label={`Remove component ${index + 1}`} onClick={() => field('components', components.filter((_, position) => position !== index))}>×</Button></TableCell>
+          </TableRow>)}</TableBody>
+        </Table></div>}
         <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={components.length >= 256} onClick={() => field('components', [...components, { id: '', name: '', type: 'NetworkPort', positions: 1 }])}>Add component</Button>
       </fieldset>
     </>;
@@ -122,29 +125,27 @@ export function InventoryHardwareFields({ kind, values, onChange, namespace, cla
   };
   const nextLane = () => { let number = lanes.length + 1; while (lanes.some(item => item.id === `lane-${number}`)) number++; return `lane-${number}`; };
   return <>
-    <Label>Cable medium<select required value={values.medium ?? ''} onChange={event => field('medium', event.target.value)}><option value="">Choose medium</option>{cableMedia.map(medium => <option key={medium}>{medium}</option>)}</select></Label>
+    <Label>Cable medium<FieldSelect required value={values.medium ?? ''} onValueChange={value => field('medium', value)} placeholder="Choose medium" options={cableMedia.map(medium => ({ value: medium, label: medium }))} /></Label>
     <fieldset><legend>Lanes</legend>
-      <div className="inventory-editor-scroll"><table className="inventory-editor-table inventory-lane-table">
-        <thead><tr><th scope="col">ID</th><th scope="col">End A</th><th scope="col">End B</th><th scope="col"><span className="inventory-visually-hidden">Remove</span></th></tr></thead>
-        <tbody>{lanes.map((item, index) => <tr key={index}>
-          <td><Input aria-label={`Lane ${index + 1} ID`} required maxLength={63} data-problem={item.id && lanes.findIndex(other => other.id === item.id) < index ? 'Lane IDs must be unique.' : ''} value={item.id} onChange={event => lane(index, { id: event.target.value })} /></td>
+      <div className="inventory-editor-scroll"><Table className="inventory-editor-table inventory-lane-table">
+        <TableHeader><TableRow><TableHead scope="col">ID</TableHead><TableHead scope="col">End A</TableHead><TableHead scope="col">End B</TableHead><TableHead scope="col"><span className="inventory-visually-hidden">Remove</span></TableHead></TableRow></TableHeader>
+        <TableBody>{lanes.map((item, index) => <TableRow key={index}>
+          <TableCell><Input aria-label={`Lane ${index + 1} ID`} required maxLength={63} data-problem={item.id && lanes.findIndex(other => other.id === item.id) < index ? 'Lane IDs must be unique.' : ''} value={item.id} onChange={event => lane(index, { id: event.target.value })} /></TableCell>
           {(['a', 'b'] as const).map(side => {
             const source = sources.find(candidate => candidate.key === sourceOf(item, side));
             const chosen = source?.ports.find(port => item[side] && port.key === JSON.stringify(item[side]));
             const problem = repeat(index, side);
             const end = `Lane ${index + 1} end ${side.toUpperCase()}`;
-            return <td key={side}><div className="inventory-endpoint-picker">
-              <select aria-label={`${end} device`} value={source?.key ?? ''} onChange={event => lane(index, { [side]: undefined, [side === 'a' ? 'aSource' : 'bSource']: event.target.value || undefined })}><option value="">Device or feed</option>
-                {groups.map(group => <optgroup key={group} label={group}>{sources.filter(candidate => candidate.group === group).map(candidate => <option key={candidate.key} value={candidate.key}>{candidate.label}</option>)}</optgroup>)}
-              </select>
-              <select aria-label={end} required data-problem={problem} data-attention={problem ? 'conflict' : chosen?.cable ? 'cabled' : undefined} title={problem || (chosen?.cable && `Already cabled: ${chosen.cable}`) || undefined} value={chosen?.key ?? ''} onChange={event => lane(index, { [side]: source?.ports.find(port => port.key === event.target.value)?.endpoint })}><option value="">Port</option>
-                {source?.ports.map(port => <option key={port.key} value={port.key} className={port.cable ? 'inventory-option-attention' : undefined} title={port.cable && `Already cabled: ${port.cable}`}>{port.label}{port.cable && ' · cabled'}</option>)}
-              </select>
-            </div></td>;
+            return <TableCell key={side}><div className="inventory-endpoint-picker">
+              <FieldSelect aria-label={`${end} device`} value={source?.key ?? ''} onValueChange={value => lane(index, { [side]: undefined, [side === 'a' ? 'aSource' : 'bSource']: value || undefined })} none="Device or feed"
+                groups={groups.map(group => ({ label: group, options: sources.filter(candidate => candidate.group === group).map(candidate => ({ value: candidate.key, label: candidate.label })) }))} />
+              <FieldSelect aria-label={end} required data-problem={problem} data-attention={problem ? 'conflict' : chosen?.cable ? 'cabled' : undefined} title={problem || (chosen?.cable && `Already cabled: ${chosen.cable}`) || undefined} value={chosen?.key ?? ''} onValueChange={value => lane(index, { [side]: source?.ports.find(port => port.key === value)?.endpoint })} placeholder="Port"
+                options={source?.ports.map(port => ({ value: port.key, attention: !!port.cable, hint: port.cable && `Already cabled: ${port.cable}`, label: <>{port.label}{port.cable && ' · cabled'}</> }))} />
+            </div></TableCell>;
           })}
-          <td>{lanes.length > 1 && <Button type="secondary" theme="outline" size="small" htmlType="button" aria-label={`Remove lane ${index + 1}`} onClick={() => field('cableLanes', lanes.filter((_, position) => position !== index))}>×</Button>}</td>
-        </tr>)}</tbody>
-      </table></div>
+          <TableCell>{lanes.length > 1 && <Button type="secondary" theme="outline" size="small" htmlType="button" aria-label={`Remove lane ${index + 1}`} onClick={() => field('cableLanes', lanes.filter((_, position) => position !== index))}>×</Button>}</TableCell>
+        </TableRow>)}</TableBody>
+      </Table></div>
       <Button type="secondary" theme="outline" size="small" htmlType="button" disabled={lanes.length >= 64} onClick={() => field('cableLanes', [...lanes, { id: nextLane() }])}>Add lane</Button>
     </fieldset>
   </>;

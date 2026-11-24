@@ -1,3 +1,4 @@
+import { selectedValue } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -268,7 +269,7 @@ it('restores search and filters with detail, group, Back and Forward presentatio
   expect(within(breadcrumb).getByRole('link', { name: 'Devices' })).toHaveAttribute('href', `/plugins/metal/inventory${query}`);
   fireEvent.click(screen.getByRole('tab', { name: 'Devices' }));
   await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue('Example'));
-  expect(screen.getByRole('combobox', { name: 'Filter by facility' })).toHaveValue('default/example-facility');
+  expect(selectedValue(screen.getByRole('combobox', { name: 'Filter by facility' }))).toBe('default/example-facility');
   fireEvent.click(screen.getByRole('tab', { name: 'Locations' }));
   await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search operational sites' })).toBeEnabled());
   await act(async () => { await view.router.navigate(-1); });

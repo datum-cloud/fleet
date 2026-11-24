@@ -42,7 +42,7 @@
 .inventory-dialog .inventory-management-status { font-size:12px; min-height:1.5em; }
 .inventory-form-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:12px; position:sticky; bottom:0; padding:12px 0; background:var(--card); }
 .inventory-error-summary { border:1px solid var(--destructive); border-radius:var(--radius); padding:12px; grid-column:1/-1; }
-.inventory-error-summary button { text-decoration:underline; text-align:left; }
+.inventory-error-summary button { height:auto; text-decoration:underline; text-align:left; white-space:normal; }
 .inventory-page-chrome { display:grid; gap:16px; min-width:0; width:100%; }
 .inventory-page-title { flex-wrap:wrap; gap:16px; }
 .inventory-title-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:start; padding-left:0; }
@@ -52,15 +52,18 @@
 .inventory-form-gate > p,.inventory-form-gate > div,.inventory-form-gate > fieldset { grid-column:1/-1; }
 .inventory-management > [role="status"] { margin-top:16px; }
 .inventory-form label { display:flex; flex-direction:column; align-items:stretch; gap:6px; margin:12px 0; line-height:1.5; }
-.inventory-form select { padding:9px 12px; background:var(--card); color:var(--foreground); border:1px solid var(--border); border-radius:var(--radius); }
-.inventory-form select:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .inventory-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 24px; margin-top:16px; padding:20px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); }
 .inventory-form > p,.inventory-form > div,.inventory-form > fieldset { grid-column:1/-1; }
 .inventory-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .inventory-search-form { display:flex; align-items:center; gap:10px; flex:1; min-width:min(320px,100%); }
 .inventory-toolbar .inventory-search { flex:1; max-width:none; min-width:200px; }
 .inventory-toolbar .inventory-search-form .inventory-search { min-width:0; }
-.inventory-toolbar select { padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); font:inherit; width:180px; max-width:100%; }
+/* A datum-ui Select sits in a span that owns its width; the trigger fills it. */
+.field-select { display:block; min-width:0; }
+.inventory-toolbar .field-select { width:180px; max-width:100%; }
+/* The open list may be wider than a narrow trigger so names do not wrap, but stays on screen. */
+.field-select-content { width:auto; min-width:var(--radix-select-trigger-width); max-width:min(480px,calc(100vw - 32px)); }
+.field-select-content [data-slot="select-label"] { color:var(--muted-foreground); font-size:12px; font-weight:500; }
 .inventory-rack-layout { display:block; min-width:0; }
 .inventory-elevation { border:1px solid var(--border); border-radius:var(--radius); padding:16px; display:grid; gap:12px; background:var(--card); }
 .inventory-elevation p { font-size:12px; }
@@ -97,7 +100,7 @@
 @media(max-width:800px) { .inventory-management-compact .inventory-management-controls { justify-content:flex-start; } }
 .inventory-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 20px; }
 .inventory-component-editor { border:1px solid var(--border); padding:12px; border-radius:var(--radius); margin:12px 0; }
-.inventory-form input,.inventory-form select { min-width:0; width:100%; }
+.inventory-form input,.inventory-form .field-select { min-width:0; width:100%; }
 @media(max-width:600px) { .inventory-form-grid { grid-template-columns:1fr; } }
 @media(max-width:600px) { .fleet-inventory th,.fleet-inventory td { min-width:180px; } }
 
@@ -198,9 +201,6 @@
    recorded = solid fill, no cable recorded = empty outline, records disagree = "!" and the destructive token,
    peer unavailable = "?" and a dashed outline, catalog only = a faint dashed outline. Nothing is styled as verified. */
 .inventory-connection-summary { font-size:13px; overflow-wrap:anywhere; }
-.inventory-connections .inventory-link-button { appearance:none; display:inline-flex; align-items:center; min-height:24px; padding:0; border:0; background:none; color:inherit; font:inherit; font-size:12px; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
-.inventory-connections .inventory-link-button:hover { color:var(--primary); }
-.inventory-connections .inventory-link-button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .inventory-port-hidden { display:flex; flex-wrap:wrap; gap:4px 16px; color:var(--muted-foreground); }
 .inventory-port-grid { position:relative; display:grid; gap:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); min-width:0; }
 .inventory-port-face-group { display:grid; gap:6px; min-width:0; }
@@ -544,7 +544,7 @@
 .inventory-directory-table tr.inventory-row-link:hover > td { background:var(--muted); }
 @media(max-width:600px) {
   .fleet-inventory .inventory-directory-table td:first-child { max-width:150px; }
-  .inventory-toolbar select { flex:1 1 140px; width:auto; }
+  .inventory-toolbar .field-select { flex:1 1 140px; width:auto; }
 }
 /* Connections and power: a reading with no limit to scale against is a neutral bar; an absent PSU is amber. */
 .inventory-port-load[data-tint="reported"] { --load-colour:color-mix(in oklab,var(--muted-foreground) 45%,var(--card)); }
@@ -579,19 +579,21 @@
 .inventory-field { display:grid; gap:2px; min-width:0; }
 .inventory-form .inventory-field > label { margin-bottom:0; }
 .inventory-field-hint { font-size:12px; color:var(--muted-foreground); }
+.inventory-field-problem { font-size:12px; color:var(--destructive); }
+.inventory-field [role="combobox"][aria-invalid="true"] { border-color:var(--destructive); }
 .inventory-form-rule { border-top:1px solid var(--border); padding-top:10px; }
 .inventory-form-actions { border-top:1px solid var(--border); }
 .inventory-attention-note { margin:0; font-size:12px; color:var(--warning,#b45309); }
 .inventory-option-attention { color:var(--warning,#b45309); }
-.inventory-form select[data-attention="cabled"] { border-color:var(--warning,#d97706); box-shadow:inset 3px 0 var(--warning,#d97706); }
-.inventory-form select[data-attention="conflict"] { border-color:var(--destructive); box-shadow:inset 3px 0 var(--destructive); }
+.inventory-form [role="combobox"][data-attention="cabled"] { border-color:var(--warning,#d97706); box-shadow:inset 3px 0 var(--warning,#d97706); }
+.inventory-form [role="combobox"][data-attention="conflict"] { border-color:var(--destructive); box-shadow:inset 3px 0 var(--destructive); }
 /* Component and lane editors: one dense row per item. */
 .inventory-editor-scroll { position:relative; overflow-x:auto; margin:8px 0; }
 .inventory-editor-table { width:100%; border-collapse:collapse; font-size:13px; }
-.inventory-editor-table th { padding:2px 4px; text-align:left; font-size:12px; font-weight:500; color:var(--muted-foreground); white-space:nowrap; }
+.inventory-editor-table th { height:auto; padding:2px 4px; text-align:left; font-size:12px; font-weight:500; color:var(--muted-foreground); white-space:nowrap; }
 .inventory-editor-table td { padding:2px 4px; vertical-align:middle; }
 .inventory-editor-table td:last-child { width:1%; }
-.inventory-form .inventory-editor-table input,.inventory-form .inventory-editor-table select { height:30px; min-width:72px; padding:2px 8px; font-size:13px; }
+.inventory-form .inventory-editor-table input,.inventory-form .inventory-editor-table [role="combobox"] { height:30px; min-height:30px; min-width:72px; padding:2px 8px; font-size:13px; }
 .inventory-endpoint-picker { display:grid; grid-template-columns:minmax(120px,1fr) minmax(96px,1fr); gap:4px; }
 .inventory-lane-table td:first-child { width:110px; }
 
@@ -603,8 +605,7 @@
 .inventory-fact-strip .inventory-discovery-chip { line-height:18px; }
 .inventory-discovery-mark[data-tone="danger"] { color:var(--destructive); font-weight:500; }
 .inventory-discovery-key { display:inline-flex; flex-wrap:wrap; align-items:baseline; gap:6px; min-width:0; }
-.inventory-copy { padding:0 6px; border:1px solid var(--border); border-radius:4px; background:transparent; color:var(--muted-foreground); font-size:11px; line-height:18px; cursor:pointer; }
-.inventory-copy:hover,.inventory-copy:focus-visible { color:var(--foreground); }
+.inventory-copy { height:20px; padding:0 6px; font-size:11px; }
 .inventory-discovery-pair { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px 24px; min-width:0; }
 .inventory-discovery-pair > * { min-width:0; }
 .inventory-discovery-identity .inventory-dense-table td:not(:first-child) { white-space:normal; overflow-wrap:anywhere; }

@@ -1,3 +1,4 @@
+import { chooseValue, selectOptions, setField } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -44,12 +45,12 @@ describe('hardware catalog readers', () => {
     render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Device" facilities={[]} claims={[claim]} catalog={[manufacturer, model]} /></QueryClientProvider>);
     fireEvent.click(await findEnabledButton({ name: 'Create device' }));
     for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Synthetic record'], ['Installation plan', 'plan-uid'], ['Model', 'Observed model'], ['Serial number', 'SYNTHETIC-NEW'], ['Catalog model', 'model-uid']]) {
-      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      setField(screen.getByLabelText(label), value);
     }
     fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
     await screen.findByText(/Related inventory is no longer readable/);
-    expect(screen.getByLabelText('Catalog model')).toHaveValue('unavailable');
-    expect(screen.getByRole('option', { name: /Selected catalog unavailable/ })).toBeInTheDocument();
+    expect(screen.getByLabelText('Catalog model')).toHaveTextContent('Selected catalog unavailable');
+    expect(selectOptions(screen.getByLabelText('Catalog model')).find(option => /Selected catalog unavailable/.test(option.text))).toMatchObject({ disabled: true });
     expect(screen.getByLabelText('Model')).toHaveValue('Observed model');
     expect(screen.queryByText(/Private canonical vendor/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create record' })).toBeDisabled();
@@ -66,15 +67,15 @@ describe('hardware catalog readers', () => {
     const change = vi.fn();
     const form = (current: InventoryFormValues, catalog: PhysicalRecord[]) => <InventoryHardwareFields kind="Device" values={current} namespace="default" claims={[]} devices={[]} feeds={[]} locations={[]} catalog={catalog} onChange={change} />;
     const result = render(form(values, [manufacturer, model, other]));
-    expect(screen.queryByRole('option', { name: /Other namespace/ })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Catalog model'), { target: { value: 'model-uid' } });
+    expect(selectOptions(screen.getByLabelText('Catalog model')).map(option => option.text).join('\n')).not.toMatch(/Other namespace/);
+    chooseValue(screen.getByLabelText('Catalog model'), 'model-uid');
     const selected = change.mock.calls[0][0];
     expect(selected.catalog).toEqual({ namespace: 'default', name: model.metadata.name, uid: 'model-uid', resourceVersion: '2', manufacturer: { name: manufacturer.metadata.name, uid: 'vendor-uid', resourceVersion: '1' } });
     expect(selected.model).toBe(values.model);
     expect(selected.manufacturer).toBe(values.manufacturer);
     expect(selected.components).toEqual([]);
     result.rerender(form(selected, []));
-    expect(screen.getByRole('option', { name: /Selected catalog unavailable/ })).toBeInTheDocument();
+    expect(selectOptions(screen.getByLabelText('Catalog model')).map(option => option.text)).toContain('Selected catalog unavailable · clear or refresh');
     expect(result.container.textContent).not.toMatch(/Private|private-model|private-vendor/);
   });
 

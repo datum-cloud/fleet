@@ -1,3 +1,4 @@
+import { selectedValue, setField } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -33,12 +34,12 @@ it.each([false, true])('removes denied prerequisite choices and cached records, 
   </MemoryRouter></QueryClientProvider>);
   fireEvent.click(await findEnabledButton({ name: 'Create device' }));
   await screen.findByLabelText('Record name');
-  for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Safe unsaved name'], ['Model', 'Example'], ['Serial number', 'SYNTHETIC-NEW'], ['Installation plan', 'plan-uid']]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  for (const [label, value] of [['Record name', 'synthetic-new'], ['Display name', 'Safe unsaved name'], ['Model', 'Example'], ['Serial number', 'SYNTHETIC-NEW'], ['Installation plan', 'plan-uid']]) setField(screen.getByLabelText(label), value);
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await screen.findByText(/Restricted choices were removed/);
   expect(writes).toEqual([]);
   expect(screen.queryByText('Restricted plan label')).not.toBeInTheDocument();
-  expect(screen.getByLabelText('Installation plan')).toHaveValue('');
+  expect(selectedValue(screen.getByLabelText('Installation plan'))).toBe('');
   expect(screen.getByLabelText('Display name')).toHaveValue('Safe unsaved name');
   expect(screen.getByRole('button', { name: 'Create record' })).toBeDisabled();
   await waitFor(() => expect(client.getQueryData<Inventory>(queryKey)?.slots).toEqual([]));
