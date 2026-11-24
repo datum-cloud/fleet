@@ -224,12 +224,13 @@ plus `Pending`:
 | `Verifying` | The site is checking the success test. |
 | `Succeeded` | The success test passed. |
 | `Failed` | Nothing was sent, or the server refused and did not change. |
-| `Cancelled` | A newer request replaced the operation before admission. |
+| `Cancelled` | Ended before admission: replaced, expired, or no longer matching the holder. |
 | `OutcomeUnknown` | A command may have reached the server, and Fleet cannot prove the result. |
 
 Custody holds the phase and result of the active operation. Operation status is
 a copy of custody. The coordinator admits the next operation only after it
-copies the previous result to that operation's status.
+copies the previous result to the previous operation's status. If that
+operation no longer exists, the coordinator skips the copy.
 
 ### Admission
 
@@ -250,8 +251,8 @@ outcomes](#unknown-outcomes) are admitted.
 
 The update sets the active operation, raises the fence, and sets a deadline. A
 staff operation admitted from holder `None` also sets the holder to `Service`.
-A `DeviceRecovery` never changes the holder, except to retire the server. If another writer changed
-custody first, the update fails, and the coordinator evaluates again.
+If another writer changed custody first, the update fails, and the coordinator
+evaluates again.
 
 Provider and release operations wait in `Pending` while another operation
 runs, and are admitted oldest first. A newer power operation for the same
@@ -314,9 +315,11 @@ While a hold exists:
 | Wipe | A later `DeviceWipe` that succeeds |
 | Commissioning | A later `DeviceCommissioning` that succeeds |
 
-A `DeviceRecovery` can also retire a held server from `Service` or `Release`.
-Retiring from `Release` records how the disks were disposed of. Fleet never
-retries an operation automatically.
+Settling a hold returns a `Service` holder to `None` and leaves an
+`Allocation` or `Release` holder in place. A `DeviceRecovery` with decision
+`Retire` sets a `Service` or `Release` holder to `Retired`. Retiring from
+`Release` records how the disks were disposed of. Fleet never retries an
+operation automatically.
 
 ### Write order and crash recovery
 
@@ -341,7 +344,8 @@ If custody is missing for an existing Device, for example after a restore, the
 coordinator creates it as `Unverified`. An `Unverified` server admits no
 operation and cannot be allocated. The coordinator rebuilds custody from:
 
-- the Device's inventory lifecycle, which sets `Retired`;
+- the Device's inventory lifecycle and `Retire` recoveries, which set
+  `Retired`;
 - live MachineAllocations for the Device, which set `Allocation` or `Release`.
   A rebuilt `Release` reopens every release gate, and the release controller
   verifies each again;
@@ -351,9 +355,9 @@ operation and cannot be allocated. The coordinator rebuilds custody from:
   used.
 
 The coordinator marks custody `Verified` only after every site that serves the
-Device reports its fence. Until then, custody stays `Unverified`. If the Device UID differs from
-`deviceRef.uid`, custody stays `Unverified` until an operator retires the old
-record.
+Device reports its fence. Custody stays `Unverified` until an operator resolves
+the conflict if these sources disagree, or if the Device UID differs from
+`deviceRef.uid`.
 
 ### Customer data
 
@@ -397,8 +401,8 @@ These tests are required and not implemented:
   server for the same Machine.
 - A staff operation names a customer allocation, and admission refuses it.
 - A commissioning times out, and a later commissioning settles the hold.
-- A staff operation targets an allocated, releasing, or held server, and
-  admission refuses it without sending anything.
+- A staff operation targets an allocated or releasing server, or a held
+  server it cannot settle, and admission refuses it without sending anything.
 - A worker passes its deadline, the operation ends as `OutcomeUnknown`, and a
   settling operation waits until the site stops that worker.
 - A delayed worker tries a step after a newer operation is admitted, and the
