@@ -64,6 +64,7 @@ jobs:
       images: |
         - { path: config/base/manager, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
         - { path: config/base/registration, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
+        - { path: config/base/bmc-discovery, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
         - { path: config/overlays/synthetic-staging, name: ghcr.io/datum-cloud/fleet, tag: "${{ needs.publish-container-image.outputs.tag }}" }
         - { path: config/components/consumer-ui-plugin, name: ghcr.io/datum-cloud/fleet-consumer-ui-plugin, tag: "${{ needs.publish-consumer-ui-plugin-image.outputs.tag }}" }
         - { path: config/components/provider-ui-plugin, name: ghcr.io/datum-cloud/fleet-provider-ui-plugin, tag: "${{ needs.publish-provider-ui-plugin-image.outputs.tag }}" }

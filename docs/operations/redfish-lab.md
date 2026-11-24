@@ -226,8 +226,10 @@ sequencing, recovery and results, and calls the same `Discover`, `Observe`,
   query on a mutation, `OData-Version: 4.0`, and a 1 MiB response bound. A
   link returned by the BMC cannot send the credential elsewhere. Redirects are
   never followed. The environment proxy is not used, so the credential goes
-  only to the enrolled endpoint. TLS uses the system trust store; there is no
-  certificate pinning or private CA yet. The endpoint must still be a literal
+  only to the enrolled endpoint. The executor's TLS uses the system trust
+  store. `NewPinnedClient` verifies a BMC by the SHA-256 of its leaf public key
+  instead, through the same guard; [BMC discovery](bmc-discovery.md) uses it,
+  and the executor does not yet. The endpoint must still be a literal
   `http(s)://IPv4:port`.
 - **Identity and capability checks.** These are unchanged: one UUID match
   across all members with the enrolled Id, a reset target and ActionInfo on
@@ -600,7 +602,8 @@ MVP. They are listed as an explicit qualification checklist:
    order persistence.
 3. **Receipts.** Replace the read-only console capture with serial-over-LAN or
    an authenticated installer callback, and decide its trust model.
-4. **Credentials and transport.** TLS with pinned CA or certificate, per-BMC
+4. **Credentials and transport.** Public-key pinning exists
+   (`NewPinnedClient`) but the executor does not use it. Per-BMC
    accounts, a credential broker so workers never hold a long-lived password,
    and rotation and revocation.
 5. **Provisioning network.** Synchronized DHCP reservations with served and
@@ -620,8 +623,9 @@ MVP. They are listed as an explicit qualification checklist:
    designed. Never reset the journal of a retained target
    ([known limitations](multiplane.md#known-limitations-of-the-local-mvp)).
 9. **Enrollment.** The asset-to-System mapping is a static source value.
-   Enrollment trust, BMC discovery and attestation of the System identity
-   (beyond Id and UUID) are open.
+   Enrollment trust and attestation of the System identity (beyond Id and
+   UUID) are open. Read-only [BMC discovery](bmc-discovery.md) reports
+   observed identity into Device status but does not enroll.
 10. **Operator recovery.** Unknown operations, for example a power-off without
     a receipt or an exhausted `On` budget, have no automated resolution. The
     only recovery is to discard the disposable topology after inspection.
