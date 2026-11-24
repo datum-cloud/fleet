@@ -190,6 +190,55 @@ The building blocks are in `ui/provider/src/components/inventory-record-layout.t
 banners, hidden empty fields, list columns, and the Device page's header
 strip, picture, table, one count line and tab contents.
 
+## Form controls (implemented)
+
+Every control in the staff and consumer plugins comes from datum-ui:
+Select, Input, Button, Table and the `picker` DateTimePicker. Neither plugin
+renders a native `<select>`, `<input>`, `<textarea>` or `<button>`, apart from
+the exemptions below.
+
+- **Selects.** `FieldSelect` (`ui/provider/src/components/field-select.tsx`)
+  wraps the datum-ui Select and takes a plain string value, where `''` means
+  none. A field that can be cleared (the directory filters, Catalog model,
+  a lane's device, and Facility, Rack, Face and Depth in the location
+  correction) lists its clearing choice first: "All facilities", "All
+  models", "All media", "No catalog assignment", "Device or feed",
+  "Unknown / not recorded" or "Unknown". A required field (Location,
+  Installation plan, Cable medium, a lane's port, a Rack's Facility and the
+  capacity registration's Device) shows its prompt until a choice is made,
+  and the prompt is not a choice. Groups (facilities and racks, racks and
+  power feeds) keep their headings. A marked option keeps its amber text and
+  its reason as its tooltip ("· has device", "· cabled"). An unavailable
+  option, such as an ineligible Device or "Selected catalog unavailable", is
+  listed but cannot be chosen. The open list may be wider than a narrow
+  trigger, up to the screen width less 32 px.
+- **Keyboard.** Enter, Space or an arrow key opens a Select. Arrow keys move
+  through the options, typing jumps to a match, Enter chooses and Escape
+  closes without choosing. A disabled Select does not open.
+- **Directory filters.** The facility and model (or medium) filters still
+  write `location` and `model` to the URL. Choosing the "All" option removes
+  the parameter.
+- **Validation.** Inside a form, each Select keeps a hidden form select, so
+  required Selects and lane ports (with their `data-problem` rule) take part
+  in validation. `InventoryForm` reports the problem against the visible
+  trigger: it is marked invalid, described by the summary line, and focused
+  when that line is clicked. Choosing a value clears the mark.
+- **Observed at.** The location correction picks the observation time with
+  the datum-ui date-time picker: a calendar, a typed `HH:mm` time, and the
+  browser time zone shown. It opens set to the time the form was opened,
+  cannot be cleared, and cannot pick a future date. The save still rejects
+  a time later than now.
+- **Tables.** The component and lane editors are datum-ui Tables.
+- **Exemptions.** Port tiles (`PortTileButton` in `device-faceplate.tsx`)
+  stay native buttons. They are drawn faceplate tiles, and their look is the
+  drawing. Rack slot links are links, not form controls.
+- **Guard.** `src/test/native-controls.test.ts` in each plugin fails when a
+  component adds one of those native elements outside its allowlist.
+- **Tests.** `ui/provider/src/test/field-select.ts` opens a Select from the
+  keyboard and picks an option by value (`chooseValue`), lists the options a
+  reader would see (`selectOptions`) and reads the chosen value
+  (`selectedValue`).
+
 ## Default-only directory and stable controls
 
 Implemented on top of `baa210318fe17927f447a8e9e9e8053a23f6b173` on
@@ -746,8 +795,8 @@ physically verified", with the reason and evidence on a small second line;
 any recorded size. **Correct location** (or **Add reported location**) sits
 on the Placement row and stays behind its permission check, with the reason
 as its tooltip. Its dialog is two columns: Facility | Rack, Position |
-Height, Face | Depth, then Mount, then Observation time | Evidence and the
-reason. Choosing a rack sets its facility; changing the facility clears a
+Height, Face | Depth, then Mount, then Observed at | Evidence and the
+reason. Observed at is a date-time picker (see [Form controls](#form-controls-implemented)). Choosing a rack sets its facility; changing the facility clears a
 rack outside it. Hardware & management groups its
 facts into titled sections of label/value rows: **Hardware** (the reported
 model when a catalog model is assigned, system UUID, MAC addresses without
