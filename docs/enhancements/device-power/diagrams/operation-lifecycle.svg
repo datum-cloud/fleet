@@ -1,21 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="680" viewBox="0 0 960 680" role="img" aria-labelledby="title description">
-<title id="title">Device power operation lifecycle and outcomes</title><desc id="description">An operation is created with its spec fixed and its requester checked. The dispatcher either refuses it at acceptance, which ends as Failed with nothing sent, or marks it Accepted. An accepted operation moves to Executing, where one worker sends at most one command. A worker that stops before its command also ends as Failed. It finishes with one of three results. Succeeded means the requested power state or a reset was observed. Failed means Fleet knows nothing was sent, or the BMC refused and power did not change. Unknown means a command may have been sent and the outcome is unproven. The result is set once and never changes.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="760" viewBox="0 0 960 760" role="img" aria-labelledby="title description">
+<title id="title">Device power operation outcomes and recovery</title><desc id="description">A power operation is Pending until the coordinator admits it through the Device's custody, or refuses it, which ends as Failed with nothing sent. An admitted operation moves to Executing, where one worker sends at most one command. Succeeded means the requested power state or a reset was observed, and Failed means nothing was sent or the BMC refused and power did not change. Both release the custody slot. Unknown means a command may have been sent and the outcome is unproven. It places a recovery hold on custody, which settles only with discovery evidence of the power state observed after the operation ended and a staff recovery record. The result is set once.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
-<rect width="960" height="680" fill="white"/>
+<rect width="960" height="760" fill="white"/>
 <rect x="42" y="40" width="500" height="76" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="292" y="72.5" class="label" text-anchor="middle">Created</text>
-<text x="292" y="95.5" class="label" text-anchor="middle">Spec fixed; requester checked</text>
+<text x="292" y="72.5" class="label" text-anchor="middle">Pending</text>
+<text x="292" y="95.5" class="label" text-anchor="middle">Waits for custody admission</text>
 <path d="M 292 116 L 292 165" class="line"/>
 <rect x="42" y="165" width="500" height="76" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="292" y="197.5" class="label" text-anchor="middle">Accepted</text>
-<text x="292" y="220.5" class="label" text-anchor="middle">Every dispatcher check passed</text>
+<text x="292" y="197.5" class="label" text-anchor="middle">Admitted</text>
+<text x="292" y="220.5" class="label" text-anchor="middle">Custody names it; fence raised</text>
 <path d="M 292 241 L 292 290" class="line"/>
 <rect x="42" y="290" width="500" height="76" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
 <text x="292" y="322.5" class="label" text-anchor="middle">Executing</text>
 <text x="292" y="345.5" class="label" text-anchor="middle">One worker; at most one command</text>
 <rect x="622" y="165" width="300" height="76" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="772" y="197.5" class="label" text-anchor="middle">Refused at acceptance</text>
+<text x="772" y="197.5" class="label" text-anchor="middle">Refused</text>
 <text x="772" y="220.5" class="label" text-anchor="middle">Failed; nothing sent</text>
 <path d="M 542 78 L 772 78 L 772 165" class="line"/>
 <path d="M 292 366 L 292 420" stroke="#475569" stroke-width="2"/>
@@ -36,5 +36,12 @@
 <text x="778" y="504" class="heading" text-anchor="middle">Unknown</text>
 <text x="778" y="530" class="label" text-anchor="middle">Maybe sent;</text>
 <text x="778" y="553" class="label" text-anchor="middle">outcome unproven</text>
-<text x="480" y="630" class="detail" text-anchor="middle">The result is set once. Staff create a new operation to try again.</text>
+<path d="M 182 570 L 182 610 L 480 610 L 480 570" stroke="#475569" stroke-width="2" fill="none"/>
+<text x="331" y="640" class="detail" text-anchor="middle">Custody slot released</text>
+<path d="M 778 570 L 778 620" class="line"/>
+<rect x="598" y="620" width="340" height="100" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="768" y="652" class="heading" text-anchor="middle">Recovery hold</text>
+<text x="768" y="678" class="label" text-anchor="middle">Settles with fresh discovery</text>
+<text x="768" y="701" class="label" text-anchor="middle">power and a recovery record</text>
+<text x="292" y="700" class="detail" text-anchor="middle">The result is set once. A new attempt is a new operation.</text>
 </svg>

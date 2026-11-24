@@ -47,7 +47,8 @@ today. Then choose a topic:
 The [Bare Metal CLI enhancement](docs/enhancements/metal-cli/README.md) proposes
 `datumctl metal` discovery, machine management, and safe recovery workflows.
 The [Device power enhancement](docs/enhancements/device-power/README.md)
-proposes how staff power unallocated servers on, off, or reset them.
+proposes the power operation that staff and Metal customers use to change a
+server's power.
 
 Contributors should also read the [repository guidance](AGENTS.md) and
 [implementation roadmap](docs/development/roadmap.md).

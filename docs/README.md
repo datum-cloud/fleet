@@ -72,7 +72,7 @@ Each topic folder has a `README.md` entry point:
 | [Troubleshooting](troubleshooting/README.md) | Common problems and safe recovery |
 | [Development](development/README.md) | Implementation status, local commands, and roadmap |
 | [Enhancements](enhancements/machine-lifecycle/README.md) | Focused machine lifecycle contracts and acceptance requirements |
-| [Device power](enhancements/device-power/README.md) | Proposed staff power operations on unallocated servers |
+| [Device power](enhancements/device-power/README.md) | Proposed power operations for staff and Metal customers |
 | [Proposals](proposals/fleet-management/README.md) | Broader service proposals, examples, diagrams, and provenance |
 
 ## Read implementation and design separately

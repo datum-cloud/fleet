@@ -38,7 +38,7 @@ Key principles to carry into the detailed design:
 | How are reservations and concurrent operations coordinated? | [Durable coordination](../enhancements/machine-lifecycle/README.md#durable-coordination) |
 | How are provider effects recovered safely? | [Provider execution and recovery](../enhancements/machine-lifecycle/README.md#provider-execution-and-recovery) |
 | What happens on release or project deletion? | [Release and project lifecycle](../enhancements/machine-lifecycle/README.md#release-and-project-lifecycle) |
-| How do staff power-control an unallocated Device? | [Device power operations](../enhancements/device-power/README.md) |
+| How is a server's power changed? | [Device power operations](../enhancements/device-power/README.md) |
 | Which internal interfaces and guarantees exist? | [Implementation status](../development/README.md) |
 | Which milestones must precede rollout? | [Implementation roadmap](../development/roadmap.md) |
 | Where did the design originate? | [Pinned source proposals](design.md#source-proposals), [migration record](../proposals/fleet-management/MIGRATION.md) |
