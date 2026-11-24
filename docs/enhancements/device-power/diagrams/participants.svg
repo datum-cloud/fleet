@@ -1,55 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720" role="img" aria-labelledby="title description">
-<title id="title">Who takes part in a Device power operation</title><desc id="description">Staff, from the Device page with a required reason, and the Fleet provider for Metal, from a Machine's powerState, both create a DevicePowerOperation in the provider project. The Fleet coordinator in management admits the operation with a conditional update to the Device's custody, reads the Device's discovery facts, and is the only writer of operation status. It delivers the admitted operation to the site with the custody fence. In the site, one worker holds one Device's BMC credential, sends at most one command to the BMC, and returns a result carrying the fence. BMC discovery reads BMCs, never changes them, and writes the offered power actions and power state to Device status. Sites hold no credentials for project APIs.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title description">
+<title id="title">What power adds to device operations</title><desc id="description">Staff, from the Device page with a required reason, and the Fleet provider for Metal, from a Machine's powerState, both create a DevicePowerOperation that names an action and the expected system UUID. Custody admission and site execution, defined in the device operations proposal, admit and deliver it. The Device's discovery facts, the offered power actions and the power state, gate admission. BMC discovery reads the BMC without changing it and reports those facts on the Device. The site worker checks the power state and sends at most one command to the BMC. A later discovery reading of the power state is the evidence that settles a power recovery hold.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
-<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 24px; font-weight: 700; } .label { font-size: 20px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .edge { font-size: 17px; fill: #334155; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
-<rect width="960" height="720" fill="white"/>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .label { font-size: 20px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .edge { font-size: 17px; fill: #334155; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="560" fill="white"/>
 <rect x="120" y="16" width="280" height="72" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
 <text x="260" y="45" class="label" text-anchor="middle">Staff</text>
 <text x="260" y="69" class="detail" text-anchor="middle">Device page; reason required</text>
-<rect x="560" y="16" width="280" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="700" y="45" class="label" text-anchor="middle">Fleet provider for Metal</text>
-<text x="700" y="69" class="detail" text-anchor="middle">From Machine powerState</text>
-<rect x="20" y="126" width="920" height="178" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="44" y="162" class="heading" text-anchor="start">Provider project</text>
-<rect x="60" y="190" width="250" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="185" y="219" class="label" text-anchor="middle">DeviceCustody</text>
-<text x="185" y="243" class="detail" text-anchor="middle">Holder None or Allocation</text>
-<rect x="355" y="190" width="250" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="480" y="219" class="label" text-anchor="middle">DevicePowerOperation</text>
-<text x="480" y="243" class="detail" text-anchor="middle">One action, one command</text>
-<rect x="650" y="190" width="250" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="775" y="219" class="label" text-anchor="middle">Device</text>
-<text x="775" y="243" class="detail" text-anchor="middle">Offered actions, power</text>
-<path d="M 260 88 L 260 140 L 450 140 L 450 190" class="line"/>
-<path d="M 700 88 L 700 140 L 510 140 L 510 190" class="line"/>
-<text x="480" y="114" class="edge" text-anchor="middle">create</text>
-<rect x="255" y="340" width="450" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="480" y="369" class="label" text-anchor="middle">Fleet coordinator</text>
-<text x="480" y="393" class="detail" text-anchor="middle">Management; only status writer</text>
-<path d="M 480 340 L 480 262" class="line"/>
-<text x="492" y="308" class="edge" text-anchor="start">writes status</text>
-<path d="M 255 376 L 185 376 L 185 262" class="line"/>
-<text x="197" y="326" class="edge" text-anchor="start">admits</text>
-<path d="M 705 376 L 775 376 L 775 262" class="line"/>
-<text x="787" y="326" class="edge" text-anchor="start">reads</text>
-<rect x="20" y="460" width="920" height="180" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
-<text x="44" y="496" class="heading" text-anchor="start">Site</text>
-<rect x="300" y="520" width="270" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="435" y="549" class="label" text-anchor="middle">Worker</text>
-<text x="435" y="573" class="detail" text-anchor="middle">One operation, one credential</text>
-<rect x="690" y="520" width="220" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="800" y="549" class="label" text-anchor="middle">BMC</text>
-<text x="800" y="573" class="detail" text-anchor="middle">One per server</text>
-<rect x="40" y="520" width="220" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
-<text x="150" y="549" class="label" text-anchor="middle">BMC discovery</text>
-<text x="150" y="573" class="detail" text-anchor="middle">Writes Device status</text>
-<path d="M 400 412 L 400 520" class="line"/>
-<text x="388" y="446" class="edge" text-anchor="end">delivers, with fence</text>
-<path d="M 470 520 L 470 412" class="line" stroke-dasharray="5 4"/>
-<text x="482" y="446" class="edge" text-anchor="start">result, with fence</text>
-<path d="M 570 556 L 690 556" class="line"/>
-<text x="630" y="544" class="edge" text-anchor="middle">one command</text>
-<path d="M 150 592 L 150 616 L 800 616 L 800 592" class="line" stroke-dasharray="6 4"/>
-<text x="630" y="608" class="edge" text-anchor="middle">reads, never changes</text>
-<text x="480" y="684" class="detail" text-anchor="middle">Sites hold no credentials for project APIs. Only the coordinator writes operation status.</text>
+<rect x="480" y="16" width="280" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="620" y="45" class="label" text-anchor="middle">Fleet provider for Metal</text>
+<text x="620" y="69" class="detail" text-anchor="middle">From Machine powerState</text>
+<rect x="315" y="140" width="250" height="72" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="440" y="169" class="label" text-anchor="middle">DevicePowerOperation</text>
+<text x="440" y="193" class="detail" text-anchor="middle">Action, expected UUID</text>
+<path d="M 260 88 L 260 114 L 410 114 L 410 140" class="line"/>
+<path d="M 620 88 L 620 114 L 470 114 L 470 140" class="line"/>
+<rect x="230" y="260" width="420" height="72" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="440" y="289" class="label" text-anchor="middle">Custody admission and site execution</text>
+<text x="440" y="313" class="detail" text-anchor="middle">Device operations proposal</text>
+<path d="M 440 212 L 440 260" class="line"/>
+<rect x="720" y="140" width="210" height="72" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+<text x="825" y="169" class="label" text-anchor="middle">BMC discovery</text>
+<text x="825" y="193" class="detail" text-anchor="middle">Read-only</text>
+<rect x="720" y="260" width="210" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="825" y="289" class="label" text-anchor="middle">Device</text>
+<text x="825" y="313" class="detail" text-anchor="middle">Offered actions, power</text>
+<path d="M 825 212 L 825 260" class="line"/>
+<text x="837" y="242" class="edge" text-anchor="start">reports</text>
+<path d="M 720 296 L 650 296" class="line"/>
+<text x="685" y="284" class="edge" text-anchor="middle">gates</text>
+<rect x="315" y="390" width="250" height="72" rx="10" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+<text x="440" y="419" class="label" text-anchor="middle">Worker</text>
+<text x="440" y="443" class="detail" text-anchor="middle">Checks power first</text>
+<path d="M 440 332 L 440 390" class="line"/>
+<text x="452" y="368" class="edge" text-anchor="start">delivers</text>
+<rect x="720" y="390" width="210" height="72" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="825" y="419" class="label" text-anchor="middle">BMC</text>
+<text x="825" y="443" class="detail" text-anchor="middle">One per server</text>
+<path d="M 565 426 L 720 426" class="line"/>
+<text x="642" y="414" class="edge" text-anchor="middle">one command</text>
+<path d="M 930 176 L 946 176 L 946 426 L 930 426" class="line" stroke-dasharray="6 4"/>
+<text x="938" y="366" class="edge" text-anchor="end">reads</text>
+<text x="480" y="520" class="detail" text-anchor="middle">A later discovery reading of the power state settles a power recovery hold.</text>
 </svg>

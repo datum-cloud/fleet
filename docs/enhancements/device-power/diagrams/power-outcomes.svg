@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="520" viewBox="0 0 960 520" role="img" aria-labelledby="title description">
+<title id="title">How a power result is decided</title><desc id="description">After admission, the worker checks the server and sends at most one command. Succeeded means the requested power state, or for a restart or power cycle a reset, was observed within three minutes. Failed means nothing was sent, or the BMC refused and the power did not change. OutcomeUnknown means no evidence appeared within the deadline, or the power changed after a refusal. It places a recovery hold, which a DeviceRecovery settles using a discovery reading of the power state taken after the operation ended.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="520" fill="white"/>
+<rect x="230" y="30" width="500" height="76" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="480" y="62.5" class="label" text-anchor="middle">After admission</text>
+<text x="480" y="85.5" class="label" text-anchor="middle">The worker checks, then sends at most one command</text>
+<path d="M 480 106 L 480 150" stroke="#475569" stroke-width="2"/>
+<path d="M 182 150 L 778 150" stroke="#475569" stroke-width="2" fill="none"/>
+<path d="M 182 150 L 182 190" class="line"/>
+<path d="M 480 150 L 480 190" class="line"/>
+<path d="M 778 150 L 778 190" class="line"/>
+<rect x="42" y="190" width="280" height="124" rx="8" fill="#f0fdf4" stroke="#96bda1" stroke-width="1.5"/>
+<text x="182" y="224" class="heading" text-anchor="middle">Succeeded</text>
+<text x="182" y="250" class="label" text-anchor="middle">Requested state, or a</text>
+<text x="182" y="273" class="label" text-anchor="middle">reset, seen within</text>
+<text x="182" y="296" class="label" text-anchor="middle">three minutes</text>
+<rect x="340" y="190" width="280" height="124" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="480" y="224" class="heading" text-anchor="middle">Failed</text>
+<text x="480" y="250" class="label" text-anchor="middle">Nothing sent, or the</text>
+<text x="480" y="273" class="label" text-anchor="middle">BMC refused and power</text>
+<text x="480" y="296" class="label" text-anchor="middle">did not change</text>
+<rect x="638" y="190" width="280" height="124" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="778" y="224" class="heading" text-anchor="middle">OutcomeUnknown</text>
+<text x="778" y="250" class="label" text-anchor="middle">No evidence in time,</text>
+<text x="778" y="273" class="label" text-anchor="middle">or power changed</text>
+<text x="778" y="296" class="label" text-anchor="middle">after a refusal</text>
+<path d="M 778 314 L 778 364" class="line"/>
+<rect x="598" y="364" width="340" height="100" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="768" y="396" class="heading" text-anchor="middle">Power recovery hold</text>
+<text x="768" y="422" class="label" text-anchor="middle">Settled by a DeviceRecovery</text>
+<text x="768" y="445" class="label" text-anchor="middle">citing a later discovery read</text>
+<text x="331" y="410" class="detail" text-anchor="middle">The result is set once.</text>
+<text x="331" y="436" class="detail" text-anchor="middle">A new attempt is a new operation.</text>
+</svg>
