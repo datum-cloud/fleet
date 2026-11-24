@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title description">
-<title id="title">What power adds to device operations</title><desc id="description">Staff, from the Device page with a required reason, and the Fleet provider for Metal, from a Machine's powerState, both create a DevicePowerOperation that names an action and the expected system UUID. Custody admission and site execution, defined in the device operations proposal, admit and deliver it. The Device's discovery facts, the offered power actions and the power state, gate admission. BMC discovery reads the BMC without changing it and reports those facts on the Device. The site worker checks the power state and sends at most one command to the BMC. A later discovery reading of the power state is the evidence that settles a power recovery hold.</desc>
+<title id="title">What power adds to device operations</title><desc id="description">Staff, from the Device page with a required reason, and the Fleet provider for Metal, from a Machine's powerState, both create a DevicePowerOperation that names an action. Staff operations also name the expected system UUID. Custody admission and site execution, defined in the device operations proposal, admit and deliver it. The Device's discovery facts, the offered power actions and the power state, gate admission. BMC discovery reads the BMC without changing it and reports those facts on the Device. The site worker checks the power state and sends at most one command to the BMC. A later discovery reading of the power state is the evidence that settles a power recovery hold.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .label { font-size: 20px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .edge { font-size: 17px; fill: #334155; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
 <rect width="960" height="560" fill="white"/>
@@ -11,7 +11,7 @@
 <text x="620" y="69" class="detail" text-anchor="middle">From Machine powerState</text>
 <rect x="315" y="140" width="250" height="72" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
 <text x="440" y="169" class="label" text-anchor="middle">DevicePowerOperation</text>
-<text x="440" y="193" class="detail" text-anchor="middle">Action, expected UUID</text>
+<text x="440" y="193" class="detail" text-anchor="middle">Action; staff add a UUID</text>
 <path d="M 260 88 L 260 114 L 410 114 L 410 140" class="line"/>
 <path d="M 620 88 L 620 114 L 470 114 L 470 140" class="line"/>
 <rect x="230" y="260" width="420" height="72" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>

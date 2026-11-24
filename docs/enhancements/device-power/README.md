@@ -96,8 +96,8 @@ The Fleet provider for Metal maps a Machine's `powerState` to an action:
 
 The provider creates an operation only when `powerState` differs from the
 server's observed power. Its name comes from the Machine generation, so a
-refused operation is not retried until `powerState` changes again. The provider
-reports the refusal reason on the Machine.
+refused operation is not retried until the Machine generation changes. The
+provider reports the refusal reason on the Machine.
 
 ### Who takes part
 
@@ -139,8 +139,8 @@ status:
     after: {state: "On", observedAt: "2026-01-02T03:04:41Z"}
 ```
 
-The coordinator writes the power status fields from the site's result. Status
-never carries a credential or BMC response content.
+The coordinator records the power fields with the site's result. They never
+carry a credential or BMC response content.
 
 ### Admission
 
@@ -212,7 +212,8 @@ number of commands at the BMC:
   response.
 - A server already in the requested state, with no command.
 - A staff operation on a Device with disabled capacity and holder `None`.
-- A refused customer operation is not retried until `powerState` changes.
+- A refused customer operation is not retried until the Machine generation
+  changes.
 - A power hold settles only with discovery evidence read after the operation
   ended.
 
@@ -267,6 +268,9 @@ See [Recovery](#recovery).
   warning the operating system. Should Metal offer a graceful power off?
 - **Shared TLS keys.** The refusal protects every kind that contacts a BMC.
   Should the device operations proposal apply it to all kinds?
+- **Result detail.** The device operations proposal makes operation status a
+  copy of custody, which has no room for the power fields. Should custody's
+  last result carry kind-specific detail?
 
 ## Infrastructure needed
 
