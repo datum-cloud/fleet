@@ -15,10 +15,10 @@ stage: alpha
   - [Admission](#admission)
   - [Site execution](#site-execution)
   - [Unknown outcomes](#unknown-outcomes)
-  - [Consistency without a database](#consistency-without-a-database)
-  - [Fleet as a Metal provider](#fleet-as-a-metal-provider)
+  - [Write order and crash recovery](#write-order-and-crash-recovery)
+  - [Rebuilding custody](#rebuilding-custody)
+  - [Customer data](#customer-data)
   - [Capacity status](#capacity-status)
-  - [Authorization](#authorization)
   - [Implementation decisions](#implementation-decisions)
   - [Acceptance tests](#acceptance-tests)
 - [Production readiness review questionnaire](#production-readiness-review-questionnaire)
@@ -30,35 +30,28 @@ stage: alpha
 ## Summary
 
 Fleet records custody for each server in one `DeviceCustody` object. Custody
-names who holds the server and the one operation running on it. Fleet starts
-every physical action, such as an install, a power change, or a wipe, by
-updating that object.
+names who holds the server, the one operation running on it, and a fence.
+Fleet admits every physical action on the server by updating that object.
 
 Customers keep using the Metal API. Fleet fulfills Metal requests with typed
-Device operations, and staff use the same operations for servers that no
-customer holds.
+Device operations. Staff use the same operations for servers that no customer
+holds.
 
 This enhancement is a proposal. Nothing in it is implemented.
 
 ## Motivation
 
-Five kinds of work act on the same server:
-
-- customer installation and reinstallation;
-- customer power changes;
-- cleaning between customers;
-- preparation before a server is offered, such as burn-in and firmware; and
-- staff power changes on unallocated servers.
-
-Today each kind has its own lock, or none. Two actions can reach one BMC at the
-same time. A lock per allocation cannot cover staff work, because staff work has
-no allocation.
+Customer installs, customer power changes, cleaning between customers,
+commissioning, and staff power changes all act on the same BMC, disks, and boot
+path. Today each has its own lock, or none, so two actions can reach one BMC at
+once. A lock per allocation cannot cover staff work, because staff work has no
+allocation.
 
 ### Goals
 
 - One record per server says who holds it and what runs on it.
 - Every physical action on a server goes through that record.
-- Customer and staff work use the same operations and the same executor.
+- Customer and staff work share one operation contract and one executor.
 - Staff cannot act on a server that a customer holds.
 - A server with an unproven operation outcome stays out of use.
 - Staff cannot read customer secrets.
@@ -74,11 +67,14 @@ no allocation.
 
 ## Proposal
 
-Customers create Machines and Installations in their project. Fleet's Metal
-provider turns those requests into Device operations in the provider project.
-Staff create operations there too. The Fleet coordinator admits each operation
-by updating the server's custody, then sends it to the site that can reach the
-server.
+Three requesters create Device operations in the provider project:
+
+- the Fleet provider for Metal, from Machines and Installations;
+- the release controller, from deleted Machines; and
+- staff.
+
+The Fleet coordinator admits each operation by updating the server's custody,
+then delivers it to the site that can reach the server.
 
 ![Every effect on a server passes through its custody record](diagrams/layers.svg)
 
@@ -92,27 +88,35 @@ server.
 
 ### Relationship to other proposals
 
-This enhancement:
+This enhancement changes these parts of the [machine
+lifecycle](../machine-lifecycle/README.md):
 
-- replaces per-allocation serialization in the [machine
-  lifecycle](../machine-lifecycle/README.md#provider-execution-and-recovery)
-  with per-server custody;
-- absorbs the staff power proposal in [#173][power-pr] as one operation kind;
-  and
-- replaces the relational ledger in [#60][admission-pr] and [#62][execution-pr]
-  with the custody object.
+- **[Provider execution and
+  recovery](../machine-lifecycle/README.md#provider-execution-and-recovery):**
+  per-Device custody and fencing replace per-allocation serialization and
+  fencing. Operations add a `Pending` phase before `Admitted`.
+- **[MachineAllocation
+  record](../machine-lifecycle/README.md#machineallocation-record):** each
+  allocation is named from its Machine's UID instead of a generated name.
+
+The machine lifecycle's admission ordering, release gates, and status contract
+are unchanged.
+
+This enhancement also absorbs the staff power proposal in [#173][power-pr] as
+one operation kind, and replaces the relational ledger in [#60][admission-pr]
+and [#62][execution-pr].
 
 ## Design details
 
 ### API design
 
 All kinds are in `fleet.datumapis.com` and live in the provider project, in the
-namespace of their Device. Names are provisional. Examples use synthetic data.
+namespace of their Device. The Fleet coordinator is the only writer of custody
+and of operation status. Names are provisional. Examples use synthetic data.
 
 #### DeviceCustody
 
-Each Device has one `DeviceCustody` with the same name. Only the coordinator
-writes it.
+Each Device has one `DeviceCustody` with the same name.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -120,61 +124,66 @@ kind: DeviceCustody
 metadata:
   name: server-example-001
   namespace: default
+  finalizers: [fleet.datumapis.com/custody]
 spec:
-  deviceRef: {name: server-example-001}
+  deviceRef: {name: server-example-001, uid: 6f1c0b52-1d7e-4a35-9e0b-2c41f7a0d9e3}
+  state: Verified              # Verified | Unverified
   holder:
-    type: Allocation          # None | Allocation | Release | Service | Retired
-    allocationRef: {name: alloc-7f3c2}
-  # Increases on every change. Executors reject work with any other value.
-  fence: 42
+    type: Release              # None | Allocation | Release | Service | Retired
+    allocationRef: {name: alloc-3b9d61c2}
+    # Release only. Each entry is a machine lifecycle release gate.
+    openGates: [Cleaning, Quota]
+  fence: 43
   activeOperation:
-    kind: DeviceInstallation
-    name: alloc-7f3c2-install-01
-  # Set after an Unknown outcome.
+    kind: DeviceWipe
+    name: alloc-3b9d61c2-wipe-1
+    fence: 43
+    phase: Dispatched
+    deadline: "2026-11-24T19:10:00Z"
+  lastResult: {name: alloc-3b9d61c2-install-1, result: Succeeded}
   recoveryHold: null
 ```
 
-The fields are in `spec` because custody is a coordination record, like a
-Kubernetes `Lease`, not desired state.
+Custody keeps its fields in `spec` because it is a coordination record, like a
+Kubernetes `Lease`, not desired state. The coordinator removes the finalizer
+only after the holder is `Retired`.
 
 | Holder | Meaning |
 | --- | --- |
 | `None` | Nobody holds the server. |
 | `Allocation` | A customer Machine holds the server. |
-| `Release` | The allocation ended, and cleanup is not yet verified. |
-| `Service` | A staff operation holds the server while it runs. |
+| `Release` | The allocation ended, and release gates are still open. |
+| `Service` | A staff operation holds the server. |
 | `Retired` | The server is out of service permanently. |
 
 ![Device custody holders and transitions](diagrams/custody-states.svg)
 
-The allocator claims a server with the same conditional update that admits
-operations. If two allocators race, one wins and the other picks another
-server. A server leaves `Release` only after every [machine lifecycle release
-gate](../machine-lifecycle/README.md#release-and-project-lifecycle) closes.
+`Allocation` and `Release` name the same allocation. The server leaves
+`Release` only when `openGates` is empty. The release controller removes each
+gate after it verifies that gate's evidence.
+
+The fence rises only when an operation is admitted and when custody is
+[rebuilt](#rebuilding-custody). A holder change does not raise it, so an
+operation that is running when its Machine is deleted can still report its
+result.
 
 #### Operations
 
-Every operation has these fields:
+Every operation has a device, an authority, and inputs. A Fleet admission
+webhook records the authenticated creator on each operation when it is
+created. Clients cannot set or change that field.
 
-```yaml
-spec:
-  deviceRef: {name: server-example-001}
-  authority:                         # exactly one
-    allocationRef: {name: alloc-7f3c2}
-    # serviceRequest: {reason: "Host hung during inspection"}
-status:
-  admission: {fence: 43}             # set by the coordinator
-  phase: Executing
-```
+| Kind | Creator | Authority | Required holder | Inputs |
+| --- | --- | --- | --- | --- |
+| `DeviceInstallation` | Fleet provider for Metal | `allocationRef` | `Allocation` | Image digest, bootstrap reference and digest, boot interface, target disks |
+| `DevicePowerOperation` | Fleet provider for Metal | `allocationRef` | `Allocation` | Power action |
+| `DevicePowerOperation` | Staff power operator | `serviceRequest` | `None` | Power action, reason, expected system UUID |
+| `DeviceWipe` | Release controller | `allocationRef` | `Release` | Cleaning policy digest pinned at allocation, target disks |
+| `DeviceCommissioning` | Staff commissioning operator | `serviceRequest` | `None` | Commissioning plan and digest |
+| `DeviceRecovery` | Staff recovery operator | `serviceRequest` | Any, with a recovery hold | Held operation, evidence, decision |
 
-The spec is immutable. Only the coordinator writes status.
-
-| Kind | Required holder | Inputs |
-| --- | --- | --- |
-| `DeviceInstallation` | `Allocation` | Image digest, bootstrap reference and digest, boot interface, target disks |
-| `DevicePowerOperation` | `Allocation` or `None` | `On`, `ForceOff`, `ForceRestart`, or `PowerCycle` |
-| `DeviceWipe` | `Release` | Cleaning policy and digest pinned at allocation, target disks |
-| `DevicePreparation` | `None` | Preparation plan and digest |
+No other creator and authority pairs are valid. Staff roles can read custody,
+operations, and MachineAllocations.
 
 For example, an installation:
 
@@ -182,165 +191,208 @@ For example, an installation:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceInstallation
 metadata:
-  name: alloc-7f3c2-install-01
+  name: alloc-3b9d61c2-install-1
   namespace: default
 spec:
+  creator: system:serviceaccount:fleet-system:metal-provider   # set by the webhook
   deviceRef: {name: server-example-001}
   authority:
-    allocationRef: {name: alloc-7f3c2}
+    allocationRef: {name: alloc-3b9d61c2}
   image: {name: debian-12, digest: "sha256:9f4ad8d8b8a6..."}
-  bootstrap:
-    secretRef: {project: consumer-a, namespace: default, name: debian-12-bootstrap}
-    digest: "sha256:0c2b77e1d9a4..."
+  bootstrap: {ref: sealed-5e0a7d, digest: "sha256:0c2b77e1d9a4..."}
   bootInterface: primary
   targetDisks: [disk-0]
 ```
 
-Operations carry references and digests for secrets, never their content. This
-covers bootstrap data, user data, SSH keys, and customer boot endpoint
-credentials. Fleet treats a bootstrap payload as secret as a whole. Only the
-worker running the operation reads it.
+Provider and release operations get names from the allocation and the request:
+the Installation for installs, the Machine generation for power, and the step
+number for wipes. Staff operations get generated names, because each one is a
+new request.
+
+The operation phases are those of the [machine lifecycle
+operation](../machine-lifecycle/README.md#provider-execution-and-recovery),
+plus `Pending`:
 
 | Phase | Meaning |
 | --- | --- |
 | `Pending` | Not yet admitted. |
 | `Admitted` | Custody names the operation. Nothing has been sent. |
-| `Executing` | The site started the operation. |
-| `Succeeded` | The kind's success test passed. |
+| `Dispatched` | The site accepted the operation. |
+| `Verifying` | The site is checking the success test. |
+| `Succeeded` | The success test passed. |
 | `Failed` | Nothing was sent, or the server refused and did not change. |
-| `Unknown` | A command may have reached the server, and Fleet cannot prove the result. |
+| `Cancelled` | A newer request replaced the operation before admission. |
+| `OutcomeUnknown` | A command may have reached the server, and Fleet cannot prove the result. |
 
-Conditions follow the [machine lifecycle status
-contract](../machine-lifecycle/README.md#status-contract).
+Custody holds the phase and result of the active operation. Operation status is
+a copy of custody.
 
 ### Admission
 
-The coordinator admits an operation with one conditional update to custody:
-
 ![One Device operation from request to outcome](diagrams/operation-sequence.svg)
 
-The coordinator admits an operation only if all of these hold:
+The coordinator admits an operation with one conditional update to custody,
+only if all of these hold:
 
-1. An `allocationRef` names the current holder, or a `serviceRequest` finds
-   holder `None`.
-2. The creator may create that kind. See [Authorization](#authorization).
-3. No operation is active.
-4. The Device is not retired, and its identity matches current discovery.
+1. Custody is `Verified`.
+2. The creator, authority, and holder match a row of the operations table.
+3. An `allocationRef` names the holder's allocation.
+4. No operation is active.
+5. The Device UID matches `deviceRef.uid`, and its identity matches current
+   discovery.
 
-The update sets the active operation and raises the fence. A staff operation
-also sets the holder to `Service`. If another writer changed custody first, the
-update fails, and the coordinator evaluates again.
+Under a recovery hold, only the operations in [Unknown
+outcomes](#unknown-outcomes) are admitted.
 
-Operations for the current holder wait in `Pending`. Staff operations are
-refused instead, because a queued staff request can run after its reason is
-gone. Pending operations expire after a limit set per kind.
+The update sets the active operation, raises the fence, and sets a deadline. A
+staff operation also sets the holder to `Service`. If another writer changed
+custody first, the update fails, and the coordinator evaluates again.
+
+Provider and release operations wait in `Pending`, oldest first. A newer power
+operation for the same allocation cancels an older pending one. Staff
+operations are refused instead of queued, and a pending staff operation expires
+after five minutes. A queued staff request could otherwise run after its reason
+is gone.
+
+Metal admission, including IAM, entitlement, and quota, still follows the
+[machine lifecycle admission
+ordering](../machine-lifecycle/README.md#admission-ordering). Custody orders
+only physical work.
 
 ### Site execution
 
-The site runs one short-lived worker per operation. The worker:
+The federation layer delivers each admitted operation, its device snapshot,
+and its sealed inputs to the site. The snapshot holds the BMC endpoint, system
+UUID, boot MAC address, and BMC key digest that the coordinator captured at
+admission. Sites never read project APIs.
 
-1. reads the BMC endpoint, system UUID, boot MAC, and BMC key digest captured
-   at admission;
-2. reads that Device's BMC credential from the site;
-3. checks the BMC's TLS key and the system identity, and fails without sending
+Each site stores the highest fence it has seen for each Device. When an
+operation arrives with a higher fence, the site raises its stored fence and
+stops every older worker for that Device before it starts the new one.
+
+The site runs one worker per operation. The worker:
+
+1. reads that Device's BMC credential from the site;
+2. checks the BMC's TLS key and the system identity, and fails without sending
    anything on a mismatch;
-4. records each step before sending it, and after a crash queries the server
-   instead of sending again; and
-5. returns a result with the admission fence.
+3. records each step in the site journal before sending it, and the journal
+   refuses a step whose fence is below the stored fence;
+4. after a crash or lost response, queries the server instead of sending again;
+   and
+5. stops at its deadline.
 
-Management rejects a result with a stale fence. Sites have no credentials for
-project APIs.
+The site returns results with the operation's fence. The coordinator accepts a
+result only if its fence matches the active operation's fence.
 
 ### Unknown outcomes
 
-An `Unknown` outcome sets a recovery hold on custody. The holder stays in place.
-While the hold exists, the coordinator admits only an operation that can settle
-it, and the server cannot return to `None`. A held allocation can still move to
-`Release`.
+An operation ends as `OutcomeUnknown` when its deadline passes without a
+proven result, or when the site cannot prove what the server did. The
+coordinator then sets a recovery hold on custody, and the holder stays.
 
-| Kind | What settles the hold |
+While a hold exists:
+
+- the server cannot return to `None`;
+- a held `Allocation` can still move to `Release`, and the hold moves with it;
+  and
+- the coordinator admits only the settling operations in this table, and only
+  after the site confirms that the held operation's worker has stopped.
+
+| Held operation | Settled by |
 | --- | --- |
-| Power | Fresh discovery evidence of the power state and a staff recovery record |
-| Installation | A later installation or wipe that succeeds |
-| Wipe | A later wipe that succeeds |
-| Preparation | A later preparation that succeeds, or retirement |
+| Power | A `DeviceRecovery` with fresh discovery evidence of the power state |
+| Installation | A later `DeviceInstallation` that succeeds, or a `DeviceWipe` that succeeds after release |
+| Wipe | A later `DeviceWipe` that succeeds |
+| Commissioning | A later `DeviceCommissioning` that succeeds |
 
-Each recovery record names the held operation, its evidence, and the decision.
-Fleet never retries an operation automatically.
+A `DeviceRecovery` can also retire a held server from `Service` or `Release`.
+Retiring from `Release` records how the disks were disposed of. Fleet never
+retries an operation automatically.
 
-### Consistency without a database
+### Write order and crash recovery
 
-A conditional update on one Kubernetes object is atomic. Fleet keeps every value
-that must change together on the custody object:
+A conditional update on one object is atomic. Where one change spans two
+objects, Fleet writes them in a fixed order and recovers from any crash between
+them:
 
-- **Commit point:** The custody update admits an operation. After a crash, the
-  coordinator resumes delivery from custody.
-- **Duplicates:** Operation names are deterministic, and custody names the one
-  admitted.
-- **Quota:** Milo holds quota. Metal claims quota before allocation and releases
-  the claim if no server is free.
-- **History:** Fleet keeps finished operations for a set period. Platform audit
-  and activity records keep history after that.
+| Change | Order | After a crash between the writes |
+| --- | --- | --- |
+| Reserve quota and allocate | Quota claim, then MachineAllocation, both named from the Machine UID | The coordinator finds both by name. A claim for a deleted Machine is released. |
+| Allocate a server | MachineAllocation, then custody | Creating the allocation fails if the name exists, so each Machine gets one allocation. An allocation without custody claims custody again. If another holder took the server, the coordinator deletes the allocation and selects again. No effect ran. |
+| Admit or finish an operation | Custody, then operation status | Operation status is copied from custody again. |
+| Deliver an operation | Custody, then site delivery | The coordinator delivers again from custody. The site ignores a fence it has already seen. |
+| End a release | Custody to `None`, then MachineAllocation to `Released` | The coordinator marks the allocation `Released`. |
 
-### Fleet as a Metal provider
+Fleet keeps finished operations for 30 days. Platform audit records keep the
+history after that.
 
-| Metal request | Fleet action |
-| --- | --- |
-| Machine admitted | The allocator sets the holder to `Allocation`. |
-| Installation created | The provider creates a `DeviceInstallation`. |
-| `powerState` changed | The provider creates a `DevicePowerOperation`. |
-| Machine deleted | Custody moves to `Release`, and the release controller creates `DeviceWipe` operations. |
+### Rebuilding custody
 
-The Metal projector reports results without operation names or inventory
-details. Other Metal providers do not use these resources.
+If custody is missing for an existing Device, for example after a restore, the
+coordinator creates it as `Unverified`. An `Unverified` server admits no
+operation and cannot be allocated. The coordinator rebuilds custody from:
+
+- live MachineAllocations for the Device, which set `Allocation` or `Release`;
+- unfinished operations, which set a recovery hold; and
+- each site's stored fence, which sets the new fence above every fence already
+  used.
+
+The coordinator then marks custody `Verified`. If the Device UID differs from
+`deviceRef.uid`, custody stays `Unverified` until an operator retires the old
+record.
+
+### Customer data
+
+Operations carry no customer secrets and no consumer project names. The Fleet
+provider copies each bootstrap payload into a sealed store in the provider
+project. Only the coordinator and the federation layer can read that store.
+The operation carries an opaque reference and a digest.
+
+Federation delivers the payload to the site with the operation. Only that
+operation's worker can read it, and the site deletes it when the operation
+ends. Fleet treats a bootstrap payload as secret as a whole, because customers
+put passwords and tokens in user data.
+
+Staff identify the customer through the MachineAllocation, which names the
+consumer project and Machine.
 
 ### Capacity status
 
 The capacity projector derives MachineCapacity conditions:
 
-- `Prepared` needs a succeeded preparation under the current plan.
-- `Healthy` needs current evidence from preparation and discovery.
-- `Available` also needs holder `None`, no recovery hold, and an enabled
-  allocation policy.
-
-### Authorization
-
-| Identity | May create |
-| --- | --- |
-| Fleet provider for Metal | `DeviceInstallation`, `DevicePowerOperation` |
-| Release controller | `DeviceWipe` |
-| Staff power operator | `DevicePowerOperation` |
-| Staff preparation operator | `DevicePreparation` |
-| Fleet coordinator | `DeviceCustody` and all operation status |
-
-Staff roles can read custody and operations. No staff role can read bootstrap
-secrets.
+- `Prepared` needs a succeeded commissioning under the current plan.
+- `Healthy` needs current evidence from commissioning and discovery.
+- `Available` also needs `Verified` custody, holder `None`, no recovery hold,
+  and an enabled allocation policy.
 
 ### Implementation decisions
 
 Record these decisions before implementation:
 
-- Whether the provider project API supports the needed conditional updates with
-  allocator-level availability.
-- What makes a preparation plan qualified, and who approves it.
-- What evidence each recovery needs, and whether a second person confirms it.
-- How long Fleet keeps finished operations.
-- Which staff roles can see the customer that holds a server.
+- What makes a commissioning plan qualified, and who approves it.
+- Whether a second person must confirm a `DeviceRecovery`.
+- Which staff roles can read MachineAllocations, and so see customer identity.
+- Where each site stores its fences and journal.
 
 ### Acceptance tests
 
 These tests are required and not implemented:
 
 - Two allocators race for one server, and one wins.
-- A staff operation races an allocation, and one is admitted.
-- A staff operation targets an allocated, releasing, or held server, and Fleet
-  refuses it without sending anything.
-- A lost BMC response ends each kind as `Unknown` and sets a hold.
-- A worker with a stale fence is rejected.
-- A coordinator restart between admission and delivery delivers once.
-- A rotated BMC key or credential is used, and a key mismatch sends nothing.
-- A Machine deleted during installation waits for the installation outcome
-  before wiping.
+- An allocator retries after a lost response and does not claim a second
+  server for the same Machine.
+- A staff operation names a customer allocation, and admission refuses it.
+- A staff operation targets an allocated, releasing, or held server, and
+  admission refuses it without sending anything.
+- A worker passes its deadline, the operation ends as `OutcomeUnknown`, and a
+  settling operation waits until the site stops that worker.
+- A delayed worker tries a step after a newer operation is admitted, and the
+  site journal refuses it.
+- Custody is deleted and restored, and the server stays unallocatable until
+  rebuilt with a higher fence.
+- A Machine is deleted during installation. Release waits for the installation
+  outcome or its deadline, and a wipe settles any hold.
+- No staff role can read a bootstrap payload.
 
 ## Production readiness review questionnaire
 
@@ -348,18 +400,19 @@ These controls are proposed, not implemented.
 
 ### How do operators enable or disable the feature?
 
-Register the kinds and IAM resources, then deploy the coordinator and site
-executors. To disable it, pause admission. Running operations and recoveries
-continue.
+Register the kinds, webhook, and IAM resources, then deploy the coordinator and
+site executors. To disable it, pause admission of new requests. Running
+operations, settling operations, and recoveries continue.
 
 ### Does enabling the feature change any default behavior?
 
-No. Custody starts at `None`, and creating it has no effect on a server.
+No. Each Device's custody is rebuilt as described above before any operation is
+admitted.
 
 ### What must operators monitor?
 
-Recovery holds, `Unknown` operations, long `Release` periods, rejected fences,
-and sites that stop reporting.
+Recovery holds, `OutcomeUnknown` operations, `Unverified` custody, long-running
+releases, rejected fences, and sites that stop reporting.
 
 ### What does the feature depend on?
 
@@ -368,8 +421,8 @@ BMC discovery for Device facts.
 
 ### Does the feature add API types or calls?
 
-It adds `DeviceCustody` and four operation kinds. Each custody change is one
-write.
+It adds `DeviceCustody`, five operation kinds, and one admission webhook. Each
+operation phase change is one custody write and one status copy.
 
 ## Implementation history
 
@@ -378,7 +431,7 @@ write.
 ## Drawbacks
 
 - Every action depends on the coordinator and the custody object.
-- Four operation kinds add resources to register and grant.
+- Five operation kinds add resources to register and grant.
 - A recovery hold can keep a server out of use while evidence is missing.
 - The allocator claims one server at a time, so it cannot claim several servers
   atomically.
@@ -393,20 +446,15 @@ write.
   admitted operation.
 - **Private records for customer work:** Customer and staff work would keep two
   admission paths and two locks.
-- **A relational ledger:** It adds a database. One object per server gives the
-  same guarantee for conflicts on that server.
+- **A relational ledger:** It adds a database. Fixed write order and
+  deterministic names give the same guarantees without one.
 - **A lock per allocation:** Staff work has no allocation.
-
-Other systems draw similar lines. OpenStack separates tenant instances from
-Ironic hardware nodes and runs manual cleaning only in a state no tenant holds.
-Metal3 records the holder on each `BareMetalHost`. Kubernetes binds a
-`PersistentVolumeClaim` to a `PersistentVolume` with one conditional update.
 
 ## Infrastructure needed
 
 Testing needs one provider project, two consumer projects, one site, and BMC
-emulators that can drop responses and rotate TLS keys. Hardware qualification
-needs reachable BMCs and a boot network.
+emulators that can drop responses, stall, and rotate TLS keys. Hardware
+qualification needs reachable BMCs and a boot network.
 
 [power-pr]: https://github.com/datum-cloud/fleet/pull/173
 [execution-pr]: https://github.com/datum-cloud/fleet/pull/62
