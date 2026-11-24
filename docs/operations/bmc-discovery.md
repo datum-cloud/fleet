@@ -167,6 +167,11 @@ Device. `examples/credential-secret.yaml` is a synthetic example.
 | `data.username`, `data.password` | Single-line BMC credential. |
 | `data.tlsPublicKeySHA256` | Optional. The approved pin, 64 hex digits, colons and case ignored. |
 
+Name the Secret `bmc.<device namespace>.<device name>` when the Device may
+receive [power operations](device-power.md#credentials): a power worker mounts
+that Secret by name. Discovery itself selects by annotation and accepts any
+name.
+
 A Device is discovered only when it has `spec.bmc` and exactly one Secret
 names it. A Device with neither is skipped and its status is not written. Two
 Secrets naming one Device report `CredentialConflict` and send nothing.
@@ -273,6 +278,7 @@ status:
           serialNumber: SYNTHETIC-0001
           sku: TAG0001
           powerState: "On"
+          resetTypes: ["On", ForceOff, ForceRestart]
           networkInterfaces:
             - {id: NIC.1, macAddress: "00:00:5e:00:53:01", linkStatus: LinkUp, speedMbps: 25000}
   conditions: [...]
@@ -324,7 +330,12 @@ is `StaleObservation`.
 ## What is read
 
 Service root, then every Manager and every ComputerSystem (up to 16 of each),
-with each one's EthernetInterfaces (up to 32). Collections follow
+with each one's EthernetInterfaces (up to 32). For each System it records
+the `ComputerSystem.Reset` types the BMC advertises, inline or from the
+System's own ActionInfo, as `resetTypes`; a reset target or ActionInfo off the
+System is ignored and records none. It reads the action's description and
+never invokes it. [Device power operations](device-power.md) use these values
+to refuse an action the server does not offer. Collections follow
 `Members@odata.nextLink` for up to 8 pages. Every member must sit under its
 collection. Documents are decoded leniently: only the named properties are
 read, so an off-schema vendor property elsewhere in a document does not fail

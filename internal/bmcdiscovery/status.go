@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -217,7 +218,20 @@ func observedInventory(inv redfish.Inventory, at metav1.Time, endpoint string) *
 	for _, s := range inv.Systems {
 		if s.ID != "" && len(out.Systems) < 16 {
 			out.Systems = append(out.Systems, inventory.ObservedSystem{ID: clip(s.ID, 253), UUID: canonicalUUIDOrEmpty(s.UUID), Manufacturer: clip(s.Manufacturer, 253),
-				Model: clip(s.Model, 253), SerialNumber: clip(s.SerialNumber, 253), SKU: clip(s.SKU, 253), PowerState: clip(s.PowerState, 63), NetworkInterfaces: nics(s.NetworkInterfaces)})
+				Model: clip(s.Model, 253), SerialNumber: clip(s.SerialNumber, 253), SKU: clip(s.SKU, 253), PowerState: clip(s.PowerState, 63), NetworkInterfaces: nics(s.NetworkInterfaces),
+				ResetTypes: resetTypes(s.ResetTypes)})
+		}
+	}
+	return out
+}
+
+// resetTypes keeps up to 16 distinct, nonempty advertised reset types.
+func resetTypes(in []string) []string {
+	var out []string
+	for _, v := range in {
+		v = clip(v, 63)
+		if v != "" && !slices.Contains(out, v) && len(out) < 16 {
+			out = append(out, v)
 		}
 	}
 	return out

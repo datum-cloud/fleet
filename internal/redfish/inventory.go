@@ -44,6 +44,9 @@ type InventorySystem struct {
 	PowerState   string
 	// NetworkInterfaces are the System's EthernetInterfaces.
 	NetworkInterfaces []NetworkInterface
+	// ResetTypes are the ComputerSystem.Reset types the System advertises.
+	// Discovery reads them and never invokes the action.
+	ResetTypes []string
 }
 
 // NetworkInterface is one Redfish EthernetInterface.
@@ -109,6 +112,7 @@ func (c *Client) Inventory(ctx context.Context) (Inventory, error) {
 				SKU                string
 				PowerState         string
 				EthernetInterfaces link
+				resetAction
 			}
 			if err := getJSON(api, p, &doc); err != nil {
 				return Inventory{}, err
@@ -117,8 +121,18 @@ func (c *Client) Inventory(ctx context.Context) (Inventory, error) {
 			if err != nil {
 				return Inventory{}, err
 			}
-			inv.Systems = append(inv.Systems, InventorySystem{ID: doc.ID, UUID: canonicalUUID(doc.UUID), Manufacturer: doc.Manufacturer,
-				Model: doc.Model, SerialNumber: doc.SerialNumber, SKU: doc.SKU, PowerState: doc.PowerState, NetworkInterfaces: nics})
+			system := InventorySystem{ID: doc.ID, UUID: canonicalUUID(doc.UUID), Manufacturer: doc.Manufacturer,
+				Model: doc.Model, SerialNumber: doc.SerialNumber, SKU: doc.SKU, PowerState: doc.PowerState, NetworkInterfaces: nics}
+			if doc.Actions.Reset.Target != "" {
+				// A reset target or ActionInfo off the System is not read:
+				// the System then offers no reset types.
+				if _, types, err := resetTypes(api, p, doc.resetAction); err == nil {
+					system.ResetTypes = types
+				} else if !errors.Is(err, ErrUnsupported) {
+					return Inventory{}, err
+				}
+			}
+			inv.Systems = append(inv.Systems, system)
 		}
 	}
 	return inv, nil
