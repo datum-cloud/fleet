@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -239,6 +240,66 @@ func TestMachineHandlerReleaseRemovesFinalizerOnlyAfterSafeSettlement(t *testing
 		}
 	} else if !apierrors.IsNotFound(err) {
 		t.Fatalf("read safely released claim: %v", err)
+	}
+}
+
+// A Machine whose own private record cannot be decoded is not requeued, and
+// release through that record keeps the finalizer.
+func TestMachineHandlerDoesNotRequeueUnreadablePrivateRecord(t *testing.T) {
+	unreadable := fmt.Errorf("%w: asset secret private/fleet-asset-x", controller.ErrRecordUnreadable)
+	cases := []struct {
+		name   string
+		setup  func(t *testing.T, kube client.Client, lifecycle *fakeMachineLifecycle, key client.ObjectKey)
+		verify func(t *testing.T, kube client.Client, key client.ObjectKey)
+	}{
+		{name: "retain authority", setup: func(_ *testing.T, _ client.Client, l *fakeMachineLifecycle, _ client.ObjectKey) {
+			l.retainErr = unreadable
+		}},
+		{name: "allocate", setup: func(t *testing.T, kube client.Client, l *fakeMachineLifecycle, key client.ObjectKey) {
+			setFinalizer(t, kube, key)
+			l.allocateErr = unreadable
+		}},
+		{name: "release", setup: func(t *testing.T, kube client.Client, l *fakeMachineLifecycle, key client.ObjectKey) {
+			setFinalizer(t, kube, key)
+			var claim fleetv1.Machine
+			if err := kube.Get(context.Background(), key, &claim); err != nil {
+				t.Fatal(err)
+			}
+			if err := kube.Delete(context.Background(), &claim); err != nil {
+				t.Fatal(err)
+			}
+			l.releaseErr = unreadable
+		}, verify: func(t *testing.T, kube client.Client, key client.ObjectKey) {
+			var claim fleetv1.Machine
+			if err := kube.Get(context.Background(), key, &claim); err != nil || !containsString(claim.Finalizers, controller.MachineFinalizer) {
+				t.Fatalf("finalizer was removed through an unreadable record: %#v, %v", claim.Finalizers, err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, kube, lifecycle, request, _ := newMachineHandlerFixture(t)
+			key := client.ObjectKey{Namespace: request.Namespace, Name: request.Name}
+			tc.setup(t, kube, lifecycle, key)
+			if outcome := handler.ReconcileEvent(context.Background(), request); outcome.RetryError != nil {
+				t.Fatalf("outcome = %#v, want no requeue", outcome)
+			}
+			if tc.verify != nil {
+				tc.verify(t, kube, key)
+			}
+		})
+	}
+}
+
+func setFinalizer(t *testing.T, kube client.Client, key client.ObjectKey) {
+	t.Helper()
+	var claim fleetv1.Machine
+	if err := kube.Get(context.Background(), key, &claim); err != nil {
+		t.Fatal(err)
+	}
+	claim.Finalizers = []string{controller.MachineFinalizer}
+	if err := kube.Update(context.Background(), &claim); err != nil {
+		t.Fatal(err)
 	}
 }
 

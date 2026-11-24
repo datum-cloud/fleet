@@ -361,17 +361,32 @@ be deleted and recreated with exact values before upgrading the manager.
 Private asset, claim custody, and Milo authority records embed the accepted
 requirements as the exact `MachineProfileSpec` (implemented). Fleet keeps no
 decoder for an earlier record shape. A private record whose requirements do
-not decode as the exact shape is invalid: allocation, selection, installation
-admission, network refresh, Milo authority recovery, and release fail closed
-on it through the generic invalid-record path, and it never produces
-`requestedHardware`, `allocatedHardware`, or readiness. Because the
-coordinator decodes every retained asset record when it scans for a claim, one
-invalid asset record, including a `Released` one kept for epoch fencing, stops
-allocation, installation, and release for every claim that coordinator serves
-until it is removed. Release cannot consume an invalid record, so deleting the
-Machine leaves its finalizer in place. Fleet has no automated recovery for this
-state: an environment holding such records discards its private lifecycle
-records and the affected Machines, then recreates the Machines.
+not decode as the exact shape is undecodable. It never produces
+`requestedHardware`, `allocatedHardware`, or readiness, and it is never
+rewritten. It blocks only the claim it belongs to (implemented):
+
+- The coordinator attributes an undecodable record by its
+  `fleet.datumapis.com/claim-uid` label, never by its body. Scans across
+  claims skip a record labeled for another claim. A record with no claim label
+  could belong to any claim, so it fails every claim-scoped scan closed.
+- Allocation, installation admission, network refresh, Milo authority recovery,
+  and release fail closed for the attributed claim. Synthetic staging reports
+  the Machine as `Bound=False` and `Ready=False`, reason
+  `UnreadablePrivateRecord`, without a retry loop. Release never removes the
+  finalizer through such a record.
+- Allocation never proposes an asset whose record, or whose previous claim's
+  custody record, cannot be decoded. Without the record there is no proof the
+  asset was released or of its epoch. A `Released` record kept for epoch
+  fencing that cannot be decoded therefore keeps its asset out of allocation
+  rather than restarting its epoch below a stale operation.
+- Each such record is logged and counted in
+  `fleet_private_lifecycle_record_undecodable_total`, labeled by record type.
+
+Fleet has no automated recovery. An operator disables allocation on the
+affected capacity, deletes the Machine, removes its finalizer by hand, then
+deletes that claim's private record Secrets. The
+[implementation status](../../development/README.md#undecodable-private-records)
+lists the steps.
 
 GPU, disk, and interface requirements keep numeric constraints with inclusive
 `min` and optional `max`, or `exact` alone. Counts are integers, capacities are
@@ -1443,6 +1458,10 @@ correctness violations.
   before exact CPU and memory, the `LegacyCustodyRecord` reason, and the
   installation-record v1 upgrader. Records in older shapes or schema versions
   are invalid.
+- 2026-11-23: An undecodable private record blocks only the claim its
+  `claim-uid` label names, plus the asset it fences, instead of every claim on
+  the coordinator. It is reported as `UnreadablePrivateRecord` and counted in
+  `fleet_private_lifecycle_record_undecodable_total`.
 
 ## Drawbacks
 

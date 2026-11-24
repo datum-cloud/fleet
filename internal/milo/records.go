@@ -123,6 +123,12 @@ func (s *RecordStore) getByName(ctx context.Context, name string) (*AuthorityRec
 		return nil, nil, err
 	}
 	record, err := decodeAuthoritySecret(&secret)
+	if err != nil {
+		// Authority records are read only by their claim's deterministic
+		// name, so an unreadable one blocks only that claim.
+		controller.ReportUndecodableRecord(ctx, "milo-authority", &secret, err)
+		return nil, &secret, fmt.Errorf("%w: %w", err, controller.ErrRecordUnreadable)
+	}
 	return record, &secret, err
 }
 
