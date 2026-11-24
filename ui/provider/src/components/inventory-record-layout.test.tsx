@@ -136,7 +136,7 @@ describe('Device page states each fact once', () => {
     const { container } = show(record('Device', 'example-srv-a01-01'));
     const header = container.querySelector<HTMLElement>('.inventory-record-header')!;
     expect(header.querySelector('dl.inventory-fact-strip')).toHaveAttribute('aria-label', 'Identity');
-    expect(facts(header)).toEqual(['ModelExample 1U compute', 'SerialSYNTH-EX-01', 'Asset tagEX-ASSET-01']);
+    expect(facts(header)).toEqual(['ModelExample 1U compute', 'SerialSYNTH-EX-01', 'Asset tagEX-ASSET-01', expect.stringMatching(/^BMCBMC ✓/)]);
     // The old Identity row and its separate draw line are gone from the body.
     expect(container.querySelector('.inventory-primary .inventory-fields')).toBeNull();
     expect(container.querySelector('.inventory-primary .inventory-device-draw')).toBeNull();
@@ -159,7 +159,10 @@ describe('Device page states each fact once', () => {
     const table = screen.getByRole('table', { name: /Components/ });
     expect(within(table).getByRole('columnheader', { name: 'MAC address' })).toBeInTheDocument();
     expect(within(table).getByText('00:00:5e:00:53:11')).toBeInTheDocument();
-    expect(container.querySelector('[data-tab="hardware"]')!.textContent).not.toMatch(/00:00:5e:00:53:11/);
+    // The tab lists the recorded MAC only where discovery observed it, on the host NIC that reports it.
+    const hardware = container.querySelector<HTMLElement>('[data-tab="hardware"]')!;
+    expect(within(hardware).queryByRole('table', { name: 'Interfaces not in the component list' })).toBeNull();
+    expect(within(hardware).getAllByText('00:00:5e:00:53:11').map(cell => cell.closest('table')?.getAttribute('aria-label'))).toEqual(['Host NICs']);
     expect(within(location).getByText('Depth for rack conflicts')).toBeInTheDocument();
     // Placement states units, height and face; the header has the facility and rack, and depth has its own fact.
     const placement = within(location).getByText('Placement').nextElementSibling as HTMLElement;

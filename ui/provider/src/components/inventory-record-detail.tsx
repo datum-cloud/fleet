@@ -23,6 +23,8 @@ import { observedDisagrees, type TelemetryContextValue } from '../lib/telemetry'
 import { feedPath } from '../lib/power-paths';
 import { DeviceDrawFact, PowerFeedPath, UPSTREAM_INLINE_LIMIT, upstreamWords } from './power-feed-path';
 import { CapacityBar, useTelemetry } from './power-telemetry';
+import { BmcChip, BmcComparison, DiscoveryHealth, IdentityComparison, NicComparison } from './device-discovery';
+import { discovered, identityRows } from '../lib/device-discovery';
 
 export type DetailKind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 export type DetailEntry = { kind: DetailKind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -113,6 +115,7 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
       {device.spec.identity.serial && <div><dt>Serial</dt><dd className="inventory-numeric">{device.spec.identity.serial}</dd></div>}
       {device.spec.assetTag && <div><dt>Asset tag</dt><dd className="inventory-numeric">{device.spec.assetTag}</dd></div>}
       {components.some(component => component.type === 'PowerInlet') && <DeviceDrawFact device={device} />}
+      <BmcChip device={device} />
     </dl>
   </>;
 
@@ -132,6 +135,10 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
   ].filter(Boolean).join(' · ') : helpers.placement({ kind: 'Device', record: device });
 
   const unplaced = interfaceAddresses(device).unplaced;
+  // Discovery's observations sit next to the spec facts they are compared with.
+  const observed = discovered(device);
+  const compared = identityRows(device).length > 0;
+  const nicsObserved = !!device.status?.discovery?.inventory;
   const tabs: RecordTab[] = [
     {
       id: 'location', label: 'Location', content: <>
@@ -150,18 +157,24 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
       id: 'hardware', label: 'Hardware & management', content: <>
         <FactSection title="Hardware">
           <Facts items={[
-            { label: 'Reported model', value: catalog && modelLabel(device.spec.identity) },
-            { label: 'System UUID', value: device.spec.identity.systemUUID },
+            // The identity table states the recorded model and system UUID once discovery has read a System.
+            { label: 'Reported model', value: !compared && catalog && modelLabel(device.spec.identity) },
+            { label: 'System UUID', value: !compared && device.spec.identity.systemUUID },
             { label: 'MAC addresses without an interface', value: device.spec.unmappedMACAddresses?.join(', ') },
           ]} />
-          {/* Interfaces that match a component show their MAC in the component table. */}
-          {!!unplaced.length && <SmallTable label="Interfaces not in the component list" head={['Interface', 'MAC address']} rows={unplaced.map(iface => [iface.name, iface.macAddress ?? 'Not recorded'])} />}
+          <IdentityComparison device={device} />
+          {/* Interfaces that match a component show their MAC in the component table; the NIC comparison lists every spec interface. */}
+          {nicsObserved ? <NicComparison device={device} />
+            : !!unplaced.length && <SmallTable label="Interfaces not in the component list" head={['Interface', 'MAC address']} rows={unplaced.map(iface => [iface.name, iface.macAddress ?? 'Not recorded'])} />}
         </FactSection>
-        {(device.spec.bmc || device.spec.providerHostRef) && <FactSection title="Management">
+        {(device.spec.bmc || device.spec.providerHostRef || observed) && <FactSection title="Management">
           <Facts items={[
             { label: 'Management endpoint', value: device.spec.bmc?.endpoint },
             { label: 'Provider host', value: device.spec.providerHostRef && `${device.spec.providerHostRef.system}/${device.spec.providerHostRef.type}/${device.spec.providerHostRef.id}` },
+            { label: 'Discovery', value: !observed && device.spec.bmc && <span className="inventory-muted">Not discovered</span> },
           ]} />
+          {observed && <DiscoveryHealth device={device} now={Date.now()} />}
+          <BmcComparison device={device} />
         </FactSection>}
         {!!device.spec.internalMappings?.length && <FactSection title="Internal paths">
           <SmallTable label="Internal paths" head={['From', 'To']} rows={device.spec.internalMappings.map(mapping => [`${mapping.from.componentID}:${mapping.from.position}`, `${mapping.to.componentID}:${mapping.to.position}`])} />

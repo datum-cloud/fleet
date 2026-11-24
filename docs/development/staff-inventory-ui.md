@@ -713,7 +713,9 @@ picture of the device and a dense table of its components. Top to bottom:
 component's name or id puts its MAC address in a **MAC address** column,
 shown only when some row has one (`interfaceAddresses()` in
 `lib/device-connections.ts`). Interfaces that match no component are listed
-in Hardware & management.
+in Hardware & management. Once BMC discovery has read the host NICs, a
+recorded MAC that no host NIC reports is amber, with "No host NIC reports
+this MAC address" as its tooltip and accessible text.
 
 **Highlight.** Hovering or focusing a row outlines that component in the
 picture, and hovering or focusing a picture port (or hovering a drawn
@@ -754,6 +756,77 @@ an interface, and a small table of interfaces that match no component) and
 for **Internal paths** and **Service references** when recorded. Empty
 facts and sections are hidden. The model is stated once, in the header
 strip.
+
+### Device page: BMC discovery status
+
+BMC discovery is the only writer of `Device.status` (see
+[BMC discovery](../operations/bmc-discovery.md)). The UI reads it from the
+same Device list as spec; it has no other request. `lib/device-discovery.ts`
+derives what the page shows and mirrors the comparisons in
+`internal/bmcdiscovery/status.go`; `components/device-discovery.tsx` draws
+it. Red is a disagreement or failure, amber needs checking, and OK stays
+plain: there is no green. Every reason is a tooltip and accessible text.
+
+- **Header chip.** One chip ends the identity strip once status exists:
+  "BMC ✓" when all five conditions are True; else the first False condition
+  in discovery order, red ("BMC unreachable", "BMC key not approved", "BMC
+  key changed", "BMC auth failed", "BMC not read", "Identity mismatch",
+  "BMC key shared"); else "BMC ?" in amber.
+- **Hardware: expected next to observed.** When discovery has read a
+  System, a Field | Expected | Observed table replaces the reported model
+  and system UUID facts: Serial, Model, Manufacturer, System UUID, SKU and
+  Power (Redfish `powerState` as a short word). Expected is `spec.identity`
+  and is blank where spec does not record the field. The compared System is
+  the one reporting the spec system UUID, else the spec serial (as serial
+  number or SKU), else the only System; with several candidates the table is
+  hidden and the IdentityMatched chip carries the reason. An observed value
+  is red when IdentityMatched is False with SerialMismatch, ModelMismatch or
+  SystemUUIDMismatch for that field (the condition message is the tooltip),
+  or when it differs by discovery's rule (a vendor prefix on the model is
+  allowed). Manufacturer is shown but, as in discovery, not compared. The
+  page never calls identity verified.
+- **Observation from another endpoint.** When the retained inventory was
+  read from an endpoint other than `spec.bmc.endpoint` (or spec records no
+  endpoint), discovery reports
+  IdentityMatched Unknown with StaleObservation, so the page compares
+  nothing: observed values are amber with "Read from … ; spec.bmc.endpoint
+  is …" as the tooltip, no spec MAC is marked unobserved, and a TLS key
+  read from another endpoint is amber before anyone approves it.
+- **Host NICs.** `systems[].networkInterfaces` of the compared System, one
+  row each: NIC, MAC address, Link, and Speed when reported. A link that is
+  not up (LinkDown, NoLink or not reported) is amber with the raw
+  `linkStatus` as its tooltip. An observed MAC that `spec.interfaces`
+  records is followed by that interface's name; matching is by MAC address
+  only, never by name. When spec interfaces match no component, their table
+  sits beside the host NICs, with a spec MAC no NIC reports in amber.
+  Interfaces that match a component keep their MAC in the component table,
+  so no MAC is listed twice.
+- **Management.** The five conditions as one line of chips (Reachable, Auth,
+  Inventory, Identity, Key unique), each with type, status, reason and
+  message as its tooltip: red ✕ for False, amber ? for Unknown or absent,
+  plain for True. Then **Last attempt** (relative, absolute time as the
+  tooltip; the attempt endpoint is added in amber only when it differs from
+  `spec.bmc.endpoint`), **TLS key** (the SHA-256 shortened, full value as
+  the tooltip, with Copy), **Key expiry** (amber within 30 days, red once
+  expired), and **Key approval**: Approved when Authenticated is True, "Not
+  approved" in amber for PinNotApproved, red for PinMismatch, and hidden for
+  other reasons. Then a BMC table (Manager, Model, Firmware, and the service
+  root's Redfish version, Vendor and Product; empty columns hidden) and the
+  manager NICs in the same NIC table form.
+- **Before discovery.** A Device with a BMC endpoint and no status adds one
+  muted "Not discovered" fact under Management and nothing else.
+- **Unreadable Devices.** Status arrives only inside a readable Device. A
+  denied or redacted Device collection shows the access state, never a
+  Device or its status.
+
+The preview fixtures carry discovery status on three servers: a01-01
+(matched, powered on, NICs up, key approved), a01-02 (serial mismatch, a
+spec MAC not observed, an interface outside the component list) and a01-05
+(key not approved, certificate expiring in 12 days, one host NIC down).
+`device-discovery.test.ts` and `device-discovery.test.tsx` cover the
+comparison and mismatch marking, condition chips and tooltips,
+PinNotApproved, expiry tones, link states, MAC matching without name
+mapping, the no-status case and denied Devices.
 
 `device-connections.test.tsx` covers the picture with no toggle, the table
 columns and rows (unmatched lanes included), conditional serial and asset
