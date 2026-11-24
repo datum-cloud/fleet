@@ -379,7 +379,7 @@ spec:
                     type: string
                     maxLength: 2048
                     x-kubernetes-validations:
-                    - rule: isURL(self) && self.matches('^https://[^/?#@]+/?$') && url(self).getHostname() != ''
+                    - rule: isURL(self) && self.matches('^https://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(:[0-9]+)?/?$') && url(self).getHostname() != ''
                       message: bmc.endpoint must be an https host and optional port, with no credentials, path, query, or fragment
               interfaces:
                 type: array

@@ -238,6 +238,8 @@ func TestInvalidDevicesAreRejected(t *testing.T) {
 		"BMC with a fragment":  func(d *Device) { d.Spec.BMC.Endpoint = "https://192.0.2.100/#pw=x" },
 		"BMC with a path":      func(d *Device) { d.Spec.BMC.Endpoint = "https://192.0.2.100/session/x" },
 		"BMC with no host":     func(d *Device) { d.Spec.BMC.Endpoint = "https://:443" },
+		"BMC with parameters":  func(d *Device) { d.Spec.BMC.Endpoint = "https://192.0.2.100;token=x" },
+		"BMC with empty port":  func(d *Device) { d.Spec.BMC.Endpoint = "https://192.0.2.100:/" },
 	} {
 		device := syntheticDevice()
 		mutate(&device)
@@ -249,6 +251,24 @@ func TestInvalidDevicesAreRejected(t *testing.T) {
 	delete(withoutClaim["spec"].(map[string]any), "claimRef")
 	if errs := admit(t, "Device", withoutClaim, nil); len(errs) == 0 {
 		t.Error("device without a claim reference accepted")
+	}
+}
+
+func TestBMCEndpointsWithAHostAndPortAreAdmitted(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://192.0.2.100",
+		"https://192.0.2.100/",
+		"https://192.0.2.100:8443",
+		"https://bmc.example.invalid",
+		"https://bmc.example.invalid:443/",
+		"https://[2001:db8::1]",
+		"https://[2001:db8::1]:443",
+	} {
+		device := syntheticDevice()
+		device.Spec.BMC.Endpoint = endpoint
+		if errs := admit(t, "Device", object(t, device), nil); len(errs) > 0 {
+			t.Errorf("%s rejected: %v", endpoint, errs)
+		}
 	}
 }
 
