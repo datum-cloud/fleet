@@ -63,7 +63,6 @@ it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].
   const input = screen.getByLabelText(mode === 'location' ? 'Correction reason' : 'Display name');
   fireEvent.change(input, { target: { value: 'Retain this draft' } });
   if (mode === 'location') {
-    fireEvent.change(screen.getByLabelText('Observation time (ISO 8601)'), { target: { value: '2026-01-02T00:00:00Z' } });
     fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/synthetic' } });
   }
   fireEvent.click(screen.getByRole('button', { name: mode === 'location' ? 'Save changes' : 'Save changes' }));

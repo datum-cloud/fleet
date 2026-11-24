@@ -6,6 +6,7 @@ import type { Device } from '../../../shared/fleet-api';
 import { capacityNameFor, ineligibleReason, registerCapacity, registrationDevices, registrationPermission, RegistrationUnknown } from '../lib/capacity-registration';
 import { InventoryOperationContext, InventoryOperationReadyContext, InventoryOperationScope, type InventoryOperation } from '../lib/inventory-operation';
 import { useInventoryRead } from '../lib/inventory-read';
+import { FieldSelect } from './field-select';
 import { confirmInventoryDismissal, InventoryDraftGuard, InventoryForm, InventoryFormSurface } from './inventory-form-surface';
 import { InventorySessionBoundary } from './inventory-session-boundary';
 
@@ -64,10 +65,14 @@ export function CapacityRegistrationForm({ onRegistered }: { onRegistered?: () =
     }}>Register capacity</Button>}>
       <InventoryForm onSubmit={event => void submit(event)} message={message}>
         <fieldset disabled={pending || unknown || !available}>
-          <Label>Device<select required value={selected?.metadata.uid ?? ''} onChange={event => {
-            const device = devices.data?.find(item => item.metadata.uid === event.target.value);
+          <Label>Device<FieldSelect required value={selected?.metadata.uid ?? ''} onValueChange={value => {
+            const device = devices.data?.find(item => item.metadata.uid === value);
             setSelected(device ? structuredClone(device) : undefined);
-          }}><option value="">Choose an existing Device</option>{devices.data?.map(device => <option key={device.metadata.uid ?? device.metadata.name} value={device.metadata.uid ?? ''} disabled={!!ineligibleReason(device, devices.data)}>{device.metadata.name}{ineligibleReason(device, devices.data) ? ` — ${ineligibleReason(device, devices.data)}` : ''}</option>)}</select></Label>
+          }} placeholder="Choose an existing Device" options={devices.data?.map(device => {
+            const reason = ineligibleReason(device, devices.data);
+            // A Device without a uid is listed as ineligible; its placeholder value never matches a selection.
+            return { value: device.metadata.uid ?? `unidentified/${device.metadata.name}`, disabled: !!reason, label: `${device.metadata.name}${reason ? ` — ${reason}` : ''}` };
+          })} /></Label>
           {devices.isPending && <p>Loading Devices…</p>}
           {devices.error && <p role="alert">Devices are unavailable or access is denied. Registration is blocked.</p>}
           {devices.data?.length === 0 && <p>No Devices are available in default.</p>}

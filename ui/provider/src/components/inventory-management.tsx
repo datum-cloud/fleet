@@ -13,6 +13,7 @@ import type { Inventory } from '../inventory';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { INVENTORY_NAMESPACE, inInventoryNamespace } from '../lib/inventory-namespace';
 import { useNavigate } from 'react-router';
+import { FieldSelect } from './field-select';
 import { confirmInventoryDismissal, InventoryDraftGuard, InventoryForm, InventoryFormSurface } from './inventory-form-surface';
 
 export function InventoryManagement(props: ComponentProps<typeof InventoryManagementForm>) {
@@ -169,7 +170,7 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
       {kind !== 'Device' || record ? names : null}
       {!record && (kind === 'Device' || kind === 'Cable' || kind === 'DeviceClaim') && <InventoryHardwareFields kind={kind} values={values} onChange={setValues} namespace={namespace} claims={claims} devices={devices} feeds={feeds} cables={cables} locations={[...facilities, ...racks]} catalog={catalog} names={names} />}
       {!record && kind === 'Rack' && <>
-        <Label>Facility<select required value={values.facility} onChange={event => field('facility', event.target.value)}><option value="">Choose a facility</option>{facilities.filter(facility => facility.metadata.namespace === namespace && !facility.metadata.deletionTimestamp).map(facility => <option key={facility.metadata.name} value={facility.metadata.name}>{facility.spec.displayName} ({facility.metadata.name})</option>)}</select></Label>
+        <Label>Facility<FieldSelect required value={values.facility} onValueChange={value => field('facility', value)} placeholder="Choose a facility" options={facilities.filter(facility => facility.metadata.namespace === namespace && !facility.metadata.deletionTimestamp).map(facility => ({ value: facility.metadata.name, label: `${facility.spec.displayName} (${facility.metadata.name})` }))} /></Label>
         <Label>Height (U)<Input type="number" min={1} max={100} step={1} placeholder="Leave blank if unknown" value={values.height} onChange={event => field('height', event.target.value)} /></Label>
       </>}
       </fieldset>

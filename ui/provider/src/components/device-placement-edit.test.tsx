@@ -1,3 +1,4 @@
+import { chooseValue } from '../test/field-select';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,7 +20,6 @@ function setup(record = device, session = new InventoryOperationScope()) {
 }
 function openAndFill(existing = false) {
   fireEvent.click(screen.getByRole('button', { name: existing ? 'Correct location' : 'Add reported location' }));
-  fireEvent.change(screen.getByLabelText('Observation time (ISO 8601)'), { target: { value: '2026-01-02T00:00:00Z' } });
   fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Correct recorded location' } });
   fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/example' } });
 }
@@ -29,6 +29,14 @@ beforeEach(() => vi.stubGlobal('confirm', vi.fn(() => true)));
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('reported location editor', () => {
+  it('picks the observation time with the datum-ui date-time picker, defaulting to when the form opened', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    setup(); openAndFill();
+    expect(screen.queryByRole('textbox', { name: /Observ/ })).not.toBeInTheDocument();
+    const observed = screen.getByRole('combobox', { name: /^Observed at/ });
+    expect(observed).toHaveTextContent(String(new Date().getFullYear()));
+    expect(observed).toBeEnabled();
+  });
   it.each([false, true])('adds/edits a Device reported location and refreshes projections: %s', async existing => {
     const record = structuredClone(device);
     if (existing) record.spec.reportedPlacement = { revision: 1, observedAt: '2026-01-01T00:00:00Z', reason: 'Synthetic survey', reference: 'ticket/synthetic', rackRef: { name: 'rack' }, position: 12, height: 4, face: 'rear', fullDepth: true };
@@ -62,7 +70,7 @@ describe('reported location editor', () => {
   it.each([401, 403, 404, 503])('purges denied rack references and choices: %s', async status => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockResolvedValueOnce(response({}, status));
     vi.stubGlobal('fetch', fetch); setup(); openAndFill();
-    fireEvent.change(screen.getByLabelText('Rack'), { target: { value: 'rack' } });
+    chooseValue(screen.getByLabelText('Rack'), 'rack');
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Restricted names and choices were removed'));
     expect(screen.queryByText('Restricted rack name')).not.toBeInTheDocument();
@@ -102,7 +110,7 @@ describe('reported location editor', () => {
     const fetch = vi.fn().mockResolvedValueOnce(response({ status: { allowed: true } })).mockResolvedValueOnce(response(device)).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     vi.stubGlobal('fetch', fetch);
     const view = setup(); openAndFill();
-    fireEvent.change(screen.getByLabelText('Rack'), { target: { value: 'rack' } });
+    chooseValue(screen.getByLabelText('Rack'), 'rack');
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(resolve).toBeDefined());
     if (event === 'session') view.session.invalidate();

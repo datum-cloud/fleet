@@ -475,9 +475,9 @@ export function PortFaceplate({ faces: laid, names, namespace, href, cablesDenie
           {face.clusters.some(hidden) && (
             <p className="inventory-port-hidden">
               {face.clusters.filter(hidden).map(cluster => (
-                <button key={cluster.group} type="button" className="inventory-link-button" aria-expanded={false} onClick={() => setExpanded(value => new Set(value).add(cluster.group))}>
+                <Button key={cluster.group} type="secondary" theme="link" size="link" htmlType="button" aria-expanded={false} onClick={() => setExpanded(value => new Set(value).add(cluster.group))}>
                   Show {cluster.title} · {portsWord(cluster.tiles.length)}, catalog only
-                </button>
+                </Button>
               ))}
             </p>
           )}

@@ -42,7 +42,6 @@ it.each(['create', 'label', 'location'].flatMap(mode => ['review', 'read', 'disp
   await waitFor(() => expect(opener).toBeEnabled());
   fireEvent.click(opener);
   if (mode === 'location') {
-    fireEvent.change(screen.getByLabelText('Observation time (ISO 8601)'), { target: { value: '2026-01-02T00:00:00Z' } });
     fireEvent.change(screen.getByLabelText('Correction reason'), { target: { value: 'Synthetic correction' } });
     fireEvent.change(screen.getByLabelText('Evidence reference'), { target: { value: 'ticket/synthetic' } });
   } else {

@@ -1,3 +1,4 @@
+import { selectOptions, selectedValue, setField } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
 import { chooseEndpoint } from '../test/cable-endpoint';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -28,7 +29,7 @@ function writes(get: (url: string) => unknown = () => claim) {
 function renderForm(kind: 'Device' | 'Cable', props: { devices?: typeof device[]; issues?: Inventory['issues']; cables?: PhysicalRecord[] } = {}) {
   return render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind={kind} facilities={[]} claims={[claim]} devices={props.devices ?? [device]} feeds={[feed]} cables={props.cables} issues={props.issues} /></QueryClientProvider>);
 }
-const change = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+const change = (label: string, value: string) => setField(screen.getByLabelText(label), value);
 
 it('requires a serial or system UUID before submit and names the field, without a request', async () => {
   const sent = writes();
@@ -78,7 +79,7 @@ it('marks installation plans that already have a device', async () => {
   writes();
   renderForm('Device', { devices: [{ ...device, spec: { ...device.spec, claimRef: { name: claim.metadata.name } } }] });
   fireEvent.click(await findEnabledButton({ name: 'Create device' }));
-  const plan = within(screen.getByLabelText('Installation plan')).getByRole('option', { name: /has device/ });
+  const plan = selectOptions(screen.getByLabelText('Installation plan')).find(option => /has device/.test(option.text))!.element;
   expect(plan).toHaveClass('inventory-option-attention');
   expect(plan).toHaveAttribute('title', 'A device is already registered to this plan');
 });
@@ -104,12 +105,13 @@ it('picks a cable end by device then port, marks cabled ports in amber and rejec
   renderForm('Cable', { cables: [cable] });
   fireEvent.click(await findEnabledButton({ name: 'Create cable' }));
   change('Display name', 'Synthetic record'); change('Cable medium', 'Copper');
-  expect(screen.getByLabelText('Lane 1 end A')).toHaveLength(1);
+  expect(selectOptions(screen.getByLabelText('Lane 1 end A'))).toHaveLength(0);
   change('Lane 1 end A device', `Device/${device.metadata.uid}`);
-  const cabled = within(screen.getByLabelText('Lane 1 end A')).getByRole('option', { name: 'Ethernet 0 · cabled' });
+  const ports = selectOptions(screen.getByLabelText('Lane 1 end A'));
+  const cabled = ports.find(option => option.text === 'Ethernet 0 · cabled')!.element;
   expect(cabled).toHaveClass('inventory-option-attention');
   expect(cabled).toHaveAttribute('title', 'Already cabled: Synthetic patch');
-  expect(within(screen.getByLabelText('Lane 1 end A')).getByRole('option', { name: 'Power supply 1' })).not.toHaveClass('inventory-option-attention');
+  expect(ports.find(option => option.text === 'Power supply 1')!.element).not.toHaveClass('inventory-option-attention');
   chooseEndpoint('Lane 1 end A', 'Ethernet 0');
   expect(screen.getByLabelText('Lane 1 end A')).toHaveAttribute('data-attention', 'cabled');
   chooseEndpoint('Lane 1 end B', 'Ethernet 0');
@@ -148,9 +150,9 @@ it('keeps facility and rack consistent and shows its own geometry message', asyn
   expect(screen.queryByText(/Leave unknown values blank|records only/)).not.toBeInTheDocument();
   expect(screen.getByLabelText('Evidence reference')).toHaveAccessibleDescription('No credentials or secrets.');
   change('Rack', 'rack-b');
-  expect(screen.getByLabelText('Facility')).toHaveValue('site-b');
+  expect(selectedValue(screen.getByLabelText('Facility'))).toBe('site-b');
   change('Facility', 'site-a');
-  expect(screen.getByLabelText('Rack')).toHaveValue('');
+  expect(selectedValue(screen.getByLabelText('Rack'))).toBe('');
   change('Facility', ''); change('Mount (non-U)', 'shelf');
   change('Correction reason', 'Synthetic correction'); change('Evidence reference', 'ticket/synthetic');
   fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));

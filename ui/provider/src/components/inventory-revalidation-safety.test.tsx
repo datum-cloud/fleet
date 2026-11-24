@@ -1,3 +1,4 @@
+import { chooseValue } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -18,7 +19,7 @@ async function open(editing: boolean, rack = false) {
   fireEvent.click(await findEnabledButton({ name: editing ? 'Edit display name' : rack ? 'Create rack' : 'Create facility' }));
   if (!editing) fireEvent.change(screen.getByLabelText('Record name'), { target: { value: values.name } });
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'New input' } });
-  if (rack) fireEvent.change(screen.getByLabelText('Facility'), { target: { value: values.name } });
+  if (rack) chooseValue(screen.getByLabelText('Facility'), values.name);
 }
 
 it.each(['same-url', 'replace', 'back-forward', 'revalidate', 'hidden-return', 'pagehide-return'].flatMap(navigation => [false, true].flatMap(editing => [false, true].map(strict => ({ navigation, editing, strict })))) )('fresh authority after $navigation edit=$editing strict=$strict', async ({ navigation, editing, strict }) => {

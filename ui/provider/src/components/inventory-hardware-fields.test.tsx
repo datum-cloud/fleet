@@ -1,3 +1,4 @@
+import { chooseValue, selectOptions } from '../test/field-select';
 import { chooseEndpoint } from '../test/cable-endpoint';
 import { findEnabledButton } from '../test/enabled-button';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -36,7 +37,7 @@ it('registers hardware through the real form without changing claim identity', a
   const addComponent = screen.getByRole('button', { name: 'Add component' });
   expect(addComponent).toHaveClass(...cn(buttonVariants({ type: 'secondary', theme: 'outline', size: 'small' })).split(' '));
   expect(addComponent).toHaveAttribute('type', 'button');
-  fireEvent.change(screen.getByLabelText('Installation plan'), { target: { value: 'plan-uid' } });
+  chooseValue(screen.getByLabelText('Installation plan'), 'plan-uid');
   fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'Recorded model' } });
   fireEvent.change(screen.getByLabelText('Serial number'), { target: { value: 'SYNTHETIC-NEW' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add component' }));
@@ -55,7 +56,7 @@ it('uses typed feed and device endpoints and retains input on submit denial', as
     writes.push(init); return response({});
   }));
   renderForm('Cable'); await open('Cable');
-  fireEvent.change(screen.getByLabelText('Cable medium'), { target: { value: 'Power' } });
+  chooseValue(screen.getByLabelText('Cable medium'), 'Power');
   chooseEndpoint('Lane 1 end A', 'Feed A'); chooseEndpoint('Lane 1 end B', 'Power supply 1');
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await screen.findByText(/Your management permission changed/);
@@ -67,7 +68,7 @@ it('does not offer unknown or inaccessible endpoint positions', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ status: { allowed: true } })));
   render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Cable" facilities={[]} devices={[{ ...device, spec: { ...device.spec, components: [{ id: 'unknown', name: 'Unknown positions', type: 'NetworkPort' }] } }]} /></QueryClientProvider>);
   await open('Cable');
-  expect((screen.getByLabelText('Lane 1 end A device') as HTMLSelectElement).options).toHaveLength(1);
+  expect(selectOptions(screen.getByLabelText('Lane 1 end A device')).map(option => option.value)).toEqual(['']);
 });
 it('does not present an unreadable installation collection as an empty device prerequisite', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ status: { allowed: true } })));
@@ -81,8 +82,9 @@ it('keeps readable cable endpoint choices with a partial-access explanation', as
   render(<QueryClientProvider client={new QueryClient()}><InventoryManagement kind="Cable" facilities={[]} devices={[device]} issues={{ PowerFeed: { status: 403 } }} /></QueryClientProvider>);
   await open('Cable');
   expect(screen.getByText('Some devices or feeds unreadable — list incomplete')).toBeInTheDocument();
-  expect((screen.getByLabelText('Lane 1 end A device') as HTMLSelectElement).options.length).toBeGreaterThan(1);
-  expect(screen.queryByRole('option', { name: /Feed A/ })).not.toBeInTheDocument();
+  const sources = selectOptions(screen.getByLabelText('Lane 1 end A device'));
+  expect(sources.length).toBeGreaterThan(1);
+  expect(sources.map(option => option.text).join('\n')).not.toMatch(/Feed A/);
 });
 it('revokes a pending cable form on unmount before delayed endpoint validation completes', async () => {
   let release: ((data: unknown) => void) | undefined;
@@ -93,7 +95,7 @@ it('revokes a pending cable form on unmount before delayed endpoint validation c
     writes.push(init); return response({});
   }));
   const mounted = renderForm('Cable'); await open('Cable');
-  fireEvent.change(screen.getByLabelText('Cable medium'), { target: { value: 'Power' } });
+  chooseValue(screen.getByLabelText('Cable medium'), 'Power');
   chooseEndpoint('Lane 1 end A', 'Feed A'); chooseEndpoint('Lane 1 end B', 'Power supply 1');
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   await waitFor(() => expect(release).toBeDefined()); mounted.unmount();

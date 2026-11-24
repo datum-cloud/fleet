@@ -1,6 +1,7 @@
 import { Input } from '@datum-cloud/datum-ui/input';
 import { Label } from '@datum-cloud/datum-ui/label';
 import { Button } from '@datum-cloud/datum-ui/button';
+import { DateTimePicker } from '@datum-cloud/datum-ui/picker';
 import { useContext, useId, useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Device, PhysicalRecord } from '../../../shared/fleet-api';
@@ -11,6 +12,7 @@ import { InventoryValidationError } from '../lib/inventory-hardware';
 import { useInventoryPermission } from '../lib/inventory-management';
 import { InventoryOperationContext, InventoryOperationGenerationContext, InventoryOperationReadyContext, InventoryOperationInvalidated, InventoryOperationScope } from '../lib/inventory-operation';
 import { InventoryReadAccessContext, InventoryReferenceReadError, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
+import { FieldSelect } from './field-select';
 import { confirmInventoryDismissal, InventoryDraftGuard, InventoryForm, InventoryFormSurface } from './inventory-form-surface';
 
 export function DevicePlacementEdit(props: ComponentProps<typeof DevicePlacementForm>) {
@@ -124,16 +126,16 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     <InventoryForm onSubmit={save} message={message}>
       <fieldset className="inventory-form-gate" disabled={!allowed || blocked || pending}>
       <div className="inventory-form-grid">
-        <Label>Facility<select value={fields.facility} disabled={!!unavailable.Facility} onChange={event => chooseFacility(event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Facility').map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
-        <Label>Rack<select value={fields.rack} disabled={!!unavailable.Rack} onChange={event => chooseRack(event.target.value)}><option value="">Unknown / not recorded</option>{visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => <option key={record.metadata.name} value={record.metadata.name}>{record.spec.displayName || record.metadata.name}</option>)}</select></Label>
+        <Label>Facility<FieldSelect value={fields.facility} disabled={!!unavailable.Facility} onValueChange={chooseFacility} none="Unknown / not recorded" options={visible.filter(record => record.kind === 'Facility').map(record => ({ value: record.metadata.name, label: record.spec.displayName || record.metadata.name }))} /></Label>
+        <Label>Rack<FieldSelect value={fields.rack} disabled={!!unavailable.Rack} onValueChange={chooseRack} none="Unknown / not recorded" options={visible.filter(record => record.kind === 'Rack' && (!fields.facility || record.spec.facilityRef?.name === fields.facility)).map(record => ({ value: record.metadata.name, label: record.spec.displayName || record.metadata.name }))} /></Label>
         <Label>Position (U)<Input type="number" min="1" max="100" step="any" value={fields.position} onChange={event => field('position', event.target.value)} /></Label>
         <Label>Height (U)<Input type="number" min="0" max="100" step="any" value={fields.height} onChange={event => field('height', event.target.value)} /></Label>
-        <Label>Face<select value={fields.face} onChange={event => field('face', event.target.value)}><option value="">Unknown</option><option value="front">Front</option><option value="rear">Rear</option></select></Label>
-        <Label>Depth<select value={fields.fullDepth} onChange={event => field('fullDepth', event.target.value)}><option value="">Unknown</option><option value="true">Full depth</option><option value="false">Partial depth</option></select></Label>
+        <Label>Face<FieldSelect value={fields.face} onValueChange={value => field('face', value)} none="Unknown" options={[{ value: 'front', label: 'Front' }, { value: 'rear', label: 'Rear' }]} /></Label>
+        <Label>Depth<FieldSelect value={fields.fullDepth} onValueChange={value => field('fullDepth', value)} none="Unknown" options={[{ value: 'true', label: 'Full depth' }, { value: 'false', label: 'Partial depth' }]} /></Label>
       </div>
       <Label>Mount (non-U)<Input value={fields.mount} maxLength={253} placeholder="shelf, 0U left" onChange={event => field('mount', event.target.value)} /></Label>
       <div className="inventory-form-grid inventory-form-rule">
-        <Label>Observation time (ISO 8601)<Input required value={fields.observedAt} onChange={event => field('observedAt', event.target.value)} /></Label>
+        <Label>Observed at<DateTimePicker value={fields.observedAt} onChange={value => field('observedAt', value ?? '')} clearable={false} disableFuture timeInputMode="input" triggerClassName="inventory-observed-at" sheetTitle="Observed at" /></Label>
         <div className="inventory-field">
           <Label>Evidence reference<Input required maxLength={1024} aria-describedby={evidenceHint} value={fields.reference} onChange={event => field('reference', event.target.value)} /></Label>
           <small id={evidenceHint} className="inventory-field-hint">No credentials or secrets.</small>
