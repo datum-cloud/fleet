@@ -234,6 +234,10 @@ func TestInvalidDevicesAreRejected(t *testing.T) {
 		"plain-http BMC":       func(d *Device) { d.Spec.BMC.Endpoint = "http://192.0.2.100" },
 		"BMC with credentials": func(d *Device) { d.Spec.BMC.Endpoint = "https://admin:secret@192.0.2.100" },
 		"BMC not a URL":        func(d *Device) { d.Spec.BMC.Endpoint = "192.0.2.100" },
+		"BMC with a query":     func(d *Device) { d.Spec.BMC.Endpoint = "https://192.0.2.100/redfish?token=x" },
+		"BMC with a fragment":  func(d *Device) { d.Spec.BMC.Endpoint = "https://192.0.2.100/#pw=x" },
+		"BMC with a path":      func(d *Device) { d.Spec.BMC.Endpoint = "https://192.0.2.100/session/x" },
+		"BMC with no host":     func(d *Device) { d.Spec.BMC.Endpoint = "https://:443" },
 	} {
 		device := syntheticDevice()
 		mutate(&device)

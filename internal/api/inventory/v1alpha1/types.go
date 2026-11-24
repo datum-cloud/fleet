@@ -165,8 +165,9 @@ type DeviceIdentity struct {
 	UnidentifiedReason string `json:"unidentifiedReason,omitempty"`
 }
 
-// BMC records where the management controller was reached. Credentials never
-// belong here.
+// BMC records where the management controller was reached: an https host and
+// optional port. Every inventory viewer can read it, so it carries no
+// credentials, path, query, or fragment.
 type BMC struct {
 	Endpoint string `json:"endpoint"`
 }

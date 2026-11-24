@@ -137,7 +137,7 @@ is registered; the kinds are provider-internal, not a catalog offering.
 | `placement` is immutable | DeviceClaim | Moving an installation is a new claim, not an edit. |
 | Interface names are unique; MACs are lowercase and colon-separated, appear at most once per Device, and are either mapped to an interface or listed in `unmappedMACAddresses`, not both | Both | Malformed or ambiguous facts are rejected. |
 | The system UUID is in lowercase canonical form | Device | One spelling per identity. |
-| `bmc.endpoint` is an `https` URL without credentials | Device | Credentials never live in inventory records. |
+| `bmc.endpoint` is an `https` host and optional port, with no credentials, path, query, or fragment | Device | Every inventory viewer can read it, so nothing secret can live in it. |
 | `lifecycle` is `Active` (default), `Decommissioning` or `Retired`; `Active` and `Decommissioning` move between each other, only `Decommissioning` moves to `Retired`, and `Retired` is terminal | Device | Retirement is deliberate and one-way. Nothing reads the lifecycle yet. |
 | `status` is a separate subresource that declares no fields | All nine | Reserved for future collectors and verifiers to report drift and mismatch. Status never carries identity, and nothing writes it yet. |
 
