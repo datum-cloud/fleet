@@ -158,9 +158,12 @@ only after the holder is `Retired`.
 
 ![Device custody holders and transitions](diagrams/custody-states.svg)
 
-`Allocation` and `Release` name the same allocation. The server leaves
-`Release` only when `openGates` is empty. The release controller removes each
-gate after it verifies that gate's evidence.
+`Allocation` and `Release` name the same allocation. The release controller
+reports evidence for each release gate, and the coordinator removes the gate
+from `openGates`. The server leaves `Release` only when `openGates` is empty.
+
+The coordinator sets holder `Retired` when inventory retires a Device whose
+holder is `None`.
 
 The fence rises only when an operation is admitted and when custody is
 [rebuilt](#rebuilding-custody). A holder change does not raise it, so an
@@ -179,8 +182,8 @@ created. Clients cannot set or change that field.
 | `DevicePowerOperation` | Fleet provider for Metal | `allocationRef` | `Allocation` | Power action |
 | `DevicePowerOperation` | Staff power operator | `serviceRequest` | `None` | Power action, reason, expected system UUID |
 | `DeviceWipe` | Release controller | `allocationRef` | `Release` | Cleaning policy digest pinned at allocation, target disks |
-| `DeviceCommissioning` | Staff commissioning operator | `serviceRequest` | `None` | Commissioning plan and digest |
-| `DeviceRecovery` | Staff recovery operator | `serviceRequest` | Any, with a recovery hold | Held operation, evidence, decision |
+| `DeviceCommissioning` | Staff commissioning operator | `serviceRequest` | `None`, or `Service` under a commissioning hold | Commissioning plan and digest |
+| `DeviceRecovery` | Staff recovery operator | `serviceRequest` | Any, with a recovery hold | Held operation, evidence, and a decision: `Settle` or `Retire` |
 
 No other creator and authority pairs are valid. Staff roles can read custody,
 operations, and MachineAllocations.
@@ -225,7 +228,8 @@ plus `Pending`:
 | `OutcomeUnknown` | A command may have reached the server, and Fleet cannot prove the result. |
 
 Custody holds the phase and result of the active operation. Operation status is
-a copy of custody.
+a copy of custody. The coordinator admits the next operation only after it
+copies the previous result to that operation's status.
 
 ### Admission
 
@@ -245,14 +249,19 @@ Under a recovery hold, only the operations in [Unknown
 outcomes](#unknown-outcomes) are admitted.
 
 The update sets the active operation, raises the fence, and sets a deadline. A
-staff operation also sets the holder to `Service`. If another writer changed
+staff operation admitted from holder `None` also sets the holder to `Service`.
+A `DeviceRecovery` never changes the holder, except to retire the server. If another writer changed
 custody first, the update fails, and the coordinator evaluates again.
 
-Provider and release operations wait in `Pending`, oldest first. A newer power
-operation for the same allocation cancels an older pending one. Staff
-operations are refused instead of queued, and a pending staff operation expires
-after five minutes. A queued staff request could otherwise run after its reason
-is gone.
+Provider and release operations wait in `Pending` while another operation
+runs, and are admitted oldest first. A newer power operation for the same
+allocation cancels an older pending one. When the holder changes, the
+coordinator cancels every pending operation that no longer matches it.
+
+Staff operations never wait behind another operation. Admission refuses a staff
+operation that cannot run now, because a queued request could run after its
+reason is gone. A staff operation not admitted within five minutes, for
+example because the coordinator is down, expires.
 
 Metal admission, including IAM, entitlement, and quota, still follows the
 [machine lifecycle admission
@@ -332,12 +341,17 @@ If custody is missing for an existing Device, for example after a restore, the
 coordinator creates it as `Unverified`. An `Unverified` server admits no
 operation and cannot be allocated. The coordinator rebuilds custody from:
 
-- live MachineAllocations for the Device, which set `Allocation` or `Release`;
-- unfinished operations, which set a recovery hold; and
+- the Device's inventory lifecycle, which sets `Retired`;
+- live MachineAllocations for the Device, which set `Allocation` or `Release`.
+  A rebuilt `Release` reopens every release gate, and the release controller
+  verifies each again;
+- unfinished operations, which set a recovery hold, and set `Service` for a
+  staff operation; and
 - each site's stored fence, which sets the new fence above every fence already
   used.
 
-The coordinator then marks custody `Verified`. If the Device UID differs from
+The coordinator marks custody `Verified` only after every site that serves the
+Device reports its fence. Until then, custody stays `Unverified`. If the Device UID differs from
 `deviceRef.uid`, custody stays `Unverified` until an operator retires the old
 record.
 
@@ -382,6 +396,7 @@ These tests are required and not implemented:
 - An allocator retries after a lost response and does not claim a second
   server for the same Machine.
 - A staff operation names a customer allocation, and admission refuses it.
+- A commissioning times out, and a later commissioning settles the hold.
 - A staff operation targets an allocated, releasing, or held server, and
   admission refuses it without sending anything.
 - A worker passes its deadline, the operation ends as `OutcomeUnknown`, and a
@@ -391,7 +406,7 @@ These tests are required and not implemented:
 - Custody is deleted and restored, and the server stays unallocatable until
   rebuilt with a higher fence.
 - A Machine is deleted during installation. Release waits for the installation
-  outcome or its deadline, and a wipe settles any hold.
+  outcome or its deadline, and a wipe settles an installation hold.
 - No staff role can read a bootstrap payload.
 
 ## Production readiness review questionnaire

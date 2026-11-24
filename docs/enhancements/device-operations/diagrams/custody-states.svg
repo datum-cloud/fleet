@@ -1,11 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title description">
-<title id="title">Device custody holders and transitions</title><desc id="description">Rebuilt custody starts Unverified and becomes Verified with its true holder. A Device with no holder can be claimed by the allocator for a customer allocation, or by an admitted staff operation, or retired. An allocation moves to release when its Machine is deleted. Release returns the Device to no holder when every release gate closes. A staff holder returns to no holder when its operation ends. A recovery record can retire a server from service or release.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="560" viewBox="245 0 700 560" role="img" aria-labelledby="title description">
+<title id="title">Device custody holders and transitions</title><desc id="description">A Device with no holder can be claimed by the allocator for a customer allocation, taken by an admitted staff operation, or retired when inventory retires it. An allocation moves to release when its Machine is deleted. Release returns the Device to no holder when every release gate closes. A staff holder returns to no holder when its operation ends. A recovery record can retire a server from service or release.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 19px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
-<rect width="960" height="560" fill="white"/>
-<rect x="40" y="60" width="200" height="80" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
-<text x="140" y="95" class="label" text-anchor="middle">Unverified</text>
-<text x="140" y="120" class="detail" text-anchor="middle">Rebuilt custody</text>
+<rect x="245" width="700" height="560" fill="white"/>
 <rect x="380" y="60" width="200" height="80" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
 <text x="480" y="95" class="label" text-anchor="middle">Allocation</text>
 <text x="480" y="120" class="detail" text-anchor="middle">Customer holds it</text>
@@ -21,9 +18,6 @@
 <rect x="720" y="440" width="200" height="80" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
 <text x="820" y="475" class="label" text-anchor="middle">Retired</text>
 <text x="820" y="500" class="detail" text-anchor="middle">Terminal</text>
-<path d="M 140 140 V 290 H 380" class="line"/>
-<text x="150" y="215" class="detail" text-anchor="start">Verified with</text>
-<text x="150" y="238" class="detail" text-anchor="start">its true holder</text>
 <path d="M 480 250 V 140" class="line"/>
 <text x="492" y="200" class="detail" text-anchor="start">Allocator claims it</text>
 <path d="M 580 100 H 720" class="line"/>
@@ -38,7 +32,8 @@
 <text x="510" y="372" class="detail" text-anchor="start">Operation</text>
 <text x="510" y="395" class="detail" text-anchor="start">ends</text>
 <path d="M 580 310 L 720 455" class="line"/>
-<text x="655" y="345" class="detail" text-anchor="start">Retired</text>
-<path d="M 580 495 H 720" class="line" stroke-dasharray="5 4"/>
-<text x="650" y="520" class="detail" text-anchor="middle">Recovery</text>
+<text x="655" y="345" class="detail" text-anchor="start">Inventory</text>
+<text x="655" y="368" class="detail" text-anchor="start">retires it</text>
+<path d="M 580 480 H 720" class="line" stroke-dasharray="5 4"/>
+<text x="650" y="470" class="detail" text-anchor="middle">Recovery</text>
 </svg>
