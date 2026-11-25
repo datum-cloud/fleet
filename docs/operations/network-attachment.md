@@ -46,8 +46,14 @@ It then creates a `NetworkInterfaceClaim` in the Network's namespace, labeled
 `fleet.datumapis.com/allocation` and `fleet.datumapis.com/machine-uid`, with
 the configured physical attachment mode, and records the claim's UID. A crash
 between the create and the UID write is recovered by name. Fleet adopts a claim
-only if its labels and spec match exactly, and never recreates a claim whose
-UID it recorded.
+only if its labels and spec match exactly, never recreates a claim whose UID it
+recorded, and records every proven UID even when a later interface fails.
+
+The Network's namespace is the consumer's, so a consumer who learns the
+allocation name could create a matching claim first, and Fleet would adopt it.
+That claim asks for nothing Fleet would not, and the realizer checks the
+attachment point against the allocation's record. Claims move to a namespace
+the consumer cannot write once NSO defines one.
 
 A claim's status wakes its Machine through the `machine-uid` label. The Machine
 reports, per interface, the Network, the MAC, the MTU of the bound
@@ -56,7 +62,9 @@ reports, per interface, the Network, the MAC, the MTU of the bound
 reports all three at the claim's generation. Until then the Machine is
 `Pending` with reason `NetworkPending`. A recorded claim that changed or
 disappeared reports `NetworkConfigurationChanged`, and an interface with no
-single cable record reports `AttachmentPointUnknown`.
+single cable record reports `AttachmentPointUnknown`. When NSO cannot be read,
+`NetworkReady` is `Unknown`, `Ready` is false, and the last network status
+stays.
 
 ## Release
 
@@ -65,6 +73,12 @@ Release deletes every recorded claim with its UID as a precondition. The
 keeps a claim until the realizer detached the port. A claim under the same name
 with another UID is not Fleet's, so Fleet's own counts as gone and the other is
 left alone.
+
+An interface that asked to retain its addresses keeps them in the consumer's
+project after release, as NSO's `Retain` policy defines. Fleet's obligation
+ends when its claim is gone. If the NSO API stops serving claims after Fleet
+recorded some, release waits with both gates open until an operator restores
+it.
 
 ## Configuration
 

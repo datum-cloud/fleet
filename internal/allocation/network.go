@@ -95,6 +95,13 @@ func (a *Allocator) Attach(ctx context.Context, allocation *fleetv1.MachineAlloc
 		}
 		uid, observation, err := a.Network.Ensure(ctx, allocation, machine, request, current)
 		if err != nil {
+			// Keep the UIDs already proven, so those claims are never
+			// adopted by name again.
+			if changed {
+				if recordErr := a.recordNetwork(ctx, allocation, machine, recorded); recordErr != nil {
+					return nil, false, recordErr
+				}
+			}
 			return nil, false, err
 		}
 		if current.Claim.UID == "" {

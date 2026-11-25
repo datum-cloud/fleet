@@ -64,7 +64,9 @@ func TestEnsureAdoptsOnlyFleetsOwnClaim(t *testing.T) {
 	for name, mutate := range map[string]func(*networkingv1.NetworkInterfaceClaim){
 		"another allocation": func(c *networkingv1.NetworkInterfaceClaim) { c.Labels[AllocationLabel] = "alloc-other" },
 		"another Machine":    func(c *networkingv1.NetworkInterfaceClaim) { c.Labels[MachineUIDLabel] = "other" },
-		"another spec":       func(c *networkingv1.NetworkInterfaceClaim) { c.Spec.AttachmentMode = networkingv1.NetworkInterfaceAttachmentModeNetns },
+		"another spec": func(c *networkingv1.NetworkInterfaceClaim) {
+			c.Spec.AttachmentMode = networkingv1.NetworkInterfaceAttachmentModeNetns
+		},
 	} {
 		changed := claim.DeepCopy()
 		mutate(changed)

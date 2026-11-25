@@ -181,7 +181,9 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	networkStatus, networkReady, networkErr := h.Allocator.Attach(ctx, record, &claim)
 	networkCondition := allocation.NetworkCondition(&claim, networkReady, networkErr)
 	if networkCondition.Status == metav1.ConditionUnknown {
-		return manager.Outcome{RetryError: networkErr}
+		// The network owner could not be read: report Unknown, keep the
+		// last network status, and retry.
+		networkStatus = claim.Status.Network
 	}
 	if len(claim.Spec.NetworkInterfaces) == 0 {
 		networkCondition = condition("NetworkReady", metav1.ConditionTrue, claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested.")
@@ -210,14 +212,18 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		},
 	}
 	status = preserveRequest(claim.Status, status)
+	var retry error
+	if networkCondition.Status == metav1.ConditionUnknown {
+		retry = networkErr
+	}
 	if sameStatus(claim.Status, status) {
-		return manager.Outcome{}
+		return manager.Outcome{RetryError: retry}
 	}
 	claim.Status = status
 	if err := h.Public.Status().Update(ctx, &claim); err != nil {
 		return manager.Outcome{RetryError: err}
 	}
-	return manager.Outcome{}
+	return manager.Outcome{RetryError: retry}
 }
 
 // machine is the claim's exact identity in its consumer project.
