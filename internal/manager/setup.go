@@ -20,6 +20,8 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
@@ -179,7 +181,13 @@ func Setup(ctx context.Context, mgr mcmanager.Manager, projects *Projects, optio
 	if options.ProviderCluster != nil {
 		providerEvents := mcbuilder.TypedControllerManagedBy[ProviderEventRequest](mgr).
 			Named("fleet-provider-machinecapacity-events").
-			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.MachineCapacity{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate()))
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.MachineCapacity{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate())).
+			// Custody, allocation and Device changes wake the consumer's
+			// Machines, so the power projector reports a recovery hold or a
+			// discovered power change without a Machine event.
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&ops.DeviceCustody{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate())).
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&fleetv1.MachineAllocation{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate())).
+			WatchesRawSource(source.TypedKind(options.ProviderCluster.GetCache(), client.Object(&inventory.Device{}), typedProviderEventMap(options.ProviderProject), DependencyPredicate()))
 		if err := providerEvents.Complete(ClusterProviderEventReconciler{Projects: projects, Consumer: options.ProviderConsumer, Provider: options.ProviderProject, ProviderVerifier: options.ProviderVerifier}); err != nil {
 			return err
 		}
