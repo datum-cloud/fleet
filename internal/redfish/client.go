@@ -239,7 +239,10 @@ type Power struct {
 	State           string `json:"state"`
 	OverrideEnabled string `json:"overrideEnabled"`
 	OverrideTarget  string `json:"overrideTarget"`
-	etag            string
+	// LastResetTime is when the BMC reports the System last came out of a
+	// reset. It is zero when the BMC reports none or an unreadable time.
+	LastResetTime time.Time `json:"lastResetTime,omitzero"`
+	etag          string
 }
 
 // resetAction holds the annotations gofish decodes into unexported fields.
@@ -391,8 +394,9 @@ func observe(api *gofish.APIClient, sys System) (Power, error) {
 	if s.ID != sys.ID || !strings.EqualFold(s.UUID, sys.UUID) {
 		return Power{}, fmt.Errorf("%w: retained System path changed identity", ErrIdentity)
 	}
+	lastReset, _ := time.Parse(time.RFC3339, s.LastResetTime)
 	return Power{State: string(s.PowerState), OverrideEnabled: string(s.Boot.BootSourceOverrideEnabled),
-		OverrideTarget: string(s.Boot.BootSourceOverrideTarget), etag: s.ODataEtag}, nil
+		OverrideTarget: string(s.Boot.BootSourceOverrideTarget), LastResetTime: lastReset.UTC(), etag: s.ODataEtag}, nil
 }
 
 // Observe reads the retained System again and re-checks its identity.

@@ -245,3 +245,31 @@ func TestClientRejectsUntrustedTLSAndEnvironmentProxy(t *testing.T) {
 		t.Fatal("BMC requests may be sent through an environment proxy")
 	}
 }
+
+// Observe reads the BMC's LastResetTime, in the lab's microsecond form, and
+// leaves it zero when the BMC reports none or an unreadable time.
+func TestObserveReadsTheLastResetTime(t *testing.T) {
+	b := newStub()
+	c := stubClient(t, b, time.Second)
+	sys, err := c.Discover(context.Background(), Target{SystemID: "A", SystemUUID: uuidA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for value, want := range map[any]time.Time{
+		"2026-01-02T03:04:05.123456+00:00": time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC),
+		"2026-01-02T03:04:05Z":             time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		"not a time":                       {},
+		nil:                                {},
+	} {
+		doc := b.docs["/redfish/v1/Systems/A"].(map[string]any)
+		if value == nil {
+			delete(doc, "LastResetTime")
+		} else {
+			doc["LastResetTime"] = value
+		}
+		power, err := c.Observe(context.Background(), sys)
+		if err != nil || !power.LastResetTime.Equal(want) {
+			t.Fatalf("LastResetTime %v: got %v, %v", value, power.LastResetTime, err)
+		}
+	}
+}
