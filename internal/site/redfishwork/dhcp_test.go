@@ -61,7 +61,7 @@ func (s *synchronizer) run(ctx context.Context, t *testing.T) {
 				request, _ := newRequest("POST", "/dhcp/v1/applied", string(data))
 				recorder := httptest.NewRecorder()
 				handler.ServeHTTP(recorder, request)
-				if recorder.Code != http.StatusNoContent {
+				if recorder.Code != http.StatusNoContent && ctx.Err() == nil {
 					t.Errorf("applied report = %d", recorder.Code)
 				}
 			}
@@ -88,8 +88,13 @@ func TestASyncedInstallServesItsAddressOnlyWhileItRuns(t *testing.T) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go (&synchronizer{server: server, instance: "dhcp-a"}).run(ctx, t)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		(&synchronizer{server: server, instance: "dhcp-a"}).run(ctx, t)
+	}()
+	// The synchronizer stops before the test's directories are removed.
+	defer func() { cancel(); <-stopped }()
 	spec := installSpec()
 	spec.BootNetwork = bootNetwork()
 	result, err := r.Run(context.Background(), assignment(l, "DeviceInstallation", "op-synced", 1, spec))
