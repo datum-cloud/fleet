@@ -3,7 +3,7 @@
 # and go executables; never contacts a container runtime or cluster.
 set -eu
 root=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
-for f in "$root"/hack/multiplane/*.sh "$root"/hack/local-vm/run.sh; do bash -n "$f"; done
+for f in "$root"/hack/multiplane/*.sh; do bash -n "$f"; done
 python3 -m py_compile "$root"/hack/multiplane/*.py
 python3 "$root"/hack/multiplane/test-k8s-evidence.py "$root"
 python3 "$root"/hack/multiplane/test-redfish.py "$root"
@@ -36,13 +36,15 @@ if tool == 'docker':
     if a[:1] == ['run']:
         print('x86_64'); sys.exit(0)
 if tool == 'kubectl' and 'exec' in a and 'deploy/fleet-site-runtime' in a:
-    if 'journal.json' in a[-1]:
-        stage = os.environ.get('FAKE_STAGE', 'installer-started')
-        print(json.dumps({'fence': 'F' * 32, 'operations': {'op': {'request': {'id': 'install-op-1', 'kind': 'install', 'epoch': 1, 'fenceToken': 'T' * 32},
-              'stage': stage, 'bootToken': 'B' * 64, 'receipt': 'R' * 64, 'result': {'phase': 'Unknown'}, 'bootClosed': False}}})); sys.exit(0)
+    if a[-1].endswith('/state.json'):
+        stage = os.environ.get('FAKE_STAGE', 'installer-start')
+        steps = {'prepared': ['prepare-disk'], 'installer-start': ['prepare-disk', 'installer-network', 'installer-start'],
+                 'disk-start': ['prepare-disk', 'installer-network', 'installer-start', 'installer-verified', 'disk-network-off', 'disk-start']}[stage]
+        print(json.dumps({'device': 'fleet-provider/synthetic-device-central-01', 'fence': 3, 'stopped': 3,
+              'journal': [{'operation': 'install-op-1', 'fence': 3, 'step': s, 'state': 'Done', 'at': '2026-01-01T00:00:00Z', 'payload': {'note': 'R' * 64}} for s in steps]})); sys.exit(0)
     if 'virsh' in a:
         import hashlib
-        print('fleet-local-' + hashlib.sha256(b'install-op-1').hexdigest()[:24]); sys.exit(0)
+        print('fleet-local-' + hashlib.sha256(b'install-op-1').hexdigest()[:16]); sys.exit(0)
 if tool == 'colima':
     if 'df' in a[-1]: print('/dev/vdb1 41000000 20000000 %d 50%% /var/lib/docker' % (int(os.environ.get('FAKE_FREE_KB', '20000000'))))
     elif 'inotify' in a[-1]: print(os.environ.get('FAKE_INOTIFY', '1024'))
@@ -66,7 +68,7 @@ with tempfile.TemporaryDirectory() as tmp:
         d = pathlib.Path(tempfile.mkdtemp(dir=tmp)); d.chmod(0o700); return d
 
     good_root = tmp / 'good'; (good_root / 'cmd/fleet-multiplane').mkdir(parents=True)
-    markers = ['seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'asset', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer']
+    markers = ['seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer']
     (good_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers) + ' multiplane.ErrLocationNotServed')
     bad_root = tmp / 'bad'; (bad_root / 'cmd/fleet-multiplane').mkdir(parents=True)
     (bad_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers))
@@ -124,17 +126,20 @@ with tempfile.TemporaryDirectory() as tmp:
         check(name + ' timeout', r.returncode == 4, r.stdout + r.stderr)
         check(name + ' bounded', time.monotonic() - started < 8)
 
-    # Provider observation never exposes fence, capability or receipt.
+    # Provider observation reads the site store's journal, never step payloads.
     obs = state()
-    r = run(['wait-stage', '--state', str(obs), '--stage', 'installer-started', '--timeout', '5'])
+    r = run(['wait-stage', '--state', str(obs), '--stage', 'installer-start', '--timeout', '5'])
     check('wait-stage observes running installer', r.returncode == 0, r.stdout)
-    check('wait-stage sanitized', not any(x in r.stdout for x in ('B' * 64, 'R' * 64, 'T' * 32, 'F' * 32)), r.stdout)
-    r = run(['wait-stage', '--state', str(obs), '--stage', 'installer-started', '--timeout', '5'], {'FAKE_STAGE': 'disk-started'})
+    seen = json.loads(r.stdout) if r.returncode == 0 else {}
+    check('wait-stage names the operation and its fence', seen.get('operation', {}).get('operation') == 'install-op-1' and seen['operation'].get('fence') == 3
+          and seen['operation'].get('kind') == 'DeviceInstallation', r.stdout)
+    check('wait-stage sanitized', 'R' * 64 not in r.stdout, r.stdout)
+    r = run(['wait-stage', '--state', str(obs), '--stage', 'installer-start', '--timeout', '5'], {'FAKE_STAGE': 'disk-start'})
     check('wait-stage rejects missed window', r.returncode == 1, r.stdout)
-    r = run(['wait-stage', '--state', str(obs), '--stage', 'installer-started', '--timeout', '2'], {'FAKE_STAGE': 'prepared'})
+    r = run(['wait-stage', '--state', str(obs), '--stage', 'installer-start', '--timeout', '2'], {'FAKE_STAGE': 'prepared'})
     check('wait-stage bounded', r.returncode == 4, r.stdout)
     out = run(['journal', '--state', str(obs)]).stdout
-    check('journal sanitized', 'B' * 64 not in out and 'install-op-1' in out, out)
+    check('journal sanitized', 'R' * 64 not in out and 'install-op-1' in out, out)
     calls = [json.loads(l) for l in trace.read_text().splitlines()]
     check('provider observation only through the cell API', not any(c[0] == 'docker' and 'exec' in c for c in calls)
           and any(c[0] == 'kubectl' and 'exec' in c and 'deploy/fleet-site-runtime' in c for c in calls))
@@ -143,12 +148,13 @@ with tempfile.TemporaryDirectory() as tmp:
     s = state(); (s / 'evidence').mkdir()
     (s / 'provider').mkdir(); (s / 'provider/tokens.csv').write_text('a' * 64 + ',bootstrap,bootstrap,system:masters\n')
     (s / 'hub.json').write_text(json.dumps({'users': [{'user': {'token': 'k' * 40}}]}))
-    (s / 'provider-private').mkdir(); (s / 'provider-private/journal.json').write_text(json.dumps({'fence': 'f' * 32, 'operations': {'x': {'bootToken': 'b' * 64, 'request': {'fenceToken': 't' * 32}}}}))
+    boot = s / 'provider-private/site/devices/0123/vmboot'; boot.mkdir(parents=True)
+    (boot / 'k.json').write_text(json.dumps({'operation': 'x', 'fence': 1, 'receipt': 'r' * 64, 'token': 'b' * 64}))
     (s / 'host.yaml').write_text('users:\n- user:\n    client-key-data: ' + 'K' * 48 + '\n')
     (s / 'evidence/clean.json').write_text('{"ok":true}')
     check('scan clean', run(['scan', '--state', str(s)]).returncode == 0)
     (s / 'worker.token').write_text('w' * 40 + '\n')
-    for secret in ('a' * 64, 'k' * 40, 'f' * 32, 'b' * 64, 't' * 32, 'K' * 48, 'w' * 40):
+    for secret in ('a' * 64, 'k' * 40, 'b' * 64, 'K' * 48, 'w' * 40):
         (s / 'evidence/leak.json').write_text('{"v":"%s"}' % secret)
         check('scan detects ' + secret[0], run(['scan', '--state', str(s)]).returncode == 1)
         check('scan redacts ' + secret[0], secret not in (s / 'evidence/leak.json').read_text())
@@ -195,13 +201,14 @@ with tempfile.TemporaryDirectory() as tmp:
             continue
         check('step implemented: ' + name, ' %s)' % name in steps or '|%s)' % name in steps or ' %s|' % name in steps)
 
-    # The custody CRD rule phase proves the project API enforces the CEL
-    # rules, then removes everything it installed, in both modes.
+    # The custody CRD rule phase proves the provider project API enforces the
+    # CEL rules in its own namespace, then deletes every object it created, in
+    # both modes. The CRDs belong to the provider project; it installs none.
     rules = (root / 'hack/multiplane/custody_crd_rules.py').read_text()
     redfish_sequence = (root / 'hack/multiplane/acceptance-redfish.sh').read_text()
     check('custody CRD rules run in both modes', 'ph custody-crd-rules ' in sequence and 'ph custody-crd-rules ' in redfish_sequence)
-    check('custody CRD rules install only the component CRDs and remove them', rules.count('config/components/device-operations/crds/fleet.datumapis.com.yaml') == 1
-          and "'delete', '-f', crds" in rules and "'delete', kind, name" in rules and "'Namespace'" not in rules)
+    check('custody CRD rules install nothing and remove what they create', 'crds' not in rules
+          and "'delete', kind, name" in rules and "'Namespace'" not in rules and "namespace = 'fleet-rules'" in rules)
     check('custody CRD rules evidence is checked', "custody-crd-rules.json" in evidence and 'custody-crd-rules: the provider project API refused' in evidence)
 
     # The kro graph and the worker exit-code contract must agree. kro owns only
@@ -262,7 +269,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check('fault injection suspends Flux first', 'suspend milo-consumer-a true' in steps and '"suspend":true' in (root / 'hack/multiplane/reflection-faults.py').read_text())
     check('RBAC revocation repaired by Flux, not the harness', "'apply'" not in (root / 'hack/multiplane/verify-rbac.py').read_text())
     for path in ('config/site/base/site.yaml', 'config/site/graph/rgd.yaml', 'config/site/instance/dispatcher.yaml', 'config/multiplane/coordination/crd.yaml',
-                 'config/multiplane/host/custody.yaml', 'config/multiplane/karmada/karmada.yaml', 'config/multiplane/karmada-members/members.yaml'):
+                 'config/multiplane/karmada/karmada.yaml', 'config/multiplane/karmada-members/members.yaml'):
         check('prune-protected: ' + path, 'kustomize.toolkit.fluxcd.io/prune: disabled' in (root / path).read_text())
     check('site volume is create-once', base.count('kustomize.toolkit.fluxcd.io/ssa: IfNotPresent') == 2)
     check('graph has no Flux substitution', 'postBuild' not in (root / 'config/multiplane/clusters/cell/cell.yaml').read_text().split('name: fleet-site-graph')[1])

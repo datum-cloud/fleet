@@ -3,8 +3,8 @@
 
 Every observation goes through the selected cell's API. Lab faults are written
 only through the lab BMC adapter's fault file (bounded, one-shot) and are
-recorded. Evidence records methods, paths, outcome classes, UIDs and digests,
-never the BMC credential, fences, boot capabilities or request bodies.
+recorded. Evidence records methods, paths, outcome classes, UIDs, fences and digests,
+never the BMC credential, boot capabilities or request bodies.
 
   enroll              create the synthetic BMC credential Secret (never in Git)
   baseline            snapshot target B and the BMC audit before any operation
@@ -12,8 +12,8 @@ never the BMC credential, fences, boot capabilities or request bodies.
                       credentials, identity mismatch and a hidden ResetType
   arm-lost-response   one-shot: withhold the response to target A's second
                       effective On (the disk boot of the first install)
-  lost-response       the worker lost the On response after the effect;
-                      recovery observed the target instead of repeating it
+  lost-response       stop the worker while that On awaits its response;
+                      the replacement observed the target instead of repeating it
   bmc-interrupt       delete the BMC Pod mid-installer; the guest keeps running
   isolation           target B untouched, target A disk verifiably zeroed
 """
@@ -26,6 +26,9 @@ import socket
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import harness  # noqa: E402  (site store layout)
 
 SITE = 'fleet-site'
 TARGET_A = {'system': 'System-1', 'uuid': '7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a', 'domain': 'fleet-lab-target-a', 'disk': '/var/lib/fleet-lab/disks/target-a.raw'}
@@ -78,20 +81,29 @@ def mutating(entries, system=None):
     return [e for e in entries if e['method'] not in ('GET', 'HEAD') and (system is None or e['path'].rstrip('/').startswith('/redfish/v1/Systems/' + system))]
 
 
-def journal(s):
-    return json.loads(runtime(s, 'cat', '/var/lib/fleet-local/journal.json').stdout)
+def journal(s, pending_ok=False):
+    """The Device's journaled operations, sanitized: UID, fence, kind and steps."""
+    # pending_ok: before the first worker raises the fence there is no state yet.
+    def run(*command):
+        r = runtime(s, *command, check=False)
+        return r.returncode, r.stdout
+    store, results = harness.read_site_store(run)
+    if store is None and not pending_ok:
+        die('the site store holds no state for the Device')
+    return harness.sanitized_operations(store, results, redfish=True)
 
 
 def installs(s, pending_ok=False):
-    # pending_ok: before the first worker retains its operation there is no journal yet.
-    if pending_ok:
-        r = runtime(s, 'cat', '/var/lib/fleet-local/journal.json', check=False)
-        if r.returncode:
-            return []
-        ops = json.loads(r.stdout)['operations'].values()
-    else:
-        ops = journal(s)['operations'].values()
-    return [o for o in ops if o['request']['kind'] == 'install']
+    return [o for o in journal(s, pending_ok) if o['kind'] == 'DeviceInstallation']
+
+
+def done(op, step):
+    return [step, 'Done'] in op['steps']
+
+
+def power_ons(op):
+    """Journaled power-on steps by phase. The journal holds one entry per step."""
+    return {n[:-len('-power-on')]: st for n, st in op['steps'] if n.endswith('-power-on')}
 
 
 def qemu_starts(s, domain):
@@ -243,47 +255,66 @@ def arm_lost_response(s):
 
 
 def lost_response(s):
+    # The site journals disk-power-on before it sends On. While that step is
+    # only Intended and the BMC withholds the On response, the worker Pod is
+    # stopped: it stores no result, and its replacement must observe that the
+    # boot began instead of sending On again. A worker whose request timed out
+    # first stores OutcomeUnknown, which this step reports as a failure.
     name = (s / 'install-handoff').read_text().strip()
     deadline = time.monotonic() + 900
     record = None
     while time.monotonic() < deadline:
+        ops = installs(s)
+        if len(ops) == 1 and ops[0]['phase']:
+            die('the install stored result %s before its worker could be stopped mid-request' % ops[0]['phase'])
+        if len(ops) == 1 and done(ops[0], 'disk-power-on'):
+            die('the disk boot On completed before its worker could be stopped mid-request')
+        if len(ops) == 1 and ['disk-power-on', 'Intended'] in ops[0]['steps']:
+            live = [p for p in kget(s, '-n', SITE, 'get', 'pods', '-l', 'fleet.datumapis.com/handoff=' + name)['items']
+                    if p['status'].get('phase') == 'Running' and not p['metadata'].get('deletionTimestamp')]
+            if len(live) == 1:
+                kubectl(s, '-n', SITE, 'delete', 'pod', live[0]['metadata']['name'], '--wait=false')
+                record = {'stoppedAt': now(), 'stoppedPodUID': live[0]['metadata']['uid'], 'journaledAtStop': 'disk-power-on Intended',
+                          'stop': 'worker Pod deleted (SIGTERM) while its On request awaited the withheld response'}
+                break
+        time.sleep(0.5)
+    if not record:
+        die('the disk boot On was never in flight with one running worker')
+    fired = []
+    for _ in range(120):
         fired = [e for e in audit(s) if e.get('fault') == 'drop-response-after-effect']
-        pods = kget(s, '-n', SITE, 'get', 'pods', '-l', 'fleet.datumapis.com/handoff=' + name)['items']
-        exits = [c['state']['terminated']['exitCode'] for p in pods for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})]
-        if fired and 75 in exits:
-            failed = next(p for p in pods for c in p['status'].get('containerStatuses', []) if c.get('state', {}).get('terminated', {}).get('exitCode') == 75)
-            log = kubectl(s, '-n', SITE, 'logs', failed['metadata']['name'], '-c', 'worker', check=False).stdout
-            # The audit entry is written after the withheld response.
-            record = {'faultRecordedAt': fired[0]['at'], 'faultedRequest': {k: fired[0].get(k) for k in ('method', 'path', 'resetType', 'effect', 'status')},
-                      'failedPodUID': failed['metadata']['uid'], 'failedPodExitCode': 75,
-                      'workerOutcomeClass': 'outcome unknown' if 'outcome unknown' in log else log.strip()[-160:]}
+        if fired:
             break
         time.sleep(2)
-    if not record:
-        die('lost-response fault did not fire and fail one worker with exit 75')
+    if len(fired) != 1:
+        die('the lost-response fault did not fire exactly once')
+    record.update(faultRecordedAt=fired[0]['at'], faultedRequest={k: fired[0].get(k) for k in ('method', 'path', 'resetType', 'effect', 'status')})
+    # The replacement worker found disk-power-on journaled but not done and
+    # observed the boot instead of sending On again.
     for _ in range(300):
         ops = installs(s)
-        if len(ops) == 1 and ops[0]['stage'] in ('disk-started', 'disk-verified', 'done'):
+        if len(ops) == 1 and done(ops[0], 'disk-power-on'):
             break
         time.sleep(2)
     ops = installs(s)
-    ons = [e for e in mutating(audit(s), TARGET_A['system']) if e.get('resetType') == 'On']
-    if len(ops) != 1 or ops[0]['stage'] not in ('disk-started', 'disk-verified', 'done') or len(ons) != 2 or ops[0].get('powerOnRequests') != {'installer': 1, 'disk': 1}:
-        die('recovery after the lost response repeated or did not observe the boot: %d On requests, %s' % (len(ons), ops[0].get('stage') if ops else None))
-    record.update(observedAt=now(), operationID=ops[0]['request']['id'], stageAfterRecovery=ops[0]['stage'], phase='disk boot', powerOnRequests=ops[0]['powerOnRequests'],
+    ons = [e for e in mutating(audit(s), TARGET_A['system']) if e.get('resetType') == 'On' and e.get('effect', '').startswith('started')]
+    journaled = power_ons(ops[0]) if len(ops) == 1 else {}
+    if len(ops) != 1 or not done(ops[0], 'disk-power-on') or len(ons) != 2 or journaled != {'installer': 'Done', 'disk': 'Done'}:
+        die('recovery after the lost response repeated or did not observe the boot: %d effective On requests, journaled power-on %s' % (len(ons), journaled))
+    record.update(observedAt=now(), operationID=ops[0]['operation'], fence=ops[0]['fence'], stageAfterRecovery=ops[0]['stage'], phase='disk boot', journaledPowerOn=journaled,
                   onRequestsToTargetA=len(ons), runningDomains=running(s),
                   recovery='replacement worker observed PowerState and the consumed one-time override; it did not repeat On')
     write(s / 'evidence' / 'redfish-lost-response.json', record)
-    print('redfish-lost-response: On took effect but its response was lost; the worker exited 75 Unknown; its replacement observed the running target and did not repeat the effect')
+    print('redfish-lost-response: On took effect but its response was lost; the worker was stopped with the step journaled Intended and stored no result; its replacement observed the running target and did not repeat the effect')
 
 
 def bmc_interrupt(s):
     ops = []
     for _ in range(600):
         ops = installs(s, pending_ok=True)
-        if len(ops) == 1 and ops[0]['stage'] == 'installer-started' and TARGET_A['domain'] in running(s):
+        if len(ops) == 1 and ops[0]['stage'] == 'installer-power-on' and TARGET_A['domain'] in running(s):
             break
-        if len(ops) == 1 and ops[0]['stage'] not in ('admitted', 'discovered', 'installer-armed', 'installer-requested', 'installer-started'):
+        if len(ops) == 1 and harness.past_installer(ops[0]):
             die('the installer finished before the BMC could be interrupted: %s' % ops[0]['stage'])
         time.sleep(0.5)
     else:
@@ -301,10 +332,10 @@ def bmc_interrupt(s):
     if not new:
         die('BMC Pod was not replaced')
     after = installs(s)
-    if TARGET_A['domain'] not in running(s) and after[0]['stage'] == 'installer-started':
+    if TARGET_A['domain'] not in running(s) and not harness.past_installer(after[0]):
         die('the guest stopped when the BMC was interrupted')
     write(s / 'evidence' / 'redfish-bmc-interrupt.json', {'observedAt': now(), 'deletedBMCPodUIDs': [o['metadata']['uid'] for o in old], 'replacementBMCPodUID': new['metadata']['uid'],
-                                                          'operationID': ops[0]['request']['id'], 'stageAtInterrupt': 'installer-started', 'stageAfter': after[0]['stage'],
+                                                          'operationID': ops[0]['operation'], 'fence': ops[0]['fence'], 'stageAtInterrupt': ops[0]['stage'], 'stageAfter': after[0]['stage'],
                                                           'guestRunningAfter': TARGET_A['domain'] in running(s),
                                                           'note': 'the BMC adapter re-reads NVRAM and libvirt state; the worker tolerates a bounded BMC outage while observing'})
     print('redfish-bmc-interrupt: lab BMC Pod force-deleted mid-install and replaced; the guest kept running and the operation stayed unfinished')

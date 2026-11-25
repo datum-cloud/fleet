@@ -52,7 +52,7 @@ rm -f "$state/kind-delete.kubeconfig"
 if [[ $mode == passed ]]; then
  # Credentials and raw journals are no longer needed once the run has passed.
  rm -rf "$state/provider" "$state/consumer-a" "$state/consumer-b" "$state/provider-private" "$state/redfish"
- rm -f "$state"/*.yaml "$state"/*-hub.json "$state"/private.json "$state"/cell-worker*.json "$state"/federation-cell.json "$state"/*.token "$state"/*-kubeconfig.json \
+ rm -f "$state"/*.yaml "$state"/*-hub.json "$state"/cell-worker*.json "$state"/federation-cell.json "$state"/*.token "$state"/*-kubeconfig.json \
   "$state"/status-fault.json "$state"/acceptance.json "$state"/fleet-multiplane "$state"/fleet-multiplane-host
  rm -rf "$state/site-bin" "$state/kro-chart" "$state/flux-tools/flux" "$state"/flux-tools/*.tar.gz
 fi

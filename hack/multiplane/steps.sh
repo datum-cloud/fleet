@@ -31,19 +31,22 @@ wait_api() {
  done
  echo "API did not recover: $(basename "$1")" >&2; return 1
 }
-local_phase() { cell -n "$ns" get machineallocationhandoffs -o jsonpath='{.items[*].status.observation.result.phase}'; }
-# Private custody digest: names, UIDs and resourceVersions only; data never leaves memory.
-custody_digest() {
- k "$state/host.yaml" -n fleet-system-private get secrets -o json | python3 -c '
-import hashlib,json,sys
-items=sorted((i["metadata"]["name"],i["metadata"]["uid"],i["metadata"]["resourceVersion"]) for i in json.load(sys.stdin)["items"])
-print(len(items), hashlib.sha256(json.dumps(items).encode()).hexdigest())'
-}
+assignments=coordination.fleet.datumapis.com/role=assignment
+# The site results the observer publishes: only it writes handoff status.
+local_phase() { cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o jsonpath='{.items[*].status.observation.result.phase}'; }
+# Provider-project custody digest: the spec, phase and fence of every custody
+# record, operation and allocation; the records never leave memory.
+custody_digest() { "${harness[@]}" custody-digest --state "$state"; }
+# The Device's site store state: its fences and journal.
+store_state=$(python3 -c 'import sys; sys.path.insert(0, "hack/multiplane"); import harness; print(harness.STATE_PATH)')
 journal_digest() {
- runtime cat /var/lib/fleet-local/journal.json | python3 -c '
+ runtime cat "$store_state" | python3 -c '
 import hashlib,sys
 print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
+# The step the install has journaled once its installer boot was requested.
+installer_step=installer-start
+[[ $(cat "$state/site-provider" 2>/dev/null) != redfish ]] || installer_step=installer-power-on
 wait_running_pod() {
  for _ in $(seq 1 "${2:-120}"); do
   uid=$(py running-pod "$state" "$1")
@@ -63,17 +66,17 @@ case "$step" in
   ;;
  await-delivery)
   for _ in $(seq 1 120); do
-   names=$(cell -n "$ns" get machineallocationhandoffs -o jsonpath='{.items[*].metadata.name}')
+   names=$(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o jsonpath='{.items[*].metadata.name}')
    [[ -z $names ]] || break
    sleep 1
   done
   [[ -n $names ]] || { echo 'Karmada did not deliver retained intent' >&2; exit 1; }
-  [[ $(wc -w <<<"$names") -eq 1 ]] || { echo 'more than one delivered handoff' >&2; exit 1; }
+  [[ $(wc -w <<<"$names") -eq 1 ]] || { echo 'more than one delivered assignment' >&2; exit 1; }
   printf '%s\n' "$names" > "$state/install-handoff"
   [[ -z $(local_phase) ]] || { echo 'cell status existed before any worker started' >&2; exit 1; }
   site wait --for=jsonpath='{.status.deliveredHandoffs}'=1 handoffdispatcher/dispatcher --timeout=120s >/dev/null
   [[ -z $(site get jobs -o name) ]] || { echo 'worker Job exists before dispatch' >&2; exit 1; }
-  printf 'delivery: Karmada delivered exactly one retained handoff; kro observed it; no worker Job before dispatch\n'
+  printf 'delivery: Karmada delivered exactly one retained assignment; kro observed it; no worker Job before dispatch\n'
   ;;
  partition)
   # Consumer A's API is Flux-managed: suspend its Kustomization, then stop it.
@@ -102,7 +105,7 @@ case "$step" in
   ;;
  interrupt-pod)
   name=$(cat "$state/install-handoff")
-  "${harness[@]}" wait-stage --state "$state" --stage installer-started --timeout 900 --interval 0.5 > "$state/interrupt-observed.json"
+  "${harness[@]}" wait-stage --state "$state" --stage "$installer_step" --timeout 900 --interval 0.5 > "$state/interrupt-observed.json"
   before=$(wait_running_pod "$name" 30)
   py job "$state" "$name" > "$state/interrupt-job-before-pod.json"
   # Abrupt Pod loss with no grace period. The guest runs under the runtime Pod,
@@ -119,7 +122,7 @@ case "$step" in
   py job "$state" "$name" > "$state/interrupt-job-after-pod.json"
   "${harness[@]}" journal --state "$state" > "$state/interrupt-after.json"
   py record-pod-interrupt "$state" "$before" "$after"
-  printf 'interrupt-pod: worker Pod force-deleted while installer-started with its domain running; Job controller replaced it; no local result\n'
+  printf 'interrupt-pod: worker Pod force-deleted after the installer boot was journaled with its domain running; Job controller replaced it; no local result\n'
   ;;
  interrupt-job)
   name=$(cat "$state/install-handoff")
@@ -150,7 +153,7 @@ case "$step" in
   cell -n "$ns" wait --for=jsonpath='{.status.observation.result.phase}'=Succeeded machineallocationhandoff "$name" --timeout=5m >/dev/null
   "${harness[@]}" journal --state "$state" > "$state/resume-after.json"
   py record-resume "$state" "$name"
-  printf 'resume: replacement worker completed the exact interrupted operation; one install operation; observer published from the journal\n'
+  printf 'resume: replacement worker completed the exact interrupted operation at its fence; one install operation; observer published the stored result\n'
   ;;
  partition-readiness)
   # The platform's root sync must apply r3 (pushed during the partition) with
@@ -219,19 +222,20 @@ case "$step" in
   ;;
  delivery-faults)
   # Cell-local delivery faults injected with cell bootstrap credentials: a
-  # duplicate under another name, a wrong-cell intent, and a stale-epoch replay.
+  # duplicate the API refuses, an assignment naming another cell, and a
+  # replay of an admitted operation below the Device's stored fence.
   before=$(journal_digest)
   py delivery-faults "$state" create
-  for fault in duplicate wrong-cell stale-epoch; do
+  for fault in wrong-cell stale-fence; do
    job=$(cat "$state/fault-$fault-job")
    for _ in $(seq 1 120); do site get job "$job" >/dev/null 2>&1 && break; sleep 1; done
    site wait --for=condition=Failed "job/$job" --timeout=300s >/dev/null
   done
   after=$(journal_digest)
-  [[ $before == "$after" ]] || { echo 'provider journal changed during delivery faults' >&2; exit 1; }
+  [[ $before == "$after" ]] || { echo 'site store changed during delivery faults' >&2; exit 1; }
   py delivery-faults "$state" verify
   py delivery-faults "$state" delete
-  printf 'delivery-faults: duplicate, wrong-cell and stale-epoch deliveries failed their Jobs by podFailurePolicy before effects; journal unchanged; kro pruned them\n'
+  printf 'delivery-faults: duplicate refused by the API; wrong-cell and stale-fence deliveries failed their Jobs by podFailurePolicy before effects; site store unchanged; kro pruned them\n'
   ;;
  release-status-a|release-status-b)
   # Released claims must not keep public readiness or an installation reference.
@@ -248,10 +252,10 @@ case "$step" in
  reuse-status)
   b=$(k "$state/consumer-b/management-project.json" -n default get machine allocation -o jsonpath='{.status.phase}/{.status.conditions[?(@.type=="Bound")].status}')
   [[ $b == Bound/True ]] || { echo "reused consumer-b status: $b" >&2; exit 1; }
-  printf 'reuse-status: consumer-b Bound after verified cleanup\n'
+  printf 'reuse-status: consumer-b Bound after the verified wipe\n'
   ;;
  wrong-location)
-  # Runs after both verified cleanups, so capacity is free: denial cannot be
+  # Runs after both releases, so capacity is free: denial cannot be
   # explained by contention. The customer recreates its request elsewhere.
   before_custody=$(custody_digest); before_journal=$(journal_digest)
   customer="$state/consumer-a/customer-project.json"
@@ -266,19 +270,19 @@ JSON
   [[ $code -ne 0 ]] || { echo 'wrong-location Machine was allocated' >&2; exit 1; }
   grep -q 'not served by the configured cell' "$state/wrong-location.err" || { echo "allocation failed for another reason: $(tail -c 300 "$state/wrong-location.err")" >&2; exit 1; }
   after_custody=$(custody_digest); after_journal=$(journal_digest)
-  [[ $before_custody == "$after_custody" ]] || { echo 'private custody changed during wrong-location attempt' >&2; exit 1; }
-  [[ $before_journal == "$after_journal" ]] || { echo 'provider journal changed during wrong-location attempt' >&2; exit 1; }
+  [[ $before_custody == "$after_custody" ]] || { echo 'custody changed during wrong-location attempt' >&2; exit 1; }
+  [[ $before_journal == "$after_journal" ]] || { echo 'site store changed during wrong-location attempt' >&2; exit 1; }
   k "$state/consumer-a/management-project.json" -n default get machine allocation -o json > "$state/wrong-location-machine.json"
   python3 - "$state" "$code" "$before_custody" <<'PY'
 import json,sys,pathlib,datetime
 m=json.loads((pathlib.Path(sys.argv[1])/'wrong-location-machine.json').read_text())
 if m['metadata'].get('finalizers') or m.get('status'): raise SystemExit('wrong-location Machine gained finalizers or status')
 record={'observedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'requestedLocation':m['spec']['locationRef']['name'],'servedLocation':'local',
- 'capacityFree':True,'exitCode':int(sys.argv[2]),'error':'ErrLocationNotServed','privateCustodyUnchanged':True,'privateCustodyRecords':int(sys.argv[3].split()[0]),
- 'providerJournalUnchanged':True,'machineFinalizers':[],'machineStatus':None}
+ 'capacityFree':True,'exitCode':int(sys.argv[2]),'error':'ErrLocationNotServed','custodyUnchanged':True,'custodyRecords':int(sys.argv[3].split()[0]),
+ 'siteStoreUnchanged':True,'machineFinalizers':[],'machineStatus':None}
 (pathlib.Path(sys.argv[1])/'evidence'/'wrong-location.json').write_text(json.dumps(record,indent=2,sort_keys=True)+'\n')
 PY
-  printf 'wrong-location: denied before allocation with free capacity; private custody and provider journal unchanged\n'
+  printf 'wrong-location: denied before allocation with free capacity; custody and site store unchanged\n'
   ;;
  boot-denials)
   # Probe the boot Service from the runtime Pod: the same path firmware uses.
