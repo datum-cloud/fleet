@@ -79,9 +79,9 @@ directly, so those conditions prove nothing.
    with a copy of the approved plan. Custody admits it from holder `None`
    and sets holder `Service`.
 4. The site worker inspects the server, checks firmware, runs burn-in, and
-   returns a verdict with evidence. Custody returns to `None`.
-5. The capacity projector sets `Prepared` and `Healthy` and records the
-   inspected hardware on the capacity.
+   returns a proven verdict with evidence. Custody returns to `None`.
+5. If the server passed, the capacity projector sets `Prepared` and
+   `Healthy` and records the inspected hardware on the capacity.
 6. A capacity operator enables the capacity with a cleaning policy and a pool
    label. The projector sets `Available`, and the pool's MachineClass can
    allocate it.
@@ -284,8 +284,8 @@ Evidence carries no credential and no raw BMC response.
 #### Holds
 
 A commissioning that ends `OutcomeUnknown` sets a commissioning hold. A later
-`DeviceCommissioning` that succeeds settles it, as the device operations
-settlement table says. No `Retry` is needed, because staff create the
+`DeviceCommissioning` that ends `Succeeded`, with either result, settles it,
+as the device operations settlement table says. No `Retry` is needed, because staff create the
 settling operation directly.
 
 ### Capacity status
@@ -430,8 +430,12 @@ and refuses any other caller before reading its request.
 
 ### Changes to device operations
 
-This enhancement changes three rules of the [device
+This enhancement changes four rules of the [device
 operations](../device-operations/README.md) design:
+
+- **Outcome phases.** For a commissioning, `Succeeded` means the verdict is
+  proven, whether the server passed or failed. The success test is the proof,
+  not a passing server.
 
 - **Retention.** Fleet keeps each Device's latest succeeded commissioning past
   the 30-day retention of finished operations, until a later one succeeds.
