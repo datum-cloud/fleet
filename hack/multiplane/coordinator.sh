@@ -13,7 +13,8 @@ case $action in
    echo "coordinator: already running"
    exit 0
   fi
-  nohup "$state/fleet-multiplane-host" coordinator --config "$state/acceptance.json" >>"$state/coordinator.log" 2>&1 </dev/null &
+  # Extra arguments, such as a shorter installation deadline, pass through.
+  nohup "$state/fleet-multiplane-host" coordinator --config "$state/acceptance.json" "${@:3}" >>"$state/coordinator.log" 2>&1 </dev/null &
   echo $! >"$pidfile"
   sleep 2
   kill -0 "$(cat "$pidfile")" || { echo 'coordinator: exited at start; see coordinator.log in the state directory' >&2; exit 1; }
@@ -30,5 +31,9 @@ case $action in
   fi
   echo "coordinator: stopped"
   ;;
- *) echo 'usage: coordinator.sh start|stop STATE' >&2; exit 64 ;;
+ restart)
+  "$0" stop "$state"
+  "$0" start "$state" "${@:3}"
+  ;;
+ *) echo 'usage: coordinator.sh start|stop|restart STATE [coordinator flags]' >&2; exit 64 ;;
 esac

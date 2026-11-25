@@ -82,7 +82,11 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'kro created the worker Job and per-operation RBAC', 'worker-rbac: per-operation ServiceAccount', 'interrupt-pod: worker Pod force-deleted',
            'interrupt-job: running worker Job deleted mid-install', 'resume: replacement worker completed the exact interrupted operation',
            'worker Job is Complete while hub/consumer disconnected; public Ready stayed False', 'install: verified', 'lifecycle: runtime, boot and observer Pods',
-           'delivery-faults: duplicate refused by the API', 'boot-denials: PASS', 'release: verified', 'release-status-a: consumer-a Machine Released', 'Installation Released, Ready False', 'reuse: verified', 'reuse-status: consumer-b Bound', 'release-b: verified', 'release-status-b: consumer-b Machine Released',
+           'delivery-faults: duplicate refused by the API', 'boot-denials: PASS', 'release: verified', 'release-status-a: consumer-a Machine Released', 'Installation Released, Ready False', 'reuse: verified', 'reuse-status: consumer-b Bound', 'release-b: verified', 'release-status-b: consumer-b Machine deleted',
+           'import-inert: ', 'staff-access: staff read custody', 'contention-custody: custody holds the Device for the one MachineAllocation',
+           'deadline-admit: the second installation was admitted', 'release-waits: the Machine is deleting', 'deadline-hold: the installation ended OutcomeUnknown at its deadline',
+           'recovery-mismatch: refused', 'deadline-settled: the release wipe was admitted', 'rebuild-unverified: custody rebuilt Unverified',
+           'probe-unallocatable: no eligible capacity while custody is Unverified', 'rebuild-verified: custody Verified',
            'wrong-location: denied before allocation', 'Flux restored the binding', 'flux-verify: 3 clusters Ready', 'cell Flux applied the dispatch revision',
            'Flux restored consumer-a', 'Flux on every cluster Ready at the current revision', 'flux-drift: helm-controller restored kro',
            'recreated the shared boot Service at its fixed ClusterIP and restored the observer', 'flux-graph-lifecycle: deleting the dispatcher removed only kro per-operation objects',
@@ -93,7 +97,7 @@ if REDFISH:
     markers += ('bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified', 'bmc-self-test: upstream emulator and lab adapter self-test passed',
                 'redfish-enroll: synthetic per-Device BMC credentials', 'redfish-baseline: both lab target disks present', 'redfish-discovery-faults: real emulator discovery',
                 'redfish-lost-response: On took effect but its response was lost', 'redfish-bmc-interrupt: lab BMC Pod force-deleted mid-install',
-                'install-b: verified', 'redfish-isolation: target B never started')
+                'a TLS key other than the pin reached no request', 'redfish-isolation: target B never started')
 for marker in markers:
     if marker not in phases:
         fail('missing acceptance phase: ' + marker)
@@ -101,33 +105,43 @@ for marker in markers:
 def site_operations(raw):
     """The Device's journaled operations from the copied site store, matched to
     the provider project's operations by site key: kind, name and fence. Expected order: consumer A's
-    install, A's release wipe, (Redfish: consumer B's install,) B's release
-    wipe, with strictly increasing fences, each Succeeded at its fence."""
+    install, A's release wipe, consumer B's install, held at its deadline,
+    and B's release wipe, with strictly increasing fences. Each operation
+    but the held one Succeeded at its fence; that one is returned apart."""
     store = json.loads((raw / 'site' / 'devices' / harness.device_dir().rsplit('/', 1)[1] / 'state.json').read_text())
     journaled = harness.sanitized_operations(store, redfish=REDFISH)
     # Operations by site key; custody and allocations by kind and name.
     provider = {(i['kind'] + '/' + i['metadata']['name'] if i['kind'] in ('DeviceCustody', 'MachineAllocation') else harness.provider_key(i)): i for i in harness.custody(s)}
-    ops = []
+    held_key = json.loads((s / 'deadline-install.json').read_text())['key']
+    ops, held = [], None
+    if [o['fence'] for o in journaled] != sorted({o['fence'] for o in journaled}):
+        fail('journaled fences are not strictly increasing: %s' % [o['fence'] for o in journaled])
     for o in journaled:
         p = provider.get(o['operation'])
+        if o['operation'] == held_key:
+            st = (p or {}).get('status', {})
+            if not p or p['kind'] != 'DeviceInstallation' or o['done'] or st.get('phase') != 'OutcomeUnknown' or st.get('reason') != 'DeadlineExceeded' or st.get('fence') != o['fence']:
+                fail('the deadline installation is not held OutcomeUnknown at its fence: %s' % {k: st.get(k) for k in ('phase', 'reason', 'fence')})
+            held = dict(o, name=p['metadata']['name'], allocation=p['spec']['authority']['allocationRef']['name'], phase=st['phase'])
+            continue
         if not p or p['kind'] != o['kind'] or not o['done']:
             fail('journaled operation %s is not a finished provider %s' % (o['operation'], o['kind']))
         st = p.get('status', {})
         if st.get('phase') != 'Succeeded' or st.get('fence') != o['fence']:
             fail('%s %s is %s at fence %s, journaled at fence %s' % (p['kind'], p['metadata']['name'], st.get('phase'), st.get('fence'), o['fence']))
         ops.append(dict(o, name=p['metadata']['name'], allocation=p['spec']['authority']['allocationRef']['name'], phase=st['phase']))
-    fences = [o['fence'] for o in ops]
-    if fences != sorted(set(fences)):
-        fail('operation fences are not strictly increasing: %s' % fences)
-    return store, ops, provider
+    if held is None:
+        fail('the site journal holds no deadline installation')
+    return store, ops, provider, held
 
 
-def check_sequence(ops, interrupt):
-    """Consumer A's allocation holds the interrupted install; the other is B's."""
+def check_sequence(ops, held, interrupt):
+    """Consumer A's allocation holds the interrupted install; the other is B's,
+    whose installation was held at its deadline."""
     a = next((o['allocation'] for o in ops if o['operation'] == interrupt['operationID']), None)
     b = next((o['allocation'] for o in ops if o['allocation'] != a), None)
-    want = [('DeviceInstallation', a), ('DeviceWipe', a)] + ([('DeviceInstallation', b)] if REDFISH else []) + [('DeviceWipe', b)]
-    if not a or not b or [(o['kind'], o['allocation']) for o in ops] != want:
+    want = [('DeviceInstallation', a), ('DeviceWipe', a), ('DeviceWipe', b)]
+    if not a or not b or held['allocation'] != b or [(o['kind'], o['allocation']) for o in ops] != want:
         fail('expected %s, got %s' % (want, [(o['kind'], o['allocation']) for o in ops]))
     if any(o['kind'] == 'DeviceWipe' and o['name'] != o['allocation'] + '-wipe-1' for o in ops):
         fail('a release wiped the Device other than with its first wipe step')
@@ -147,10 +161,14 @@ def custody_evidence(store, ops, provider, a, b):
     spec = custody['spec']
     if spec.get('state') != 'Verified' or spec.get('holder', {}).get('type') != 'None' or spec.get('activeOperation') or spec.get('recoveryHold'):
         fail('final custody is not Verified with no holder, operation or hold: %s' % {k: spec.get(k) for k in ('state', 'holder', 'activeOperation', 'recoveryHold')})
-    if spec.get('fence') != ops[-1]['fence'] or store.get('fence') != ops[-1]['fence'] or store.get('stopped') != ops[-1]['fence']:
-        fail('custody fence %s, site fence %s/%s and the last operation fence %s differ' % (spec.get('fence'), store.get('fence'), store.get('stopped'), ops[-1]['fence']))
-    if any(i['kind'] == 'DeviceRecovery' for i in provider.values()):
-        fail('a DeviceRecovery exists after an uninterrupted lifecycle')
+    # Custody was rebuilt after the last operation, with a fence above every
+    # fence the site stored.
+    rebuilt = json.loads((ev / 'rebuild.json').read_text())
+    if spec.get('fence') != rebuilt['verifiedFence'] or spec['fence'] <= ops[-1]['fence'] or store.get('fence') != ops[-1]['fence'] or store.get('stopped') != ops[-1]['fence']:
+        fail('custody fence %s, site fence %s/%s and the last operation fence %s do not follow the rebuild' % (spec.get('fence'), store.get('fence'), store.get('stopped'), ops[-1]['fence']))
+    recoveries = [i for i in provider.values() if i['kind'] == 'DeviceRecovery']
+    if len(recoveries) != 1 or recoveries[0].get('status', {}).get('phase') != 'Failed' or recoveries[0]['status'].get('fence'):
+        fail('expected only the refused mismatched recovery, never admitted')
     record = {'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'device': harness.DEVICE,
               'custody': {'state': spec['state'], 'holder': spec['holder'], 'fence': spec['fence'], 'activeOperation': None, 'recoveryHold': None,
                           'rejectedResults': spec.get('rejectedResults')},
@@ -177,9 +195,9 @@ def libvirt_provider():
     copy_out('/var/lib/fleet-local', raw)
     copy_out('/var/lib/fleet-boot', raw / 'boot-evidence')
     copy_out('/var/log/libvirt/qemu', raw / 'libvirt-qemu')
-    store, ops, provider = site_operations(raw)
+    store, ops, provider, held = site_operations(raw)
     interrupt = json.loads((ev / 'interrupt.json').read_text())
-    a, b = check_sequence(ops, interrupt)
+    a, b = check_sequence(ops, held, interrupt)
     installs = [o for o in ops if o['kind'] == 'DeviceInstallation']
     wipes = [o for o in ops if o['kind'] == 'DeviceWipe']
 
@@ -242,9 +260,9 @@ def redfish_provider():
     copy_out('/var/lib/fleet-boot', raw / 'boot-evidence')
     copy_out('/var/log/libvirt/qemu', raw / 'libvirt-qemu')
     copy_out('/var/lib/fleet-lab-console', raw / 'lab-console')
-    store, ops, provider = site_operations(raw)
+    store, ops, provider, held = site_operations(raw)
     interrupt = json.loads((ev / 'interrupt.json').read_text())
-    a_alloc, b_alloc = check_sequence(ops, interrupt)
+    a_alloc, b_alloc = check_sequence(ops, held, interrupt)
     installs = [o for o in ops if o['kind'] == 'DeviceInstallation']
     wipes = [o for o in ops if o['kind'] == 'DeviceWipe']
     enrollment = json.loads(next(l for l in pathlib.Path('config/site/redfish/graph/kustomization.yaml').read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1])
@@ -271,8 +289,8 @@ def redfish_provider():
                 fail('missing completed boot delivery of %s for %s' % (name, o['kind']))
     if expected != sorted(expected) or sum(1 for l in console if l.startswith('FLEET-')) != len(expected):
         fail('console receipts are out of order or include another operation')
-    if sum(1 for l in console if l.startswith('+ sfdisk /dev/vda')) != 2:
-        fail('the installer partitioned the target disk other than once per install')
+    if sum(1 for l in console if l.startswith('+ sfdisk /dev/vda')) != 1:
+        fail('the installer partitioned the target disk other than once for the one finished install')
     qemu = (raw / 'libvirt-qemu' / 'fleet-lab-target-a.log').read_text(errors='replace')
     blocks = re.split(r'^\S+ \S+: starting up ', qemu, flags=re.M)[1:]
     def network(block):
@@ -280,17 +298,19 @@ def redfish_provider():
     order = ['network' if network(b) else 'disk' for b in blocks]
     starts = {'targetA': order, 'targetB': (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').read_text(errors='replace').count(': starting up ')
               if (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').exists() else 0}
-    if order != ['network', 'disk', 'network', 'network', 'disk', 'network'] or starts['targetB']:
-        fail('expected target A boots network, disk, network, network, disk, network and no target B start; got %s' % starts)
+    # A install (network, disk), A wipe, B's held install (its network boot
+    # found no boot server), B wipe.
+    if order != ['network', 'disk', 'network', 'network', 'network'] or starts['targetB']:
+        fail('expected target A boots network, disk, network, network, network and no target B start; got %s' % starts)
     audit = [json.loads(l) for l in (ev / 'redfish-audit.jsonl').read_text().splitlines()]
     effects = [e for e in audit if e['method'] not in ('GET', 'HEAD')]
     ons = [e for e in effects if e.get('resetType') == 'On']
-    if len(ons) != 6 or any(not e.get('effect', '').startswith('started') for e in ons) or any('/System-1' not in e['path'] for e in effects):
-        fail('expected exactly six effective On requests, all to System-1, and no other target effect')
+    if len(ons) != 5 or any(not e.get('effect', '').startswith('started') for e in ons) or any('/System-1' not in e['path'] for e in effects):
+        fail('expected exactly five effective On requests, all to System-1, and no other target effect')
     if sum(1 for e in ons if e.get('fault') == 'drop-response-after-effect') != 1:
         fail('the lost-response fault did not fire exactly once')
     # Each boot was requested once: one journaled power-on step per phase.
-    powered = sum(1 for o in ops for n, st in o['steps'] if n.endswith('-power-on') and st == 'Done')
+    powered = sum(1 for o in ops + [held] for n, st in o['steps'] if n.endswith('-power-on') and st == 'Done')
     if powered != len(ons):
         fail('journaled %d power-on steps for %d effective On requests' % (powered, len(ons)))
     if runtime('virsh', '--connect', 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock', 'list', '--name').strip():
@@ -401,6 +421,13 @@ for cluster, snap in final.items():
     if any(k['lastAppliedRevision'] != flux_revisions[-1]['fluxRevision'] or k['suspend'] for n, k in snap['kustomizations'].items()):
         fail('%s has a Kustomization not at the final revision' % cluster)
 write_env = json.loads((s / 'gitops-environment.json').read_text())
+# The #174 failure scenarios, each written by hack/multiplane/scenarios.py.
+FAILURE_SCENARIOS = ('import-inert', 'staff-access', 'contention', 'release-waits', 'deadline-hold', 'deadline-settled', 'rebuild')
+failure_scenarios = {}
+for name in FAILURE_SCENARIOS:
+    if not (ev / (name + '.json')).exists():
+        fail('missing failure scenario evidence ' + name)
+    failure_scenarios[name] = json.loads((ev / (name + '.json')).read_text())
 
 summary = {
     'schemaVersion': 2, 'acceptance': 'passed',
@@ -418,6 +445,7 @@ summary = {
                    'evidence': list(flux_files), 'siteImage': write_env['siteImage']},
         'installerStarts': starts,
         'reflectionRejections': list(REFLECTION_FAULTS),
+        'failureScenarios': failure_scenarios,
         'wrongLocationDeniedBeforeAllocation': json.loads((ev / 'wrong-location.json').read_text()),
         'custodyCRDRules': custody_rules,
         'releasedProjection': {'consumerA': {'machine': 'Released, Bound False, Ready False, no currentInstallationRef, no Fleet finalizer', 'installation': 'Released, Ready False'},

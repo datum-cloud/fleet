@@ -154,7 +154,7 @@ for name in re.findall(r'^step (\S+)', sequence, re.M):
 for name in re.findall(r'^rf (\S+)', sequence, re.M):
     check('redfish step implemented: ' + name, "'%s':" % name in redfish_steps)
 order = ['baseline', 'discovery-faults', 'allocate', 'arm-lost-response', 'dispatch', 'bmc-interrupt', 'interrupt-pod', 'interrupt-job', 'lost-response', 'resume', 'release',
-         'reuse', 'delivery-faults', 'install-b', 'release-b', 'boot-denials', 'isolation', 'evidence']
+         'reuse', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'rebuild', 'boot-denials', 'isolation', 'evidence']
 positions = [sequence.find(' ' + n + ' ') for n in order]
 check('Redfish phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
 for path in sorted(list((root / 'internal/redfish').glob('*.go')) + list((root / 'internal/site/redfishwork').glob('*.go'))):
