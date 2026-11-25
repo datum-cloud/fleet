@@ -82,11 +82,12 @@ does not fork or patch upstream files.
 | `ComputerSystem.Reset` with `On`, `ForceOff` and `ForceRestart` applied to one exact persistent libvirt domain per System | Adapter (replaces upstream's in-memory handler for the two lab Systems) |
 | `PowerState` read from libvirt on every System read | Adapter |
 | `Boot` source override (`Pxe` or `Hdd`, `Once`), persisted in NVRAM state on the site volume and consumed at power-on | Adapter |
+| `LastResetTime`, persisted on the site volume and moved forward each time a reset starts the domain | Adapter |
 | `ResetType` and boot `AllowableValues` narrowed to what the adapter implements; System `UUID` set from the lab target | Adapter |
 | Definition of the lab domains and the provisioning network, re-created with the same identity if the runtime loses them | Adapter |
 | Append-only request audit: method, path, status, principal class, ResetType, boot override, effect and fault. It never records bodies or credentials. | Adapter |
 | `DELETE /redfish/v1/reset` and non-Redfish paths | Refused by the adapter |
-| Bounded, one-shot lab faults (`reject-auth`, `hide-reset`, `drop-response`) from a fault file | Adapter, lab only |
+| Bounded lab faults from a fault file: one-shot `reject-auth`, `drop-response` (any applied reset, response withheld) and `drop-request` (response withheld, reset never applied); and, until cleared, `hide-reset` (a reset type), `hide-reset-time` and `swap-identity` (the System reports another UUID) | Adapter, lab only |
 
 `hack/redfish-lab/test_adapter.py` runs inside the built image, with the real
 upstream emulator and a fake `virsh`, in the `bmc-self-test` phase.

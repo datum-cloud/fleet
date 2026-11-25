@@ -99,6 +99,39 @@ class AdapterTest(unittest.TestCase):
         self.assertNotIn('synthetic-test-password', text)
         self.assertNotIn('Authorization', text)
 
+    def test_5b_power_faults_and_reset_time(self):
+        reset = '/redfish/v1/Systems/System-2/Actions/ComputerSystem.Reset'
+        system = lambda: self.app.get('/redfish/v1/Systems/System-2', headers=AUTH).json
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceOff'})
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'On'})
+        first = system()['LastResetTime']
+        # A restart moves the reset time forward; a ForceOff does not.
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceRestart'})
+        second = system()['LastResetTime']
+        self.assertGreater(second, first)
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceOff'})
+        self.assertEqual(system()['LastResetTime'], second)
+        adapter.fault_cli(['hide-reset-time', 'System-2'])
+        self.assertNotIn('LastResetTime', system())
+        adapter.fault_cli(['swap-identity', 'System-2', '00000000-0000-4000-8000-0000000000b2'])
+        self.assertEqual(system()['UUID'], '00000000-0000-4000-8000-0000000000b2')
+        adapter.fault_cli(['clear'])
+        self.assertEqual(system()['UUID'], '7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b')
+        self.assertEqual(system()['LastResetTime'], second)
+        # A withheld request is never applied, and is audited as received.
+        adapter.fault_cli(['drop-request', 'System-2', 'On', '0'])
+        self.assertEqual(self.app.post(reset, headers=AUTH, json={'ResetType': 'On'}).status_code, 503)
+        self.assertEqual(system()['PowerState'], 'Off')
+        entries = self.audit()
+        posts = [e for e in entries if e['method'] == 'POST' and e['path'] == reset]
+        self.assertEqual((posts[-1]['fault'], posts[-1]['effect']), ('drop-request', 'none'))
+        # A withheld response follows any applied reset, such as a ForceOff.
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'On'})
+        adapter.fault_cli(['drop-response', 'System-2', 'ForceOff', '0'])
+        self.app.post(reset, headers=AUTH, json={'ResetType': 'ForceOff'})
+        self.assertEqual(self.audit()[-1]['fault'], 'drop-response-after-effect')
+        self.assertEqual(system()['PowerState'], 'Off')
+
     def test_6_lost_libvirt_definitions_are_redefined_with_the_same_identity(self):
         s = virsh_state()
         s['domains'].pop('fleet-lab-target-a')
