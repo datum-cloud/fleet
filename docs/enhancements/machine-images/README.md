@@ -236,8 +236,11 @@ and digest. It carries no consumer project name and no bootstrap bytes.
 
 The provider's publisher creates a consumer project's MachineImage, as it does
 for MachineClass. Fleet records each publication in a protected record in the
-provider project: the consumer MachineImage, and the provider MachineImage's
-name, UID, and digest.
+provider project. The record names the consumer MachineImage and the provider
+MachineImage, and holds the provider image's digest. Its name derives from the
+consumer project, the consumer MachineImage, and the provider MachineImage
+incarnations, so its spec holds no object UID. Publishing a recreated image
+again writes a new record; a record never changes.
 
 Customers cannot write MachineImages. IAM gives customer roles no write
 permission on the kind, and a Fleet validating webhook, called from Milo's root
@@ -249,9 +252,11 @@ API server, rejects:
 
 A project is entitled to an image only while all of these hold:
 
-- the consumer MachineImage exists and matches its publication record;
+- the publication record for the current consumer project, consumer
+  MachineImage, and provider MachineImage incarnations exists, and its names
+  match them;
 - the provider MachineImage is in the provider project that holds the
-  Machine's allocation, and its UID and digest match the record; and
+  Machine's allocation, and its digest matches the record; and
 - the provider MachineImage is `Available`.
 
 The caller also needs `machineimages.use` on both the consumer and provider
@@ -291,7 +296,7 @@ reasons:
 | Reason | Refused by |
 | --- | --- |
 | `ImageNotFound` | No MachineImage of that name in the namespace |
-| `ImageNotEntitled` | Publication record, provider project, UID, digest, or `machineimages.use` |
+| `ImageNotEntitled` | Publication record, provider project, a recreated image, digest, or `machineimages.use` |
 | `ImageWithdrawn` | The provider image is `Withdrawn` |
 | `ImageIncompatible` | Architecture, firmware mode, or bootstrap format |
 | `BootstrapNotFound` | No readable bootstrap Secret of that name |
@@ -449,6 +454,8 @@ These tests are required and not implemented:
 - The provider deletes and recreates a MachineImage with other artifacts under
   the same name. An admitted install keeps the first digest, and a new install
   is refused until the image is published again.
+- A consumer project or its MachineImage is deleted and recreated under the
+  same name, and the old publication record entitles neither.
 - An image's architecture or firmware mode does not match the server, and
   admission or the worker refuses it before anything is sent.
 - The customer edits the bootstrap Secret after admission, and the install uses
