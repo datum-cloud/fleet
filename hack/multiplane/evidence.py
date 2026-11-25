@@ -298,7 +298,7 @@ def redfish_provider():
     qemu = (raw / 'libvirt-qemu' / 'fleet-lab-target-a.log').read_text(errors='replace')
     blocks = re.split(r'^\S+ \S+: starting up ', qemu, flags=re.M)[1:]
     def network(block):
-        return any(a['mac'] in seg and ('"bootindex":1' in seg or 'bootindex=1' in seg) for seg in re.split(r'\s-device\s', block))
+        return any(lab_mac(a['systemID']) in seg and ('"bootindex":1' in seg or 'bootindex=1' in seg) for seg in re.split(r'\s-device\s', block))
     order = ['network' if network(b) else 'disk' for b in blocks]
     starts = {'targetA': order, 'targetB': (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').read_text(errors='replace').count(': starting up ')
               if (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').exists() else 0}
