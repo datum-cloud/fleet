@@ -41,12 +41,28 @@ func TestReadToken(t *testing.T) {
 	}
 }
 
-func TestRuntimeAndAdminTokensMustDiffer(t *testing.T) {
-	if err := validateDistinctTokens("runtime", "admin"); err != nil {
-		t.Fatalf("distinct tokens rejected: %v", err)
+func TestReadEnrollmentRequiresCompleteTargets(t *testing.T) {
+	dir := t.TempDir()
+	complete := filepath.Join(dir, "complete.json")
+	if err := os.WriteFile(complete, []byte(`{"fleet-provider/server-example-001":{"bmcEndpoint":"https://[2001:db8::1]","systemUUID":"00000000-0000-4000-8000-000000000001","bootMACAddress":"02:00:00:00:00:01","bmcPublicKeySHA256":"`+strings.Repeat("a", 64)+`","disks":["disk-0"]}}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if err := validateDistinctTokens("same", "same"); err == nil {
-		t.Fatal("equal runtime and admin tokens were accepted")
+	if enrollment, err := readEnrollment(complete); err != nil || len(enrollment) != 1 {
+		t.Fatalf("complete enrollment = %v, %v", enrollment, err)
+	}
+	for name, body := range map[string]string{
+		"no-namespace": `{"server-example-001":{"bmcEndpoint":"e","systemUUID":"u","bmcPublicKeySHA256":"k","disks":["disk-0"]}}`,
+		"no-key":       `{"fleet-provider/server-example-001":{"bmcEndpoint":"e","systemUUID":"u","disks":["disk-0"]}}`,
+		"no-disks":     `{"fleet-provider/server-example-001":{"bmcEndpoint":"e","systemUUID":"u","bmcPublicKeySHA256":"k"}}`,
+		"unknown":      `{"fleet-provider/server-example-001":{"bmcEndpoint":"e","systemUUID":"u","bmcPublicKeySHA256":"k","disks":["disk-0"],"extra":true}}`,
+	} {
+		path := filepath.Join(dir, name+".json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readEnrollment(path); err == nil {
+			t.Errorf("%s: enrollment accepted", name)
+		}
 	}
 }
 

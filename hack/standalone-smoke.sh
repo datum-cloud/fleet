@@ -40,7 +40,7 @@ done <<EOF
 $manager_deployments
 EOF
 
-for namespace in fleet-system fleet-system-private fleet-provider fleet-project-a fleet-project-b; do
+for namespace in fleet-system fleet-provider fleet-project-a fleet-project-b; do
   if kubectl --context "$context" get namespace "$namespace" >/dev/null 2>&1; then
     echo "fixed namespace $namespace already exists; use a fresh dedicated kind cluster" >&2
     exit 1
@@ -52,20 +52,32 @@ for crd in installations machineallocations machinecapacities machineclasses mac
     exit 1
   fi
 done
-for object in clusterrole/fleet-standalone-fixture-reader clusterrolebinding/fleet-standalone-fixture-reader; do
+for crd in devices devicecustodies deviceinstallations devicewipes devicerecoveries; do
+  if kubectl --context "$context" get crd "$crd.fleet.datumapis.com" >/dev/null 2>&1; then
+    echo "fixed Fleet CRD $crd already exists; use a fresh dedicated kind cluster" >&2
+    exit 1
+  fi
+done
+for object in clusterrole/fleet-standalone-fixture-reader clusterrolebinding/fleet-standalone-fixture-reader clusterrole/fleet-custody-coordinator-devices clusterrolebinding/fleet-custody-coordinator-devices validatingadmissionpolicy/fleet-operation-creator validatingadmissionpolicybinding/fleet-operation-creator; do
   if kubectl --context "$context" get "$object" >/dev/null 2>&1; then
     echo "fixed cluster object $object already exists; use a fresh dedicated kind cluster" >&2
     exit 1
   fi
 done
-# The five required namespaces are absent, which also proves every fixed
+# The four required namespaces are absent, which also proves every fixed
 # namespaced ServiceAccount, Role, binding, Secret, workload, Job, and fixture
 # name is absent. No ownership label or ConfigMap is accepted as resume proof.
 
 docker build -f build/simulator.Dockerfile -t "$simulator_image" .
 docker build -f build/standalone-smoke.Dockerfile -t "$smoke_image" .
 kind load docker-image --name "$cluster" "$simulator_image" "$smoke_image"
-kustomize build config/base/crd >"$rendered"
+{
+  kustomize build config/base/crd
+  echo ---
+  kustomize build config/components/inventory/crds
+  echo ---
+  kustomize build config/components/device-operations/crds
+} >"$rendered"
 kubectl --context "$context" apply -f "$rendered"
 kubectl --context "$context" wait --for=condition=Established --timeout=60s -f "$rendered"
 kustomize build config/standalone |
@@ -76,6 +88,7 @@ if grep -q 'standalone-local' "$rendered"; then
 fi
 kubectl --context "$context" apply -f "$rendered"
 kubectl --context "$context" -n fleet-system rollout status statefulset/fleet-simulator --timeout=120s
+kubectl --context "$context" -n fleet-system rollout status deployment/fleet-custody-coordinator --timeout=120s
 simulator_pod=$(kubectl --context "$context" -n fleet-system get pod -l app.kubernetes.io/name=fleet-simulator -o jsonpath='{.items[0].metadata.name}')
 test "$(kubectl --context "$context" -n fleet-system get pod "$simulator_pod" -o jsonpath='{.spec.containers[0].image}')" = "$simulator_image"
 test "$(kubectl --context "$context" -n fleet-system get pod "$simulator_pod" -o jsonpath='{.spec.containers[0].imagePullPolicy}')" = "Never"
@@ -99,6 +112,13 @@ test "$(kubectl --context "$context" -n fleet-project-a get machine -o name)" = 
 test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.metal.datumapis.com/allocation"
 test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.phase}')" = "Ready"
 test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Pending"
+# Custody decided the contention: one allocation exists, and custody names it.
+test "$(kubectl --context "$context" -n fleet-provider get machineallocations -o name | wc -l | tr -d ' ')" = "1"
+winner=$(kubectl --context "$context" -n fleet-provider get machineallocations -o jsonpath='{.items[0].metadata.name}')
+test "$(kubectl --context "$context" -n fleet-provider get devicecustody synthetic-device-central-01 -o jsonpath='{.spec.state}/{.spec.holder.type}/{.spec.holder.allocationRef.name}')" = "Verified/Allocation/$winner"
+# Power comes only from the manager's power projector, which reads custody
+# and fixture discovery.
+test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.power.state}')" = "Off"
 # Requested hardware is pinned from the exact profile for both claims,
 # including the one still waiting for capacity.
 for project in fleet-project-a fleet-project-b; do
@@ -123,21 +143,26 @@ test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -
 
 for project in fleet-project-a fleet-project-b; do
   subject="system:serviceaccount:$project:default"
-  for verb in get list watch create update patch delete; do
-    if [ "$(kubectl --context "$context" auth can-i "$verb" secrets --as="$subject" -n fleet-system-private)" != "no" ]; then
-      echo "$subject unexpectedly has $verb access to private records" >&2
+  for resource in devicecustodies deviceinstallations devicewipes devicerecoveries machineallocations; do
+    for verb in get list watch create update patch delete; do
+      if [ "$(kubectl --context "$context" auth can-i "$verb" "$resource" --as="$subject" -n fleet-provider)" != "no" ]; then
+        echo "$subject unexpectedly has $verb access to $resource" >&2
+        exit 1
+      fi
+    done
+  done
+  for secret in fleet-simulator-runtime fleet-custody-coordinator-token fleet-release-controller-token; do
+    if [ "$(kubectl --context "$context" auth can-i get "secret/$secret" --as="$subject" -n fleet-system)" != "no" ]; then
+      echo "$subject unexpectedly has access to $secret" >&2
       exit 1
     fi
   done
-  if [ "$(kubectl --context "$context" auth can-i get secret/fleet-claim-forbidden --as="$subject" -n fleet-system-private)" != "no" ]; then
-    echo "$subject unexpectedly has named private-record access" >&2
-    exit 1
-  fi
-  if [ "$(kubectl --context "$context" auth can-i get secret/fleet-simulator-runtime --as="$subject" -n fleet-system)" != "no" ]; then
-    echo "$subject unexpectedly has simulator credential access" >&2
-    exit 1
-  fi
 done
+# Only the custody coordinator writes custody; the Metal provider only reads it.
+provider_subject=system:serviceaccount:fleet-system:fleet-standalone-smoke
+test "$(kubectl --context "$context" auth can-i update devicecustodies --as="$provider_subject" -n fleet-provider)" = "no"
+test "$(kubectl --context "$context" auth can-i create devicewipes --as="$provider_subject" -n fleet-provider)" = "no"
+test "$(kubectl --context "$context" auth can-i create deviceinstallations --as=system:serviceaccount:fleet-system:fleet-release-controller -n fleet-provider)" = "no"
 smoke_subject=system:serviceaccount:fleet-system:fleet-standalone-smoke
 test "$(kubectl --context "$context" auth can-i get machine/other-machine --as="$smoke_subject" -n fleet-provider)" = "no"
 test "$(kubectl --context "$context" auth can-i update machineclass/standard-metal --as="$smoke_subject")" = "no"
@@ -151,3 +176,17 @@ if kubectl --context "$context" -n fleet-project-a get machine allocation >/dev/
 fi
 test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.metal.datumapis.com/allocation"
 test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Ready"
+# The release wiped the Device once, under a fence above both installations,
+# and custody now names the reusing consumer's allocation.
+kubectl --context "$context" -n fleet-provider get machineallocations,deviceinstallations,devicewipes,devicecustodies
+test "$(kubectl --context "$context" -n fleet-provider get devicewipes -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}')" = "Succeeded"
+test "$(kubectl --context "$context" -n fleet-provider get deviceinstallations -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | sort -u)" = "Succeeded"
+wipe_fence=$(kubectl --context "$context" -n fleet-provider get devicewipes -o jsonpath='{.items[0].status.fence}')
+for fence in $(kubectl --context "$context" -n fleet-provider get deviceinstallations -o jsonpath='{.items[*].status.fence}'); do
+  test "$fence" -lt "$wipe_fence"
+done
+released=$(kubectl --context "$context" -n fleet-provider get machineallocations -o jsonpath='{range .items[?(@.status.phase=="Released")]}{.metadata.name}{"\n"}{end}')
+reused=$(kubectl --context "$context" -n fleet-provider get machineallocations -o jsonpath='{range .items[?(@.status.phase=="Active")]}{.metadata.name}{"\n"}{end}')
+test "$released" = "$winner"
+test -n "$reused" && test "$reused" != "$winner"
+test "$(kubectl --context "$context" -n fleet-provider get devicecustody synthetic-device-central-01 -o jsonpath='{.spec.holder.type}/{.spec.holder.allocationRef.name}')" = "Allocation/$reused"

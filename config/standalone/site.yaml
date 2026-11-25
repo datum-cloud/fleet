@@ -1,0 +1,65 @@
+# The simulator site's enrollment: the one synthetic Device it serves, with
+# the identity its fixture Device records and the key digest its fixture
+# discovery reports. Synthetic data only.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: fleet-simulator-enrollment, namespace: fleet-system}
+data:
+  enrollment.json: |
+    {"fleet-provider/synthetic-device-central-01": {"bmcEndpoint": "https://[2001:db8::21]", "systemUUID": "00000000-0000-4000-8000-000000000021", "bootMACAddress": "02:00:00:00:00:21", "bmcPublicKeySHA256": "2121212121212121212121212121212121212121212121212121212121212121", "disks": ["disk-0"]}}
+---
+# The custody coordinator: the only writer of custody and of operation
+# status. It delivers admitted operations to the simulator site and reports
+# their results.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fleet-custody-coordinator, namespace: fleet-system}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: fleet-custody-coordinator}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fleet-custody-coordinator}
+    spec:
+      serviceAccountName: fleet-custody-coordinator
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: coordinator
+          image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
+          imagePullPolicy: Never
+          args: [--phase=coordinate, --site-token-file=/var/run/fleet/token]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+          volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
+      volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+---
+# The creator rule. Milo projects ignore admission policies, so Milo uses the
+# creator webhook; a plain cluster enforces the same rule with this policy:
+# an operation's creator is the caller who created it and never changes.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: fleet-operation-creator}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [fleet.datumapis.com]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [deviceinstallations, devicewipes, devicerecoveries]
+  validations:
+    - expression: "request.operation != 'CREATE' || (object.spec.creator.username == request.userInfo.username && object.spec.creator.uid == request.userInfo.uid)"
+      message: spec.creator must be the authenticated caller's username and UID
+    - expression: "request.operation != 'UPDATE' || object.spec.creator == oldObject.spec.creator"
+      message: spec.creator cannot change
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: fleet-operation-creator}
+spec:
+  policyName: fleet-operation-creator
+  validationActions: [Deny]

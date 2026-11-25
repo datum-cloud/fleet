@@ -13,6 +13,8 @@ spec:
       labels: {app.kubernetes.io/name: fleet-simulator}
     spec:
       serviceAccountName: fleet-simulator
+      # Fixture discovery writes the status of the Devices this site serves.
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -27,10 +29,12 @@ spec:
           args:
             - --listen-address=0.0.0.0:8080
             - --runtime-token-file=/var/run/fleet/token
-            - --state-file=/var/lib/fleet/state.json
+            - --state-dir=/var/lib/fleet/site
+            - --enrollment-file=/etc/fleet/enrollment/enrollment.json
+            - --discover
           ports: [{name: runtime, containerPort: 8080}]
           readinessProbe: {httpGet: {path: /readyz, port: runtime}, periodSeconds: 2}
-          livenessProbe: {httpGet: {path: /healthz, port: runtime}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /readyz, port: runtime}, periodSeconds: 10}
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           resources:
             requests: {cpu: 20m, memory: 32Mi}
@@ -38,9 +42,12 @@ spec:
           volumeMounts:
             - {name: state, mountPath: /var/lib/fleet}
             - {name: runtime-token, mountPath: /var/run/fleet, readOnly: true}
+            - {name: enrollment, mountPath: /etc/fleet/enrollment, readOnly: true}
       volumes:
         - name: runtime-token
           secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}
+        - name: enrollment
+          configMap: {name: fleet-simulator-enrollment, defaultMode: 0440}
   volumeClaimTemplates:
     - metadata: {name: state}
       spec:
