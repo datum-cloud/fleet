@@ -43,6 +43,10 @@ const (
 	HoldRequired HoldBehavior = "Required"
 	// HoldIgnored admits the operation whether or not a hold exists.
 	HoldIgnored HoldBehavior = "Ignored"
+	// HoldSettlesRequired admits the operation only under a hold it
+	// settles, such as a staff power operation from holder Service under a
+	// power hold.
+	HoldSettlesRequired HoldBehavior = "SettlesRequired"
 )
 
 // Rule is one row of the operations table in #174.

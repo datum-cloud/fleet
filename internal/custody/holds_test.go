@@ -138,6 +138,28 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		}
 	})
 
+	t.Run("a rebuilt hold on a retry keeps the retry lineage", func(t *testing.T) {
+		e := e.sub(t)
+		device := next()
+		allocation := "alloc-l-" + device.Name
+		e.allocation(device, allocation, "Releasing")
+		original := e.wipe(device, allocation, 1)
+		original.Status = ops.OperationStatus{Phase: ops.PhaseOutcomeUnknown, Fence: 1, FinishedAt: ptrTime(e.clock.Now())}
+		if err := e.admin.Status().Update(e.ctx, original); err != nil {
+			t.Fatal(err)
+		}
+		retried := e.namedWipe(device, allocation, original.Name+"-retry-2", 1)
+		retried.Status = ops.OperationStatus{Phase: ops.PhaseOutcomeUnknown, Fence: 3, FinishedAt: ptrTime(e.clock.Now())}
+		if err := e.admin.Status().Update(e.ctx, retried); err != nil {
+			t.Fatal(err)
+		}
+		custody := verify(e, device, 3)
+		hold := custody.Spec.RecoveryHold
+		if hold == nil || hold.UID != string(retried.UID) || hold.RetryName != original.Name || hold.Retries != 2 || RetryName(*hold, 3) != original.Name+"-retry-3" || len(custody.Spec.Conflicts) != 0 {
+			t.Fatalf("rebuilt hold = %+v", hold)
+		}
+	})
+
 	t.Run("several unproven outcomes keep the newest held and need a Resolve", func(t *testing.T) {
 		e := e.sub(t)
 		device := next()

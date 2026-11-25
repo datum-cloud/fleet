@@ -116,6 +116,32 @@ func TestExtensionSeams(t *testing.T) {
 		e.requirePhase(tooMuch, ops.PhaseFailed, ReasonSnapshotInvalid)
 	})
 
+	t.Run("a row may admit from Service only under a hold its kind settles", func(t *testing.T) {
+		e := e.sub(t)
+		// The staff power row: None, or Service under a power hold.
+		if err := e.coord.Registry.AddRule(Rule{Kind: testStaffKind, Creator: CreatorStaff, Authority: AuthorityService, Holders: []ops.HolderType{ops.HolderService}, Hold: HoldSettlesRequired}); err != nil {
+			t.Fatal(err)
+		}
+		device := fresh()
+		hold := e.holdOn(device)
+		if holder := e.custody(device.Name).Spec.Holder.Type; holder != ops.HolderService {
+			t.Fatalf("holder = %s", holder)
+		}
+		settling := e.staffOp(device, "ok")
+		e.settle(device.Name)
+		e.requirePhase(settling, ops.PhaseAdmitted, "")
+		if active := e.custody(device.Name).Spec.ActiveOperation; active.Settles == nil || active.Settles.UID != hold.UID {
+			t.Fatalf("active = %+v", active)
+		}
+		if err := e.result(device.Name, ops.PhaseSucceeded, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.settle(device.Name)
+		if custody := e.custody(device.Name); custody.Spec.RecoveryHold != nil || custody.Spec.Holder.Type != ops.HolderNone {
+			t.Fatalf("after settling: %+v", custody.Spec)
+		}
+	})
+
 	t.Run("a refusal with a reason the kind never declared is recorded as UndeclaredReason", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
@@ -194,7 +220,7 @@ func TestRegistryValidatesDeclaredReasons(t *testing.T) {
 	none := testKinds()[1]
 	none.GVK.Kind, none.Settles = "DeviceTestUnsettled", nil
 	c := &Coordinator{Registry: registry}
-	if c.settlesHold(&none, ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: "DeviceTestUnsettled"}}) {
+	if c.settlesHold(&none, ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: "DeviceTestUnsettled"}}, &DeviceTestProviderOperation{}) {
 		t.Fatal("a kind with no settle rules settled a hold")
 	}
 }

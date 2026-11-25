@@ -4,7 +4,7 @@
 
 This page records how Fleet implements the [device custody and operations
 proposal](https://github.com/datum-cloud/fleet/pull/174) (#174, pinned at
-`abb1f88`). The proposal's API names are provisional. Each piece below is
+`23c583f`). The proposal's API names are provisional. Each piece below is
 marked **implemented and verified**, **implemented and inert**, or
 **proposed**.
 
@@ -53,7 +53,7 @@ Each decision lists the open point from the implementation brief it settles.
 ### Who created an operation (O14)
 
 - The client sets `spec.creator` to its own username and UID. The webhook
-  rejects any other value and any change. That is how #174 at `abb1f88` reads,
+  rejects any other value and any change. That is how #174 at `23c583f` reads,
   so "clients cannot set the creator" becomes "clients can set only
   themselves". CEL also makes the creator immutable, as part of the spec.
 - Milo's root API server calls the webhook, because Milo v0.32.5 does not
@@ -92,22 +92,38 @@ Each decision lists the open point from the implementation brief it settles.
   reasons.
 - **Shared reasons.** The admission reasons use the names of #174's table:
 
-  | Reason | Admission rule |
+  | Reason | Refused by |
   | --- | --- |
-  | `CustodyUnverified` | 1 |
-  | `CreatorNotPermitted` | 2 |
-  | `HolderMismatch` | 2 or 3 |
-  | `OperationInProgress` | 4 |
-  | `DeviceIdentityMismatch` | 5, both a mismatched identity and discovery that is not current |
-  | `SharedPublicKey` | 6 |
-  | `RecoveryHold` | A hold admits only its settling operations |
-  | `Expired` | Not admitted in time; ends `Cancelled` |
+  | `CustodyUnverified` | Rule 1 |
+  | `CreatorNotPermitted` | Rule 2 |
+  | `HolderMismatch` | Rule 2 or 3 |
+  | `OperationInProgress` | Rule 4 |
+  | `DeviceIdentityMismatch` | Rule 5, both a mismatched identity and discovery that is not current |
+  | `SharedPublicKey` | Rule 6 |
+  | `RecoveryHold` | A recovery hold |
 
-  Rule 7 is a kind's own checks of its inputs, with its own reasons. This
-  implementation adds `NameMismatch`, for a deterministic kind that is not
+  Rule 7 is a kind's own checks of its inputs, with its own reasons. A staff
+  operation not admitted within five minutes ends `Cancelled` with reason
+  `Expired`. This implementation adds `NameMismatch`, for an operation not
   named by its rule, and outcome reasons: `Superseded`, `Withdrawn`,
   `DeadlineExceeded`, `SiteNotConfirmed`, `SiteCouldNotProve`,
   `InvalidEvidence`, `SnapshotInvalid` and `UndeclaredReason`.
+- **Retries.** An operation created after a `Retry` is named from the held
+  operation: its name, `-retry-`, and the number of `Retry` decisions for it,
+  which custody records with the hold. This applies to every kind whose
+  settlement needs a `Retry`, such as a wipe, and the kind's own naming rule
+  does not apply to it. Until the `Retry` is applied, the retried operation
+  waits in `Pending`. The `Retry` is used when that operation is admitted. If
+  the retried operation also ends unknown, its hold keeps the original name
+  and count, so the next retry is named `-retry-2`, not `-retry-1-retry-1`.
+  Rebuild reads that lineage back from the names.
+- **Settling operations come first.** Pending replacement never cancels an
+  operation that settles the hold. Other operations wait in `Pending` until the
+  hold is settled, and they do not hold back the operation that settles it.
+- **Holders under a hold.** A row can admit from a holder only to settle a
+  hold of its kind. The staff power row, "`None`, or `Service` under a power
+  hold", is two rows: one from `None`, and one from `Service` that requires a
+  hold the operation settles.
 - **Current identity (O9).** Identity is current when BMC discovery reports
   `IdentityMatched` true for the Device's current generation, its last complete
   inventory read is at most two hours old (twice the default discovery
@@ -290,7 +306,7 @@ these seams. Each is decided here.
 | 3 | Kinds add bounded snapshot fields | `SnapshotExtra` adds up to 16 camelCase fields of at most 256 bytes each. The snapshot goes to the operation, the active operation, the hold, and the site. | Implemented and inert |
 | 4 | The settle hook sees the hold's end time, its deadline and current Device status | The hold records when it ended (`Since`), the operation's deadline and its snapshot. The hook gets the Device as read when the recovery is admitted and again when it is applied. A hold that rebuild created has `Since` set to the rebuild time, and copies the deadline and snapshot from the operation's status, so both are absent for an operation whose status never recorded them. A hook checks for that. | Implemented and inert |
 | 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal with an undeclared reason ends `UndeclaredReason`. A recovery's refusal may carry the held kind's declared reason only when it comes from that kind's settle hook. | Implemented and inert. Worker reasons are checked when results arrive, in B. |
-| 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock: a wipe, and, per #174 at `abb1f88`, power, whose hold settles with `Settle` and fresh discovery evidence or with `Retry` and a later power operation. A hold counts the `Retry` decisions applied to it. A deterministic name may carry that count, as power names an operation from its Machine generation and retry count; the kind's check compares the count with the hold's. | Implemented and inert |
+| 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock: a wipe, and power, whose hold settles with `Settle` and fresh discovery evidence or with `Retry` and a later power operation. A hold counts the `Retry` decisions applied to it, and the operation created after a `Retry` is named from the held operation and that count, as [Retries](#admission) describes. | Implemented and inert |
 | 7 | End-to-end proof that Milo enforces the CRD rules | The `custody-crd-rules` phase of both local end-to-end runs installs only these CRDs into the provider project, requires the project API to refuse eight forbidden writes, and removes them. | Implemented and verified in the local end-to-end runs |
 | 8 | Journal steps carry a kind's payload | A step records a bounded payload, such as the send time or the power state before. Observation after a crash reads it. | Proposed for B |
 | 9 | Delivery carries the admission time, and kinds declare a start-by window | A worker that starts after the window refuses as `Stale`, with nothing sent. | Proposed for B |
@@ -327,9 +343,8 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    - a digest of its exact inputs (`custody.SpecDigest` covers the whole
      spec);
    - its naming rule: `DeterministicName` with a `Name` function for provider
-     and release kinds, or `GeneratedName` for staff kinds. A name may
-     include a retry count from the spec; a kind that does checks it against
-     the hold's `Retries`;
+     and release kinds, or `GeneratedName` for staff kinds. An operation
+     created after a `Retry` is named by the coordinator's retry rule instead;
    - its `Deadline`, and `Effectful` if it can reach the server;
    - `Supersedes`, if a newer pending operation of the same kind and the
      same authority should cancel an older one, as power needs. It never
@@ -355,7 +370,9 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    the phase rule, plus a ProtectedResource and roles.
 2. **Add its rows.** Add one `custody.Rule` per row of the #174 operations
    table: the creator class, the authority type, the holders it admits from,
-   its hold behavior, and whether it queues. Staff rows never queue. To admit
+   its hold behavior, and whether it queues. A holder admitted only under the
+   kind's own hold, such as `Service` under a power hold, is a separate row
+   with `HoldSettlesRequired`. Staff rows never queue. To admit
    a new service principal, add its class to the coordinator's principal
    configuration. Never hard-code an identity.
 3. **Implement its site worker** (Increment B). The site framework owns the

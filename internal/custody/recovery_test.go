@@ -199,7 +199,7 @@ func TestRecovery(t *testing.T) {
 		}
 	})
 
-	t.Run("a held wipe settles only after a Retry, which authorizes one wipe", func(t *testing.T) {
+	t.Run("a held wipe settles only with a wipe named for the Retry, and retries count on", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
 		if err := e.coord.Claim(e.ctx, device.Name, "alloc-w"); err != nil {
@@ -210,17 +210,21 @@ func TestRecovery(t *testing.T) {
 		}
 		first := e.wipe(device, "alloc-w", 1)
 		e.settle(device.Name)
-		if err := e.result(device.Name, ops.PhaseOutcomeUnknown, "BMCResponseLost"); err != nil {
+		if err := e.result(device.Name, ops.PhaseOutcomeUnknown, ""); err != nil {
 			t.Fatal(err)
 		}
 		e.settle(device.Name)
 		e.requirePhase(first, ops.PhaseOutcomeUnknown, "")
 		hold := *e.custody(device.Name).Spec.RecoveryHold
-		// A wipe that cannot settle the hold yet waits; its name is
-		// deterministic, so it could not be created again.
-		next := e.wipe(device, "alloc-w", 2)
+		// Other operations wait until the hold is settled; their names are
+		// deterministic, so they could not be created again.
+		later := e.wipe(device, "alloc-w", 2)
 		e.settle(device.Name)
-		e.requirePhase(next, ops.PhasePending, ReasonRecoveryHold)
+		e.requirePhase(later, ops.PhasePending, ReasonRecoveryHold)
+		// The retried wipe takes the held wipe's name, and waits for the Retry.
+		retried := e.namedWipe(device, "alloc-w", RetryName(hold, 1), 1)
+		e.settle(device.Name)
+		e.requirePhase(retried, ops.PhasePending, ReasonRecoveryHold)
 		// Settle is not how a wipe hold ends.
 		settle := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionSettle, Hold: heldRef(hold)})
 		e.settle(device.Name)
@@ -230,19 +234,66 @@ func TestRecovery(t *testing.T) {
 		e.sites.report(device.Name, e.custody(device.Name).Spec.Fence)
 		e.settle(device.Name)
 		e.requirePhase(retry, ops.PhaseSucceeded, "")
-		// The waiting wipe is the one settling operation the Retry allows.
-		e.requirePhase(next, ops.PhaseAdmitted, "")
+		// The retried wipe goes first, ahead of the older waiting one, and
+		// uses the Retry.
+		e.requirePhase(retried, ops.PhaseAdmitted, "")
+		e.requirePhase(later, ops.PhasePending, ReasonRecoveryHold)
 		custody := e.custody(device.Name)
-		if got := custody.Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy != nil || custody.Spec.ActiveOperation.Settles == nil || custody.Spec.ActiveOperation.Settles.UID != hold.UID {
-			t.Fatalf("the retry was not used by the waiting wipe: %+v", custody.Spec)
+		if got := custody.Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy != nil || got.Retries != 1 || custody.Spec.ActiveOperation.Settles == nil || custody.Spec.ActiveOperation.Settles.UID != hold.UID {
+			t.Fatalf("the retry was not used by the retried wipe: %+v", custody.Spec)
 		}
+		// The retried wipe ends unknown too: the next retry keeps the
+		// original name and counts on.
+		if err := e.result(device.Name, ops.PhaseOutcomeUnknown, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.settle(device.Name)
+		second := *e.custody(device.Name).Spec.RecoveryHold
+		if second.UID != string(retried.UID) || second.RetryName != hold.Name || second.Retries != 1 {
+			t.Fatalf("second hold = %+v", second)
+		}
+		again := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(second)})
+		e.settle(device.Name)
+		e.sites.report(device.Name, e.custody(device.Name).Spec.Fence)
+		e.settle(device.Name)
+		e.requirePhase(again, ops.PhaseSucceeded, "")
+		if name := RetryName(*e.custody(device.Name).Spec.RecoveryHold, 2); name != hold.Name+"-retry-2" {
+			t.Fatalf("next retry name = %s", name)
+		}
+		retriedAgain := e.namedWipe(device, "alloc-w", hold.Name+"-retry-2", 1)
+		e.settle(device.Name)
+		e.requirePhase(retriedAgain, ops.PhaseAdmitted, "")
 		if err := e.result(device.Name, ops.PhaseSucceeded, ""); err != nil {
 			t.Fatal(err)
 		}
 		e.settle(device.Name)
+		// The hold is settled, and the waiting wipe runs next.
 		if got := e.custody(device.Name).Spec.RecoveryHold; got != nil {
 			t.Fatalf("hold survived the retried wipe: %+v", got)
 		}
+		e.requirePhase(later, ops.PhaseAdmitted, "")
+	})
+
+	t.Run("pending replacement never cancels an operation that settles a hold", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		if err := e.coord.Claim(e.ctx, device.Name, "alloc-ps"); err != nil {
+			t.Fatal(err)
+		}
+		e.providerOp(device, "alloc-ps", "held")
+		e.settle(device.Name)
+		if err := e.result(device.Name, ops.PhaseOutcomeUnknown, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.settle(device.Name)
+		// Both settle the held provider operation, and the kind supersedes:
+		// neither replaces the other while the hold exists.
+		older := e.providerOp(device, "alloc-ps", "older")
+		time.Sleep(1100 * time.Millisecond)
+		newer := e.providerOp(device, "alloc-ps", "newer")
+		e.settle(device.Name)
+		e.requirePhase(older, ops.PhaseAdmitted, "")
+		e.requirePhase(newer, ops.PhasePending, ReasonOperationInProgress)
 	})
 
 	t.Run("a second Retry for the same hold is refused", func(t *testing.T) {

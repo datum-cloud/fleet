@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"regexp"
 	"slices"
+	"strconv"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
@@ -24,6 +26,16 @@ const (
 	ConflictMultipleAllocations = "MultipleAllocations"
 	ConflictMultipleUnfinished  = "MultipleUnfinishedOperations"
 )
+
+var retrySuffix = regexp.MustCompile(`^(.+)-retry-([1-9][0-9]{0,8})$`)
+
+// retryBase is the name of the operation a retry was named from.
+func retryBase(name string) string {
+	if match := retrySuffix.FindStringSubmatch(name); match != nil {
+		return match[1]
+	}
+	return name
+}
 
 // ReasonRebuilt is the hold reason for an operation found unfinished when
 // custody was rebuilt.
@@ -95,6 +107,10 @@ func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device)
 	settled := func(held found) bool {
 		fence := held.operation.OperationStatus().Fence
 		for _, other := range all {
+			// A later retry of the same operation continues its hold.
+			if other.kind == held.kind && retryBase(other.operation.GetName()) == retryBase(held.operation.GetName()) && other.operation.GetName() != held.operation.GetName() && other.operation.OperationStatus().Fence > fence {
+				return true
+			}
 			status := other.operation.OperationStatus()
 			if status.Phase != ops.PhaseSucceeded {
 				continue
@@ -139,6 +155,15 @@ func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device)
 		newest := held[0]
 		status := newest.operation.OperationStatus()
 		spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: newest.kind.GVK.Kind, Name: newest.operation.GetName(), UID: string(newest.operation.GetUID())}, Fence: status.Fence, Since: metav1.NewTime(c.now()), Reason: ReasonRebuilt, Deadline: status.Deadline, Snapshot: status.Snapshot}
+		// A held retry keeps its lineage: its name is the original
+		// operation's name, "-retry-" and the Retry count.
+		if match := retrySuffix.FindStringSubmatch(newest.operation.GetName()); match != nil && slices.ContainsFunc(all, func(other found) bool {
+			return other.kind == newest.kind && other.operation.GetName() == match[1]
+		}) {
+			if count, err := strconv.Atoi(match[2]); err == nil {
+				spec.RecoveryHold.RetryName, spec.RecoveryHold.Retries = match[1], int32(count)
+			}
+		}
 		if len(held) > 1 {
 			spec.Conflicts = appendOnce(spec.Conflicts, ConflictMultipleUnfinished)
 		}

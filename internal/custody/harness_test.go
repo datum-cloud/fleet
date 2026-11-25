@@ -321,6 +321,16 @@ func (e *env) wipe(device *inventory.Device, allocation string, step int32) *ops
 	return operation
 }
 
+// namedWipe creates a wipe with an explicit name, such as a retry's.
+func (e *env) namedWipe(device *inventory.Device, allocation, name string, step int32) *ops.DeviceWipe {
+	e.t.Helper()
+	operation := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: ops.DeviceWipeSpec{
+		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"},
+	}}
+	e.create(operation)
+	return operation
+}
+
 func (e *env) recovery(device *inventory.Device, spec ops.DeviceRecoverySpec) *ops.DeviceRecovery {
 	e.t.Helper()
 	spec.OperationEnvelope = envelope(device, staffUser, service("recovery"))

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"time"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
@@ -491,7 +492,16 @@ func (c *Coordinator) holdUnknown(custody *ops.DeviceCustody, active ops.ActiveO
 	now := metav1.NewTime(c.now())
 	spec.ActiveOperation = nil
 	deadline, snapshot := active.Deadline, active.Snapshot
-	spec.RecoveryHold = &ops.RecoveryHold{OperationReference: active.OperationReference, Fence: active.Fence, Since: now, Reason: reason, Deadline: &deadline, Snapshot: &snapshot}
+	next := &ops.RecoveryHold{OperationReference: active.OperationReference, Fence: active.Fence, Since: now, Reason: reason, Deadline: &deadline, Snapshot: &snapshot}
+	// A retry that itself ends unknown keeps the original operation's name
+	// and Retry count, so the next retry is named on from it.
+	if previous := spec.RecoveryHold; previous != nil && active.Settles != nil && *active.Settles == previous.OperationReference && previous.Retries > 0 && active.Name == RetryName(*previous, previous.Retries) {
+		next.RetryName, next.Retries = previous.RetryName, previous.Retries
+		if next.RetryName == "" {
+			next.RetryName = previous.Name
+		}
+	}
+	spec.RecoveryHold = next
 	spec.LastResult = &ops.OperationResult{OperationReference: active.OperationReference, Fence: active.Fence, Phase: ops.PhaseOutcomeUnknown, Reason: reason, Message: message, FinishedAt: now}
 	if evidence != nil {
 		spec.LastResult.Evidence = rawExtension(evidence)
@@ -580,7 +590,7 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 	if fresh.ResourceVersion != custody.ResourceVersion {
 		return Outcome{Changed: true}, nil
 	}
-	superseded := c.superseded(candidates)
+	superseded := c.superseded(candidates, custody.Spec.RecoveryHold)
 	queued := false
 	changed := false
 	for _, candidate := range candidates {
@@ -597,7 +607,9 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 			outcome.Changed = true
 			return outcome, err
 		}
-		if d.phase == ops.PhasePending {
+		// An operation waiting for the hold to settle does not hold back
+		// the queue: the operation that settles it goes first.
+		if d.phase == ops.PhasePending && d.reason != ReasonRecoveryHold {
 			queued = true
 		}
 		wrote, err := c.mark(ctx, operation, d)
@@ -611,12 +623,13 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 
 // superseded returns pending operations replaced by a newer one of the same
 // superseding kind and authority.
-func (c *Coordinator) superseded(candidates []candidate) map[types.UID]bool {
+func (c *Coordinator) superseded(candidates []candidate, hold *ops.RecoveryHold) map[types.UID]bool {
 	out := map[types.UID]bool{}
 	newest := map[string]ops.Operation{}
 	for _, candidate := range candidates {
 		operation, kind := candidate.operation, candidate.kind
-		if !kind.Supersedes {
+		// An operation that settles the hold is never replaced.
+		if !kind.Supersedes || (hold != nil && (c.settlesHold(kind, *hold, operation) || isRetry(kind, hold, operation))) {
 			continue
 		}
 		key := kind.GVK.Kind + "/" + authorityKey(operation.Envelope().Authority)
@@ -667,12 +680,15 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	if len(rows) == 0 {
 		return fail(ReasonCreatorNotPermitted, "no row admits %s from a %s creator with this authority", kind.GVK.Kind, class)
 	}
-	switch kind.Naming {
-	case DeterministicName:
+	// An operation created after a Retry is named for the Retry, whatever
+	// the kind's own rule.
+	switch {
+	case isRetry(kind, custody.Spec.RecoveryHold, operation):
+	case kind.Naming == DeterministicName:
 		if want := kind.Name(operation); operation.GetName() != want {
 			return fail(ReasonNameMismatch, "the operation must be named %s", want)
 		}
-	case GeneratedName:
+	case kind.Naming == GeneratedName:
 		if operation.GetGenerateName() == "" {
 			return fail(ReasonNameMismatch, "a staff operation must be created with a generated name")
 		}
@@ -703,8 +719,10 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	case row.Hold == HoldRequired && hold == nil:
 		return fail(ReasonRecoveryHold, "this operation decides a recovery hold, and there is none")
 	case row.Hold == HoldRequired:
+	case row.Hold == HoldSettlesRequired && (hold == nil || !c.settlesHold(kind, *hold, operation)):
+		return fail(ReasonHolderMismatch, "from this holder, the operation is admitted only to settle a hold of its kind")
 	case hold != nil:
-		if !c.settlesHold(kind, *hold) {
+		if !c.settlesHold(kind, *hold, operation) {
 			if row.Queue {
 				return decision{phase: ops.PhasePending, reason: ReasonRecoveryHold, message: "waiting: " + hold.Kind + " " + hold.Name + " is held, and only its settling operations are admitted"}
 			}
@@ -758,13 +776,44 @@ func (c *Coordinator) wait(class CreatorClass, reason, message string) decision 
 	return decision{phase: ops.PhaseFailed, reason: reason, message: message}
 }
 
-func (c *Coordinator) settlesHold(kind *Kind, hold ops.RecoveryHold) bool {
+// settlesHold reports whether the operation settles the hold. A settle rule
+// that requires a Retry admits only the operation named for the current
+// Retry, after that Retry is applied.
+func (c *Coordinator) settlesHold(kind *Kind, hold ops.RecoveryHold, operation ops.Operation) bool {
 	for _, rule := range kind.Settles {
-		if rule.Held == hold.Kind && (!rule.RequiresRetry || hold.RetryAuthorizedBy != nil) {
+		if rule.Held != hold.Kind {
+			continue
+		}
+		if !rule.RequiresRetry || (hold.RetryAuthorizedBy != nil && operation.GetName() == RetryName(hold, hold.Retries)) {
 			return true
 		}
 	}
 	return false
+}
+
+// retries reports whether the kind settles the hold only after a Retry.
+func retries(kind *Kind, hold *ops.RecoveryHold) bool {
+	return hold != nil && slices.ContainsFunc(kind.Settles, func(rule SettleRule) bool { return rule.Held == hold.Kind && rule.RequiresRetry })
+}
+
+// RetryName is the name of the operation created after the count-th Retry
+// of a hold: the held operation's name, "-retry-" and the count.
+func RetryName(hold ops.RecoveryHold, count int32) string {
+	base := hold.RetryName
+	if base == "" {
+		base = hold.Name
+	}
+	return base + "-retry-" + strconv.Itoa(int(count))
+}
+
+// isRetry reports whether the operation is named as a retry of the hold,
+// for the Retry already applied or the next one.
+func isRetry(kind *Kind, hold *ops.RecoveryHold, operation ops.Operation) bool {
+	if !retries(kind, hold) {
+		return false
+	}
+	name := operation.GetName()
+	return name == RetryName(*hold, hold.Retries) || name == RetryName(*hold, hold.Retries+1)
 }
 
 // identityCurrent is precondition 5's discovery half. Identity is current when

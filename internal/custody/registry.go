@@ -1,5 +1,5 @@
 // Package custody implements Device custody and coordinator admission, as
-// proposed in datum-cloud/fleet#174 at abb1f88.
+// proposed in datum-cloud/fleet#174 at 23c583f.
 //
 // The Coordinator is the only writer of DeviceCustody and of operation status.
 // Every custody change is one Update carrying the resourceVersion it read; on

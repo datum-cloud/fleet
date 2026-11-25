@@ -1,4 +1,4 @@
-# DeviceCustody and the Device operation kinds proposed in #174 at abb1f88.
+# DeviceCustody and the Device operation kinds proposed in #174 at 23c583f.
 # The coordinator is the only writer of custody and of operation status.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -339,6 +339,9 @@ spec:
                     type: integer
                     format: int32
                     minimum: 0
+                  retryName:
+                    type: string
+                    maxLength: 253
                 required:
                 - kind
                 - name
