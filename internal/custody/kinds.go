@@ -353,9 +353,15 @@ func disposedDrive(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 	if admission.Reader == nil {
 		return "", refuse(ReasonDisposalInvalid, "the held wipe could not be read")
 	}
+	// The held wipe is the one the coordinator ended at the hold's fence for
+	// a drive it could not clean. A wipe deleted and recreated under the same
+	// name has no such status, so its plan never names what is disposed of.
 	wipe := &ops.DeviceWipe{}
-	if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: recovery.Namespace, Name: hold.Name}, wipe); err != nil || string(wipe.UID) != hold.UID {
+	if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: recovery.Namespace, Name: hold.Name}, wipe); err != nil {
 		return "", refuse(ReasonDisposalInvalid, "the held wipe could not be read")
+	}
+	if status := wipe.Status; status.Phase != ops.PhaseOutcomeUnknown || status.Fence != hold.Fence || status.Reason != hold.Reason {
+		return "", refuse(ReasonDisposalInvalid, "wipe %s is not the wipe held at fence %d", hold.Name, hold.Fence)
 	}
 	i := slices.IndexFunc(wipe.Spec.Drives, func(d ops.PlannedDrive) bool { return d.Name == drive.Name && d.State != "" })
 	if i < 0 {

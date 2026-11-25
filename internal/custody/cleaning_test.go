@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
@@ -98,6 +99,43 @@ func TestWipeAdmissionChecksThePlan(t *testing.T) {
 		}
 	})
 
+	t.Run("a held wipe recreated under the same name cannot be disposed of", func(t *testing.T) {
+		release(785, "alloc-dr")
+		device := e.read("server-example-785")
+		device.Status.Discovery.Inventory.Systems[0].Storage.Drives = nil
+		if err := e.admin.Status().Update(e.ctx, device); err != nil {
+			t.Fatal(err)
+		}
+		plan := e.planWith(device, "alloc-dr")
+		newWipe := func() *ops.DeviceWipe {
+			wipe := &ops.DeviceWipe{}
+			wipe.Name, wipe.Namespace = WipeName("alloc-dr", 1), "default"
+			wipe.Spec = ops.DeviceWipeSpec{OperationEnvelope: envelope(device, releaseUser, allocated("alloc-dr")), Step: 1,
+				Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, Assurance: ops.AssuranceClear, Drives: plan}
+			return wipe
+		}
+		held := newWipe()
+		e.create(held)
+		e.settle(device.Name)
+		e.requirePhase(held, ops.PhaseOutcomeUnknown, ReasonDriveMissing)
+		hold := *e.custody(device.Name).Spec.RecoveryHold
+		// The held wipe is deleted and a new one takes its name. The new one
+		// was never held, so its plan must not authorize a disposal.
+		if err := e.admin.Delete(e.ctx, held); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(held), &ops.DeviceWipe{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("the held wipe must be gone: %v", err)
+		}
+		e.create(newWipe())
+		dispose := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionDisposeDrive, Hold: heldRef(hold), Drive: &ops.DriveDisposal{Name: "disk-0", Method: ops.DisposalRemoved, Reference: "ticket-4"}})
+		e.settle(device.Name)
+		e.requirePhase(dispose, ops.PhaseFailed, ReasonDisposalInvalid)
+		if state := e.custody(device.Name); state.Spec.RecoveryHold == nil || len(state.Spec.Holder.DisposedDrives) != 0 {
+			t.Fatalf("custody = %+v", state.Spec)
+		}
+	})
+
 	t.Run("an uncovered drive still in the server cannot be disposed of", func(t *testing.T) {
 		release(784, "alloc-du")
 		device := e.read("server-example-784")
@@ -113,7 +151,7 @@ func TestWipeAdmissionChecksThePlan(t *testing.T) {
 		wipe := &ops.DeviceWipe{}
 		wipe.Name, wipe.Namespace = WipeName("alloc-du", 1), "default"
 		wipe.Spec = ops.DeviceWipeSpec{OperationEnvelope: envelope(device, releaseUser, allocated("alloc-du")), Step: 1,
-			Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", UID: "policy-uid", Digest: policyDigest}, Assurance: ops.AssuranceClear, Drives: plan}
+			Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, Assurance: ops.AssuranceClear, Drives: plan}
 		e.create(wipe)
 		e.settle(device.Name)
 		e.requirePhase(wipe, ops.PhaseOutcomeUnknown, ReasonDriveUncovered)
