@@ -18,15 +18,16 @@ import (
 // three-minute observation of the outcome, and a minute of margin.
 const PowerDeadline = 8 * time.Minute
 
-// Power refusal reasons the coordinator raises. The worker's own reasons
-// (Stale, NotPoweredOn, and PowerStateNotSettled before a command) arrive
-// with the site worker; SystemUUIDMismatch and ResetTypeNotOffered are
-// raised by both.
+// Power refusal reasons. SystemUUIDMismatch and ResetTypeNotOffered are
+// raised by the coordinator and the site worker, NotPoweredOn by the worker
+// only, and PowerStateNotSettled by the worker before a command and by the
+// settle hook. Stale is the site framework's shared reason.
 const (
 	ReasonSystemUUIDNotRecorded = "SystemUUIDNotRecorded"
 	ReasonSystemUUIDMismatch    = "SystemUUIDMismatch"
 	ReasonDiscoveryNotCurrent   = "DiscoveryNotCurrent"
 	ReasonResetTypeNotOffered   = "ResetTypeNotOffered"
+	ReasonNotPoweredOn          = "NotPoweredOn"
 	// The reasons a DeviceRecovery Settle of a power hold is refused with.
 	ReasonPowerEvidenceNotCurrent    = "PowerEvidenceNotCurrent"
 	ReasonPowerEvidenceWrongEndpoint = "PowerEvidenceWrongEndpoint"
@@ -89,7 +90,8 @@ func DevicePowerOperationKind() Kind {
 			{Name: ReasonResetTypeNotOffered, RaisedBy: RaisedByBoth},
 			{Name: ReasonPowerEvidenceNotCurrent, RaisedBy: RaisedByCoordinator},
 			{Name: ReasonPowerEvidenceWrongEndpoint, RaisedBy: RaisedByCoordinator},
-			{Name: ReasonPowerStateNotSettled, RaisedBy: RaisedByCoordinator},
+			{Name: ReasonPowerStateNotSettled, RaisedBy: RaisedByBoth},
+			{Name: ReasonNotPoweredOn, RaisedBy: RaisedByWorker},
 			{Name: ReasonPowerEvidenceMismatch, RaisedBy: RaisedByCoordinator},
 		},
 		SnapshotExtra:    powerSnapshot,
