@@ -56,6 +56,25 @@ func TestRegistryRejectsIncompleteKindsAndRows(t *testing.T) {
 // TestAddingRowsLeavesExistingRowsAlone registers the test kinds and rows on
 // top of the defaults and checks every built-in kind matches exactly the same
 // rows for every creator class, authority and variant.
+// sameRows compares rows, with a row's Name rule compared by identity:
+// reflect.DeepEqual never finds two non-nil functions equal.
+func sameRows(left, right []Rule) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		a, b := left[index], right[index]
+		if (a.Name == nil) != (b.Name == nil) || (a.Name != nil && reflect.ValueOf(a.Name).Pointer() != reflect.ValueOf(b.Name).Pointer()) {
+			return false
+		}
+		a.Name, b.Name = nil, nil
+		if !reflect.DeepEqual(a, b) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestAddingRowsLeavesExistingRowsAlone(t *testing.T) {
 	base, err := DefaultRegistry()
 	if err != nil {
@@ -74,7 +93,7 @@ func TestAddingRowsLeavesExistingRowsAlone(t *testing.T) {
 					}
 					before := base.matchRows(kind, operation, class)
 					after := extended.matchRows(extended.Kind(kind.GVK.Kind), operation, class)
-					if !reflect.DeepEqual(before, after) {
+					if !sameRows(before, after) {
 						t.Fatalf("%s %s %+v: rows changed from %v to %v", kind.GVK.Kind, class, authority, before, after)
 					}
 				}
