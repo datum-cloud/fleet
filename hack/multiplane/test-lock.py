@@ -133,6 +133,26 @@ with tempfile.TemporaryDirectory() as t:
     check('stale: the dead ticket was removed', not tickets(tmp), str(tickets(tmp)))
     stop(a, b, c, wa, wb, wc)
 
+# An owner killed but not yet reaped is a zombie: it no longer holds the
+# lock. A waiter whose own run is gone gives up its place in the queue.
+with tempfile.TemporaryDirectory() as t:
+    tmp = pathlib.Path(t)
+    a, b, c = owner(), owner(), owner()
+    wa = waiter(tmp, a, 'a')
+    finished(wa, 10)
+    wb = waiter(tmp, b, 'b')
+    time.sleep(1)
+    b.kill()
+    b.wait()
+    check('owner gone: the queued waiter gives up', finished(wb, 10) and wb.returncode == 1, str(wb.returncode))
+    check('owner gone: recorded', lock_record(tmp, 'b')['status'] == 'owner-gone')
+    check('owner gone: ticket removed', not tickets(tmp))
+    a.kill()  # never reaped here, so it stays a zombie
+    wc = waiter(tmp, c, 'c')
+    check('zombie: a killed, unreaped owner releases the lock', finished(wc, 10) and wc.returncode == 0, str(wc.returncode))
+    a.wait()
+    stop(a, b, c, wa, wb, wc)
+
 # The holder ignores signals while its owner lives, so a run stopping its own
 # process tree keeps the lock through its cleanup.
 with tempfile.TemporaryDirectory() as t:
@@ -194,7 +214,28 @@ with tempfile.TemporaryDirectory() as t:
     check('foreign: the check passes once that run is done', finished(c, 40) and c.returncode == 0, str(c.returncode))
     pre = json.loads((mine / 'evidence/preflight.json').read_text())
     check('foreign: recorded', [x['ok'] for x in pre['checks'] if x['name'] == 'no-concurrent-fleet-runtime'] == [True], str(pre))
-    stop(live, c)
+    # The wait is bounded: it expires with exit 4, the code for a bounded wait.
+    live = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)', str(other)])
+    running.write_text('fleet-mp-1234abcd-vm\n')
+    c = contention(3)
+    check('foreign: the wait expires with exit 4', finished(c, 40) and c.returncode == 4, str(c.returncode))
+    live.kill()
+    live.wait()
+    # A coordinator left behind by a run killed outright is not a live run.
+    orphan = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)', 'coordinator', '--config', str(other / 'acceptance.json')])
+    c = contention(60)
+    check('foreign: an orphaned coordinator alone is not a live run', finished(c, 20) and c.returncode == 2, str(c.returncode))
+    orphan.kill()
+    orphan.wait()
+    # Sources edited while a run queued are gated again under the lock.
+    running.write_text('')
+    (mine / 'readiness-SHA256').write_text('stale\n')
+    r = subprocess.run([sys.executable, str(harness), 'preflight', '--checks', 'contention', '--state', str(mine), '--root', str(tmp), '--skip-tests'],
+                       env=env, capture_output=True, text=True, timeout=60)
+    names = [x['name'] for x in json.loads((mine / 'evidence/preflight.json').read_text())['checks']]
+    check('readiness: changed sources are gated again', r.returncode == 3 and 'readiness-regated' in names and 'implementation:subcommands' in names,
+          '%s %s' % (r.returncode, names))
+    stop(live, c, orphan)
 
 # The real run.sh holds the lock through its phases and releases it when TERM
 # stops the run.
@@ -203,7 +244,9 @@ spec = importlib.util.spec_from_file_location('harness', %r)
 harness = importlib.util.module_from_spec(spec)
 sys.modules['harness'] = harness
 spec.loader.exec_module(harness)
-harness.preflight = lambda args: 0
+import os
+# The contention check another run can change fails when the test says so.
+harness.preflight = lambda args: 2 if args.checks == 'contention' and os.environ.get('FAKE_CONTENTION') == 'busy' else 0
 sys.exit(harness.main())
 '''
 with tempfile.TemporaryDirectory() as t:
@@ -244,6 +287,26 @@ with tempfile.TemporaryDirectory() as t:
     except ProcessLookupError:
         pass
     stop(b, probe)
+    # The check repeated under the lock decides: busy, the run stops with exit
+    # 2 before it builds anything, and releases the lock.
+    busy = runs / 'busy'
+    busy.mkdir()
+    r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh')], cwd=repo, env=dict(env, FAKE_CONTENTION='busy', FLEET_MULTIPLANE_STATE_ROOT=str(busy)),
+                       capture_output=True, text=True, timeout=120)
+    check('run.sh: a busy runtime under the lock stops the run with exit 2', r.returncode == 2, str(r.returncode) + r.stderr[-300:])
+    check('run.sh: nothing was built', not list(busy.glob('fleet-multiplane.*/logs/build.log')))
+    b = owner()
+    probe = waiter(tmp, b, 'probe2', timeout=10)
+    check('run.sh: a stopped run released the lock', finished(probe, 15) and probe.returncode == 0, str(probe.returncode))
+    stop(b, probe)
+    # A single-use CI runner is not shared: the run takes no lock.
+    ci = runs / 'ci'
+    ci.mkdir()
+    shutil.rmtree(tmp / 'lock')
+    r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh')], cwd=repo, capture_output=True, text=True, timeout=120,
+                       env=dict(env, FAKE_CONTENTION='busy', FLEET_MULTIPLANE_RUNTIME='ci', FLEET_MULTIPLANE_STATE_ROOT=str(ci)))
+    check('run.sh: CI mode takes no lock', r.returncode == 2 and not (tmp / 'lock').exists() and not list(ci.glob('fleet-multiplane.*/evidence/lock.json')),
+          str(r.returncode))
 
 if failures:
     print('FAIL lock tests:\n  ' + '\n  '.join(failures))

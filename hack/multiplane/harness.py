@@ -123,7 +123,10 @@ def live_run(prefix):
             continue
         for attempt in range(3):
             code, out, _ = capture(['pgrep', '-f', '--', re.escape(str(state))], 10, env=dict(os.environ))
-            if code == 0 and out.strip():
+            pids = out.split() if code == 0 else []
+            # A coordinator outlives a run killed outright; it alone is not a live run.
+            code, out, _ = capture(['ps', '-o', 'command=', '-p', ','.join(pids)], 10, env=dict(os.environ)) if pids else (1, '', '')
+            if any(' coordinator --config ' not in c for c in out.splitlines() if c.strip()):
                 return str(state)
             time.sleep(1)
         return None
@@ -135,13 +138,16 @@ def contention_checks(check, wait=0):
     it holds the runtime lock, so no two runs can both pass them. With wait,
     containers of a live run that does not take the lock (an older checkout)
     are waited for, up to wait seconds; anything else fails at once."""
-    deadline, last = time.monotonic() + wait, 0.0
+    deadline, last, expired = time.monotonic() + wait, 0.0, False
     while True:
         code, active = running_fleet_containers()
         prefixes = sorted({m.group(0) for m in (re.match(r'^fleet-mp-[a-f0-9]{8}', n) for n in active) if m})
         owners = {p: live_run(p) for p in prefixes} if wait and code == 0 else {}
         waitable = active and len(prefixes) and all(owners.values()) and all(n.startswith(tuple(prefixes)) for n in active)
-        if not waitable or time.monotonic() >= deadline:
+        if not waitable:
+            break
+        if time.monotonic() >= deadline:
+            expired = bool(wait)
             break
         if time.monotonic() - last >= 60:
             print('lock %s: held; waiting for a run without the lock to finish: %s' % (PROFILE, ', '.join('%s (%s)' % kv for kv in owners.items())),
@@ -151,6 +157,36 @@ def contention_checks(check, wait=0):
     check('no-concurrent-fleet-runtime', code == 0 and not active, ('running: ' + ', '.join(active[:6])) if active else 'none running; stopped diagnostics are left untouched')
     free = vm_free_bytes()
     check('runtime-disk', free is not None and free >= 12 * 2**30, ('%.1f GiB free in docker data root; 12 GiB required' % (free / 2**30)) if free is not None else 'unable to read docker data-root free space')
+    return expired
+
+
+def readiness_digest(root):
+    """Digest of every source the readiness gate tests and the run builds."""
+    root = pathlib.Path(root)
+    paths = [p for name in ('internal', 'cmd') for p in (root / name).rglob('*') if p.is_file() and '__pycache__' not in p.parts]
+    paths += [root / n for n in ('go.mod', 'go.sum') if (root / n).is_file()]
+    h = hashlib.sha256()
+    for p in sorted(paths):
+        h.update(str(p.relative_to(root)).encode() + b'\0' + hashlib.sha256(p.read_bytes()).digest())
+    return h.hexdigest()
+
+
+def readiness_checks(check, args):
+    """The implementation gate. It records the digest of the sources it
+    gated, so a run that queued can tell whether they changed while it waited."""
+    root = pathlib.Path(args.root)
+    digest = readiness_digest(root)
+    main = (root / 'cmd/fleet-multiplane/main.go')
+    source = main.read_text() if main.exists() else ''
+    missing = [c for c in REQUIRED_SOURCE_MARKERS if c not in source]
+    check('implementation:subcommands', not missing, ('missing: ' + ', '.join(missing)) if missing else 'all harness subcommands and denial errors present', 'readiness')
+    if args.skip_tests:
+        check('implementation:tests', True, 'skipped by caller', 'readiness')
+    else:
+        code, out, err = capture(['go', 'test', '-race', '-count=1', *READINESS_PACKAGES], 900, cwd=str(root), env=dict(os.environ))
+        failing = sorted(set(re.findall(r'--- FAIL: (\S+)', out + err)))
+        check('implementation:tests', code == 0, 'passed' if code == 0 else 'failing: ' + (', '.join(failing[:8]) or (out + err).strip()[-300:]), 'readiness')
+    (pathlib.Path(args.state) / 'readiness-SHA256').write_text(digest + '\n')
 
 
 def record_preflight(args, checks, code):
@@ -171,8 +207,18 @@ def preflight(args):
         return ok
 
     if args.checks == 'contention':
-        contention_checks(check, args.wait)
-        return record_preflight(args, checks, EXIT_PREFLIGHT if any(not c['ok'] for c in checks) else EXIT_PASSED)
+        # The wait for a run without the lock shares the lock's bound.
+        lock_record = evidence_dir(args.state) / 'lock.json'
+        waited = json.loads(lock_record.read_text()).get('waitedSeconds', 0) if lock_record.exists() else 0
+        expired = contention_checks(check, max(0, args.wait - int(waited)))
+        # Sources edited while the run queued are gated again, under the lock.
+        gated = pathlib.Path(args.state) / 'readiness-SHA256'
+        if gated.exists() and gated.read_text().strip() != readiness_digest(args.root):
+            check('readiness-regated', True, 'sources changed while queued; readiness gated again', 'readiness')
+            readiness_checks(check, args)
+        pre = [c for c in checks if c['kind'] == 'preflight' and not c['ok']]
+        ready = [c for c in checks if c['kind'] == 'readiness' and not c['ok']]
+        return record_preflight(args, checks, EXIT_TIMEOUT if expired else EXIT_PREFLIGHT if pre else EXIT_BLOCKED if ready else EXIT_PASSED)
 
     for tool in ('go', 'python3', 'openssl', 'docker', 'kind', 'kubectl', 'kustomize', 'curl', 'git'):
         check('tool:' + tool, shutil.which(tool), 'required on PATH')
@@ -208,18 +254,7 @@ def preflight(args):
         opted = os.environ.get('FLEET_MULTIPLANE_INOTIFY') == '1024'
         check('inotify-instances', limit is not None and (limit >= 1024 or opted), 'current %s; requires >=1024 or FLEET_MULTIPLANE_INOTIFY=1024 (reversible task-VM adjustment)' % limit)
 
-    root = pathlib.Path(args.root)
-    main = (root / 'cmd/fleet-multiplane/main.go')
-    source = main.read_text() if main.exists() else ''
-    missing = [c for c in REQUIRED_SOURCE_MARKERS if c not in source]
-    check('implementation:subcommands', not missing, ('missing: ' + ', '.join(missing)) if missing else 'all harness subcommands and denial errors present', 'readiness')
-    if args.skip_tests:
-        check('implementation:tests', True, 'skipped by caller', 'readiness')
-    else:
-        code, out, err = capture(['go', 'test', '-race', '-count=1', *READINESS_PACKAGES], 900, cwd=str(root), env=dict(os.environ))
-        failing = sorted(set(re.findall(r'--- FAIL: (\S+)', out + err)))
-        check('implementation:tests', code == 0, 'passed' if code == 0 else 'failing: ' + (', '.join(failing[:8]) or (out + err).strip()[-300:]), 'readiness')
-
+    readiness_checks(check, args)
     pre = [c for c in checks if c['kind'] == 'preflight' and not c['ok']]
     ready = [c for c in checks if c['kind'] == 'readiness' and not c['ok']]
     code = EXIT_PREFLIGHT if pre else EXIT_BLOCKED if ready else EXIT_PASSED
@@ -274,6 +309,24 @@ def process_started(pid):
     return out.strip() if code == 0 and out.strip() else None
 
 
+def owner_alive(pid, started):
+    """Whether the owning run still runs: the same process, and not a zombie
+    its parent has yet to reap."""
+    code, out, _ = capture(['ps', '-o', 'stat=', '-o', 'lstart=', '-p', str(pid)], 10, env=dict(os.environ))
+    fields = out.split(None, 1) if code == 0 else []
+    return len(fields) == 2 and not fields[0].startswith('Z') and fields[1].strip() == started
+
+
+def lock_dir():
+    """The lock directory, created private. One another user created, or a
+    symlink, is refused: it could block or redirect the lock."""
+    LOCK_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    st = os.lstat(LOCK_DIR)
+    if LOCK_DIR.is_symlink() or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise SystemExit('lock: %s is not a private directory this user owns' % LOCK_DIR)
+    (LOCK_DIR / 'queue').mkdir(mode=0o700, exist_ok=True)
+
+
 def read_holder():
     try:
         return json.loads((LOCK_DIR / 'holder.json').read_text())
@@ -321,32 +374,35 @@ def lock_status(position, waiters, waited, timeout):
 def lock(args):
     """Queue for the profile, take the lock, and hand it to a detached holder
     that keeps it until the owning run exits. Exits 0 once held, 4 when the
-    bounded wait expires, 128 plus the signal number if stopped while queued."""
+    bounded wait expires, 1 if the owning run is gone, and 128 plus the
+    signal number if stopped while queued."""
     owner_started = process_started(args.owner)
     if owner_started is None:
         print('lock: owner pid %s is not running' % args.owner, file=sys.stderr)
         return EXIT_USAGE
-    (LOCK_DIR / 'queue').mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_dir()
     ev = evidence_dir(args.state)
     queued = time.time()
-    # The ticket is flocked before it is visible, so no waiter can see it unheld.
-    tmp = LOCK_DIR / 'queue' / ('.%d.tmp' % os.getpid())
-    ticket_fd = os.open(tmp, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
-    fcntl.flock(ticket_fd, fcntl.LOCK_EX)
-    os.write(ticket_fd, json.dumps({'owner': args.owner, 'state': str(args.state)}).encode())
-    ticket = LOCK_DIR / 'queue' / ('%020d-%d.ticket' % (time.time_ns(), os.getpid()))
-    os.rename(tmp, ticket)
-    lock_fd = os.open(LOCK_DIR / 'lock', os.O_RDWR | os.O_CREAT, 0o600)
     received = []
 
     def on_signal(signum, _frame):
+        # Only the first signal interrupts; later ones arrive during cleanup.
         received.append(signum)
-        raise Interrupted()
+        if len(received) == 1:
+            raise Interrupted()
     for sig in INTERRUPT_SIGNALS:
         signal.signal(sig, on_signal)
     record = {'schemaVersion': 1, 'profile': PROFILE, 'queuedAt': now(), 'timeoutSeconds': args.timeout}
-    status, line, last_print = None, None, 0.0
+    status, line, last_print, ticket, ticket_fd, lock_fd = None, None, 0.0, None, None, None
+    tmp = LOCK_DIR / 'queue' / ('.%d.tmp' % os.getpid())
     try:
+        # The ticket is flocked before it is visible, so no waiter can see it unheld.
+        ticket_fd = os.open(tmp, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
+        fcntl.flock(ticket_fd, fcntl.LOCK_EX)
+        os.write(ticket_fd, json.dumps({'owner': args.owner, 'state': str(args.state)}).encode())
+        ticket = LOCK_DIR / 'queue' / ('%020d-%d.ticket' % (time.time_ns(), os.getpid()))
+        os.rename(tmp, ticket)
+        lock_fd = os.open(LOCK_DIR / 'lock', os.O_RDWR | os.O_CREAT, 0o600)
         while True:
             waited = time.time() - queued
             live = live_tickets(ticket)
@@ -358,6 +414,10 @@ def lock(args):
             if waited >= args.timeout:
                 status = 'timeout'
                 break
+            # A run killed outright leaves this waiter behind: give up its place.
+            if not owner_alive(args.owner, owner_started):
+                status = 'owner-gone'
+                break
             line_now = lock_status(position, len(live), int(waited), args.timeout)
             if line_now != line or time.time() - last_print >= args.status_interval:
                 print(line_now, file=sys.stderr, flush=True)
@@ -365,18 +425,22 @@ def lock(args):
             time.sleep(args.interval)
     except Interrupted:
         status = 'interrupted'
-    finally:
-        for sig in INTERRUPT_SIGNALS:
-            signal.signal(sig, signal.SIG_IGN)
+    for sig in INTERRUPT_SIGNALS:
+        signal.signal(sig, signal.SIG_IGN)
+    tmp.unlink(missing_ok=True)
+    if ticket:
         ticket.unlink(missing_ok=True)
+    if ticket_fd is not None:
         os.close(ticket_fd)
     record.update(status=status, waitedSeconds=round(time.time() - queued, 1), finishedAt=now())
     if status != 'acquired':
-        os.close(lock_fd)
+        if lock_fd is not None:
+            os.close(lock_fd)
         write_json(ev / 'lock.json', record)
-        print('lock %s: %s after %dm; no resources were created' % (PROFILE, 'wait expired' if status == 'timeout' else 'stopped while queued',
-                                                                     record['waitedSeconds'] // 60), file=sys.stderr, flush=True)
-        return EXIT_TIMEOUT if status == 'timeout' else 128 + received[0]
+        print('lock %s: %s after %dm; no resources were created' % (
+            PROFILE, {'timeout': 'wait expired', 'owner-gone': 'owning run gone'}.get(status, 'stopped while queued'), record['waitedSeconds'] // 60),
+            file=sys.stderr, flush=True)
+        return {'timeout': EXIT_TIMEOUT, 'owner-gone': EXIT_FAILED}.get(status) or 128 + received[0]
     record['acquiredAt'] = record['finishedAt']
     holder = {'owner': args.owner, 'ownerStarted': owner_started, 'state': str(args.state), 'acquiredEpoch': time.time(),
               'acquiredAt': record['acquiredAt'], 'provider': PROVIDER}
@@ -390,18 +454,7 @@ def lock(args):
         null = os.open(os.devnull, os.O_RDWR)
         for fd in (0, 1, 2):
             os.dup2(null, fd)
-        checked = time.monotonic()
-        while True:
-            try:
-                os.kill(args.owner, 0)
-            except ProcessLookupError:
-                break
-            except PermissionError:
-                pass
-            if time.monotonic() - checked >= 15:
-                checked = time.monotonic()
-                if process_started(args.owner) != owner_started:
-                    break
+        while owner_alive(args.owner, owner_started):
             time.sleep(1)
         if (read_holder() or {}).get('owner') == args.owner:
             (LOCK_DIR / 'holder.json').unlink(missing_ok=True)
