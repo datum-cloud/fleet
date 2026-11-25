@@ -446,6 +446,10 @@ These tests are required and not implemented:
 
 - A customer installs a published image, and the installer verifies exactly
   its user data and SSH keys on the target disk before the install succeeds.
+  In the lab, the booted guest also reports on first boot that it found the
+  same data where its bootstrap format reads it. That report is lab evidence,
+  not a condition of success. It does not prove that a production image's
+  bootstrap agent consumed the data; qualifying the production OS must.
 - The installer reads back a wrong or truncated payload, and the install fails
   without reporting `Succeeded`.
 - A customer names an image that is not published to their project, or writes
