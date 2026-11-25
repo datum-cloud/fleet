@@ -137,22 +137,21 @@ func (r *Runner) commissioned(ctx context.Context, operator client.Client, devic
 	if err := operator.List(ctx, &list, client.InNamespace(DeviceNamespace)); err != nil {
 		return err
 	}
-	digest, err := custody.PlanDigest(plan)
-	if err != nil {
-		return err
-	}
 	for _, operation := range list.Items {
 		if operation.Spec.DeviceRef.UID != string(device.UID) {
 			continue
 		}
-		// The run proves this plan, so a commissioning under another plan
-		// proves nothing here.
-		if reference := operation.Spec.Plan.PlanReference; reference.UID != string(plan.UID) || reference.Digest != digest {
-			return fmt.Errorf("%w: commissioning %s ran under plan %s, not %s", errTerminal, operation.Name, reference.Name, plan.Name)
+		// The run proves this plan incarnation, so a commissioning under
+		// another plan proves nothing here.
+		reference := operation.Spec.Plan.ApprovedPlanReference
+		if pinned, err := custody.Pins(reference, plan); err != nil {
+			return err
+		} else if !pinned {
+			return fmt.Errorf("%w: commissioning %s ran under plan %s with approval %s, not %s", errTerminal, operation.Name, reference.Name, reference.Approval, custody.ApprovalName(plan))
 		}
 		switch status := operation.Status; {
 		case status.Phase == ops.PhaseSucceeded:
-			if result := evidenceResult(status, operation.Spec.Plan.PlanReference); result != string(ops.CommissioningPassed) {
+			if result := evidenceResult(status, reference); result != string(ops.CommissioningPassed) {
 				return fmt.Errorf("%w: commissioning %s proved the server failed: %s", errTerminal, operation.Name, result)
 			}
 			return nil
@@ -172,7 +171,7 @@ func (r *Runner) commissioned(ctx context.Context, operator client.Client, devic
 	return fmt.Errorf("%w: created commissioning %s", errPending, operation.Name)
 }
 
-func evidenceResult(status ops.OperationStatus, plan ops.PlanReference) string {
+func evidenceResult(status ops.OperationStatus, plan ops.ApprovedPlanReference) string {
 	if status.Evidence == nil {
 		return "no evidence"
 	}

@@ -256,8 +256,7 @@ The phases are then:
    - exactly one Karmada-delivered assignment handoff besides the
      commissioning's, which the cell retains after it succeeded;
    - kro reporting both handoffs in `HandoffDispatcher.status.deliveredHandoffs`;
-   - no cell status for the install and no worker Job other than the
-     commissioning's.
+   - no cell status for the install and no install worker Job.
 4. **Partition.** Suspend consumer A's Flux Kustomization, stop its API and pause
    the hub. `dispatch` then publishes revision 5, which sets `dispatch: true`.
    The cell's own Flux reconciles it from the registry with no hub access. kro
