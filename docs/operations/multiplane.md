@@ -121,12 +121,19 @@ Exit codes and `evidence/result.json` status:
 
 | Exit | Status | Meaning | Resources |
 | --- | --- | --- | --- |
-| 0 | `passed` | Every phase and evidence assertion passed | Owned containers, clusters and image tag deleted; private credentials removed |
+| 0 | `passed` | Every phase and evidence assertion passed, and the run reached its last line | Owned containers, clusters and image tag deleted; private credentials removed |
+| 0 | `preflight-passed` | `--preflight-only`: every prerequisite is present; no acceptance ran | None created |
 | 1 | `failed` | A phase or assertion failed | Owned containers stopped, state retained, custody Unknown |
 | 2 | `preflight-failed` | A local prerequisite is missing | None created |
 | 3 | `blocked` | Implementation readiness gate failed | None created |
 | 4 | `timeout` | A bounded phase expired; its process group was terminated | Stopped and retained as for 1 |
 | 64 | `usage` | Invalid option | None created |
+| 129, 130, 143 | `interrupted` | The run received HUP, INT or TERM. It stops every phase it started, records the phase it was in as `interrupted`, and names it as the failed phase | Stopped and retained as for 1 |
+| 1 | `interrupted` | The run exited 0 before its last line, so nothing proves it finished | Stopped and retained as for 1 |
+
+Only a run that reaches its last line writes the completion marker the result
+requires for `passed`. A result recorded as `passed` before this rule, by a run
+that was interrupted, proves nothing.
 
 The full run uses three kind nodes (platform, hub, cell), a registry, Flux on
 each node, three small Milo/etcd pairs, Karmada and kro. Node caps are
@@ -155,7 +162,7 @@ mode-0700 `/tmp/fleet-multiplane.*` state directory (override the parent with
 | `result.json` | Final status, exit code, failed phase, every phase record, retained containers, custody statement |
 | `phases.jsonl` | One record per bounded phase: name, status, exit code, bound, duration |
 | `preflight.json` | Each prerequisite and readiness check |
-| `summary.json` | Pass only: allowlisted scenario evidence, operations, digests, receipt hashes, qualification flags |
+| `summary.json` | Written when the evidence checks pass, with `acceptance: evidence-verified`: allowlisted scenario evidence, operations, digests, receipt hashes, qualification flags. It does not say the run passed; `result.json` does |
 | `flux-verify.json`, `flux-initial.json`, `flux-rbac-restore.json`, `flux-drift.json`, `flux-graph-lifecycle.json`, `flux-restart.json`, `flux-fail-closed.json`, `flux-retention.json`, `flux-final.json`, `flux-ownership-final.json`, `flux-reconciles.json`, `flux-partition.json`, `flux-reflection-suspension.json`, `gitops-r<N>.SHA256SUMS` | Flux source revisions and digests, Ready/generation/revision of every Kustomization and HelmRelease, inventories and single-writer ownership, and each GitOps scenario ([details](gitops.md#acceptance-coverage)) |
 | `kro-rbac.json` | kro's allowed and denied verbs and each admission probe's outcome |
 | `custody-crd-rules.json` | Each forbidden custody or operation write and whether the provider project API refused it, and that the CRDs were removed |
@@ -387,7 +394,7 @@ hack/multiplane/teardown.sh /tmp/fleet-multiplane.REPLACE --discard-unknown
 ```
 
 `teardown.sh` without `--discard-unknown` refuses unless `summary.json` records
-a pass. `--discard-unknown` is an explicit human decision after inspection: it
+verified acceptance evidence. `--discard-unknown` is an explicit human decision after inspection: it
 deletes the same exact-prefix resources, keeps every private file, and records
 in `teardown.json` that it is not release evidence. Neither script touches other
 prefixes. The original limit of 128 inotify instances was insufficient for this

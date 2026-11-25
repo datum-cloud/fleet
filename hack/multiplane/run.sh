@@ -4,7 +4,8 @@
 # and retain exact state as Unknown custody. See docs/operations/multiplane.md.
 #
 # Exit codes: 0 passed, 1 failed, 2 preflight failed, 3 blocked by implementation
-# readiness, 4 bounded wait expired, 64 usage.
+# readiness, 4 bounded wait expired, 64 usage, 128 plus the signal number when
+# interrupted. Only a run that reached its last line records passed.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 umask 077
@@ -42,14 +43,39 @@ finish() {
   echo "Execution and custody are Unknown. Retained private state: $state. Discard only after inspection: hack/multiplane/teardown.sh $state --discard-unknown"
  fi
  [[ $code -eq 0 ]] || "${harness[@]}" scan --state "$state" >/dev/null 2>&1 || true
- "${harness[@]}" result --state "$state" --exit-code "$code"
- exit "$code"
+ # The result decides the exit code: exit 0 without the completion marker is
+ # an interrupted run.
+ "${harness[@]}" result --state "$state" --exit-code "$code" && exit 0
+ exit $?
+}
+# Every descendant. Parents are signalled before their children, so a phase
+# stops its own command and records the interruption; the children are
+# listed first, so none is missed when its parent exits.
+stop_tree() {
+ local child children
+ children=$(pgrep -P "$1" || true)
+ [[ $1 == "$$" ]] || kill -TERM "$1" 2>/dev/null || true
+ for child in $children; do stop_tree "$child"; done
+}
+interrupt() {
+ trap '' TERM INT HUP
+ stop_tree $$
+ wait || true
+ finish "$1"
 }
 trap 'finish $?' EXIT
-ph() { "${harness[@]}" phase --state "$state" --name "$1" --timeout "$2" -- "${@:3}"; }
+trap 'interrupt 143' TERM
+trap 'interrupt 130' INT
+trap 'interrupt 129' HUP
+# Phases and acceptance scripts run in the background and are waited for, so
+# a signal reaches the traps at once rather than after the current phase.
+ph() { "${harness[@]}" phase --state "$state" --name "$1" --timeout "$2" -- "${@:3}" & wait $!; }
 
-"${harness[@]}" preflight --state "$state" --root . "${bootstrap[@]}" "${skip_tests[@]}"
-[[ $preflight_only == 0 ]] || exit 0
+"${harness[@]}" preflight --state "$state" --root . "${bootstrap[@]}" "${skip_tests[@]}" & wait $!
+if [[ $preflight_only == 1 ]]; then
+ : > "$state/preflight-completed"
+ exit 0
+fi
 
 prefix="fleet-mp-$(openssl rand -hex 4)"
 printf '%s\n' "$prefix" > "$state/prefix"
@@ -111,9 +137,9 @@ ph flux-site 1200 "${flux[@]}" publish "$state" --revision 2 --site off --purpos
 ph site-install 900 bash hack/multiplane/site.sh check "$state"
 ph flux-verify 300 "${flux[@]}" verify "$state"
 if [[ $provider == redfish ]]; then
- bash hack/multiplane/acceptance-redfish.sh "$state"
+ bash hack/multiplane/acceptance-redfish.sh "$state" & wait $!
 else
- bash hack/multiplane/acceptance.sh "$state"
+ bash hack/multiplane/acceptance.sh "$state" & wait $!
 fi
 ph secret-scan 120 "${harness[@]}" scan --state "$state"
 if [[ $keep == 1 ]]; then
@@ -121,4 +147,6 @@ if [[ $keep == 1 ]]; then
 else
  ph teardown 900 bash hack/multiplane/teardown.sh "$state"
 fi
+# The last act of a completed run: only now may the result record passed.
+: > "$state/completed"
 printf 'Local topology/PXE acceptance (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$provider"
