@@ -726,6 +726,19 @@ capacity while it was enabled re-reads it after creating its allocation, and
 withdraws the allocation, before claiming the Device, if the capacity is gone
 or `Disabled`. Any other delete of registered capacity is still denied.
 
+### The Device incarnation
+
+Registered capacity records its Device's incarnation in metadata, never in
+its spec: the name is `device-` and the Device UID, and the
+`registration-device-uid` annotation repeats it. Registration keeps both
+unchanged. A Device recreated under the same name inherits nothing: the
+webhook refuses to enable the old capacity for it, and the projector reports
+the capacity not `Prepared` (`DeviceReplaced`), so the allocator never offers
+it. The name carries the raw UID rather than a hash of it, as stage 1 named
+it; it is deterministic and holds one capacity per incarnation. Changing the
+naming scheme belongs to the change that applies the no-UIDs-in-spec rule to
+the existing kinds.
+
 ### Status writes
 
 `machinecapacities/status` is in the webhook rule. A status write to

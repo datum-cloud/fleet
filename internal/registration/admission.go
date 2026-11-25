@@ -37,7 +37,7 @@ import (
 )
 
 const (
-	DeviceUIDAnnotation     = "fleet.datumapis.com/registration-device-uid"
+	DeviceUIDAnnotation     = capacity.RegisteredDeviceUID
 	DeviceVersionAnnotation = "fleet.datumapis.com/registration-device-version"
 	OperationAnnotation     = "fleet.datumapis.com/registration-operation"
 
