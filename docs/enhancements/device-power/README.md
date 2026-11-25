@@ -93,9 +93,10 @@ The Fleet provider for Metal maps a Machine's `powerState` to an action:
 | `Off` | `ForceOff` |
 
 The provider creates an operation only when `powerState` differs from the
-server's observed power. Because of how the [operations][operations] section
-names provider operations, a refused one is not retried until the Machine
-generation changes. The provider reports the refusal reason on the Machine.
+server's observed power. A refused operation is not retried until the Machine
+generation changes, because [provider operations are named by
+generation][operations]. The provider reports the refusal reason on the
+Machine.
 
 ### Who takes part
 
@@ -165,13 +166,14 @@ the holder `None`. [Custody admission][admission] defines the reasons every
 kind shares.
 
 Power adds these reasons. The coordinator checks run under the admission rule
-for a kind's own inputs, and the worker checks run before the command. None
-sends a command:
+for a kind's own inputs, which `DiscoveryNotCurrent` extends to the freshness of
+the discovery facts the other checks read. The worker checks run before the
+command. None sends a command:
 
 | Reason | Refused by | When |
 | --- | --- | --- |
 | `SystemUUIDNotRecorded` | Coordinator | A staff operation targets a Device with no system UUID on record. |
-| `SystemUUIDMismatch` | Coordinator or worker | `expectedSystemUUID` differs from the Device record, discovery or the BMC. |
+| `SystemUUIDMismatch` | Coordinator or worker | `expectedSystemUUID` differs from the Device's recorded UUID, or from the UUID the BMC reports. |
 | `DiscoveryNotCurrent` | Coordinator | Discovery has not read the BMC within twice its interval. |
 | `ResetTypeNotOffered` | Coordinator or worker | Discovery or the BMC does not offer the action. |
 | `Stale` | Worker | The worker started more than two minutes after admission. |
@@ -210,12 +212,15 @@ A `Settle` recovery must cite discovery evidence that:
 - came from the Device's current BMC endpoint; and
 - reports a settled power state, `On` or `Off`.
 
-After a `Retry` recovery, the held operation's requester creates one power
-operation. For a staff hold, that is a staff power operation. For a customer
-hold, the Fleet provider for Metal creates it. The operation repeats the held
+The power operation created after a `Retry` recovery repeats the held
 operation's action, passes power's checks again, and settles the hold only if
 it ends `Succeeded` under the [outcome table](#execution-and-outcomes). For
 `ForceRestart` and `PowerCycle`, a retry is a second reset of the server.
+
+The Fleet provider for Metal creates a retry without comparing observed power,
+which is `Unknown` during the hold. It creates one only if the Machine's
+current `powerState` still maps to the held action. Otherwise staff settle the
+hold with `Settle`, and the newer operation runs after it.
 
 A held Machine's power is unverified, so the [machine
 lifecycle](../machine-lifecycle/README.md#machine) rule reports it as `Unknown`
