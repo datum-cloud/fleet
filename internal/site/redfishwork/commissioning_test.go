@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,21 @@ var labBurnIn = "sha256:" + strings.Repeat("d", 64)
 func commissioningRunner(t *testing.T, l *lab) *site.Runner {
 	t.Helper()
 	r := runner(t, l)
+	// The store's clock moves ahead while burn-in runs, so the journal shows
+	// a burn-in as long as the plan's without the test waiting for it.
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := site.OpenStore(root, func() time.Time {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return time.Now().Add(l.skew)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Store, r.Results, l.store = store, site.NewResults(store), store
 	config := r.Kinds["DeviceWipe"].(Wipe).Config
 	r.Kinds["DeviceCommissioning"] = Commissioning{Config: config, BurnInDigest: labBurnIn}
 	return r
@@ -54,7 +70,7 @@ func commission(t *testing.T, l *lab, r *site.Runner, uid string, spec ops.Devic
 			t.Fatal(err)
 		}
 		// The evidence passes the kind's own validation.
-		operation := &ops.DeviceCommissioning{Spec: spec}
+		operation := &ops.DeviceCommissioning{Spec: spec, Status: ops.OperationStatus{Snapshot: &work.Snapshot}}
 		if _, err := custody.DeviceCommissioningKind().Evidence(operation, result.Evidence); err != nil {
 			t.Fatalf("the kind rejects the worker's evidence: %v", err)
 		}
@@ -253,5 +269,15 @@ func TestOversizedEvidenceKeepsTheVerdict(t *testing.T) {
 	data, _ := json.Marshal(fitted)
 	if len(data) > maxEvidence || fitted.Result != ops.CommissioningFailed || fitted.FailedPhase != ops.PhaseInspect {
 		t.Fatalf("fitted evidence is %d bytes: %+v", len(data), fitted.Result)
+	}
+}
+
+func TestABurnInShorterThanThePlanFails(t *testing.T) {
+	l := newLab(t)
+	l.burnTime = 0
+	r := commissioningRunner(t, l)
+	result, evidence := commission(t, l, r, "op-short", planSpec(t, nil))
+	if result.Phase != ops.PhaseSucceeded || evidence.Result != ops.CommissioningFailed || evidence.FailedPhase != ops.PhaseBurnIn {
+		t.Fatalf("result = %+v, evidence %+v", result, evidence)
 	}
 }
