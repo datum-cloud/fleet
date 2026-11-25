@@ -11,12 +11,16 @@ import (
 	"github.com/stmcginnis/gofish/schemas"
 )
 
+// MaxInventoryDrives bounds a System's drives and its RAID volumes. Unlike the
+// other bounds, storage is never truncated: a System that reports more fails
+// the whole inventory, so a partial drive list can never look complete.
+const MaxInventoryDrives = 32
+
 // Inventory bounds. A BMC that reports more is read only up to these limits.
 const (
 	maxInventoryMembers    = 16
 	maxInventoryInterfaces = 32
 	maxInventoryStorage    = 8
-	maxInventoryDrives     = 32
 	maxCollectionPages     = 8
 )
 
@@ -169,10 +173,18 @@ func getJSON(api *gofish.APIClient, path string, out any) error {
 // members returns up to limit member paths of a collection, following
 // Members@odata.nextLink pages. Every member must sit under the collection.
 func members(api *gofish.APIClient, collection string, limit int) ([]string, error) {
+	out, _, err := pagedMembers(api, collection, limit)
+	return out, err
+}
+
+// pagedMembers is members that also reports whether the collection holds
+// members it did not read: past limit, or on a page past maxCollectionPages.
+func pagedMembers(api *gofish.APIClient, collection string, limit int) ([]string, bool, error) {
 	base, err := cleanPath(collection)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	more := false
 	var out []string
 	next := base
 	for page := 0; next != "" && page < maxCollectionPages && len(out) < limit; page++ {
@@ -182,7 +194,7 @@ func members(api *gofish.APIClient, collection string, limit int) ([]string, err
 		}
 		path, query, _ := strings.Cut(next, "?")
 		if _, err := cleanPath(path); err != nil || (path != base && !strings.HasPrefix(path, base+"/")) {
-			return nil, errors.New("redfish: collection page outside the collection")
+			return nil, false, errors.New("redfish: collection page outside the collection")
 		}
 		if query != "" {
 			path += "?" + query
@@ -193,20 +205,22 @@ func members(api *gofish.APIClient, collection string, limit int) ([]string, err
 		}
 		schemas.DeferredCleanupHTTPResponse(resp)
 		if err != nil {
-			return nil, classify(err)
+			return nil, false, classify(err)
 		}
 		for _, m := range doc.Members {
 			p, err := cleanPath(m.ID)
 			if err != nil || !strings.HasPrefix(p, base+"/") {
-				return nil, errors.New("redfish: collection member outside the collection")
+				return nil, false, errors.New("redfish: collection member outside the collection")
 			}
 			if len(out) < limit {
 				out = append(out, p)
+			} else {
+				more = true
 			}
 		}
 		next = doc.NextLink
 	}
-	return out, nil
+	return out, more || next != "", nil
 }
 
 // interfaces reads an EthernetInterfaces collection that must belong to owner.
@@ -250,8 +264,11 @@ func interfaces(api *gofish.APIClient, owner, collection string) ([]NetworkInter
 }
 
 // storageDrives reads every Drive of every Storage in a collection that must
-// belong to owner, and marks drives that a RAID Volume links. A drive linked
-// from two Storage resources is read once.
+// belong to owner, then marks drives that a RAID Volume links. Volumes are read
+// after every drive, because a Volume can link a drive under another Storage.
+// A drive linked from two Storage resources is read once. Its ID is its path
+// under the System, which is unique; a document Id is not. Any storage beyond
+// the bounds fails the read rather than being dropped.
 func storageDrives(api *gofish.APIClient, owner, collection string) ([]Drive, error) {
 	if collection == "" {
 		return nil, nil
@@ -259,12 +276,13 @@ func storageDrives(api *gofish.APIClient, owner, collection string) ([]Drive, er
 	if p, err := cleanPath(collection); err != nil || !strings.HasPrefix(p, owner+"/") {
 		return nil, errors.New("redfish: Storage outside its owner")
 	}
-	storages, err := members(api, collection, maxInventoryStorage)
+	storages, err := exactMembers(api, collection, maxInventoryStorage)
 	if err != nil {
 		return nil, err
 	}
-	var out []Drive
+	out := []Drive{}
 	index := map[string]int{}
+	var volumeCollections []string
 	for _, storage := range storages {
 		var doc struct {
 			Drives  []link
@@ -278,11 +296,13 @@ func storageDrives(api *gofish.APIClient, owner, collection string) ([]Drive, er
 			if err != nil || !strings.HasPrefix(p, owner+"/") {
 				return nil, errors.New("redfish: Drive outside its System")
 			}
-			if _, seen := index[p]; seen || len(out) >= maxInventoryDrives {
+			if _, seen := index[p]; seen {
 				continue
 			}
+			if len(out) == MaxInventoryDrives {
+				return nil, errors.New("redfish: the System reports more drives than Fleet reads")
+			}
 			var drive struct {
-				ID               string `json:"Id"`
 				SerialNumber     string
 				Model            string
 				Revision         string
@@ -294,7 +314,7 @@ func storageDrives(api *gofish.APIClient, owner, collection string) ([]Drive, er
 			if err := getJSON(api, p, &drive); err != nil {
 				return nil, err
 			}
-			found := Drive{ID: drive.ID, SerialNumber: strings.TrimSpace(drive.SerialNumber), Model: strings.TrimSpace(drive.Model), Revision: strings.TrimSpace(drive.Revision),
+			found := Drive{ID: strings.TrimPrefix(p, owner+"/"), SerialNumber: strings.TrimSpace(drive.SerialNumber), Model: strings.TrimSpace(drive.Model), Revision: strings.TrimSpace(drive.Revision),
 				Protocol: drive.Protocol, MediaType: drive.MediaType, EncryptionStatus: drive.EncryptionStatus}
 			if drive.CapacityBytes != nil {
 				if v, err := drive.CapacityBytes.Int64(); err == nil && v > 0 {
@@ -304,13 +324,15 @@ func storageDrives(api *gofish.APIClient, owner, collection string) ([]Drive, er
 			index[p] = len(out)
 			out = append(out, found)
 		}
-		if doc.Volumes.ID == "" {
-			continue
+		if doc.Volumes.ID != "" {
+			if p, err := cleanPath(doc.Volumes.ID); err != nil || !strings.HasPrefix(p, storage+"/") {
+				return nil, errors.New("redfish: Volumes outside its Storage")
+			}
+			volumeCollections = append(volumeCollections, doc.Volumes.ID)
 		}
-		if p, err := cleanPath(doc.Volumes.ID); err != nil || !strings.HasPrefix(p, storage+"/") {
-			return nil, errors.New("redfish: Volumes outside its Storage")
-		}
-		volumes, err := members(api, doc.Volumes.ID, maxInventoryDrives)
+	}
+	for _, collection := range volumeCollections {
+		volumes, err := exactMembers(api, collection, MaxInventoryDrives)
 		if err != nil {
 			return nil, err
 		}
@@ -326,15 +348,30 @@ func storageDrives(api *gofish.APIClient, owner, collection string) ([]Drive, er
 				continue
 			}
 			for _, d := range volume.Links.Drives {
-				if p, err := cleanPath(d.ID); err == nil {
-					if i, ok := index[p]; ok {
-						out[i].InVolume = true
-					}
+				p, err := cleanPath(d.ID)
+				if err != nil {
+					return nil, errors.New("redfish: a Volume links an invalid Drive")
+				}
+				if i, ok := index[p]; ok {
+					out[i].InVolume = true
 				}
 			}
 		}
 	}
 	return out, nil
+}
+
+// exactMembers is members that fails, instead of truncating, when the
+// collection holds members it did not read.
+func exactMembers(api *gofish.APIClient, collection string, limit int) ([]string, error) {
+	paths, more, err := pagedMembers(api, collection, limit)
+	if err != nil {
+		return nil, err
+	}
+	if more {
+		return nil, errors.New("redfish: a storage collection holds more members than Fleet reads")
+	}
+	return paths, nil
 }
 
 // canonicalMAC returns a 48-bit MAC in lowercase colon form, or "" when the

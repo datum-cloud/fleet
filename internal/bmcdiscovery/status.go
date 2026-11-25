@@ -231,9 +231,14 @@ func storage(s redfish.InventorySystem) *inventory.ObservedStorage {
 		return nil
 	}
 	out := &inventory.ObservedStorage{}
+	if len(s.Drives) > redfish.MaxInventoryDrives {
+		return nil
+	}
 	for _, d := range s.Drives {
-		if d.ID == "" || len(out.Drives) == 32 {
-			continue
+		// A drive that cannot be recorded makes the list incomplete, so
+		// storage stays unknown rather than looking complete.
+		if clip(d.ID, 253) == "" {
+			return nil
 		}
 		out.Drives = append(out.Drives, inventory.ObservedDrive{ID: clip(d.ID, 253), SerialNumber: clip(d.SerialNumber, 253), Model: clip(d.Model, 253), Firmware: clip(d.Revision, 63),
 			Protocol: clip(d.Protocol, 31), MediaType: clip(d.MediaType, 31), CapacityBytes: max(d.CapacityBytes, 0), EncryptionStatus: clip(d.EncryptionStatus, 63), InVolume: d.InVolume})
