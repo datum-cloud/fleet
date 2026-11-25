@@ -249,6 +249,8 @@ number of commands at the BMC:
 - A staff operation on a Device with disabled capacity and holder `None`.
 - A refused customer operation is not retried until the Machine generation
   changes.
+- After a customer `Retry`, a changed `powerState` produces no retry, and the
+  newer operation runs after staff `Settle` the hold.
 - A power hold settles only with discovery evidence that meets the
   [Recovery](#recovery) rules, or with a retried operation that succeeds, and
   the held Machine reports power as `Unknown` until then.
