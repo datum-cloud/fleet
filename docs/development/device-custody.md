@@ -869,7 +869,8 @@ which a test pins, because the coordinator lists every registered kind.
   none left because the matching plans supersede each other, is
   `PlanAmbiguous`. A supersession reaches only Devices the superseding plan
   selects, and revoking it restores the old plan. `supersedes` names plans,
-  so a plan re-created under a superseded name stays superseded.
+  so a plan re-created under a superseded name stays superseded. That fails
+  closed: the plan inherits no approval, only the supersession.
 - **Admission.** Two staff rows: from `None`, and from `Service` only to settle
   a commissioning hold. The kind refuses a Device that is not `Active`, one
   without a `primary` interface MAC (`BootInterfaceUnknown`), a plan that is
