@@ -1251,6 +1251,10 @@ record these decisions in the repository:
   preparation, allocation, and operation admission. Existing Milo cleanup does not
   establish the required purge ordering.
 
+[Production allocation admission](../production-admission/README.md) proposes
+the Milo admission, quota adapter, and project lifecycle decisions, and the
+changes they need in Milo.
+
 Packaging and internal encoding remain open. The contracts must also support a
 future managed-node consumer.
 
