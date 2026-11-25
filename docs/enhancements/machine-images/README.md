@@ -411,8 +411,11 @@ While the admission is open, the boot service serves the rendered payload to
 requests that carry the token, so a firmware retry within the window works.
 Production serves it over HTTPS with a site-issued certificate that the
 installer trusts. The installer writes it where the image's bootstrap format
-reads it on first boot. The boot service drops its copy when the admission
-closes.
+reads it on first boot, then reads it back from the target disk and reports
+its salted digest. The worker reports success only when that digest matches
+the operation's digest. Success never depends on what the installed OS does
+or prints, because Fleet does not own the guest. The boot service drops its
+copy when the admission closes.
 
 The site deletes every copy it made when the operation ends or a higher fence
 stops its worker. When the coordinator answers the result, federation deletes
@@ -434,8 +437,10 @@ Record these before production:
 
 These tests are required and not implemented:
 
-- A customer installs a published image, and the guest receives exactly its
-  user data and SSH keys.
+- A customer installs a published image, and the installer verifies exactly
+  its user data and SSH keys on the target disk before the install succeeds.
+- The installer reads back a wrong or truncated payload, and the install fails
+  without reporting `Succeeded`.
 - A customer names an image that is not published to their project, or writes
   their own MachineImage, and Fleet refuses it.
 - A withdrawn image admits no new install, and a running install of it
