@@ -39,8 +39,9 @@ local_phase() { cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o
 custody_digest() { "${harness[@]}" custody-digest --state "$state"; }
 # The Device's site store state: its fences and journal.
 store_state=$(python3 -c 'import sys; sys.path.insert(0, "hack/multiplane"); import harness; print(harness.STATE_PATH)')
+# A store with no state file yet, before any assignment, digests as empty.
 journal_digest() {
- runtime cat "$store_state" | python3 -c '
+ runtime sh -c "cat '$store_state' 2>/dev/null || true" | python3 -c '
 import hashlib,sys
 print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
@@ -82,6 +83,16 @@ case "$step" in
   [[ $a == Bound/* && $b == Pending/InsufficientCapacity ]] || { echo "unexpected contention status: A=$a B=$b" >&2; exit 1; }
   printf 'contention: consumer-a %s; consumer-b %s\n' "$a" "$b"
   scenario contention "$state"
+  ;;
+ tenant-isolation)
+  # Consumer A holds the Device and consumer B holds nothing. Nothing B's
+  # side asks for reaches the site or the server.
+  before=$(journal_digest)
+  audit_mark
+  "$host" tenant-isolation --config "$state/acceptance.json"
+  [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for an unheld tenant' >&2; exit 1; }
+  [[ -z $(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o name) ]] || { echo 'an assignment was delivered for an unheld tenant' >&2; exit 1; }
+  audit_unchanged
   ;;
  import-inert)
   scenario import-inert "$state"
