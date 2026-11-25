@@ -68,6 +68,9 @@ type CapacityInputs struct {
 	// DeviceSerial and DeviceSystemUUID are the Device's recorded identity.
 	DeviceSerial, DeviceSystemUUID string
 	DeviceActive                   bool
+	// DeviceReplaced is true when the Device under the capacity's name is
+	// another incarnation than the one the capacity was registered for.
+	DeviceReplaced bool
 	// Commissioning is nil when no commissioning has succeeded.
 	Commissioning *LatestCommissioning
 	CurrentPlan   CurrentPlanInput
@@ -117,6 +120,8 @@ func ProjectCapacity(in CapacityInputs) CapacityProjection {
 	var prepared metav1.Condition
 	plan := in.CurrentPlan
 	switch {
+	case in.DeviceReplaced:
+		prepared = no(ConditionPrepared, "DeviceReplaced", "the capacity was registered for another incarnation of its Device")
 	case latest == nil:
 		prepared = no(ConditionPrepared, "NotCommissioned", "no commissioning has succeeded")
 	case latest.Evidence.Result != ops.CommissioningPassed:
