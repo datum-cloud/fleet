@@ -230,7 +230,12 @@ The phases are then:
 2. **Contention.** Two consumers request one provider capacity. Custody grants one
    allocation; `verify-contention` independently reads Bound for A and
    Pending/InsufficientCapacity for B, and requires custody to name the one
-   MachineAllocation, A's.
+   MachineAllocation, A's. `tenant-isolation` then requires that B, which
+   holds nothing, cannot reach the server: its project serves no Device API,
+   the allocator refuses to install for it, and an installation named for its
+   unheld allocation is refused for `HolderMismatch`. The fence, the site
+   store and, in Redfish mode, the BMC audit stay unchanged, and nothing is
+   delivered.
 3. **Admission before effects.** The coordinator admits the `DeviceInstallation`
    and raises the Device's fence, then writes one immutable hub handoff carrying
    that exact assignment, before any effect. `await-delivery` requires the

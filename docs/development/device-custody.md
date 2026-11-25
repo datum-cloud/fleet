@@ -394,6 +394,7 @@ phases](../operations/multiplane.md#acceptance-phases) describe each one.
 | Importing sends nothing | Checked before any allocation: no operation, assignment, worker Job, journal entry or BMC effect |
 | Staff access | A staff token in the provider project reads custody and creates recoveries, and is forbidden everything else |
 | Contention | Custody names the one MachineAllocation, the winner's |
+| Tenant isolation | The losing consumer's project has no Device API, and an installation for its unheld allocation is refused before delivery |
 | Deadline | The coordinator restarts with a four-minute installation deadline for one admission, and a lab-only boot hook withholds every boot while it is armed, so the installer is never served |
 | Machine deleted mid-install | The customer deletes the Machine; release holds the Device and waits for the installation |
 | Recovery for the wrong hold | Staff name the held installation at the wrong fence; admission refuses it with nothing delivered or sent |

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -133,5 +135,85 @@ func (r *Runner) ProbeUnallocatable(ctx context.Context) error {
 		return fmt.Errorf("%w: an allocation exists for the probe Machine", errTerminal)
 	}
 	fmt.Println("probe-unallocatable: no eligible capacity while custody is Unverified; no allocation recorded")
+	return nil
+}
+
+// TenantIsolation runs while consumer A holds the Device and consumer B
+// holds nothing. B's project has no Device API at all; the allocator refuses
+// to install for B; and an installation the Metal provider names for B's
+// allocation, which never held the Device, is refused before anything is
+// delivered, with custody's fence unchanged.
+func (r *Runner) TenantIsolation(ctx context.Context) error {
+	if err := r.Consumers[1].API.List(ctx, &ops.DeviceCustodyList{}); !meta.IsNoMatchError(err) && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("%w: a consumer project serves Device custody: %v", errTerminal, err)
+	}
+	if err := r.Consumers[1].API.List(ctx, &ops.DeviceInstallationList{}); !meta.IsNoMatchError(err) && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("%w: a consumer project serves Device operations: %v", errTerminal, err)
+	}
+	if _, _, _, _, err := r.installation(ctx, 1); err == nil {
+		return fmt.Errorf("%w: the allocator installed for a consumer that holds nothing", errTerminal)
+	}
+	q, err := r.request(ctx, 1)
+	if err != nil {
+		return err
+	}
+	before := &ops.DeviceCustody{}
+	if err := r.Provider.API.Get(ctx, client.ObjectKey{Namespace: DeviceNamespace, Name: Device}, before); err != nil {
+		return err
+	}
+	if before.Spec.Holder.Type != ops.HolderAllocation {
+		return fmt.Errorf("%w: consumer A does not hold the Device", errTerminal)
+	}
+	var install fleet.Installation
+	if err := q.project.API.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "debian-pxe"}, &install); err != nil {
+		return err
+	}
+	device := &inventory.Device{}
+	if err := r.Provider.API.Get(ctx, client.ObjectKey{Namespace: DeviceNamespace, Name: Device}, device); err != nil {
+		return err
+	}
+	unheld := allocation.Name(q.alloc.Machine)
+	image, err := allocation.ParseImage(install.Spec.ImageRef.Name)
+	if err != nil {
+		return err
+	}
+	// B's allocation takes this name once B reuses the Device, so the refused
+	// installation names a synthetic Installation UID to keep its name apart
+	// from B's later installation. It labels the current Device incarnation,
+	// as the Metal provider does, so admission reaches the holder check.
+	const request = "00000000-0000-4000-8000-000000000174"
+	operation := &ops.DeviceInstallation{}
+	key := client.ObjectKey{Namespace: DeviceNamespace, Name: custody.InstallationName(unheld, request)}
+	if err := r.Provider.API.Get(ctx, key, operation); apierrors.IsNotFound(err) {
+		operation = &ops.DeviceInstallation{
+			ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace, Labels: map[string]string{
+				ops.LabelDeviceUID: string(device.UID), ops.LabelInstallationUID: request}},
+			Spec: ops.DeviceInstallationSpec{
+				OperationEnvelope: ops.OperationEnvelope{Creator: r.Allocator.ProviderCreator, DeviceRef: ops.DeviceReference{Name: device.Name},
+					Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: unheld}}},
+				Image: image, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+			},
+		}
+		if err := r.Provider.API.Create(ctx, operation); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	switch phase := operation.Status.Phase; {
+	case phase == ops.PhaseFailed && operation.Status.Reason == custody.ReasonHolderMismatch:
+	case phase.Ended() || phase.Running():
+		return fmt.Errorf("%w: the unheld installation is %s: %s", errTerminal, phase, operation.Status.Reason)
+	default:
+		return fmt.Errorf("%w: the unheld installation is %q", errPending, phase)
+	}
+	after := &ops.DeviceCustody{}
+	if err := r.Provider.API.Get(ctx, client.ObjectKey{Namespace: DeviceNamespace, Name: Device}, after); err != nil {
+		return err
+	}
+	if after.Spec.Fence != before.Spec.Fence || after.Spec.ActiveOperation != nil || operation.Status.Fence != 0 {
+		return fmt.Errorf("%w: the refused installation changed custody", errTerminal)
+	}
+	fmt.Println("tenant-isolation: consumer B's project has no Device API; the allocator refused to install for it; an installation for its unheld allocation was refused for HolderMismatch with the fence unchanged")
 	return nil
 }

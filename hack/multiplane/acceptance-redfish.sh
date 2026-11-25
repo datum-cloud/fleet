@@ -21,6 +21,7 @@ rf baseline 300
 rf discovery-faults 600
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"
 step verify-contention 120
+step tenant-isolation 300
 ph admit-install 900 "$host" admit-install --config "$state/acceptance.json"
 step await-delivery 300
 rf arm-lost-response 120

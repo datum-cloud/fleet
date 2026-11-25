@@ -16,6 +16,7 @@ step import-inert 300
 step staff-access 120
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"
 step verify-contention 120
+step tenant-isolation 300
 ph admit-install 900 "$host" admit-install --config "$state/acceptance.json"
 step await-delivery 300
 step partition 300
