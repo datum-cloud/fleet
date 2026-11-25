@@ -42,9 +42,10 @@ operations](../device-operations/README.md):
   IPAM, and the network owner connects the server's switch port to the
   customer's network. Fleet reports the result on the Machine.
 
-Fleet never configures a switch, a router, or a relay. The reservation feed,
-its evidence gates, and the Kea synchronizer exist today and take their values
-from site enrollment. Everything else here is proposed.
+Fleet never configures a switch, a router, or a relay. A reservation feed, two
+evidence gates, and a Kea synchronizer exist today and take their values from
+site enrollment. This enhancement changes all three, and everything in it is
+proposed.
 
 ## Motivation
 
@@ -119,7 +120,7 @@ server.
 | Relays, the provisioning VLAN, and each switch port's base profile | Network operations |
 | A switch port's membership in customer networks | The network owner's physical realizer |
 | Customer addresses and interfaces | NSO, through IPAM |
-| Interface requests for a Machine | The Fleet provider for Metal |
+| Interface requests for a Machine, and their UIDs on the allocation | The Fleet provider for Metal |
 | Machine network status | The Fleet provider for Metal |
 
 A switch port has two writers in the network owner's systems, each for its own
@@ -171,19 +172,20 @@ serve it. The requester deletes the claim when one of these holds:
 
 - The operation succeeded. Success already proves withdrawal.
 - The operation failed or was cancelled. Both mean the site published no
-  reservation, because the site counts publishing a reservation as an effect,
-  and an operation with an effect never ends `Failed`.
+  reservation, because the site records publishing a reservation as a sent
+  step before the reservation enters the feed, and an operation with a sent
+  step never ends `Failed`.
 - The operation ended `OutcomeUnknown`, and its recovery hold was settled.
   Every settling operation for an installation or a wipe is a later network
-  boot of the same NIC that succeeded, which proves that no DHCP instance still
-  serves that NIC.
+  boot that succeeded at the same site, and its success gate covers every
+  reservation the site ever published for the Device.
 - The Device was retired.
 
 A [custody `Retry`](../device-operations/README.md#unknown-outcomes) creates a
 new operation with a new name, so it claims a new address while the held claim
 stays. A claim whose operation will never be created, because the Installation
 or the release that would create it is gone, is deleted by its requester when
-the allocation is released.
+the allocation is released, and so is any claim still left then.
 
 #### Reservation lifecycle
 
@@ -216,10 +218,10 @@ The site worker gates effects on those reports:
    accepted after the operation's boot window opened, that serves the boot NIC
    at the operation's address.
 2. Before it reports success, it waits until at least one instance served the
-   reservation during the operation, and no instance's latest report serves
-   the boot NIC or the operation's address. An instance that went silent while
-   serving them keeps the outcome unknown until an operator removes it from
-   the site.
+   reservation during the operation, and no instance's latest report, however
+   old, serves any MAC or address the site ever published for the Device. An
+   instance that went silent while serving one keeps the outcome unknown until
+   an operator retires the instance at the site.
 
 #### Site DHCP service
 
@@ -265,8 +267,8 @@ Each site needs:
    which switch port each NIC is cabled to.
 9. **Names.** Fleet inventory's cable records use the switch and port names the
    network owner uses.
-10. **UEFI HTTP Boot.** The base configuration answers the HTTP Boot vendor class
-   with the boot service's URL, for firmware that boots over HTTP.
+10. **UEFI HTTP Boot.** The base configuration answers the HTTP Boot vendor
+    class with the boot service's URL, for firmware that boots over HTTP.
 
 ### Customer network attachment
 
