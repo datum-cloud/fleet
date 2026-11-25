@@ -90,11 +90,12 @@ describe('Installation plan page', () => {
     expect(screen.queryByText('No cable references recorded.')).toBeNull();
   });
 
-  it('names the directory once in the breadcrumb, as Installation plans', () => {
+  it('names the directory once, in the back link, as Installation plans', () => {
     show(PLAN);
-    const crumbs = document.querySelector('nav[aria-label="breadcrumb"]')!;
-    expect(crumbs.textContent?.match(/Installation plans/g)).toHaveLength(1);
-    expect(crumbs).not.toHaveTextContent(/Claims & registrations/);
+    const back = document.querySelector('.inventory-back-link')!;
+    expect(back).toHaveTextContent(/^Installation plans$/);
+    expect(document.querySelector('nav[aria-label="breadcrumb"]')).toBeNull();
+    expect(document.body).not.toHaveTextContent(/Claims & registrations/);
   });
 
   it('links the expected hardware to its model, and marks a registered device reporting another model in red', () => {

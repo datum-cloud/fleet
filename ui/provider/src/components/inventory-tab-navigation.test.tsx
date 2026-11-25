@@ -265,10 +265,11 @@ it('restores search and filters with detail, group, Back and Forward presentatio
   await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
   await act(async () => { await view.router.navigate(`${query}&record=${fixturePhysicalDevices[0].metadata.name}&namespace=default`); });
   await screen.findByRole('heading', { name: 'Example compute server' });
-  const breadcrumb = screen.getByRole('navigation', { name: 'breadcrumb' });
-  expect(breadcrumb).toHaveTextContent('EquipmentDevicesExample compute server');
-  expect(within(breadcrumb).getByRole('link', { name: 'Devices' })).toHaveAttribute('href', `/plugins/metal/inventory${query}`);
-  fireEvent.click(within(breadcrumb).getByRole('link', { name: 'Devices' }));
+  // The back link returns to the list with its search and filters.
+  const back = screen.getByRole('link', { name: 'Devices' });
+  expect(back).toHaveClass('inventory-back-link');
+  expect(back).toHaveAttribute('href', `/plugins/metal/inventory${query}`);
+  fireEvent.click(back);
   await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue('Example'));
   openFilters();
   expect(selectedValue(screen.getByRole('combobox', { name: 'Filter by facility' }))).toBe('default/example-facility');

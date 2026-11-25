@@ -1,4 +1,5 @@
 import { Button } from '@datum-cloud/datum-ui/button';
+import { RefreshCw } from 'lucide-react';
 import { Title } from '@datum-cloud/datum-ui/typography';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
@@ -23,7 +24,7 @@ import { DevicePlacementEdit } from './device-placement-edit';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { inventoryHref } from './inventory-location';
-import { RackDetail } from './rack-detail';
+import { RackDetail, RackSummary } from './rack-detail';
 import { devicePlacement, placementFacility, reportedPlacementLabel } from '../lib/device-placement';
 import { facilitySites } from '../lib/site-membership';
 import { deviceCatalog } from '../lib/hardware-catalog';
@@ -268,7 +269,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
   ];
   if (unauthenticated) return <InventoryAccessState status={401} />;
   const view = selected ? detailView(selected, placementEditor) : undefined;
-  const refresh = onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>;
+  const refresh = onRetry && <Button type="secondary" theme="borderless" size="icon" htmlType="button" aria-label="Refresh inventory" title="Refresh inventory" onClick={onRetry} icon={<RefreshCw size={16} aria-hidden="true" />} />;
   const titleActions = <>{refresh}{management}</>;
   return (
     <InventoryReadAccessContext.Provider value={error => setReadIssues(previous => ({ ...previous, ...readFailureIssues(error) }))}>
@@ -277,7 +278,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       <div className="inventory-body">
           {inventory.issues?.[section.kind] ? <><InventoryDirectoryHeading section={section} /><InventoryToolbar section={section} onRetry={onRetry} management={management} /><InventoryAccessState status={inventory.issues[section.kind]!.status} onRetry={onRetry} /></> : selectedName !== null ? (
             <>
-              <div ref={heading} tabIndex={-1} className="inventory-record-header"><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} description={view?.summary} actions={titleActions} /></div>
+              <div ref={heading} tabIndex={-1} className="inventory-record-header"><InventoryPageTitle title={selected ? recordName(selected) : 'Record not found'} category={section} directory={href(section.kind)} description={selected?.kind === 'Rack' ? <RackSummary rack={selected.record as PhysicalRecord} inventory={inventory} /> : view?.summary} actions={titleActions} /></div>
               {selected?.kind === 'Rack' ? <RackDetail rack={selected.record as PhysicalRecord} inventory={inventory} /> : selected && view ? (
                 <>
                   <IssueBanners issues={view.issues} />
