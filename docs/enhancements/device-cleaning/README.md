@@ -95,11 +95,14 @@ assurance levels. It changes these parts of that design:
 - **[Operations](../device-operations/README.md#operations):**
   `DeviceInstallation` target disks resolve through the [pinned
   manifest](#pinning-at-allocation).
+- **[Operation phases](../device-operations/README.md#operations):** a wipe
+  with a `Missing` or `Uncovered` step moves from `Admitted` to
+  `OutcomeUnknown` with nothing sent. The data on that drive is unaccounted
+  for, which is an outcome Fleet cannot prove.
 - **[Unknown outcomes](../device-operations/README.md#unknown-outcomes):**
-  the coordinator ends a wipe that cannot clean a drive `OutcomeUnknown`
-  without delivering it. `DeviceRecovery` gains a `DisposeDrive` decision that
-  settles that hold, and a `Release` holder in custody records disposed drives.
-  See [Planning a release](#planning-a-release).
+  such a hold is settled by a new `DeviceRecovery` decision, `DisposeDrive`,
+  not by `Retry`. A `Release` holder in custody records disposed drives. See
+  [Planning a release](#planning-a-release).
 - **[Capacity status](../device-operations/README.md#capacity-status):**
   `Available` adds the [cleaning check](#capacity-status).
 
@@ -249,11 +252,12 @@ Staff settle that hold with a `DeviceRecovery` decision `DisposeDrive`. It names
 the drive and how it was destroyed or removed, with a reference. Admission
 accepts it only under that hold, and only for a drive the held wipe could not
 clean and current discovery no longer reports, so an uncovered drive must be
-pulled first. `DisposeDrive` clears the hold. The coordinator records the
-disposal in custody with the `Release` holder, the planner omits the drive, and
-the release controller plans the next step. The record ends when the holder
-leaves `Release`. Replacing a drive does not settle the missing one. Staff can
-also retire the server under the same hold.
+pulled first. Admission refuses `Retry` for this hold, because a retried wipe
+would plan the same step. `DisposeDrive` clears the hold. The coordinator
+records the disposal in custody with the `Release` holder, the planner omits
+the drive, and the release controller plans the next wipe with the next step
+number. The record ends when the holder leaves `Release`. Replacing a drive
+does not settle the missing one.
 
 The `DeviceWipe` carries the plan:
 
@@ -282,8 +286,14 @@ spec:
       rule: nvme-ssd
       methods: [CryptographicErase, BlockErase]
       verify: {mode: Canary, samples: 64}
+    - name: disk-1
+      serial: EXAMPLE-SN-0002
+      model: EXAMPLE-NVME-3840
+      firmware: EX1.3
+      protocol: NVMe
+      capacityBytes: 3840755982336
       # Set only for a drive the plan cannot clean: Missing or Uncovered.
-      # state: Missing
+      state: Missing
 ```
 
 Admission checks that the plan equals the planner's output, as a check of the
