@@ -893,6 +893,32 @@ which a test pins, because the coordinator lists every registered kind.
 
 The boot interface is fixed at `primary`, like the allocator's in every mode.
 
+### The Redfish commissioning worker
+
+The Redfish worker for `DeviceCommissioning` is **implemented and inert**. It
+is tested against a TLS BMC stub, and no site registers it yet, so the lab
+emulator has not run it.
+
+- **Preflight.** It reads the system's identity, processors, memory, storage,
+  network interfaces and firmware inventory with GETs only, and compares them
+  with the plan and the admission snapshot. A mismatch is a `Failed` result
+  with nothing sent. The passing evidence is stored before burn-in sends
+  anything, and a resumed worker reuses it.
+- **Health.** Only `Warning` or `Critical` is unhealthy. Redfish lets a
+  component omit its health, and an omitted health counts as healthy.
+- **Disks.** Drives come from `Storage`, or from `SimpleStorage` when the
+  System has no `Storage`. A drive may sit under the System or under a
+  Chassis, and a drive linked twice counts once.
+- **Burn-in.** The site serves one burn-in image, and a plan that names
+  another digest is refused before anything is sent. The worker powers the
+  server off, arms a one-time network boot, powers it on once, and waits for
+  exactly one result receipt. The boot server passes the plan's duration to
+  the image. The burn-in times come from the journal, and a burn-in that
+  reported before the plan's duration is a `Failed` result.
+- **Evidence.** Strings the BMC supplies are cut to 128 bytes, and the
+  component lists are dropped before the verdict if the evidence would pass
+  the kind's limit.
+
 ## Points for a person
 
 These need a decision before the increment that depends on them.
