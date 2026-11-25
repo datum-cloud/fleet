@@ -7,6 +7,7 @@ for f in "$root"/hack/multiplane/*.sh; do bash -n "$f"; done
 python3 -m py_compile "$root"/hack/multiplane/*.py
 python3 "$root"/hack/multiplane/test-k8s-evidence.py "$root"
 python3 "$root"/hack/multiplane/test-redfish.py "$root"
+python3 "$root"/hack/multiplane/test-interrupt.py "$root"
 python3 -m py_compile "$root"/hack/redfish-lab/*.py
 exec python3 - "$root" <<'PY'
 import json, os, pathlib, re, stat, subprocess, sys, tempfile, time
@@ -160,9 +161,11 @@ with tempfile.TemporaryDirectory() as tmp:
         check('scan detects ' + secret[0], run(['scan', '--state', str(s)]).returncode == 1)
         check('scan redacts ' + secret[0], secret not in (s / 'evidence/leak.json').read_text())
 
-    # Result: status mapping and retained owned containers.
+    # Result: status mapping and retained owned containers. Exit 0 is passed
+    # only with the completion marker run.sh writes last.
     s = state(); (s / 'prefix').write_text('fleet-mp-0000aaaa\n')
-    for code, status in ((0, 'passed'), (1, 'failed'), (2, 'preflight-failed'), (3, 'blocked'), (4, 'timeout')):
+    (s / 'completed').write_text('')
+    for code, status in ((0, 'passed'), (1, 'failed'), (2, 'preflight-failed'), (3, 'blocked'), (4, 'timeout'), (143, 'interrupted'), (130, 'interrupted')):
         run(['result', '--state', str(s), '--exit-code', str(code)])
         res = json.loads((s / 'evidence/result.json').read_text())
         check('result ' + status, res['status'] == status and res['productionAuthority'] is False)
@@ -177,6 +180,9 @@ with tempfile.TemporaryDirectory() as tmp:
     (s / 'evidence/summary.json').write_text('{"acceptance":"failed"}')
     r = subprocess.run(['bash', str(root / 'hack/multiplane/teardown.sh'), str(s)], text=True, capture_output=True, env=base)
     check('teardown refuses failed summary', r.returncode == 1)
+    (s / 'evidence/summary.json').write_text('{"acceptance":"passed"}')
+    r = subprocess.run(['bash', str(root / 'hack/multiplane/teardown.sh'), str(s)], text=True, capture_output=True, env=base)
+    check('teardown refuses a summary that claims the run passed', r.returncode == 1)
     check('teardown refusal is effect-free', trace.read_text() == '')
     (s / 'prefix').write_text('other-prefix\n')
     r = subprocess.run(['bash', str(root / 'hack/multiplane/teardown.sh'), str(s), '--discard-unknown'], text=True, capture_output=True, env=base)
