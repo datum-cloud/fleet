@@ -641,8 +641,13 @@ func TestAStoredResultSurvivesARedelivery(t *testing.T) {
 	if err != nil || first.Phase != ops.PhaseSucceeded {
 		t.Fatalf("first = %+v %v", first, err)
 	}
-	f.access().Credentials = fixedCredentials{}
+	// A redelivery returns the stored result without running again.
 	again, err := f.runner.Run(context.Background(), f.assignment(1, "op-kept"))
+	if err != nil || again.Phase != ops.PhaseSucceeded || f.kind.sends.Load() != 2 {
+		t.Fatalf("redelivered = %+v %v, sends %d", again, err, f.kind.sends.Load())
+	}
+	f.access().Credentials = fixedCredentials{}
+	again, err = f.runner.Run(context.Background(), f.assignment(1, "op-kept"))
 	if err != nil || again.Phase != ops.PhaseSucceeded || f.kind.sends.Load() != 2 {
 		t.Fatalf("redelivered = %+v %v, sends %d", again, err, f.kind.sends.Load())
 	}
@@ -667,4 +672,87 @@ func TestAWorkerStoppedFromOutsideStoresNoResult(t *testing.T) {
 	if _, found, _ := f.runner.Results.Get(testDevice, "op-shutdown", 1); found {
 		t.Fatal("a worker shut down from outside stored a result")
 	}
+}
+
+func TestAShutdownWhileWaitingForTheRunLockStoresNothing(t *testing.T) {
+	f := newFixture(t, testUUID)
+	f.kind.block, f.kind.stuck = make(chan struct{}), true
+	done := make(chan struct{})
+	defer func() { close(f.kind.block); <-done }()
+	go func() { defer close(done); _, _ = f.runner.Run(context.Background(), f.assignment(1, "op-holder")) }()
+	waitFor(t, func() bool { return f.kind.sends.Load() == 1 })
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := f.runner.Run(ctx, f.assignment(2, "op-waiting")); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("shutdown while waiting: %v", err)
+	}
+	if _, found, _ := f.runner.Results.Get(testDevice, "op-waiting", 2); found {
+		t.Fatal("a worker shut down while waiting stored a result")
+	}
+}
+
+// TestALostLockWithJournaledStepsIsUnknown covers a newer assignment whose
+// operation already has journaled steps but which cannot stop an older
+// worker before its deadline.
+func TestALostLockWithJournaledStepsIsUnknown(t *testing.T) {
+	f := newFixture(t, testUUID)
+	f.kind.block, f.kind.stuck = make(chan struct{}), true
+	done := make(chan struct{})
+	defer func() { close(f.kind.block); <-done }()
+	go func() { defer close(done); _, _ = f.runner.Run(context.Background(), f.assignment(1, "op-old")) }()
+	waitFor(t, func() bool { return f.kind.sends.Load() == 1 })
+	if err := f.runner.Store.Raise(testDevice, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Store.Intend(testDevice, 2, "op-journaled", "power-off"); err != nil {
+		t.Fatal(err)
+	}
+	newer := f.assignment(2, "op-journaled")
+	newer.Deadline = time.Now().Add(300 * time.Millisecond)
+	result, err := f.runner.Run(context.Background(), newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Phase != ops.PhaseOutcomeUnknown || result.Reason != ReasonWorkerRunning {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAFenceRaisedBetweenJournalAndSendStopsTheStep(t *testing.T) {
+	f := newFixture(t, testUUID)
+	beforeSend = func() {
+		_ = f.runner.Store.Raise(testDevice, 2)
+	}
+	defer func() { beforeSend = nil }()
+	result, err := f.runner.Run(context.Background(), f.assignment(1, "op-raced"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Phase != ops.PhaseOutcomeUnknown || result.Reason != ReasonSuperseded || f.kind.sends.Load() != 0 {
+		t.Fatalf("result = %+v, sends %d", result, f.kind.sends.Load())
+	}
+}
+
+func TestAShutdownDuringTheChecksStoresNothing(t *testing.T) {
+	f := newFixture(t, testUUID)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The shutdown arrives while the framework looks up the credential, so
+	// the lookup's refusal must not be stored.
+	f.access().Credentials = cancellingCredentials{cancel: cancel}
+	if _, err := f.runner.Run(ctx, f.assignment(1, "op-checks")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("shutdown during checks: %v", err)
+	}
+	if _, found, _ := f.runner.Results.Get(testDevice, "op-checks", 1); found {
+		t.Fatal("a worker shut down during its checks stored a result")
+	}
+}
+
+// cancellingCredentials cancels the worker's context, as a shutdown would,
+// and then reports no credential.
+type cancellingCredentials struct{ cancel context.CancelFunc }
+
+func (c cancellingCredentials) Lookup(context.Context, string) (bmcdiscovery.Credential, bool, error) {
+	c.cancel()
+	return bmcdiscovery.Credential{}, false, nil
 }

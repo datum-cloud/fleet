@@ -351,11 +351,13 @@ func TestAServerThatNeverPowersOffEndsTheStep(t *testing.T) {
 	installation := r.Kinds["DeviceInstallation"].(Installation)
 	installation.PowerOffBound = 100 * time.Millisecond
 	r.Kinds["DeviceInstallation"] = installation
+	started := time.Now()
 	result, err := r.Run(context.Background(), assignment(l, "DeviceInstallation", "op-stuck-on", 1, installSpec()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Phase != ops.PhaseOutcomeUnknown || l.onCount() != 0 {
-		t.Fatalf("result = %+v, %d power-ons", result, l.onCount())
+	// The bound ends the step, long before the one-minute deadline.
+	if result.Phase != ops.PhaseOutcomeUnknown || result.Reason != site.ReasonStep || l.onCount() != 0 || time.Since(started) > 10*time.Second {
+		t.Fatalf("result = %+v, %d power-ons after %s", result, l.onCount(), time.Since(started))
 	}
 }

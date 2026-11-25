@@ -123,13 +123,22 @@ func (w *Work) Store() *Store { return w.store }
 
 // Journaled reports whether a step of this operation is journaled done.
 func (w *Work) Journaled(step string) bool {
+	_, done := w.JournaledAt(step)
+	return done
+}
+
+// JournaledAt returns when a step of this operation was journaled done.
+func (w *Work) JournaledAt(step string) (time.Time, bool) {
 	journal, err := w.store.Journal(w.Device)
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
-	return slices.ContainsFunc(journal, func(entry Entry) bool {
-		return entry.Operation == w.Operation.UID && entry.Step == step && entry.State == StepDone
-	})
+	for _, entry := range journal {
+		if entry.Operation == w.Operation.UID && entry.Step == step && entry.State == StepDone {
+			return entry.At, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // Step journals a step, then sends it, then records it done. A step found
@@ -179,6 +188,9 @@ func (w *Work) Step(ctx context.Context, step Step) error {
 		w.sent = true
 		// The fence is checked again just before the send, so a newer
 		// admission stored after the step was journaled stops it.
+		if beforeSend != nil {
+			beforeSend()
+		}
 		if fence, _, err := w.store.Current(w.Device); err != nil {
 			return err
 		} else if fence > w.Fence {
@@ -195,6 +207,10 @@ func (w *Work) Step(ctx context.Context, step Step) error {
 	}
 	return nil
 }
+
+// beforeSend runs between journaling a step and re-checking the fence. Only
+// tests set it.
+var beforeSend func()
 
 var (
 	errSuperseded  = errors.New("a newer operation was admitted for the Device")
@@ -308,6 +324,9 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 	}
 	lock, err := r.acquire(ctx, assignment)
 	switch {
+	case err != nil && ctx.Err() != nil:
+		// Stopped from outside while waiting: store nothing.
+		return custody.SiteResult{}, context.Cause(ctx)
 	case errors.Is(err, ErrStaleFence):
 		return custody.SiteResult{}, err
 	case errors.Is(err, errWorkerRunning):

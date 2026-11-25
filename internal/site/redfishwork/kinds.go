@@ -245,8 +245,8 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 	var evidence []ops.StepEvidence
 	for _, ph := range phases {
 		// A phase verified by an earlier worker is done; resume after it.
-		if work.Journaled(ph.name + "-verified") {
-			evidence = append(evidence, ops.StepEvidence{Name: ph.name, CompletedAt: metaNow(c.now())})
+		if at, done := work.JournaledAt(ph.name + "-verified"); done {
+			evidence = append(evidence, ops.StepEvidence{Name: ph.name, CompletedAt: metaNow(at)})
 			continue
 		}
 		// The boot admission is checked only before this phase's boot is
