@@ -746,12 +746,19 @@ lab's targets each have one emulated NVMe drive.
   pages nobody. After the grace it creates the wipe. Admission checks its
   plan, then admits it and ends it `OutcomeUnknown` with that reason in the
   same custody update (a kind's `HoldOnAdmit`), so the fence rises, nothing is
-  delivered, and the server is under a recovery hold.
+  delivered, and the server is under a recovery hold. If that wipe was
+  settling an installation hold, the drive hold replaces it: every drive the
+  installation could have written is then wiped by a later step or recorded
+  as disposed of, which is what settling it requires. A rebuild holds the
+  installation again, which fails closed. Each blocked plan gets its own
+  grace: settling a drive hold restarts it.
 - **DisposeDrive.** A `DeviceRecovery` with decision `DisposeDrive` names the
   hold, the drive, and how it was destroyed or removed, with a reference. It
   is admitted only from a `Release` holder under that hold, for a drive the
   held wipe planned as `Missing` or `Uncovered` and that discovery no longer
-  reports, so an uncovered drive is pulled first. Retry is refused for this
+  reports, so an uncovered drive is pulled first. Discovery proves only that
+  no drive reports the planned serial number; for a drive whose serial
+  changed, the recorded method and reference are the proof. Retry is refused for this
   hold, because a retried wipe would plan the same drive. Like every
   recovery, it applies once the sites report its fence. It clears the hold
   and records the drive in custody's `holder.disposedDrives`; the planner

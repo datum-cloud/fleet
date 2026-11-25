@@ -187,15 +187,25 @@ func (a *Allocator) clean(ctx context.Context, state *ops.DeviceCustody, allocat
 		return a.startWipe(ctx, allocation, fleetv1.WipeReference{Name: custody.WipeName(allocation.Name, step), Step: step})
 	case ops.PhaseOutcomeUnknown:
 		hold := state.Spec.RecoveryHold
-		if hold != nil && hold.Kind == "DeviceWipe" && hold.Name == current.Name && hold.RetryName != "" {
+		drives := wipe.Status.Reason == custody.ReasonDriveMissing || wipe.Status.Reason == custody.ReasonDriveUncovered
+		// A drive hold is settled by DisposeDrive, never by a Retry, even
+		// when it carries the lineage of a retried wipe.
+		if !drives && hold != nil && hold.Kind == "DeviceWipe" && hold.Name == current.Name && hold.RetryName != "" {
 			return a.startWipe(ctx, allocation, fleetv1.WipeReference{Name: hold.RetryName, Step: current.Step + 1})
 		}
 		// A wipe held for a drive it could not clean, whose hold staff
 		// settled with DisposeDrive: plan the next step without that drive.
 		held := hold != nil && hold.Kind == "DeviceWipe" && hold.Name == current.Name
-		if !held && (wipe.Status.Reason == custody.ReasonDriveMissing || wipe.Status.Reason == custody.ReasonDriveUncovered) {
+		if !held && drives {
 			if current.Step >= maxPlanSteps {
 				return false, fmt.Errorf("%w: %s", ErrWipeFailed, wipe.Status.Reason)
+			}
+			// Restart the grace: another drive that cannot be cleaned now
+			// gets its own wait before it holds the server again.
+			if apiMeta.RemoveStatusCondition(&allocation.Status.Conditions, ConditionCleaning) {
+				if err := a.Provider.Status().Update(ctx, allocation); err != nil {
+					return false, err
+				}
 			}
 			step := current.Step + 1
 			return a.startWipe(ctx, allocation, fleetv1.WipeReference{Name: custody.WipeName(allocation.Name, step), Step: step})
@@ -264,6 +274,9 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 		return errNothingToClean
 	}
 	if blocked := blockedReason(plan); blocked != nil {
+		// The grace runs on the allocator's clock from when the plan first
+		// blocked.
+		blocked.LastTransitionTime = metav1.NewTime(a.now())
 		if changed := apiMeta.SetStatusCondition(&allocation.Status.Conditions, *blocked); changed {
 			if err := a.Provider.Status().Update(ctx, allocation); err != nil {
 				return err
