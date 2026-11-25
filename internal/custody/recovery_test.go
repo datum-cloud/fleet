@@ -107,6 +107,33 @@ func TestRecovery(t *testing.T) {
 		e.requirePhase(blocked, ops.PhaseFailed, ReasonHolderMismatch)
 	})
 
+	t.Run("only Retire and Resolve skip current discovery and the shared-key check", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		hold := e.holdOn(device)
+		key := fmt.Sprintf("%064x", n)
+		// The BMC stopped answering: discovery is old, and another live
+		// Device now records the same key.
+		e.discover(device, key, e.clock.Now().Add(-DefaultDiscoveryMaxAge-time.Minute))
+		fence := e.custody(device.Name).Spec.Fence
+		settle := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionSettle, Hold: heldRef(hold), Evidence: ops.RecoveryEvidence{ObservedAt: metav1.NewTime(e.clock.Now().Add(time.Minute)), Summary: "s", Data: map[string]string{"state": "On"}}})
+		e.settle(device.Name)
+		e.requirePhase(settle, ops.PhaseFailed, ReasonIdentityNotCurrent)
+		retry := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
+		e.settle(device.Name)
+		e.requirePhase(retry, ops.PhaseFailed, ReasonIdentityNotCurrent)
+		e.requireUntouched(device.Name, fence)
+		e.device(fmt.Sprintf("server-twin-%03d", n), uid(900+n), key)
+		retire := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetire, Hold: heldRef(hold)})
+		e.settle(device.Name)
+		e.sites.report(device.Name, e.custody(device.Name).Spec.Fence)
+		e.settle(device.Name)
+		e.requirePhase(retire, ops.PhaseSucceeded, "")
+		if holder := e.custody(device.Name).Spec.Holder.Type; holder != ops.HolderRetired {
+			t.Fatalf("holder = %s", holder)
+		}
+	})
+
 	t.Run("a recovery whose sites never confirm ends Failed and keeps the hold", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()

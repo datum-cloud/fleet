@@ -40,6 +40,11 @@ func TestRegistryRejectsIncompleteKindsAndRows(t *testing.T) {
 	if err := registry.Register(inert); err == nil {
 		t.Fatal("a non-effectful kind without Apply registered")
 	}
+	skipping := testKinds()[1]
+	skipping.SkipsDiscovery = func(ops.Operation) bool { return true }
+	if err := registry.Register(skipping); err == nil {
+		t.Fatal("a kind that reaches the server skipped discovery")
+	}
 	if err := registry.AddRule(Rule{Kind: testStaffKind, Creator: CreatorStaff, Authority: AuthorityService, Queue: true}); err == nil {
 		t.Fatal("a staff row that queues was added")
 	}

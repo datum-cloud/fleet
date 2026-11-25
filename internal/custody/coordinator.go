@@ -648,8 +648,8 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 		return fail(ReasonOperationActive, "another operation is running, and staff operations never wait")
 	}
-	// Preconditions 5 and 6 concern what can reach the BMC.
-	if kind.Effectful {
+	// Preconditions 5 and 6: current discovery and a unique BMC key.
+	if kind.checksDiscovery(operation) {
 		if refusal := c.identityCurrent(device, now); refusal != nil {
 			if row.Queue {
 				return decision{phase: ops.PhasePending, reason: refusal.Reason, message: refusal.Message}

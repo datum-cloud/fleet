@@ -160,6 +160,12 @@ func DeviceRecoveryKind() Kind {
 		Naming:   GeneratedName,
 		Deadline: RecoveryDeadline,
 		Variant:  func(operation ops.Operation) string { return string(operation.(*ops.DeviceRecovery).Spec.Decision) },
+		// Retire and Resolve must work on a server whose BMC is
+		// unreachable. Settle and Retry still need current discovery.
+		SkipsDiscovery: func(operation ops.Operation) bool {
+			decision := operation.(*ops.DeviceRecovery).Spec.Decision
+			return decision == ops.DecisionRetire || decision == ops.DecisionResolve
+		},
 		Check: func(ctx context.Context, admission *Admission) *Refusal {
 			return checkRecovery(ctx, admission.Operation.(*ops.DeviceRecovery), admission.Custody, admission.Registry, admission)
 		},

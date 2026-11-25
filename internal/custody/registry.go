@@ -58,6 +58,12 @@ type Kind struct {
 	// DeviceRecovery, that passes its deadline ends Failed: nothing it does
 	// can leave the server in an unknown state.
 	Effectful bool
+	// SkipsDiscovery, when it returns true, exempts the operation from
+	// admission checks 5 (current discovery) and 6 (a unique BMC key).
+	// Only a kind that cannot reach the server may set it. DeviceRecovery
+	// sets it for Retire and Resolve, which must work when a BMC is
+	// unreachable. The Device UID is always checked.
+	SkipsDiscovery func(ops.Operation) bool
 	// Supersedes means a newer pending operation of this kind for the same
 	// authority cancels an older pending one.
 	Supersedes bool
@@ -85,6 +91,10 @@ type Kind struct {
 	// Retires reports whether a succeeded operation of this kind retired the
 	// Device. Rebuild reads it.
 	Retires func(ops.Operation) bool
+}
+
+func (k *Kind) checksDiscovery(operation ops.Operation) bool {
+	return k.SkipsDiscovery == nil || !k.SkipsDiscovery(operation)
 }
 
 // SettleRule says a success of the owning kind settles a hold of Held. When
@@ -179,6 +189,9 @@ func (r *Registry) Register(kind Kind) error {
 	}
 	if !kind.Effectful && kind.Apply == nil {
 		return fmt.Errorf("%s: a non-effectful kind needs Apply", name)
+	}
+	if kind.Effectful && kind.SkipsDiscovery != nil {
+		return fmt.Errorf("%s: a kind that can reach the server always checks discovery", name)
 	}
 	if _, ok := r.kinds[name]; ok {
 		return fmt.Errorf("%s is already registered", name)
