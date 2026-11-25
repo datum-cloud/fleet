@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,8 @@ type hypervisor struct {
 	// networkReceipt is the receipt a network boot's script carries, as the
 	// boot server reads it from the open admission.
 	networkReceipt func() string
+	// failNetwork makes creating the provisioning network fail.
+	failNetwork bool
 }
 
 var receiptArg = regexp.MustCompile(`fleet.receipt=([0-9a-f]{64})`)
@@ -88,6 +91,10 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 		h.running[name] = log
 		if !h.hold {
 			delete(h.running, name)
+		}
+	case "net-create":
+		if h.failNetwork {
+			return "", errors.New("net-create failed")
 		}
 	case "net-dhcp-leases":
 		return guestMAC + " 192.168.77.2/24", nil
@@ -437,4 +444,58 @@ func TestTheBootServerServesTheSeedOnlyWhileOpen(t *testing.T) {
 	if code, _ := get("seed.cpio"); code != http.StatusForbidden {
 		t.Fatalf("seed after close = %d", code)
 	}
+}
+
+// TestEveryEndDropsTheSeed: a seed is customer data in the site store, so
+// an install that fails before its network boot opens, or whose admission
+// expires, drops it as surely as a clean close does, and a newer fence
+// drops a superseded operation's.
+func TestEveryEndDropsTheSeed(t *testing.T) {
+	seed := func(r *rig, uid string) []byte {
+		var boot Boot
+		if _, err := r.store.GetRecord(device, bootRecords, Key(uid), &boot); err != nil {
+			t.Fatal(err)
+		}
+		return boot.Seed
+	}
+	for name, setup := range map[string]func(*rig){
+		"a failure before the admission opens": func(r *rig) { r.vm.failNetwork = true },
+		"an admission that expires":            func(r *rig) { r.config.BootWindow = time.Nanosecond },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			r.config.PXE = true
+			setup(r)
+			r.runner.Kinds["DeviceInstallation"] = Installation{r.config}
+			r.runner.Payloads = site.StorePayloads{Store: r.store}
+			uid := "00000000-0000-4000-8000-000000000221"
+			assignment, _ := r.sealedInstall(uid, 2)
+			result, err := r.runner.Run(context.Background(), assignment)
+			if err != nil || result.Phase == ops.PhaseSucceeded {
+				t.Fatalf("result = %+v, %v", result, err)
+			}
+			if got := seed(r, uid); len(got) != 0 {
+				t.Fatalf("the site kept %d bytes of seed after the install ended", len(got))
+			}
+		})
+	}
+	t.Run("a newer fence", func(t *testing.T) {
+		r := newRig(t)
+		uid := "00000000-0000-4000-8000-000000000222"
+		boot := Boot{Operation: uid, Fence: 2, Receipt: strings.Repeat("d", 64), Token: strings.Repeat("c", 64), Expires: time.Now().Add(time.Minute), Seed: []byte("seed-bytes")}
+		if err := r.store.Raise(device, 2); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.store.PutRecord(device, 2, bootRecords, Key(uid), boot); err != nil {
+			t.Fatal(err)
+		}
+		// A recovery only raises the fence; nothing of its own ends.
+		recovery := r.assignment("DeviceRecovery", "00000000-0000-4000-8000-000000000223", 3, wipeSpec())
+		if err := r.runner.Fence(context.Background(), recovery); err != nil {
+			t.Fatal(err)
+		}
+		if got := seed(r, uid); len(got) != 0 {
+			t.Fatalf("a superseded admission kept %d bytes of seed", len(got))
+		}
+	})
 }

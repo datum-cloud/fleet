@@ -2,6 +2,7 @@ package allocation
 
 import (
 	"encoding/json"
+	"slices"
 	"sync"
 	"testing"
 
@@ -86,6 +87,24 @@ func TestBootstrapReachesTheServerAndEveryCopyIsDeleted(t *testing.T) {
 		t.Fatalf("retry = %v, %v; payloads %d, before %d", again.Spec.Bootstrap, err, e.payloads(), before)
 	}
 
+	// A pass that delivers the active operation tells the site to keep its
+	// payload. A pass that fails to deliver any Device sweeps nothing.
+	_ = e.loop.Pass(e.ctx)
+	if kept, _ := e.site.lastSweep(); !slices.Contains(kept, operation.Name) {
+		t.Fatalf("the active operation's payload was not kept: %v", kept)
+	}
+	e.site.mu.Lock()
+	e.site.failDeliver = true
+	e.site.mu.Unlock()
+	_, sweeps := e.site.lastSweep()
+	_ = e.loop.Pass(e.ctx)
+	if _, after := e.site.lastSweep(); after != sweeps {
+		t.Fatal("a pass that failed to deliver swept payloads")
+	}
+	e.site.mu.Lock()
+	e.site.failDeliver = false
+	e.site.mu.Unlock()
+
 	e.until("the installation succeeds", func() bool {
 		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(operation), operation); err != nil {
 			t.Fatal(err)
@@ -106,6 +125,11 @@ func TestBootstrapReachesTheServerAndEveryCopyIsDeleted(t *testing.T) {
 	// The ended operation's payload, the orphan and the concurrent loser are
 	// deleted, and the site kept no copy.
 	e.until("no sealed payload remains", func() bool { return e.payloads() == 0 })
+	// Once the operation ended, the site is told to keep nothing for it.
+	_ = e.loop.Pass(e.ctx)
+	if kept, _ := e.site.lastSweep(); slices.Contains(kept, operation.Name) {
+		t.Fatalf("an ended operation's payload was kept: %v", kept)
+	}
 	if records, err := e.store.Records("payload"); err != nil || len(records) != 0 {
 		t.Fatalf("site payloads = %d, %v", len(records), err)
 	}

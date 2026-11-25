@@ -227,6 +227,28 @@ type Boot struct {
 
 const bootRecords = "boot"
 
+var _ site.Scrubber = Installation{}
+
+// Scrub drops the seed from every boot admission of the Device below the
+// fence, however its install ended.
+func (Installation) Scrub(store *site.Store, device string, below int64) error {
+	records, err := store.Records(bootRecords)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		var boot Boot
+		if record.Device != device || json.Unmarshal(record.Data, &boot) != nil || boot.Fence >= below || len(boot.Seed) == 0 {
+			continue
+		}
+		boot.Seed = nil
+		if err := store.RewriteRecord(device, bootRecords, record.Name, boot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // boot reads the operation's boot admission, creating it once. The receipt is
 // fixed before any boot, so a replay waits for the same receipt.
 func (c Config) boot(ctx context.Context, work *site.Work, mode string) (Boot, error) {

@@ -137,8 +137,10 @@ proposal's API names are provisional. Each piece below is marked
   names are removed.
 - **Guest.** The worker renders the verified payload as a NoCloud seed archive
   and attaches it to the operation's boot admission. The boot service serves
-  it as a second initrd only while the admission is open, and the admission
-  drops it when it closes. The installer copies it to the disk, puts the user
+  it as a second initrd only while the admission is open. The site drops the
+  seed when the admission closes, when the operation's result is stored
+  however it ended, and when a newer fence for the Device is raised, so no
+  failed, expired or superseded install leaves it behind. The installer copies it to the disk, puts the user
   data where NoCloud reads it and the keys in the default user's
   `authorized_keys`. On its first disk boot the installed system prints the
   salted digest of what it found, and the worker requires exactly that line

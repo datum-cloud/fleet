@@ -19,6 +19,7 @@ import (
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
@@ -528,3 +529,33 @@ func (p failingPayloads) Get(context.Context, site.Assignment) (*site.Payload, e
 }
 func (failingPayloads) Delete(context.Context, site.Assignment) error { return nil }
 func (failingPayloads) Prune(context.Context, string) error           { return nil }
+
+// TestASweepDeletesOnlyThePayloadItListed: each delete carries the UID the
+// sweep listed, so a payload replaced since the list is never removed.
+func TestASweepDeletesOnlyThePayloadItListed(t *testing.T) {
+	f := newFixture(t)
+	ended, payload := f.sealedWipe(4, "00000000-0000-4000-8000-000000000161")
+	if err := f.hub.Deliver(f.ctx, ended, &payload); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := f.hub.payloads().Get(f.ctx, PayloadName(ended), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake API server assigns no UIDs; this one does.
+	listed.SetUID("payload-uid-1")
+	if listed, err = f.hub.payloads().Update(f.ctx, listed, metav1.UpdateOptions{}); err != nil || listed.GetUID() == "" {
+		t.Fatalf("set UID: %v", err)
+	}
+	var preconditions []*metav1.Preconditions
+	f.hub.API.(*fake.FakeDynamicClient).PrependReactor("delete", "machineallocationpayloads", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		preconditions = append(preconditions, action.(k8stesting.DeleteActionImpl).GetDeleteOptions().Preconditions)
+		return false, nil, nil
+	})
+	if err := f.hub.SweepPayloads(f.ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(preconditions) != 1 || preconditions[0] == nil || preconditions[0].UID == nil || *preconditions[0].UID != listed.GetUID() {
+		t.Fatalf("delete preconditions = %+v, want the listed UID %s", preconditions, listed.GetUID())
+	}
+}

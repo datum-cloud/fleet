@@ -450,3 +450,38 @@ func TestBootstrapDataReachesTheInstalledSystemOverRedfish(t *testing.T) {
 		})
 	}
 }
+
+// TestAFailedRedfishInstallDropsItsSeed: an admission that expires before
+// the network boot ends the install without a clean close, and the site
+// still drops the seed it held.
+func TestAFailedRedfishInstallDropsItsSeed(t *testing.T) {
+	l := newLab(t)
+	r := runner(t, l)
+	installation := r.Kinds["DeviceInstallation"].(Installation)
+	installation.BootWindow = time.Nanosecond
+	r.Kinds["DeviceInstallation"] = installation
+	r.Payloads = site.StorePayloads{Store: r.Store}
+	salt := make([]byte, 32)
+	data := []byte(`{"userData":"#cloud-config\n"}`)
+	hash := sha256.New()
+	hash.Write(salt)
+	hash.Write(data)
+	payload := site.Payload{Ref: "sealed-example", Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), Salt: salt, Data: data}
+	spec := installSpec()
+	spec.Bootstrap = &ops.SealedInput{Ref: payload.Ref, Digest: payload.Digest}
+	a := assignment(l, "DeviceInstallation", "op-expired", 1, spec)
+	if err := r.Store.Raise(device, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Payloads.(site.StorePayloads).Put(a, payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := r.Run(context.Background(), a)
+	if err != nil || result.Phase == ops.PhaseSucceeded {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+	var boot Boot
+	if found, err := r.Store.GetRecord(device, bootRecords, a.Key(), &boot); err != nil || !found || len(boot.Seed) != 0 {
+		t.Fatalf("the site kept %d bytes of seed: %v, %v", len(boot.Seed), found, err)
+	}
+}

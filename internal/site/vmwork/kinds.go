@@ -177,6 +177,28 @@ type Boot struct {
 	Seed []byte `json:"seed,omitempty"`
 }
 
+var _ site.Scrubber = Installation{}
+
+// Scrub drops the seed from every boot admission of the Device below the
+// fence, however its install ended.
+func (Installation) Scrub(store *site.Store, device string, below int64) error {
+	records, err := store.Records(bootRecords)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		var boot Boot
+		if record.Device != device || json.Unmarshal(record.Data, &boot) != nil || boot.Fence >= below || len(boot.Seed) == 0 {
+			continue
+		}
+		boot.Seed = nil
+		if err := store.RewriteRecord(device, bootRecords, record.Name, boot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // closeBoot closes an admission and drops its seed.
 func closeBoot(boot *Boot) { boot.Open, boot.Closed, boot.Seed = false, true, nil }
 
