@@ -134,13 +134,13 @@ or while they were bypassed. Fleet does not allocate it and reports
 
 Fleet retains the username and UID, never a token or group list.
 
-In Milo, the webhook also refuses a Machine whose tenant is not a project. Fleet
-names a tenant only with a typed consumer reference, such as
+Fleet names a tenant only with a typed consumer reference, such as
 `{apiGroup: resourcemanager.miloapis.com, kind: Project, name: consumer-a}`,
-and never with a bare project field. Fleet's single tenancy lookup resolves
-that reference to the tenant's identity, quota consumer, and API client. The
-webhook and every later step use it rather than resolving a project
-themselves.
+and never with a bare project field. The tenant is a Milo Project, or a
+Namespace in standalone mode, and admission refuses any other kind. Fleet's
+single tenancy lookup resolves the reference to the tenant's identity, quota
+consumer, and API client. The webhook and every later step use it rather than
+resolving a project themselves.
 
 ### Request authorization
 
@@ -179,8 +179,9 @@ The fence of the provider project also covers provider retirement.
 Each MachineAllocation is named from its Machine, as Device custody already
 requires. It names its tenant with the consumer reference and records the
 generation of the consumer fence and of the provider fence. Standalone mode
-names a Namespace as the consumer, and has no Milo fence. The allocator
-commits a Machine in this order:
+runs without Milo, so it has neither fence, and the fence reads and checks in
+steps 1, 2, and 4 do not apply there. The allocator commits a Machine in this
+order:
 
 1. Read both fences from the API server, not a cache.
 2. Check admission for the retained creator with fresh access reviews, an
@@ -203,7 +204,7 @@ never held a Device.
 When a fence moves, Fleet's fence controller lists, from the API server, every
 `Pending` allocation that records that fence: by consumer reference for a
 consumer fence, across every provider namespace that holds allocations, and by
-provider project for a provider fence. It deletes each one recorded at an
+provider Project for a provider fence. It deletes each one recorded at an
 older generation, with the same preconditions. It acknowledges the new
 generation only after a complete list contains no such allocation.
 
@@ -248,10 +249,10 @@ than the fence covers:
 
 Fleet creates one ResourceClaim per Machine, named from the Machine UID within
 its project, after the access and project checks pass. The claim's consumer is
-the allocation's consumer reference, resolved through the tenancy lookup. The
-claim carries Fleet's quota custody finalizer from the moment it is created.
-Milo keeps counting a claim while a finalizer holds it, so deleting the claim,
-or purging its namespace, does not free quota early.
+the allocation's consumer reference. The claim carries Fleet's quota custody
+finalizer from the moment it is created. Milo keeps counting a claim while a
+finalizer holds it, so deleting the claim, or purging its namespace, does not
+free quota early.
 
 Fleet releases the claim when release closes the quota gate after cleaning, or
 when a Machine is refused or deleted before it holds an allocation:
@@ -444,6 +445,10 @@ Record these decisions before production allocation is enabled:
 These tests are required and not implemented:
 
 - A client sends a creator, and the webhook replaces it with the caller.
+- A Machine whose tenant is neither a Milo Project nor, in standalone mode, a
+  Namespace is refused.
+- A Machine's allocation and quota claim both name the Machine's tenant as
+  their consumer.
 - A client changes, adds, or removes the creator, and admission refuses it.
 - A Machine without a creator never binds.
 - A caller without class `use` cannot create a Machine.
