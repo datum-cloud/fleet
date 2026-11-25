@@ -226,18 +226,24 @@ func boot(command, origin, extraMAC, syncToken, tlsCert, tlsKey string) error {
 		fmt.Println(summary)
 		return nil
 	}
+	if redfishMode() && command == "dhcp-feed" {
+		// Reservations come from the admitted operations in the store, and
+		// reports go beside the boot evidence. The feed serves no boot
+		// artifacts, so it needs no boot origin or installer image.
+		root, err := bootRoot()
+		if err != nil {
+			return err
+		}
+		token, err := os.ReadFile(syncToken)
+		if err != nil {
+			return fmt.Errorf("DHCP synchronizer token: %w", err)
+		}
+		return redfishwork.BootServer{Store: store, BootRoot: root}.ServeDHCP(strings.TrimSpace(string(token)), tlsCert, tlsKey)
+	}
 	if redfishMode() {
 		server, err := redfishBootServer(store)
 		if err != nil {
 			return err
-		}
-		if command == "dhcp-feed" {
-			// Reservations come from the admitted operations in the store.
-			token, err := os.ReadFile(syncToken)
-			if err != nil {
-				return fmt.Errorf("DHCP synchronizer token: %w", err)
-			}
-			return server.ServeDHCP(strings.TrimSpace(string(token)), tlsCert, tlsKey)
 		}
 		return serveBoot(server.Handler(), vmwork.DefaultBootWindow*2)
 	}
