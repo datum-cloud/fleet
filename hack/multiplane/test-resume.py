@@ -89,6 +89,7 @@ with tempfile.TemporaryDirectory() as t:
     check('RESULT line says resumed', r.stdout.startswith('RESULT resumed'), r.stdout)
     check('result carries the resume record', (result.get('resumed') or {}).get('from') == 'release')
     check('no summary pointer for a resumed run', result['summary'] is None)
+    check('a resumed run does not claim custody was released', result['custody'].startswith('unverified'), result['custody'])
     r = run(['result', '--state', str(s), '--exit-code', '1'], env)
     result = json.loads((s / 'evidence/result.json').read_text())
     check('a failed resumed run is failed', result['status'] == 'failed' and result['resumed'] and result['failedPhase'] is None, str(result))
@@ -125,6 +126,57 @@ with tempfile.TemporaryDirectory() as t:
     check('own retained containers are allowed', r.returncode == 0, r.stdout)
     r = run(['preflight', '--checks', 'contention', '--state', str(s), '--allow-prefix', 'fleet-mp-0000aaaa'], cenv)
     check('only its own', r.returncode == 2, r.stdout)
+
+# The inotify record: a resumed run sets the limit again only after stop.sh
+# restored it, and an unrestored record keeps the original value.
+FAKE_DOCKER = '''#!/bin/sh
+case "$1" in
+ context) echo unix:///Users/x/.colima/fleet-acceptance-tcg/docker.sock ;;
+ exec) case "$3" in cat) cat "$FAKE_VALUE" ;; sysctl) echo "${5#*=}" > "$FAKE_VALUE" ;; esac ;;
+esac
+'''
+with tempfile.TemporaryDirectory() as t:
+    tmp = pathlib.Path(t)
+    (tmp / 'bin').mkdir()
+    (tmp / 'bin/docker').write_text(FAKE_DOCKER)
+    (tmp / 'bin/docker').chmod(0o755)
+    value = tmp / 'value'
+    env = dict(os.environ, PATH=str(tmp / 'bin') + os.pathsep + os.environ['PATH'], FAKE_VALUE=str(value), FLEET_MULTIPLANE_INOTIFY='1024')
+    sysctl = [sys.executable, str(root / 'hack/multiplane/sysctl.py')]
+    for restored in (True, False):
+        s = tmp / ('state-%s' % restored)
+        s.mkdir()
+        (s / 'prefix').write_text('fleet-mp-0000beef\n')
+        (s / 'sysctl.json').write_text(json.dumps({'original': 128, 'effective': 1024, 'restored': True} if restored else {'original': 128, 'effective': 1024}, indent=2))
+        value.write_text('128\n' if restored else '1024\n')
+        r = subprocess.run(sysctl + [str(s), 'resume'], env=env, capture_output=True, text=True)
+        record = json.loads((s / 'sysctl.json').read_text())
+        if restored:
+            check('restored: set again with a fresh record', r.returncode == 0 and record['original'] == 128 and value.read_text().strip() == '1024'
+                  and (s / 'sysctl-before-resume-0.json').exists(), r.stdout + r.stderr)
+        else:
+            check('unrestored: the earlier record and its original value stay', r.returncode == 0 and record == {'original': 128, 'effective': 1024}
+                  and not list(s.glob('sysctl-before-resume-*')), r.stdout + r.stderr)
+
+# Teardown after a resumed run is labeled as no acceptance or release evidence.
+with tempfile.TemporaryDirectory() as t:
+    tmp = pathlib.Path(t)
+    (tmp / 'bin').mkdir()
+    for tool in ('docker', 'kind'):
+        (tmp / 'bin' / tool).write_text('#!/bin/sh\n[ "$1" = inspect ] && exit 1\nexit 0\n')
+        (tmp / 'bin' / tool).chmod(0o755)
+    env = dict(os.environ, PATH=str(tmp / 'bin') + os.pathsep + os.environ['PATH'])
+    for resumed in (True, False):
+        s = tmp / ('state-%s' % resumed)
+        (s / 'evidence').mkdir(parents=True)
+        (s / 'prefix').write_text('fleet-mp-0000beef\n')
+        (s / 'evidence/summary.json').write_text(json.dumps({'acceptance': 'evidence-verified', 'resumed': resumed}))
+        if resumed:
+            (s / 'resume.json').write_text('{}')
+        r = subprocess.run(['bash', str(root / 'hack/multiplane/teardown.sh'), str(s)], env=env, capture_output=True, text=True)
+        mode = json.loads((s / 'evidence/teardown.json').read_text())['mode'] if (s / 'evidence/teardown.json').exists() else None
+        check('teardown label, resumed=%s' % resumed, r.returncode == 0 and (('not acceptance' in mode) if resumed else mode == 'after passed acceptance'),
+              '%s %s %s' % (r.returncode, mode, r.stderr[-300:]))
 
 # The real run.sh: --resume reuses the retained state, skips the topology
 # build, restarts the retained topology, and runs the suite from the phase.

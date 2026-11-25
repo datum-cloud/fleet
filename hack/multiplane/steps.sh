@@ -272,13 +272,8 @@ JSON
    [[ $(docker inspect -f '{{.State.Paused}}' "$name") != true ]] || docker unpause "$name" >/dev/null
    [[ $(docker inspect -f '{{.State.Running}}' "$name") == true ]] || docker start "$name" >/dev/null
   done
-  # When stop.sh restored the inotify limit, set it again with a fresh record,
-  # keeping the earlier one. Unrestored (--leave-running), the earlier record
-  # still holds the original value, so it stays the record.
-  if [[ ! -f $state/sysctl.json ]] || grep -q '"restored": true' "$state/sysctl.json"; then
-   [[ ! -f $state/sysctl.json ]] || mv "$state/sysctl.json" "$state/sysctl-before-resume-$(date +%s).json"
-   python3 hack/multiplane/sysctl.py "$state" set >/dev/null
-  fi
+  # Set the inotify limit again only if stop.sh restored it.
+  python3 hack/multiplane/sysctl.py "$state" resume >/dev/null
   for config in platform-admin.yaml host.yaml cell-admin.yaml; do wait_api "$state/$config"; done
   k "$state/host.yaml" -n karmada-system wait --for=condition=Available deployment --all --timeout=300s >/dev/null
   cell -n kro-system wait --for=condition=Available deployment --all --timeout=300s >/dev/null
