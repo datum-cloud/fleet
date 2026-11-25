@@ -44,8 +44,7 @@ marked **implemented and verified**, **implemented and inert**, or
   only when `spec.creator` is the authenticated caller's username, plus its UID
   when the caller has one, and an update only when the creator is unchanged.
 - **The capacity projector** is a pure function that derives `Prepared`,
-  `Healthy` and `Available`. Nothing calls it outside tests (**implemented and
-  inert**; see [Capacity](#other-decisions)).
+  `Healthy` and `Available`. [Capacity status](#capacity-status) wires it.
 
 Creating or importing a Device creates `Unverified` custody. That sends
 nothing to a BMC and makes no capacity `Available`.
@@ -377,8 +376,6 @@ event.
 
 ### Unchanged and still open
 
-- The capacity projector stays unwired (O1), so the synthetic fixtures still write
-  `Prepared`, `Healthy` and `Available`.
 - Bootstrap stays refused (O10).
 - `DeviceRecovery` needs no second person.
 
@@ -698,12 +695,8 @@ remains.
   policy record pinned at allocation. A resolver maps the capacity's cleaning
   policy reference to that digest when the allocator creates the allocation. The
   standalone, staging and multi-plane modes supply a fixture resolver.
-- **Capacity (O1).** The projector stays a pure function. `Prepared` needs a
-  succeeded commissioning under the current plan, `Healthy` needs current
-  commissioning and discovery evidence, and `Available` also needs `Verified`
-  custody, holder `None`, no hold and an enabled allocation policy. Wiring it
-  as written would make every server unallocatable, because commissioning is
-  not built.
+- **Capacity (O1).** Settled by commissioning: see [Capacity
+  status](#capacity-status).
 
 ### No object UIDs in spec
 
@@ -919,13 +912,54 @@ emulator has not run it.
   component lists are dropped before the verdict if the evidence would pass
   the kind's limit.
 
+## Capacity status
+
+The capacity projector is **implemented** in every mode, and verified by tests
+against a real API server and by the standalone smoke. It derives
+`Prepared`, `Healthy`, `Available` and the hardware of every MachineCapacity
+from the [commissioning proposal](https://github.com/datum-cloud/fleet/pull/185)'s
+inputs, and nothing else writes them.
+
+- **Where it runs.** The coordinator loop runs it after each pass, with the
+  projector's own identity: the `fleet.datumapis.com-capacity-projector` role
+  in Milo, a `fleet-capacity-projector` ServiceAccount in standalone, the
+  `--synthetic-projector-client-cert-dir` client certificate in synthetic staging, and a
+  `projector` token in the multi-plane run. The Metal controller role no
+  longer holds `machinecapacities.updateStatus`.
+- **The allocator does not read conditions.** It asks the projector to
+  evaluate each candidate from live inputs (`Offer`), matches the profile
+  against the hardware that evaluation returns, and pins that hardware on the
+  allocation. Custody still decides. `TestOnlyEvidenceOffersCapacity` edits a
+  failed server's status to `Available` and shows the allocator refuses it and
+  the projector restores the derived status.
+- **Inputs.** The Device and its lifecycle, custody for the same Device UID,
+  the Device's current plan, its latest succeeded commissioning for the same
+  Device UID, discovery currency by the admission rule, the cleaning policy
+  resolver, and whether another Device in the namespace shares an identity
+  alias. Aliases moved from registration to the inventory API package, so
+  registration and the projector compute them the same way.
+- **Cleaning policy.** The projector takes a resolver that returns a digest,
+  `ErrUnresolved`, or another error, which makes `Available` `Unknown`. Every
+  mode supplies a fixture resolver for its one fixture policy. No production
+  resolver exists yet; it belongs to the cleaning policy owner.
+- **Simulated commissioning.** The simulator site runs a `DeviceCommissioning`
+  worker that inspects the hardware and firmware its enrollment records for
+  the Device and journals one burn-in step. The enrollment gains `hardware`
+  and `firmware` fields for it.
+- **Standalone.** A `commission` phase runs before `allocate`, as three
+  ServiceAccounts: a plan author, an approver and an operator. The fixture
+  Device carries a `fleet.datumapis.com/hardware-model` label that the plan
+  selects. The smoke checks that the provider cannot write capacity status
+  and that the author cannot approve.
+- **Multi-plane.** The provider project gets the projector and the three staff
+  identities, and the Metal provider reads commissioning evidence. The seed
+  no longer writes capacity conditions, so the run commissions its server
+  before it allocates (see the end-to-end increment).
+
 ## Points for a person
 
 These need a decision before the increment that depends on them.
 
-- **O1: the interim source of `Prepared` and `Healthy`.** Still open after C.
-  The projector stays unwired, so the synthetic fixtures write `Prepared`,
-  `Healthy` and `Available` themselves.
 - **O10: the sealed store for bootstrap payloads.** Bootstrap stays refused in
   every increment until a store is chosen.
 - **A second person for `DeviceRecovery`.** Not required yet. A person

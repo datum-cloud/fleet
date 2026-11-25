@@ -170,52 +170,71 @@ func TestEvidenceIsTypedAndBounded(t *testing.T) {
 }
 
 func TestCapacityProjection(t *testing.T) {
-	plan := "sha256:plan"
-	commissionings := map[string]*CommissioningEvidence{"none": nil, "old plan": {PlanDigest: "sha256:old", HealthCurrent: true}, "unhealthy": {PlanDigest: plan}, "current": {PlanDigest: plan, HealthCurrent: true}}
-	hold := &ops.RecoveryHold{Reason: "x"}
-	custodies := map[string]*ops.DeviceCustodySpec{
-		"missing":    nil,
-		"unverified": {State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}},
-		"held":       {State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderNone}, RecoveryHold: hold},
-		"allocated":  {State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderAllocation}},
-		"releasing":  {State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderRelease}},
-		"service":    {State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderService}},
-		"retired":    {State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderRetired}},
-		"free":       {State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderNone}},
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	plan := &ops.DeviceCommissioningPlan{ObjectMeta: metav1.ObjectMeta{Name: "plan", UID: "plan-uid"}, Spec: ops.DeviceCommissioningPlanSpec{EvidenceLifetime: metav1.Duration{Duration: 24 * time.Hour}}}
+	passed := func(mutate func(*LatestCommissioning)) *LatestCommissioning {
+		latest := &LatestCommissioning{DeviceUID: "device-uid", FinishedAt: now.Add(-time.Hour), Evidence: ops.CommissioningEvidence{
+			Plan: ops.PlanReference{Name: "plan", UID: "plan-uid", Digest: "sha256:plan"}, Result: ops.CommissioningPassed,
+			SerialNumber: "SERIAL-1", SystemUUID: "uuid-1", BMCPublicKeySHA256: "key", Hardware: &ops.InspectedHardware{Memory: "2Gi"}}}
+		if mutate != nil {
+			mutate(latest)
+		}
+		return latest
 	}
-	available := 0
-	for commissioningName, commissioning := range commissionings {
-		for custodyName, custody := range custodies {
-			for _, discovery := range []bool{false, true} {
-				for _, enabled := range []bool{false, true} {
-					conditions := ProjectCapacity(CapacityInputs{Generation: 3, Commissioning: commissioning, CurrentPlanDigest: plan, DiscoveryCurrent: discovery, Custody: custody, AllocationPolicyEnabled: enabled})
-					prepared := conditions[0].Status == metav1.ConditionTrue
-					healthy := conditions[1].Status == metav1.ConditionTrue
-					free := conditions[2].Status == metav1.ConditionTrue
-					if prepared != (commissioningName == "current" || commissioningName == "unhealthy") {
-						t.Fatalf("%s: Prepared = %v", commissioningName, prepared)
-					}
-					if healthy != (commissioningName != "none" && commissioning.HealthCurrent && discovery) {
-						t.Fatalf("%s discovery %v: Healthy = %v", commissioningName, discovery, healthy)
-					}
-					want := prepared && healthy && custodyName == "free" && enabled
-					if free != want {
-						t.Fatalf("%s %s discovery %v enabled %v: Available = %v (%s)", commissioningName, custodyName, discovery, enabled, free, conditions[2].Reason)
-					}
-					if free {
-						available++
-					}
-					for _, condition := range conditions {
-						if condition.ObservedGeneration != 3 || condition.Reason == "" {
-							t.Fatalf("condition = %+v", condition)
-						}
-					}
-				}
+	free := &ops.DeviceCustodySpec{State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderNone}}
+	base := func() CapacityInputs {
+		return CapacityInputs{Generation: 3, Now: now, DeviceUID: "device-uid", DeviceSerial: "serial-1", DeviceSystemUUID: "UUID-1", DeviceActive: true,
+			Commissioning: passed(nil), CurrentPlan: CurrentPlanInput{Plan: plan, Digest: "sha256:plan"}, Discovery: DiscoveryInput{Current: true, KeyDigest: "key"},
+			Custody: free, AllocationPolicyEnabled: true, Cleaning: CleaningResolved}
+	}
+	if projection := ProjectCapacity(base()); !projection.Available() || projection.Hardware == nil {
+		t.Fatalf("the base inputs are not Available: %+v", projection.Conditions)
+	}
+	for name, test := range map[string]struct {
+		mutate func(*CapacityInputs)
+		index  int
+		reason string
+		status metav1.ConditionStatus
+	}{
+		"never commissioned":  {func(in *CapacityInputs) { in.Commissioning = nil }, 0, "NotCommissioned", metav1.ConditionFalse},
+		"another incarnation": {func(in *CapacityInputs) { in.DeviceUID = "other" }, 0, "NotCommissioned", metav1.ConditionFalse},
+		"failed":              {func(in *CapacityInputs) { in.Commissioning.Evidence.Result = ops.CommissioningFailed }, 0, "CommissioningFailed", metav1.ConditionFalse},
+		"no plan":             {func(in *CapacityInputs) { in.CurrentPlan = CurrentPlanInput{Reason: ReasonNoCurrentPlan} }, 0, ReasonNoCurrentPlan, metav1.ConditionFalse},
+		"ambiguous":           {func(in *CapacityInputs) { in.CurrentPlan = CurrentPlanInput{Reason: ReasonPlanAmbiguous} }, 0, ReasonPlanAmbiguous, metav1.ConditionFalse},
+		"plan changed":        {func(in *CapacityInputs) { in.CurrentPlan.Digest = "sha256:new" }, 0, "PlanChanged", metav1.ConditionFalse},
+		"expired":             {func(in *CapacityInputs) { in.Now = now.Add(48 * time.Hour) }, 1, "EvidenceExpired", metav1.ConditionFalse},
+		"discovery old":       {func(in *CapacityInputs) { in.Discovery.Current = false }, 1, "DiscoveryNotCurrent", metav1.ConditionFalse},
+		"key changed":         {func(in *CapacityInputs) { in.Discovery.KeyDigest = "other" }, 1, "IdentityChanged", metav1.ConditionFalse},
+		"serial changed":      {func(in *CapacityInputs) { in.DeviceSerial = "other" }, 1, "IdentityChanged", metav1.ConditionFalse},
+		"custody missing":     {func(in *CapacityInputs) { in.Custody = nil }, 2, "CustodyMissing", metav1.ConditionFalse},
+		"unverified": {func(in *CapacityInputs) {
+			in.Custody = &ops.DeviceCustodySpec{State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}
+		}, 2, "CustodyUnverified", metav1.ConditionFalse},
+		"hold":                    {func(in *CapacityInputs) { c := *free; c.RecoveryHold = &ops.RecoveryHold{}; in.Custody = &c }, 2, "RecoveryHold", metav1.ConditionFalse},
+		"allocated":               {func(in *CapacityInputs) { c := *free; c.Holder.Type = ops.HolderAllocation; in.Custody = &c }, 2, "Held", metav1.ConditionFalse},
+		"disabled":                {func(in *CapacityInputs) { in.AllocationPolicyEnabled = false }, 2, "AllocationDisabled", metav1.ConditionFalse},
+		"not active":              {func(in *CapacityInputs) { in.DeviceActive = false }, 2, "DeviceNotActive", metav1.ConditionFalse},
+		"duplicate":               {func(in *CapacityInputs) { in.Duplicate = true }, 2, "IdentityConflict", metav1.ConditionFalse},
+		"cleaning unresolved":     {func(in *CapacityInputs) { in.Cleaning = CleaningUnresolved }, 2, "CleaningPolicyUnresolved", metav1.ConditionFalse},
+		"cleaning owner unknown":  {func(in *CapacityInputs) { in.Cleaning = CleaningUnknown }, 2, "CleaningPolicyUnknown", metav1.ConditionUnknown},
+		"cleaning state is empty": {func(in *CapacityInputs) { in.Cleaning = "" }, 2, "CleaningPolicyUnresolved", metav1.ConditionFalse},
+	} {
+		in := base()
+		in.Commissioning = passed(nil)
+		test.mutate(&in)
+		projection := ProjectCapacity(in)
+		condition := projection.Conditions[test.index]
+		if condition.Status != test.status || condition.Reason != test.reason || projection.Available() {
+			t.Fatalf("%s: %+v", name, projection.Conditions)
+		}
+		if test.index == 0 && projection.Hardware != nil {
+			t.Fatalf("%s: unprepared capacity keeps hardware", name)
+		}
+		for _, condition := range projection.Conditions {
+			if condition.ObservedGeneration != 3 || condition.Reason == "" {
+				t.Fatalf("%s: condition = %+v", name, condition)
 			}
 		}
-	}
-	if available != 1 {
-		t.Fatalf("%d combinations are Available, want exactly one", available)
 	}
 }
 

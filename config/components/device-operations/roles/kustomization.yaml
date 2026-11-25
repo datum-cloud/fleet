@@ -9,3 +9,4 @@ resources:
   - device-commissioning-operator.yaml
   - device-commissioning-plan-author.yaml
   - device-commissioning-plan-approver.yaml
+  - capacity-projector.yaml

@@ -6,7 +6,7 @@ kind: ConfigMap
 metadata: {name: fleet-simulator-enrollment, namespace: fleet-system}
 data:
   enrollment.json: |
-    {"fleet-provider/synthetic-device-central-01": {"bmcEndpoint": "https://[2001:db8::21]", "systemUUID": "00000000-0000-4000-8000-000000000021", "bootMACAddress": "02:00:00:00:00:21", "bmcPublicKeySHA256": "2121212121212121212121212121212121212121212121212121212121212121", "disks": ["disk-0"]}}
+    {"fleet-provider/synthetic-device-central-01": {"bmcEndpoint": "https://[2001:db8::21]", "systemUUID": "00000000-0000-4000-8000-000000000021", "bootMACAddress": "02:00:00:00:00:21", "bmcPublicKeySHA256": "2121212121212121212121212121212121212121212121212121212121212121", "disks": ["disk-0"], "hardware": {"cpu": {"architecture": "amd64", "model": "synthetic", "sockets": 2, "cores": 24}, "memory": "128Gi", "disks": [{"name": "disk-0", "capacity": "960Gi"}], "interfaces": [{"name": "primary", "macAddress": "02:00:00:00:00:21"}]}, "firmware": [{"component": "BMC", "version": "synthetic-1.0"}]}}
 ---
 # The custody coordinator: the only writer of custody and of operation
 # status. It delivers admitted operations to the simulator site and reports
@@ -29,13 +29,17 @@ spec:
         - name: coordinator
           image: ghcr.io/datum-cloud/fleet-standalone-smoke:v0.0.0-dev
           imagePullPolicy: Never
-          args: [--phase=coordinate, --site-token-file=/var/run/fleet/token]
+          args: [--phase=coordinate, --site-token-file=/var/run/fleet/token, --projector-token-file=/var/run/fleet/projector/token]
           securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: true}
           resources:
             requests: {cpu: 20m, memory: 32Mi}
             limits: {cpu: 250m, memory: 128Mi}
-          volumeMounts: [{name: runtime-token, mountPath: /var/run/fleet, readOnly: true}]
-      volumes: [{name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}]
+          volumeMounts:
+            - {name: runtime-token, mountPath: /var/run/fleet, readOnly: true}
+            - {name: projector-token, mountPath: /var/run/fleet/projector, readOnly: true}
+      volumes:
+        - {name: runtime-token, secret: {secretName: fleet-simulator-runtime, defaultMode: 0440}}
+        - {name: projector-token, secret: {secretName: fleet-capacity-projector-token, defaultMode: 0440, items: [{key: token, path: token}]}}
 ---
 # The creator rule. Milo projects ignore admission policies, so Milo uses the
 # creator webhook; a plain cluster enforces the same rule with this policy:

@@ -56,15 +56,6 @@ func Seed(ctx context.Context, c Config) error {
 	if err := provider.Status().Update(ctx, &class); err != nil {
 		return err
 	}
-	// The capacity projector is not wired, so the fixture writes Prepared,
-	// Healthy and Available. Custody decides which Machine gets the Device.
-	capacity.Status.Hardware = fleet.Hardware{CPU: fleet.HardwareCPU{Architecture: "amd64", Cores: 2}, Memory: fleet.HardwareMemory{Capacity: "2Gi"}}
-	for _, kind := range []string{"Available", "Prepared", "Healthy"} {
-		capacity.Status.Conditions = append(capacity.Status.Conditions, condition(kind, metav1.ConditionTrue, capacity.Generation, "SyntheticHardwareObservation"))
-	}
-	if err := provider.Status().Update(ctx, &capacity); err != nil {
-		return err
-	}
 	var routing []map[string]string
 	for _, name := range []string{"consumer-a", "consumer-b"} {
 		api, err := API(filepath.Join(c.State, name, "bootstrap-project.json"))

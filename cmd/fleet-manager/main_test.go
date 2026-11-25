@@ -52,7 +52,7 @@ func TestSyntheticFlagsRequireAndScopeStaging(t *testing.T) {
 	if err := parse(t, append(required, "--synthetic-staging", "--synthetic-provider-token-file=/t")...); !errors.Is(err, errFlags) {
 		t.Fatalf("staging without a consumer project: %v", err)
 	}
-	components := []string{"--synthetic-coordinator-client-cert-dir=/c", "--synthetic-release-client-cert-dir=/r", "--synthetic-site-enrollment-file=/e"}
+	components := []string{"--synthetic-coordinator-client-cert-dir=/c", "--synthetic-release-client-cert-dir=/r", "--synthetic-projector-client-cert-dir=/p", "--synthetic-site-enrollment-file=/e"}
 	staging := append(append(required, "--synthetic-staging", "--synthetic-provider-token-file=/t", "--synthetic-consumer-project-name=consumer"), components...)
 	if err := parse(t, staging...); err != nil {
 		t.Fatal(err)

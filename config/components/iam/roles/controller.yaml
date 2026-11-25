@@ -13,7 +13,6 @@ spec:
   includedPermissions:
     - metal.datumapis.com/machineclasses.updateStatus
     - metal.datumapis.com/machineprofiles.updateStatus
-    - metal.datumapis.com/machinecapacities.updateStatus
     - metal.datumapis.com/machines.updateStatus
     - metal.datumapis.com/machineallocations.list
     - metal.datumapis.com/machineallocations.get
