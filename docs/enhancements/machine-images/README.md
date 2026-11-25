@@ -151,8 +151,7 @@ every file the installer writes or boots.
 #### MachineImage in a consumer project
 
 Publication creates a MachineImage in the consumer project that names its
-provider source, the same way a [MachineClass](../machine-lifecycle/README.md#machineclass)
-does:
+publisher and the image there:
 
 ```yaml
 apiVersion: metal.datumapis.com/v1alpha1
@@ -161,7 +160,9 @@ metadata:
   name: example-linux-1-2
   namespace: default
 spec:
-  source: {project: example-provider, name: example-linux-1-2}   # immutable
+  source:                                                         # immutable
+    publisherRef: {apiGroup: resourcemanager.miloapis.com, kind: Project, name: example-provider}
+    name: example-linux-1-2
 status:
   resolved:
     family: example-linux
@@ -176,6 +177,10 @@ status:
 
 A MachineImage has exactly one of `definition` or `source`. Status is for
 display; admission reads the [publication record](#publication-and-entitlement).
+
+`publisherRef`, and the publication record's `consumerRef`, are typed tenant
+references that hold names only. A tenant is a Milo Project, or a Namespace in
+standalone mode. Fleet refuses any other kind.
 
 #### Bootstrap Secret
 
@@ -236,8 +241,9 @@ and digest. It carries no consumer project name and no bootstrap bytes.
 
 The provider's publisher creates a consumer project's MachineImage, as it does
 for MachineClass. Fleet records each publication in a protected record in the
-provider project. The record names the consumer MachineImage and the provider
-MachineImage, and holds the provider image's digest. Its name derives from the
+provider project. The record references the consumer tenant with
+`consumerRef`, names the consumer MachineImage and the provider MachineImage,
+and holds the provider image's digest. Its name derives from the
 identities of the consumer project, the consumer MachineImage, and the
 provider MachineImage. Each identity is new each time the object is created, so
 a record matches only the objects it was written for. Publishing a recreated
