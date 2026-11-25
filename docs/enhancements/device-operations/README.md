@@ -209,9 +209,9 @@ spec:
 ```
 
 Provider and release operations get names from the allocation and the request:
-the Installation for installs, the Machine generation for power, and the step
-number for wipes. Staff operations get generated names, because each one is a
-new request.
+the Installation for installs, the Machine generation and its `Retry` count for
+power, and the step number for wipes. Staff operations get generated names,
+because each one is a new request.
 
 The operation phases are those of the [machine lifecycle
 operation](../machine-lifecycle/README.md#provider-execution-and-recovery),
@@ -248,6 +248,21 @@ only if all of these hold:
 5. The Device UID matches `deviceRef.uid`, and its identity matches current
    discovery.
 6. No other Device that is not retired records the same BMC key digest.
+7. Every check that the operation's kind defines for its own inputs passes.
+
+A kind can add checks of its own inputs, such as the expected system UUID, and
+its own refusal reasons. Every kind uses these shared reasons:
+
+| Reason | Rule |
+| --- | --- |
+| `CustodyUnverified` | 1 |
+| `CreatorNotPermitted` | 2 |
+| `HolderMismatch` | 2 or 3 |
+| `OperationInProgress` | 4 |
+| `RecoveryHold` | A hold admits only its settling operations |
+| `DeviceIdentityMismatch` | 5 |
+| `SharedPublicKey` | 6 |
+| `Expired` | Not admitted in time; the operation ends as `Cancelled` |
 
 Under a recovery hold, only the operations in [Unknown
 outcomes](#unknown-outcomes) are admitted.
@@ -325,7 +340,7 @@ the site reports the raised fence.
 
 | Held operation | Settled by |
 | --- | --- |
-| Power | A `DeviceRecovery` with fresh discovery evidence of the power state |
+| Power | A `DeviceRecovery` with `Settle` and fresh discovery evidence of the power state, or with `Retry`, then a later `DevicePowerOperation` that succeeds |
 | Installation | A later `DeviceInstallation` that succeeds, or a `DeviceWipe` that succeeds after release |
 | Wipe | A `DeviceRecovery` with `Retry`, then a later `DeviceWipe` that succeeds |
 | Commissioning | A later `DeviceCommissioning` that succeeds |
