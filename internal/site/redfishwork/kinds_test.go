@@ -68,6 +68,10 @@ type lab struct {
 	noHealth bool
 	both     bool
 	receipts int
+	// burnTime is how long a burn-in boot takes on the store's clock, and
+	// skew is how far that clock has moved ahead.
+	burnTime time.Duration
+	skew     time.Duration
 }
 
 func newLab(t *testing.T) *lab {
@@ -81,7 +85,7 @@ func newLab(t *testing.T) *lab {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := &lab{t: t, power: "Off", enabled: "Disabled", target: "None", console: filepath.Join(t.TempDir(), "console.log"), bootRoot: t.TempDir(), serial: "SERIAL-001", bmcFW: "1.0.0", burnIn: "passed", receipts: 1}
+	l := &lab{t: t, power: "Off", enabled: "Disabled", target: "None", console: filepath.Join(t.TempDir(), "console.log"), bootRoot: t.TempDir(), serial: "SERIAL-001", bmcFW: "1.0.0", burnIn: "passed", receipts: 1, burnTime: 2 * time.Minute}
 	l.server = httptest.NewUnstartedServer(l)
 	l.server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
 	l.server.StartTLS()
@@ -179,6 +183,7 @@ func (l *lab) boot(target string) {
 		l.deliver()
 		l.mu.Lock()
 		result := l.burnIn
+		l.skew += l.burnTime
 		l.mu.Unlock()
 		line = fmt.Sprintf("FLEET-BURNIN:%s:%s", boot.Receipt, result)
 		for range l.receipts - 1 {

@@ -126,6 +126,9 @@ func (k Commissioning) Run(ctx context.Context, work *site.Work) (any, error) {
 	if result != ops.BurnInPassed {
 		return fail(evidence, ops.PhaseBurnIn, []string{"the burn-in image reported a failure"})
 	}
+	if completed.Sub(started) < plan.BurnIn.Duration.Duration {
+		return fail(evidence, ops.PhaseBurnIn, []string{"the burn-in image reported before the plan's duration"})
+	}
 	after, err := conn(work).BMC.Hardware(ctx, conn(work).System)
 	if err != nil {
 		return nil, fmt.Errorf("the server could not be read after burn-in: %w", err)
