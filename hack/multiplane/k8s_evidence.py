@@ -267,6 +267,9 @@ def delivery_faults(state, action):
         if source['metadata']['name'] != assignment_name(assignment) or assignment['fence'] < 2:
             raise SystemExit('the stale-fence fault needs a delivered assignment under its own name with a fence of at least 2')
         faults = {}
+        # A Redfish worker's Role names the Device's credential, so each fault
+        # carries the source's; without it kro renders no Job.
+        credential = {k: v for k, v in source['spec'].items() if k == 'credential'}
         # The same assignment again: its name is fixed by its contents, so the API refuses it.
         dup = handoff(source['metadata']['name'], cell, source['spec'], 'duplicate')
         r = kubectl(state, 'create', '-f', '-', input=json.dumps(dup), check=False)
@@ -276,11 +279,11 @@ def delivery_faults(state, action):
         # Selected by the cell label, but the handoff names another cell.
         wrong = dict(assignment, operation=dict(assignment['operation'], uid=assignment['operation']['uid'] + '-fault-wrong-cell'))
         faults['wrong-cell'] = {'handoff': assignment_name(wrong), 'spec': {'cell': 'remote-elsewhere-cell', 'device': assignment['device'],
-                                                                          'assignmentJSON': json.dumps(wrong, separators=(',', ':'))}}
+                                                                          'assignmentJSON': json.dumps(wrong, separators=(',', ':')), **credential}}
         # Well-formed for this cell under its own name, but below the stored fence.
         stale = dict(assignment, fence=assignment['fence'] - 1)
         faults['stale-fence'] = {'handoff': assignment_name(stale), 'operation': assignment['operation']['uid'], 'fence': stale['fence'],
-                                 'spec': {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(stale, separators=(',', ':'))}}
+                                 'spec': {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(stale, separators=(',', ':')), **credential}}
         for fault in JOB_FAULTS:
             f = faults[fault]
             kubectl(state, 'create', '-f', '-', input=json.dumps(handoff(f['handoff'], cell, f.pop('spec'), fault)))
