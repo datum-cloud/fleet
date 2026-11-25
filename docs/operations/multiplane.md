@@ -161,6 +161,7 @@ mode-0700 `/tmp/fleet-multiplane.*` state directory (override the parent with
 | `custody-crd-rules.json` | Each forbidden custody or operation write and whether the provider project API refused it, and that the CRDs were removed |
 | `kubernetes-execution.json` | kro version, image and RGD/instance state; Flux-owned site Deployments; retained volume identity; every worker Job's UID, conditions, Pods, exit codes and policies; per-operation RBAC |
 | `interrupt.json`, `lifecycle.json`, `delivery-faults.json`, `wrong-location.json` | Scenario-specific observations, no secrets |
+| `import-inert.json`, `staff-access.json`, `contention.json`, `release-waits.json`, `deadline-hold.json`, `deadline-settled.json`, `rebuild.json` | The #174 failure scenarios ([coverage](../../test/acceptance/coverage.md#device-custody-and-operations)) |
 | `source-SHA256SUMS`, `binary-SHA256SUMS`, `image-id`, `sysctl.json`, `teardown.json` | Tested inputs and teardown record |
 
 Before reporting, the harness scans `evidence/` for every retained static token,
@@ -219,9 +220,17 @@ The phases are then:
    another Device. It then removes the objects and the CRDs. Milo ignores
    admission policies stored in a project, so this proves the rules hold
    there. It sends nothing to any server.
+   `import-inert` then requires that importing the Devices admitted,
+   delivered and sent nothing: no operation, allocation, assignment, worker
+   Job or journal entry, and custody with no operation, result or hold. In
+   Redfish mode the BMC audit must hold no effect. `staff-access` requires
+   the staff identity to read custody and list recoveries, and to be
+   forbidden Secrets, every other operation, allocations and custody writes.
+   Staff hold no consumer-project or hub credential.
 2. **Contention.** Two consumers request one provider capacity. Custody grants one
    allocation; `verify-contention` independently reads Bound for A and
-   Pending/InsufficientCapacity for B.
+   Pending/InsufficientCapacity for B, and requires custody to name the one
+   MachineAllocation, A's.
 3. **Admission before effects.** The coordinator admits the `DeviceInstallation`
    and raises the Device's fence, then writes one immutable hub handoff carrying
    that exact assignment, before any effect. `await-delivery` requires the
@@ -316,24 +325,46 @@ The phases are then:
 
     Each of the last two creates a kro Job that must fail once with exit 65 by
     `podFailurePolicy`. The site store must be unchanged, no status may appear,
-    consumer B must stay Bound, and kro must prune them once deleted. After B
-    installs and is released, `release-status-b` repeats the released checks for
-    B.
-14. **Wrong location.** With capacity free, the consumer A customer recreates its
+    consumer B must stay Bound, and kro must prune them once deleted. In
+    Redfish mode the BMC audit must gain no effect.
+14. **Deadline and Machine deletion.** `deadline-admit` stops the site's boot
+    server, with its Flux layer suspended, and restarts the coordinator with a
+    four-minute installation deadline for consumer B's installation only. The
+    installer boot is requested but never served. `machine-delete` has the
+    customer delete B's Machine mid-install. One release pass must leave
+    custody holding the Device for release with the installation still active
+    and no wipe. `deadline-hold` requires the installation to end
+    `OutcomeUnknown` with `DeadlineExceeded`, custody to hold it at its fence,
+    and its worker to have stopped. A staff `DeviceRecovery` naming the
+    held operation at the wrong fence must be refused, with custody, the site
+    store and, in Redfish mode, the BMC audit unchanged. Flux then restores the
+    boot server. The release's wipe must be admitted above the held fence
+    after the worker stopped, succeed, and clear the hold. `release-status-b`
+    requires the deleted Machine to be gone.
+15. **Custody rebuild.** `rebuild` stops the site observer, so the cell cannot
+    report its fence, and deletes the free Device's custody as the provider
+    bootstrap admin. The coordinator must rebuild it `Unverified`, and a new
+    consumer A Machine must find no eligible capacity and record no
+    allocation. Once Flux restores the observer, custody must become
+    `Verified` with a fence above every fence the site stored.
+16. **Wrong location.** With capacity free, the consumer A customer recreates its
     request with `locationRef: remote-elsewhere`. Allocation must fail with the
     location-not-served error. The custody records, the site store's state, and the
     Machine's finalizers and status must be unchanged. Free capacity rules out contention as the reason for denial.
-15. **Closed boot and evidence.** Live HTTP probes from the runtime Pod to the
+17. **Closed boot and evidence.** Live HTTP probes from the runtime Pod to the
     boot Service are denied after closure. Evidence requires all of:
-    - PXE mode, one install and two wipes, each `Succeeded` at its own fence, with
-      the fences strictly increasing;
+    - PXE mode, one install and two wipes, each `Succeeded` at its own fence,
+      and B's installation `OutcomeUnknown` at its deadline, with the fences
+      strictly increasing;
     - completed broker writes and a DHCP lease for the installer NIC;
     - network-only installer XML, and disk XML with no NIC or direct kernel;
     - closed boot admission, no remaining domain or disk;
-    - kro-created, `Complete` worker Jobs for exactly the one install and two
-      wipes, each with one successful Pod;
+    - kro-created, `Complete` worker Jobs for exactly these four operations,
+      each with one successful Pod;
+    - custody `Verified` with no holder at the rebuilt fence, and only the
+      refused recovery;
     - zero OOM kills.
-16. **Final convergence and teardown.** `flux-final` requires all three
+18. **Final convergence and teardown.** `flux-final` requires all three
     clusters at the last revision with nothing suspended, and repeats the
     single-writer ownership audit. After a pass, only exact-prefix resources are deleted, the
     inotify value is restored, and private credentials are removed.

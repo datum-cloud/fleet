@@ -34,28 +34,33 @@ result reports every required phase `Passed`.
 These are the acceptance tests of [#174 at `d4d17f9`](https://github.com/datum-cloud/fleet/pull/174).
 Increment A covers them against a real API server, and Increment B covers the
 site side in unit tests. Increment C runs allocation, installation, release and
-reuse end to end in the standalone smoke. The multi-plane local VM and Redfish
-runs use the same code, and verification of both is pending. The remaining
-end-to-end failure scenarios arrive in Increment D. See [device
-custody](../../docs/development/device-custody.md#tests).
+reuse end to end. Increment D adds the failure scenarios to both multi-plane
+runs, the local VM and the Redfish lab, through real Milo project APIs, Karmada,
+kro and the site. See [device custody](../../docs/development/device-custody.md#tests)
+and the [multi-plane phases](../../docs/operations/multiplane.md#acceptance-phases).
 
 | #174 acceptance test | Executable evidence | Current state |
 | --- | --- | --- |
-| Two allocators race for one server; one wins | `TestConcurrency`, `TestConcurrentAllocatorsOneWinner` | Envtest verified; the standalone smoke verifies two consumers contending for one server |
+| Two allocators race for one server; one wins | `TestConcurrency`, `TestConcurrentAllocatorsOneWinner`; the `verify-contention` phase | Envtest verified for true concurrency. End to end, two consumers contend and custody names the one MachineAllocation |
 | An allocator retries after a lost response and claims no second server | `TestConcurrency`, `TestAnAllocationThatLostItsDeviceIsReplaced` | Envtest verified; the allocation is named from the Machine UID, so a retry finds the same one |
-| A staff operation names a customer allocation and is refused | `TestAdmissionPreconditions`, with the test-only staff kind | Envtest verified; end to end deferred to power |
-| A commissioning times out and a later one settles the hold | `TestLifecycle`, `TestRecovery`, with the test-only kind and `DeviceWipe` | Deferred: commissioning is out of scope; the mechanism is envtest verified |
-| A staff operation targets an allocated, releasing or unsettleable held server and is refused, nothing sent | `TestAdmissionPreconditions`, `TestRecovery` | Envtest verified; end to end proposed |
-| A worker passes its deadline; `OutcomeUnknown`; settling waits for the worker to stop | `TestLifecycle`, `TestRecovery` | Envtest verified with a fake site; end to end proposed |
-| A delayed worker's step after a newer admission is refused by the journal | `TestTwoWorkersOnOneDevice`, `TestANewerFenceStopsTheOlderWorker`, `TestStoreRefusesOlderFencesAndSurvivesARestart` | Unit verified; the multi-plane `delivery-faults` phase replays an assignment below the stored fence, and its verification is pending |
-| A TLS pin mismatch or an identity mismatch sends nothing | `TestPinMismatchSendsNothing`, `TestIdentityMismatchSendsNothing`, against TLS servers | Unit verified. The Redfish run's lab BMC serves TLS with a per-run key and workers reach it only through the pin, so a mismatch is not injected there; verification of the run is pending |
-| Custody deleted and restored stays unallocatable until rebuilt with a higher fence | `TestRebuild` | Envtest verified with a fake site; end to end proposed |
-| A Machine deleted during installation; release waits; a wipe settles the install hold | `TestLifecycle`, `TestRecovery` | Envtest verified; end to end proposed |
-| No staff role can read a bootstrap payload | `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets` | Role definitions verified; bootstrap stays refused |
+| A staff operation names a customer allocation and is refused | `TestAdmissionPreconditions`, with the test-only staff kind | Envtest verified; end to end deferred to power, the first staff kind with an effect |
+| A commissioning times out and a later one settles the hold | `TestLifecycle`, `TestRecovery`, with the test-only kind and `DeviceWipe` | Deferred: commissioning is out of scope. The same hold and settle mechanism runs end to end for an installation and a wipe |
+| A staff operation targets an allocated, releasing or unsettleable held server and is refused, nothing sent | `TestAdmissionPreconditions`, `TestRecovery`; the `deadline-hold` phase | Envtest verified. End to end, a `DeviceRecovery` naming the held installation at the wrong fence is refused on a releasing Device; custody, the site store and the BMC audit are unchanged |
+| A worker passes its deadline; `OutcomeUnknown`; settling waits for the worker to stop | `TestLifecycle`, `TestRecovery`, `TestAWorkerStoppedAtItsDeadlineClosesItsAdmission`; the `deadline-hold` and `deadline-settled` phases | End to end in both runs: the installation ends `OutcomeUnknown` with `DeadlineExceeded`, and the settling wipe is admitted only after its worker stopped |
+| A delayed worker's step after a newer admission is refused by the journal | `TestTwoWorkersOnOneDevice`, `TestANewerFenceStopsTheOlderWorker`, `TestStoreRefusesOlderFencesAndSurvivesARestart`; the `delivery-faults` phase | End to end: an assignment below the stored fence fails its Job before any effect, with the journal and the BMC audit unchanged |
+| A TLS pin mismatch or an identity mismatch sends nothing | `TestPinMismatchSendsNothing`, `TestIdentityMismatchSendsNothing`; the `redfish-discovery-faults` phase | End to end in the Redfish run: a key other than the pin reaches no request, and a swapped or unknown identity sends only reads |
+| Custody deleted and restored stays unallocatable until rebuilt with a higher fence | `TestRebuild`; the `rebuild` phase | End to end: rebuilt `Unverified` while the site cannot report, a new Machine finds no capacity, then `Verified` above the site's fence |
+| A Machine deleted during installation; release waits; a wipe settles the install hold | `TestLifecycle`, `TestRecovery`; the `machine-delete`, `deadline-hold` and `deadline-settled` phases | End to end: release holds the Device with the installation active and no wipe, then the wipe settles the hold and the Machine is gone |
+| No staff role can read a bootstrap payload | `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets`; the `staff-access` phase | Role definitions verified. End to end, staff are forbidden Secrets and every write but recoveries. Bootstrap stays refused, so no payload exists to read |
+| Importing a Device sends nothing and makes no capacity Available | `TestImportedDeviceGetsUnverifiedCustodyAndSendsNothing`; the `import-inert` phase | End to end: no operation, assignment, Job, journal entry or BMC effect. The capacity projector is not wired, so the run's fixture writes capacity status itself |
 
-The emulator lab cannot cover BMC TLS key rotation, vendor Redfish behavior,
-UEFI or real PXE firmware, real disks and wipe assurance, real power reset
-evidence, clock skew between coordinator and site, more than one site serving
-a Device, or a permanently lost site. The multi-plane Milo registers no creator
-webhook, so the multi-plane runs do not prove it. None of these tests qualifies
-hardware.
+The emulator lab cannot cover these:
+
+- BMC TLS key rotation, or one key per server: the lab serves both targets from one BMC with one key, so only target A is a Device;
+- vendor Redfish behavior, UEFI or real PXE firmware;
+- real disks, wipe assurance or power reset evidence;
+- clock skew between the coordinator and a site;
+- more than one site serving a Device, or a site lost for good;
+- true parallel races between processes, which envtest covers.
+
+The multi-plane Milo registers no creator webhook, so the multi-plane runs do not prove it. None of these tests qualifies hardware.

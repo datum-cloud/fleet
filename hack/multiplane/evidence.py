@@ -372,8 +372,10 @@ if REDFISH:
         mounts = [m.get('subPath', '') + ':' + m['mountPath'] for m in c.get('volumeMounts', [])]
         if env.get('FLEET_SITE_PROVIDER') != 'redfish' or 'FLEET_LIBVIRT_URI' in env or any('libvirt' in m or 'lab-disks' in m for m in mounts) or any('hostPath' in v for v in pod.get('volumes', [])):
             fail('a Redfish worker Job had a hypervisor path: ' + job['metadata']['name'])
-# One kro-created worker Job per admitted operation, at that operation's fence.
-if sorted((j['operationID'], j['fence']) for j in worker_jobs) != sorted((o['operation'], o['fence']) for o in ops) or any(j['createdBy'] != 'workers' for j in worker_jobs):
+# One kro-created worker Job per admitted operation, at that operation's
+# fence, including the installation held at its deadline.
+held_job = (json.loads((s / 'deadline-install.json').read_text())['key'], json.loads((s / 'deadline-hold.json').read_text())['fence'])
+if sorted((j['operationID'], j['fence']) for j in worker_jobs) != sorted([(o['operation'], o['fence']) for o in ops] + [held_job]) or any(j['createdBy'] != 'workers' for j in worker_jobs):
     fail('expected one kro-created worker Job per operation at its fence, got %s' % [(j['kind'], j['name'], j['fence'], j['createdBy']) for j in worker_jobs])
 pvc = kget('-n', 'fleet-site', 'get', 'pvc', 'fleet-site-state')
 pv = kget('get', 'pv', pvc['spec']['volumeName'])

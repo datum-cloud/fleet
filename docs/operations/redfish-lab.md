@@ -351,23 +351,24 @@ fixture discovery for the lab Devices. Real BMC discovery is not part of this ru
 | Phase | What it proves |
 | --- | --- |
 | `redfish-baseline` | Both target disks exist and neither target was ever started; records target B's disk digest |
-| `redfish-discovery-faults` | Uses the real emulator through `fleet-multiplane redfish-probe` and the production discovery code. Each enrolled System is discovered exactly. A wrong credential exits 10. Target A's Id with target B's UUID, or an unknown UUID, exits 12. An injected unadvertised `On` exits 11. The BMC audit shows only GETs in the window. |
+| `redfish-discovery-faults` | Uses the real emulator through `fleet-multiplane redfish-probe` and the production discovery code. Each enrolled System is discovered exactly. A wrong credential exits 10. Target A's Id with target B's UUID, or an unknown UUID, exits 12. An injected unadvertised `On` exits 11. A TLS key other than the pin exits 13 and reaches no request. The BMC audit shows only GETs in the window. |
 | `redfish-bmc-interrupt` | As soon as the installer is running, the BMC Pod is force-deleted and replaced. The guest keeps running; the worker tolerates a bounded BMC outage. |
 | `interrupt-pod`, `interrupt-job` | As in libvirt mode, now on the Redfish worker, still inside the installer phase |
 | `redfish-arm-lost-response`, `redfish-lost-response` | Armed before dispatch: the second effective `On` for System-1 (the first install's disk boot) is answered only after 45 seconds. The worker times out and exits 75 (Unknown). Its replacement observes the running or completed target and the consumed override. Exactly one `On` per phase was sent: `powerOnRequests` is one installer and one disk request. |
 | `resume` | The recreated Job completes the exact operation with one succeeded Pod |
-| `install-b` | After the wipe and reuse, consumer B installs on the same physical target under a higher fence with a new receipt |
+| `deadline-admit`, `machine-delete`, `deadline-hold` | After the wipe and reuse, consumer B's installation runs under a four-minute deadline with the boot server stopped. Its `On` is sent and its installer is never served. The Machine is deleted mid-install, the installation ends `OutcomeUnknown` at its deadline, and a mismatched staff recovery is refused with no BMC effect. The release wipe powers the target off and settles the hold. |
 | `boot-denials` | Closed per-MAC scripts and capabilities of all four operations, target B's MAC and unknown identities are denied over the live boot Service |
 | `redfish-isolation` | Target B: unchanged disk digest, no QEMU start, no console line, no mutating Redfish request. Target A: disk hashes as all zeroes. No domain running. Exports the BMC audit. |
 
 The final `evidence` phase adds these independent checks in Redfish mode:
 
 - **Console.** Target A's console holds exactly one receipt line per boot, in
-  operation order: install, disk boot, wipe, install, disk boot, wipe.
-- **QEMU.** libvirt's append-only log shows exactly six starts of target A, in
-  the boot order network, disk, network, network, disk, network (read from
+  operation order: install, disk boot, wipe, wipe. B's held installation
+  prints none.
+- **QEMU.** libvirt's append-only log shows exactly five starts of target A, in
+  the boot order network, disk, network, network, network (read from
   `bootindex`), and none of target B.
-- **BMC audit.** Exactly six effective `On` requests, all to System-1, of which
+- **BMC audit.** Exactly five effective `On` requests, all to System-1, of which
   exactly one carried the lost-response fault.
 - **Kubernetes and admission.** Every worker Job selects the Redfish provider
   with no hypervisor mount or URI, and the admission probes denied each

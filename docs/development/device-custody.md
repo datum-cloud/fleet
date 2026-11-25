@@ -15,7 +15,7 @@ marked **implemented and verified**, **implemented and inert**, or
 | A: control-plane foundation | API types and CRDs for `DeviceCustody`, `DeviceInstallation`, `DeviceWipe` and `DeviceRecovery`; CEL rules; IAM resources and roles; the creator webhook; the kind registry and admission rule table; the coordinator's custody reconciler, admission, results, recovery, rebuild and retention; the capacity projector | **Implemented and verified**, except the capacity projector, which is **implemented and inert**. Verified with unit tests and with tests against a real API server. Increment C wires the rest into every mode. |
 | B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
 | C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, the standalone smoke (`task standalone:test`), and both multi-plane runs, local VM and Redfish. |
-| D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
+| D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests, and the two site fixes they found. See [Failure scenarios](#failure-scenarios-increment-d). | **Implemented.** Unit tested. Verification of both multi-plane runs is pending. |
 
 ## What Increment A adds
 
@@ -380,6 +380,42 @@ event.
   `Prepared`, `Healthy` and `Available`.
 - Bootstrap stays refused (O10).
 - `DeviceRecovery` needs no second person.
+
+## Failure scenarios (Increment D)
+
+Both multi-plane runs, local VM and Redfish, run the #174 acceptance tests
+end to end. The [coverage
+inventory](../../test/acceptance/coverage.md#device-custody-and-operations) maps
+each test to its phase, and the [multi-plane
+phases](../operations/multiplane.md#acceptance-phases) describe each one.
+
+| Scenario | How the run produces it |
+| --- | --- |
+| Importing sends nothing | Checked before any allocation: no operation, assignment, worker Job, journal entry or BMC effect |
+| Staff access | A staff token in the provider project reads custody and creates recoveries, and is forbidden everything else |
+| Contention | Custody names the one MachineAllocation, the winner's |
+| Deadline | The coordinator restarts with a four-minute installation deadline for one admission, and the boot server is stopped, so the installer is never served |
+| Machine deleted mid-install | The customer deletes the Machine; release holds the Device and waits for the installation |
+| Recovery for the wrong hold | Staff name the held installation at the wrong fence; admission refuses it with nothing delivered or sent |
+| A wipe settles the hold | The release wipe is admitted above the held fence after the worker stopped |
+| Rebuild | Custody is deleted while the site observer is stopped, so no fence report arrives |
+| Pin mismatch | The Redfish probe connects with another key's digest and reaches no request |
+
+The scenarios found two site gaps, both fixed:
+
+- **A worker stopped at its deadline left its boot admission open** until the
+  boot window expired, so the server could still fetch the installer when
+  nothing could resume or observe the operation. Both workers now close it at
+  the deadline. A worker stopped from outside still leaves it open for its
+  replacement.
+- **The local VM wipe refused to run while a guest was up**, so it could never
+  settle an installation stopped at its deadline, which leaves its guest
+  running. The wipe now powers the guest off first, as a Redfish wipe does,
+  and still refuses if the guest keeps running.
+
+The shorter installation deadline is a flag of the acceptance binary's
+coordinator, and only the deadline scenario sets it. The emulator lab's limits
+are listed in the coverage inventory.
 
 ## Implementation decisions
 
@@ -938,7 +974,8 @@ a real API server:
 | CRD contract, roles, and that nothing ships the component or the test-only kinds | `TestCRDContract`, `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets`, `TestComponentIsInert` |
 
 Increment A has no site, so "nothing was sent" means custody admitted nothing
-and the fence did not rise. Increment D proves it with the lab BMC audit.
+and the fence did not rise. Increment D's phases prove it end to end, with the
+site journal and, in the Redfish run, the lab BMC audit.
 
 Both local end-to-end runs include the `custody-crd-rules` phase. It proves
 that a Milo project API refuses every write the CRD rules forbid, which
@@ -975,7 +1012,14 @@ Increment C's tests run with `task test:envtest`, and the smoke runs with
 | Where the component ships | `TestComponentRoots` |
 | The standalone smoke: contention, install, a simulator restart and recovery, reinstall, release with a wipe, reuse, and the role checks that keep one writer per kind | `task standalone:test` |
 
+Increment D's site tests run with `go test -race ./internal/site/...`:
+
+| Area | Tests |
+| --- | --- |
+| A worker stopped at its deadline closes its boot admission, in both workers | `TestAWorkerStoppedAtItsDeadlineClosesItsAdmission` |
+| A local VM wipe powers off a running guest, and is not proven while it keeps running | `TestAWipePowersOffARunningDomain`, `TestAWipeWithADomainThatKeepsRunningIsNotProven` |
+
 The multi-plane local VM and Redfish runs (`task multiplane:acceptance` and
-`task multiplane:redfish-acceptance`) run the same workers. Their verification
-is pending. The acceptance state of each #174 test is in the [coverage
+`task multiplane:redfish-acceptance`) run the same workers and the failure
+scenarios. The acceptance state of each #174 test is in the [coverage
 inventory](../../test/acceptance/coverage.md#device-custody-and-operations).
