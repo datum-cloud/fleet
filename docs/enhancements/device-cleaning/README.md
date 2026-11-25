@@ -244,12 +244,17 @@ controller uses it to create a wipe, and admission uses it to check one.
 - A drive with no planned method gets a step marked `Uncovered`.
 
 Fleet cannot account for the data on a `Missing` or `Uncovered` drive. The
-coordinator admits a wipe with such a step, sends nothing, and ends it
-`OutcomeUnknown` with reason `DriveMissing` or `DriveUncovered`. The server
-gets a recovery hold, and the `Cleaning` gate stays open.
+release controller waits 10 minutes for discovery to report the drive again,
+so a brief gap in discovery does not hold the server. The wait is fixed, not a
+policy setting, and each blocked plan gets its own. If the drive is still
+`Missing` or `Uncovered`, the release controller creates the wipe. The
+coordinator admits it, sends nothing, and ends it `OutcomeUnknown` with reason
+`DriveMissing` or `DriveUncovered`. The server gets a recovery hold, and the
+`Cleaning` gate stays open.
 
-Staff settle that hold with a `DeviceRecovery` decision `DisposeDrive`. It names
-the drive and how it was destroyed or removed, with a reference. Admission
+A recovery operator settles that hold with a `DeviceRecovery` decision
+`DisposeDrive`. One operator may record it; no second person confirms it. It
+names the drive and how it was destroyed or removed, with a reference. Admission
 accepts it only under that hold, and only for a drive the held wipe could not
 clean and current discovery no longer reports, so an uncovered drive must be
 pulled first. Admission refuses `Retry` for this hold, because a retried wipe
@@ -425,11 +430,16 @@ policy lists for it.
 
 ### Implementation decisions
 
-Record these decisions before implementation:
+Decided:
+
+- A dedicated provider role creates CleaningPolicies, separate from staff
+  viewer roles.
+- A single recovery operator may record `DisposeDrive`.
+- A drive waits a fixed 10 minutes before it holds the server.
+
+Record this decision before implementation:
 
 - Who approves a hardware qualification, and where its results live.
-- Who can record `DisposeDrive`, and whether a second person must confirm it.
-- Which roles can create a CleaningPolicy.
 
 ### Acceptance tests
 
