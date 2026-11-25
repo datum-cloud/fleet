@@ -59,6 +59,9 @@ type lab struct {
 	bootstrap func(receipt string) string
 	// seeded records whether the network boot's script loaded the seed.
 	seeded bool
+	// unfetchedSeed leaves the seed out of the boot service's delivery log,
+	// as when the installer never fetched it.
+	unfetchedSeed bool
 }
 
 func newLab(t *testing.T) *lab {
@@ -173,7 +176,7 @@ func (l *lab) deliver() {
 	os.MkdirAll(dir, 0o700)
 	log := "t admitted boot.ipxe bytes=1\n"
 	names := []string{"boot.ipxe", "kernel", "installer.gz"}
-	if l.seeded {
+	if l.seeded && !l.unfetchedSeed {
 		names = append(names, "seed.cpio")
 	}
 	for _, name := range names {
@@ -410,19 +413,24 @@ func TestTheInstallerVerifiesBootstrapDataOverRedfish(t *testing.T) {
 	hash.Write(salt)
 	hash.Write(data)
 	payload := site.Payload{Ref: "sealed-example", Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), Salt: salt, Data: data}
+	admitted := func(receipt string) string { return site.BootstrapLine(receipt, payload.Digest) }
 	for name, test := range map[string]struct {
-		line func(receipt string) string
-		ok   bool
+		line      func(receipt string) string
+		unfetched bool
+		ok        bool
 	}{
-		"the admitted seed":      {func(receipt string) string { return site.BootstrapLine(receipt, payload.Digest) }, true},
-		"a wrong seed read back": {func(receipt string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }, false},
-		"no verification line":   {func(string) string { return "booted" }, false},
+		"the admitted seed":      {line: admitted, ok: true},
+		"a wrong seed read back": {line: func(receipt string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }},
+		"no verification line":   {line: func(string) string { return "booted" }},
+		"another receipt":        {line: func(string) string { return site.BootstrapLine(strings.Repeat("e", 64), payload.Digest) }},
+		"a seed never fetched":   {line: admitted, unfetched: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			l := newLab(t)
 			r := runner(t, l)
 			r.Payloads = site.StorePayloads{Store: r.Store}
 			l.bootstrap = test.line
+			l.unfetchedSeed = test.unfetched
 			spec := installSpec()
 			spec.Bootstrap = &ops.SealedInput{Ref: payload.Ref, Digest: payload.Digest}
 			a := assignment(l, "DeviceInstallation", "op-seed", 1, spec)

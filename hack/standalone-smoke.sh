@@ -133,14 +133,14 @@ kubectl --context "$context" -n fleet-project-a get installations,machines
 test "$(kubectl --context "$context" -n fleet-project-a get installation debian-12 -o jsonpath='{.status.phase}')" = "Ready"
 test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.currentInstallationRef.name}')" = "debian-12"
 # The install resolved the published image to its pinned digest, and the
-# simulated server was handed exactly the admitted bootstrap data: its
+# simulated installer verified exactly the admitted bootstrap data: its
 # evidence names the operation's salted digest.
 test "$(kubectl --context "$context" -n fleet-project-a get installation debian-12 -o jsonpath='{.status.resolvedImage.digest}')" = "$(kubectl --context "$context" -n fleet-provider get machineimage debian-12 -o jsonpath='{.spec.definition.digest}')"
 bootstrap_op=$(kubectl --context "$context" -n fleet-provider get deviceinstallations -o jsonpath='{range .items[?(@.spec.bootstrap)]}{.metadata.name}{"\n"}{end}')
 test "$(printf '%s\n' "$bootstrap_op" | grep -c .)" = "1"
 bootstrap_digest=$(kubectl --context "$context" -n fleet-provider get deviceinstallation "$bootstrap_op" -o jsonpath='{.spec.bootstrap.digest}')
 test -n "$bootstrap_digest"
-test "$(kubectl --context "$context" -n fleet-provider get deviceinstallation "$bootstrap_op" -o jsonpath='{.status.evidence.bootstrap}')" = "$bootstrap_digest"
+test "$(kubectl --context "$context" -n fleet-provider get deviceinstallation "$bootstrap_op" -o jsonpath='{.status.evidence.installerVerifiedBootstrap}')" = "$bootstrap_digest"
 # The coordinator deletes the sealed copy once the operation ended.
 payloads=1
 for _ in $(seq 1 60); do

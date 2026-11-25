@@ -9,24 +9,24 @@ import (
 )
 
 // SeedDirectory is where the seed archive puts a payload in the installer's
-// root filesystem. The installer copies it to the target disk, and the
-// installed system's first boot reads it.
+// root filesystem. The installer copies it to the target disk.
 const SeedDirectory = "fleet-bootstrap"
 
-// BootstrapMarker starts the console line in which the installed system,
-// on its first disk boot, reports the digest of the bootstrap data it
-// found: "FLEET-BOOTSTRAP:<receipt>:sha256:<hex>". The guest recomputes it
-// from the salt and data on its own disk, so the line proves receipt
+// BootstrapMarker starts the console line in which the installer, after it
+// writes the seed to the target disk, reports the digest of what it reads
+// back: "FLEET-BOOTSTRAP:<receipt>:sha256:<hex>". It recomputes the digest
+// from the salt and data on the target disk, so the line proves the write
 // without printing the data or an unsalted hash of it.
 const BootstrapMarker = "FLEET-BOOTSTRAP:"
 
-// BootstrapLine is the console line a guest prints for a receipt and digest.
+// BootstrapLine is the console line the installer prints for a receipt and
+// digest.
 func BootstrapLine(receipt, digest string) string {
 	return BootstrapMarker + receipt + ":" + digest
 }
 
 // SeedArchive renders a verified payload as the newc cpio archive a network
-// boot loads as a second initrd. It holds the salt and data the guest
+// boot loads as a second initrd. It holds the salt and data the installer
 // digests, and the NoCloud user-data, meta-data and authorized keys the
 // installed system reads. Every file is readable by root only.
 func SeedArchive(payload *Payload, instanceID string) ([]byte, error) {
