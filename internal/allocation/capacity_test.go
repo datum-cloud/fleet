@@ -1,11 +1,13 @@
 package allocation
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	fleetcapacity "go.datum.net/fleet/internal/capacity"
 	"go.datum.net/fleet/internal/custody"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -114,5 +116,69 @@ func TestAnAllocationOnDisabledCapacityIsWithdrawn(t *testing.T) {
 	}
 	if holder := e.custody(device.Name).Spec.Holder; holder.Type != ops.HolderNone {
 		t.Fatalf("custody was claimed for Disabled capacity: %+v", holder)
+	}
+}
+
+// TestARecreatedDeviceIsNotClaimed creates an allocation, as an allocator
+// would after selecting the capacity, for an earlier incarnation of the
+// Device. The allocator withdraws it instead of claiming the Device.
+func TestARecreatedDeviceIsNotClaimed(t *testing.T) {
+	e := startEnv(t)
+	device := e.server(1)
+	capacity := e.capacity(device.Name)
+	stale, err := e.allocator.newAllocation(e.request(1), capacity, device, fleetv1.Hardware{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The allocation names another incarnation than the Device now stored.
+	stale.Spec.DeviceRef.UID = uid(990)
+	e.create(stale)
+	if held, err := e.allocator.claim(e.ctx, stale); err != nil || held {
+		t.Fatalf("claim for an earlier incarnation: held %v, %v", held, err)
+	}
+	if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(stale), stale); err == nil {
+		t.Fatal("the allocation for an earlier incarnation was kept")
+	}
+	if holder := e.custody(device.Name).Spec.Holder; holder.Type != ops.HolderNone {
+		t.Fatalf("custody was claimed for an earlier incarnation: %+v", holder)
+	}
+}
+
+// offerAll offers every capacity, as a projection read before the Device was
+// recreated would.
+type offerAll struct{ hardware fleetv1.Hardware }
+
+func (o offerAll) Offer(context.Context, *fleetv1.MachineCapacity) (bool, fleetv1.Hardware, error) {
+	return true, o.hardware, nil
+}
+
+// TestCapacityRegisteredForAnotherIncarnationIsSkipped records another Device
+// incarnation as the capacity's registration. Even when the offer was made,
+// the allocator does not select the capacity.
+func TestCapacityRegisteredForAnotherIncarnationIsSkipped(t *testing.T) {
+	e := startEnv(t)
+	device := e.server(1)
+	capacity := e.capacity(device.Name)
+	e.until("the projector offers the capacity", func() bool {
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(capacity), capacity); err != nil {
+			t.Fatal(err)
+		}
+		available := apiMeta.FindStatusCondition(capacity.Status.Conditions, custody.ConditionAvailable)
+		return available != nil && available.Status == metav1.ConditionTrue
+	})
+	e.allocator.Capacity = offerAll{hardware: capacity.Status.Hardware}
+	capacity.Annotations = map[string]string{fleetcapacity.RegisteredDeviceUID: uid(990)}
+	if err := e.admin.Update(e.ctx, capacity); err != nil {
+		t.Fatal(err)
+	}
+	// Selection skips it, and so does the recheck before the claim.
+	if _, _, _, err := e.allocator.candidate(e.ctx, e.request(1), map[string]bool{}); !errors.Is(err, ErrInsufficientCapacity) {
+		t.Fatalf("capacity registered for another incarnation was a candidate: %v", err)
+	}
+	if _, err := e.allocator.Allocate(e.ctx, e.request(1)); !errors.Is(err, ErrInsufficientCapacity) {
+		t.Fatalf("capacity registered for another incarnation was selected: %v", err)
+	}
+	if holder := e.custody(device.Name).Spec.Holder; holder.Type != ops.HolderNone {
+		t.Fatalf("custody was claimed: %+v", holder)
 	}
 }

@@ -733,7 +733,9 @@ its spec: the name is `device-` and the Device UID, and the
 unchanged. A Device recreated under the same name inherits nothing: the
 webhook refuses to enable the old capacity for it, and the projector reports
 the capacity not `Prepared` (`DeviceReplaced`), so the allocator never offers
-it. The name carries the raw UID rather than a hash of it, as stage 1 named
+it. The allocator also skips such capacity when it reads the Device after the
+offer, and withdraws an allocation that has not claimed its Device once the
+Device is no longer the incarnation the allocation names. The name carries the raw UID rather than a hash of it, as stage 1 named
 it; it is deterministic and holds one capacity per incarnation. Changing the
 naming scheme belongs to the change that applies the no-UIDs-in-spec rule to
 the existing kinds.
