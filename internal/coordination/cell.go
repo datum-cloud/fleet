@@ -84,7 +84,11 @@ func (c *Cell) Work(ctx context.Context, name string, runner *site.Runner) error
 		if runner.Payloads == nil {
 			return ErrNotDelivered
 		}
-		if payload, err := runner.Payloads.Get(ctx, assignment); err != nil || payload == nil {
+		payload, err := runner.Payloads.Get(ctx, assignment)
+		if err != nil {
+			return err
+		}
+		if payload == nil {
 			return ErrPayloadPending
 		}
 	}
@@ -121,14 +125,16 @@ func (s HandoffPayloads) Get(ctx context.Context, assignment site.Assignment) (*
 	if cell, _, _ := unstructured.NestedString(object.Object, "spec", "cell"); cell != s.Cell || object.GetLabels()[CellLabel] != s.Cell || object.GetLabels()[RoleLabel] != RolePayload {
 		return nil, ErrNotDelivered
 	}
+	// A payload that does not decode was not delivered by the hub; the
+	// worker refuses the handoff rather than retry it.
 	encoded, _, _ := unstructured.NestedString(object.Object, "spec", "payload")
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return nil, err
+		return nil, ErrNotDelivered
 	}
 	var payload site.Payload
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
+		return nil, ErrNotDelivered
 	}
 	return &payload, nil
 }

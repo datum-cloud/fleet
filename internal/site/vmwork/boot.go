@@ -65,7 +65,7 @@ func (c Config) stopNetwork(ctx context.Context) error {
 
 // verifyNetworkBoot requires the boot server's completed deliveries and the
 // firmware's DHCP lease.
-func (k Installation) verifyNetworkBoot(ctx context.Context, work *site.Work) error {
+func (k Installation) verifyNetworkBoot(ctx context.Context, work *site.Work, seed bool) error {
 	data, err := os.ReadFile(filepath.Join(k.BootRoot, Key(work.Key()), "boot-delivery.log"))
 	if err != nil {
 		return err
@@ -80,7 +80,11 @@ func (k Installation) verifyNetworkBoot(ctx context.Context, work *site.Work) er
 			completed[fields[2]] = true
 		}
 	}
-	for _, name := range []string{"boot.ipxe", "kernel", "installer.gz"} {
+	names := []string{"boot.ipxe", "kernel", "installer.gz"}
+	if seed {
+		names = append(names, "seed.cpio")
+	}
+	for _, name := range names {
 		if !completed[name] {
 			return fmt.Errorf("missing network delivery: %s", name)
 		}
@@ -139,7 +143,20 @@ func (c Config) BootHandler(store *site.Store) http.Handler {
 		switch name {
 		case "boot.ipxe":
 			base := c.origin() + "/" + parts[1] + "/" + boot.Token
-			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s\ninitrd %s/installer.gz\nboot\n", base, boot.Receipt, base))
+			seed := ""
+			if len(boot.Seed) > 0 {
+				seed = "initrd " + base + "/seed.cpio\n"
+			}
+			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s\ninitrd %s/installer.gz\n%sboot\n", base, boot.Receipt, base, seed))
+			size = int64(len(data))
+		case "seed.cpio":
+			// The operation's bootstrap seed, only while its admission is
+			// open; it is never written to the delivery evidence.
+			if len(boot.Seed) == 0 {
+				deny()
+				return
+			}
+			data = boot.Seed
 			size = int64(len(data))
 		case "kernel", "installer.gz":
 			// Hash the pinned artifact, then serve the same open file.
@@ -235,7 +252,7 @@ func (c Config) CheckClosedBoot(store *site.Store, origin string) (string, error
 			return "", fmt.Errorf("a boot admission is not closed")
 		}
 		base := origin + "/" + record.Name + "/" + boot.Token
-		for _, url := range []string{base + "/boot.ipxe", base + "/kernel", base + "/installer.gz", base + "/disk.raw", origin + "/kernel", origin + "/unknown/unknown/boot.ipxe"} {
+		for _, url := range []string{base + "/boot.ipxe", base + "/kernel", base + "/installer.gz", base + "/seed.cpio", base + "/disk.raw", origin + "/kernel", origin + "/unknown/unknown/boot.ipxe"} {
 			response, err := client.Get(url)
 			if err != nil {
 				return "", fmt.Errorf("the boot denial probe is unavailable")

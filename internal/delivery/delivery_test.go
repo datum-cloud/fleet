@@ -99,6 +99,32 @@ func TestADeviceCarriesPayloadsOnlyIfEverySiteServingItDoes(t *testing.T) {
 	var _ custody.PayloadCarriers = (*Sites)(nil)
 }
 
+type sweeping struct {
+	siteWith
+	kept *[][]site.Assignment
+}
+
+func (s sweeping) SweepPayloads(_ context.Context, keep []site.Assignment) error {
+	*s.kept = append(*s.kept, keep)
+	return nil
+}
+
+// TestPayloadsAreSweptOnlyAfterACompletePass never tells a site to drop
+// payloads after a pass that could not reconcile or deliver every Device,
+// because it would drop one an active operation needs.
+func TestPayloadsAreSweptOnlyAfterACompletePass(t *testing.T) {
+	var kept [][]site.Assignment
+	delivered := []site.Assignment{{Operation: ops.OperationReference{Kind: "DeviceInstallation", Name: "op-active"}}}
+	c := &Courier{Sites: &Sites{Sites: map[string]Site{"a": sweeping{kept: &kept}}}, delivered: delivered}
+	if err := c.SweepPayloads(context.Background()); err != nil || len(kept) != 0 {
+		t.Fatalf("swept after an incomplete pass: %v, %v", kept, err)
+	}
+	c.complete = true
+	if err := c.SweepPayloads(context.Background()); err != nil || len(kept) != 1 || len(kept[0]) != 1 || kept[0][0].Operation.Name != "op-active" {
+		t.Fatalf("kept = %v, %v", kept, err)
+	}
+}
+
 // TestOnlyTheAdmittedOperationIsDelivered never builds an assignment from
 // an operation that does not carry the fence custody admitted it at, so a
 // same-name operation created later is never delivered as the admitted one.

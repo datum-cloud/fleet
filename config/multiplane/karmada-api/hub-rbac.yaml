@@ -12,10 +12,10 @@ rules:
     # patch marks a handoff's result answered; the spec stays immutable.
     verbs: [get, list, watch, create, patch]
   # The courier writes each assignment's payload, checks an existing one,
-  # and deletes it once the result is answered. It lists none.
+  # and deletes it once the result is answered or the operation ends.
   - apiGroups: [coordination.fleet.datumapis.com]
     resources: [machineallocationpayloads]
-    verbs: [get, create, delete]
+    verbs: [get, list, create, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

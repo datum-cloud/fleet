@@ -127,6 +127,14 @@ func start(t *testing.T, base string) *env {
 	if err := e.kro.Create(e.ctx, object(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"probe","namespace":"kube-system"}}`)); !apierrors.IsForbidden(err) {
 		t.Fatalf("the API server does not authorize kro by RBAC: %v", err)
 	}
+	// The Job policy reads the site image from its parameter.
+	e.apply(object(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"fleet-site-worker-policy","namespace":"fleet-site"},"data":{"image":"site-image"}}`))
+	// A new policy admits everything until it is compiled; nothing counts
+	// as admitted until a known-refused request is refused by the policy.
+	control := dryRun(object(t, fmt.Sprintf(`{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"w-%s","namespace":%q},"rules":[]}`, handoff, coordination)))
+	if got := e.outcome(control, "policy"); got != "policy" {
+		t.Fatalf("the policies never took effect: %s", got)
+	}
 	return e
 }
 
@@ -160,23 +168,28 @@ func (e *env) policy(name string) *unstructured.Unstructured {
 	return policy
 }
 
-// weaken replaces the validation whose message starts with prefix by one
-// that always passes, and returns a function that restores the policy.
-func (e *env) weaken(name, prefix string) func() {
+// weaken replaces one clause, an exact substring of exactly one
+// validation's expression, by true, and returns a function that restores
+// the policy. Weakening a single clause, not a whole validation, shows that
+// this clause is what refuses the probe.
+func (e *env) weaken(name, clause string) func() {
 	e.t.Helper()
 	policy := e.policy(name)
 	original := policy.DeepCopy()
+	original.SetResourceVersion("")
 	validations, _, _ := unstructured.NestedSlice(policy.Object, "spec", "validations")
-	found := false
+	found := 0
 	for index, validation := range validations {
 		rule := validation.(map[string]any)
-		if strings.HasPrefix(fmt.Sprint(rule["message"]), prefix) {
-			rule["expression"], found = "true", true
+		expression := fmt.Sprint(rule["expression"])
+		if n := strings.Count(expression, clause); n > 0 {
+			found += n
+			rule["expression"] = strings.ReplaceAll(expression, clause, "true")
 			validations[index] = rule
 		}
 	}
-	if !found {
-		e.t.Fatalf("%s has no validation %q", name, prefix)
+	if found != 1 {
+		e.t.Fatalf("%s has %d copies of the clause %q, want exactly one", name, found, clause)
 	}
 	_ = unstructured.SetNestedSlice(policy.Object, validations, "spec", "validations")
 	if err := e.admin.Update(e.ctx, policy); err != nil {
@@ -184,8 +197,10 @@ func (e *env) weaken(name, prefix string) func() {
 	}
 	return func() {
 		current := e.policy(name)
-		original.SetResourceVersion(current.GetResourceVersion())
-		if err := e.admin.Update(e.ctx, original); err != nil {
+		restored := current.DeepCopy()
+		spec, _, _ := unstructured.NestedMap(original.Object, "spec")
+		restored.Object["spec"] = spec
+		if err := e.admin.Update(e.ctx, restored); err != nil {
 			e.t.Fatal(err)
 		}
 	}
@@ -227,16 +242,43 @@ func role(t *testing.T, namespace string, rules ...string) *unstructured.Unstruc
 }
 
 const (
-	ownHandoff     = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationhandoffs"],"resourceNames":["` + handoff + `"],"verbs":["get"]}`
-	ownPayload     = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationpayloads"],"resourceNames":["` + handoff + `-payload"],"verbs":["get"]}`
-	otherPayload   = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationpayloads"],"resourceNames":["op-other-payload"],"verbs":["get"]}`
-	anyPayload     = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationpayloads"],"verbs":["get"]}`
-	ownCredential  = `{"apiGroups":[""],"resources":["secrets"],"resourceNames":["bmc-0123456789abcdef0123"],"verbs":["get"]}`
-	anyCredential  = `{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}`
-	roleRuleText   = "a worker Role may grant only"
-	bindingRule    = "a worker RoleBinding may bind only"
-	clusterRBACMsg = "kro may not write cluster-wide RBAC"
+	ownHandoff    = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationhandoffs"],"resourceNames":["` + handoff + `"],"verbs":["get"]}`
+	ownPayload    = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationpayloads"],"resourceNames":["` + handoff + `-payload"],"verbs":["get"]}`
+	otherPayload  = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationpayloads"],"resourceNames":["op-other-payload"],"verbs":["get"]}`
+	anyPayload    = `{"apiGroups":["coordination.fleet.datumapis.com"],"resources":["machineallocationpayloads"],"verbs":["get"]}`
+	ownCredential = `{"apiGroups":[""],"resources":["secrets"],"resourceNames":["bmc-0123456789abcdef0123"],"verbs":["get"]}`
+	anyCredential = `{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}`
+	// Clauses of the rendered policies, each refusing one probe.
+	sizeClause         = "size(object.rules) == 2"
+	payloadNameClause  = "object.rules[1].resourceNames == [variables.handoff + '-payload']"
+	roleRefKindClause  = "object.roleRef.kind == 'Role'"
+	ownRoleClause      = "object.roleRef.name == object.metadata.name"
+	oneSubjectClause   = "size(object.subjects) == 1"
+	subjectKindClause  = "object.subjects[0].kind == 'ServiceAccount'"
+	subjectNameClause  = "object.subjects[0].name == object.metadata.name"
+	subjectSpaceClause = "object.subjects[0].namespace == 'fleet-site'"
+	clusterRBACClause  = "false"
+	envClause          = "!has(c.envFrom)"
+	secretKeyClause    = "!has(e.valueFrom.secretKeyRef)"
+	commandClause      = "c.command[0] == 'fleet-multiplane'"
+	ownHandoffClause   = "c.command[3] == variables.handoff"
+	argsClause         = "!has(c.args)"
+	credentialSize     = "size(object.rules) == 1"
+	payloadNamedClause = "has(object.rules[1].resourceNames)"
 )
+
+// payloadRuleClauses are every clause about a worker Role's second rule.
+var payloadRuleClauses = []string{
+	"object.rules[1].apiGroups == ['coordination.fleet.datumapis.com']",
+	"object.rules[1].resources == ['machineallocationpayloads']",
+	"object.rules[1].verbs == ['get']",
+	payloadNamedClause,
+	payloadNameClause,
+	"!has(object.rules[1].nonResourceURLs)",
+}
+
+// credentialName is the Redfish credential Role's Secret name clause.
+const credentialName = "n.matches('^bmc-[a-f0-9]{20}$')"
 
 func binding(t *testing.T, namespace string, subjects ...string) *unstructured.Unstructured {
 	return object(t, fmt.Sprintf(`{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"w-%s","namespace":%q},"subjects":[%s],
@@ -249,13 +291,24 @@ const (
 	kroAccount  = `{"kind":"ServiceAccount","name":"kro","namespace":"kro-system"}`
 	kroUser     = `{"kind":"User","apiGroup":"rbac.authorization.k8s.io","name":"` + kro + `"}`
 	everyone    = `{"kind":"Group","apiGroup":"rbac.authorization.k8s.io","name":"system:serviceaccounts"}`
+	// workerElsewhere has the worker's name in kro's namespace.
+	workerElsewhere = `{"kind":"ServiceAccount","name":"w-` + handoff + `","namespace":"kro-system"}`
 )
+
+// bindingTo binds the subjects to the named Role.
+func bindingTo(t *testing.T, namespace, role string, subjects ...string) *unstructured.Unstructured {
+	return object(t, fmt.Sprintf(`{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"w-%s","namespace":%q},"subjects":[%s],
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":%q}}`, handoff, namespace, strings.Join(subjects, ","), role))
+}
 
 type probe struct {
 	name string
 	send func(context.Context, client.Client) error
-	// policy and rule name the one validation that must refuse the probe.
-	policy, rule string
+	// policy and clauses name the clauses that refuse the probe. Several
+	// clauses are named only where each alone refuses it, or where one
+	// cannot be evaluated without the other.
+	policy  string
+	clauses []string
 }
 
 // check runs each probe: refused by the named rule as rendered, and
@@ -266,10 +319,17 @@ func (e *env) check(probes []probe) {
 			if got := e.outcome(p.send, "policy"); got != "policy" {
 				t.Fatalf("as rendered: %s, want refused by policy", got)
 			}
-			restore := e.weaken(p.policy, p.rule)
-			defer restore()
+			var restores []func()
+			for _, clause := range p.clauses {
+				restores = append(restores, e.weaken(p.policy, clause))
+			}
+			defer func() {
+				for i := len(restores) - 1; i >= 0; i-- {
+					restores[i]()
+				}
+			}()
 			if got := e.outcome(p.send, "admitted"); got != "admitted" {
-				t.Fatalf("without %q: %s, want admitted; the probe does not test that rule", p.rule, got)
+				t.Fatalf("without %q: %s, want admitted; the probe does not test those clauses", p.clauses, got)
 			}
 		})
 	}
@@ -294,10 +354,12 @@ func TestKroCanCreateOnlyPerOperationRBAC(t *testing.T) {
 	// 1. Role shape. Each Role is within kro's own grant, so only the
 	// policy can refuse it.
 	e.check([]probe{
-		{"a Role without its payload rule", dryRun(role(t, coordination, ownHandoff)), identity, roleRuleText},
-		{"a Role reading another operation's payload", dryRun(role(t, coordination, ownHandoff, otherPayload)), identity, roleRuleText},
-		{"a Role reading every payload", dryRun(role(t, coordination, ownHandoff, anyPayload)), identity, roleRuleText},
-		{"a Role with a third rule", dryRun(role(t, coordination, ownHandoff, ownPayload, ownHandoff)), identity, roleRuleText},
+		// Without a second rule, no clause about it can be evaluated, so all
+		// of them and the rule count refuse it together.
+		{"a Role without its payload rule", dryRun(role(t, coordination, ownHandoff)), identity, append([]string{sizeClause}, payloadRuleClauses...)},
+		{"a Role reading another operation's payload", dryRun(role(t, coordination, ownHandoff, otherPayload)), identity, []string{payloadNameClause}},
+		{"a Role reading every payload", dryRun(role(t, coordination, ownHandoff, anyPayload)), identity, []string{payloadNamedClause, payloadNameClause}},
+		{"a Role with a third rule", dryRun(role(t, coordination, ownHandoff, ownPayload, ownHandoff)), identity, []string{sizeClause}},
 	})
 	// Shapes outside kro's own grant are refused by RBAC before admission.
 	for name, outside := range map[string]*unstructured.Unstructured{
@@ -318,11 +380,15 @@ func TestKroCanCreateOnlyPerOperationRBAC(t *testing.T) {
 		t.Fatalf("the worker binding: %s", got)
 	}
 	e.check([]probe{
-		{"a binding to kro's own ServiceAccount", dryRun(binding(t, coordination, kroAccount)), identity, bindingRule},
-		{"a binding to another operation's worker", dryRun(binding(t, coordination, otherWorker)), identity, bindingRule},
-		{"a binding to kro as a user", dryRun(binding(t, coordination, kroUser)), identity, bindingRule},
-		{"a binding to every ServiceAccount", dryRun(binding(t, coordination, everyone)), identity, bindingRule},
-		{"a binding to its worker and kro", dryRun(binding(t, coordination, worker, kroAccount)), identity, bindingRule},
+		{"a binding to kro's own ServiceAccount", dryRun(binding(t, coordination, kroAccount)), identity, []string{subjectNameClause, subjectSpaceClause}},
+		{"a binding to another operation's worker", dryRun(binding(t, coordination, otherWorker)), identity, []string{subjectNameClause}},
+		{"a binding to a worker name in another namespace", dryRun(binding(t, coordination, workerElsewhere)), identity, []string{subjectSpaceClause}},
+		{"a binding to kro as a user", dryRun(binding(t, coordination, kroUser)), identity, []string{subjectKindClause, subjectNameClause, subjectSpaceClause}},
+		{"a binding to every ServiceAccount", dryRun(binding(t, coordination, everyone)), identity, []string{subjectKindClause, subjectNameClause, subjectSpaceClause}},
+		{"a binding to its worker and kro", dryRun(binding(t, coordination, worker, kroAccount)), identity, []string{oneSubjectClause}},
+		// kro holds every permission of its own Role, so RBAC admits binding
+		// a worker to it, and only the own-Role clause refuses it.
+		{"a binding of the worker to kro's own Role", dryRun(bindingTo(t, coordination, "fleet-site-kro-worker-rbac", worker)), identity, []string{ownRoleClause}},
 	})
 
 	// 4. No widening: an update of kro's own Role passes the same rule.
@@ -338,8 +404,8 @@ func TestKroCanCreateOnlyPerOperationRBAC(t *testing.T) {
 		}
 	}
 	e.check([]probe{
-		{"widening the Role to every payload", widen(ownHandoff, anyPayload), identity, roleRuleText},
-		{"widening the Role to another payload", widen(ownHandoff, otherPayload), identity, roleRuleText},
+		{"widening the Role to every payload", widen(ownHandoff, anyPayload), identity, []string{payloadNamedClause, payloadNameClause}},
+		{"widening the Role to another payload", widen(ownHandoff, otherPayload), identity, []string{payloadNameClause}},
 	})
 
 	// 3. No cluster-wide RBAC. kro holds no such grant, so RBAC refuses it;
@@ -356,8 +422,49 @@ func TestKroCanCreateOnlyPerOperationRBAC(t *testing.T) {
 	e.apply(object(t, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"probe-cluster-rbac"},
 		"subjects":[`+kroAccount+`],"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"probe-cluster-rbac"}}`))
 	e.check([]probe{
-		{"a ClusterRole, with a grant", dryRun(clusterRole), "fleet-site-kro-cluster-rbac", clusterRBACMsg},
-		{"a ClusterRoleBinding, with a grant", dryRun(clusterBinding), "fleet-site-kro-cluster-rbac", clusterRBACMsg},
+		{"a ClusterRole, with a grant", dryRun(clusterRole), "fleet-site-kro-cluster-rbac", []string{clusterRBACClause}},
+		{"a ClusterRoleBinding, with a grant", dryRun(clusterBinding), "fleet-site-kro-cluster-rbac", []string{clusterRBACClause}},
+	})
+}
+
+// job is a worker Job for the handoff, as the graph renders it, with one
+// change applied to its container.
+func job(t *testing.T, change string) *unstructured.Unstructured {
+	container := `"name":"worker","image":"site-image","command":["fleet-multiplane","site-worker","--handoff","` + handoff + `","--cell","cell-example"],
+		"env":[{"name":"FLEET_SITE_ENROLLMENT","valueFrom":{"configMapKeyRef":{"name":"fleet-site-enrollment","key":"enrollment.json"}}}],
+		"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}`
+	if change != "" {
+		container = change
+	}
+	return object(t, `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"w-`+handoff+`","namespace":"fleet-site","labels":{"fleet.datumapis.com/handoff":"`+handoff+`"}},
+		"spec":{"template":{"spec":{"restartPolicy":"Never","serviceAccountName":"w-`+handoff+`","containers":[{`+container+`}]}}}}`)
+}
+
+// TestKroJobsReadNoSecretAndRunOnlyTheWorker: the kubelet resolves a Pod's
+// Secret references whatever its ServiceAccount may read, so a Job kro
+// writes takes environment only from literals and the site enrollment, and
+// runs only the site worker for its own handoff.
+func TestKroJobsReadNoSecretAndRunOnlyTheWorker(t *testing.T) {
+	e := start(t, filepath.Join("config", "site", "base"))
+	jobs := "fleet-site-kro-worker-jobs"
+	safe := `"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}`
+	command := func(args ...string) string {
+		quoted := make([]string, len(args))
+		for i, a := range args {
+			quoted[i] = fmt.Sprintf("%q", a)
+		}
+		return `"name":"worker","image":"site-image","command":[` + strings.Join(quoted, ",") + `],` + safe
+	}
+	if got := e.outcome(dryRun(job(t, "")), "admitted"); got != "admitted" {
+		t.Fatalf("the worker Job: %s", got)
+	}
+	e.check([]probe{
+		{"a Job taking environment from a Secret", dryRun(job(t, command("fleet-multiplane", "site-worker", "--handoff", handoff, "--cell", "c")+`,"envFrom":[{"secretRef":{"name":"fleet-site-bmc-credentials"}}]`)), jobs, []string{envClause}},
+		{"a Job reading one Secret key", dryRun(job(t, command("fleet-multiplane", "site-worker", "--handoff", handoff, "--cell", "c")+`,"env":[{"name":"X","valueFrom":{"secretKeyRef":{"name":"fleet-site-bmc-credentials","key":"password"}}}]`)), jobs,
+			[]string{"has(e.valueFrom.configMapKeyRef) && e.valueFrom.configMapKeyRef.name == 'fleet-site-enrollment'", secretKeyClause}},
+		{"a Job running another program", dryRun(job(t, command("sh", "site-worker", "--handoff", handoff, "--cell", "c"))), jobs, []string{commandClause}},
+		{"a Job for another handoff", dryRun(job(t, command("fleet-multiplane", "site-worker", "--handoff", "op-other", "--cell", "c"))), jobs, []string{ownHandoffClause}},
+		{"a Job with arguments", dryRun(job(t, command("fleet-multiplane", "site-worker", "--handoff", handoff, "--cell", "c")+`,"args":["--extra"]`)), jobs, []string{argsClause}},
 	})
 }
 
@@ -373,9 +480,12 @@ func TestRedfishCredentialRolesAreOneGetOnOneSecret(t *testing.T) {
 		t.Fatalf("the worker Role: %s", got)
 	}
 	e.check([]probe{
-		{"a credential Role with a second rule", dryRun(role(t, credentials, ownCredential, ownCredential)), identity, roleRuleText},
-		{"a credential Role naming another Secret", dryRun(role(t, credentials, strings.Replace(ownCredential, "bmc-0123456789abcdef0123", "fleet-site-bmc-credentials", 1))), identity, roleRuleText},
-		{"a worker Role reading every payload", dryRun(role(t, coordination, ownHandoff, anyPayload)), identity, roleRuleText},
+		{"a credential Role with a second rule", dryRun(role(t, credentials, ownCredential, ownCredential)), identity, []string{credentialSize}},
+		{"a credential Role naming another Secret", dryRun(role(t, credentials, strings.Replace(ownCredential, "bmc-0123456789abcdef0123", "fleet-site-bmc-credentials", 1))), identity, []string{credentialName}},
+		{"a worker Role reading every payload", dryRun(role(t, coordination, ownHandoff, anyPayload)), identity, []string{payloadNamedClause, payloadNameClause}},
+		// kro holds get on every BMC credential to grant one, so only the
+		// own-Role clause refuses binding a worker to kro's Role.
+		{"a binding of the worker to kro's credential Role", dryRun(bindingTo(t, credentials, "fleet-site-kro-worker-credentials", worker)), identity, []string{ownRoleClause}},
 	})
 	if got := e.outcome(dryRun(role(t, credentials, anyCredential)), "rbac"); got != "policy" && got != "rbac" {
 		t.Errorf("a credential Role reading every Secret: %s", got)

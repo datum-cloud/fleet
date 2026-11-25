@@ -1,8 +1,12 @@
 package vmwork
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,6 +39,12 @@ type hypervisor struct {
 	hold bool
 	// noReceipt makes the guest print no receipt.
 	noReceipt bool
+	// bootstrap, given the receipt, is the extra line the installed
+	// system prints on its disk boot.
+	bootstrap func(receipt string) string
+	// networkReceipt is the receipt a network boot's script carries, as the
+	// boot server reads it from the open admission.
+	networkReceipt func() string
 }
 
 var receiptArg = regexp.MustCompile(`fleet.receipt=([0-9a-f]{64})`)
@@ -56,6 +66,8 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 		receipt := ""
 		if match := receiptArg.FindStringSubmatch(xml); match != nil {
 			marker, receipt = "FLEET-INSTALLED:", match[1]
+		} else if strings.Contains(xml, "<boot dev='network'/>") && h.networkReceipt != nil {
+			marker, receipt = "FLEET-INSTALLED:", h.networkReceipt()
 		} else {
 			// The disk boot prints the receipt the installer wrote.
 			installed, _ := os.ReadFile(filepath.Join(filepath.Dir(log), "installer.log"))
@@ -64,6 +76,9 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 			}
 		}
 		console := "booting\n" + marker + receipt + "\n"
+		if marker == "FLEET-DISK-BOOT:" && h.bootstrap != nil {
+			console = "booting\n" + h.bootstrap(receipt) + "\n" + marker + receipt + "\n"
+		}
 		if h.noReceipt {
 			console = "booting\n"
 		}
@@ -74,6 +89,8 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 		if !h.hold {
 			delete(h.running, name)
 		}
+	case "net-dhcp-leases":
+		return guestMAC + " 192.168.77.2/24", nil
 	case "list":
 		var names []string
 		for name := range h.running {
@@ -287,5 +304,137 @@ func TestAFailedNetworkBootClosesItsAdmission(t *testing.T) {
 	var boot Boot
 	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Open || !boot.Closed {
 		t.Fatalf("admission after the failure = %+v, %v, %v", boot, found, err)
+	}
+}
+
+// sealedInstall is an install whose admitted inputs name a sealed payload,
+// with the payload stored at the site as the site API stores it.
+func (r *rig) sealedInstall(uid string, fence int64) (site.Assignment, site.Payload) {
+	r.t.Helper()
+	salt := bytes.Repeat([]byte{9}, 32)
+	data := []byte(`{"userData":"#cloud-config\n","sshAuthorizedKeys":"ssh-ed25519 AAAAExampleOnly\n"}`)
+	hash := sha256.New()
+	hash.Write(salt)
+	hash.Write(data)
+	payload := site.Payload{Ref: "sealed-example", Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), Salt: salt, Data: data}
+	spec := installSpec()
+	spec.Bootstrap = &ops.SealedInput{Ref: payload.Ref, Digest: payload.Digest}
+	assignment := r.assignment("DeviceInstallation", uid, fence, spec)
+	if err := r.store.Raise(device, fence); err != nil {
+		r.t.Fatal(err)
+	}
+	if err := (site.StorePayloads{Store: r.store}).Put(assignment, payload); err != nil {
+		r.t.Fatal(err)
+	}
+	// The boot server's delivery evidence for every network boot file.
+	dir := filepath.Join(r.config.BootRoot, Key(assignment.Key()))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		r.t.Fatal(err)
+	}
+	evidence := ""
+	for _, name := range []string{"boot.ipxe", "kernel", "installer.gz", "seed.cpio"} {
+		evidence += "2026-11-25T00:00:00Z write-complete " + name + " bytes=1\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "boot-delivery.log"), []byte(evidence), 0o600); err != nil {
+		r.t.Fatal(err)
+	}
+	return assignment, payload
+}
+
+// TestBootstrapDataReachesTheInstalledSystem: a network install loads the
+// seed as a second initrd, the installed system reports the salted digest
+// of the data it found, and the evidence names it. A guest that reports
+// other data, or none, does not succeed, and the seed is dropped either way.
+func TestBootstrapDataReachesTheInstalledSystem(t *testing.T) {
+	for name, test := range map[string]struct {
+		line func(receipt, digest string) string
+		ok   bool
+	}{
+		"the admitted data": {func(receipt, digest string) string { return site.BootstrapLine(receipt, digest) }, true},
+		"other data":        {func(receipt, _ string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }, false},
+		"no bootstrap line": {func(string, string) string { return "" }, false},
+		"another receipt":   {func(_, digest string) string { return site.BootstrapLine(strings.Repeat("e", 64), digest) }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			r.config.PXE = true
+			r.runner.Kinds["DeviceInstallation"] = Installation{r.config}
+			r.runner.Payloads = site.StorePayloads{Store: r.store}
+			assignment, payload := r.sealedInstall("00000000-0000-4000-8000-000000000211", 2)
+			r.vm.bootstrap = func(receipt string) string { return test.line(receipt, payload.Digest) }
+			r.vm.networkReceipt = func() string {
+				var boot Boot
+				_, _ = r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot)
+				return boot.Receipt
+			}
+			result, err := r.runner.Run(context.Background(), assignment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var boot Boot
+			if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Open || len(boot.Seed) != 0 {
+				t.Fatalf("admission after the install = open %v, seed %d bytes, %v, %v", boot.Open, len(boot.Seed), found, err)
+			}
+			if !test.ok {
+				if result.Phase == ops.PhaseSucceeded {
+					t.Fatalf("result = %+v", result)
+				}
+				return
+			}
+			var evidence ops.InstallationEvidence
+			if result.Phase != ops.PhaseSucceeded || json.Unmarshal(result.Evidence, &evidence) != nil || evidence.Bootstrap != payload.Digest {
+				t.Fatalf("result = %+v, evidence %+v", result, evidence)
+			}
+		})
+	}
+}
+
+// TestADirectBootRefusesBootstrapData: a direct kernel boot has one initrd,
+// so it cannot hand the seed to the guest, and sends nothing.
+func TestADirectBootRefusesBootstrapData(t *testing.T) {
+	r := newRig(t)
+	r.runner.Payloads = site.StorePayloads{Store: r.store}
+	assignment, _ := r.sealedInstall("00000000-0000-4000-8000-000000000212", 2)
+	result, err := r.runner.Run(context.Background(), assignment)
+	if err != nil || result.Phase != ops.PhaseFailed || result.Reason != custody.ReasonBootstrapUnsupported || r.vm.creates != 0 {
+		t.Fatalf("result = %+v, %v, %d boots", result, err, r.vm.creates)
+	}
+}
+
+// TestTheBootServerServesTheSeedOnlyWhileOpen: the script loads the seed as
+// a second initrd, and the seed is served only under the open admission.
+func TestTheBootServerServesTheSeedOnlyWhileOpen(t *testing.T) {
+	r := newRig(t)
+	if err := r.store.Raise(device, 4); err != nil {
+		t.Fatal(err)
+	}
+	token := strings.Repeat("c", 64)
+	boot := Boot{Operation: "00000000-0000-4000-8000-000000000213", Fence: 4, Receipt: strings.Repeat("d", 64), Token: token, Expires: time.Now().Add(time.Minute), Open: true, Seed: []byte("seed-bytes")}
+	if err := r.store.PutRecord(device, 4, bootRecords, Key(boot.Operation), boot); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(r.config.BootHandler(r.store))
+	defer server.Close()
+	get := func(name string) (int, string) {
+		response, err := http.Get(server.URL + "/" + Key(boot.Operation) + "/" + token + "/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, _ := io.ReadAll(response.Body)
+		return response.StatusCode, string(body)
+	}
+	if code, script := get("boot.ipxe"); code != http.StatusOK || !strings.Contains(script, "/seed.cpio\n") {
+		t.Fatalf("script = %d %q", code, script)
+	}
+	if code, body := get("seed.cpio"); code != http.StatusOK || body != "seed-bytes" {
+		t.Fatalf("seed = %d %q", code, body)
+	}
+	closeBoot(&boot)
+	if err := r.store.PutRecord(device, 4, bootRecords, Key(boot.Operation), boot); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := get("seed.cpio"); code != http.StatusForbidden {
+		t.Fatalf("seed after close = %d", code)
 	}
 }

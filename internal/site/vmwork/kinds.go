@@ -146,8 +146,10 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 	if refusal != nil {
 		return refusal
 	}
-	if spec.Bootstrap != nil {
-		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "this site cannot yet hand bootstrap data to the server"}
+	// Bootstrap data reaches the guest only as a second initrd of a network
+	// boot; a direct kernel boot has one initrd.
+	if spec.Bootstrap != nil && !k.PXE {
+		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "this site hands bootstrap data to the server only on a network boot"}
 	}
 	if spec.Image.Name+"@"+spec.Image.Digest != k.Image {
 		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "the site installs only its verified local image"}
@@ -170,7 +172,13 @@ type Boot struct {
 	Expires   time.Time `json:"expires"`
 	Open      bool      `json:"open,omitempty"`
 	Closed    bool      `json:"closed,omitempty"`
+	// Seed is the operation's bootstrap seed archive, served only while the
+	// admission is open and dropped when it closes.
+	Seed []byte `json:"seed,omitempty"`
 }
+
+// closeBoot closes an admission and drops its seed.
+func closeBoot(boot *Boot) { boot.Open, boot.Closed, boot.Seed = false, true, nil }
 
 const bootRecords = "vmboot"
 
@@ -190,6 +198,11 @@ func (k Installation) boot(work *site.Work) (Boot, error) {
 		return boot, err
 	}
 	boot = Boot{Operation: work.Key(), Fence: work.Fence, Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Expires: k.now().Add(k.window())}
+	if payload := work.Bootstrap(); payload != nil {
+		if boot.Seed, err = site.SeedArchive(payload, "fleet-"+Key(work.Key())); err != nil {
+			return boot, err
+		}
+	}
 	return boot, k.save(work, boot)
 }
 
@@ -255,7 +268,7 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 		// leaves it open for its replacement to resume.
 		fail := func(err error) error {
 			if stage == "installer" && k.PXE && boot.Open && ctx.Err() == nil {
-				boot.Open, boot.Closed = false, true
+				closeBoot(&boot)
 				_ = k.save(work, boot)
 			}
 			return err
@@ -284,10 +297,10 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 			return nil, fail(err)
 		}
 		if stage == "installer" && k.PXE {
-			if err := k.verifyNetworkBoot(ctx, work); err != nil {
+			if err := k.verifyNetworkBoot(ctx, work, len(boot.Seed) > 0); err != nil {
 				return nil, fail(err)
 			}
-			boot.Open, boot.Closed = false, true
+			closeBoot(&boot)
 			if err := k.save(work, boot); err != nil {
 				return nil, err
 			}
@@ -296,6 +309,9 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 			return nil, err
 		}
 		record(stage)
+	}
+	if payload := work.Bootstrap(); payload != nil {
+		evidence.Bootstrap = payload.Digest
 	}
 	return evidence, nil
 }
@@ -363,6 +379,15 @@ func (k Installation) domainXML(work *site.Work, boot Boot, stage string) string
 	return fmt.Sprintf(`<domain type='%s'><name>%s</name><memory unit='MiB'>2048</memory><vcpu>2</vcpu><cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features><os><type arch='x86_64' machine='pc'>hvm</type>%s</os><on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash><devices>%s<emulator>/usr/bin/qemu-system-x86_64</emulator><disk type='file' device='disk'><driver name='qemu' type='raw'/><source file='%s/disk.raw'/><target dev='vda' bus='virtio'/></disk><serial type='file'><source path='%s/%s.log'/><target port='0'/></serial></devices></domain>`, domainType, domain(work.Key()), bootXML, nic, dir, dir, stage)
 }
 
+// bootstrapLine is the console line the installed system prints for the
+// admitted bootstrap data, or a line no guest prints when there is none.
+func bootstrapLine(work *site.Work, boot Boot) string {
+	if payload := work.Bootstrap(); payload != nil {
+		return site.BootstrapLine(boot.Receipt, payload.Digest)
+	}
+	return "\x00"
+}
+
 // waitReceipt waits for the guest to stop with exactly this phase's receipt.
 func (k Installation) waitReceipt(ctx context.Context, work *site.Work, boot Boot, stage string) error {
 	marker := "FLEET-INSTALLED:"
@@ -380,14 +405,22 @@ func (k Installation) waitReceipt(ctx context.Context, work *site.Work, boot Boo
 			if err != nil {
 				return err
 			}
-			count := 0
+			count, bootstrapped := 0, 0
 			for _, line := range strings.Split(string(data), "\n") {
-				if strings.TrimSpace(line) == marker+boot.Receipt {
+				switch strings.TrimSpace(line) {
+				case marker + boot.Receipt:
 					count++
+				case bootstrapLine(work, boot):
+					bootstrapped++
 				}
 			}
 			if count != 1 {
 				return errors.New("the guest stopped without exactly one boot receipt")
+			}
+			// The installed system proves it found exactly the admitted
+			// bootstrap data on its own disk, by its salted digest.
+			if stage == "disk" && work.Bootstrap() != nil && bootstrapped != 1 {
+				return errors.New("the installed system did not report the admitted bootstrap data")
 			}
 			file, err := os.OpenFile(log, os.O_RDWR, 0)
 			if err != nil {

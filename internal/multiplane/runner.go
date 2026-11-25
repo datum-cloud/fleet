@@ -35,6 +35,7 @@ import (
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/delivery"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/sealed"
 	"go.datum.net/fleet/internal/site/fixture"
 	"go.datum.net/fleet/internal/tenancy"
 )
@@ -417,8 +418,17 @@ func (r *Runner) installation(ctx context.Context, index int) (*request, *fleet.
 		if err == nil {
 			image, err = ImageCatalog(r.Provider.API).Resolve(ctx, consumer, &install)
 		}
+		var bootstrap *sealed.Payload
+		if ref := install.Spec.BootstrapConfigRef; err == nil && ref != nil {
+			// The management identity reads only this named Secret, standing
+			// in for the Installation creator's authority.
+			var payload sealed.Payload
+			if payload, err = sealed.Read(ctx, q.project.API, install.Namespace, ref.Name); err == nil {
+				bootstrap = &payload
+			}
+		}
 		if err == nil {
-			operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &install, Current: previous, Image: image})
+			operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &install, Current: previous, Image: image, Bootstrap: bootstrap})
 		}
 		if refusal := (*catalog.Refusal)(nil); errors.As(err, &refusal) {
 			accepted := condition("Accepted", metav1.ConditionFalse, install.Generation, refusal.Reason)

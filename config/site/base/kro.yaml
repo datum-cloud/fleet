@@ -127,6 +127,19 @@ spec:
         !has(variables.pod.volumes) || variables.pod.volumes.all(v,
         (has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == 'fleet-site-state') || has(v.emptyDir))
       message: a worker Job may mount only the site journal claim and emptyDir
+    # The kubelet resolves Secret references for a Pod whatever its
+    # ServiceAccount may read, so a worker takes environment only from
+    # literal values and the site enrollment.
+    - expression: >-
+        variables.pod.containers.all(c, !has(c.envFrom) && (!has(c.env) || c.env.all(e, !has(e.valueFrom) ||
+        (has(e.valueFrom.configMapKeyRef) && e.valueFrom.configMapKeyRef.name == 'fleet-site-enrollment' &&
+        !has(e.valueFrom.secretKeyRef) && !has(e.valueFrom.fieldRef) && !has(e.valueFrom.resourceFieldRef)))))
+      message: a worker Job may take environment only from literal values and the site enrollment
+    - expression: >-
+        variables.pod.containers.all(c, !has(c.args) && has(c.command) && size(c.command) == 6 &&
+        c.command[0] == 'fleet-multiplane' && c.command[1] == 'site-worker' &&
+        c.command[2] == '--handoff' && c.command[3] == variables.handoff && c.command[4] == '--cell')
+      message: a worker Job must run only the site worker for its own handoff
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

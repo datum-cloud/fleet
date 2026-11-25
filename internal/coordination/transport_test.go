@@ -434,3 +434,97 @@ func TestACellRefusesAHandoffNamingAnotherPayload(t *testing.T) {
 		})
 	}
 }
+
+// TestTheHubSweepsPayloadsNoOperationNeeds deletes every payload of its
+// cell not in the keep set: an operation that ended without an answered
+// result, or a payload written before a crash left it without a handoff.
+// It keeps the payloads still needed and touches no other cell's.
+func TestTheHubSweepsPayloadsNoOperationNeeds(t *testing.T) {
+	f := newFixture(t)
+	kept, keptPayload := f.sealedWipe(3, "00000000-0000-4000-8000-000000000141")
+	ended, endedPayload := f.sealedWipe(4, "00000000-0000-4000-8000-000000000142")
+	for _, pair := range []struct {
+		a site.Assignment
+		p site.Payload
+	}{{kept, keptPayload}, {ended, endedPayload}} {
+		if err := f.hub.Deliver(f.ctx, pair.a, &pair.p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := &Hub{API: f.hub.API, Namespace: namespace, Cell: "cell-example-b", MaxAge: time.Minute}
+	foreign, foreignPayload := f.sealedWipe(5, "00000000-0000-4000-8000-000000000143")
+	if err := other.Deliver(f.ctx, foreign, &foreignPayload); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.hub.SweepPayloads(f.ctx, []site.Assignment{kept}); err != nil {
+		t.Fatal(err)
+	}
+	exists := func(a site.Assignment) bool {
+		_, err := f.hub.payloads().Get(f.ctx, PayloadName(a), metav1.GetOptions{})
+		return err == nil
+	}
+	if !exists(kept) || exists(ended) || !exists(foreign) {
+		t.Fatalf("kept %v, ended %v, other cell %v", exists(kept), exists(ended), exists(foreign))
+	}
+	// The next delivery writes a swept payload again, so a sweep racing a
+	// delivery leaves the worker waiting, not failed.
+	if err := f.hub.Deliver(f.ctx, ended, &endedPayload); err != nil || !exists(ended) {
+		t.Fatalf("redelivery after a sweep: %v", err)
+	}
+}
+
+// TestOnlyAMissingPayloadIsPending: a worker retries only while the payload
+// has not arrived. A read it may not make is an error, and a payload that
+// does not decode, or names another cell, refuses the handoff.
+func TestOnlyAMissingPayloadIsPending(t *testing.T) {
+	assignment, payload := newFixture(t).sealedWipe(3, "00000000-0000-4000-8000-000000000151")
+	cases := map[string]struct {
+		mutate func(f *rig)
+		want   error
+	}{
+		"a payload that does not decode": {func(f *rig) {
+			object, _ := f.cell.API.Resource(PayloadResource).Namespace(namespace).Get(f.ctx, PayloadName(assignment), metav1.GetOptions{})
+			_ = unstructured.SetNestedField(object.Object, "not base64!", "spec", "payload")
+			_, _ = f.cell.API.Resource(PayloadResource).Namespace(namespace).Update(f.ctx, object, metav1.UpdateOptions{})
+		}, ErrNotDelivered},
+		"a payload for another cell": {func(f *rig) {
+			object, _ := f.cell.API.Resource(PayloadResource).Namespace(namespace).Get(f.ctx, PayloadName(assignment), metav1.GetOptions{})
+			_ = unstructured.SetNestedField(object.Object, "cell-example-b", "spec", "cell")
+			_, _ = f.cell.API.Resource(PayloadResource).Namespace(namespace).Update(f.ctx, object, metav1.UpdateOptions{})
+		}, ErrNotDelivered},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			f.runner.Payloads = HandoffPayloads{API: f.cell.API, Namespace: namespace, Cell: cellName}
+			if err := f.hub.Deliver(f.ctx, assignment, &payload); err != nil {
+				t.Fatal(err)
+			}
+			f.fed.sync()
+			f.fed.syncPayloads()
+			test.mutate(f)
+			if err := f.cell.Work(f.ctx, AssignmentName(assignment), f.runner); !errors.Is(err, test.want) {
+				t.Fatalf("err = %v, want %v", err, test.want)
+			}
+		})
+	}
+	t.Run("a read the worker may not make", func(t *testing.T) {
+		f := newFixture(t)
+		f.runner.Payloads = failingPayloads{errors.New("forbidden")}
+		if err := f.hub.Deliver(f.ctx, assignment, &payload); err != nil {
+			t.Fatal(err)
+		}
+		f.fed.sync()
+		if err := f.cell.Work(f.ctx, AssignmentName(assignment), f.runner); err == nil || errors.Is(err, ErrPayloadPending) {
+			t.Fatalf("err = %v, want the read error", err)
+		}
+	})
+}
+
+type failingPayloads struct{ err error }
+
+func (p failingPayloads) Get(context.Context, site.Assignment) (*site.Payload, error) {
+	return nil, p.err
+}
+func (failingPayloads) Delete(context.Context, site.Assignment) error { return nil }
+func (failingPayloads) Prune(context.Context, string) error           { return nil }

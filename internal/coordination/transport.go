@@ -232,6 +232,32 @@ func (h *Hub) Deliver(ctx context.Context, assignment site.Assignment, payload *
 	return err
 }
 
+// SweepPayloads deletes every payload object of this cell that is not for
+// one of the assignments to keep. Deleting the hub's copy deletes the
+// cell's. A payload deleted just before its handoff is written is written
+// again by the next delivery, and the worker waits for it.
+func (h *Hub) SweepPayloads(ctx context.Context, keep []site.Assignment) error {
+	names := map[string]bool{}
+	for _, assignment := range keep {
+		names[PayloadName(assignment)] = true
+	}
+	list, err := h.payloads().List(ctx, metav1.ListOptions{LabelSelector: CellLabel + "=" + h.Cell + "," + RoleLabel + "=" + RolePayload})
+	if err != nil {
+		return err
+	}
+	var failed error
+	for _, object := range list.Items {
+		if names[object.GetName()] {
+			continue
+		}
+		uid := object.GetUID()
+		if err := h.payloads().Delete(ctx, object.GetName(), metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+			failed = errors.Join(failed, err)
+		}
+	}
+	return failed
+}
+
 func (h *Hub) payloads() dynamic.ResourceInterface {
 	return h.API.Resource(PayloadResource).Namespace(h.Namespace)
 }

@@ -54,6 +54,11 @@ type lab struct {
 	bootRoot  string
 	store     *site.Store
 	operation string
+	// bootstrap, given the receipt, is the extra line the installed
+	// system prints on its disk boot.
+	bootstrap func(receipt string) string
+	// seeded records whether the network boot's script loaded the seed.
+	seeded bool
 }
 
 func newLab(t *testing.T) *lab {
@@ -142,10 +147,16 @@ func (l *lab) boot(target string) {
 		l.deliver()
 		line = fmt.Sprintf("FLEET-WIPED:%s:%d", boot.Receipt, diskBytes)
 	case target == "Pxe":
+		l.mu.Lock()
+		l.seeded = len(boot.Seed) > 0
+		l.mu.Unlock()
 		l.deliver()
 		line = "FLEET-INSTALLED:" + boot.Receipt
 	case target == "Hdd":
 		line = "FLEET-DISK-BOOT:" + boot.Receipt
+		if l.bootstrap != nil {
+			line = l.bootstrap(boot.Receipt) + "\n" + line
+		}
 	}
 	file, err := os.OpenFile(l.console, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err == nil {
@@ -161,7 +172,11 @@ func (l *lab) deliver() {
 	dir := BootDirectory(l.bootRoot, l.operation)
 	os.MkdirAll(dir, 0o700)
 	log := "t admitted boot.ipxe bytes=1\n"
-	for _, name := range []string{"boot.ipxe", "kernel", "installer.gz"} {
+	names := []string{"boot.ipxe", "kernel", "installer.gz"}
+	if l.seeded {
+		names = append(names, "seed.cpio")
+	}
+	for _, name := range names {
 		log += "t write-complete " + name + " bytes=1\n"
 	}
 	os.WriteFile(filepath.Join(dir, "boot-delivery.log"), []byte(log), 0o600)
@@ -271,14 +286,19 @@ func TestWipeChecksTheEnrolledDisk(t *testing.T) {
 	}
 }
 
-func TestBootstrapIsRefusedAtTheSiteToo(t *testing.T) {
+// TestBootstrapWithoutAPayloadSendsNothing: an install whose inputs name a
+// payload the site does not hold is refused before any power change.
+func TestBootstrapWithoutAPayloadSendsNothing(t *testing.T) {
 	l := newLab(t)
 	r := runner(t, l)
 	spec := installSpec()
 	spec.Bootstrap = &ops.SealedInput{Ref: "sealed-example", Digest: "sha256:" + strings.Repeat("c", 64)}
-	result, _ := r.Run(context.Background(), assignment(l, "DeviceInstallation", "op-bootstrap", 1, spec))
-	if result.Phase != ops.PhaseFailed || l.onCount() != 0 {
-		t.Fatalf("result = %+v", result)
+	for name, payloads := range map[string]site.Payloads{"a site that cannot receive payloads": nil, "a payload never delivered": site.StorePayloads{Store: r.Store}} {
+		r.Payloads = payloads
+		result, _ := r.Run(context.Background(), assignment(l, "DeviceInstallation", "op-bootstrap-"+strings.ReplaceAll(name, " ", "-"), 1, spec))
+		if result.Phase != ops.PhaseFailed || l.onCount() != 0 {
+			t.Fatalf("%s: result = %+v", name, result)
+		}
 	}
 }
 
@@ -376,5 +396,57 @@ func TestAServerThatNeverPowersOffEndsTheStep(t *testing.T) {
 	// The bound ends the step, long before the one-minute deadline.
 	if result.Phase != ops.PhaseOutcomeUnknown || result.Reason != site.ReasonStep || l.onCount() != 0 || time.Since(started) > 10*time.Second {
 		t.Fatalf("result = %+v, %d power-ons after %s", result, l.onCount(), time.Since(started))
+	}
+}
+
+// TestBootstrapDataReachesTheInstalledSystemOverRedfish: the network boot
+// loads the seed, and the install succeeds only if the installed system
+// reports the admitted data's salted digest.
+func TestBootstrapDataReachesTheInstalledSystemOverRedfish(t *testing.T) {
+	salt := make([]byte, 32)
+	data := []byte(`{"sshAuthorizedKeys":"ssh-ed25519 AAAAExampleOnly\n"}`)
+	hash := sha256.New()
+	hash.Write(salt)
+	hash.Write(data)
+	payload := site.Payload{Ref: "sealed-example", Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), Salt: salt, Data: data}
+	for name, test := range map[string]struct {
+		line func(receipt string) string
+		ok   bool
+	}{
+		"the admitted data": {func(receipt string) string { return site.BootstrapLine(receipt, payload.Digest) }, true},
+		"other data":        {func(receipt string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }, false},
+		"no bootstrap line": {func(string) string { return "booted" }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newLab(t)
+			r := runner(t, l)
+			r.Payloads = site.StorePayloads{Store: r.Store}
+			l.bootstrap = test.line
+			spec := installSpec()
+			spec.Bootstrap = &ops.SealedInput{Ref: payload.Ref, Digest: payload.Digest}
+			a := assignment(l, "DeviceInstallation", "op-seed", 1, spec)
+			if err := r.Store.Raise(device, 1); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Payloads.(site.StorePayloads).Put(a, payload); err != nil {
+				t.Fatal(err)
+			}
+			result, err := r.Run(context.Background(), a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !l.seeded {
+				t.Fatal("the network boot did not load the seed")
+			}
+			var boot Boot
+			if found, err := r.Store.GetRecord(device, bootRecords, a.Key(), &boot); err != nil || !found || len(boot.Seed) != 0 {
+				t.Fatalf("the admission kept its seed: %d bytes, %v, %v", len(boot.Seed), found, err)
+			}
+			var evidence ops.InstallationEvidence
+			_ = json.Unmarshal(result.Evidence, &evidence)
+			if succeeded := result.Phase == ops.PhaseSucceeded; succeeded != test.ok || (test.ok && evidence.Bootstrap != payload.Digest) {
+				t.Fatalf("result = %+v, evidence %+v", result, evidence)
+			}
+		})
 	}
 }

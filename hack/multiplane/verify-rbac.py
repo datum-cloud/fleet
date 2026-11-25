@@ -79,11 +79,11 @@ retained=[('create','customresourcedefinitions'),('delete','customresourcedefini
 retained={' '.join(a):can(*a) for a in retained}
 image=json.loads((s/'gitops-environment.json').read_text())['siteImage']
 def job(**change):
- c={'name':'worker','image':image,'command':['fleet-multiplane','site-worker'],'securityContext':{'runAsUser':0,'allowPrivilegeEscalation':False,'readOnlyRootFilesystem':True,'capabilities':{'drop':['ALL']}}}
+ c={'name':'worker','image':image,'command':['fleet-multiplane','site-worker','--handoff','op-admission-probe','--cell','probe'],'securityContext':{'runAsUser':0,'allowPrivilegeEscalation':False,'readOnlyRootFilesystem':True,'capabilities':{'drop':['ALL']}}}
  if redfish:c['env']=[{'name':'FLEET_SITE_PROVIDER','value':'redfish'}]
  spec={'restartPolicy':'Never','serviceAccountName':'w-op-admission-probe','containers':[c],'volumes':[{'name':'state','persistentVolumeClaim':{'claimName':'fleet-site-state'}},{'name':'tmp','emptyDir':{}}]}
  for k,v in change.items():
-  (c if k in ('image','securityContext','env','volumeMounts') else spec)[k]=v
+  (c if k in ('image','securityContext','env','envFrom','command','args','volumeMounts') else spec)[k]=v
  return {'apiVersion':'batch/v1','kind':'Job','metadata':{'name':'w-op-admission-probe','namespace':site,'labels':{'fleet.datumapis.com/handoff':'op-admission-probe'}},'spec':{'template':{'spec':spec}}}
 role=lambda rules,namespace=ns:{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'Role','metadata':{'name':'w-op-admission-probe','namespace':namespace},'rules':rules}
 own=[{'apiGroups':['coordination.fleet.datumapis.com'],'resources':['machineallocationhandoffs'],'resourceNames':['op-admission-probe'],'verbs':['get']},
@@ -99,7 +99,13 @@ sa=lambda name:{'apiVersion':'v1','kind':'ServiceAccount','metadata':{'name':nam
 cases={'admitted':{'worker Job':job(),'worker Role':role(own),'worker ServiceAccount':sa('w-op-admission-probe')},
  'denied':{'Job as the observer':job(serviceAccountName='fleet-site-observer'),'privileged Job':job(securityContext={'privileged':True,'allowPrivilegeEscalation':True}),
   'Job from another image':job(image='registry.k8s.io/pause:3.10'),'Job with a hostPath volume':job(volumes=[{'name':'host','hostPath':{'path':'/'}}]),
-  'Job on the host network':job(hostNetwork=True),'Role listing every handoff':role([dict(own[0],resourceNames=[],verbs=['get','list']),own[1]]),
+  'Job on the host network':job(hostNetwork=True),
+  # The kubelet resolves these whatever the worker may read, so the policy refuses them.
+  'Job taking environment from a Secret':job(envFrom=[{'secretRef':{'name':'fleet-site-bmc-credentials'}}]),
+  'Job reading a Secret key':job(env=[{'name':'X','valueFrom':{'secretKeyRef':{'name':'fleet-site-bmc-credentials','key':'password'}}}]),
+  'Job running another command':job(command=['sh','-c','true']),
+  'Job for another handoff':job(command=['fleet-multiplane','site-worker','--handoff','op-other-operation','--cell','probe']),
+  'Job with arguments':job(args=['--extra']),'Role listing every handoff':role([dict(own[0],resourceNames=[],verbs=['get','list']),own[1]]),
   # Each shape is within kro's own grant, so only the policy can refuse it.
   'worker Role without its payload rule':role([own[0]]),
   'worker Role reading another operation\'s payload':role([own[0],dict(own[1],resourceNames=['op-other-operation-payload'])]),
@@ -150,6 +156,8 @@ if wrong:
  raise SystemExit('a shape was refused by the wrong layer (%s): %s'%(', '.join(wrong),record['admission']))
 # With a real per-operation Role in place, kro may bind it only to that
 # operation's worker, and cannot widen it later: updates pass the same policy.
+# A probe Role left by an interrupted run is removed first.
+call(s/'cell-admin.yaml','-n',ns,'delete','role','w-op-admission-probe','--ignore-not-found')
 probe=role(own)
 r=call(s/'cell-admin.yaml','create','--as',kro,'-f','-',input=json.dumps(probe))
 if r.returncode:raise SystemExit('kro could not create the widening probe Role: '+r.stderr[:300])
@@ -165,7 +173,11 @@ try:
    'RoleBinding to another operation\'s worker':subject(dict(worker,name='w-op-other-operation')),
    'RoleBinding to a user':subject({'kind':'User','apiGroup':'rbac.authorization.k8s.io','name':kro}),
    'RoleBinding to a group':subject({'kind':'Group','apiGroup':'rbac.authorization.k8s.io','name':'system:serviceaccounts'}),
-   'RoleBinding to its worker and kro':subject(worker,{'kind':'ServiceAccount','name':'kro','namespace':'kro-system'})}}
+   'RoleBinding to its worker and kro':subject(worker,{'kind':'ServiceAccount','name':'kro','namespace':'kro-system'}),
+   'RoleBinding to a worker name in another namespace':subject(dict(worker,namespace='kro-system')),
+   # kro holds every permission of its own Role, so only the policy's
+   # own-Role rule refuses binding a worker to it.
+   'RoleBinding of a worker to kro\'s own Role':dict(subject(worker),roleRef={'apiGroup':'rbac.authorization.k8s.io','kind':'Role','name':'fleet-site-kro-worker-rbac'})}}
  for outcome,objs in bindings.items():
   for name,obj in objs.items():
    r=call(s/'cell-admin.yaml','create','--dry-run=server','--as',kro,'-f','-',input=json.dumps(obj))

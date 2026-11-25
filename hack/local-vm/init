@@ -45,6 +45,16 @@ mount --bind /dev /target/dev
 mount --bind /proc /target/proc
 mount --bind /sys /target/sys
 printf '%s\n' "$receipt" > /target/fleet-receipt
+# Bootstrap data arrives as a second initrd under /fleet-bootstrap, which the
+# copy above already put on the disk. Install it where the image reads it on
+# first boot: the NoCloud seed, and the default user's SSH keys.
+if [ -d /fleet-bootstrap ]; then
+ mkdir -p /target/var/lib/cloud/seed/nocloud /target/root/.ssh
+ cp /fleet-bootstrap/user-data /fleet-bootstrap/meta-data /target/var/lib/cloud/seed/nocloud/
+ cp /fleet-bootstrap/authorized_keys /target/root/.ssh/authorized_keys
+ chmod 700 /target/root/.ssh /target/fleet-bootstrap
+ chmod 600 /target/root/.ssh/authorized_keys
+fi
 chroot /target grub-install --target=i386-pc /dev/vda
 kernel=$(basename /boot/vmlinuz-*)
 initrd=$(basename /boot/initrd.img-*)
