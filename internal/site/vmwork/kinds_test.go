@@ -261,6 +261,25 @@ func TestTheBootServerServesOnlyAnOpenAdmissionAtTheStoredFence(t *testing.T) {
 
 // TestAFailedNetworkBootClosesItsAdmission stops serving the installer as
 // soon as a network-boot installation fails.
+func TestAWorkerStoppedAtItsDeadlineClosesItsAdmission(t *testing.T) {
+	r := newRig(t)
+	r.config.PXE = true
+	r.runner.Kinds["DeviceInstallation"] = Installation{r.config}
+	// The guest keeps running and never prints a receipt, so the worker is
+	// still waiting when the deadline passes.
+	r.vm.hold, r.vm.noReceipt = true, true
+	assignment := r.assignment("DeviceInstallation", "00000000-0000-4000-8000-000000000207", 2, installSpec())
+	assignment.Deadline = time.Now().Add(time.Second)
+	result, err := r.runner.Run(context.Background(), assignment)
+	if err != nil || result.Phase != ops.PhaseOutcomeUnknown || result.Reason != site.ReasonDeadline {
+		t.Fatalf("install past its deadline = %+v, %v", result, err)
+	}
+	var boot Boot
+	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Open || !boot.Closed {
+		t.Fatalf("admission after the deadline = %+v, %v, %v", boot, found, err)
+	}
+}
+
 func TestAFailedNetworkBootClosesItsAdmission(t *testing.T) {
 	r := newRig(t)
 	r.config.PXE = true
