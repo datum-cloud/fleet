@@ -53,7 +53,7 @@ func planSpec(t *testing.T, mutate func(*ops.CommissioningPlanContent)) ops.Devi
 	if mutate != nil {
 		mutate(&content)
 	}
-	return ops.DeviceCommissioningSpec{Plan: ops.CommissioningPlanInput{PlanReference: ops.PlanReference{Name: "plan-example", UID: "plan-uid", Digest: "sha256:" + strings.Repeat("e", 64)}, Content: content}}
+	return ops.DeviceCommissioningSpec{Plan: ops.CommissioningPlanInput{ApprovedPlanReference: ops.ApprovedPlanReference{PlanReference: ops.PlanReference{Name: "plan-example", Generation: 1, Digest: "sha256:" + strings.Repeat("e", 64)}, Approval: "plan-example-0123456789abcdef"}, Content: content}}
 }
 
 func commission(t *testing.T, l *lab, r *site.Runner, uid string, spec ops.DeviceCommissioningSpec) (custody.SiteResult, ops.CommissioningEvidence) {

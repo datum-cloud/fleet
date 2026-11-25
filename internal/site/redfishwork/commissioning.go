@@ -154,7 +154,7 @@ type preflight struct {
 // preflight inspects the server and checks its firmware with GETs only. It
 // returns the failing phase and what failed, if anything did.
 func (k Commissioning) preflight(ctx context.Context, work *site.Work, spec ops.DeviceCommissioningSpec) (ops.CommissioningEvidence, ops.CommissioningPhase, []string, error) {
-	evidence := ops.CommissioningEvidence{Plan: spec.Plan.PlanReference, BMCPublicKeySHA256: work.Snapshot.BMCPublicKeySHA256}
+	evidence := ops.CommissioningEvidence{Plan: spec.Plan.ApprovedPlanReference, BMCPublicKeySHA256: work.Snapshot.BMCPublicKeySHA256}
 	hw, err := conn(work).BMC.Hardware(ctx, conn(work).System)
 	if err != nil {
 		return evidence, "", nil, fmt.Errorf("inspection could not read the server: %w", err)
