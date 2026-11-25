@@ -56,7 +56,9 @@ def scratch(tmp):
         path = bin_dir / tool
         path.write_text('#!/bin/sh\n' + body + '\n')
         path.chmod(0o755)
-    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(tmp))
+    # A scratch lock, so the test never queues behind a real run.
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(tmp),
+               FLEET_MULTIPLANE_LOCK_DIR=str(tmp / 'lock'))
     return repo, env
 
 

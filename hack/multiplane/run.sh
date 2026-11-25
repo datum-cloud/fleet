@@ -71,11 +71,17 @@ trap 'interrupt 129' HUP
 # a signal reaches the traps at once rather than after the current phase.
 ph() { "${harness[@]}" phase --state "$state" --name "$1" --timeout "$2" -- "${@:3}" & wait $!; }
 
-"${harness[@]}" preflight --state "$state" --root . "${bootstrap[@]}" "${skip_tests[@]}" & wait $!
 if [[ $preflight_only == 1 ]]; then
+ "${harness[@]}" preflight --state "$state" --root . "${bootstrap[@]}" "${skip_tests[@]}" & wait $!
  : > "$state/preflight-completed"
  exit 0
 fi
+# Checks no other run can change come first, so a queued run is ready when its
+# turn comes. Then the run queues for the profile's lock, which it holds until
+# it exits, and repeats the checks another run can change under the lock.
+"${harness[@]}" preflight --checks host --state "$state" --root . "${bootstrap[@]}" "${skip_tests[@]}" & wait $!
+"${harness[@]}" lock --state "$state" --owner $$ & wait $!
+"${harness[@]}" preflight --checks contention --wait "${FLEET_MULTIPLANE_LOCK_TIMEOUT:-14400}" --state "$state" --root . & wait $!
 
 prefix="fleet-mp-$(openssl rand -hex 4)"
 printf '%s\n' "$prefix" > "$state/prefix"
