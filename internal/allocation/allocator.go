@@ -222,6 +222,18 @@ func (a *Allocator) claim(ctx context.Context, allocation *fleetv1.MachineAlloca
 	case fleetv1.AllocationReleasing, fleetv1.AllocationReleased:
 		return false, ErrReleased
 	}
+	// The capacity may have been disabled or removed after it was selected.
+	// An allocation that has not claimed its Device yet is withdrawn then,
+	// so removing Disabled capacity never races an allocation onto it.
+	if allocation.Status.Phase != fleetv1.AllocationActive {
+		usable, err := a.capacityUsable(ctx, allocation)
+		if err != nil {
+			return false, err
+		}
+		if !usable && !a.holds(ctx, allocation) {
+			return false, a.withdraw(ctx, allocation)
+		}
+	}
 	err := a.Custody.Claim(ctx, allocation.Spec.DeviceRef.Name, types.UID(allocation.Labels[fleetv1.LabelDeviceUID]), allocation.Name)
 	switch {
 	case err == nil:
@@ -232,11 +244,40 @@ func (a *Allocator) claim(ctx context.Context, allocation *fleetv1.MachineAlloca
 		return false, ErrCustodyLost
 	}
 	// No effect ran under this allocation: it never held the Device.
+	return false, a.withdraw(ctx, allocation)
+}
+
+// withdraw deletes an allocation that never held its Device.
+func (a *Allocator) withdraw(ctx context.Context, allocation *fleetv1.MachineAllocation) error {
 	uid, version := allocation.UID, allocation.ResourceVersion
 	if err := a.Provider.Delete(ctx, allocation, client.Preconditions{UID: &uid, ResourceVersion: &version}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+		return err
+	}
+	return nil
+}
+
+// capacityUsable reports whether the allocation's capacity still exists,
+// enabled and not deleting.
+func (a *Allocator) capacityUsable(ctx context.Context, allocation *fleetv1.MachineAllocation) (bool, error) {
+	reference := allocation.Spec.MachineCapacityRef
+	capacity := &fleetv1.MachineCapacity{}
+	if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: reference.Namespace, Name: reference.Name}, capacity); apierrors.IsNotFound(err) {
+		return false, nil
+	} else if err != nil {
 		return false, err
 	}
-	return false, nil
+	return capacity.Spec.AllocationPolicy == "Enabled" && capacity.DeletionTimestamp.IsZero(), nil
+}
+
+// holds reports whether custody already names the allocation, as after a
+// claim whose phase write was lost.
+func (a *Allocator) holds(ctx context.Context, allocation *fleetv1.MachineAllocation) bool {
+	state := &ops.DeviceCustody{}
+	if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: allocation.Spec.DeviceRef.Name}, state); err != nil {
+		return false
+	}
+	holder := state.Spec.Holder
+	return holder.AllocationRef != nil && holder.AllocationRef.Name == allocation.Name
 }
 
 // candidate returns the first capacity, by name, that the projection offers

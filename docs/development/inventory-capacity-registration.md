@@ -77,11 +77,12 @@ operation ID is no longer used for deduplication.
 
 An empty cleaning-policy name explicitly means **unconfigured**, not a policy
 named `default`, synthetic cleaning, or authorization to prepare. The CRD
-permits it only while Disabled. The webhook rejects every update and delete
-of [inventory-backed capacity](#scope-inventory-backed-capacity-only). An
-update that would move capacity out of
-`Disabled` while its Device is `Decommissioning` or `Retired` is denied for
-that reason; the webhook first checks that the caller can read the Device. Real policy resolution and policy-use authorization
+permits it only while Disabled. Updates and deletes of [inventory-backed
+capacity](#scope-inventory-backed-capacity-only) follow the [stage 2
+rules](#stage-2); stage 1 denied all of them. An update that would move
+capacity out of `Disabled` while its Device is `Decommissioning` or `Retired`
+is denied for that reason; the webhook first checks that the caller can read
+the Device. Real policy resolution and policy-use authorization
 are future prerequisites for a separately designed transition; there is no
 stage-1 preparation endpoint.
 
@@ -156,8 +157,8 @@ The marker is registration's own metadata:
 
 The marker is reliable because the webhook admits no create of
 inventory-backed capacity without all three annotations and the derived
-name, and admits no later update or delete of it, so the annotations cannot
-be removed or changed after creation. A label was not used: registration
+name, and no later update may add, change or remove a registration
+annotation, so the annotations cannot be removed or changed after creation. A label was not used: registration
 sets none, adding one would change the portal's wire contract, and a match
 condition can read annotations directly. The name is part of the marker only
 on create, so that the derived name space is reserved for registration and
@@ -171,7 +172,7 @@ rules:
   - apiGroups: [metal.datumapis.com]
     apiVersions: [v1alpha1]
     operations: [CREATE, UPDATE, DELETE]
-    resources: [machinecapacities]
+    resources: [machinecapacities, machinecapacities/status]
     scope: Namespaced
 matchConditions:
   - name: inventory-backed-capacity
@@ -264,8 +265,8 @@ The duplicate check is a point-in-time list. It does not close this race:
 No reservation store closes this, by decision. The consequences are bounded:
 
 - B can never be registered, because A now exists and shares its alias.
-- A's capacity is `Disabled`, and the webhook denies every update of
-  inventory-backed capacity, so it can never become available in stage 1.
+- In stage 1, A's capacity was `Disabled`, and the webhook denied every
+  update of inventory-backed capacity, so it could never become available.
 - The staff registration form lists every Device and marks each one that
   shares an alias with another as **Conflicting**, so both A and B show the
   conflict until a person resolves it.
@@ -315,8 +316,7 @@ Registration semantics, enforced by the registration webhook:
 
 - Only an `Active` Device can get new capacity.
 - Capacity whose Device is `Decommissioning` or `Retired` cannot leave
-  `Disabled`. Stage 1 already denies every update of inventory-backed
-  capacity, so this states the rule a future enabling transition must keep.
+  `Disabled`. Stage 2 enforces this when it enables capacity.
 - A Retired Device still takes part in the duplicate-identity check for as
   long as it exists. Deleting it removes its identity from that check.
 
@@ -405,9 +405,10 @@ evaluation error also denies.
 
   This comes from reading the pinned Milo source and from the envtest
   simulation below, not from a live Milo test.
-- **Capacity is not deleted with its Device.** The registration webhook denies
-  deletes of inventory-backed capacity, so a namespace or project teardown that removes Devices
-  still stops at their capacity; see the next section.
+- **Capacity is not deleted with its Device.** The registration webhook
+  admits the delete of registered capacity only once it is `Disabled` and its
+  Device is gone or Retired, so a namespace or project teardown that removes
+  Devices still stops at enabled capacity; see the next section.
 
 ### Cleanup identity
 
@@ -501,10 +502,10 @@ Consequences to plan for:
 
 Deleting a Device that backs capacity, whether it is Retired, its namespace is
 being deleted, or the component is not installed, leaves the capacity in
-place, still `Disabled`. The webhook denies every update and delete of it, so
-it cannot become available. No owner reference links the two: the webhook
-rejects owner references on registration, and garbage collection would be
-denied anyway because deletes of inventory-backed capacity are fenced.
+place, still `Disabled`. It cannot be enabled, because enabling needs its
+Device. No owner reference links the two: the webhook rejects owner
+references on registration and on every later update. Stage 2 lets a person
+remove it; see [Removing orphaned capacity](#removing-orphaned-capacity).
 
 The deletion policy narrows when this happens but does not prevent it: a
 Retired Device, a Device in a deleting namespace, and a delete by a cleanup
@@ -515,10 +516,9 @@ before its capacity was admitted.
 
 The resulting orphaned capacity is in this state:
 
-- It stays `Disabled` and is immutable. The webhook denies every update and
-  delete of inventory-backed capacity for every caller, administrators
-  included, and an update out of `Disabled` is denied with
-  `its Device does not exist`.
+- It stays `Disabled`: an update out of `Disabled` is denied with `its Device
+  does not exist`. In stage 1 it was also immutable and could not be
+  deleted.
 - It keeps its Device UID annotation and its `spec.deviceRef` name. A
   replacement Device created under the same name cannot register, because
   the capacity already references that name.
@@ -550,12 +550,17 @@ webhook was installed.
 
 - `config/milo` includes the mandatory fail-closed registration webhook
   (`config/components/registration-admission`). Its one entry matches
-  capacity create, update and delete in every namespace, narrowed by the
-  [inventory-backed match condition](#scope-inventory-backed-capacity-only)
-  and with no selectors. Status writes are not matched. An unreachable
-  service blocks writes to inventory-backed capacity and nothing else:
-  unmarked capacity, capacity status, Device, namespace and Project writes do
-  not pass through the registration webhook.
+  capacity create, update and delete, and capacity status writes, in every
+  namespace, narrowed by the [inventory-backed match
+  condition](#scope-inventory-backed-capacity-only) and with no selectors. An
+  unreachable service blocks writes to inventory-backed capacity, including
+  the projector's status writes, and nothing else: unmarked capacity, Device,
+  namespace and Project writes do not pass through the registration webhook.
+- The same server serves the creator webhook for Device operations. Its
+  `--client-identities` pin applies to both, so until an environment sets the
+  real API-server identities, the base manifest's placeholder refuses every
+  caller: no capacity registration and no operation create succeeds. `args`
+  is a list, so an overlay replaces it as a whole.
 - No root in this repository includes Device deletion protection. A
   deploying repository adds `config/components/device-deletion-protection` to
   the root it applies to Milo when it must keep in-service Devices.
@@ -589,7 +594,11 @@ Environment-owned inputs, none of which this repository supplies:
    `client-ca.crt`. Configure Milo's admission webhook client with an
    API-server client certificate signed by that CA, patch the webhook URL for
    reachability, and set `clientConfig.caBundle` to the serving CA.
-3. Keep `--provider-projects` equal to the complete provider scope.
+3. Keep `--provider-projects` equal to the complete provider scope. Set
+   `--client-identities` to the subjects of the API-server webhook client
+   certificates, and `--capacity-projectors` to the capacity projector's
+   username. The projector writes status through the provider project, so
+   its requests carry the project context the webhook requires.
 4. Decide whether the Milo root you apply includes
    `config/components/device-deletion-protection`. With it, the only Device
    deletes admitted are of Retired Devices, of Devices in a deleting namespace,
@@ -666,9 +675,12 @@ registration annotations and other labels, is denied.
 - While it is `Enabled`, the only permitted change is to `Disabled`.
 - Moving to `Enabled` requires, at the time of the update: the caller's
   `update` permission on the capacity and `get` on its Device; the annotated
-  Device incarnation, `Active` and not deleting; a pool label; a cleaning
-  policy that resolves; and no other Device in the provider scope, Retired
-  ones included, that shares an identity alias.
+  Device incarnation, `Active`, not deleting, and still recording a complete,
+  non-placeholder identity; a pool label; a cleaning policy that resolves;
+  and no other Device in the provider scope, Retired ones included, that
+  shares an identity alias.
+- An update that changes none of the three fields, such as an unchanged
+  apply, is admitted.
 
 Enabling does not require commissioning. The capacity projector offers the
 capacity only once it is `Prepared` and `Healthy`.
@@ -707,10 +719,12 @@ To resolve a conflict, correct the wrong record's identity, or move it to
 
 The webhook admits the delete of registered capacity when it is `Disabled`;
 its annotated Device is missing, another incarnation, or `Retired`; no
-MachineAllocation that is not `Released` names it; and the caller may delete
-it. Those facts cannot change between the check and the delete: enabling
-needs an `Active` Device of the annotated incarnation, and allocation needs
-`Enabled` capacity. Any other delete of registered capacity is still denied.
+MachineAllocation in its namespace that is not `Released` names it; and the
+caller may delete it. Enabling needs an `Active` Device of the annotated
+incarnation, so the capacity stays `Disabled`. An allocator that selected the
+capacity while it was enabled re-reads it after creating its allocation, and
+withdraws the allocation, before claiming the Device, if the capacity is gone
+or `Disabled`. Any other delete of registered capacity is still denied.
 
 ### Status writes
 
