@@ -92,8 +92,8 @@ for role in roles:
           {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
   components={
    'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},
-                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries'],'verbs':['get','list','watch','delete']},
-                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status'],'verbs':['get','update']},
+                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicepoweroperations','devicerecoveries'],'verbs':['get','list','watch','delete']},
+                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicepoweroperations/status','devicerecoveries/status'],'verbs':['get','update']},
                   {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}],
    'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}],
    'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}]}

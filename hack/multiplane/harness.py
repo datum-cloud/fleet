@@ -53,7 +53,7 @@ RESULTS_DIR = device_dir() + '/results'
 FINAL_STEPS = {'DeviceInstallation': ('disk-verified',), 'DeviceWipe': ('wipe', 'wipe-verified')}
 # Provider-project custody records, read with the provider's bootstrap credential.
 CUSTODY_KINDS = ('devicecustodies.fleet.datumapis.com', 'deviceinstallations.fleet.datumapis.com', 'devicewipes.fleet.datumapis.com',
-                 'devicerecoveries.fleet.datumapis.com', 'machineallocations.metal.datumapis.com')
+                 'devicepoweroperations.fleet.datumapis.com', 'devicerecoveries.fleet.datumapis.com', 'machineallocations.metal.datumapis.com')
 
 
 def now():

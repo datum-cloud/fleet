@@ -50,7 +50,7 @@ spec:
       - apiGroups: [fleet.datumapis.com]
         apiVersions: ["*"]
         operations: [CREATE, UPDATE]
-        resources: [deviceinstallations, devicewipes, devicerecoveries]
+        resources: [deviceinstallations, devicewipes, devicepoweroperations, devicerecoveries]
   validations:
     - expression: "request.operation != 'CREATE' || (object.spec.creator.username == request.userInfo.username && object.spec.creator.uid == request.userInfo.uid)"
       message: spec.creator must be the authenticated caller's username and UID

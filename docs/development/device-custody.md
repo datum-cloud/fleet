@@ -16,12 +16,12 @@ marked **implemented and verified**, **implemented and inert**, or
 | B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
 | C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, and the standalone smoke (`task standalone:test`). Verification of the two multi-plane runs, local VM and Redfish, is pending. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
-| Power P1: control plane | `DevicePowerOperation`, its registry entry, rows, checks, evidence and settle hook, its roles, and the Device field for offered reset types. See [Device power operations](#device-power-operations). | **Implemented and inert**, like A. Discovery fills the reset-type field in a separate change. |
+| Power P1: control plane | `DevicePowerOperation`, its registry entry, rows, checks, evidence and settle hook, its roles, and the Device field for offered reset types. See [Device power operations](#device-power-operations). | **Implemented.** The kind ships with the component in every root C wires, and the creator webhook, standalone's creator policy and each coordinator's access cover it. Nothing creates power operations yet. Discovery fills the reset-type field in a separate change. |
 | Power P2 to P4 | The site worker (on B), customer power from `Machine.spec.powerState` (on C), and the UI | **Proposed** |
 
 ## What Increment A adds
 
-- **Kinds.** `DeviceCustody` and three operation kinds in
+- **Kinds.** `DeviceCustody` and the operation kinds in
   `fleet.datumapis.com`, served only in provider project control planes. The
   component that registers them, with their ProtectedResources, roles and
   webhook, is in the production Milo root. The synthetic Milo root has it
@@ -884,10 +884,14 @@ against a real API server.
 
 This section records how Fleet implements the power kind of the [device power
 operations proposal](https://github.com/datum-cloud/fleet/pull/173) (#173,
-pinned at `d6744ab`) on this foundation. Step P1 is **implemented and inert**:
-the coordinator admits, holds and settles power operations, but no site
-worker runs them and nothing creates them. It follows [Adding an operation
-kind](#adding-an-operation-kind), and adds no change to the coordinator.
+pinned at `d6744ab`) on this foundation. Step P1 is **implemented**: the
+coordinator admits, holds and settles power operations in every mode the
+cutover wires, but no site worker runs them and nothing creates them. It
+follows [Adding an operation kind](#adding-an-operation-kind), and adds no
+change to the coordinator. The kind joins the creator webhook's governed
+kinds, standalone's creator policy and each coordinator's access, and
+`TestEveryOperationKindIsGoverned` requires every operation kind to be
+governed.
 
 | Piece | Decision |
 | --- | --- |
