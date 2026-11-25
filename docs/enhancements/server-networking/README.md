@@ -42,15 +42,17 @@ operations](../device-operations/README.md):
   IPAM, and the network owner connects the server's switch port to the
   customer's network. Fleet reports the result on the Machine.
 
-Fleet never configures a switch, a router, or a relay. This enhancement is a
-proposal. Nothing in it is implemented.
+Fleet never configures a switch, a router, or a relay. The reservation feed,
+its evidence gates, and the Kea synchronizer exist today and take their values
+from site enrollment. Everything else here is proposed.
 
 ## Motivation
 
 Today a site's enrollment lists each server's boot NIC MAC and provisioning
 address by hand, and the site's DHCP reservations come from those values.
-A Machine can request network interfaces, but nothing attaches a physical NIC
-to a customer network, and NSO has no attachment mode for a physical server.
+A Machine can request network interfaces, but Fleet cannot attach a physical
+NIC to a customer network, because NSO has no attachment mode for a physical
+server.
 
 ### Goals
 
@@ -65,7 +67,6 @@ to a customer network, and NSO has no attachment mode for a physical server.
 
 ### Non-goals
 
-- Configuring switches, routers, relays, VLANs, or bonds from Fleet.
 - Allocating customer addresses in Fleet. NSO and IPAM own them.
 - Routing, network policy, DNS, and public exposure. Networking owns them.
 - The underlay a managed node uses. Galactic and IPAM own it.
@@ -102,9 +103,8 @@ to a customer network, and NSO has no attachment mode for a physical server.
 - **Boot network reservations ([#87][boot-pr]):** this enhancement keeps its
   reservation feed and evidence gates, and replaces its enrollment values and
   its static mode at synchronized sites.
-- **Network handoff ([#61][handoff-pr]):** this enhancement covers its
-  attachment and disconnect on custody. Commissioning paths and customer boot
-  proxies stay there.
+- **Network handoff ([#61][handoff-pr]):** both propose physical attachment
+  and disconnect. See [Decisions for a person](#decisions-for-a-person).
 
 ## Design details
 
@@ -131,8 +131,9 @@ customer network membership. Neither changes the other's fields.
 
 #### Provisioning address
 
-Network operations defines one IPAM class for provisioning addresses and one
-pool per site. The pool reserves each subnet's gateway.
+Each site has one provisioning subnet. Network operations defines one IPAM
+class for provisioning addresses, with one pool per site that covers that
+subnet, reserves its gateway, and keeps each address unique within the pool.
 
 The requester of an operation that network-boots the server makes one IPAM
 claim for it, in the provider project, before it creates the operation:
@@ -140,7 +141,8 @@ claim for it, in the provider project, before it creates the operation:
 - the Fleet provider for Metal, for a `DeviceInstallation`;
 - the release controller, for a `DeviceWipe`.
 
-The claim is named from the operation, so a retry finds it. IPAM assigns a host
+The claim is named from the operation and scoped to the site's location, so a
+requester that crashes and runs again finds the same claim. IPAM assigns a host
 address when the claim is created. The requester copies the claim's name, UID,
 and address into the operation:
 
@@ -164,13 +166,24 @@ and hold that address. Otherwise admission refuses the operation with
 `BootAddressUnavailable`. The Device snapshot already records the boot NIC's
 MAC from Device inventory, and the site uses only that MAC.
 
-A claim's address belongs to the operation until the operation can no longer
-reach DHCP:
+A claim's address belongs to the operation until no DHCP instance can still
+serve it. The requester deletes the claim when one of these holds:
 
-- The requester deletes the claim after the operation succeeds, fails, or is
-  cancelled.
-- After `OutcomeUnknown`, the requester keeps the claim until the recovery
-  hold is settled, because a silent DHCP instance may still serve it.
+- The operation succeeded. Success already proves withdrawal.
+- The operation failed or was cancelled. Both mean the site published no
+  reservation, because the site counts publishing a reservation as an effect,
+  and an operation with an effect never ends `Failed`.
+- The operation ended `OutcomeUnknown`, and its recovery hold was settled.
+  Every settling operation for an installation or a wipe is a later network
+  boot of the same NIC that succeeded, which proves that no DHCP instance still
+  serves that NIC.
+- The Device was retired.
+
+A [custody `Retry`](../device-operations/README.md#unknown-outcomes) creates a
+new operation with a new name, so it claims a new address while the held claim
+stays. A claim whose operation will never be created, because the Installation
+or the release that would create it is gone, is deleted by its requester when
+the allocation is released.
 
 #### Reservation lifecycle
 
@@ -179,6 +192,9 @@ reach DHCP:
 A site declares whether its DHCP is synchronized. A synchronized site refuses an
 operation without a boot network input, and other sites refuse one with it.
 Either refusal sends nothing.
+
+The feed changes shape. A reservation carries the boot NIC's MAC and a host
+address only. The gateway and prefix come from the base configuration.
 
 At a synchronized site, the boot NIC holds the operation's address while all of
 these hold:
@@ -189,39 +205,37 @@ these hold:
 
 The site serves the full reservation set as a feed. Each synchronizer applies
 the feed to its Kea instance and reports the exact feed it applied. Kea places
-each reservation in the base subnet that contains its address, and the base
-configuration supplies the gateway and boot options. A reservation whose address
-no base subnet contains fails the cycle and is never dropped.
+each reservation in the base subnet that contains its address. A reservation
+whose address no base subnet contains fails the cycle and is never dropped, so
+a provisioning class that does not match the base configuration stops every
+boot at the site until it is fixed.
 
 The site worker gates effects on those reports:
 
 1. Before it powers on the server for a network boot, it waits for a report,
    accepted after the operation's boot window opened, that serves the boot NIC
    at the operation's address.
-2. Before it reports success, it waits until no DHCP instance's latest report
-   serves the boot NIC, and at least one instance served it during the
-   operation. An instance that went silent while serving keeps the outcome
-   unknown.
+2. Before it reports success, it waits until at least one instance served the
+   reservation during the operation, and no instance's latest report serves
+   the boot NIC or the operation's address. An instance that went silent while
+   serving them keeps the outcome unknown until an operator removes it from
+   the site.
 
 #### Site DHCP service
 
 The site DHCP service is a site component with these parts:
 
-- **Kea and synchronizer.** A StatefulSet with at least two replicas. Each pod
-  runs one Kea DHCPv4 server and one synchronizer that share Kea's control
-  socket. The pod name is the instance name reported to the site. Pods use host
-  networking on nodes that network operations labels as DHCP hosts, and Kea
-  listens on that node's address on the services network.
-- **Base configuration.** A ConfigMap that network operations owns. It lists
-  the provisioning subnets with their gateways and boot options, accepts only
-  relayed requests from known relay addresses, and has no address pools.
-- **Feed.** The site's boot service serves the feed over TLS on a port apart
-  from the firmware-facing boot listener. Each synchronizer authenticates with
-  the site's bearer token. The token and the TLS key are Secrets delivered to
-  the site, never in Git.
+- **Instances.** At least two Kea DHCPv4 servers, each paired with one
+  synchronizer. Each instance has a stable name and a fixed address that
+  relays can reach.
+- **Base configuration.** Network operations owns it. It names the site's
+  provisioning subnet, gateway, and boot options, accepts only relayed
+  requests from known relay addresses, and has no address pools.
+- **Feed.** The site serves the feed over TLS, apart from the firmware-facing
+  boot listener. Each synchronizer authenticates with the site's token. The
+  token and the TLS key are delivered to the site as secrets, never in Git.
 
-Scaling down drains the instance first: an instance removed while it serves a
-reservation keeps that operation's outcome unknown.
+Scaling down drains the instance first, until it reports an empty feed.
 
 #### Network operations requirements
 
@@ -229,25 +243,29 @@ Each site needs:
 
 1. **Provisioning VLAN.** One per site or per rack, untagged on each server's
    boot NIC port, so firmware boots without VLAN settings.
-2. **Port isolation.** Isolated or protected ports on the provisioning VLAN,
-   so a server reaches only the gateway and never another server's boot NIC.
+2. **Isolation on the provisioning VLAN only.** A private VLAN or equivalent,
+   so a server reaches only the gateway on the provisioning VLAN. Isolation
+   must not apply to customer VLANs on the same port.
 3. **Edge ports.** Spanning tree edge mode on server ports, so a port forwards
    before firmware's DHCP times out.
 4. **Bond fallback.** Where the boot NIC is a member of an LACP bond, LACP
    fallback to an individual port, so a member with no LACP partner forwards on
-   its native VLAN. The fallback must begin before the firmware's DHCP timeout,
-   about 60 seconds. Vendors call this "LACP fallback", "no suspend-individual",
-   or "force-up".
+   its native VLAN. Configure the fallback timeout below the DHCP timeout of
+   every firmware qualified at the site, measured during qualification.
+   Vendors call this "LACP fallback", "no suspend-individual", or "force-up".
 5. **DHCP relay.** On the gateway of each provisioning subnet, relay to every
    Kea instance address, with the gateway address as the relay address.
 6. **Reachability.** Provisioning subnets reach only the site's DHCP service and
    boot service. They reach no customer network, no BMC network, and no
    internet.
-7. **LLDP.** Switches send LLDP on server ports, so BMC discovery can confirm
+7. **Spoofing protection.** DHCP snooping and source address binding on the
+   provisioning VLAN, so a server cannot use another server's boot NIC MAC or
+   provisioning address.
+8. **LLDP.** Switches send LLDP on server ports, so BMC discovery can confirm
    which switch port each NIC is cabled to.
-8. **Names.** Fleet inventory's cable records use the switch and port names the
+9. **Names.** Fleet inventory's cable records use the switch and port names the
    network owner uses.
-9. **UEFI HTTP Boot.** The base configuration answers the HTTP Boot vendor class
+10. **UEFI HTTP Boot.** The base configuration answers the HTTP Boot vendor class
    with the boot service's URL, for firmware that boots over HTTP.
 
 ### Customer network attachment
@@ -269,12 +287,17 @@ Before allocation, the Fleet provider for Metal checks:
 - the location supports physical attachment.
 
 A failed check leaves the Machine `Pending` and reserves no capacity.
+Interfaces are checked again after allocation. If one no longer fits, the
+Machine keeps its server and reports `NetworkReady=False`, and deleting the
+Machine releases the server.
 
 #### Attachment
 
 After allocation, the Fleet provider for Metal creates one NSO interface claim
-per Machine interface, named from the allocation and the interface. Each claim
-uses the proposed `Physical` attachment mode and names its attachment point:
+per Machine interface, named from the allocation and the interface. Claims live
+where only the Fleet provider can write them, so a customer cannot create or
+replace one. Each claim uses the proposed `Physical` attachment mode and names
+its attachment point:
 
 - the host interface's MAC address, from Device inventory; and
 - the switch and port it is cabled to, from inventory's cable records.
@@ -283,8 +306,10 @@ Then:
 
 1. NSO assigns addresses through IPAM and writes the interface: addresses,
    gateway, and MTU.
-2. The network owner's physical realizer adds the switch port to the Network's
-   segment at that location and reports the interface `Programmed`.
+2. The network owner's physical realizer checks that the attachment point
+   belongs to the allocation, reports the interface `Prepared`, adds the
+   switch port to the Network's segment at that location, and reports it
+   `Programmed`.
 3. Fleet copies the interface's addresses, gateway, MTU, and the host
    interface's MAC address into `Machine.status.network`.
 
@@ -306,13 +331,11 @@ reports the same values in status, and the customer configures the OS.
 
 When a Machine is deleted, the Fleet provider for Metal deletes its interface
 claims. NSO keeps each claim until the realizer removes the port from the
-customer's segment, and then returns the addresses to IPAM. The release
-controller closes the `Network` and `Address` gates when every claim of the
-allocation is gone. Release then wipes the server on the boot network as
-before.
-
-A claim that never goes away keeps the gates open, and the server stays out of
-use.
+customer's segment. Then it returns the addresses to IPAM, or keeps them for
+an interface that asked to retain them. The release controller closes the
+`Network` and `Address` gates when every claim of the allocation is gone, and
+a claim that never goes away keeps the server out of use. Release then wipes
+the server on the boot network as before.
 
 ### Write order and crash recovery
 
@@ -320,7 +343,7 @@ use.
 | --- | --- | --- |
 | Boot address for an operation | IPAM claim, then operation, both named from the operation | The requester finds the claim by name and creates the operation. A claim whose operation will never be created is deleted. |
 | Release a boot address | Operation ends, then the requester deletes the claim | The requester deletes the claim again. |
-| Interface claims | Allocation, then each claim, named from the allocation and interface | The provider finds each claim by name and requires its spec to match. A claim with another spec is a conflict, and the Machine stays `Pending`. |
+| Interface claims | Allocation, then each claim, named from the allocation and interface, then the claim's UID on the allocation | The provider finds each claim by name in a namespace only it can write, requires its spec to match, and records its UID. A claim with another spec or another UID is a conflict, and the Machine reports `NetworkReady=False`. |
 | Release an interface | Delete the claim, then observe it gone | The release controller observes again. A gate closes only on absence. |
 
 ### Requests to other teams
@@ -336,26 +359,30 @@ order.
    copy it to the interface: a host MAC address, and a switch and port name.
    Validate the MAC's format and require both names for `Physical`.
 3. **Claim placement.** Define where a provider that is not compute creates
-   claims for a consumer project, since compute creates them in a location
-   cell's namespace. Fleet runs in the provider project and reaches the
-   consumer project through Milo.
-4. **Detach before delete.** Keep a `Physical` claim until the realizer reports
-   the port removed from the segment, then release its addresses.
+   claims for a consumer project, in a namespace the consumer cannot write.
+   Compute creates them in a location cell's namespace. Fleet runs in the
+   provider project and reaches the consumer project through Milo.
+4. **Who may attach a port.** Allow only the Fleet provider's identity to
+   create `Physical` claims.
+5. **Detach before delete.** Keep a `Physical` claim until the realizer reports
+   the port removed from the segment, then release or retain its addresses.
 
 #### Networking and network operations
 
-1. **Physical realizer.** A component that reads `Physical` interfaces, adds
-   and removes the named port's membership in the Network's segment, and
-   writes `Programmed` and the attachment reference. It is the only writer of
-   that membership.
+1. **Physical realizer.** A component that reads `Physical` interfaces, checks
+   each attachment point against the allocation Fleet records for that
+   server, adds and removes the named port's membership in the Network's
+   segment, and writes `Prepared`, `Programmed`, and the attachment reference.
+   It is the only writer of that membership.
 2. **Base port profiles and site requirements.** The list under [Network
    operations requirements](#network-operations-requirements).
 
 #### IPAM
 
-1. **Provisioning class.** One IPAM class for provisioning addresses, private,
-   with one host address per claim and the gateway reserved. No IPAM code
-   change is needed.
+1. **Provisioning class.** One IPAM class for provisioning addresses: private,
+   one pool per site scoped to the site's location, one host address per
+   claim, the gateway reserved, and addresses unique within the pool. No IPAM
+   code change is needed.
 
 ### Decisions for a person
 
@@ -368,6 +395,8 @@ order.
 - **The `Physical` attachment contract.** NSO and Networking must accept or
   change the asks above. Until they do, Fleet refuses Machines that request
   interfaces.
+- **Overlap with network handoff ([#61][handoff-pr]).** Both propose physical
+  attachment and disconnect. Decide which one owns them.
 
 ### Acceptance tests
 
@@ -380,6 +409,8 @@ These tests are required and not implemented:
   gets none.
 - A silent DHCP instance keeps the operation unknown, and its boot address
   stays claimed until the hold is settled.
+- An operation that fails after its site published a reservation ends
+  unknown, not failed.
 - A requester crash between the claim and the operation creates one claim and
   one operation.
 - A Machine on a Network its creator cannot use stays `Pending` without
@@ -425,7 +456,6 @@ interface.
 ## Drawbacks
 
 - Every network boot depends on the site DHCP service and its reports.
-- A silent DHCP instance holds an operation unknown until an operator acts.
 - Customer attachment waits on two other teams.
 - Installations carry static network configuration, so a customer who changes
   addresses later must also change the OS.
@@ -435,8 +465,8 @@ interface.
 - **One provisioning address per server.** Simpler and stable, but it holds an
   address for every idle server and cannot tell whether a silent DHCP instance
   still serves it.
-- **Fleet configures switch ports.** It would make Fleet a second writer of the
-  network owner's switches and hold their credentials.
+- **Fleet configures switch ports.** Fleet would hold the switches'
+  credentials and write the network owner's systems.
 - **DHCP on customer networks.** NSO has no DHCP, and a server would get a
   customer address before Fleet hands it off.
 - **Central DHCP outside the site.** Possible behind the same feed, but each
