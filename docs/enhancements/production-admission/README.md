@@ -179,9 +179,10 @@ The fence of the provider project also covers provider retirement.
 Each MachineAllocation is named from its Machine, as Device custody already
 requires. It names its tenant with the consumer reference and records the
 generation of the consumer fence and of the provider fence. Standalone mode
-runs without Milo, so it has neither fence, and the fence reads and checks in
-steps 1, 2, and 4 do not apply there. The allocator commits a Machine in this
-order:
+runs without Milo, so it has neither fence. There, the fence reads in steps 1
+and 4 and the Milo access, entitlement, and project checks in step 2 do not
+apply, but step 2 still checks class and profile policy and capacity
+eligibility. The allocator commits a Machine in this order:
 
 1. Read both fences from the API server, not a cache.
 2. Check admission for the retained creator with fresh access reviews, an
