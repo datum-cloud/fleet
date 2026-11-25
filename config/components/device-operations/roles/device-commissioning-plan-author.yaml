@@ -1,0 +1,14 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-commissioning-plan-author
+  annotations:
+    kubernetes.io/display-name: Fleet Device Commissioning Plan Author
+    kubernetes.io/description: Write and delete commissioning plans. An author cannot approve a plan they wrote.
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-device-operations-viewer
+  includedPermissions:
+    - fleet.datumapis.com/devicecommissioningplans.create
+    - fleet.datumapis.com/devicecommissioningplans.delete

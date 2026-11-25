@@ -16,6 +16,7 @@ marked **implemented and verified**, **implemented and inert**, or
 | B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
 | C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, the standalone smoke (`task standalone:test`), and both multi-plane runs, local VM and Redfish. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests, and the two site fixes they found. See [Failure scenarios](#failure-scenarios-increment-d). | **Implemented and verified** by unit tests and both multi-plane runs, local VM and Redfish. |
+| Commissioning, step 1 | `DeviceCommissioning`, `DeviceCommissioningPlan` and `DeviceCommissioningPlanApproval`: CRDs, ProtectedResources, roles, the creator webhook route, the kind and its rows, plan qualification and the current plan. See [Commissioning](#commissioning). | **Implemented and inert.** Verified by tests against a real API server. No site runs a commissioning worker yet, and no mode creates one. |
 
 ## What Increment A adds
 
@@ -823,11 +824,52 @@ these seams. Each is decided here.
 | 10 | The TLS and identity check is separate from install capabilities | The framework verifies the pin and the System only, through the Redfish client's identity walk. Each kind checks the capabilities it uses, such as the Pxe and Hdd boot targets, and drives the System through a connection bound to it. | Implemented and inert |
 | 11 | A worker refusal with nothing sent ends `Failed` | It ends `Failed` under the operation's fence and returns a `Service` holder to `None`. It never ends `OutcomeUnknown`. Whether anything was sent comes from the journal. | Implemented and inert |
 | 12 | The single writer of `Machine.status.power` | The manager's `PowerProjector` is the only writer. It reads the custody of the Machine's allocation: while a recovery hold exists, or custody is unverified, it reports power `Unknown`. Otherwise it reports the power state discovery last observed. A Machine with no active allocation has no power. The harness runners call the same projection. A power operation's evidence becomes a second source when the power kind exists. | Implemented and verified by the standalone smoke, which reads the projected state |
+| 13 | A deadline from the operation's inputs | `DeadlineFor` replaces the kind's fixed `Deadline` at admission. Commissioning uses its plan's burn-in duration plus one hour. | Implemented and verified by `TestCommissioning` |
+| 14 | Evidence kept past retention | `KeepsLatest` keeps each Device's latest succeeded operation of the kind. Commissioning uses it, because the capacity projector reads it. | Implemented and verified by `TestCommissioning` |
 
 Rows 1 to 11 keep the status recorded when Increment A added them. The
 install and wipe kinds use some of them, such as step payloads and the refusal
-rule. No power or commissioning kind exists yet, so no shipped kind uses the
-settle hook or `Supersedes`. None of these conflicts with #174.
+rule. No power kind exists yet, and commissioning uses neither, so no shipped
+kind uses the settle hook or `Supersedes`. None of these conflicts with #174.
+
+## Commissioning
+
+This implements the kinds of the [commissioning
+proposal](https://github.com/datum-cloud/fleet/pull/185). Step 1 is
+**implemented and inert**: custody admits, holds and settles commissioning,
+but no site runs its worker, so an admitted commissioning ends
+`OutcomeUnknown` at its deadline.
+
+- **Plans.** `DeviceCommissioningPlan` has an immutable spec with a creator, a
+  non-empty Device selector, plans it supersedes, the content the site runs,
+  and an evidence lifetime of 1 hour to 365 days. Burn-in runs 1 minute to 24
+  hours. `DeviceCommissioningPlanApproval` has the plan's name, and names the
+  plan's UID and the digest of its whole spec (`custody.PlanDigest`). The
+  creator webhook governs both, so each creator is the caller.
+- **Qualified.** An approval qualifies its plan when it names the plan's UID
+  and current digest and its creator's username differs from the plan's. No
+  role both writes and approves plans, which a test pins.
+- **Current plan.** The qualified plans whose selector matches the Device's
+  labels, minus those another of them supersedes. One left is the current
+  plan. None left with none matching is `NoCurrentPlan`. More than one, or
+  none left because the matching plans supersede each other, is
+  `PlanAmbiguous`. A supersession reaches only Devices the superseding plan
+  selects, and revoking it restores the old plan.
+- **Admission.** Two staff rows: from `None`, and from `Service` only to settle
+  a commissioning hold. The kind refuses a Device that is not `Active`, one
+  without a `primary` interface MAC (`BootInterfaceUnknown`), a plan that is
+  missing, re-created or not qualified (`PlanNotQualified`), a copied content
+  or digest that differs from the plan (`PlanMismatch`), and a plan that is
+  not the Device's current plan (`PlanNotCurrent`).
+- **Results.** A proven verdict ends `Succeeded` with result `Passed` or
+  `Failed` in its evidence. A `Passed` result must record inspected hardware
+  and a passed burn-in, and a `Failed` result must name the phase that
+  failed, or the evidence proves nothing and the operation ends
+  `OutcomeUnknown`. Evidence is limited to 16 KiB.
+- **Holds.** A later commissioning that ends `Succeeded` settles a
+  commissioning hold. It needs no `Retry`.
+
+The boot interface is fixed at `primary`, like the allocator's in every mode.
 
 ## Points for a person
 

@@ -20,5 +20,5 @@ webhooks:
       - apiGroups: [fleet.datumapis.com]
         apiVersions: [v1alpha1]
         operations: [CREATE, UPDATE]
-        resources: [deviceinstallations, devicewipes, devicerecoveries]
+        resources: [deviceinstallations, devicewipes, devicerecoveries, devicecommissionings, devicecommissioningplans, devicecommissioningplanapprovals]
         scope: Namespaced

@@ -462,7 +462,7 @@ type DeviceRecoveryList struct {
 func addKnown(s *runtime.Scheme) error {
 	s.AddKnownTypes(GroupVersion, &DeviceCustody{}, &DeviceCustodyList{}, &DeviceInstallation{}, &DeviceInstallationList{}, &DeviceWipe{}, &DeviceWipeList{}, &DeviceRecovery{}, &DeviceRecoveryList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
-	return nil
+	return addCommissioning(s)
 }
 
 var AddToScheme = addKnown

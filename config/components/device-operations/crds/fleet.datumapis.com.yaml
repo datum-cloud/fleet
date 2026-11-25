@@ -1073,3 +1073,553 @@ spec:
               message: operation phases move forward only, and an ended phase is final
         required:
         - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicecommissionings.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceCommissioning
+    listKind: DeviceCommissioningList
+    plural: devicecommissionings
+    singular: devicecommissioning
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Device
+      type: string
+      jsonPath: .spec.deviceRef.name
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Reason
+      type: string
+      jsonPath: .status.reason
+    - name: Fence
+      type: integer
+      jsonPath: .status.fence
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              creator:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                required:
+                - username
+                - uid
+              deviceRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                required:
+                - name
+                - uid
+              authority:
+                type: object
+                properties:
+                  allocationRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - name
+                  serviceRequest:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                    required:
+                    - reason
+                x-kubernetes-validations:
+                - rule: has(self.allocationRef) != has(self.serviceRequest)
+                  message: set exactly one of allocationRef and serviceRequest
+              plan:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                  digest:
+                    type: string
+                    pattern: ^sha256:[0-9a-f]{64}$
+                  content:
+                    type: object
+                    properties:
+                      inspection:
+                        type: object
+                        properties:
+                          cpu:
+                            type: object
+                            properties:
+                              architecture:
+                                type: string
+                                enum: [amd64, arm64]
+                              cores:
+                                type: integer
+                                format: int64
+                                minimum: 1
+                                maximum: 4096
+                            required: [architecture, cores]
+                          memory:
+                            type: object
+                            properties:
+                              capacity:
+                                type: string
+                                pattern: ^[1-9][0-9]{0,6}(Mi|Gi|Ti)$
+                            required: [capacity]
+                          disks:
+                            type: object
+                            properties:
+                              count:
+                                type: integer
+                                format: int64
+                                minimum: 1
+                                maximum: 64
+                              minCapacity:
+                                type: string
+                                pattern: ^[1-9][0-9]{0,6}(Mi|Gi|Ti)$
+                            required: [count, minCapacity]
+                          interfaces:
+                            type: object
+                            properties:
+                              count:
+                                type: integer
+                                format: int64
+                                minimum: 1
+                                maximum: 64
+                            required: [count]
+                        required: [cpu, memory, disks, interfaces]
+                      firmware:
+                        type: array
+                        maxItems: 32
+                        items:
+                          type: object
+                          properties:
+                            component:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                            version:
+                              type: string
+                              minLength: 1
+                              maxLength: 128
+                          required: [component, version]
+                        x-kubernetes-list-type: map
+                        x-kubernetes-list-map-keys: [component]
+                      burnIn:
+                        type: object
+                        properties:
+                          image:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                                minLength: 1
+                                maxLength: 253
+                              digest:
+                                type: string
+                                pattern: ^sha256:[0-9a-f]{64}$
+                            required: [name, digest]
+                          duration:
+                            type: string
+                            pattern: ^([0-9]+h)?([0-9]+m)?([0-9]+s)?$
+                            x-kubernetes-validations:
+                            - rule: self != '' && duration(self) >= duration('1m') && duration(self) <= duration('24h')
+                              message: burn-in runs from 1 minute to 24 hours
+                        required: [image, duration]
+                    required: [inspection, burnIn]
+                required: [name, uid, digest, content]
+            required:
+            - creator
+            - deviceRef
+            - authority
+            - plan
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: an operation spec is immutable after create
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                - Pending
+                - Admitted
+                - Dispatched
+                - Verifying
+                - Succeeded
+                - Failed
+                - Cancelled
+                - OutcomeUnknown
+              reason:
+                type: string
+                maxLength: 128
+              message:
+                type: string
+                maxLength: 1024
+              fence:
+                type: integer
+                format: int64
+                minimum: 0
+              admittedAt:
+                type: string
+                format: date-time
+              deadline:
+                type: string
+                format: date-time
+              finishedAt:
+                type: string
+                format: date-time
+              inputDigest:
+                type: string
+                maxLength: 128
+              snapshot:
+                type: object
+                properties:
+                  bmcEndpoint:
+                    type: string
+                    maxLength: 2048
+                  systemUUID:
+                    type: string
+                    maxLength: 64
+                  bootMACAddress:
+                    type: string
+                    maxLength: 32
+                  bmcPublicKeySHA256:
+                    type: string
+                    maxLength: 128
+                  deviceGeneration:
+                    type: integer
+                    format: int64
+                  discoveryObservedAt:
+                    type: string
+                    maxLength: 64
+                  extra:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
+              evidence:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            x-kubernetes-validations:
+            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
+              message: operation phases move forward only, and an ended phase is final
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicecommissioningplans.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceCommissioningPlan
+    listKind: DeviceCommissioningPlanList
+    plural: devicecommissioningplans
+    singular: devicecommissioningplan
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: Creator
+      type: string
+      jsonPath: .spec.creator.username
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              creator:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                required:
+                - username
+                - uid
+              deviceSelector:
+                type: object
+                properties:
+                  matchLabels:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 63
+                  matchExpressions:
+                    type: array
+                    maxItems: 16
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                          minLength: 1
+                          maxLength: 317
+                        operator:
+                          type: string
+                          enum: [In, NotIn, Exists, DoesNotExist]
+                        values:
+                          type: array
+                          maxItems: 16
+                          items:
+                            type: string
+                            maxLength: 63
+                      required: [key, operator]
+                x-kubernetes-validations:
+                - rule: (has(self.matchLabels) && size(self.matchLabels) > 0) || (has(self.matchExpressions) && size(self.matchExpressions) > 0)
+                  message: a plan must select Devices
+              supersedes:
+                type: array
+                maxItems: 16
+                items:
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                x-kubernetes-list-type: set
+              content:
+                type: object
+                properties:
+                  inspection:
+                    type: object
+                    properties:
+                      cpu:
+                        type: object
+                        properties:
+                          architecture:
+                            type: string
+                            enum: [amd64, arm64]
+                          cores:
+                            type: integer
+                            format: int64
+                            minimum: 1
+                            maximum: 4096
+                        required: [architecture, cores]
+                      memory:
+                        type: object
+                        properties:
+                          capacity:
+                            type: string
+                            pattern: ^[1-9][0-9]{0,6}(Mi|Gi|Ti)$
+                        required: [capacity]
+                      disks:
+                        type: object
+                        properties:
+                          count:
+                            type: integer
+                            format: int64
+                            minimum: 1
+                            maximum: 64
+                          minCapacity:
+                            type: string
+                            pattern: ^[1-9][0-9]{0,6}(Mi|Gi|Ti)$
+                        required: [count, minCapacity]
+                      interfaces:
+                        type: object
+                        properties:
+                          count:
+                            type: integer
+                            format: int64
+                            minimum: 1
+                            maximum: 64
+                        required: [count]
+                    required: [cpu, memory, disks, interfaces]
+                  firmware:
+                    type: array
+                    maxItems: 32
+                    items:
+                      type: object
+                      properties:
+                        component:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                        version:
+                          type: string
+                          minLength: 1
+                          maxLength: 128
+                      required: [component, version]
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys: [component]
+                  burnIn:
+                    type: object
+                    properties:
+                      image:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                          digest:
+                            type: string
+                            pattern: ^sha256:[0-9a-f]{64}$
+                        required: [name, digest]
+                      duration:
+                        type: string
+                        pattern: ^([0-9]+h)?([0-9]+m)?([0-9]+s)?$
+                        x-kubernetes-validations:
+                        - rule: self != '' && duration(self) >= duration('1m') && duration(self) <= duration('24h')
+                          message: burn-in runs from 1 minute to 24 hours
+                    required: [image, duration]
+                required: [inspection, burnIn]
+              evidenceLifetime:
+                type: string
+                pattern: ^([0-9]+h)?([0-9]+m)?([0-9]+s)?$
+                x-kubernetes-validations:
+                - rule: self != '' && duration(self) >= duration('1h') && duration(self) <= duration('8760h')
+                  message: evidence stays current from 1 hour to 365 days
+            required:
+            - creator
+            - deviceSelector
+            - content
+            - evidenceLifetime
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: the spec is immutable after create
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicecommissioningplanapprovals.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceCommissioningPlanApproval
+    listKind: DeviceCommissioningPlanApprovalList
+    plural: devicecommissioningplanapprovals
+    singular: devicecommissioningplanapproval
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: Approver
+      type: string
+      jsonPath: .spec.creator.username
+    - name: Digest
+      type: string
+      jsonPath: .spec.planRef.digest
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              creator:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                required:
+                - username
+                - uid
+              planRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                  digest:
+                    type: string
+                    pattern: ^sha256:[0-9a-f]{64}$
+                required: [name, uid, digest]
+            required:
+            - creator
+            - planRef
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: the spec is immutable after create
+        required:
+        - spec
+        x-kubernetes-validations:
+        - rule: self.metadata.name == self.spec.planRef.name
+          message: an approval has the name of the plan it approves
