@@ -176,3 +176,37 @@ func TestQuotaServesOnlyTheMachinesProjectIncarnation(t *testing.T) {
 		t.Fatalf("claims = %+v, %v", claims.Items, err)
 	}
 }
+
+// TestAnotherFinalizerKeepsTheClaimCounted removes only Fleet's finalizer.
+// A claim another actor still holds exists, so Milo still counts it, and
+// release stays pending until that actor lets go.
+func TestAnotherFinalizerKeepsTheClaimCounted(t *testing.T) {
+	ctx := context.Background()
+	api := quotaClient(t)
+	quota := Quota{Consumers: consumers(api, machine.ConsumerUID)}
+	_, _ = quota.Acquire(ctx, machine)
+	key := client.ObjectKey{Namespace: machine.Namespace, Name: ClaimName(machine)}
+	claim := &quotav1alpha1.ResourceClaim{}
+	if err := api.Get(ctx, key, claim); err != nil {
+		t.Fatal(err)
+	}
+	claim.Finalizers = append(claim.Finalizers, "example.com/other")
+	if err := api.Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := quota.Release(ctx, machine); !errors.Is(err, ErrQuotaPending) {
+			t.Fatalf("release while another finalizer holds the claim = %v", err)
+		}
+	}
+	if err := api.Get(ctx, key, claim); err != nil || !slices.Equal(claim.Finalizers, []string{"example.com/other"}) {
+		t.Fatalf("claim = %+v, %v", claim.ObjectMeta, err)
+	}
+	claim.Finalizers = nil
+	if err := api.Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := quota.Release(ctx, machine); err != nil {
+		t.Fatalf("release after the other finalizer = %v", err)
+	}
+}
