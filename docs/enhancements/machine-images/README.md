@@ -101,9 +101,10 @@ custody](../device-operations/README.md):
 
 - **[Customer data](../device-operations/README.md#customer-data):** the
   site's boot service can also read a payload, only while that operation's
-  boot is open. The site controller that creates every worker can also read
-  site payloads; it grants no new access, because that controller can already
-  run a worker as any operation's identity. See [Site delivery](#site-delivery).
+  boot is open. The site controller that creates every worker can also get a
+  site payload by name, with no list, watch, or write; it grants no new
+  access, because that controller can already run a worker as any operation's
+  identity. See [Site delivery](#site-delivery).
 - **[Admission](../device-operations/README.md#admission):** DeviceInstallation
   adds one check of its own inputs.
 
@@ -388,10 +389,11 @@ the Secret again.
 ### Site delivery
 
 Federation delivers the payload to the site with the operation, as a separate
-object, never inside the operation's handoff. It is a dedicated kind, not a
-Secret, so permission on it reaches nothing else. The handoff names that
-object, and the site grants that operation's worker `get` on exactly that
-object. No worker can list or watch payloads.
+object, never inside the operation's handoff. That object is a dedicated
+kind, not a Secret, like the sealed store, so permission on it reaches nothing
+else. The handoff names that object, and the site grants that operation's
+worker `get` on exactly that object. No site identity can list or watch
+payloads.
 
 The worker checks the payload against the operation's digest, and refuses with
 `InputMismatch` before it sends anything if they differ. It renders the payload
@@ -449,7 +451,8 @@ These tests are required and not implemented:
   retries. One operation exists, and the unused payload
   is deleted.
 - No staff role can get, list, or watch a SealedPayload, and no site identity
-  other than the operation's worker can read its payload Secret.
+  other than the operation's worker and the site controller that creates
+  workers can read its delivered payload.
 - After the operation ends, no copy of the payload remains in the provider
   project, the federation layer, or the site.
 
