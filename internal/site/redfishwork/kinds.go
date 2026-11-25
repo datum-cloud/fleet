@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -211,6 +212,8 @@ type Boot struct {
 	// are not this operation's.
 	Created time.Time `json:"created"`
 	Expires time.Time `json:"expires"`
+	// DurationSeconds is how long a burn-in image runs. Other modes omit it.
+	DurationSeconds int64 `json:"durationSeconds,omitempty"`
 	// Phase is the network-booting phase, set while it may boot.
 	Phase  string `json:"phase,omitempty"`
 	Closed bool   `json:"closed,omitempty"`
@@ -433,13 +436,17 @@ func (c Config) receipts(work *site.Work, boot Boot, ph phase) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	want := ph.marker + boot.Receipt
-	if ph.name == "wipe" {
-		want += ":" + strconv.FormatInt(conn(work).Target.DiskBytes, 10)
+	want := []string{ph.marker + boot.Receipt}
+	switch ph.name {
+	case "wipe":
+		want[0] += ":" + strconv.FormatInt(conn(work).Target.DiskBytes, 10)
+	case burnInPhase.name:
+		// A burn-in receipt carries the image's result.
+		want = []string{want[0] + ":passed", want[0] + ":failed"}
 	}
 	n := 0
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == want {
+		if slices.Contains(want, strings.TrimSpace(line)) {
 			n++
 		}
 	}
