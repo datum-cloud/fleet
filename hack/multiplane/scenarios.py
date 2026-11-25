@@ -179,21 +179,14 @@ def newest_install(s):
     return ops[-1] if ops else None
 
 
-def wait_job(s):
-    """Record the newest installation and wait for kro to create its worker
-    Job."""
+def wait_installer(s, step):
+    """Record the newest installation and wait until it journaled its
+    installer step."""
     name = newest_install(s)['metadata']['name']
     # The site keys the operation by kind, name and the fence it was admitted
     # at; a same-name installation created later is admitted at another.
     key = wait_for(lambda: admitted_key(provider(s, 'get', 'deviceinstallation', name)), 300, 'the second installation to be admitted', interval=1)
     (s / 'deadline-install.json').write_text(json.dumps({'name': name, 'key': key}) + '\n')
-    handoff = wait_for(lambda: handoff_for(s, key), 300, 'the second installation to be delivered', interval=1)
-    wait_for(lambda: kubectl(s, 'cell-admin.yaml', '-n', SITE, 'get', 'job', 'w-' + handoff, check=False).returncode == 0, 300, 'its worker Job', interval=0.5)
-
-
-def wait_installer(s, step):
-    """Wait until the deadline installation journaled its installer step."""
-    _, key = deadline_op(s)
 
     def journaled():
         for o in harness.journal(s) or []:
@@ -337,4 +330,4 @@ if __name__ == '__main__':
     {'import-inert': import_inert, 'staff-access': staff_access, 'contention': contention, 'release-waits': release_waits,
      'deadline-hold': deadline_hold, 'deadline-settled': deadline_settled, 'rebuild-before': rebuild_before,
      'rebuild-unverified': rebuild_unverified, 'rebuild-verified': rebuild_verified,
-     'wait-job': wait_job, 'wait-installer': lambda s: wait_installer(s, sys.argv[3])}[command](state)
+     'wait-installer': lambda s: wait_installer(s, sys.argv[3])}[command](state)

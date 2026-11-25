@@ -394,7 +394,7 @@ phases](../operations/multiplane.md#acceptance-phases) describe each one.
 | Importing sends nothing | Checked before any allocation: no operation, assignment, worker Job, journal entry or BMC effect |
 | Staff access | A staff token in the provider project reads custody and creates recoveries, and is forbidden everything else |
 | Contention | Custody names the one MachineAllocation, the winner's |
-| Deadline | The coordinator restarts with a four-minute installation deadline for one admission, and the boot server is stopped, so the installer is never served |
+| Deadline | The coordinator restarts with a four-minute installation deadline for one admission, and a lab-only boot hook withholds every boot while it is armed, so the installer is never served |
 | Machine deleted mid-install | The customer deletes the Machine; release holds the Device and waits for the installation |
 | Recovery for the wrong hold | Staff name the held installation at the wrong fence; admission refuses it with nothing delivered or sent |
 | A wipe settles the hold | The release wipe is admitted above the held fence after the worker stopped |
@@ -414,7 +414,12 @@ The scenarios found two site gaps, both fixed:
   and still refuses if the guest keeps running.
 
 The shorter installation deadline is a flag of the acceptance binary's
-coordinator, and only the deadline scenario sets it. The emulator lab's limits
+coordinator, and only the deadline scenario sets it. The boot hook lives in
+the acceptance binary's boot service, and only the local multi-plane site's
+Flux source configures it, which no production root may reference.
+`TestOnlyTheLabSiteSourceSetsTheWithholdHook` fails if any other
+configuration sets it, any production root references that source, or any
+other package names it. The emulator lab's limits
 are listed in the coverage inventory.
 
 ## Implementation decisions

@@ -90,17 +90,17 @@ case "$step" in
   scenario staff-access "$state"
   ;;
  deadline-admit)
-  # Consumer B's installation is admitted under a four-minute deadline. Only
-  # this admission uses the short deadline. kro creates a worker Job only
-  # while the boot server is ready, so the boot server is stopped as soon as
-  # the Job exists, before the firmware can fetch the installer.
+  # Consumer B's installation is admitted under a four-minute deadline with
+  # the lab boot hook armed: the boot service stays Ready, so kro creates
+  # the worker, and withholds every boot, so the installer never runs and
+  # the worker waits for its receipt until the deadline. Only this admission
+  # uses the short deadline.
+  site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold arm
   bash hack/multiplane/coordinator.sh restart "$state" --installation-deadline=4m >/dev/null
   "$host" admit-install-b --config "$state/acceptance.json" >/dev/null
   bash hack/multiplane/coordinator.sh restart "$state" >/dev/null
-  scenario wait-job "$state"
-  site_stop fleet-site-boot
   scenario wait-installer "$state" "$installer_step"
-  printf 'deadline-admit: the second installation was admitted under a four-minute deadline and journaled its installer boot with the boot server stopped\n'
+  printf 'deadline-admit: the second installation was admitted under a four-minute deadline and journaled its installer boot with the lab boot hook withholding it\n'
   ;;
  machine-delete)
   # The customer deletes Machine B mid-install. One release pass begins the
@@ -118,8 +118,8 @@ case "$step" in
   "$host" recovery-mismatch --config "$state/acceptance.json"
   [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for a refused recovery' >&2; exit 1; }
   audit_unchanged
-  # Flux restores the boot server before the release's wipe.
-  site_restore fleet-site-boot
+  # The release's wipe boots normally.
+  site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear
   ;;
  deadline-settled)
   scenario deadline-settled "$state"
