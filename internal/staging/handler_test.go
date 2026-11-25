@@ -290,3 +290,25 @@ func TestStagingPreservesPinnedRequestAndRejectsConflictingProfile(t *testing.T)
 		t.Fatalf("conflicting Machine was allocated: %v, %v", found, err)
 	}
 }
+
+// TestInterfacesWithoutANetworkOwnerReserveNothing keeps a Machine that
+// requests network interfaces Pending, before any capacity is reserved,
+// while no network owner can attach a physical interface.
+func TestInterfacesWithoutANetworkOwnerReserveNothing(t *testing.T) {
+	s := startStack(t)
+	s.server(1)
+	handler := s.handler()
+	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "networked"}, Spec: fleetv1.MachineSpec{
+		MachineClassRef: fleetv1.LocalReference{Name: className}, MachineProfileRef: fleetv1.LocalReference{Name: profileName}, LocationRef: fleetv1.LocalReference{Name: locationName}, PowerState: "Off",
+		NetworkInterfaces: []fleetv1.NetworkInterfaceRequest{{Name: "primary", Network: fleetv1.NamespacedReference{Name: "customer-a"}}},
+	}}
+	s.create(claim)
+	drive(t, s.ctx, handler, consumerProject, claim, 2)
+	got := s.get(claim)
+	assertPhase(t, got, "Pending")
+	assertCondition(t, got, "Accepted", metav1.ConditionTrue, "")
+	assertCondition(t, got, "Bound", metav1.ConditionFalse, "NetworkAttachmentUnsupported")
+	if allocation, err := s.allocator.Get(s.ctx, machineIdentity(consumerProject, claim)); err != nil || allocation != nil {
+		t.Fatalf("allocation = %v, %v: nothing may be reserved", allocation, err)
+	}
+}

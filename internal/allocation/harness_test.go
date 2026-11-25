@@ -11,12 +11,15 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
+	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
@@ -59,7 +62,7 @@ type env struct {
 
 func scheme(t *testing.T) *runtime.Scheme {
 	s := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, inventory.AddToScheme, fleetv1.AddToScheme, ops.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, inventory.AddToScheme, fleetv1.AddToScheme, ops.AddToScheme, networkingv1.AddToScheme} {
 		if err := add(s); err != nil {
 			t.Fatal(err)
 		}
@@ -68,6 +71,12 @@ func scheme(t *testing.T) *runtime.Scheme {
 }
 
 func startEnv(t *testing.T) *env {
+	t.Helper()
+	return startEnvWith(t)
+}
+
+// startEnvWith starts the environment with extra CRDs, such as NSO's.
+func startEnvWith(t *testing.T, crds ...*apiextensionsv1.CustomResourceDefinition) *env {
 	t.Helper()
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS required")
@@ -79,7 +88,7 @@ func startEnv(t *testing.T) *env {
 		filepath.Join(root, "config", "components", "inventory", "crds"),
 		filepath.Join(root, "config", "components", "device-operations", "crds"),
 		filepath.Join(root, "internal", "bootaddress", "testdata"),
-	}, ErrorIfCRDPathMissing: true}
+	}, CRDs: crds, ErrorIfCRDPathMissing: true}
 	config, err := environment.Start()
 	if err != nil {
 		t.Fatal(err)

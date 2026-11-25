@@ -411,8 +411,47 @@ const (
 type MachineAllocationStatus struct {
 	Phase string `json:"phase,omitempty"`
 	// Wipe is the latest DeviceWipe the release created.
-	Wipe       *WipeReference     `json:"wipe,omitempty"`
+	Wipe *WipeReference `json:"wipe,omitempty"`
+	// Network is the allocation's attached interfaces. The Metal provider
+	// is its only writer.
+	Network    *AllocationNetwork `json:"network,omitempty"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// AllocationNetwork records each Machine interface Fleet asked NSO to
+// attach, the physical attachment point it named, and the interface claim
+// it created. A network owner's realizer checks an attachment point against
+// this record before it connects a switch port.
+type AllocationNetwork struct {
+	Interfaces []AllocatedInterface `json:"interfaces,omitempty"`
+}
+
+// AllocatedInterface is one Machine interface on the allocated Device.
+type AllocatedInterface struct {
+	// Name is the Machine interface, which is also the MachineProfile slot
+	// and the Device inventory interface.
+	Name       string              `json:"name"`
+	Network    NamespacedReference `json:"network"`
+	Attachment AttachmentPoint     `json:"attachment"`
+	// Claim is the NSO interface claim. Its name is recorded before Fleet
+	// creates it and its UID after, so a crash between the two is recovered
+	// by name.
+	Claim ClaimReference `json:"claim"`
+}
+
+// AttachmentPoint is where a host interface meets the network: its MAC, from
+// Device inventory, and the switch port inventory's cable record lands it on.
+type AttachmentPoint struct {
+	MACAddress string `json:"macAddress"`
+	Switch     string `json:"switch"`
+	Port       string `json:"port"`
+}
+
+// ClaimReference names an interface claim, and its UID once created.
+type ClaimReference struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	UID       string `json:"uid,omitempty"`
 }
 
 // WipeReference names a release's DeviceWipe and its step.

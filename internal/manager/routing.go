@@ -31,6 +31,7 @@ const (
 	RouteMachine         RouteKind = "Machine"
 	RouteMachineCapacity RouteKind = "MachineCapacity"
 	RouteNetwork         RouteKind = "Network"
+	RouteInterfaceClaim  RouteKind = "NetworkInterfaceClaim"
 	RouteQuota           RouteKind = "Quota"
 	RouteLocation        RouteKind = "Location"
 	RouteAvailability    RouteKind = "ServiceAvailability"
@@ -82,9 +83,9 @@ func (m Mappers) Route(kind RouteKind) func(context.Context, client.Object) []Ro
 			request.Key = string(encoded)
 		case RouteNetwork:
 			request.Key = object.GetNamespace() + "/" + object.GetName()
-		case RouteQuota:
-			// A quota claim names its Machine only by this label; a claim
-			// without it wakes nothing.
+		case RouteQuota, RouteInterfaceClaim:
+			// A quota claim or an interface claim names its Machine only by
+			// this label; a claim without it wakes nothing.
 			request.Key = object.GetLabels()["fleet.datumapis.com/machine-uid"]
 			if request.Key == "" {
 				return nil
@@ -136,7 +137,7 @@ func (m Mappers) ResolveRoute(ctx context.Context, route RouteRequest) ([]Projec
 		return m.claimsForMachineE(ctx, &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: route.Namespace, Name: route.Name, UID: route.UID, Labels: eventLabels}})
 	case RouteNetwork:
 		return m.claimsByFieldE(ctx, IndexClaimNetwork, route.Key)
-	case RouteQuota:
+	case RouteQuota, RouteInterfaceClaim:
 		return m.claimsByFieldE(ctx, IndexClaimUID, route.Key)
 	case RouteLocation, RouteAvailability:
 		return m.claimsByFieldE(ctx, IndexClaimLocationName, route.Key)
@@ -180,6 +181,8 @@ func routeObject(route RouteRequest) (client.Object, error) {
 		return &fleetv1.MachineCapacity{}, nil
 	case RouteNetwork:
 		return &networkingv1.Network{}, nil
+	case RouteInterfaceClaim:
+		return &networkingv1.NetworkInterfaceClaim{}, nil
 	case RouteQuota:
 		return &quotav1alpha1.ResourceClaim{}, nil
 	case RouteLocation:

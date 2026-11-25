@@ -204,7 +204,9 @@ update). A retry finds the same allocation by its name.
   A bootstrap reference is refused.
 - **Release.** The allocation's holder moves to `Release` with all six gates
   open. Then:
-  - Access, Network and Address close at once.
+  - Access closes at once.
+  - Network and Address close when every interface claim the allocation
+    recorded is gone. See [Network attachment](../operations/network-attachment.md).
   - Operations closes when no installation of the allocation is active or
     unended.
   - Cleaning creates a `DeviceWipe`, step 1. A wipe that ended `Failed` sent
@@ -663,8 +665,9 @@ person.
   deleted and the allocator selects again, because it exposed nothing. An `Active`
   allocation that lost custody means the records disagree about who holds a
   server a customer may be using. Fleet leaves it to an operator.
-- **Release gates.** Access, Network and Address close at once, because no mode
-  provisions them. There is nothing to wait for.
+- **Release gates.** Access closes at once, because no mode provisions it.
+  Network and Address close on the absence of every interface claim, because
+  the network owner keeps a claim until it detached the port.
 - **Wipe retries.** A wipe that ended `Failed` sent nothing, so a new step is safe.
   A wipe that ended `OutcomeUnknown` may have written to disks, so only a
   `DeviceRecovery` `Retry` allows another.

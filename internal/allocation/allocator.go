@@ -123,6 +123,9 @@ type Allocator struct {
 	// replaced by the requester's own. Nil means the site's DHCP is
 	// configured independently of Fleet.
 	BootAddresses *bootaddress.Claimer
+	// Network attaches Machine interfaces through the network owner. Nil
+	// refuses every Machine that requests interfaces.
+	Network Networks
 }
 
 // Get returns the Machine's allocation, or nil.

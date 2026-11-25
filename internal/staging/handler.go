@@ -27,8 +27,9 @@ import (
 
 // Handler is an event-driven synthetic provider and claim coordinator. It uses
 // the real durable allocator but substitutes an explicit synthetic admission
-// decision and provider observation. It accepts only powered-off, networkless
-// claims in one configured location.
+// decision and provider observation. It accepts only powered-off claims in
+// one configured location, and network interfaces only when its allocator
+// has a network owner.
 type Handler struct {
 	Public   client.Client
 	Provider client.Client
@@ -63,8 +64,8 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	if claim.DeletionTimestamp != nil {
 		return h.release(ctx, claim.Namespace, claim.UID, &claim)
 	}
-	if claim.Spec.LocationRef.Name != h.Location || claim.Spec.PowerState != "Off" || len(claim.Spec.NetworkInterfaces) != 0 || claim.Spec.InitialInstallationRef != nil {
-		return h.rejected(ctx, &claim, "UnsupportedSyntheticRequest", "Synthetic staging accepts powered-off, networkless claims without an initial installation.")
+	if claim.Spec.LocationRef.Name != h.Location || claim.Spec.PowerState != "Off" || claim.Spec.InitialInstallationRef != nil {
+		return h.rejected(ctx, &claim, "UnsupportedSyntheticRequest", "Synthetic staging accepts powered-off claims without an initial installation.")
 	}
 
 	var namespace corev1.Namespace
@@ -142,9 +143,24 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		}
 		return manager.Outcome{}
 	}
+	authority := fleetv1.AllocationAuthority{Principal: "synthetic-staging:" + string(h.Project.UID), Decision: "synthetic-staging:" + string(claim.UID)}
+	// Interfaces are checked before any capacity is reserved.
+	existing, err := h.Allocator.Get(ctx, h.machine(&claim))
+	if err != nil {
+		return manager.Outcome{RetryError: err}
+	}
+	if existing == nil {
+		if err := h.Allocator.CheckNetwork(ctx, &claim, authority.Principal); err != nil {
+			network := allocation.NetworkCondition(&claim, false, err)
+			if network.Status == metav1.ConditionUnknown {
+				return manager.Outcome{RetryError: err}
+			}
+			return h.pending(ctx, &claim, network.Reason, network.Message, nil)
+		}
+	}
 	record, err := h.Allocator.Allocate(ctx, allocation.Request{
 		Machine: h.machine(&claim), Class: sourceClass, Profile: sourceProfile,
-		Authority: fleetv1.AllocationAuthority{Principal: "synthetic-staging:" + string(h.Project.UID), Decision: "synthetic-staging:" + string(claim.UID)},
+		Authority: authority,
 	})
 	if errors.Is(err, allocation.ErrInsufficientCapacity) {
 		return h.pending(ctx, &claim, "InsufficientCapacity", "No matching synthetic machine is currently available.", nil)
@@ -162,19 +178,35 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 			}
 		}
 	}
+	networkStatus, networkReady, networkErr := h.Allocator.Attach(ctx, record, &claim)
+	networkCondition := allocation.NetworkCondition(&claim, networkReady, networkErr)
+	if networkCondition.Status == metav1.ConditionUnknown {
+		return manager.Outcome{RetryError: networkErr}
+	}
+	if len(claim.Spec.NetworkInterfaces) == 0 {
+		networkCondition = condition("NetworkReady", metav1.ConditionTrue, claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested.")
+		networkStatus = nil
+	}
+	ready := condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "The synthetic powered-off handoff is ready.")
+	phase := "Ready"
+	if networkCondition.Status != metav1.ConditionTrue {
+		ready = condition("Ready", metav1.ConditionFalse, claim.Generation, networkCondition.Reason, networkCondition.Message)
+		phase = "Pending"
+	}
 	observed := metav1.NewTime(now)
 	if claim.Status.AllocatedHardware != nil && claim.Status.AllocatedHardware.ObservedAt != nil {
 		observed = *claim.Status.AllocatedHardware.ObservedAt
 	}
 	status := fleetv1.MachineStatus{
-		Phase: "Ready", Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: h.Location}},
+		Phase: phase, Placement: &fleetv1.Placement{LocationRef: fleetv1.LocalReference{Name: h.Location}},
 		AcceptedProfileRef: &fleetv1.LocalReference{Name: profile.Name},
 		AllocatedHardware:  &fleetv1.AllocatedHardwareStatus{ObservedAt: &observed, Hardware: record.Spec.Hardware},
+		Network:            networkStatus,
 		Conditions: []metav1.Condition{
 			condition("Accepted", metav1.ConditionTrue, claim.Generation, admissionReason(crossProject), admissionMessage(crossProject)),
 			condition("Bound", metav1.ConditionTrue, claim.Generation, "MachineAllocationActive", "Device custody names this Machine's allocation."),
-			condition("NetworkReady", metav1.ConditionTrue, claim.Generation, "NoAttachmentsRequired", "No network interfaces were requested."),
-			condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "The synthetic powered-off handoff is ready."),
+			condition(networkCondition.Type, networkCondition.Status, claim.Generation, networkCondition.Reason, networkCondition.Message),
+			ready,
 		},
 	}
 	status = preserveRequest(claim.Status, status)
@@ -387,7 +419,24 @@ func sameStatus(left, right fleetv1.MachineStatus) bool {
 		left.Conditions[i].LastTransitionTime = metav1.Time{}
 		right.Conditions[i].LastTransitionTime = metav1.Time{}
 	}
+	left.Network, right.Network = timeless(left.Network), timeless(right.Network)
 	return reflect.DeepEqual(left, right)
+}
+
+// timeless copies network status without condition transition times.
+func timeless(status *fleetv1.NetworkStatus) *fleetv1.NetworkStatus {
+	if status == nil {
+		return nil
+	}
+	out := &fleetv1.NetworkStatus{Revision: status.Revision}
+	for _, iface := range status.Interfaces {
+		iface.Conditions = append([]metav1.Condition(nil), iface.Conditions...)
+		for i := range iface.Conditions {
+			iface.Conditions[i].LastTransitionTime = metav1.Time{}
+		}
+		out.Interfaces = append(out.Interfaces, iface)
+	}
+	return out
 }
 
 // ConsumerHandlers installs the synthetic staging handler for exactly one
