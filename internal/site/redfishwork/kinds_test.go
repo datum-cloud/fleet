@@ -144,7 +144,7 @@ func (l *lab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path + "/Memory":                                  map[string]any{"Members": []any{map[string]string{"@odata.id": path + "/Memory/DIMM0"}}},
 		path + "/Memory/DIMM0":                            map[string]any{"Id": "DIMM0", "CapacityMiB": 2048, "Status": l.health("DIMM0")},
 		path + "/Storage":                                 map[string]any{"Members": []any{map[string]string{"@odata.id": path + "/Storage/1"}}},
-		path + "/Storage/1":                               map[string]any{"Drives": []any{map[string]string{"@odata.id": "/redfish/v1/Chassis/1/Drives/0"}}},
+		path + "/Storage/1":                               map[string]any{"Drives": []any{map[string]string{"@odata.id": "/redfish/v1/Chassis/1/Drives/0"}, map[string]string{"@odata.id": "/redfish/v1/Chassis/1/Drives/0"}}},
 		"/redfish/v1/Chassis/1/Drives/0":                  map[string]any{"Name": "disk-0", "CapacityBytes": diskBytes, "Status": l.health("disk-0")},
 		path + "/SimpleStorage":                           map[string]any{"Members": []any{map[string]string{"@odata.id": path + "/SimpleStorage/S0"}}},
 		path + "/SimpleStorage/S0":                        map[string]any{"Id": "S0", "Devices": []any{map[string]any{"Name": "disk-0", "CapacityBytes": diskBytes, "Status": l.health("disk-0")}}},
