@@ -32,7 +32,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one attempt, for fault injection")
@@ -78,6 +78,8 @@ func run() error {
 		return nil
 	case "boot-service", "boot-denials", "dhcp-feed":
 		return boot(os.Args[1], *origin, *extraMAC, *syncToken)
+	case "boot-withhold":
+		return armWithhold(fs.Arg(0))
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")
