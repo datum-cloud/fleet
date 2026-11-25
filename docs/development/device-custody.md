@@ -70,7 +70,8 @@ so work on one Device never waits for another.
 
 - **Fences.** An assignment below the stored fence is refused and stores no
   result. An equal fence is accepted again, because delivery is replayed from
-  custody after a crash.
+  custody after a crash. The fence is checked when a step is journaled and
+  again just before it is sent.
 - **Older-worker stop.** One worker runs per Device. A newer assignment raises
   the fence, then waits for the run lock. The older worker sees the higher
   fence within a second, stops, and releases the lock, and a worker that dies
@@ -82,18 +83,29 @@ so work on one Device never waits for another.
   journaled but not done is observed instead of sent again. If the observation
   cannot show it took effect, the outcome is unknown. Only a step that is safe
   to repeat, such as powering off before a boot was requested, is sent again.
-- **Deadlines.** A worker stops at its deadline exactly. If nothing was sent,
-  it reports `Failed`. Otherwise it reports `OutcomeUnknown`.
+- **Deadlines and shutdown.** A worker stops at its deadline exactly. If the
+  journal holds nothing for the operation, it reports `Failed`. Otherwise it
+  reports `OutcomeUnknown`. A worker stopped from outside, such as a Pod
+  being shut down, stores no result, so its replacement resumes from the
+  journal.
+- **One worker per assignment.** A redelivered assignment that already has a
+  result returns it. One that finds a worker for the same assignment holding
+  the run lock stores nothing and leaves the result to that worker. A newer
+  assignment that cannot stop an older worker before its deadline ends
+  `Failed`, or `OutcomeUnknown` if the journal holds steps for it.
 - **Checks before any effect.** The inputs must match the admitted digest. The
   site's enrollment must match the snapshot's BMC endpoint, system UUID and boot
   MAC. The per-Device credential Secret must exist, its operator-approved pin
   must equal the key discovery recorded at admission (O9), and the BMC is read
   only over a connection pinned to that key. A different key aborts the TLS
   handshake before any request, so no credential is sent. Each failure is a
-  named refusal that ends the operation `Failed` with nothing sent.
+  named refusal. It ends the operation `Failed` when the journal holds
+  nothing for it, and `OutcomeUnknown` when an earlier worker for the same
+  operation journaled steps.
 - **Results.** Each result carries the operation's fence and typed evidence,
-  and messages never carry a BMC response or an endpoint. The site keeps its
-  copy until the coordinator accepts it or rejects it for a stale fence.
+  and messages never carry a BMC response or an endpoint. A stored result is
+  final: nothing replaces it. The site keeps its copy until the coordinator
+  accepts it or rejects it for a stale fence.
 - **The fence report.** Each site reports, for each Device it is configured to
   serve, the fence it has seen and the fence for which it confirmed the stop.
 - **Boot admissions.** A network boot is served only while the operation's
@@ -109,8 +121,19 @@ for a network boot, the boot server's delivery evidence. Power-on is the only
 step that is not repeated after a crash; it is observed instead. Each site
 enrolls one disk per server, named `disk-0`, with its size (O12). An
 installation or wipe that names other disks is refused before anything is
-sent. Synchronized DHCP reservations are not yet supported by the new workers.
-They arrive with the cutover.
+sent. Each verified phase is journaled, so a resumed worker continues from
+the next phase.
+
+The port differs from the old executor in three ways:
+
+- After a crash or a lost response, a power-on is observed and never sent
+  again. The old executor sent `On` again, up to a small budget, when the
+  server was still off and armed after a settle window.
+- Synchronized DHCP reservations are not yet supported by the new workers.
+  They arrive with the cutover.
+- Its timing values match the old executor's, including the five-minute
+  power-off bound and the 30-second wait for a receipt after power-off, and
+  each is configurable.
 
 ### Access to the server
 
@@ -539,6 +562,7 @@ Increment B's site tests run with `go test -race ./internal/site/...`:
 | Two workers on one Device, two Devices in parallel | `TestTwoWorkersOnOneDevice`, `TestTwoDevicesInParallel`, `TestANewerFenceStopsTheOlderWorker` |
 | A TLS pin mismatch and an identity mismatch send nothing, against TLS servers | `TestPinMismatchSendsNothing`, `TestIdentityMismatchSendsNothing` |
 | Every pre-effect refusal, stale assignments, deadlines, result deletion, payload validation | `TestPreEffectRefusalsSendNothing`, `TestAStaleAssignmentIsRefusedAndStoresNothing`, `TestAWorkerStopsAtItsDeadline`, `TestResultsAreDeletedOnceTheCoordinatorAnswers`, `TestAssignmentValidation` |
+| One worker per assignment, final results, shutdown, an older worker that does not stop | `TestARedeliveryWhileTheSameOperationRunsStoresNothing`, `TestAStoredResultSurvivesARedelivery`, `TestAWorkerStoppedFromOutsideStoresNoResult`, `TestANewerAssignmentThatCannotStopTheOlderWorkerSendsNothing` |
 | Per-Device credentials, the fence report | `TestSecretCredentialsUseThePerDeviceContract`, `TestReportGivesTheCoordinatorSeenAndStoppedFences` |
 | Step payloads, the start-by window, identity separate from capabilities, a resumed worker reporting unknown | `TestAStepPayloadIsJournaledAndReadBack`, `TestALateStartIsStaleAndSendsNothing`, `TestIdentityIsSeparateFromInstallCapabilities`, `TestAResumedWorkerThatCannotReachTheBMCReportsUnknown` |
-| Install and wipe against a simulated BMC, one power-on per phase after an interruption, fenced boot admission, bootstrap refused | `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |
+| Install and wipe against a simulated BMC, one power-on per phase after an interruption in either phase, the power-off bound, fenced boot admission, bootstrap refused | `TestAWorkerInterruptedInTheDiskPhaseResumes`, `TestAServerThatNeverPowersOffEndsTheStep`, `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |
