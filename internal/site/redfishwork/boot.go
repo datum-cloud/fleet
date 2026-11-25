@@ -122,7 +122,11 @@ func (b BootServer) Handler() http.Handler {
 		var size int64
 		if name == "boot.ipxe" {
 			base := b.Origin + "/" + Key(boot.Operation) + "/" + boot.Token
-			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s fleet.mode=%s\ninitrd %s/installer.gz\nboot\n", base, boot.Receipt, boot.Mode, base))
+			args := ""
+			if boot.DurationSeconds > 0 {
+				args = " fleet.duration=" + strconv.FormatInt(boot.DurationSeconds, 10)
+			}
+			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s fleet.mode=%s%s\ninitrd %s/installer.gz\nboot\n", base, boot.Receipt, boot.Mode, args, base))
 			size = int64(len(data))
 		} else {
 			// Hash the pinned artifact, then serve the same open file.
