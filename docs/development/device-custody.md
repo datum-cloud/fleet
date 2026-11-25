@@ -4,7 +4,7 @@
 
 This page records how Fleet implements the [device custody and operations
 proposal](https://github.com/datum-cloud/fleet/pull/174) (#174, pinned at
-`23c583f`). The proposal's API names are provisional. Each piece below is
+`d4d17f9`). The proposal's API names are provisional. Each piece below is
 marked **implemented and verified**, **implemented and inert**, or
 **proposed**.
 
@@ -53,7 +53,7 @@ Each decision lists the open point from the implementation brief it settles.
 ### Who created an operation (O14)
 
 - The client sets `spec.creator` to its own username and UID. The webhook
-  rejects any other value and any change. That is how #174 at `23c583f` reads,
+  rejects any other value and any change. That is how #174 at `d4d17f9` reads,
   so "clients cannot set the creator" becomes "clients can set only
   themselves". CEL also makes the creator immutable, as part of the spec.
 - Milo's root API server calls the webhook, because Milo v0.32.5 does not
@@ -195,7 +195,13 @@ Each value is configurable.
   that check accepts the evidence. Installation and wipe holds have no such
   check: later operations settle them.
 - `Retry` marks the hold so that the held operation's requester can create one
-  settling operation. Admitting that operation uses up the retry.
+  settling operation. The hold carries what #174 asks of it: the held
+  operation, its `Retry` count (`retries`), and whether a `Retry` is unused
+  (`retryAuthorizedBy`). Admission accepts a `Retry` only for a hold whose
+  settlement row requires one, meaning the held kind is `Retryable` and a kind
+  settles it after a `Retry`, and refuses one while an earlier `Retry` is
+  unused. Applying a `Retry` raises the count, and admitting the settling
+  operation uses it.
 - `Retire` needs a hold and a `Service` or `Release` holder. Retiring from
   `Release` requires a disk disposal record.
 - `Resolve` is the only operation `Unverified` custody admits. It records the

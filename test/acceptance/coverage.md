@@ -31,7 +31,7 @@ result reports every required phase `Passed`.
 
 ## Device custody and operations
 
-These are the acceptance tests of [#174 at `23c583f`](https://github.com/datum-cloud/fleet/pull/174).
+These are the acceptance tests of [#174 at `d4d17f9`](https://github.com/datum-cloud/fleet/pull/174).
 Increment A covers them against a real API server. End-to-end coverage arrives
 in Increments C and D. See [device custody](../../docs/development/device-custody.md#tests).
 

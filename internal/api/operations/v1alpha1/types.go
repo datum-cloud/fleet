@@ -1,5 +1,5 @@
 // Package v1alpha1 holds Device custody and the Device operation kinds in
-// fleet.datumapis.com, as proposed in datum-cloud/fleet#174 at 23c583f.
+// fleet.datumapis.com, as proposed in datum-cloud/fleet#174 at d4d17f9.
 //
 // DeviceCustody is a coordination record, like a Lease: its fields live in
 // spec and the coordinator is their only writer. Every operation kind shares
