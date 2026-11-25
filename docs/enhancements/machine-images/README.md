@@ -238,9 +238,10 @@ The provider's publisher creates a consumer project's MachineImage, as it does
 for MachineClass. Fleet records each publication in a protected record in the
 provider project. The record names the consumer MachineImage and the provider
 MachineImage, and holds the provider image's digest. Its name derives from the
-consumer project, the consumer MachineImage, and the provider MachineImage
-incarnations, so its spec holds no object UID. Publishing a recreated image
-again writes a new record; a record never changes.
+identities of the consumer project, the consumer MachineImage, and the
+provider MachineImage. Each identity is new each time the object is created, so
+a record matches only the objects it was written for. Publishing a recreated
+image again writes a new record; a record never changes.
 
 Customers cannot write MachineImages. IAM gives customer roles no write
 permission on the kind, and a Fleet validating webhook, called from Milo's root
@@ -252,9 +253,9 @@ API server, rejects:
 
 A project is entitled to an image only while all of these hold:
 
-- the publication record for the current consumer project, consumer
-  MachineImage, and provider MachineImage incarnations exists, and its names
-  match them;
+- Fleet finds the publication record under the name derived from the current
+  consumer project, consumer MachineImage, and provider MachineImage, and the
+  names it records match those images;
 - the provider MachineImage is in the provider project that holds the
   Machine's allocation, and its digest matches the record; and
 - the provider MachineImage is `Available`.
