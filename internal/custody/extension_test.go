@@ -140,6 +140,27 @@ func TestExtensionSeams(t *testing.T) {
 		if custody := e.custody(device.Name); custody.Spec.RecoveryHold != nil || custody.Spec.Holder.Type != ops.HolderNone {
 			t.Fatalf("after settling: %+v", custody.Spec)
 		}
+
+		// From Service with no hold, the row refuses: the holder is a running
+		// staff operation, not a hold to settle.
+		busy := fresh()
+		e.staffOp(busy, "ok")
+		e.settle(busy.Name)
+		noHold := e.staffOp(busy, "ok")
+		e.settle(busy.Name)
+		e.requirePhase(noHold, ops.PhaseFailed, ReasonHolderMismatch)
+
+		// From Service under a hold the kind does not settle, it refuses too.
+		other := fresh()
+		custody := e.custody(other.Name)
+		custody.Spec.Holder = ops.Holder{Type: ops.HolderService}
+		custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: testProviderKind, Name: "alloc-x-test-a", UID: "00000000-0000-4000-8000-00000000abcd"}, Fence: custody.Spec.Fence, Since: metav1.NewTime(e.clock.Now()), Reason: "Test"}
+		if err := e.admin.Update(e.ctx, custody); err != nil {
+			t.Fatal(err)
+		}
+		unrelated := e.staffOp(other, "ok")
+		e.settle(other.Name)
+		e.requirePhase(unrelated, ops.PhaseFailed, ReasonHolderMismatch)
 	})
 
 	t.Run("a refusal with a reason the kind never declared is recorded as UndeclaredReason", func(t *testing.T) {
