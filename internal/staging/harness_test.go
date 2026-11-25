@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"go.datum.net/fleet/internal/capacity"
+
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -60,6 +62,8 @@ type stack struct {
 	sites     *delivery.Sites
 	class     *fleetv1.MachineClass
 	profile   *fleetv1.MachineProfile
+	projector *capacity.Projector
+	plan      *ops.DeviceCommissioningPlan
 }
 
 func stackScheme(t *testing.T) *runtime.Scheme {
@@ -109,7 +113,7 @@ func startStack(t *testing.T) *stack {
 	}
 	enrollment := fixture.Enrollment{}
 	runner := &site.Runner{Site: siteName, Store: store, Results: site.NewResults(store), Access: fixture.Access{Enrollment: enrollment},
-		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}, Poll: 20 * time.Millisecond}
+		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}, "DeviceCommissioning": simwork.Commissioning{}}, Poll: 20 * time.Millisecond}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx}
 	server := httptest.NewServer(siteapi.Handler(dispatcher, store, runner.Results, func() (string, error) { return siteToken, nil }))
 	t.Cleanup(func() { cancel(); server.Close(); dispatcher.Wait() })
@@ -125,15 +129,34 @@ func startStack(t *testing.T) *stack {
 	coordinator := &custody.Coordinator{Client: admin, Registry: registry, Sites: sites, Config: custody.Config{Namespace: providerNamespace, Principals: custody.Principals{
 		custody.CreatorMetalProvider: {{Username: providerUser}}, custody.CreatorReleaseController: {{Username: releaseUser}},
 	}}}
-	s.loop = &delivery.Loop{Client: admin, Coordinator: coordinator, Namespace: providerNamespace,
+	s.projector = &capacity.Projector{Reader: admin, Writer: admin, Namespace: providerNamespace, Cleaning: capacity.Fixed(map[string]string{"example-cleaning": policyDigest})}
+	s.loop = &delivery.Loop{Client: admin, Coordinator: coordinator, Namespace: providerNamespace, Capacity: s.projector,
 		Courier: &delivery.Courier{Client: admin, Registry: registry, Coordinator: coordinator, Sites: sites, Namespace: providerNamespace}}
 	s.allocator = &allocation.Allocator{
 		Provider: admin, ProviderCreator: ops.Creator{Username: providerUser, UID: uid(801)},
 		Releaser: admin, ReleaseCreator: ops.Creator{Username: releaseUser, UID: uid(802)},
 		Custody: coordinator, Namespace: providerNamespace,
 		Cleaning:      func(string) (string, error) { return policyDigest, nil },
+		Capacity:      s.projector,
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
+	// One qualified plan covers every fixture server.
+	s.plan = &ops.DeviceCommissioningPlan{ObjectMeta: metav1.ObjectMeta{Name: "example-plan", Namespace: providerNamespace}, Spec: ops.DeviceCommissioningPlanSpec{
+		Creator:        ops.Creator{Username: "plan-author@example.com", UID: uid(803)},
+		DeviceSelector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/hardware-model": "example"}},
+		Content: ops.CommissioningPlanContent{
+			Inspection: ops.CommissioningInspection{CPU: ops.InspectionCPU{Architecture: "amd64", Cores: 24}, Memory: ops.InspectionValue{Capacity: "128Gi"},
+				Disks: ops.InspectionDisks{Count: 1, MinCapacity: "100Gi"}, Interfaces: ops.InspectionCount{Count: 1}},
+			BurnIn: ops.CommissioningBurnIn{Image: ops.ImageInput{Name: "burn-in", Digest: policyDigest}, Duration: metav1.Duration{Duration: time.Minute}},
+		},
+		EvidenceLifetime: metav1.Duration{Duration: 24 * time.Hour},
+	}}
+	s.create(s.plan)
+	approval, err := custody.NewApproval(s.plan, ops.Creator{Username: "plan-approver@example.com", UID: uid(804)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.create(approval)
 	s.servers = enrollment
 	s.sites = sites
 	s.class = &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: className}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: profileName}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: providerNamespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "example"}}}}}}
@@ -157,32 +180,39 @@ func (s *stack) server(n int) *inventory.Device {
 	s.t.Helper()
 	name := fmt.Sprintf("server-example-%03d", n)
 	mac := fmt.Sprintf("02:00:00:00:00:%02x", n)
-	device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: providerNamespace}, Spec: inventory.DeviceSpec{
+	device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: providerNamespace, Labels: map[string]string{"fleet.datumapis.com/hardware-model": "example"}}, Spec: inventory.DeviceSpec{
 		ClaimRef:   inventory.LocalReference{Name: "claim-" + name},
 		Identity:   inventory.DeviceIdentity{Model: "example", Serial: "serial-" + name, SystemUUID: uid(100 + n)},
 		BMC:        &inventory.BMC{Endpoint: fmt.Sprintf("https://[2001:db8::%x]", n)},
 		Interfaces: []inventory.Interface{{Name: "primary", MACAddress: mac}},
 	}}
 	s.create(device)
-	target := fixture.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: fmt.Sprintf("%064x", n), Disks: []string{"disk-0"}}
+	target := fixture.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: fmt.Sprintf("%064x", n), Disks: []string{"disk-0"},
+		Hardware: &ops.InspectedHardware{CPU: ops.InspectedCPU{Architecture: "amd64", Sockets: 2, Cores: 24}, Memory: "128Gi", Disks: []ops.InspectedDisk{{Name: "disk-0", Capacity: "960Gi"}}, Interfaces: []ops.InspectedInterface{{Name: "primary", MACAddress: mac}}}}
 	s.servers[providerNamespace+"/"+name] = target
 	s.sites.Devices[name] = []string{siteName}
 	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "capacity-" + name, Namespace: providerNamespace, Labels: map[string]string{"pool": "example"}},
 		Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: name}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "example-cleaning"}, ReclaimPolicy: "Retain"}}
 	s.create(capacity)
-	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
-	for _, kind := range []string{"Prepared", "Healthy", "Available"} {
-		capacity.Status.Conditions = append(capacity.Status.Conditions, metav1.Condition{Type: kind, Status: metav1.ConditionTrue, Reason: "Fixture", ObservedGeneration: capacity.Generation, LastTransitionTime: metav1.Now()})
-	}
-	if err := s.admin.Status().Update(s.ctx, capacity); err != nil {
-		s.t.Fatal(err)
-	}
 	if err := fixture.Discover(s.ctx, s.admin, fixture.Enrollment{providerNamespace + "/" + name: target}, time.Now()); err != nil {
 		s.t.Fatal(err)
 	}
 	s.until("custody is Verified", func() bool {
 		state := s.custody(name)
 		return state != nil && state.Spec.State == ops.CustodyVerified
+	})
+	// Commission the server, so the projector offers it.
+	if err := s.admin.Get(s.ctx, client.ObjectKeyFromObject(device), device); err != nil {
+		s.t.Fatal(err)
+	}
+	operation, err := custody.NewCommissioning(device, s.plan, ops.Creator{Username: "operator@example.com", UID: uid(805)}, "fixture intake")
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	s.create(operation)
+	s.until("the capacity is offered", func() bool {
+		offered, _, err := s.projector.Offer(s.ctx, capacity)
+		return err == nil && offered
 	})
 	return device
 }
