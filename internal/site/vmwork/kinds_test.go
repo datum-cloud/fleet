@@ -115,17 +115,17 @@ func (r *rig) assignment(kind, uid string, fence int64, spec any) site.Assignmen
 	inputs, _ := json.Marshal(spec)
 	digest, _ := custody.SpecDigest(spec)
 	now := time.Now().UTC()
-	return site.Assignment{Device: device, Operation: ops.OperationReference{Kind: kind, Name: "op-" + uid[len(uid)-3:], UID: uid}, Fence: fence, AdmittedAt: now, Deadline: now.Add(30 * time.Second),
+	return site.Assignment{Device: device, Operation: ops.OperationReference{Kind: kind, Name: "op-" + uid[len(uid)-3:]}, Fence: fence, AdmittedAt: now, Deadline: now.Add(30 * time.Second),
 		Snapshot: ops.DeviceSnapshot{BMCEndpoint: "https://[2001:db8::1]", SystemUUID: "00000000-0000-4000-8000-000000000001", BootMACAddress: "02:00:00:00:00:01", BMCPublicKeySHA256: key}, InputDigest: digest, Inputs: inputs}
 }
 
 func envelope() ops.OperationEnvelope {
-	return ops.OperationEnvelope{Creator: ops.Creator{Username: "provider", UID: "u"}, DeviceRef: ops.DeviceReference{Name: "server-example-001", UID: "d"}, Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: "alloc-example"}}}
+	return ops.OperationEnvelope{Creator: ops.Creator{Username: "provider", UID: "u"}, DeviceRef: ops.DeviceReference{Name: "server-example-001"}, Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: "alloc-example"}}}
 }
 
 func installSpec() ops.DeviceInstallationSpec {
 	name, digest, _ := strings.Cut(image, "@")
-	return ops.DeviceInstallationSpec{OperationEnvelope: envelope(), RequestUID: "r", Image: ops.ImageInput{Name: name, Digest: digest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
+	return ops.DeviceInstallationSpec{OperationEnvelope: envelope(), Image: ops.ImageInput{Name: name, Digest: digest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
 }
 
 func wipeSpec() ops.DeviceWipeSpec {
@@ -273,7 +273,7 @@ func TestAFailedNetworkBootClosesItsAdmission(t *testing.T) {
 		t.Fatalf("install without a receipt = %+v, %v", result, err)
 	}
 	var boot Boot
-	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Operation.UID), &boot); err != nil || !found || boot.Open || !boot.Closed {
+	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Open || !boot.Closed {
 		t.Fatalf("admission after the failure = %+v, %v, %v", boot, found, err)
 	}
 }

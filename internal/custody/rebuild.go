@@ -50,6 +50,7 @@ func (c *Coordinator) rebuild(ctx context.Context, device *inventory.Device) (Ou
 		return Outcome{}, err
 	}
 	custody := &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: device.Name, Namespace: device.Namespace, Finalizers: []string{ops.CustodyFinalizer}}, Spec: spec}
+	setDeviceUID(custody, device)
 	if err := c.Client.Create(ctx, custody); err != nil && !apierrors.IsAlreadyExists(err) {
 		return Outcome{}, err
 	}
@@ -57,7 +58,7 @@ func (c *Coordinator) rebuild(ctx context.Context, device *inventory.Device) (Ou
 }
 
 func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device) (ops.DeviceCustodySpec, error) {
-	spec := ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: device.Name, UID: string(device.UID)}, State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}
+	spec := ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: device.Name}, State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}
 	holders := map[ops.HolderType]bool{}
 	if inventory.LifecycleOf(device) == inventory.DeviceRetired {
 		holders[ops.HolderRetired] = true
@@ -90,11 +91,11 @@ func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device)
 		}
 		for _, operation := range kind.Items(list) {
 			envelope := operation.Envelope()
-			if envelope.DeviceRef.Name != device.Name || envelope.DeviceRef.UID != string(device.UID) {
+			if envelope.DeviceRef.Name != device.Name || operation.GetLabels()[ops.LabelDeviceUID] != string(device.UID) {
 				continue
 			}
 			status := operation.OperationStatus()
-			spec.Fence = max(spec.Fence, status.Fence)
+			spec.Fence = max(spec.Fence, status.Fence, admissionFence(operation))
 			if kind.Retires != nil && status.Phase == ops.PhaseSucceeded && kind.Retires(operation) {
 				holders[ops.HolderRetired] = true
 			}
@@ -105,10 +106,10 @@ func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device)
 	// an operation whose kind settles the held kind, or a recovery that
 	// cleared that exact hold.
 	settled := func(held found) bool {
-		fence := held.operation.OperationStatus().Fence
+		fence := admissionFence(held.operation)
 		for _, other := range all {
 			// A later retry of the same operation continues its hold.
-			if other.kind == held.kind && retryBase(other.operation.GetName()) == retryBase(held.operation.GetName()) && other.operation.GetName() != held.operation.GetName() && other.operation.OperationStatus().Fence > fence {
+			if other.kind == held.kind && retryBase(other.operation.GetName()) == retryBase(held.operation.GetName()) && other.operation.GetName() != held.operation.GetName() && admissionFence(other.operation) > fence {
 				return true
 			}
 			status := other.operation.OperationStatus()
@@ -120,19 +121,21 @@ func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device)
 					return true
 				}
 			}
-			if status.Fence > fence && slices.ContainsFunc(other.kind.Settles, func(rule SettleRule) bool { return rule.Held == held.kind.GVK.Kind }) {
+			if admissionFence(other.operation) > fence && slices.ContainsFunc(other.kind.Settles, func(rule SettleRule) bool { return rule.Held == held.kind.GVK.Kind }) {
 				return true
 			}
 		}
 		return false
 	}
-	// Every operation that has not ended may already have been admitted and
-	// executed, even if its status says Pending, because custody is written
-	// before status. An unknown outcome nothing later settled is held too.
+	// An operation records its admission before custody names it, so one
+	// without an admission record was never admitted. Every admitted
+	// operation that has not ended may already have executed, even if its
+	// status says Pending, because custody is written before the rest of its
+	// status. An unknown outcome nothing later settled is held too.
 	var held []found
 	for _, candidate := range all {
 		phase := candidate.operation.OperationStatus().Phase
-		if phase.Ended() && (phase != ops.PhaseOutcomeUnknown || settled(candidate)) {
+		if candidate.operation.OperationStatus().Admission == nil || phase.Ended() && (phase != ops.PhaseOutcomeUnknown || settled(candidate)) {
 			continue
 		}
 		held = append(held, candidate)
@@ -150,11 +153,11 @@ func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device)
 		// With several, the newest is held and a Resolve must decide, so the
 		// hold is never dropped.
 		slices.SortStableFunc(held, func(a, b found) int {
-			return cmp.Compare(b.operation.OperationStatus().Fence, a.operation.OperationStatus().Fence)
+			return cmp.Compare(admissionFence(b.operation), admissionFence(a.operation))
 		})
 		newest := held[0]
 		status := newest.operation.OperationStatus()
-		spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: newest.kind.GVK.Kind, Name: newest.operation.GetName(), UID: string(newest.operation.GetUID())}, Fence: status.Fence, Since: metav1.NewTime(c.now()), Reason: ReasonRebuilt, Deadline: status.Deadline, Snapshot: status.Snapshot}
+		spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: newest.kind.GVK.Kind, Name: newest.operation.GetName()}, Fence: admissionFence(newest.operation), Since: metav1.NewTime(c.now()), Reason: ReasonRebuilt, Deadline: status.Deadline, Snapshot: status.Snapshot}
 		// A held retry keeps its lineage: its name is the original
 		// operation's name, "-retry-" and the Retry count.
 		if match := retrySuffix.FindStringSubmatch(newest.operation.GetName()); match != nil && slices.ContainsFunc(all, func(other found) bool {
@@ -197,7 +200,7 @@ func LiveAllocations(ctx context.Context, reader client.Reader, device *inventor
 	var out []metal.MachineAllocation
 	for _, allocation := range allocations.Items {
 		reference := allocation.Spec.DeviceRef
-		if allocation.Status.Phase != metal.AllocationReleased && reference.Name == device.Name && reference.UID == string(device.UID) {
+		if allocation.Status.Phase != metal.AllocationReleased && reference.Name == device.Name && allocation.Labels[metal.LabelDeviceUID] == string(device.UID) {
 			out = append(out, allocation)
 		}
 	}

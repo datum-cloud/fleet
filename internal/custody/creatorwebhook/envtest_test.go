@@ -81,7 +81,7 @@ func TestCreatorAgainstAPIServer(t *testing.T) {
 	}
 	recovery := func(creator ops.Creator) *ops.DeviceRecovery {
 		return &ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "recovery-", Namespace: "default"}, Spec: ops.DeviceRecoverySpec{
-			OperationEnvelope: ops.OperationEnvelope{Creator: creator, DeviceRef: ops.DeviceReference{Name: "server-example-001", UID: "00000000-0000-4000-8000-000000000001"}, Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "settle"}}},
+			OperationEnvelope: ops.OperationEnvelope{Creator: creator, DeviceRef: ops.DeviceReference{Name: "server-example-001"}, Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "settle"}}},
 			Decision:          ops.DecisionSettle, Hold: &ops.HeldOperationReference{Kind: "DeviceWipe", Name: "alloc-example-wipe-1", Fence: 3},
 			Evidence: ops.RecoveryEvidence{ObservedAt: metav1.NewTime(time.Now()), Summary: "observed"},
 		}}

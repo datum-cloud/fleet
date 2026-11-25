@@ -202,16 +202,18 @@ func runner(t *testing.T, l *lab) *site.Runner {
 func assignment(l *lab, kind, uid string, fence int64, spec any) site.Assignment {
 	inputs, _ := json.Marshal(spec)
 	sum := sha256.Sum256(inputs)
-	l.operation = uid
-	return site.Assignment{
-		Device: device, Operation: ops.OperationReference{Kind: kind, Name: "alloc-example-" + uid, UID: uid}, Fence: fence, AdmittedAt: time.Now(), Deadline: time.Now().Add(time.Minute),
+	a := site.Assignment{
+		Device: device, Operation: ops.OperationReference{Kind: kind, Name: "alloc-example-" + uid}, Fence: fence, AdmittedAt: time.Now(), Deadline: time.Now().Add(time.Minute),
 		Snapshot:    ops.DeviceSnapshot{BMCEndpoint: l.server.URL, SystemUUID: uuid, BootMACAddress: mac, BMCPublicKeySHA256: l.pin()},
 		InputDigest: "sha256:" + hex.EncodeToString(sum[:]), Inputs: inputs,
 	}
+	// The lab finds the boot record by the admission's site key.
+	l.operation = a.Key()
+	return a
 }
 
 func installSpec() ops.DeviceInstallationSpec {
-	return ops.DeviceInstallationSpec{Image: ops.ImageInput{Name: "debian-12", Digest: "sha256:" + strings.Repeat("a", 64)}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, RequestUID: "request-1"}
+	return ops.DeviceInstallationSpec{Image: ops.ImageInput{Name: "debian-12", Digest: "sha256:" + strings.Repeat("a", 64)}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
 }
 
 func TestInstallationRunsBothPhasesWithOneOnEach(t *testing.T) {

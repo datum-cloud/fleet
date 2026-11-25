@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 
-	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site"
 )
@@ -37,7 +36,7 @@ type Dispatcher struct {
 }
 
 func key(assignment site.Assignment) string {
-	return assignment.Device + "/" + assignment.Operation.UID + "/" + jsonInt(assignment.Fence)
+	return assignment.Device + "/" + assignment.Key()
 }
 
 func jsonInt(value int64) string { data, _ := json.Marshal(value); return string(data) }
@@ -125,11 +124,11 @@ func Handler(dispatcher *Dispatcher, store *site.Store, results *site.Results, t
 	})
 	mux.HandleFunc("DELETE /v1/results", func(w http.ResponseWriter, r *http.Request) {
 		var stored site.Stored
-		if err := decode(r, &stored); err != nil || stored.Device == "" || stored.Result.Operation.UID == "" {
+		if err := decode(r, &stored); err != nil || stored.Device == "" || stored.Result.Operation.Name == "" {
 			http.Error(w, "the result could not be decoded", http.StatusBadRequest)
 			return
 		}
-		if err := results.Forget(stored.Device, custody.SiteResult{Operation: ops.OperationReference{UID: stored.Result.Operation.UID}, Fence: stored.Result.Fence}); err != nil {
+		if err := results.Forget(stored.Device, custody.SiteResult{Operation: stored.Result.Operation, Fence: stored.Result.Fence}); err != nil {
 			http.Error(w, "the result could not be deleted", http.StatusInternalServerError)
 			return
 		}

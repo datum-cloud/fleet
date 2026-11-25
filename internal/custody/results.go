@@ -2,10 +2,14 @@ package custody
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
@@ -77,6 +81,22 @@ func ignoreNoChange(err error) error {
 	return err
 }
 
+// OperationKey is the site's name for one admission of an operation: its
+// lowercased kind, name and fence. A same-name operation admitted later has
+// a higher fence and so another key. It is a valid site record and file
+// name: a name too long for that is replaced by its digest.
+func OperationKey(reference ops.OperationReference, fence int64) string {
+	kind, suffix := strings.ToLower(reference.Kind), "."+strconv.FormatInt(fence, 10)
+	if key := kind + "." + reference.Name + suffix; len(key) <= maxOperationKey {
+		return key
+	}
+	sum := sha256.Sum256([]byte(reference.Name))
+	return kind + "." + hex.EncodeToString(sum[:])[:32] + suffix
+}
+
+// maxOperationKey is the site store's limit on a record name.
+const maxOperationKey = 128
+
 // AcceptResult records a site result in custody. A result whose fence or
 // operation does not match the active operation is rejected and recorded as
 // a rejected fence; ErrStaleFence is returned either way, so the site
@@ -87,7 +107,7 @@ func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error
 	// unregistered kind is rejected as stale below.
 	var operation ops.Operation
 	if kind := c.Registry.Kind(result.Operation.Kind); kind != nil && len(result.Evidence) != 0 {
-		found, _, err := c.get(ctx, result.Operation)
+		found, _, err := c.get(ctx, result.Operation, result.Fence)
 		if err != nil {
 			return err
 		}
@@ -163,7 +183,7 @@ func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error
 		case ops.PhaseFailed:
 			c.finishActive(custody, *active, ops.PhaseFailed, result.Reason, result.Message, evidence)
 		case ops.PhaseSucceeded:
-			if hold := spec.RecoveryHold; hold != nil && active.Settles != nil && *active.Settles == hold.OperationReference {
+			if hold := spec.RecoveryHold; hold != nil && active.Settles != nil && *active.Settles == heldReference(*hold) {
 				spec.RecoveryHold = nil
 			}
 			c.finishActive(custody, *active, ops.PhaseSucceeded, result.Reason, result.Message, evidence)
@@ -201,7 +221,7 @@ func (c *Coordinator) Claim(ctx context.Context, deviceName, allocation string) 
 			return errNoChange
 		}
 		switch {
-		case !custody.DeletionTimestamp.IsZero(), spec.DeviceRef.UID != string(device.UID):
+		case !custody.DeletionTimestamp.IsZero(), false:
 			return fmt.Errorf("%w: custody is for another Device incarnation", ErrUnavailable)
 		case spec.State != ops.CustodyVerified:
 			return fmt.Errorf("%w: custody is Unverified", ErrUnavailable)

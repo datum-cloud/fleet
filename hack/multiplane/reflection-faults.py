@@ -48,7 +48,7 @@ try:
   elif mode=='future':o['observedAt']='2999-01-01T00:00:00Z'
   elif mode=='wrong-assignment':o['assignmentDigest']='0'*64
   elif mode=='wrong-device':result['device']=result['device']+'-other'
-  elif mode=='wrong-operation':result['operation']=dict(result['operation'],uid=result['operation']['uid']+'-other')
+  elif mode=='wrong-operation':result['operation']=dict(result['operation'],name=result['operation']['name']+'-other')
   elif mode=='stale-fence':result['fence']=result['fence']-1
   else:status={'reflected':[]}
   guard('check')

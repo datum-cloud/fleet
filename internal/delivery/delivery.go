@@ -68,7 +68,9 @@ func (s *Sites) Fence(ctx context.Context, name string, device *inventory.Device
 // and the operation's spec, exactly as admitted.
 func Assignment(state *ops.DeviceCustody, operation ops.Operation) (site.Assignment, error) {
 	active := state.Spec.ActiveOperation
-	if active == nil || string(operation.GetUID()) != active.UID || operation.GetName() != active.Name {
+	// The operation records the fence custody admitted it at, so a same-name
+	// operation created later is never delivered as this one.
+	if admission := operation.OperationStatus().Admission; active == nil || operation.GetName() != active.Name || admission == nil || admission.Fence != active.Fence {
 		return site.Assignment{}, errors.New("delivery: the operation is not custody's active operation")
 	}
 	var object struct {
@@ -129,7 +131,7 @@ func (c *Courier) Deliver(ctx context.Context, name string) error {
 		return err
 	}
 	status := operation.OperationStatus()
-	if string(operation.GetUID()) != active.UID || status.Fence != active.Fence || status.Phase == ops.PhasePending || status.Phase.Ended() {
+	if status.Fence != active.Fence || status.Phase == ops.PhasePending || status.Phase.Ended() {
 		return nil
 	}
 	assignment, err := Assignment(state, operation)

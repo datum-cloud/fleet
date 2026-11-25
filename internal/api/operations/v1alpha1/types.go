@@ -80,10 +80,21 @@ type DeviceCustodySpec struct {
 	RejectedResults *RejectedResults `json:"rejectedResults,omitempty"`
 }
 
+// DeviceReference names the Device. No spec holds an object UID: the Device
+// incarnation is in the LabelDeviceUID label of the operation or custody,
+// which the coordinator compares with the Device's UID.
 type DeviceReference struct {
 	Name string `json:"name"`
-	UID  string `json:"uid"`
 }
+
+// LabelDeviceUID records the Device incarnation an operation or custody
+// record is for. It is the same label the Metal provider puts on a
+// MachineAllocation.
+const LabelDeviceUID = "fleet.datumapis.com/device-uid"
+
+// LabelInstallationUID records the Installation a DeviceInstallation
+// fulfills. The operation's name hashes it, and admission checks the name.
+const LabelInstallationUID = "fleet.datumapis.com/installation-uid"
 
 type LocalReference struct {
 	Name string `json:"name"`
@@ -97,11 +108,13 @@ type Holder struct {
 	OpenGates     []ReleaseGate   `json:"openGates,omitempty"`
 }
 
-// OperationReference names one operation incarnation.
+// OperationReference names an operation by kind and name. Custody always
+// records it with the fence it was admitted at, which identifies the
+// admission uniquely: a same-name operation created later is admitted at a
+// higher fence.
 type OperationReference struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
-	UID  string `json:"uid"`
 }
 
 // ActiveOperation is the one admitted operation. Custody retains its exact
@@ -117,7 +130,7 @@ type ActiveOperation struct {
 	Snapshot           DeviceSnapshot `json:"snapshot"`
 	Creator            Creator        `json:"creator"`
 	// Settles names the recovery hold this operation was admitted to settle.
-	Settles *OperationReference `json:"settles,omitempty"`
+	Settles *HeldOperationReference `json:"settles,omitempty"`
 }
 
 // DeviceSnapshot is what admission captured about the Device. The site
@@ -158,9 +171,10 @@ type RecoveryHold struct {
 	Deadline *metav1.Time `json:"deadline,omitempty"`
 	// Snapshot is the Device snapshot the held operation was admitted with.
 	Snapshot *DeviceSnapshot `json:"snapshot,omitempty"`
-	// RetryAuthorizedBy names the DeviceRecovery with Retry that lets the
-	// held operation's requester create one settling operation.
-	RetryAuthorizedBy *OperationReference `json:"retryAuthorizedBy,omitempty"`
+	// RetryAuthorizedBy names the DeviceRecovery with Retry, and the fence it
+	// was admitted at, that lets the held operation's requester create one
+	// settling operation.
+	RetryAuthorizedBy *HeldOperationReference `json:"retryAuthorizedBy,omitempty"`
 	// Retries counts the DeviceRecovery Retry decisions for the held
 	// operation. An operation created after a Retry is named RetryName (the
 	// held operation's name when empty) plus "-retry-" and this count.
@@ -240,17 +254,27 @@ type OperationEnvelope struct {
 // OperationStatus is the status every operation kind shares. The coordinator
 // copies it from custody.
 type OperationStatus struct {
-	Phase       Phase           `json:"phase,omitempty"`
-	Reason      string          `json:"reason,omitempty"`
-	Message     string          `json:"message,omitempty"`
-	Fence       int64           `json:"fence,omitempty"`
-	AdmittedAt  *metav1.Time    `json:"admittedAt,omitempty"`
-	Deadline    *metav1.Time    `json:"deadline,omitempty"`
-	FinishedAt  *metav1.Time    `json:"finishedAt,omitempty"`
-	InputDigest string          `json:"inputDigest,omitempty"`
-	Snapshot    *DeviceSnapshot `json:"snapshot,omitempty"`
+	// Admission is the coordinator's record that it admitted this object.
+	// It is written before custody names the operation, so custody matches
+	// an operation only by its name and this fence; a same-name object
+	// created later has none.
+	Admission   *OperationAdmission `json:"admission,omitempty"`
+	Phase       Phase               `json:"phase,omitempty"`
+	Reason      string              `json:"reason,omitempty"`
+	Message     string              `json:"message,omitempty"`
+	Fence       int64               `json:"fence,omitempty"`
+	AdmittedAt  *metav1.Time        `json:"admittedAt,omitempty"`
+	Deadline    *metav1.Time        `json:"deadline,omitempty"`
+	FinishedAt  *metav1.Time        `json:"finishedAt,omitempty"`
+	InputDigest string              `json:"inputDigest,omitempty"`
+	Snapshot    *DeviceSnapshot     `json:"snapshot,omitempty"`
 	// Evidence is the kind's typed result evidence, as recorded in custody.
 	Evidence *runtime.RawExtension `json:"evidence,omitempty"`
+}
+
+// OperationAdmission records the fence custody admitted an operation at.
+type OperationAdmission struct {
+	Fence int64 `json:"fence"`
 }
 
 // Operation is implemented by every operation kind.
@@ -272,9 +296,9 @@ type DeviceInstallation struct {
 
 type DeviceInstallationSpec struct {
 	OperationEnvelope `json:",inline"`
-	// RequestUID is the UID of the Installation this fulfills. The name is
-	// derived from it, so a retried create collides.
-	RequestUID    string       `json:"requestUID"`
+	// The Installation this fulfills is in the name, which hashes the
+	// Installation's UID, so a retried create collides and a same-name
+	// Installation gets a new operation.
 	Image         ImageInput   `json:"image"`
 	Bootstrap     *SealedInput `json:"bootstrap,omitempty"`
 	BootInterface string       `json:"bootInterface"`
@@ -363,6 +387,8 @@ type DeviceRecoverySpec struct {
 	Resolve *ResolveInput `json:"resolve,omitempty"`
 }
 
+// HeldOperationReference names an operation and the fence it was admitted
+// at.
 type HeldOperationReference struct {
 	Kind  string `json:"kind"`
 	Name  string `json:"name"`

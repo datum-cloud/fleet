@@ -170,7 +170,7 @@ func TestConcurrency(t *testing.T) {
 			switch status.Phase {
 			case ops.PhaseAdmitted:
 				// Admitted under Allocation, then released while running.
-				if custody.Spec.ActiveOperation == nil || custody.Spec.ActiveOperation.UID != string(operation.UID) || custody.Spec.Fence != before+1 {
+				if custody.Spec.ActiveOperation == nil || custody.Spec.ActiveOperation.Name != operation.Name || custody.Spec.Fence != before+1 {
 					t.Fatalf("admitted but custody %+v", custody.Spec)
 				}
 			case ops.PhaseFailed, ops.PhaseCancelled:

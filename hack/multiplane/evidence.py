@@ -100,12 +100,13 @@ for marker in markers:
 
 def site_operations(raw):
     """The Device's journaled operations from the copied site store, matched to
-    the provider project's operations by UID. Expected order: consumer A's
+    the provider project's operations by site key: kind, name and fence. Expected order: consumer A's
     install, A's release wipe, (Redfish: consumer B's install,) B's release
     wipe, with strictly increasing fences, each Succeeded at its fence."""
     store = json.loads((raw / 'site' / 'devices' / harness.device_dir().rsplit('/', 1)[1] / 'state.json').read_text())
     journaled = harness.sanitized_operations(store, redfish=REDFISH)
-    provider = {i['metadata']['uid']: i for i in harness.custody(s)}
+    # Operations by site key; custody and allocations by kind and name.
+    provider = {(i['kind'] + '/' + i['metadata']['name'] if i['kind'] in ('DeviceCustody', 'MachineAllocation') else harness.provider_key(i)): i for i in harness.custody(s)}
     ops = []
     for o in journaled:
         p = provider.get(o['operation'])
@@ -336,7 +337,7 @@ for job in jobs:
     if exits.count(0) != 1:
         fail('worker Job without exactly one successful Pod: ' + job['metadata']['name'])
     operation = handoffs[handoff]['operation']
-    worker_jobs.append({'job': job['metadata']['name'], 'uid': job['metadata']['uid'], 'operationID': operation['uid'], 'kind': operation['kind'], 'name': operation['name'],
+    worker_jobs.append({'job': job['metadata']['name'], 'uid': job['metadata']['uid'], 'operationID': harness.operation_key(operation['kind'], operation['name'], handoffs[handoff]['fence']), 'kind': operation['kind'], 'name': operation['name'],
                         'fence': handoffs[handoff]['fence'], 'conditions': conditions, 'succeeded': job['status'].get('succeeded', 0), 'failed': job['status'].get('failed', 0),
                         'pods': [{'uid': p['metadata']['uid'], 'phase': p['status'].get('phase'), 'exitCode': e} for p, e in zip(job_pods, exits)],
                         'serviceAccount': job['spec']['template']['spec']['serviceAccountName'], 'podReplacementPolicy': job['spec'].get('podReplacementPolicy'),
@@ -426,7 +427,7 @@ summary = {
         'closedBootDenials': denials,
     },
     'operations': [{'operation': o['operation'], 'kind': o['kind'], 'name': o['name'], 'allocation': o['allocation'], 'fence': o['fence'], 'phase': o['phase'],
-                    'inputDigest': next((h['inputDigest'] for h in handoffs.values() if h['operation']['uid'] == o['operation']), None)} for o in ops],
+                    'inputDigest': next((h['inputDigest'] for h in handoffs.values() if harness.operation_key(h['operation']['kind'], h['operation']['name'], h['fence']) == o['operation']), None)} for o in ops],
     'projectRouting': routing, 'brokerWriteCompletion': True, 'guestEvidence': receipts,
     'runtimePodMemoryEvents': {key: int(value) for key, value in memory_events.items()},
     'cellNodeMemoryEvents': {key: int(value) for key, value in node_memory_events.items()},

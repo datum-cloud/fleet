@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -99,7 +98,7 @@ type HubStatus struct {
 
 // AssignmentName is the only name an assignment's handoff may have.
 func AssignmentName(assignment site.Assignment) string {
-	return "op-" + digest(fmt.Sprintf("%s/%s/%d", assignment.Device, assignment.Operation.UID, assignment.Fence))[:40]
+	return "op-" + digest(assignment.Device + "/" + assignment.Key())[:40]
 }
 
 // ReportName is the only name a Device's report handoff may have.

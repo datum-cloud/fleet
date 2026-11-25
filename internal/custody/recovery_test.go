@@ -148,7 +148,7 @@ func TestRecovery(t *testing.T) {
 		e.clock.Advance(RecoveryDeadline + DefaultSkewMargin)
 		e.settle(device.Name)
 		e.requirePhase(settle, ops.PhaseFailed, ReasonSiteNotConfirmed)
-		if got := e.custody(device.Name).Spec.RecoveryHold; got == nil || got.UID != hold.UID {
+		if got := e.custody(device.Name).Spec.RecoveryHold; got == nil || got.Name != hold.Name || got.Fence != hold.Fence {
 			t.Fatalf("hold = %+v", got)
 		}
 	})
@@ -181,7 +181,7 @@ func TestRecovery(t *testing.T) {
 		wipe := e.wipe(device, "alloc-i", 1)
 		e.settle(device.Name)
 		e.requirePhase(wipe, ops.PhaseAdmitted, "")
-		if active := e.custody(device.Name).Spec.ActiveOperation; active.Settles == nil || active.Settles.UID != string(install.UID) {
+		if active := e.custody(device.Name).Spec.ActiveOperation; active.Settles == nil || active.Settles.Name != install.Name {
 			t.Fatalf("wipe does not record what it settles: %+v", active)
 		}
 		if err := e.result(device.Name, ops.PhaseSucceeded, `{"wipedDisks":["disk-0"],"policyDigest":"`+policyDigest+`"}`); err != nil {
@@ -243,7 +243,7 @@ func TestRecovery(t *testing.T) {
 		e.requirePhase(retried, ops.PhaseAdmitted, "")
 		e.requirePhase(later, ops.PhasePending, ReasonRecoveryHold)
 		custody := e.custody(device.Name)
-		if got := custody.Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy != nil || got.Retries != 1 || custody.Spec.ActiveOperation.Settles == nil || custody.Spec.ActiveOperation.Settles.UID != hold.UID {
+		if got := custody.Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy != nil || got.Retries != 1 || custody.Spec.ActiveOperation.Settles == nil || *custody.Spec.ActiveOperation.Settles != heldReference(hold) {
 			t.Fatalf("the retry was not used by the retried wipe: %+v", custody.Spec)
 		}
 		// The retried wipe ends unknown too: the next retry keeps the
@@ -253,7 +253,7 @@ func TestRecovery(t *testing.T) {
 		}
 		e.settle(device.Name)
 		second := *e.custody(device.Name).Spec.RecoveryHold
-		if second.UID != string(retried.UID) || second.RetryName != hold.Name || second.Retries != 1 {
+		if second.Name != retried.Name || second.RetryName != hold.Name || second.Retries != 1 {
 			t.Fatalf("second hold = %+v", second)
 		}
 		again := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(second)})
@@ -321,7 +321,7 @@ func TestRecovery(t *testing.T) {
 		e.sites.report(device.Name, e.custody(device.Name).Spec.Fence)
 		e.settle(device.Name)
 		e.requirePhase(retry, ops.PhaseSucceeded, "")
-		if got := e.custody(device.Name).Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy == nil || got.RetryAuthorizedBy.UID != string(retry.UID) || got.Retries != 1 {
+		if got := e.custody(device.Name).Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy == nil || got.RetryAuthorizedBy.Name != retry.Name || got.Retries != 1 {
 			t.Fatalf("retry not recorded: %+v", got)
 		}
 		second := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
@@ -507,18 +507,18 @@ func TestRebuild(t *testing.T) {
 		}
 	})
 
-	t.Run("from operations: an unfinished operation, even Pending, is held", func(t *testing.T) {
+	t.Run("from operations: an admitted unfinished operation, even Pending, is held", func(t *testing.T) {
 		e := e.sub(t)
 		name, id, key := next()
 		device := e.device(name, id, key)
 		operation := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: name + "-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, service("restore")), Input: "a"}}
 		e.create(operation)
-		operation.Status = ops.OperationStatus{Phase: ops.PhasePending, Fence: 9}
+		operation.Status = ops.OperationStatus{Admission: admitted(9), Phase: ops.PhasePending, Fence: 9}
 		if err := e.admin.Status().Update(e.ctx, operation); err != nil {
 			t.Fatal(err)
 		}
 		custody := rebuildFrom(e, name, 4)
-		if hold := custody.Spec.RecoveryHold; hold == nil || hold.UID != string(operation.UID) || hold.Reason != ReasonRebuilt || custody.Spec.Holder.Type != ops.HolderService || custody.Spec.Fence != 10 {
+		if hold := custody.Spec.RecoveryHold; hold == nil || hold.Name != operation.Name || hold.Reason != ReasonRebuilt || custody.Spec.Holder.Type != ops.HolderService || custody.Spec.Fence != 10 {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
 		}
 	})
@@ -530,7 +530,7 @@ func TestRebuild(t *testing.T) {
 		recovery := &ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: name + "-", Namespace: "default"}, Spec: ops.DeviceRecoverySpec{OperationEnvelope: envelope(device, staffUser, service("retired")), Decision: ops.DecisionRetire, Hold: &ops.HeldOperationReference{Kind: testStaffKind, Name: "x", Fence: 1}, Evidence: ops.RecoveryEvidence{ObservedAt: metav1.NewTime(e.clock.Now()), Summary: "s"}}}
 		e.create(recovery)
 		finished := metav1.NewTime(e.clock.Now())
-		recovery.Status = ops.OperationStatus{Phase: ops.PhaseSucceeded, Fence: 2, FinishedAt: &finished}
+		recovery.Status = ops.OperationStatus{Admission: admitted(2), Phase: ops.PhaseSucceeded, Fence: 2, FinishedAt: &finished}
 		if err := e.admin.Status().Update(e.ctx, recovery); err != nil {
 			t.Fatal(err)
 		}
@@ -564,7 +564,9 @@ func TestRebuild(t *testing.T) {
 		name, id, key := next()
 		device := e.device(name, id, key)
 		e.allocation(device, "alloc-"+name, "Active")
-		e.create(&DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: name + "-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, service("x")), Input: "a"}})
+		staff := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: name + "-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, service("x")), Input: "a"}}
+		e.create(staff)
+		e.markAdmitted(staff, 1)
 		conflict(t, e, name, ConflictHolderSources)
 	})
 
@@ -572,8 +574,10 @@ func TestRebuild(t *testing.T) {
 		e := e.sub(t)
 		name, id, key := next()
 		device := e.device(name, id, key)
-		for range 2 {
-			e.create(&DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: name + "-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, service("x")), Input: "a"}})
+		for fence := range int64(2) {
+			staff := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: name + "-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, service("x")), Input: "a"}}
+			e.create(staff)
+			e.markAdmitted(staff, fence+1)
 		}
 		conflict(t, e, name, ConflictMultipleUnfinished)
 	})
@@ -602,7 +606,7 @@ func TestRebuild(t *testing.T) {
 		e.settle(name)
 		e.requirePhase(resolve, ops.PhaseSucceeded, "")
 		custody = e.custody(name)
-		if custody.Spec.State != ops.CustodyVerified || custody.Spec.Holder.Type != ops.HolderNone || custody.Spec.DeviceRef.UID != string(replacement.UID) || len(custody.Spec.Conflicts) != 0 {
+		if custody.Spec.State != ops.CustodyVerified || custody.Spec.Holder.Type != ops.HolderNone || custody.Labels[ops.LabelDeviceUID] != string(replacement.UID) || len(custody.Spec.Conflicts) != 0 {
 			t.Fatalf("after Resolve: %+v", custody.Spec)
 		}
 	})

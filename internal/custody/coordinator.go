@@ -162,7 +162,7 @@ func (c *Coordinator) Reconcile(ctx context.Context, name string) (Outcome, erro
 	if changed, err := c.copyStatus(ctx, custody); err != nil || changed {
 		return Outcome{Changed: changed}, err
 	}
-	if custody.Spec.DeviceRef.UID != string(device.UID) && !slices.Contains(custody.Spec.Conflicts, ConflictDeviceUID) {
+	if custody.Labels[ops.LabelDeviceUID] != string(device.UID) && !slices.Contains(custody.Spec.Conflicts, ConflictDeviceUID) {
 		return c.markUnverified(ctx, custody, ConflictDeviceUID)
 	}
 	var requeue time.Duration
@@ -253,9 +253,13 @@ func (c *Coordinator) settleHolder(ctx context.Context, custody *ops.DeviceCusto
 	return Outcome{}, nil
 }
 
-// get reads one operation. It returns nil if it does not exist or is a
-// different incarnation.
-func (c *Coordinator) get(ctx context.Context, reference ops.OperationReference) (ops.Operation, *Kind, error) {
+// get reads the operation custody admitted at fence. It returns nil if the
+// operation does not exist or is a different incarnation. No spec holds an
+// object UID, so the incarnation is the admission record the coordinator
+// wrote to the operation's status before custody named it: a same-name
+// operation created later has none, and never inherits the admission, its
+// result or its hold.
+func (c *Coordinator) get(ctx context.Context, reference ops.OperationReference, fence int64) (ops.Operation, *Kind, error) {
 	kind := c.Registry.Kind(reference.Kind)
 	if kind == nil {
 		return nil, nil, fmt.Errorf("custody names unregistered kind %s", reference.Kind)
@@ -266,10 +270,25 @@ func (c *Coordinator) get(ctx context.Context, reference ops.OperationReference)
 	} else if err != nil {
 		return nil, kind, err
 	}
-	if reference.UID != "" && string(operation.GetUID()) != reference.UID {
+	if !admittedAt(operation, fence) {
 		return nil, kind, nil
 	}
 	return operation, kind, nil
+}
+
+// admittedAt reports whether operation is the incarnation custody admitted
+// at fence: its status carries that admission.
+func admittedAt(operation ops.Operation, fence int64) bool {
+	admission := operation.OperationStatus().Admission
+	return admission != nil && admission.Fence == fence
+}
+
+// admissionFence is the fence an operation records it was admitted at, or 0.
+func admissionFence(operation ops.Operation) int64 {
+	if admission := operation.OperationStatus().Admission; admission != nil {
+		return admission.Fence
+	}
+	return 0
 }
 
 // copyStatus copies the active operation and the last result from custody to
@@ -277,7 +296,7 @@ func (c *Coordinator) get(ctx context.Context, reference ops.OperationReference)
 // again. A missing operation is skipped.
 func (c *Coordinator) copyStatus(ctx context.Context, custody *ops.DeviceCustody) (bool, error) {
 	if result := custody.Spec.LastResult; result != nil {
-		operation, _, err := c.get(ctx, result.OperationReference)
+		operation, _, err := c.get(ctx, result.OperationReference, result.Fence)
 		if err != nil {
 			return false, err
 		}
@@ -293,7 +312,7 @@ func (c *Coordinator) copyStatus(ctx context.Context, custody *ops.DeviceCustody
 	// A held operation has ended, even if a rebuild found it unfinished. It
 	// is never admitted again.
 	if hold := custody.Spec.RecoveryHold; hold != nil {
-		operation, _, err := c.get(ctx, hold.OperationReference)
+		operation, _, err := c.get(ctx, hold.OperationReference, hold.Fence)
 		if err != nil {
 			return false, err
 		}
@@ -310,7 +329,7 @@ func (c *Coordinator) copyStatus(ctx context.Context, custody *ops.DeviceCustody
 	if active == nil {
 		return false, nil
 	}
-	operation, _, err := c.get(ctx, active.OperationReference)
+	operation, _, err := c.get(ctx, active.OperationReference, active.Fence)
 	if err != nil {
 		return false, err
 	}
@@ -332,14 +351,14 @@ func (c *Coordinator) copyStatus(ctx context.Context, custody *ops.DeviceCustody
 func activeStatus(active ops.ActiveOperation) ops.OperationStatus {
 	snapshot := active.Snapshot
 	admitted, deadline := active.AdmittedAt, active.Deadline
-	return ops.OperationStatus{Phase: active.Phase, Fence: active.Fence, AdmittedAt: &admitted, Deadline: &deadline, InputDigest: active.InputDigest, Snapshot: &snapshot}
+	return ops.OperationStatus{Admission: &ops.OperationAdmission{Fence: active.Fence}, Phase: active.Phase, Fence: active.Fence, AdmittedAt: &admitted, Deadline: &deadline, InputDigest: active.InputDigest, Snapshot: &snapshot}
 }
 
 func resultStatus(result ops.OperationResult, current *ops.OperationStatus) ops.OperationStatus {
 	finished := result.FinishedAt
 	status := ops.OperationStatus{Phase: result.Phase, Reason: result.Reason, Message: result.Message, Fence: result.Fence, FinishedAt: &finished, Evidence: result.Evidence}
 	// Keep what admission recorded.
-	status.AdmittedAt, status.Deadline, status.InputDigest, status.Snapshot = current.AdmittedAt, current.Deadline, current.InputDigest, current.Snapshot
+	status.Admission, status.AdmittedAt, status.Deadline, status.InputDigest, status.Snapshot = current.Admission, current.AdmittedAt, current.Deadline, current.InputDigest, current.Snapshot
 	return status
 }
 
@@ -402,7 +421,7 @@ func (c *Coordinator) progressActive(ctx context.Context, custody *ops.DeviceCus
 	if err != nil || !ok {
 		return Outcome{RequeueAfter: min(due.Sub(now), 5*time.Second)}, err
 	}
-	operation, _, err := c.get(ctx, active.OperationReference)
+	operation, _, err := c.get(ctx, active.OperationReference, active.Fence)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -422,6 +441,10 @@ func (c *Coordinator) progressActive(ctx context.Context, custody *ops.DeviceCus
 	}
 	spec.LastResult = &ops.OperationResult{OperationReference: active.OperationReference, Fence: active.Fence, Phase: ops.PhaseSucceeded, FinishedAt: metav1.NewTime(now), Evidence: evidence}
 	custody.Spec = *spec
+	// Resolve adopts the current Device incarnation.
+	if ops.RecoveryDecision(variantOf(kind, operation)) == ops.DecisionResolve {
+		setDeviceUID(custody, device)
+	}
 	return c.writeCustody(ctx, custody)
 }
 
@@ -495,7 +518,7 @@ func (c *Coordinator) holdUnknown(custody *ops.DeviceCustody, active ops.ActiveO
 	next := &ops.RecoveryHold{OperationReference: active.OperationReference, Fence: active.Fence, Since: now, Reason: reason, Deadline: &deadline, Snapshot: &snapshot}
 	// A retry that itself ends unknown keeps the original operation's name
 	// and Retry count, so the next retry is named on from it.
-	if previous := spec.RecoveryHold; previous != nil && active.Settles != nil && *active.Settles == previous.OperationReference && previous.Retries > 0 && active.Name == RetryName(*previous, previous.Retries) {
+	if previous := spec.RecoveryHold; previous != nil && active.Settles != nil && *active.Settles == heldReference(*previous) && previous.Retries > 0 && active.Name == RetryName(*previous, previous.Retries) {
 		next.RetryName, next.Retries = previous.RetryName, previous.Retries
 		if next.RetryName == "" {
 			next.RetryName = previous.Name
@@ -531,10 +554,10 @@ func (c *Coordinator) candidates(ctx context.Context, custody *ops.DeviceCustody
 			if operation.Envelope().DeviceRef.Name != custody.Name || operation.OperationStatus().Phase.Ended() || !operation.GetDeletionTimestamp().IsZero() {
 				continue
 			}
-			if active := custody.Spec.ActiveOperation; active != nil && active.Kind == kind.GVK.Kind && active.UID == string(operation.GetUID()) {
+			if active := custody.Spec.ActiveOperation; active != nil && active.Kind == kind.GVK.Kind && active.Name == operation.GetName() && admittedAt(operation, active.Fence) {
 				continue
 			}
-			if hold := custody.Spec.RecoveryHold; hold != nil && hold.Kind == kind.GVK.Kind && hold.UID == string(operation.GetUID()) {
+			if hold := custody.Spec.RecoveryHold; hold != nil && hold.Kind == kind.GVK.Kind && hold.Name == operation.GetName() && admittedAt(operation, hold.Fence) {
 				continue
 			}
 			out = append(out, candidate{operation: operation, kind: kind})
@@ -568,7 +591,7 @@ type decision struct {
 	reason  string
 	message string
 	row     Rule
-	settles *ops.OperationReference
+	settles *ops.HeldOperationReference
 	extra   map[string]string
 }
 
@@ -705,8 +728,8 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	if len(rows) == 0 {
 		return fail(ReasonCreatorNotPermitted, "no row admits %s from a %s creator with this authority", kind.GVK.Kind, class)
 	}
-	if envelope.DeviceRef.UID != string(device.UID) {
-		return fail(ReasonDeviceIdentityMismatch, "deviceRef.uid does not match the Device")
+	if operation.GetLabels()[ops.LabelDeviceUID] != string(device.UID) {
+		return fail(ReasonDeviceIdentityMismatch, "the "+ops.LabelDeviceUID+" label does not match the Device")
 	}
 	// Precondition 1: custody state.
 	rows = slices.DeleteFunc(rows, func(rule Rule) bool { return rule.custodyState() != custody.Spec.State })
@@ -742,7 +765,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 	}
 	// Recovery holds.
-	var settles *ops.OperationReference
+	var settles *ops.HeldOperationReference
 	switch hold := custody.Spec.RecoveryHold; {
 	case row.Hold == HoldIgnored:
 	case row.Hold == HoldRequired && hold == nil:
@@ -759,7 +782,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 			}
 			return fail(ReasonRecoveryHold, "%s %s is held; only its settling operations are admitted", hold.Kind, hold.Name)
 		}
-		reference := hold.OperationReference
+		reference := heldReference(*hold)
 		settles = &reference
 	}
 	// Precondition 4: one active operation.
@@ -919,7 +942,7 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 	}
 	spec.Fence = max(spec.Fence, seen) + 1
 	active := &ops.ActiveOperation{
-		OperationReference: ops.OperationReference{Kind: kind.GVK.Kind, Name: operation.GetName(), UID: string(operation.GetUID())},
+		OperationReference: ops.OperationReference{Kind: kind.GVK.Kind, Name: operation.GetName()},
 		Fence:              spec.Fence,
 		Phase:              ops.PhaseAdmitted,
 		AdmittedAt:         metav1.NewTime(now),
@@ -930,6 +953,17 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 		Settles:            d.settles,
 	}
 	spec.ActiveOperation = active
+	// The operation records the admission before custody names it, so
+	// custody never names an object that cannot prove it is the one
+	// admitted. A conflict here admits nothing; the next pass decides again.
+	if !admittedAt(operation, spec.Fence) {
+		operation.OperationStatus().Admission = &ops.OperationAdmission{Fence: spec.Fence}
+		if err := c.Client.Status().Update(ctx, operation); apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+			return Outcome{Changed: true}, nil
+		} else if err != nil {
+			return Outcome{}, err
+		}
+	}
 	if d.row.Creator == CreatorStaff && spec.Holder.Type == ops.HolderNone {
 		spec.Holder = ops.Holder{Type: ops.HolderService}
 	}
@@ -983,4 +1017,20 @@ func validExtra(extra map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// heldReference names a hold by its operation and fence.
+func heldReference(hold ops.RecoveryHold) ops.HeldOperationReference {
+	return ops.HeldOperationReference{Kind: hold.Kind, Name: hold.Name, Fence: hold.Fence}
+}
+
+// setDeviceUID records the Device incarnation custody is for. Only the
+// coordinator writes custody, so its label is written with custody's spec.
+func setDeviceUID(custody *ops.DeviceCustody, device *inventory.Device) {
+	labels := custody.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[ops.LabelDeviceUID] = string(device.UID)
+	custody.SetLabels(labels)
 }

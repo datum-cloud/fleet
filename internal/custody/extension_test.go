@@ -130,7 +130,7 @@ func TestExtensionSeams(t *testing.T) {
 		settling := e.staffOp(device, "ok")
 		e.settle(device.Name)
 		e.requirePhase(settling, ops.PhaseAdmitted, "")
-		if active := e.custody(device.Name).Spec.ActiveOperation; active.Settles == nil || active.Settles.UID != hold.UID {
+		if active := e.custody(device.Name).Spec.ActiveOperation; active.Settles == nil || *active.Settles != heldReference(hold) {
 			t.Fatalf("active = %+v", active)
 		}
 		if err := e.result(device.Name, ops.PhaseSucceeded, ""); err != nil {
@@ -154,7 +154,7 @@ func TestExtensionSeams(t *testing.T) {
 		other := fresh()
 		custody := e.custody(other.Name)
 		custody.Spec.Holder = ops.Holder{Type: ops.HolderService}
-		custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: testProviderKind, Name: "alloc-x-test-a", UID: "00000000-0000-4000-8000-00000000abcd"}, Fence: custody.Spec.Fence, Since: metav1.NewTime(e.clock.Now()), Reason: "Test"}
+		custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: testProviderKind, Name: "alloc-x-test-a"}, Fence: custody.Spec.Fence, Since: metav1.NewTime(e.clock.Now()), Reason: "Test"}
 		if err := e.admin.Update(e.ctx, custody); err != nil {
 			t.Fatal(err)
 		}

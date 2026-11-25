@@ -363,35 +363,46 @@ type MachineAllocationSpec struct {
 	TargetDisks   []string `json:"targetDisks"`
 }
 
-// AllocatedMachineReference names one Machine incarnation in one consumer
-// project incarnation.
+// Labels that pin the object incarnations a MachineAllocation was made for.
+// No spec holds an object UID: the allocation's name hashes the consumer
+// project and Machine UIDs, and these labels let a reader confirm them, so a
+// same-name Machine, project or Device never inherits the allocation.
+const (
+	LabelMachineUID         = "fleet.datumapis.com/machine-uid"
+	LabelConsumerProjectUID = "fleet.datumapis.com/consumer-project-uid"
+	LabelDeviceUID          = "fleet.datumapis.com/device-uid"
+)
+
+// AllocatedMachineReference names one Machine in one consumer project. The
+// incarnation is in the allocation's name and labels.
 type AllocatedMachineReference struct {
-	Project    string `json:"project"`
-	ProjectUID string `json:"projectUID"`
-	Namespace  string `json:"namespace"`
-	Name       string `json:"name"`
-	UID        string `json:"uid"`
+	Project   string `json:"project"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 }
 
-// AllocatedDeviceReference names one Device incarnation in the allocation's
-// namespace.
+// AllocatedDeviceReference names the Device in the allocation's namespace.
+// The incarnation is in the allocation's device-uid label.
 type AllocatedDeviceReference struct {
 	Name string `json:"name"`
-	UID  string `json:"uid"`
 }
 
 // AcceptedContract is the class and profile Fleet accepted, with the exact
 // CPU and memory it allocated against.
 type AcceptedContract struct {
-	MachineClassRef   UIDReference      `json:"machineClassRef"`
-	MachineProfileRef UIDReference      `json:"machineProfileRef"`
+	MachineClassRef   ContentReference  `json:"machineClassRef"`
+	MachineProfileRef ContentReference  `json:"machineProfileRef"`
 	CPU               CPURequirement    `json:"cpu"`
 	Memory            MemoryRequirement `json:"memory"`
 }
 
-type UIDReference struct {
-	Name string `json:"name"`
-	UID  string `json:"uid"`
+// ContentReference pins an object's content by its generation and a digest
+// of its spec, which also tells same-name recreations apart.
+type ContentReference struct {
+	Name       string `json:"name"`
+	Generation int64  `json:"generation"`
+	// Digest is "sha256:<hex>" over the object's complete spec.
+	Digest string `json:"digest"`
 }
 
 // AllocationAuthority is the admission decision Fleet acted on.

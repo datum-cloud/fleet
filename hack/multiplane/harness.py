@@ -315,16 +315,30 @@ def operation_kind(steps):
     return 'DeviceWipe' if any(s == 'wipe' or s.startswith('wipe-') for s in steps) else 'DeviceInstallation'
 
 
+def operation_key(kind, name, fence):
+    """The site's key for one admission of an operation, as
+    custody.OperationKey builds it: no object UID is in any spec."""
+    key = '%s.%s.%d' % (kind.lower(), name, fence)
+    if len(key) <= 128:
+        return key
+    return '%s.%s.%d' % (kind.lower(), hashlib.sha256(name.encode()).hexdigest()[:32], fence)
+
+
+def provider_key(item):
+    """A provider-project operation's site key, from its admitted fence."""
+    return operation_key(item['kind'], item['metadata']['name'], item.get('status', {}).get('fence', 0))
+
+
 def sanitized_operations(store, results=(), redfish=None):
-    """Each journaled operation in admission order: its UID, fence, kind (from
-    its step names), steps with their states, and its stored result phase.
-    Step payloads are never read out."""
+    """Each journaled operation in admission order: its site key, fence, kind
+    (from its step names), steps with their states, and its stored result
+    phase. Step payloads are never read out."""
     redfish = PROVIDER == 'redfish' if redfish is None else redfish
     ops = {}
     for e in (store or {}).get('journal') or []:
         o = ops.setdefault(e['operation'], {'operation': e['operation'], 'fence': e['fence'], 'steps': []})
         o['steps'].append([e['step'], e['state']])
-    phases = {(r['result']['operation']['uid'], r['result']['fence']): r['result'].get('phase') for r in results}
+    phases = {(operation_key(r['result']['operation']['kind'], r['result']['operation']['name'], r['result']['fence']), r['result']['fence']): r['result'].get('phase') for r in results}
     out = []
     for o in ops.values():
         kind = operation_kind([n for n, _ in o['steps']])

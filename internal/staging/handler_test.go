@@ -218,7 +218,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	if err != nil || allocated == nil {
 		t.Fatalf("allocation = %v, %v", allocated, err)
 	}
-	if allocated.Spec.MachineRef.Project != consumer.RouteName || allocated.Spec.MachineRef.ProjectUID != string(consumer.UID) || allocated.Spec.DeviceRef.Name != device.Name || got.Status.AllocatedHardware == nil || !reflect.DeepEqual(got.Status.AllocatedHardware.Hardware, allocated.Spec.Hardware) {
+	if allocated.Spec.MachineRef.Project != consumer.RouteName || allocated.Labels[fleetv1.LabelConsumerProjectUID] != string(consumer.UID) || allocated.Spec.DeviceRef.Name != device.Name || got.Status.AllocatedHardware == nil || !reflect.DeepEqual(got.Status.AllocatedHardware.Hardware, allocated.Spec.Hardware) {
 		t.Fatalf("allocation = %+v, allocated hardware %#v", allocated.Spec, got.Status.AllocatedHardware)
 	}
 	if holder := s.custody(device.Name).Spec.Holder; holder.Type != ops.HolderAllocation || holder.AllocationRef.Name != allocated.Name {

@@ -43,7 +43,7 @@ func assignment(t *testing.T) site.Assignment {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	return site.Assignment{Device: device, Operation: ops.OperationReference{Kind: "DeviceTestKind", Name: "op-example", UID: "00000000-0000-4000-8000-000000000401"}, Fence: 2,
+	return site.Assignment{Device: device, Operation: ops.OperationReference{Kind: "DeviceTestKind", Name: "op-example"}, Fence: 2,
 		AdmittedAt: now, Deadline: now.Add(time.Minute), InputDigest: digest, Inputs: inputs,
 		Snapshot: ops.DeviceSnapshot{BMCEndpoint: "https://[2001:db8::1]", SystemUUID: "00000000-0000-4000-8000-000000000001", BMCPublicKeySHA256: "aa"}}
 }

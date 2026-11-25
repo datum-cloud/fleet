@@ -223,7 +223,7 @@ const bootRecords = "boot"
 func (c Config) boot(ctx context.Context, work *site.Work, mode string) (Boot, error) {
 	store := work.Store()
 	var boot Boot
-	found, err := store.GetRecord(work.Device, bootRecords, work.Operation.UID, &boot)
+	found, err := store.GetRecord(work.Device, bootRecords, work.Key(), &boot)
 	if err != nil || found {
 		return boot, err
 	}
@@ -235,12 +235,12 @@ func (c Config) boot(ctx context.Context, work *site.Work, mode string) (Boot, e
 		return boot, err
 	}
 	_, _, _, window := c.durations()
-	boot = Boot{Operation: work.Operation.UID, Fence: work.Fence, Mode: mode, MAC: strings.ToLower(conn(work).Target.MAC), Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Created: c.now().UTC(), Expires: c.now().Add(window).UTC()}
-	return boot, store.PutRecord(work.Device, work.Fence, bootRecords, work.Operation.UID, boot)
+	boot = Boot{Operation: work.Key(), Fence: work.Fence, Mode: mode, MAC: strings.ToLower(conn(work).Target.MAC), Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Created: c.now().UTC(), Expires: c.now().Add(window).UTC()}
+	return boot, store.PutRecord(work.Device, work.Fence, bootRecords, work.Key(), boot)
 }
 
 func (c Config) saveBoot(work *site.Work, boot Boot) error {
-	return work.Store().PutRecord(work.Device, work.Fence, bootRecords, work.Operation.UID, boot)
+	return work.Store().PutRecord(work.Device, work.Fence, bootRecords, work.Key(), boot)
 }
 
 func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops.StepEvidence, error) {
@@ -457,7 +457,7 @@ func BootDirectory(root, operationUID string) string {
 }
 
 func (c Config) deliveries(work *site.Work) map[string]bool {
-	data, _ := os.ReadFile(filepath.Join(BootDirectory(c.BootRoot, work.Operation.UID), "boot-delivery.log"))
+	data, _ := os.ReadFile(filepath.Join(BootDirectory(c.BootRoot, work.Key()), "boot-delivery.log"))
 	done := map[string]bool{}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)

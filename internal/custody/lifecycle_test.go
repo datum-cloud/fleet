@@ -19,7 +19,7 @@ func TestImportedDeviceGetsUnverifiedCustodyAndSendsNothing(t *testing.T) {
 	device := e.device("server-example-001", uid(1), testKeyA)
 	e.settle(device.Name)
 	custody := e.custody(device.Name)
-	if custody.Spec.State != ops.CustodyUnverified || custody.Spec.Holder.Type != ops.HolderNone || custody.Spec.ActiveOperation != nil || custody.Spec.DeviceRef.UID != string(device.UID) {
+	if custody.Spec.State != ops.CustodyUnverified || custody.Spec.Holder.Type != ops.HolderNone || custody.Spec.ActiveOperation != nil || custody.Labels[ops.LabelDeviceUID] != string(device.UID) {
 		t.Fatalf("new custody = %+v", custody.Spec)
 	}
 	if len(custody.Finalizers) != 1 || custody.Finalizers[0] != ops.CustodyFinalizer {
@@ -258,9 +258,9 @@ func TestLifecycle(t *testing.T) {
 		}
 		other := stale
 		other.Fence = active.Fence
-		other.Operation.UID = "00000000-0000-4000-8000-000000000999"
+		other.Operation.Name = "another-operation"
 		if err := e.coord.AcceptResult(e.ctx, other); !errors.Is(err, ErrStaleFence) {
-			t.Fatalf("result for another incarnation: %v", err)
+			t.Fatalf("result for another operation: %v", err)
 		}
 		after := e.custody(device.Name)
 		if after.Spec.ActiveOperation == nil || after.Spec.Holder.Type != custody.Spec.Holder.Type || after.Spec.RejectedResults == nil || after.Spec.RejectedResults.Count != 2 || after.Spec.RejectedResults.Last.Fence != active.Fence || after.Spec.RejectedResults.Last.Site != testSite {

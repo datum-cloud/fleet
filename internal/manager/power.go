@@ -82,7 +82,7 @@ func power(ctx context.Context, provider client.Reader, namespace string, machin
 	} else if err != nil {
 		return nil, err
 	}
-	if current.Spec.MachineRef.UID != string(machine.UID) || current.Spec.MachineRef.ProjectUID != string(machine.ProjectUID) || current.Status.Phase != fleetv1.AllocationActive {
+	if current.Labels[fleetv1.LabelMachineUID] != string(machine.UID) || current.Labels[fleetv1.LabelConsumerProjectUID] != string(machine.ProjectUID) || current.Status.Phase != fleetv1.AllocationActive {
 		return nil, nil
 	}
 	state := &ops.DeviceCustody{}
@@ -91,7 +91,7 @@ func power(ctx context.Context, provider client.Reader, namespace string, machin
 	} else if err != nil {
 		return nil, err
 	}
-	if state.Spec.RecoveryHold != nil || state.Spec.State != ops.CustodyVerified || state.Spec.DeviceRef.UID != current.Spec.DeviceRef.UID {
+	if state.Spec.RecoveryHold != nil || state.Spec.State != ops.CustodyVerified || state.Labels[ops.LabelDeviceUID] != current.Labels[fleetv1.LabelDeviceUID] {
 		return unknown, nil
 	}
 	device := &inventory.Device{}
@@ -100,7 +100,7 @@ func power(ctx context.Context, provider client.Reader, namespace string, machin
 	} else if err != nil {
 		return nil, err
 	}
-	if device.UID != types.UID(current.Spec.DeviceRef.UID) || device.Status.Discovery == nil || device.Status.Discovery.Inventory == nil {
+	if device.UID != types.UID(current.Labels[fleetv1.LabelDeviceUID]) || device.Status.Discovery == nil || device.Status.Discovery.Inventory == nil {
 		return unknown, nil
 	}
 	for _, system := range device.Status.Discovery.Inventory.Systems {

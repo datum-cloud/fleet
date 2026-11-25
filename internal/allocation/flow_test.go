@@ -26,7 +26,7 @@ func TestAllocateInstallReleaseReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Name != Name(machine(1)) || first.Status.Phase != fleetv1.AllocationActive || first.Spec.DeviceRef.UID != string(device.UID) {
+	if first.Name != Name(machine(1)) || first.Status.Phase != fleetv1.AllocationActive || first.Labels[fleetv1.LabelDeviceUID] != string(device.UID) {
 		t.Fatalf("allocation = %s %s %+v", first.Name, first.Status.Phase, first.Spec.DeviceRef)
 	}
 	state := e.custody(device.Name)

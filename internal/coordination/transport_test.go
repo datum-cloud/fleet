@@ -115,12 +115,12 @@ func newFixture(t *testing.T) *rig {
 }
 
 func (f *rig) wipe(fence int64, uid string) site.Assignment {
-	spec := ops.DeviceWipeSpec{OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: "release", UID: "u"}, DeviceRef: ops.DeviceReference{Name: "server-example-001", UID: "d"}, Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: "alloc-example"}}},
+	spec := ops.DeviceWipeSpec{OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: "release", UID: "u"}, DeviceRef: ops.DeviceReference{Name: "server-example-001"}, Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: "alloc-example"}}},
 		Step: 1, CleaningPolicyDigest: "sha256:" + keyDigest, TargetDisks: []string{"disk-0"}}
 	inputs, _ := json.Marshal(spec)
 	digest, _ := custody.SpecDigest(spec)
 	now := time.Now().UTC()
-	return site.Assignment{Device: device, Operation: ops.OperationReference{Kind: "DeviceWipe", Name: "alloc-example-wipe-1", UID: uid}, Fence: fence, AdmittedAt: now, Deadline: now.Add(time.Minute), Snapshot: f.snapshot, InputDigest: digest, Inputs: inputs}
+	return site.Assignment{Device: device, Operation: ops.OperationReference{Kind: "DeviceWipe", Name: "alloc-example-wipe-1-" + uid}, Fence: fence, AdmittedAt: now, Deadline: now.Add(time.Minute), Snapshot: f.snapshot, InputDigest: digest, Inputs: inputs}
 }
 
 func (f *rig) observe() {
@@ -179,7 +179,7 @@ func TestAssignmentRoundTrip(t *testing.T) {
 	}
 	f.fed.sync()
 	f.observe()
-	if _, found, _ := f.results.Get(device, assignment.Operation.UID, 3); found {
+	if _, found, _ := f.results.Get(device, assignment.Operation, 3); found {
 		t.Fatal("the cell kept a result the coordinator answered")
 	}
 	if held, _ := f.hub.Results(f.ctx); len(held) != 0 {
@@ -198,7 +198,7 @@ func TestReflectionIsRejectedUnlessItIsThisCellsObservation(t *testing.T) {
 		"future":           func(s *HubStatus, _ *Spec) { s.Reflected[0].Observation.ObservedAt = time.Now().Add(time.Hour) },
 		"other inputs":     func(s *HubStatus, _ *Spec) { s.Reflected[0].Observation.AssignmentDigest = keyDigest },
 		"another fence":    func(s *HubStatus, _ *Spec) { s.Reflected[0].Observation.Result.Fence++ },
-		"another op":       func(s *HubStatus, _ *Spec) { s.Reflected[0].Observation.Result.Operation.UID = "other" },
+		"another op":       func(s *HubStatus, _ *Spec) { s.Reflected[0].Observation.Result.Operation.Name = "other" },
 		"another device":   func(s *HubStatus, _ *Spec) { s.Reflected[0].Observation.Result.Device = "server-example-002" },
 		"spec of another":  func(_ *HubStatus, spec *Spec) { spec.Cell = "cell-example-b" },
 		"no observed time": func(s *HubStatus, _ *Spec) { s.Reflected[0].Observation.ObservedAt = time.Time{} },

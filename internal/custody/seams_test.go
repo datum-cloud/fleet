@@ -263,7 +263,7 @@ func TestCRDRules(t *testing.T) {
 		custody = e.custody(device.Name)
 		custody.Spec.DeviceRef.Name = "another"
 		requireInvalid(t, e.admin.Update(ctx, custody))
-		requireInvalid(t, e.admin.Create(ctx, &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: "mismatch", Namespace: "default"}, Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: "other", UID: "u"}, State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}}))
+		requireInvalid(t, e.admin.Create(ctx, &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: "mismatch", Namespace: "default"}, Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: "other"}, State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}}))
 		custody = e.custody(device.Name)
 		custody.Spec.Holder = ops.Holder{Type: ops.HolderAllocation}
 		requireInvalid(t, e.admin.Update(ctx, custody))

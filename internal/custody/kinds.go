@@ -95,7 +95,7 @@ func DeviceInstallationKind() Kind {
 		},
 		Naming: DeterministicName,
 		Name: func(operation ops.Operation) string {
-			return InstallationName(allocationName(operation), operation.(*ops.DeviceInstallation).Spec.RequestUID)
+			return InstallationName(allocationName(operation), operation.GetLabels()[ops.LabelInstallationUID])
 		},
 		Deadline:      InstallationDeadline,
 		Effectful:     true,
@@ -292,7 +292,8 @@ func applyRecovery(ctx context.Context, apply *ApplyContext) (*ops.DeviceCustody
 		return nil, refusal
 	}
 	spec := custody.Spec
-	reference := ops.OperationReference{Kind: "DeviceRecovery", Name: recovery.Name, UID: string(recovery.UID)}
+	// The recovery is applied while it is the active operation, at its fence.
+	reference := ops.HeldOperationReference{Kind: "DeviceRecovery", Name: recovery.Name, Fence: custody.Spec.ActiveOperation.Fence}
 	switch recovery.Spec.Decision {
 	case ops.DecisionSettle:
 		spec.RecoveryHold = nil
@@ -311,7 +312,6 @@ func applyRecovery(ctx context.Context, apply *ApplyContext) (*ops.DeviceCustody
 		resolve := recovery.Spec.Resolve
 		spec.State = ops.CustodyVerified
 		spec.Conflicts = nil
-		spec.DeviceRef.UID = string(apply.Device.UID)
 		spec.Fence = max(spec.Fence, apply.HighestFence)
 		spec.Holder = ops.Holder{Type: resolve.Holder}
 		if resolve.AllocationRef != nil {

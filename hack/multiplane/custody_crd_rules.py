@@ -54,7 +54,7 @@ try:
     for name in names:
         kubectl('wait', '--for=condition=Established', 'crd/%s.fleet.datumapis.com' % name, '--timeout=90s')
     envelope = {'creator': {'username': 'staff-example', 'uid': 'staff-example-uid'},
-                'deviceRef': {'name': 'server-example-001', 'uid': '00000000-0000-4000-8000-000000000001'},
+                'deviceRef': {'name': 'server-example-001'},
                 'authority': {'serviceRequest': {'reason': 'synthetic rule check'}}}
     recovery = {'apiVersion': 'fleet.datumapis.com/v1alpha1', 'kind': 'DeviceRecovery',
                 'metadata': {'name': 'rules-recovery', 'namespace': namespace},

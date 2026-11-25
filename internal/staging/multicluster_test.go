@@ -80,7 +80,7 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	t.Cleanup(cancel)
 	scheme := stagingScheme(t)
 	const authority = "staging"
-	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: profileName, UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 24}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
+	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: profileName, UID: "source-profile-uid", Generation: 1}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 24}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
 	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: className, UID: "source-class-uid", Generation: 1}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: profileName}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: providerNamespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "example"}}}}}}
 	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: providerNamespace, Name: "capacity-" + device.Name, UID: "capacity-uid", Labels: map[string]string{"pool": "example"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: device.Name}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "example-cleaning"}, ReclaimPolicy: "Retain"}}
 	claim := func() *fleetv1.Machine {
@@ -223,7 +223,7 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	if err := s.admin.List(ctx, &allocations, client.InNamespace(providerNamespace)); err != nil {
 		t.Fatal(err)
 	}
-	if len(allocations.Items) != 1 || allocations.Items[0].Spec.MachineRef.ProjectUID != string(consumerProject.UID) || allocations.Items[0].Spec.DeviceRef.Name != device.Name {
+	if len(allocations.Items) != 1 || allocations.Items[0].Labels[fleetv1.LabelConsumerProjectUID] != string(consumerProject.UID) || allocations.Items[0].Spec.DeviceRef.Name != device.Name {
 		t.Fatalf("allocations = %#v, want one for the consumer on %s", allocations.Items, device.Name)
 	}
 	if holder := s.custody(device.Name).Spec.Holder; holder.AllocationRef == nil || holder.AllocationRef.Name != allocations.Items[0].Name {

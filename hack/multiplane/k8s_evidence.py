@@ -85,7 +85,8 @@ def installs(path):
 
 def assignment_name(assignment):
     """internal/coordination.AssignmentName: the only name an assignment's handoff may have."""
-    return 'op-' + hashlib.sha256(('%s/%s/%d' % (assignment['device'], assignment['operation']['uid'], assignment['fence'])).encode()).hexdigest()[:40]
+    key = harness.operation_key(assignment['operation']['kind'], assignment['operation']['name'], assignment['fence'])
+    return 'op-' + hashlib.sha256(('%s/%s' % (assignment['device'], key)).encode()).hexdigest()[:40]
 
 
 def observation(state, name):
@@ -186,7 +187,8 @@ def record_resume(state, name):
         raise SystemExit('replacement workers did not complete the exact interrupted operation')
     # The observer published the stored result for exactly that assignment.
     result = (observation(state, name) or {}).get('result') or {}
-    if result.get('phase') != 'Succeeded' or result.get('operation', {}).get('uid') != i['operationID'] or result.get('fence') != i['fence']:
+    operation = result.get('operation', {})
+    if result.get('phase') != 'Succeeded' or harness.operation_key(operation.get('kind', ''), operation.get('name', ''), result.get('fence', 0)) != i['operationID'] or result.get('fence') != i['fence']:
         raise SystemExit('the observed result is not the interrupted operation Succeeded at its fence')
     j, ps = job(state, name), pods(state, name)
     if j['uid'] != i['jobRecreation']['recreatedJobUID'] or ['Complete', 'True', 'CompletionsReached'] not in j['conditions']:
@@ -277,12 +279,12 @@ def delivery_faults(state, action):
             raise SystemExit('a duplicate assignment was not refused as AlreadyExists: ' + r.stderr[:200])
         faults['duplicate'] = {'handoff': source['metadata']['name'], 'refused': 'AlreadyExists'}
         # Selected by the cell label, but the handoff names another cell.
-        wrong = dict(assignment, operation=dict(assignment['operation'], uid=assignment['operation']['uid'] + '-fault-wrong-cell'))
+        wrong = dict(assignment, operation=dict(assignment['operation'], name=assignment['operation']['name'] + '-fault-wrong-cell'))
         faults['wrong-cell'] = {'handoff': assignment_name(wrong), 'spec': {'cell': 'remote-elsewhere-cell', 'device': assignment['device'],
                                                                           'assignmentJSON': json.dumps(wrong, separators=(',', ':')), **credential}}
         # Well-formed for this cell under its own name, but below the stored fence.
         stale = dict(assignment, fence=assignment['fence'] - 1)
-        faults['stale-fence'] = {'handoff': assignment_name(stale), 'operation': assignment['operation']['uid'], 'fence': stale['fence'],
+        faults['stale-fence'] = {'handoff': assignment_name(stale), 'operation': harness.operation_key(stale['operation']['kind'], stale['operation']['name'], stale['fence']), 'fence': stale['fence'],
                                  'spec': {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(stale, separators=(',', ':')), **credential}}
         for fault in JOB_FAULTS:
             f = faults[fault]
@@ -306,7 +308,7 @@ def delivery_faults(state, action):
                 raise SystemExit('the stale-fence handoff gained a result')
             record['faults'][fault] = {'handoff': name, 'job': j, 'pods': ps, 'observedFence': (seen or {}).get('fence'), 'result': None}
         stored = kubectl(state, '-n', SITE, 'exec', 'deploy/fleet-site-runtime', '-c', 'libvirt', '--', 'test', '-e',
-                         '%s/%s-%d.json' % (harness.RESULTS_DIR, faults['stale-fence']['operation'], faults['stale-fence']['fence']), check=False)
+                         '%s/%s.json' % (harness.RESULTS_DIR, faults['stale-fence']['operation']), check=False)
         if stored.returncode == 0:
             raise SystemExit('the site stored a result for the stale-fence assignment')
         machine = get(state, '-n', 'default', 'get', 'machine', 'allocation', config='consumer-b/management-project.json')

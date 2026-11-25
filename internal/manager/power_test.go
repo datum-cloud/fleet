@@ -31,11 +31,12 @@ func TestPowerFollowsCustodyAndDiscovery(t *testing.T) {
 	const namespace, deviceUID = "fleet-provider", "00000000-0000-4000-8000-000000000101"
 	device := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: "server-example-001", Namespace: namespace, UID: deviceUID}, Spec: inventory.DeviceSpec{Identity: inventory.DeviceIdentity{SystemUUID: "00000000-0000-4000-8000-000000000201"}},
 		Status: inventory.DeviceStatus{Discovery: &inventory.DeviceDiscovery{Inventory: &inventory.ObservedInventory{Systems: []inventory.ObservedSystem{{ID: "s", UUID: "00000000-0000-4000-8000-000000000201", PowerState: "On"}}}}}}
-	held := &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: device.Name, Namespace: namespace}, Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: device.Name, UID: deviceUID}, State: ops.CustodyVerified,
+	held := &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: device.Name, Namespace: namespace, Labels: map[string]string{ops.LabelDeviceUID: deviceUID}}, Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: device.Name}, State: ops.CustodyVerified,
 		Holder: ops.Holder{Type: ops.HolderAllocation, AllocationRef: &ops.LocalReference{Name: allocation.Name(machine)}}}}
-	active := &fleetv1.MachineAllocation{ObjectMeta: metav1.ObjectMeta{Name: allocation.Name(machine), Namespace: namespace}, Spec: fleetv1.MachineAllocationSpec{
-		MachineRef: fleetv1.AllocatedMachineReference{Project: machine.Project, ProjectUID: string(machine.ProjectUID), Namespace: machine.Namespace, Name: machine.Name, UID: string(machine.UID)},
-		DeviceRef:  fleetv1.AllocatedDeviceReference{Name: device.Name, UID: deviceUID}}, Status: fleetv1.MachineAllocationStatus{Phase: fleetv1.AllocationActive}}
+	active := &fleetv1.MachineAllocation{ObjectMeta: metav1.ObjectMeta{Name: allocation.Name(machine), Namespace: namespace, Labels: map[string]string{
+		fleetv1.LabelMachineUID: string(machine.UID), fleetv1.LabelConsumerProjectUID: string(machine.ProjectUID), fleetv1.LabelDeviceUID: deviceUID}}, Spec: fleetv1.MachineAllocationSpec{
+		MachineRef: fleetv1.AllocatedMachineReference{Project: machine.Project, Namespace: machine.Namespace, Name: machine.Name},
+		DeviceRef:  fleetv1.AllocatedDeviceReference{Name: device.Name}}, Status: fleetv1.MachineAllocationStatus{Phase: fleetv1.AllocationActive}}
 	provider := fake.NewClientBuilder().WithScheme(scheme).WithObjects(device, held, active).Build()
 	power := func() string {
 		t.Helper()
@@ -65,7 +66,7 @@ func TestPowerFollowsCustodyAndDiscovery(t *testing.T) {
 		}
 	}
 	update(func(c *ops.DeviceCustody) {
-		c.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: "DeviceWipe", Name: "wipe", UID: "u"}, Fence: 3, Reason: "DeadlineExceeded"}
+		c.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: "DeviceWipe", Name: "wipe"}, Fence: 3, Reason: "DeadlineExceeded"}
 	})
 	if got := power(); got != "Unknown" {
 		t.Fatalf("power under a recovery hold = %q", got)

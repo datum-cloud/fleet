@@ -99,11 +99,12 @@ with tempfile.TemporaryDirectory() as tmp:
     (state / 'install-handoff').write_text(h + '\n')
     device = 'fleet-provider/synthetic-device-central-01'
     # The latest delivered assignment: the release wipe at fence 2.
-    wipe = {'device': device, 'operation': {'kind': 'DeviceWipe', 'name': 'alloc-0123456789abcdef-wipe-1', 'uid': 'wipe-uid'}, 'fence': 2,
+    wipe = {'device': device, 'operation': {'kind': 'DeviceWipe', 'name': 'alloc-0123456789abcdef-wipe-1'}, 'fence': 2,
             'admittedAt': '2026-01-01T00:00:00Z', 'deadline': '2026-01-01T01:00:00Z', 'snapshot': {}, 'inputDigest': 'sha256:' + '0' * 64, 'inputs': {}}
-    wipe_name = 'op-' + hashlib.sha256(('%s/wipe-uid/2' % device).encode()).hexdigest()[:40]
-    install = dict(wipe, operation={'kind': 'DeviceInstallation', 'name': 'alloc-0123456789abcdef-install-0123456789ab', 'uid': 'install-1'}, fence=1)
-    store = {'device': device, 'fence': 2, 'stopped': 2, 'journal': [{'operation': 'install-1', 'fence': 1, 'step': 'prepare-disk', 'state': 'Done', 'at': 'x'}]}
+    wipe_name = 'op-' + hashlib.sha256(('%s/devicewipe.alloc-0123456789abcdef-wipe-1.2' % device).encode()).hexdigest()[:40]
+    install = dict(wipe, operation={'kind': 'DeviceInstallation', 'name': 'alloc-0123456789abcdef-install-0123456789ab'}, fence=1)
+    install_key = 'deviceinstallation.alloc-0123456789abcdef-install-0123456789ab.1'
+    store = {'device': device, 'fence': 2, 'stopped': 2, 'journal': [{'operation': install_key, 'fence': 1, 'step': 'prepare-disk', 'state': 'Done', 'at': 'x'}]}
     world = {'handoff': h, 'store': json.dumps(store), 'qemu': 'x: starting up a\nx: starting up b\n',
              'jobs': {'w-' + h: job('w-' + h, 'job-2', [('Complete', 'CompletionsReached')], succeeded=1)},
              'pods': [pod('p2', 'pod-2', h, 'job-2', 'Succeeded', 0)] + [pod(d, d + '-uid', None, '', 'Running', app=d) for d in ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observer')],
@@ -132,9 +133,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check('job record', r.returncode == 0 and json.loads(r.stdout)['uid'] == 'job-2', r.stderr)
 
     # Interruption records.
-    ops = lambda stage: json.dumps([{'operation': 'install-1', 'fence': 1, 'kind': 'DeviceInstallation', 'stage': stage, 'stageState': 'Done',
+    ops = lambda stage: json.dumps([{'operation': install_key, 'fence': 1, 'kind': 'DeviceInstallation', 'stage': stage, 'stageState': 'Done',
                                      'done': stage == 'disk-verified', 'phase': 'Succeeded' if stage == 'disk-verified' else None, 'steps': [[stage, 'Done']]}])
-    (state / 'interrupt-observed.json').write_text(json.dumps({'operation': {'operation': 'install-1', 'fence': 1, 'stage': 'installer-start', 'domain': 'd'}, 'domainRunning': True}))
+    (state / 'interrupt-observed.json').write_text(json.dumps({'operation': {'operation': install_key, 'fence': 1, 'stage': 'installer-start', 'domain': 'd'}, 'domainRunning': True}))
     (state / 'interrupt-after.json').write_text(ops('installer-start'))
     (state / 'interrupt-job-before-pod.json').write_text(json.dumps({'uid': 'job-1', 'failed': 0}))
     (state / 'interrupt-job-after-pod.json').write_text(json.dumps({'uid': 'job-1', 'failed': 1}))
@@ -165,7 +166,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (state / 'lifecycle-after.json').write_text(r.stdout)
     r = run('record-lifecycle', 'job-2', 'job-3')
     check('record-lifecycle', r.returncode == 0 and (state / 'evidence/lifecycle.json').exists(), r.stderr)
-    world['store'] = json.dumps(dict(store, journal=store['journal'] + [{'operation': 'install-1', 'fence': 1, 'step': 'installer-start', 'state': 'Intended', 'at': 'y'}]))
+    world['store'] = json.dumps(dict(store, journal=store['journal'] + [{'operation': install_key, 'fence': 1, 'step': 'installer-start', 'state': 'Intended', 'at': 'y'}]))
     (state / 'lifecycle-after.json').write_text(run('lifecycle-snapshot', h).stdout)
     check('record-lifecycle rejects a site store change', run('record-lifecycle', 'job-2', 'job-3').returncode != 0)
 
@@ -180,8 +181,8 @@ with tempfile.TemporaryDirectory() as tmp:
     faults = json.loads((state / 'fault-handoffs.json').read_text())
     check('duplicate refused by the API', faults['duplicate'] == {'handoff': wipe_name, 'refused': 'AlreadyExists'}, str(faults['duplicate']))
     stale = faults['stale-fence']
-    check('stale fault is the same operation below the fence under its own name', stale['operation'] == 'wipe-uid' and stale['fence'] == 1
-          and stale['handoff'] == 'op-' + hashlib.sha256(('%s/wipe-uid/1' % device).encode()).hexdigest()[:40], str(stale))
+    check('stale fault is the same operation below the fence under its own name', stale['operation'] == 'devicewipe.alloc-0123456789abcdef-wipe-1.1' and stale['fence'] == 1
+          and stale['handoff'] == 'op-' + hashlib.sha256(('%s/devicewipe.alloc-0123456789abcdef-wipe-1.1' % device).encode()).hexdigest()[:40], str(stale))
     check('faults derive from the latest assignment', faults['source']['handoff'] == wipe_name and faults['source']['fence'] == 2)
     for fault in ('wrong-cell', 'stale-fence'):
         name = faults[fault]['handoff']
@@ -191,7 +192,7 @@ with tempfile.TemporaryDirectory() as tmp:
     world['statuses'][stale['handoff']] = {'observation': {'cell': 'fleet-mp-1234abcd-cell', 'fence': {'seen': 2, 'stopped': 2}}}
     r = run('delivery-faults', 'verify')
     check('delivery-faults verify', r.returncode == 0, r.stderr)
-    world['results'] = ['wipe-uid-1.json']
+    world['results'] = ['devicewipe.alloc-0123456789abcdef-wipe-1.1.json']
     check('delivery-faults rejects a stored stale result', run('delivery-faults', 'verify').returncode != 0)
     world['results'] = []
     world['statuses'][faults['wrong-cell']['handoff']] = {'observation': {'cell': 'fleet-mp-1234abcd-cell'}}

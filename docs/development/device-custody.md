@@ -31,7 +31,7 @@ marked **implemented and verified**, **implemented and inert**, or
   the fence from decreasing, keeps `Retired` terminal, and requires the active
   operation to carry the current fence.
 - **Operations.** Every kind starts with one envelope: `creator`, `deviceRef`
-  (name and UID) and `authority` (exactly one of `allocationRef` and
+  (the Device's name) and `authority` (exactly one of `allocationRef` and
   `serviceRequest`). The spec is immutable after create. Status phases move
   forward only, and an ended phase is final. `Pending` may end
   `OutcomeUnknown`, because rebuild holds an operation whose status still
@@ -177,11 +177,15 @@ records where an environment needs them.
 A `MachineAllocation` holds the allocation's private facts (O8). It lives in the
 provider project, and only the Metal provider writes it.
 
-- **Spec (immutable).** The exact Machine and consumer project incarnation, the
-  capacity, the Device incarnation, the accepted class, profile, CPU and
-  memory, the hardware snapshot, the admission authority, an optional quota
-  claim, the pinned cleaning policy digest, the boot interface and the target
-  disks.
+- **Spec (immutable).** The Machine and consumer project by name, the
+  capacity, the Device by name, the accepted class and profile pinned by
+  generation and spec digest, the CPU and memory, the hardware snapshot, the
+  admission authority, an optional quota claim, the pinned cleaning policy
+  digest, the boot interface and the target disks.
+- **Labels.** `fleet.datumapis.com/machine-uid`,
+  `fleet.datumapis.com/consumer-project-uid` and
+  `fleet.datumapis.com/device-uid` record the incarnations the allocation was
+  made for. See [No object UIDs in spec](#no-object-uids-in-spec).
 - **Status.** A phase, `Active`, `Releasing` or `Released`, and the latest wipe.
 - **Name.** `alloc-` and the first 16 hex characters of the SHA-256 of
   `<consumer project UID>/<Machine UID>`. See [the decision](#cutover-decisions).
@@ -199,7 +203,8 @@ update). A retry finds the same allocation by its name.
   not repaired. The allocator returns `ErrCustodyLost`, the Machine reports
   `Pending` with reason `CustodyLost`, and an operator resolves it.
 - **Installation.** The `DeviceInstallation` is named from the allocation and the
-  Installation UID. Its predecessor must be the Machine's current installation.
+  Installation UID, which its `fleet.datumapis.com/installation-uid` label
+  records. Its predecessor must be the Machine's current installation.
   A bootstrap reference is refused.
 - **Release.** The allocation's holder moves to `Release` with all six gates
   open. Then:
@@ -439,7 +444,8 @@ Each decision lists the open point from the implementation brief it settles.
 - **Only `Retire` and `Resolve` skip checks 5 and 6.** A `DeviceRecovery`
   with `Retire` or `Resolve` skips current discovery and the shared-key check,
   because it must work when a BMC is unreachable, for example to retire a dead
-  server. The Device UID is always checked. `Settle` still needs current
+  server. The operation's `device-uid` label is always checked against the
+  Device's UID. `Settle` still needs current
   discovery: settling a power hold needs fresh discovery evidence of the power
   state, as the #174 settlement table says. `Retry` needs no evidence of its
   own, and it still passes both checks. The settling operation it authorizes
@@ -450,10 +456,10 @@ Each decision lists the open point from the implementation brief it settles.
   staff power and generation-based names for provider power; otherwise the
   kind's rule applies. An operation that does not follow its rule ends
   `Failed` with `NameMismatch`. A `DeviceInstallation` is named from its allocation and
-  a digest of the Installation UID. A `DeviceWipe` is named from its allocation
+  a digest of the Installation UID in its `installation-uid` label. A `DeviceWipe` is named from its allocation
   and step. Staff kinds must use a generated name.
 - **Order.** Pending operations are admitted oldest first. Ties break on kind,
-  then name, then UID, so every coordinator picks the same one.
+  then name, then the object UID, so every coordinator picks the same one.
 - **Refusals use current custody.** The coordinator reads custody, lists the
   operations, and reads custody again. It decides only if custody did not
   change in between. A claim followed by its installation's create is
@@ -485,7 +491,7 @@ Each value is configurable.
 ### Unknown outcomes and recovery (O2, O3, O6, O7)
 
 - `OutcomeUnknown` moves the operation from `activeOperation` to
-  `recoveryHold` in the same update, keeping its kind, name, UID and fence.
+  `recoveryHold` in the same update, keeping its kind, name and fence.
   The holder stays.
 - A result whose evidence does not match the kind's schema proves nothing, and
   ends `OutcomeUnknown` with `InvalidEvidence`.
@@ -512,7 +518,8 @@ Each value is configurable.
   `Release` requires a disk disposal record.
 - `Resolve` is the only operation `Unverified` custody admits. It records the
   holder (`None`, `Allocation`, `Release` or `Retired`), marks custody
-  `Verified`, and adopts the current Device UID. The holder must agree with
+  `Verified`, and adopts the current Device UID in custody's `device-uid`
+  label. The holder must agree with
   the Device's live MachineAllocations, both at admission and when it is
   applied: `None` or `Retired` when none names the Device, and `Allocation`
   or `Release` with the one that does. A rebuilt hold stays, to be settled
@@ -525,9 +532,11 @@ Each value is configurable.
   succeeded `Retire` recoveries, its MachineAllocations that are not
   `Released`, and its operations. A releasing allocation rebuilds `Release`
   with every gate open.
-- Every operation that has not ended is held, even if its status says
-  `Pending`, because custody is written before status. Its status is ended
-  `OutcomeUnknown` with reason `Rebuilt`, and it is never admitted again.
+- Every admitted operation that has not ended is held, even if its status
+  says `Pending`, because custody is written before the rest of its status.
+  Its status is ended `OutcomeUnknown` with reason `Rebuilt`, and it is never
+  admitted again. An operation records its admission before custody names
+  it, so one without an admission record was never admitted and is not held.
 - An operation that ended `OutcomeUnknown` is held again unless something
   later settled it: a succeeded operation with a higher fence whose kind
   settles the held kind, or a succeeded recovery that cleared that exact
@@ -536,7 +545,8 @@ Each value is configurable.
   held and custody stays `Unverified`, so a `Resolve` must decide and the hold
   is never dropped.
 - Two live allocations, holder sources that disagree, a Device UID that
-  differs from custody, or a missing Device also keep custody `Unverified`
+  differs from custody's `device-uid` label, or a missing Device also keep
+  custody `Unverified`
   until a `Resolve`.
 - Custody becomes `Verified` only after every site configured to serve the
   Device reports its stored fence. The new fence is above every fence those
@@ -608,14 +618,49 @@ remains.
   as written would make every server unallocatable, because commissioning is
   not built.
 
+### No object UIDs in spec
+
+No resource spec holds an object UID (#211). A deterministic name, a label or
+status pins each incarnation. The one exception is an operation's
+`creator.uid`, the authenticated caller's UID, as in a Kubernetes
+CertificateSigningRequest. Each same-name recreation is guarded, and a test
+fails if its guard is removed:
+
+| Recreated | Guard | Test |
+| --- | --- | --- |
+| Machine or consumer project | The allocation's name hashes both UIDs, and its `machine-uid` and `consumer-project-uid` labels must match | `TestAnAllocationForAnotherMachineIncarnationIsAConflict` |
+| Device | Custody's `device-uid` label must match the Device, or custody stays `Unverified` until a `Resolve` | `TestARecreatedDeviceLeavesCustodyUnverified` |
+| Device, against free capacity | Custody for another Device incarnation is never free | `TestCustodyForAnotherDeviceIncarnationIsNotFree` |
+| Device, against an operation | An operation's `device-uid` label must match the Device at admission | `TestAdmissionPreconditions` |
+| Device, against an existing operation | The Metal provider and release controller require an existing same-name operation to carry the same labels | `TestAnOperationForAnotherDeviceIncarnationIsAConflict` |
+| Installation | The `DeviceInstallation` name hashes the Installation UID, so a same-name Installation gets a new operation | `TestAllocateInstallReleaseReuse` |
+| Operation, as the active operation | Custody names an operation by kind and name with the fence it admitted it at, and an operation matches only if its `status.admission.fence` carries that fence | `TestARecreatedActiveOperationNeverGetsItsResult` |
+| Operation, as the last result | The same match: the result is never copied to a same-name operation created later | `TestARecreatedOperationNeverInheritsItsLastResult` |
+| Operation, as the recovery hold | The same match: a same-name operation is neither held nor excluded as the held one | `TestARecreatedHeldOperationNeverTakesTheHold` |
+| Operation, as a Retry's settling operation | The same match: a same-name operation is never admitted or settled as the Retry's | `TestARecreatedRetryIsNeverCountedAsTheRetry` |
+| Operation, as a later retry at rebuild | A later retry supersedes a held operation only if it carries an admission record | `TestARecreatedRetryNeverSupersedesARebuiltHold` |
+
+The coordinator writes `status.admission.fence` to the operation before it
+writes custody, so custody never names an operation that cannot prove it is
+the one admitted. A same-name object created later has no admission record,
+so it never matches custody's active operation, last result, hold or Retry
+lineage. An operation without an admission record was never admitted, so
+rebuild holds only operations that carry one.
+
+The site keys its journal, results and boot records by the admission, not by
+an object UID: `<lowercased kind>.<name>.<fence>`, with the name replaced by
+its digest if the key would exceed the site store's 128-character limit. A
+same-name operation admitted later has a higher fence and so another key.
+
 ### Cutover decisions
 
 Each decision was made while building Increment C. Each is open for review by a
 person.
 
 - **Allocation names.** An allocation is named from the Machine UID within its
-  consumer project. A retried create then collides with the first, and equal
-  Machine UIDs in two consumer projects never share an allocation.
+  consumer project, and its labels record both UIDs. A retried create then
+  collides with the first, and equal Machine UIDs in two consumer projects
+  never share an allocation.
 - **Lost custody is not repaired.** An allocation that never held its Device is
   deleted and the allocator selects again, because it exposed nothing. An `Active`
   allocation that lost custody means the records disagree about who holds a

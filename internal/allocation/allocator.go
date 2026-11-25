@@ -65,7 +65,14 @@ func (m Machine) Valid() bool {
 }
 
 func (m Machine) reference() fleetv1.AllocatedMachineReference {
-	return fleetv1.AllocatedMachineReference{Project: m.Project, ProjectUID: string(m.ProjectUID), Namespace: m.Namespace, Name: m.Name, UID: string(m.UID)}
+	return fleetv1.AllocatedMachineReference{Project: m.Project, Namespace: m.Namespace, Name: m.Name}
+}
+
+// labels pin the Machine and consumer project incarnations. No spec holds an
+// object UID; the allocation's name hashes both, and these labels confirm
+// them.
+func (m Machine) labels() map[string]string {
+	return map[string]string{fleetv1.LabelMachineUID: string(m.UID), fleetv1.LabelConsumerProjectUID: string(m.ProjectUID)}
 }
 
 // Name is the only name a Machine's allocation may have. It derives from the
@@ -127,7 +134,8 @@ func (a *Allocator) Get(ctx context.Context, machine Machine) (*fleetv1.MachineA
 	} else if err != nil {
 		return nil, err
 	}
-	if allocation.Spec.MachineRef != machine.reference() {
+	// A same-name Machine or project never inherits the allocation.
+	if allocation.Spec.MachineRef != machine.reference() || allocation.Labels[fleetv1.LabelMachineUID] != string(machine.UID) || allocation.Labels[fleetv1.LabelConsumerProjectUID] != string(machine.ProjectUID) {
 		return nil, ErrConflict
 	}
 	return allocation, nil
@@ -262,7 +270,7 @@ func Eligible(capacity *fleetv1.MachineCapacity, profile fleetv1.MachineProfileS
 // Device incarnation, holder None, no hold and no active operation.
 func Free(state *ops.DeviceCustody, device *inventory.Device) bool {
 	spec := state.Spec
-	return state.DeletionTimestamp.IsZero() && spec.DeviceRef.UID == string(device.UID) && spec.State == ops.CustodyVerified && spec.Holder.Type == ops.HolderNone &&
+	return state.DeletionTimestamp.IsZero() && state.Labels[ops.LabelDeviceUID] == string(device.UID) && spec.State == ops.CustodyVerified && spec.Holder.Type == ops.HolderNone &&
 		spec.RecoveryHold == nil && spec.ActiveOperation == nil && inventory.LifecycleOf(device) == inventory.DeviceActive
 }
 
@@ -274,15 +282,25 @@ func (a *Allocator) newAllocation(request Request, capacity *fleetv1.MachineCapa
 	if err != nil {
 		return nil, fmt.Errorf("resolve cleaning policy: %w", err)
 	}
+	classDigest, err := custody.SpecDigest(request.Class.Spec)
+	if err != nil {
+		return nil, err
+	}
+	profileDigest, err := custody.SpecDigest(request.Profile.Spec)
+	if err != nil {
+		return nil, err
+	}
+	labels := request.Machine.labels()
+	labels[fleetv1.LabelDeviceUID] = string(device.UID)
 	allocation := &fleetv1.MachineAllocation{
-		ObjectMeta: metav1.ObjectMeta{Name: Name(request.Machine), Namespace: a.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: Name(request.Machine), Namespace: a.Namespace, Labels: labels},
 		Spec: fleetv1.MachineAllocationSpec{
 			MachineRef:         request.Machine.reference(),
 			MachineCapacityRef: fleetv1.NamespacedReference{Namespace: capacity.Namespace, Name: capacity.Name},
-			DeviceRef:          fleetv1.AllocatedDeviceReference{Name: device.Name, UID: string(device.UID)},
+			DeviceRef:          fleetv1.AllocatedDeviceReference{Name: device.Name},
 			Accepted: fleetv1.AcceptedContract{
-				MachineClassRef:   fleetv1.UIDReference{Name: request.Class.Name, UID: string(request.Class.UID)},
-				MachineProfileRef: fleetv1.UIDReference{Name: request.Profile.Name, UID: string(request.Profile.UID)},
+				MachineClassRef:   fleetv1.ContentReference{Name: request.Class.Name, Generation: request.Class.Generation, Digest: classDigest},
+				MachineProfileRef: fleetv1.ContentReference{Name: request.Profile.Name, Generation: request.Profile.Generation, Digest: profileDigest},
 				CPU:               request.Profile.Spec.CPU,
 				Memory:            request.Profile.Spec.Memory,
 			},
@@ -344,11 +362,12 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	if err != nil {
 		return nil, err
 	}
+	labels := operationLabels(allocation)
+	labels[ops.LabelInstallationUID] = string(installation.UID)
 	operation := &ops.DeviceInstallation{
-		ObjectMeta: metav1.ObjectMeta{Name: custody.InstallationName(allocation.Name, string(installation.UID)), Namespace: a.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: custody.InstallationName(allocation.Name, string(installation.UID)), Namespace: a.Namespace, Labels: labels},
 		Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: a.envelope(allocation, a.ProviderCreator),
-			RequestUID:        string(installation.UID),
 			Image:             image,
 			BootInterface:     allocation.Spec.BootInterface,
 			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
@@ -360,13 +379,20 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 func (a *Allocator) envelope(allocation *fleetv1.MachineAllocation, creator ops.Creator) ops.OperationEnvelope {
 	return ops.OperationEnvelope{
 		Creator:   creator,
-		DeviceRef: ops.DeviceReference{Name: allocation.Spec.DeviceRef.Name, UID: allocation.Spec.DeviceRef.UID},
+		DeviceRef: ops.DeviceReference{Name: allocation.Spec.DeviceRef.Name},
 		Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: allocation.Name}},
 	}
 }
 
+// operationLabels carries the allocation's Device incarnation onto an
+// operation, where admission compares it with the Device.
+func operationLabels(allocation *fleetv1.MachineAllocation) map[string]string {
+	return map[string]string{ops.LabelDeviceUID: allocation.Labels[fleetv1.LabelDeviceUID]}
+}
+
 // createOnce creates an operation, or reads the existing one and requires it
-// to carry the same spec.
+// to carry the same spec and the same incarnation labels, so an operation for
+// a same-name Device or Installation is never taken for this one.
 func (a *Allocator) createOnce(ctx context.Context, api client.Client, operation ops.Operation, existing ops.Operation) error {
 	if err := api.Create(ctx, operation); err == nil || !apierrors.IsAlreadyExists(err) {
 		return err
@@ -384,6 +410,11 @@ func (a *Allocator) createOnce(ctx context.Context, api client.Client, operation
 	}
 	if want != got {
 		return fmt.Errorf("%w: %s exists with other inputs", ErrConflict, operation.GetName())
+	}
+	for key, value := range operation.GetLabels() {
+		if existing.GetLabels()[key] != value {
+			return fmt.Errorf("%w: %s exists for another %s", ErrConflict, operation.GetName(), key)
+		}
 	}
 	data, err := json.Marshal(existing)
 	if err != nil {

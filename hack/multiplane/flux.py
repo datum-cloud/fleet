@@ -877,7 +877,10 @@ def handoff_outcome(s, handoff):
     if r.returncode != 0:
         return None
     current = json.loads(r.stdout)
-    return current.get('status', {}).get('phase') if current['metadata']['uid'] == operation['uid'] else None
+    # The operation admitted at the handoff's fence; a same-name operation
+    # created later has another fence.
+    status = current.get('status', {})
+    return status.get('phase') if status.get('fence') == json.loads(obj['spec']['assignmentJSON'])['fence'] else None
 
 
 def graph_lifecycle(args):

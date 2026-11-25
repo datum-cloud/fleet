@@ -153,12 +153,12 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.requirePhase(waiting, ops.PhaseAdmitted, "")
 	})
 
-	t.Run("5: the Device UID must match deviceRef.uid", func(t *testing.T) {
+	t.Run("5: the Device UID must match the operation's device-uid label", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
 		fence := e.custody(device.Name).Spec.Fence
 		operation := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: "stale-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, service("old record")), Input: "a"}}
-		operation.Spec.DeviceRef.UID = "00000000-0000-4000-8000-ffffffffffff"
+		labelDevice(operation, "00000000-0000-4000-8000-ffffffffffff")
 		e.create(operation)
 		e.settle(device.Name)
 		e.requirePhase(operation, ops.PhaseFailed, ReasonDeviceIdentityMismatch)
@@ -252,14 +252,14 @@ func TestAdmissionPreconditions(t *testing.T) {
 			t.Fatal(err)
 		}
 		fence := e.custody(device.Name).Spec.Fence
-		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-1"), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
-			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")), RequestUID: "request-1",
-			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, Bootstrap: &ops.SealedInput{Ref: "sealed-example", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-1"), Namespace: "default", Labels: map[string]string{ops.LabelInstallationUID: "request-1"}}, Spec: ops.DeviceInstallationSpec{
+			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")),
+			Image:             ops.ImageInput{Name: "debian-12", Digest: imageDigest}, Bootstrap: &ops.SealedInput{Ref: "sealed-example", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
 		}}
 		e.create(operation)
-		missing := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-2"), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
-			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")), RequestUID: "request-2",
-			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "absent", TargetDisks: []string{"disk-0"},
+		missing := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-2"), Namespace: "default", Labels: map[string]string{ops.LabelInstallationUID: "request-2"}}, Spec: ops.DeviceInstallationSpec{
+			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")),
+			Image:             ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "absent", TargetDisks: []string{"disk-0"},
 		}}
 		e.create(missing)
 		e.settle(device.Name)

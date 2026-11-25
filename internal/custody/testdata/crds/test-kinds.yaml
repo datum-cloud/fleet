@@ -67,13 +67,8 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                 required:
                 - name
-                - uid
               authority:
                 type: object
                 properties:
@@ -113,6 +108,15 @@ spec:
           status:
             type: object
             properties:
+              admission:
+                type: object
+                properties:
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                required:
+                - fence
               phase:
                 type: string
                 enum:
@@ -249,13 +253,8 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
                 required:
                 - name
-                - uid
               authority:
                 type: object
                 properties:
@@ -295,6 +294,15 @@ spec:
           status:
             type: object
             properties:
+              admission:
+                type: object
+                properties:
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                required:
+                - fence
               phase:
                 type: string
                 enum:

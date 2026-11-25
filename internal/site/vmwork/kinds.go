@@ -173,7 +173,7 @@ const bootRecords = "vmboot"
 // receipt is fixed before any boot, so a replay waits for the same receipt.
 func (k Installation) boot(work *site.Work) (Boot, error) {
 	var boot Boot
-	found, err := work.Store().GetRecord(work.Device, bootRecords, Key(work.Operation.UID), &boot)
+	found, err := work.Store().GetRecord(work.Device, bootRecords, Key(work.Key()), &boot)
 	if err != nil || found {
 		return boot, err
 	}
@@ -184,12 +184,12 @@ func (k Installation) boot(work *site.Work) (Boot, error) {
 	if _, err := rand.Read(token); err != nil {
 		return boot, err
 	}
-	boot = Boot{Operation: work.Operation.UID, Fence: work.Fence, Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Expires: k.now().Add(k.window())}
+	boot = Boot{Operation: work.Key(), Fence: work.Fence, Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Expires: k.now().Add(k.window())}
 	return boot, k.save(work, boot)
 }
 
 func (k Installation) save(work *site.Work, boot Boot) error {
-	return work.Store().PutRecord(work.Device, work.Fence, bootRecords, Key(work.Operation.UID), boot)
+	return work.Store().PutRecord(work.Device, work.Fence, bootRecords, Key(work.Key()), boot)
 }
 
 func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
@@ -200,7 +200,7 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir := k.directory(work.Device, work.Operation.UID)
+	dir := k.directory(work.Device, work.Key())
 	var evidence ops.InstallationEvidence
 	record := func(step string) {
 		at, _ := work.JournaledAt(step)
@@ -265,7 +265,7 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 				return err
 			},
 			Observe: func(ctx context.Context, _ json.RawMessage) (bool, error) {
-				running, err := k.running(ctx, work.Operation.UID)
+				running, err := k.running(ctx, work.Key())
 				if err != nil || running {
 					return running, err
 				}
@@ -341,7 +341,7 @@ func (k Installation) running(ctx context.Context, operationUID string) (bool, e
 }
 
 func (k Installation) domainXML(work *site.Work, boot Boot, stage string) string {
-	dir := k.directory(work.Device, work.Operation.UID)
+	dir := k.directory(work.Device, work.Key())
 	bootXML := "<boot dev='hd'/>"
 	nic := ""
 	if stage == "installer" {
@@ -355,7 +355,7 @@ func (k Installation) domainXML(work *site.Work, boot Boot, stage string) string
 	if k.Accelerator == "tcg" {
 		domainType = "qemu"
 	}
-	return fmt.Sprintf(`<domain type='%s'><name>%s</name><memory unit='MiB'>2048</memory><vcpu>2</vcpu><cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features><os><type arch='x86_64' machine='pc'>hvm</type>%s</os><on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash><devices>%s<emulator>/usr/bin/qemu-system-x86_64</emulator><disk type='file' device='disk'><driver name='qemu' type='raw'/><source file='%s/disk.raw'/><target dev='vda' bus='virtio'/></disk><serial type='file'><source path='%s/%s.log'/><target port='0'/></serial></devices></domain>`, domainType, domain(work.Operation.UID), bootXML, nic, dir, dir, stage)
+	return fmt.Sprintf(`<domain type='%s'><name>%s</name><memory unit='MiB'>2048</memory><vcpu>2</vcpu><cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features><os><type arch='x86_64' machine='pc'>hvm</type>%s</os><on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash><devices>%s<emulator>/usr/bin/qemu-system-x86_64</emulator><disk type='file' device='disk'><driver name='qemu' type='raw'/><source file='%s/disk.raw'/><target dev='vda' bus='virtio'/></disk><serial type='file'><source path='%s/%s.log'/><target port='0'/></serial></devices></domain>`, domainType, domain(work.Key()), bootXML, nic, dir, dir, stage)
 }
 
 // waitReceipt waits for the guest to stop with exactly this phase's receipt.
@@ -364,9 +364,9 @@ func (k Installation) waitReceipt(ctx context.Context, work *site.Work, boot Boo
 	if stage == "disk" {
 		marker = "FLEET-DISK-BOOT:"
 	}
-	log := filepath.Join(k.directory(work.Device, work.Operation.UID), stage+".log")
+	log := filepath.Join(k.directory(work.Device, work.Key()), stage+".log")
 	for {
-		running, err := k.running(ctx, work.Operation.UID)
+		running, err := k.running(ctx, work.Key())
 		if err != nil {
 			return err
 		}

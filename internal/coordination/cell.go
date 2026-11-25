@@ -84,7 +84,7 @@ func (c *Cell) Publish(ctx context.Context, object *unstructured.Unstructured, s
 			return err
 		}
 		device, observation.AssignmentDigest = assignment.Device, Digest(spec.AssignmentJSON)
-		result, found, err := results.Get(assignment.Device, assignment.Operation.UID, assignment.Fence)
+		result, found, err := results.Get(assignment.Device, assignment.Operation, assignment.Fence)
 		if err != nil {
 			return err
 		}

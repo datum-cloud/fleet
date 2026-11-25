@@ -37,6 +37,10 @@ type Assignment struct {
 
 const maxInputs = 16 << 10
 
+// Key names this admission at the site: the journal, results and boot
+// records are keyed by it.
+func (a Assignment) Key() string { return custody.OperationKey(a.Operation, a.Fence) }
+
 // Validate checks the payload's shape. It does not check the inputs
 // against their digest; the worker does, before anything is sent.
 func (a Assignment) Validate() error {
@@ -44,8 +48,8 @@ func (a Assignment) Validate() error {
 	switch {
 	case !ok || namespace == "" || name == "" || strings.Contains(name, "/"):
 		return errors.New("site: an assignment names one Device as namespace/name")
-	case a.Operation.Kind == "" || a.Operation.Name == "" || a.Operation.UID == "":
-		return errors.New("site: an assignment names one operation incarnation")
+	case a.Operation.Kind == "" || a.Operation.Name == "":
+		return errors.New("site: an assignment names one operation")
 	case a.Fence < 1 || a.AdmittedAt.IsZero() || a.Deadline.IsZero() || !a.AdmittedAt.Before(a.Deadline) || a.InputDigest == "":
 		return errors.New("site: an assignment carries a fence, its admission time, a later deadline and an input digest")
 	case len(a.Inputs) == 0 || len(a.Inputs) > maxInputs:
@@ -134,7 +138,7 @@ func (w *Work) JournaledAt(step string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	for _, entry := range journal {
-		if entry.Operation == w.Operation.UID && entry.Step == step && entry.State == StepDone {
+		if entry.Operation == w.Key() && entry.Step == step && entry.State == StepDone {
 			return entry.At, true
 		}
 	}
@@ -159,7 +163,7 @@ func (w *Work) Step(ctx context.Context, step Step) error {
 		payload = data
 	}
 	name := step.Name
-	prior, recorded, err := w.store.IntendWithPayload(w.Device, w.Fence, w.Operation.UID, name, payload)
+	prior, recorded, err := w.store.IntendWithPayload(w.Device, w.Fence, w.Key(), name, payload)
 	switch {
 	case errors.Is(err, ErrStaleFence):
 		return errSuperseded
@@ -200,7 +204,7 @@ func (w *Work) Step(ctx context.Context, step Step) error {
 			return err
 		}
 	}
-	if err := w.store.Done(w.Device, w.Fence, w.Operation.UID, name); errors.Is(err, ErrStaleFence) {
+	if err := w.store.Done(w.Device, w.Fence, w.Key(), name); errors.Is(err, ErrStaleFence) {
 		return errSuperseded
 	} else if err != nil {
 		return err
@@ -310,7 +314,7 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 		return custody.SiteResult{}, err
 	}
 	// A redelivered assignment that already has a result returns it.
-	if stored, found, err := r.Results.Get(assignment.Device, assignment.Operation.UID, assignment.Fence); err != nil || found {
+	if stored, found, err := r.Results.Get(assignment.Device, assignment.Operation, assignment.Fence); err != nil || found {
 		return stored, err
 	}
 	result := custody.SiteResult{Site: r.Site, Device: deviceName(assignment.Device), Operation: assignment.Operation, Fence: assignment.Fence}
@@ -326,7 +330,7 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 		if err != nil {
 			return false, err
 		}
-		return slices.ContainsFunc(journal, func(entry Entry) bool { return entry.Operation == assignment.Operation.UID }), nil
+		return slices.ContainsFunc(journal, func(entry Entry) bool { return entry.Operation == assignment.Key() }), nil
 	}
 	lock, err := r.acquire(ctx, assignment)
 	switch {
@@ -357,7 +361,7 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 	// A worker for this same assignment may have stored its result while
 	// this one waited for the lock. Return that result; running the kind
 	// again could send to the server after the outcome was recorded.
-	if stored, found, err := r.Results.Get(assignment.Device, assignment.Operation.UID, assignment.Fence); err != nil || found {
+	if stored, found, err := r.Results.Get(assignment.Device, assignment.Operation, assignment.Fence); err != nil || found {
 		return stored, err
 	}
 	parent := ctx

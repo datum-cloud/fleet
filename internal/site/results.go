@@ -62,7 +62,7 @@ func (r *Results) Put(device string, result custody.SiteResult) (custody.SiteRes
 	// content, so a reader never sees a partial result.
 	if err := os.Link(file.Name(), filepath.Join(dir, resultName(result))); err != nil {
 		if os.IsExist(err) {
-			stored, found, readErr := r.Get(device, result.Operation.UID, result.Fence)
+			stored, found, readErr := r.Get(device, result.Operation, result.Fence)
 			if readErr != nil || !found {
 				return result, errors.New("site: a stored result is unreadable")
 			}
@@ -79,8 +79,8 @@ func (r *Results) Put(device string, result custody.SiteResult) (custody.SiteRes
 }
 
 // Get returns the stored result for an operation and fence.
-func (r *Results) Get(device, operation string, fence int64) (custody.SiteResult, bool, error) {
-	data, err := os.ReadFile(filepath.Join(r.dir(device), resultName(custody.SiteResult{Operation: ops.OperationReference{UID: operation}, Fence: fence})))
+func (r *Results) Get(device string, operation ops.OperationReference, fence int64) (custody.SiteResult, bool, error) {
+	data, err := os.ReadFile(filepath.Join(r.dir(device), resultName(custody.SiteResult{Operation: operation, Fence: fence})))
 	if os.IsNotExist(err) {
 		return custody.SiteResult{}, false, nil
 	}
@@ -95,7 +95,7 @@ func (r *Results) Get(device, operation string, fence int64) (custody.SiteResult
 }
 
 func resultName(result custody.SiteResult) string {
-	return result.Operation.UID + "-" + jsonInt(result.Fence) + ".json"
+	return custody.OperationKey(result.Operation, result.Fence) + ".json"
 }
 
 func jsonInt(value int64) string { data, _ := json.Marshal(value); return string(data) }

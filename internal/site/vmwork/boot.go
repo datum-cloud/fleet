@@ -40,8 +40,8 @@ func (k Installation) prepareNetwork(ctx context.Context, work *site.Work, boot 
 	if k.origin() == defaultBootOrigin {
 		forward = ""
 	}
-	xml := fmt.Sprintf(`<network><name>fleet-pxe</name>%s<bridge name='fleetpxe0' stp='off' delay='0'/><dns enable='no'/><ip address='192.168.77.1' netmask='255.255.255.0'><dhcp><range start='192.168.77.2' end='192.168.77.2'/><host mac='%s' ip='192.168.77.2'/><bootp file='%s/%s/%s/boot.ipxe'/></dhcp></ip></network>`, forward, guestMAC, k.origin(), Key(work.Operation.UID), boot.Token)
-	path := filepath.Join(k.directory(work.Device, work.Operation.UID), "network-private.xml")
+	xml := fmt.Sprintf(`<network><name>fleet-pxe</name>%s<bridge name='fleetpxe0' stp='off' delay='0'/><dns enable='no'/><ip address='192.168.77.1' netmask='255.255.255.0'><dhcp><range start='192.168.77.2' end='192.168.77.2'/><host mac='%s' ip='192.168.77.2'/><bootp file='%s/%s/%s/boot.ipxe'/></dhcp></ip></network>`, forward, guestMAC, k.origin(), Key(work.Key()), boot.Token)
+	path := filepath.Join(k.directory(work.Device, work.Key()), "network-private.xml")
 	if err := os.WriteFile(path, []byte(xml), 0o600); err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func (c Config) stopNetwork(ctx context.Context) error {
 // verifyNetworkBoot requires the boot server's completed deliveries and the
 // firmware's DHCP lease.
 func (k Installation) verifyNetworkBoot(ctx context.Context, work *site.Work) error {
-	data, err := os.ReadFile(filepath.Join(k.BootRoot, Key(work.Operation.UID), "boot-delivery.log"))
+	data, err := os.ReadFile(filepath.Join(k.BootRoot, Key(work.Key()), "boot-delivery.log"))
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func (k Installation) verifyNetworkBoot(ctx context.Context, work *site.Work) er
 	if !strings.Contains(leases, guestMAC) || !strings.Contains(leases, "192.168.77.2") {
 		return fmt.Errorf("missing firmware DHCP lease")
 	}
-	return os.WriteFile(filepath.Join(k.directory(work.Device, work.Operation.UID), "dhcp-leases.txt"), []byte(leases), 0o600)
+	return os.WriteFile(filepath.Join(k.directory(work.Device, work.Key()), "dhcp-leases.txt"), []byte(leases), 0o600)
 }
 
 // admission returns the open admission under a boot key: open for the

@@ -270,7 +270,7 @@ func (e *env) verified(name, uuid, key string) *inventory.Device {
 }
 
 func envelope(device *inventory.Device, user string, authority ops.Authority) ops.OperationEnvelope {
-	return ops.OperationEnvelope{Creator: ops.Creator{Username: user, UID: user + "-uid"}, DeviceRef: ops.DeviceReference{Name: device.Name, UID: string(device.UID)}, Authority: authority}
+	return ops.OperationEnvelope{Creator: ops.Creator{Username: user, UID: user + "-uid"}, DeviceRef: ops.DeviceReference{Name: device.Name}, Authority: authority}
 }
 
 func service(reason string) ops.Authority {
@@ -281,11 +281,44 @@ func allocated(name string) ops.Authority {
 	return ops.Authority{AllocationRef: &ops.LocalReference{Name: name}}
 }
 
+// create creates an object. An operation without a device-uid label gets
+// its Device's UID, as the operation's creator records it; a test that
+// needs another value sets the label itself.
 func (e *env) create(object client.Object) {
 	e.t.Helper()
+	if operation, ok := object.(ops.Operation); ok && operation.GetLabels()[ops.LabelDeviceUID] == "" {
+		device := &inventory.Device{}
+		if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: "default", Name: operation.Envelope().DeviceRef.Name}, device); err == nil {
+			labelDevice(operation, string(device.UID))
+		}
+	}
 	if err := e.admin.Create(e.ctx, object); err != nil {
 		e.t.Fatal(err)
 	}
+}
+
+// admitted is the admission record the coordinator writes to an operation
+// before custody names it.
+func admitted(fence int64) *ops.OperationAdmission { return &ops.OperationAdmission{Fence: fence} }
+
+// markAdmitted gives an operation the admission record the coordinator
+// would have written, as one admitted before custody was lost.
+func (e *env) markAdmitted(operation ops.Operation, fence int64) {
+	e.t.Helper()
+	operation.OperationStatus().Admission = admitted(fence)
+	if err := e.admin.Status().Update(e.ctx, operation); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// labelDevice sets an object's device-uid label.
+func labelDevice(object client.Object, uid string) {
+	labels := object.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[ops.LabelDeviceUID] = uid
+	object.SetLabels(labels)
 }
 
 func (e *env) staffOp(device *inventory.Device, input string) *DeviceTestStaffOperation {
@@ -304,9 +337,9 @@ func (e *env) providerOp(device *inventory.Device, allocation, input string) *De
 
 func (e *env) installation(device *inventory.Device, allocation, request string) *ops.DeviceInstallation {
 	e.t.Helper()
-	operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName(allocation, request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
-		OperationEnvelope: envelope(device, providerUser, allocated(allocation)), RequestUID: request,
-		Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+	operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName(allocation, request), Namespace: "default", Labels: map[string]string{ops.LabelInstallationUID: request}}, Spec: ops.DeviceInstallationSpec{
+		OperationEnvelope: envelope(device, providerUser, allocated(allocation)),
+		Image:             ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}}
 	e.create(operation)
 	return operation
@@ -361,7 +394,7 @@ func (e *env) requirePhase(operation ops.Operation, phase ops.Phase, reason stri
 }
 
 func reference(kind string, operation ops.Operation) ops.OperationReference {
-	return ops.OperationReference{Kind: kind, Name: operation.GetName(), UID: string(operation.GetUID())}
+	return ops.OperationReference{Kind: kind, Name: operation.GetName()}
 }
 
 // result reports a site result for the active operation.
@@ -387,11 +420,12 @@ func (e *env) allocation(device *inventory.Device, name, phase string) *metal.Ma
 	if err := e.admin.Create(e.ctx, capacity); err != nil && !apierrors.IsAlreadyExists(err) {
 		e.t.Fatal(err)
 	}
-	allocation := &metal.MachineAllocation{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: metal.MachineAllocationSpec{
-		MachineRef:         metal.AllocatedMachineReference{Project: "consumer-example", ProjectUID: uid(900), Namespace: "default", Name: "machine-" + name, UID: uid(901)},
+	allocation := &metal.MachineAllocation{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Labels: map[string]string{
+		metal.LabelMachineUID: uid(901), metal.LabelConsumerProjectUID: uid(900), metal.LabelDeviceUID: string(device.UID)}}, Spec: metal.MachineAllocationSpec{
+		MachineRef:         metal.AllocatedMachineReference{Project: "consumer-example", Namespace: "default", Name: "machine-" + name},
 		MachineCapacityRef: metal.NamespacedReference{Namespace: "default", Name: capacityName},
-		DeviceRef:          metal.AllocatedDeviceReference{Name: device.Name, UID: string(device.UID)},
-		Accepted: metal.AcceptedContract{MachineClassRef: metal.UIDReference{Name: "class-example", UID: uid(902)}, MachineProfileRef: metal.UIDReference{Name: "profile-example", UID: uid(903)},
+		DeviceRef:          metal.AllocatedDeviceReference{Name: device.Name},
+		Accepted: metal.AcceptedContract{MachineClassRef: metal.ContentReference{Name: "class-example", Generation: 1, Digest: policyDigest}, MachineProfileRef: metal.ContentReference{Name: "profile-example", Generation: 1, Digest: policyDigest},
 			CPU: metal.CPURequirement{Architecture: "amd64", Cores: 2}, Memory: metal.MemoryRequirement{Capacity: "2Gi"}},
 		Authority:            metal.AllocationAuthority{Principal: "fixture", Decision: "fixture-" + name},
 		CleaningPolicyDigest: policyDigest,

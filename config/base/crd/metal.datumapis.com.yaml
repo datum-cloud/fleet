@@ -359,15 +359,15 @@ spec:
             x-kubernetes-validations:
             - {rule: 'self == oldSelf', message: MachineAllocation identity and endpoints are immutable}
             properties:
+              # No spec holds an object UID. The allocation's name hashes the
+              # consumer project and Machine UIDs, and its labels record them.
               machineRef:
                 type: object
-                required: [project, projectUID, namespace, name, uid]
+                required: [project, namespace, name]
                 properties:
                   project: {type: string, minLength: 1}
-                  projectUID: {type: string, minLength: 1}
                   namespace: {type: string, minLength: 1}
                   name: {type: string, minLength: 1}
-                  uid: {type: string, minLength: 1}
               machineCapacityRef:
                 type: object
                 required: [namespace, name]
@@ -376,26 +376,27 @@ spec:
                   name: {type: string, minLength: 1}
               deviceRef:
                 type: object
-                required: [name, uid]
+                required: [name]
                 properties:
                   name: {type: string, minLength: 1}
-                  uid: {type: string, minLength: 1}
               accepted:
                 type: object
                 required: [machineClassRef, machineProfileRef, cpu, memory]
                 properties:
                   machineClassRef:
                     type: object
-                    required: [name, uid]
+                    required: [name, generation, digest]
                     properties:
                       name: {type: string, minLength: 1}
-                      uid: {type: string, minLength: 1}
+                      generation: {type: integer, format: int64, minimum: 1}
+                      digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
                   machineProfileRef:
                     type: object
-                    required: [name, uid]
+                    required: [name, generation, digest]
                     properties:
                       name: {type: string, minLength: 1}
-                      uid: {type: string, minLength: 1}
+                      generation: {type: integer, format: int64, minimum: 1}
+                      digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
                   cpu:
                     type: object
                     required: [architecture, cores]

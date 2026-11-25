@@ -176,7 +176,7 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 		}
 	}
 	wipe := &ops.DeviceWipe{
-		ObjectMeta: metav1.ObjectMeta{Name: reference.Name, Namespace: a.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: reference.Name, Namespace: a.Namespace, Labels: operationLabels(allocation)},
 		Spec: ops.DeviceWipeSpec{
 			OperationEnvelope:    a.envelope(allocation, a.ReleaseCreator),
 			Step:                 reference.Step,
