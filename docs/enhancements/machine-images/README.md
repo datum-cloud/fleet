@@ -33,9 +33,8 @@ supplies bootstrap data such as user data and SSH keys. Both are inputs to an
 
 The provider publishes each image as an immutable `MachineImage` that names its
 artifacts by digest. Fleet resolves the customer's choice to that digest when
-it admits the Installation, and keeps it. Fleet copies the bootstrap data into
-a sealed store that staff cannot read, and delivers it only to the site worker
-that runs the install.
+it admits the Installation. Fleet copies the bootstrap data into a sealed store
+that staff cannot read, and delivers it only to the site that runs the install.
 
 This enhancement is a proposal. Nothing in it is implemented.
 
@@ -52,8 +51,7 @@ configure the installed system.
 
 - The provider publishes images that cannot change after publication.
 - A customer can install only the images published to their project.
-- An admitted install keeps the exact image it resolved, whatever later
-  happens to the catalog.
+- Later catalog changes never change an admitted install.
 - Fleet refuses an image that does not match the server's architecture or
   firmware mode.
 - No staff role can read bootstrap data.
@@ -96,6 +94,20 @@ it as for any [Device operation](../device-operations/README.md#admission).
 - A staff member investigates a failed install without seeing the customer's
   user data.
 
+### Relationship to other proposals
+
+This enhancement changes two parts of [Device
+custody](../device-operations/README.md):
+
+- **[Customer data](../device-operations/README.md#customer-data):** the
+  site's boot service can also read a payload, only while that operation's
+  boot is open. See [Site delivery](#site-delivery).
+- **[Admission](../device-operations/README.md#admission):** DeviceInstallation
+  adds one check of its own inputs.
+
+It replaces the machine lifecycle's operator-installed image fixtures with the
+published catalog.
+
 ## Design details
 
 ### API design
@@ -113,7 +125,7 @@ metadata:
   name: example-linux-1-2
   namespace: default
 spec:
-  definition:                     # immutable
+  definition:
     family: example-linux
     version: "1.2"
     architecture: amd64
@@ -123,9 +135,8 @@ spec:
   availability: Available         # Available | Withdrawn
 ```
 
-The definition cannot change. A new release is a new MachineImage. The
-provider can change only `availability`. A withdrawn image admits no new
-Installations.
+The provider can change only `availability`, and a new release is a new
+MachineImage. A withdrawn image admits no new Installations.
 
 The digest identifies the image's artifact manifest, which lists the digest of
 every file the installer writes or boots. The API holds no URL.
@@ -156,7 +167,8 @@ status:
     - {type: Available, status: "True"}
 ```
 
-A MachineImage has exactly one of `definition` or `source`.
+A MachineImage has exactly one of `definition` or `source`. Status is for
+display; admission reads the [publication record](#publication-and-entitlement).
 
 #### Bootstrap Secret
 
@@ -216,41 +228,55 @@ and digest. It carries no consumer project name and no bootstrap bytes.
 ### Publication and entitlement
 
 The provider's publisher creates a consumer project's MachineImage, as it does
-for MachineClass. Customers cannot create, change, or delete MachineImages.
-Fleet records the publication in a protected record in the provider project,
-as the machine lifecycle requires for [classes and
-profiles](../machine-lifecycle/README.md#entitlement-and-publication).
+for MachineClass. Fleet records each publication in a protected record in the
+provider project: the consumer MachineImage, and the provider MachineImage's
+name, UID, and digest.
+
+Customers cannot write MachineImages. IAM gives customer roles no write
+permission on the kind, and a Fleet validating webhook, called from Milo's root
+API server, rejects:
+
+- a write by anyone but the provider's publisher in a consumer project;
+- a `definition` outside a project that Fleet registers as a provider; and
+- any change to `definition` or `source`.
 
 A project is entitled to an image only while all of these hold:
 
-- the consumer MachineImage exists and matches its retained publication;
-- its source is in the provider project that holds the Machine's allocation;
-  and
-- the provider MachineImage exists and is `Available`.
+- the consumer MachineImage exists and matches its publication record;
+- the provider MachineImage is in the provider project that holds the
+  Machine's allocation, and its UID and digest match the record; and
+- the provider MachineImage is `Available`.
 
-The caller also needs `machineimages.use` on the consumer MachineImage, and
-`get` on the bootstrap Secret. Fleet checks both for the principal that created
-the Installation, as for [install
-permission](../machine-lifecycle/README.md#request-authority).
+The caller also needs `machineimages.use` on both the consumer and provider
+MachineImages, as for [classes and
+profiles](../machine-lifecycle/README.md#request-authority), and `get` on the
+bootstrap Secret. Fleet checks these for the principal that created the
+Installation.
 
 ### Admission
 
 The Fleet provider admits an Installation in this order. Each step must pass
-before the next one runs, and nothing is copied or created until all pass:
+before the next one runs:
 
 1. The Machine has an active allocation, and the predecessor check passes.
-2. The image is entitled and the caller may use it.
+2. The image is entitled and the caller may use it. Fleet takes the digest from
+   the publication record.
 3. The image matches the allocation's hardware:
    - its architecture equals the CPU architecture;
    - it lists the server's firmware mode; and
    - if the Installation has bootstrap data, it lists a bootstrap format.
-4. The caller can read the bootstrap Secret, and its contents are valid.
-5. The sealed copy is written. See [Write order](#write-order-and-crash-recovery).
-6. The DeviceInstallation is created.
+4. If a DeviceInstallation already exists for this Installation, Fleet stops
+   here: the install is admitted.
+5. The caller can read the bootstrap Secret, and its contents are valid.
+6. The sealed copy is written. See [Retention and crash recovery](#retention-and-crash-recovery).
+7. The DeviceInstallation is created.
 
-The allocation records the server's hardware when Fleet allocates it, including
-its firmware mode. Inventory records each Device's firmware mode, from BMC
-discovery. A server with no recorded firmware mode installs no image.
+The allocation's hardware snapshot would gain the server's firmware mode. This
+field is proposed, and its source is an [open
+decision](#implementation-decisions). A server with no recorded firmware mode
+installs no image. Because firmware settings can change after allocation, the
+site worker also reads the server's firmware mode before it sends anything,
+and refuses with `ImageIncompatible` if the image does not list it.
 
 Each refusal sets `Accepted=False` on the Installation with one of these
 reasons:
@@ -258,7 +284,7 @@ reasons:
 | Reason | Refused by |
 | --- | --- |
 | `ImageNotFound` | No MachineImage of that name in the namespace |
-| `ImageNotEntitled` | Publication, source project, or `machineimages.use` |
+| `ImageNotEntitled` | Publication record, provider project, UID, digest, or `machineimages.use` |
 | `ImageWithdrawn` | The provider image is `Withdrawn` |
 | `ImageIncompatible` | Architecture, firmware mode, or bootstrap format |
 | `BootstrapNotFound` | No readable bootstrap Secret of that name |
@@ -267,12 +293,17 @@ reasons:
 
 Fleet evaluates a refused Installation again while it exists, because a missing
 publication or Secret can appear later. Admission is final once the
-DeviceInstallation exists. Later changes to either MachineImage, the
-publication, or the Secret never change an admitted install.
+DeviceInstallation exists.
 
-The coordinator adds one [admission check](../device-operations/README.md#admission)
-for DeviceInstallation: the sealed copy exists and matches its digest. If not,
-it refuses with `BootstrapUnavailable`, and nothing is sent.
+The coordinator adds one check of DeviceInstallation inputs. It passes when the
+operation has no bootstrap data. Otherwise the referenced SealedPayload must
+exist and match the operation's digest, or the coordinator refuses with
+`BootstrapUnavailable`, and nothing is sent. Like every kind check, it holds at
+the moment of the custody update. [Retention](#retention-and-crash-recovery)
+keeps the payload after that.
+
+A refused or failed DeviceInstallation reports its reason on the Installation.
+The Installation is immutable, so the customer creates a new one.
 
 ### Artifact distribution
 
@@ -281,40 +312,42 @@ artifact registry, then creates the MachineImage with the manifest digest. The
 registry is site configuration, not an API field. Customers cannot name a
 registry, a URL, or an artifact.
 
-Each site keeps a content-addressed store. It mirrors every `Available`
-provider MachineImage by digest from its configured registry, and checks every
-artifact against the manifest before it keeps any. It keeps an image's
-artifacts while a MachineImage or an operation that has not ended names the
-digest.
+Each site keeps a content-addressed store. The coordinator sends each site,
+through federation, the digests of every `Available` provider MachineImage.
+Sites cannot read the catalog. A site mirrors each digest from its configured
+registry, and checks every artifact against the manifest before it keeps any.
+It keeps an image's artifacts while the digest list or an operation that has
+not ended names the digest.
 
-A site worker refuses an install whose image digest is not in the store, with
-reason `ImageUnavailable`, before it sends anything. The site's boot service
-serves an artifact only to a server booting under an open boot admission whose
-operation names that image, and only if the artifact's digest matches the
-manifest.
+If an install's digest is not in the store, the worker fetches it by digest
+from the configured registry before it sends anything. If that fails, it
+refuses with `ImageUnavailable`.
 
 ### Sealed bootstrap store
 
 The sealed store is a dedicated kind, `SealedPayload`, in
 `fleet.datumapis.com`, in the provider project. A Kubernetes Secret would not
-work there: Milo grants permissions per kind or per object, not per namespace,
-so every role that reads Secrets in the provider project would read every
-payload.
+work there: [Milo PolicyBindings][milo-policybinding] grant a role on one kind
+or one object, not on a namespace, so every role that reads Secrets in the
+provider project would read every payload.
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: SealedPayload
 metadata:
-  name: sealed-9a3f0c5e21b7d84e6f10
+  name: sealed-5e0a7d
   namespace: default
 spec:                          # immutable
-  operationName: alloc-3b9d61c2-install-5d1e8a0b4c2f
+  operationName: alloc-3b9d61c2-install-1
+  allocationName: alloc-3b9d61c2
   digest: "sha256:0c2b77e1d9a4..."
+  salt: <base64>               # 32 random bytes
   data: <base64>               # the bootstrap Secret's two values, exactly
 ```
 
-The name derives from the operation name and the digest. A retried write after
-a crash creates the same name, and the same name always holds the same bytes.
+The digest covers the salt and the data. A reader of the DeviceInstallation
+cannot confirm a guessed SSH key against it. The name derives from the
+operation name and the digest.
 
 | Identity | Can do on SealedPayload |
 | --- | --- |
@@ -323,36 +356,60 @@ a crash creates the same name, and the same name always holds the same bytes.
 | Every staff role | Nothing |
 
 The provider never reads a payload back. Production must encrypt this kind at
-rest in the provider project's storage.
+rest, and the audit policy must omit request and response bodies for it.
 
-#### Write order and crash recovery
+#### Retention and crash recovery
 
 | Change | Order | After a crash between the writes |
 | --- | --- | --- |
-| Admit an Installation | SealedPayload, then DeviceInstallation | The retry writes the same SealedPayload name and creates the operation. |
-| End an install | Custody result, then operation status, then delete SealedPayload | The coordinator deletes the payload of every ended operation. |
+| Admit an Installation | SealedPayload, then DeviceInstallation | The retry re-reads the Secret. If it changed, the retry writes a second payload under another name, and the operation names that one. |
+| End an install | Custody result, then operation status, then delete SealedPayload | The coordinator deletes it on its next pass. |
 
-The coordinator also deletes a SealedPayload that no operation names after one
-hour. If the provider creates the operation after that, admission refuses it
-with `BootstrapUnavailable`, and the customer creates a new Installation.
+The coordinator deletes a SealedPayload, with its UID as a precondition, only
+when one of these holds:
+
+- its operation has ended as `Succeeded`, `Failed`, `Cancelled`, or
+  `OutcomeUnknown`;
+- its operation exists and references another payload; or
+- no operation has its name, and its allocation is no longer `Active`.
+
+An allocation that is not `Active` cannot admit an install, so the last rule
+never removes a payload that admission still needs. Fleet does not retry an
+install: a [held installation](../device-operations/README.md#unknown-outcomes)
+is settled by a later DeviceInstallation from a new Installation, which reads
+the Secret again. That Installation names the held Installation as its
+predecessor.
 
 ### Site delivery
 
 Federation delivers the payload to the site with the operation, as a separate
-Secret, never inside the operation's handoff. The site's handoff names that
-Secret, and the site grants that operation's worker `get` on exactly that
-Secret. No site identity can list or watch these Secrets.
+Secret, never inside the operation's handoff. The handoff names that Secret,
+and the site grants that operation's worker `get` on exactly that Secret. No
+site identity can list or watch these Secrets.
 
-The worker checks the payload against the operation's digest and refuses with
-`InputMismatch` before it sends anything if they differ. It hands the payload to
-the server only through that operation's one-time boot: the boot service
-serves it once, under the boot admission's capability, in the image's
-bootstrap format. The boot service drops its copy when the admission closes.
+The worker checks the payload against the operation's digest, and refuses with
+`InputMismatch` before it sends anything if they differ. It renders the payload
+in the image's bootstrap format and attaches it to the operation's boot
+admission. A boot admission is the site record that lets one server network
+boot once:
 
-The site deletes the payload Secret when the operation ends, when a higher
-fence stops its worker, or when the coordinator answers its result, whichever
-comes first. Federation removes its copy when the coordinator answers the
-result.
+- it names the operation, the fence, and the boot interface's MAC address;
+- it carries a random 256-bit token, which appears only in the boot script the
+  site serves to that MAC address;
+- it closes when the installer finishes, when its 10-minute window ends, or
+  when a higher fence stops the worker.
+
+While the admission is open, the boot service serves the rendered payload to
+requests that carry the token, so a firmware retry within the window works.
+Production serves it over HTTPS with a site-issued certificate that the
+installer trusts. The installer writes it where the image's bootstrap format
+reads it on first boot. The boot service drops its copy when the admission
+closes.
+
+The site deletes the payload Secret and every copy when the operation ends,
+when a higher fence stops its worker, or when the coordinator answers its
+result, whichever comes first. Federation removes its copy when the coordinator
+answers the result.
 
 ### Implementation decisions
 
@@ -372,22 +429,24 @@ These tests are required and not implemented:
 
 - A customer installs a published image, and the guest receives exactly its
   user data and SSH keys.
-- A customer names an image that is not published to their project, and
-  admission refuses it.
+- A customer names an image that is not published to their project, or writes
+  their own MachineImage, and Fleet refuses it.
 - A withdrawn image admits no new install, and a running install of it
   completes.
 - The provider deletes and recreates a MachineImage with other artifacts under
-  the same name, and an admitted install keeps the first digest.
+  the same name. An admitted install keeps the first digest, and a new install
+  is refused until the image is published again.
 - An image's architecture or firmware mode does not match the server, and
-  admission refuses it.
+  admission or the worker refuses it before anything is sent.
 - The customer edits the bootstrap Secret after admission, and the install uses
   the admitted data.
-- The provider crashes between the sealed write and the operation, retries, and
-  one payload and one operation exist.
+- The provider crashes between the sealed write and the operation, and the
+  Secret changes before the retry. One operation exists, and the unused payload
+  is deleted.
 - No staff role can get, list, or watch a SealedPayload, and no site identity
   other than the operation's worker can read its payload Secret.
-- The payload is gone from the provider project and the site after the
-  operation ends.
+- After the operation ends, no copy of the payload remains in the provider
+  project, the federation layer, or the site.
 
 ## Production readiness review questionnaire
 
@@ -395,13 +454,12 @@ These controls are proposed, not implemented.
 
 ### How do operators enable or disable the feature?
 
-Register MachineImage, SealedPayload, and their IAM resources, then publish
-images. To stop new installs of an image, withdraw it.
+Register MachineImage, SealedPayload, their webhook, and their IAM resources,
+then publish images. To stop new installs of an image, withdraw it.
 
 ### Does enabling the feature change any default behavior?
 
-Installations that name a bare digest stop resolving. A consumer project needs
-a published MachineImage to install.
+A consumer project needs a published MachineImage to install.
 
 ### What must operators monitor?
 
@@ -426,7 +484,7 @@ one SealedPayload write and one delete.
 
 - Each site stores every available image.
 - A customer can change bootstrap data only by creating a new Installation.
-- The site's boot service holds the payload while the boot admission is open.
+- The site's boot service can read a payload while its boot is open.
 
 ## Alternatives
 
@@ -434,8 +492,6 @@ one SealedPayload write and one delete.
   offering, and IAM could not grant one image without the others.
 - **A URL in the MachineImage:** Sites would fetch from wherever the API
   points, which allows server-side request forgery.
-- **A Secret in a protected namespace for the sealed store:** Milo IAM cannot
-  scope Secret access to a namespace.
 - **Carrying the payload in the operation:** Staff can read operations.
 
 ## Infrastructure needed
@@ -445,3 +501,4 @@ boot service, and an artifact registry. The local VM and Redfish lab modes can
 prove the install path without hardware.
 
 [pxe-pr]: https://github.com/datum-cloud/fleet/pull/59
+[milo-policybinding]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/iam/v1alpha1/policybinding_types.go

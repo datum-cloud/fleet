@@ -78,8 +78,9 @@ consumer.
 ### Non-goals
 
 This enhancement excludes procurement, full physical inventory, real BMC and
-console access, network implementation, image-catalog management, OS policy
-composition, managed clusters, `NodeClaim`, rollouts, and node services.
+console access, network implementation, OS policy composition, managed
+clusters, `NodeClaim`, rollouts, and node services. The [OS images
+enhancement](../machine-images/README.md) proposes the image catalog.
 
 The later bare-metal release must qualify real hardware, network handoff,
 cleaning, and a supported non-Talos OS. Simulated results do not satisfy that gate.
@@ -1151,11 +1152,10 @@ contract first.
 ### Provider execution and recovery
 
 Typed resolvers supply image inputs, network evidence, and provider access;
-missing required evidence blocks dispatch. Operator-installed, project-scoped
-image fixtures provide immutable artifacts, permissions, compatibility, and
-bootstrap behavior without accepting arbitrary URLs. A future catalog can
-implement that resolver. Private fixtures also resolve provider and cleaning
-records without adding public provider APIs.
+missing required evidence blocks dispatch. The [published image
+catalog](../machine-images/README.md) supplies image inputs and bootstrap
+behavior without accepting arbitrary URLs. Private fixtures resolve provider
+and cleaning records without adding public provider APIs.
 
 Persist dispatch intent before sending commands. Retries reuse the operation ID
 and exact plan; a changed plan with the same key conflicts. After a lost response,
