@@ -3,6 +3,7 @@ package redfishwork
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +16,6 @@ import (
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var burnInPhase = phase{"burnin", "Pxe", "FLEET-BURNIN:", "burnin"}
@@ -41,6 +41,16 @@ func (k Commissioning) Check(_ context.Context, work *site.Work) *custody.Refusa
 	spec, err := commissioningSpec(work)
 	if err != nil {
 		return &custody.Refusal{Reason: ReasonInputs, Message: "the admitted inputs are not a DeviceCommissioning spec"}
+	}
+	content := spec.Plan.Content
+	if d := content.BurnIn.Duration.Duration; d < time.Minute || d > 24*time.Hour {
+		return &custody.Refusal{Reason: ReasonInputs, Message: "the burn-in duration is outside 1 minute to 24 hours"}
+	}
+	if _, ok := mib(content.Inspection.Memory.Capacity); !ok {
+		return &custody.Refusal{Reason: ReasonInputs, Message: "the plan's memory capacity does not parse"}
+	}
+	if _, ok := mib(content.Inspection.Disks.MinCapacity); !ok {
+		return &custody.Refusal{Reason: ReasonInputs, Message: "the plan's minimum disk capacity does not parse"}
 	}
 	if k.BurnInDigest == "" || spec.Plan.Content.BurnIn.Image.Digest != k.BurnInDigest {
 		return &custody.Refusal{Reason: ReasonUnsupportedTarget, Message: "the site does not serve the plan's burn-in image"}
@@ -71,81 +81,126 @@ func (k Commissioning) Run(ctx context.Context, work *site.Work) (any, error) {
 		return nil, &custody.Refusal{Reason: ReasonInputs, Message: "the admitted inputs are not a DeviceCommissioning spec"}
 	}
 	plan := spec.Plan.Content
-	evidence := ops.CommissioningEvidence{Plan: spec.Plan.PlanReference, BMCPublicKeySHA256: work.Snapshot.BMCPublicKeySHA256}
-	fail := func(phase ops.CommissioningPhase, mismatches []string) (any, error) {
+	fail := func(evidence ops.CommissioningEvidence, phase ops.CommissioningPhase, mismatches []string) (any, error) {
 		evidence.Result, evidence.FailedPhase = ops.CommissioningFailed, phase
 		evidence.Mismatches = bound(mismatches)
-		return evidence, nil
+		return fit(evidence), nil
 	}
 
-	// Inspect. GETs only.
-	hw, err := conn(work).BMC.Hardware(ctx, conn(work).System)
+	// Inspection and the firmware check run once, before any effect, and
+	// their passing evidence is stored before the first burn-in step. A
+	// resumed worker reuses it instead of reading the server again, so
+	// nothing it reads after an effect can become an inspection verdict.
+	var record preflight
+	found, err := work.Store().GetRecord(work.Device, preflightRecords, work.Key(), &record)
 	if err != nil {
-		return nil, fmt.Errorf("inspection could not read the server: %w", err)
+		return nil, err
 	}
-	evidence.SerialNumber, evidence.SystemUUID = hw.SerialNumber, hw.UUID
-	evidence.Hardware = inspected(hw)
-	if mismatches := inspect(plan.Inspection, hw, work.Snapshot); len(mismatches) > 0 {
-		return fail(ops.PhaseInspect, mismatches)
+	if !found {
+		if work.Journaled(burnInPhase.name + "-power-off") {
+			return nil, errors.New("burn-in began without a stored inspection")
+		}
+		evidence, phase, mismatches, err := k.preflight(ctx, work, spec)
+		if err != nil {
+			return nil, err
+		}
+		if len(mismatches) > 0 {
+			return fail(evidence, phase, mismatches)
+		}
+		record = preflight{Evidence: evidence}
+		if err := work.Store().PutRecord(work.Device, work.Fence, preflightRecords, work.Key(), record); err != nil {
+			return nil, err
+		}
 	}
-
-	// Check firmware. GETs only.
-	firmware, err := conn(work).BMC.Firmware(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("the firmware inventory could not be read: %w", err)
-	}
-	reported, mismatches := checkFirmware(plan.Firmware, firmware)
-	evidence.Firmware = reported
-	if len(mismatches) > 0 {
-		return fail(ops.PhaseFirmware, mismatches)
-	}
+	evidence := record.Evidence
 
 	// Burn in: one network boot of the plan's image.
-	steps, startedAt, result, err := k.burnIn(ctx, work, plan.BurnIn.Duration.Duration)
+	steps, result, err := k.burnIn(ctx, work, plan.BurnIn.Duration.Duration)
 	if err != nil {
 		return nil, err
 	}
 	evidence.Steps = steps
-	evidence.BurnIn = &ops.BurnInEvidence{Result: result, StartedAt: metaNow(startedAt), CompletedAt: metaNow(k.now())}
+	started, _ := work.JournaledAt(burnInPhase.name + "-power-on")
+	completed, _ := work.JournaledAt(burnInPhase.name + "-verified")
+	evidence.BurnIn = &ops.BurnInEvidence{Result: result, StartedAt: metaNow(started), CompletedAt: metaNow(completed)}
 	if result != ops.BurnInPassed {
-		return fail(ops.PhaseBurnIn, []string{"the burn-in image reported a failure"})
+		return fail(evidence, ops.PhaseBurnIn, []string{"the burn-in image reported a failure"})
 	}
 	after, err := conn(work).BMC.Hardware(ctx, conn(work).System)
 	if err != nil {
 		return nil, fmt.Errorf("the server could not be read after burn-in: %w", err)
 	}
 	if !after.Healthy {
-		return fail(ops.PhaseBurnIn, append([]string{"unhealthy after burn-in"}, after.Unhealthy...))
+		return fail(evidence, ops.PhaseBurnIn, append([]string{"unhealthy after burn-in"}, after.Unhealthy...))
 	}
 	evidence.Result = ops.CommissioningPassed
-	return evidence, nil
+	return fit(evidence), nil
+}
+
+// preflightRecords holds each operation's passing inspection and firmware
+// evidence, stored before burn-in sends anything.
+const preflightRecords = "commissioning"
+
+type preflight struct {
+	Evidence ops.CommissioningEvidence `json:"evidence"`
+}
+
+// preflight inspects the server and checks its firmware with GETs only. It
+// returns the failing phase and what failed, if anything did.
+func (k Commissioning) preflight(ctx context.Context, work *site.Work, spec ops.DeviceCommissioningSpec) (ops.CommissioningEvidence, ops.CommissioningPhase, []string, error) {
+	evidence := ops.CommissioningEvidence{Plan: spec.Plan.PlanReference, BMCPublicKeySHA256: work.Snapshot.BMCPublicKeySHA256}
+	hw, err := conn(work).BMC.Hardware(ctx, conn(work).System)
+	if err != nil {
+		return evidence, "", nil, fmt.Errorf("inspection could not read the server: %w", err)
+	}
+	evidence.SerialNumber, evidence.SystemUUID = clip(hw.SerialNumber), hw.UUID
+	evidence.Hardware = inspected(hw)
+	if mismatches := inspect(spec.Plan.Content.Inspection, hw, work.Snapshot); len(mismatches) > 0 {
+		return evidence, ops.PhaseInspect, mismatches, nil
+	}
+	firmware, err := conn(work).BMC.Firmware(ctx)
+	if err != nil {
+		return evidence, "", nil, fmt.Errorf("the firmware inventory could not be read: %w", err)
+	}
+	reported, mismatches := checkFirmware(spec.Plan.Content.Firmware, firmware)
+	evidence.Firmware = reported
+	if len(mismatches) > 0 {
+		return evidence, ops.PhaseFirmware, mismatches, nil
+	}
+	return evidence, "", nil, nil
 }
 
 // burnIn boots the burn-in image once and reads its one result receipt.
-func (k Commissioning) burnIn(ctx context.Context, work *site.Work, duration time.Duration) ([]ops.StepEvidence, time.Time, ops.BurnInResult, error) {
+func (k Commissioning) burnIn(ctx context.Context, work *site.Work, duration time.Duration) ([]ops.StepEvidence, ops.BurnInResult, error) {
 	boot, err := k.boot(ctx, work, burnInPhase.mode)
 	if err != nil {
-		return nil, time.Time{}, "", err
+		return nil, "", err
 	}
 	if boot.DurationSeconds == 0 {
 		boot.DurationSeconds = int64(duration / time.Second)
 		if err := k.saveBoot(work, boot); err != nil {
-			return nil, time.Time{}, "", err
+			return nil, "", err
 		}
 	}
 	steps, err := k.run(ctx, work, []phase{burnInPhase})
 	if err != nil {
-		return nil, time.Time{}, "", err
+		return nil, "", err
 	}
 	result, err := k.burnInResult(work, boot)
 	if err != nil {
-		return nil, time.Time{}, "", err
+		return nil, "", err
 	}
-	return steps, boot.Created, result, nil
+	return steps, result, nil
 }
 
-// burnInResult reads the one burn-in receipt's result.
+// burnInResult reads the result of the operation's one burn-in receipt.
+// More than one receipt, of either result, proves nothing.
 func (c Config) burnInResult(work *site.Work, boot Boot) (ops.BurnInResult, error) {
+	if n, err := c.receipts(work, boot, burnInPhase); err != nil {
+		return "", err
+	} else if n != 1 {
+		return "", fmt.Errorf("found %d burn-in receipts for this operation, want one", n)
+	}
 	data, err := os.ReadFile(filepath.Join(c.ConsoleRoot, filepath.Base(conn(work).Target.Console)))
 	if err != nil {
 		return "", err
@@ -159,7 +214,37 @@ func (c Config) burnInResult(work *site.Work, boot Boot) (ops.BurnInResult, erro
 			return ops.BurnInFailed, nil
 		}
 	}
-	return "", fmt.Errorf("no burn-in result for this operation")
+	return "", errors.New("no burn-in result for this operation")
+}
+
+// maxEvidence is the kind's evidence limit, less room for the envelope.
+const maxEvidence = 15 << 10
+
+// clip bounds a string the BMC supplied.
+func clip(value string) string {
+	if len(value) > 128 {
+		return value[:128]
+	}
+	return value
+}
+
+// fit keeps the evidence within the kind's limit. It drops the inspected
+// component lists before it would drop the verdict.
+func fit(evidence ops.CommissioningEvidence) ops.CommissioningEvidence {
+	if data, err := json.Marshal(evidence); err == nil && len(data) <= maxEvidence {
+		return evidence
+	}
+	if evidence.Hardware != nil {
+		hw := *evidence.Hardware
+		hw.Disks, hw.Interfaces = nil, nil
+		evidence.Hardware = &hw
+	}
+	if data, err := json.Marshal(evidence); err == nil && len(data) <= maxEvidence {
+		return evidence
+	}
+	evidence.Mismatches = evidence.Mismatches[:min(len(evidence.Mismatches), 4)]
+	evidence.Firmware = nil
+	return evidence
 }
 
 func bound(list []string) []string {
@@ -167,9 +252,7 @@ func bound(list []string) []string {
 		list = list[:32]
 	}
 	for i, value := range list {
-		if len(value) > 256 {
-			list[i] = value[:256]
-		}
+		list[i] = clip(value)
 	}
 	return list
 }
@@ -213,7 +296,10 @@ func inspect(plan ops.CommissioningInspection, hw redfish.Hardware, snapshot ops
 	if want, ok := mib(plan.Memory.Capacity); !ok || hw.MemoryMiB != want {
 		out = append(out, fmt.Sprintf("%d MiB of memory, want %s", hw.MemoryMiB, plan.Memory.Capacity))
 	}
-	minimum, _ := mib(plan.Disks.MinCapacity)
+	minimum, ok := mib(plan.Disks.MinCapacity)
+	if !ok {
+		out = append(out, "the plan's minimum disk capacity does not parse")
+	}
 	var disks int64
 	for _, disk := range hw.Disks {
 		if disk.CapacityBytes/(1<<20) >= minimum {
@@ -235,17 +321,17 @@ func inspected(hw redfish.Hardware) *ops.InspectedHardware {
 		out.CPU.Sockets++
 		out.CPU.Cores += cpu.Cores
 		if out.CPU.Architecture == "" {
-			out.CPU.Architecture, out.CPU.Model = cpu.Architecture, cpu.Model
+			out.CPU.Architecture, out.CPU.Model = clip(cpu.Architecture), clip(cpu.Model)
 		}
 	}
 	for _, disk := range hw.Disks {
 		if len(out.Disks) < 64 {
-			out.Disks = append(out.Disks, ops.InspectedDisk{Name: disk.Name, Capacity: quantity(disk.CapacityBytes)})
+			out.Disks = append(out.Disks, ops.InspectedDisk{Name: clip(disk.Name), Capacity: quantity(disk.CapacityBytes)})
 		}
 	}
 	for _, nic := range hw.Interfaces {
 		if len(out.Interfaces) < 64 {
-			iface := ops.InspectedInterface{Name: nic.ID, MACAddress: nic.MACAddress}
+			iface := ops.InspectedInterface{Name: clip(nic.ID), MACAddress: nic.MACAddress}
 			if nic.SpeedMbps > 0 {
 				iface.Speed = strconv.FormatInt(nic.SpeedMbps, 10) + "Mbps"
 			}
@@ -265,9 +351,9 @@ func checkFirmware(baseline []ops.FirmwareBaseline, inventory []redfish.Firmware
 		for _, item := range inventory {
 			if item.ID == want.Component || item.Name == want.Component {
 				found = true
-				reported = append(reported, ops.FirmwareBaseline{Component: want.Component, Version: item.Version})
+				reported = append(reported, ops.FirmwareBaseline{Component: want.Component, Version: clip(item.Version)})
 				if item.Version != want.Version {
-					mismatches = append(mismatches, fmt.Sprintf("%s is %q, want %q", want.Component, item.Version, want.Version))
+					mismatches = append(mismatches, fmt.Sprintf("%s is %q, want %q", want.Component, clip(item.Version), want.Version))
 				}
 				break
 			}
@@ -278,5 +364,3 @@ func checkFirmware(baseline []ops.FirmwareBaseline, inventory []redfish.Firmware
 	}
 	return reported, mismatches
 }
-
-var _ = metav1.Now

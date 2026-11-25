@@ -3,7 +3,10 @@ package redfishwork
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,7 +96,9 @@ func TestCommissioningFailsAMismatchWithoutSendingAnything(t *testing.T) {
 		"unhealthy": {lab: func(l *lab) { l.unhealthy = "DIMM0" }, phase: ops.PhaseInspect, expect: "Memory DIMM0"},
 		"serial":    {lab: func(l *lab) { l.serial = "OTHER" }, phase: ops.PhaseInspect, expect: "serial number"},
 		"firmware":  {lab: func(l *lab) { l.bmcFW = "0.9.0" }, phase: ops.PhaseFirmware, expect: `BMC is "0.9.0"`},
-		"missing":   {plan: func(p *ops.CommissioningPlanContent) { p.Firmware = append(p.Firmware, ops.FirmwareBaseline{Component: "BIOS", Version: "1"}) }, phase: ops.PhaseFirmware, expect: "BIOS is not reported"},
+		"missing": {plan: func(p *ops.CommissioningPlanContent) {
+			p.Firmware = append(p.Firmware, ops.FirmwareBaseline{Component: "BIOS", Version: "1"})
+		}, phase: ops.PhaseFirmware, expect: "BIOS is not reported"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			l := newLab(t)
@@ -105,8 +110,8 @@ func TestCommissioningFailsAMismatchWithoutSendingAnything(t *testing.T) {
 			if result.Phase != ops.PhaseSucceeded || evidence.Result != ops.CommissioningFailed || evidence.FailedPhase != setup.phase || !strings.Contains(strings.Join(evidence.Mismatches, ";"), setup.expect) {
 				t.Fatalf("result = %+v, evidence %+v", result, evidence)
 			}
-			if l.effects != 0 {
-				t.Fatalf("%d effectful requests reached the BMC", l.effects)
+			if l.effectCount() != 0 {
+				t.Fatalf("%d effectful requests reached the BMC", l.effectCount())
 			}
 		})
 	}
@@ -132,8 +137,8 @@ func TestCommissioningRefusesABurnInImageTheSiteDoesNotServe(t *testing.T) {
 	r := commissioningRunner(t, l)
 	spec := planSpec(t, func(p *ops.CommissioningPlanContent) { p.BurnIn.Image.Digest = "sha256:" + strings.Repeat("f", 64) })
 	result, _ := commission(t, l, r, "op-other-image", spec)
-	if result.Phase != ops.PhaseFailed || result.Reason != ReasonUnsupportedTarget || l.effects != 0 {
-		t.Fatalf("result = %+v, %d effects", result, l.effects)
+	if result.Phase != ops.PhaseFailed || result.Reason != ReasonUnsupportedTarget || l.effectCount() != 0 {
+		t.Fatalf("result = %+v, %d effects", result, l.effectCount())
 	}
 }
 
@@ -144,5 +149,109 @@ func TestTheBootServerPassesTheBurnInDuration(t *testing.T) {
 	var boot Boot
 	if _, err := r.Store.GetRecord(device, "boot", l.operation, &boot); err != nil || boot.Mode != "burnin" || boot.DurationSeconds != 60 {
 		t.Fatalf("boot = %+v, %v", boot, err)
+	}
+}
+
+// A worker resumed after burn-in powered the server on reuses the stored
+// inspection. A fault it reads afterwards fails burn-in, never inspection,
+// and it powers on no second time.
+func TestAResumedCommissioningKeepsItsInspection(t *testing.T) {
+	l := newLab(t)
+	r := commissioningRunner(t, l)
+	work := assignment(l, "DeviceCommissioning", "op-resume", 1, planSpec(t, nil))
+	work.Snapshot.Extra = map[string]string{custody.SnapshotSerialNumber: "serial-001"}
+	ctx, cancel := context.WithCancel(context.Background())
+	var once sync.Once
+	l.onHook = func() { once.Do(func() { l.setUnhealthy("DIMM0"); cancel() }) }
+	if _, err := r.Run(ctx, work); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted: %v", err)
+	}
+	l.onHook = nil
+	result, err := r.Run(context.Background(), work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence ops.CommissioningEvidence
+	if err := json.Unmarshal(result.Evidence, &evidence); err != nil {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Phase != ops.PhaseSucceeded || evidence.Result != ops.CommissioningFailed || evidence.FailedPhase != ops.PhaseBurnIn || l.onCount() != 1 {
+		t.Fatalf("result = %+v, evidence %+v, %d power-ons", result, evidence, l.onCount())
+	}
+	if evidence.BurnIn.StartedAt.IsZero() || evidence.BurnIn.CompletedAt.Before(&evidence.BurnIn.StartedAt) {
+		t.Fatalf("burn-in times = %+v", evidence.BurnIn)
+	}
+}
+
+func TestTwoBurnInReceiptsProveNothing(t *testing.T) {
+	l := newLab(t)
+	l.receipts = 2
+	r := commissioningRunner(t, l)
+	result, _ := commission(t, l, r, "op-two-receipts", planSpec(t, nil))
+	if result.Phase != ops.PhaseOutcomeUnknown {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAServerUnhealthyAfterBurnInFails(t *testing.T) {
+	l := newLab(t)
+	r := commissioningRunner(t, l)
+	l.onHook = func() { l.setUnhealthy("CPU0") }
+	result, evidence := commission(t, l, r, "op-after", planSpec(t, nil))
+	if result.Phase != ops.PhaseSucceeded || evidence.Result != ops.CommissioningFailed || evidence.FailedPhase != ops.PhaseBurnIn || !strings.Contains(strings.Join(evidence.Mismatches, ";"), "Processor CPU0") {
+		t.Fatalf("result = %+v, evidence %+v", result, evidence)
+	}
+}
+
+// Redfish lets a component omit its health. That is not a fault.
+func TestAnOmittedHealthIsNotAFault(t *testing.T) {
+	l := newLab(t)
+	l.noHealth = true
+	r := commissioningRunner(t, l)
+	if result, evidence := commission(t, l, r, "op-no-health", planSpec(t, nil)); evidence.Result != ops.CommissioningPassed {
+		t.Fatalf("result = %+v, evidence %+v", result, evidence)
+	}
+}
+
+// A drive listed under Storage and SimpleStorage counts once, and a drive
+// under a Chassis is read.
+func TestADriveListedTwiceCountsOnce(t *testing.T) {
+	l := newLab(t)
+	l.both = true
+	r := commissioningRunner(t, l)
+	result, evidence := commission(t, l, r, "op-both", planSpec(t, func(p *ops.CommissioningPlanContent) { p.Inspection.Disks.Count = 2 }))
+	if result.Phase != ops.PhaseSucceeded || evidence.FailedPhase != ops.PhaseInspect || len(evidence.Hardware.Disks) != 1 {
+		t.Fatalf("result = %+v, evidence %+v", result, evidence)
+	}
+}
+
+func TestCommissioningRefusesUnusablePlanValues(t *testing.T) {
+	for name, mutate := range map[string]func(*ops.CommissioningPlanContent){
+		"short burn-in": func(p *ops.CommissioningPlanContent) { p.BurnIn.Duration.Duration = time.Second },
+		"memory":        func(p *ops.CommissioningPlanContent) { p.Inspection.Memory.Capacity = "lots" },
+		"disk minimum":  func(p *ops.CommissioningPlanContent) { p.Inspection.Disks.MinCapacity = "big" },
+	} {
+		l := newLab(t)
+		r := commissioningRunner(t, l)
+		result, _ := commission(t, l, r, "op-"+strings.ReplaceAll(name, " ", "-"), planSpec(t, mutate))
+		if result.Phase != ops.PhaseFailed || result.Reason != ReasonInputs || l.effectCount() != 0 {
+			t.Fatalf("%s: result = %+v", name, result)
+		}
+	}
+}
+
+func TestOversizedEvidenceKeepsTheVerdict(t *testing.T) {
+	evidence := ops.CommissioningEvidence{Result: ops.CommissioningFailed, FailedPhase: ops.PhaseInspect, Hardware: &ops.InspectedHardware{}}
+	for i := range 64 {
+		evidence.Hardware.Disks = append(evidence.Hardware.Disks, ops.InspectedDisk{Name: strings.Repeat("d", 128) + fmt.Sprint(i), Capacity: "1Ti"})
+		evidence.Hardware.Interfaces = append(evidence.Hardware.Interfaces, ops.InspectedInterface{Name: strings.Repeat("n", 128), MACAddress: mac})
+	}
+	for range 32 {
+		evidence.Mismatches = append(evidence.Mismatches, strings.Repeat("m", 128))
+	}
+	fitted := fit(evidence)
+	data, _ := json.Marshal(fitted)
+	if len(data) > maxEvidence || fitted.Result != ops.CommissioningFailed || fitted.FailedPhase != ops.PhaseInspect {
+		t.Fatalf("fitted evidence is %d bytes: %+v", len(data), fitted.Result)
 	}
 }
