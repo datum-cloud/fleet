@@ -65,6 +65,15 @@ real API server verify it. No handler reads the creator yet, and no Machine
 without one is refused. See the [production admission
 proposal](https://github.com/datum-cloud/fleet/pull/187).
 
+The Milo quota claim is created with Fleet's quota custody finalizer, so a
+claim deleted by anyone else, or by namespace purge, keeps its quota until
+release. Release deletes the claim, removes the finalizer with a conditional
+update, and reports the quota free only once the claim is gone. A finalizer
+removed from a live claim is restored on the next acquire. No mode wires the
+quota claim into allocation yet; synthetic staging still reserves no quota.
+See the proposed [quota
+custody](../enhancements/production-admission/README.md#quota-custody).
+
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
