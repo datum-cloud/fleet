@@ -71,17 +71,27 @@ func Manifest(spec ops.CleaningPolicySpec, storage *inventory.ObservedStorage) (
 // disposed of gets a step, and so does every drive discovery reports now that
 // the manifest lacks. Methods come from the pinned policy and the drive as
 // discovery reports it now, so changed firmware must still be qualified. A
-// pinned drive discovery no longer reports is Missing, and a drive with no
-// planned method is Uncovered.
+// pinned drive discovery no longer reports is Missing. A drive with no
+// planned method is Uncovered, and so is every drive that shares its serial
+// number with another, a pinned drive whose model, protocol, media type or
+// capacity changed, and a drive that reports no serial number: none of them
+// can be matched to one physical drive.
 func Plan(policy ops.CleaningPolicySpec, manifest []ops.ManifestDrive, storage *inventory.ObservedStorage, disposed []string) ([]ops.PlannedDrive, error) {
 	if storage == nil {
 		return nil, ErrStorageUnknown
 	}
 	current := map[string]inventory.ObservedDrive{}
+	count := map[string]int{}
 	for _, d := range storage.Drives {
+		count[d.SerialNumber]++
 		if d.SerialNumber != "" {
 			current[d.SerialNumber] = d
 		}
+	}
+	unmatchable := func(d inventory.ObservedDrive) bool { return d.SerialNumber == "" || count[d.SerialNumber] > 1 }
+	uncovered := func(p ops.PlannedDrive) ops.PlannedDrive {
+		p.State, p.Methods, p.Verify, p.TimePerTiB, p.Rule = ops.DriveUncovered, nil, nil, nil, ""
+		return p
 	}
 	step := func(name string, d inventory.ObservedDrive) ops.PlannedDrive {
 		planned := ops.PlannedDrive{ManifestDrive: ops.ManifestDrive{Name: name, SerialNumber: d.SerialNumber, Model: d.Model, Firmware: d.Firmware,
@@ -109,20 +119,28 @@ func Plan(policy ops.CleaningPolicySpec, manifest []ops.ManifestDrive, storage *
 			continue
 		}
 		d, ok := current[m.SerialNumber]
-		if !ok {
+		switch {
+		case !ok:
 			out = append(out, ops.PlannedDrive{ManifestDrive: m, State: ops.DriveMissing})
+		case unmatchable(d) || d.Model != m.Model || ops.DriveProtocol(d.Protocol) != m.Protocol || ops.MediaType(d.MediaType) != m.MediaType || d.CapacityBytes != m.CapacityBytes:
+			out = append(out, uncovered(ops.PlannedDrive{ManifestDrive: m}))
+		default:
+			out = append(out, step(m.Name, d))
+		}
+	}
+	// Every drive not planned above gets a step: a new drive, a drive with
+	// no serial number, and every extra drive sharing a serial number.
+	var added []inventory.ObservedDrive
+	planned := map[string]bool{}
+	for _, d := range storage.Drives {
+		if pinned[d.SerialNumber] && !planned[d.SerialNumber] {
+			planned[d.SerialNumber] = true
 			continue
 		}
-		out = append(out, step(m.Name, d))
-	}
-	var added []inventory.ObservedDrive
-	for _, d := range storage.Drives {
-		if !pinned[d.SerialNumber] {
-			added = append(added, d)
-		}
+		added = append(added, d)
 	}
 	slices.SortFunc(added, func(a, b inventory.ObservedDrive) int {
-		return strings.Compare(a.Protocol+"\x00"+a.SerialNumber, b.Protocol+"\x00"+b.SerialNumber)
+		return strings.Compare(a.Protocol+"\x00"+a.SerialNumber+"\x00"+a.ID, b.Protocol+"\x00"+b.SerialNumber+"\x00"+b.ID)
 	})
 	next := 0
 	for _, d := range added {
@@ -131,13 +149,11 @@ func Plan(policy ops.CleaningPolicySpec, manifest []ops.ManifestDrive, storage *
 		}
 		name := "disk-" + strconv.Itoa(next)
 		used[name] = true
-		planned := step(name, d)
-		if d.SerialNumber == "" {
-			// A drive that does not identify itself cannot be matched in
-			// band, so it cannot be cleaned.
-			planned.State, planned.Methods, planned.Verify, planned.TimePerTiB, planned.Rule = ops.DriveUncovered, nil, nil, nil, ""
+		step := step(name, d)
+		if unmatchable(d) {
+			step = uncovered(step)
 		}
-		out = append(out, planned)
+		out = append(out, step)
 	}
 	if len(out) > MaxDrives {
 		return nil, fmt.Errorf("a plan has at most %d drives", MaxDrives)

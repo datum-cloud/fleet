@@ -73,6 +73,10 @@ func TestPlan(t *testing.T) {
 		{"added drive", storage(nvme("SN-A", "EX1.3"), nvme("SN-B", "EX1.3"), nvme("SN-C", "EX1.2")), nil, []string{"disk-0=SN-A:", "disk-1=SN-B:", "disk-2=SN-C:"}},
 		{"added drive after a disposal keeps names unique", storage(nvme("SN-A", "EX1.3"), nvme("SN-C", "EX1.2")), []string{"disk-1"}, []string{"disk-0=SN-A:", "disk-2=SN-C:"}},
 		{"added anonymous drive", storage(nvme("SN-A", "EX1.3"), nvme("SN-B", "EX1.3"), nvme("", "EX1.3")), nil, []string{"disk-0=SN-A:", "disk-1=SN-B:", "disk-2=:Uncovered"}},
+		{"a pinned serial reported twice", storage(nvme("SN-A", "EX1.3"), nvme("SN-B", "EX1.3"), withID(nvme("SN-A", "EX1.3"), "clone")), nil, []string{"disk-0=SN-A:Uncovered", "disk-1=SN-B:", "disk-2=SN-A:Uncovered"}},
+		{"two new drives share a serial", storage(nvme("SN-A", "EX1.3"), nvme("SN-B", "EX1.3"), withID(nvme("SN-C", "EX1.3"), "c1"), withID(nvme("SN-C", "EX1.3"), "c2")), nil, []string{"disk-0=SN-A:", "disk-1=SN-B:", "disk-2=SN-C:Uncovered", "disk-3=SN-C:Uncovered"}},
+		{"a pinned serial on another model", storage(withModel(nvme("SN-A", "EX1.3"), "OTHER-MODEL"), nvme("SN-B", "EX1.3")), nil, []string{"disk-0=SN-A:Uncovered", "disk-1=SN-B:"}},
+		{"a pinned serial with another capacity", storage(withCapacity(nvme("SN-A", "EX1.3"), 1<<30), nvme("SN-B", "EX1.3")), nil, []string{"disk-0=SN-A:Uncovered", "disk-1=SN-B:"}},
 	}
 	for _, tc := range cases {
 		plan, err := Plan(policy, manifest, tc.current, tc.disposed)
@@ -122,4 +126,14 @@ func TestStorageOfFindsTheDevicesSystem(t *testing.T) {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}
+}
+
+func withID(d inventory.ObservedDrive, id string) inventory.ObservedDrive { d.ID = id; return d }
+func withModel(d inventory.ObservedDrive, model string) inventory.ObservedDrive {
+	d.Model = model
+	return d
+}
+func withCapacity(d inventory.ObservedDrive, bytes int64) inventory.ObservedDrive {
+	d.CapacityBytes = bytes
+	return d
 }

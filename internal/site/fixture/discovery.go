@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -80,12 +81,13 @@ const SimulatedDriveBytes = 2 << 30
 
 // Drives is what fixture discovery reports for an enrolled Device: one
 // simulated NVMe drive per enrolled disk, in order, with a serial number
-// derived from the Device and the disk.
+// derived from the Device and the disk. Serial numbers sort in enrollment
+// order, so the manifest names each drive as the site enrolls it.
 func Drives(device string, target Target) *inventory.ObservedStorage {
 	out := &inventory.ObservedStorage{}
-	for _, disk := range target.Disks {
+	for i, disk := range target.Disks {
 		sum := sha256.Sum256([]byte(device + "/" + disk))
-		out.Drives = append(out.Drives, inventory.ObservedDrive{ID: disk, SerialNumber: "SIM-" + strings.ToUpper(hex.EncodeToString(sum[:6])), Model: SimulatedModel,
+		out.Drives = append(out.Drives, inventory.ObservedDrive{ID: disk, SerialNumber: fmt.Sprintf("SIM-%02d-%s", i, strings.ToUpper(hex.EncodeToString(sum[:6]))), Model: SimulatedModel,
 			Firmware: "sim", Protocol: "NVMe", MediaType: "SSD", CapacityBytes: SimulatedDriveBytes})
 	}
 	return out
