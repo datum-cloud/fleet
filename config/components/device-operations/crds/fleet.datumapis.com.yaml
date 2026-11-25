@@ -556,13 +556,8 @@ spec:
                         type: string
                         minLength: 1
                         maxLength: 253
-                      uid:
-                        type: string
-                        minLength: 1
-                        maxLength: 64
                     required:
                     - name
-                    - uid
                   address:
                     type: string
                     minLength: 2
@@ -784,13 +779,8 @@ spec:
                         type: string
                         minLength: 1
                         maxLength: 253
-                      uid:
-                        type: string
-                        minLength: 1
-                        maxLength: 64
                     required:
                     - name
-                    - uid
                   address:
                     type: string
                     minLength: 2

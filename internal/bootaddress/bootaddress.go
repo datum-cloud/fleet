@@ -112,7 +112,7 @@ func (c Claimer) Claim(ctx context.Context, allocation, operation string) (*ops.
 	if err != nil {
 		return nil, err
 	}
-	return &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: claim.GetName(), UID: string(claim.GetUID())}, Address: address}, nil
+	return &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: claim.GetName()}, Address: address}, nil
 }
 
 // Release deletes the operation's claim. It returns true once the claim is
@@ -161,8 +161,11 @@ func (c Claimer) get(ctx context.Context, name string) (*unstructured.Unstructur
 }
 
 // Verify requires the input to name the operation's own claim, by its only
-// name and its labels, and that claim incarnation to be bound to exactly the
-// input's address. Admission calls it with the provider project's reader.
+// name and its labels, and that claim to be bound to exactly the input's
+// address. The requester creates the claim before the operation, so a claim
+// created after its operation is a recreation, never the claim the operation
+// was built from, and is refused. Admission calls it with the provider
+// project's reader.
 func Verify(ctx context.Context, reader client.Reader, operation ops.Operation, kind string, input ops.BootNetworkInput) error {
 	if reader == nil {
 		return ErrUnavailable
@@ -176,8 +179,9 @@ func Verify(ctx context.Context, reader client.Reader, operation ops.Operation, 
 	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: input.AddressClaim.Name}, claim); err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	if string(claim.GetUID()) != input.AddressClaim.UID || claim.GetDeletionTimestamp() != nil {
-		return fmt.Errorf("%w: the claim is another incarnation or is being deleted", ErrUnavailable)
+	created, opened := claim.GetCreationTimestamp(), operation.GetCreationTimestamp()
+	if claim.GetDeletionTimestamp() != nil || created.IsZero() || opened.IsZero() || created.After(opened.Time) {
+		return fmt.Errorf("%w: the claim was recreated after its operation or is being deleted", ErrUnavailable)
 	}
 	if labels := claim.GetLabels(); labels[OperationLabel] != operation.GetName() || labels[KindLabel] != kind {
 		return fmt.Errorf("%w: the claim belongs to another operation", ErrUnavailable)

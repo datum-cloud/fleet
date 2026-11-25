@@ -115,7 +115,7 @@ func TestBootAddressesFollowTheirOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	network := operation.Spec.BootNetwork
-	if network == nil || network.AddressClaim.Name != bootaddress.ClaimName(operation.Name) || network.AddressClaim.UID == "" || network.Address == "" {
+	if network == nil || network.AddressClaim.Name != bootaddress.ClaimName(operation.Name) || network.Address == "" {
 		t.Fatalf("boot network = %+v", network)
 	}
 	creates := recorder.created()

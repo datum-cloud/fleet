@@ -290,15 +290,12 @@ type DeviceInstallationSpec struct {
 // operation and releases the claim when the operation can no longer reach
 // DHCP.
 type BootNetworkInput struct {
-	AddressClaim ClaimReference `json:"addressClaim"`
+	// AddressClaim is the operation's own IPAM claim, by its only name. Its
+	// incarnation is pinned by that name, its labels, and its creation no
+	// later than the operation's; no UID is held in spec.
+	AddressClaim LocalReference `json:"addressClaim"`
 	// Address is the bound host address, without a prefix length.
 	Address string `json:"address"`
-}
-
-// ClaimReference names one IPAM claim incarnation in the provider project.
-type ClaimReference struct {
-	Name string `json:"name"`
-	UID  string `json:"uid"`
 }
 
 type ImageInput struct {

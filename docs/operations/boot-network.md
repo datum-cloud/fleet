@@ -41,20 +41,22 @@ The claim is an IPAM `IPClaim` in the provider project named
 `<operation>-boot`, labeled with the allocation, the operation and the
 operation kind, and scoped to the site's location. It asks for one IPv4 host
 address and `reclaimPolicy: Delete`.
-IPAM binds it when it is created. The requester copies the claim's name, UID
-and address into the operation's `spec.bootNetwork`:
+IPAM binds it when it is created. The requester copies the claim's name and
+address into the operation's `spec.bootNetwork`. The spec holds no UID:
 
 ```yaml
 spec:
   bootInterface: primary
   bootNetwork:
-    addressClaim: {name: alloc-3b9d61c2-install-1-boot, uid: 1d2f7a9e-0b3c-4e5f-8a6b-7c8d9e0f1a2b}
+    addressClaim: {name: alloc-3b9d61c2-install-1-boot}
     address: 198.51.100.10
 ```
 
 Admission refuses the operation with `BootAddressUnavailable` unless that claim
-is the operation's own, by name and labels, and that incarnation exists, is
-`Bound`, and holds that address. It refuses it with
+is the operation's own, by name and labels, exists, is `Bound`, holds that
+address, and was created no later than the operation. The requester always
+creates the claim first, so a claim deleted and recreated under the name after
+the operation is refused even if it holds the same address. It refuses it with
 `BootInterfaceUnknown` unless the Device records the boot interface with a MAC.
 The admission snapshot records that MAC.
 

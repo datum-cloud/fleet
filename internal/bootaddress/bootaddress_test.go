@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -49,7 +50,7 @@ func TestClaimIsCreatedOnceAndBoundBeforeUse(t *testing.T) {
 	}
 	claim := bind(t, api, "alloc-a-install-1-boot", "Bound", "198.51.100.10")
 	input, err := c.Claim(ctx, "alloc-a", "alloc-a-install-1")
-	if err != nil || input.Address != "198.51.100.10" || input.AddressClaim.Name != "alloc-a-install-1-boot" || input.AddressClaim.UID != string(claim.GetUID()) {
+	if err != nil || input.Address != "198.51.100.10" || input.AddressClaim.Name != "alloc-a-install-1-boot" {
 		t.Fatalf("input = %+v, %v", input, err)
 	}
 	if spec, _, _ := unstructured.NestedMap(claim.Object, "spec"); spec["className"] != "provisioning" || spec["ipFamily"] != "IPv4" || spec["reclaimPolicy"] != "Delete" {
@@ -71,7 +72,8 @@ func TestClaimIsCreatedOnceAndBoundBeforeUse(t *testing.T) {
 }
 
 // TestVerifyRequiresTheExactBoundIncarnation refuses a missing claim,
-// another incarnation, another address, and an unbound or deleting claim.
+// a claim recreated after its operation, another address, and an unbound or
+// deleting claim.
 func TestVerifyRequiresTheExactBoundIncarnation(t *testing.T) {
 	ctx := context.Background()
 	c, api := claimer(t)
@@ -79,9 +81,19 @@ func TestVerifyRequiresTheExactBoundIncarnation(t *testing.T) {
 		t.Fatal(err)
 	}
 	claim := bind(t, api, "alloc-a-install-1-boot", "Bound", "198.51.100.10")
-	good := ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: claim.GetName(), UID: string(claim.GetUID())}, Address: "198.51.100.10"}
+	created := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	stamp := func(at time.Time) {
+		t.Helper()
+		claim.SetCreationTimestamp(metav1.NewTime(at))
+		if err := api.Update(ctx, claim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stamp(created)
+	good := ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: claim.GetName()}, Address: "198.51.100.10"}
 	operation := &ops.DeviceInstallation{}
 	operation.Name, operation.Namespace = "alloc-a-install-1", namespace
+	operation.CreationTimestamp = metav1.NewTime(created.Add(time.Second))
 	if err := Verify(ctx, api, operation, "DeviceInstallation", good); err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +107,7 @@ func TestVerifyRequiresTheExactBoundIncarnation(t *testing.T) {
 		t.Fatalf("another kind's claim verified: %v", err)
 	}
 	for name, input := range map[string]ops.BootNetworkInput{
-		"other name":     {AddressClaim: ops.ClaimReference{Name: "other-boot", UID: good.AddressClaim.UID}, Address: good.Address},
-		"other UID":      {AddressClaim: ops.ClaimReference{Name: good.AddressClaim.Name, UID: string(types.UID("other"))}, Address: good.Address},
+		"other name":     {AddressClaim: ops.LocalReference{Name: "other-boot"}, Address: good.Address},
 		"other address":  {AddressClaim: good.AddressClaim, Address: "198.51.100.11"},
 		"not an address": {AddressClaim: good.AddressClaim, Address: "198.51.100.10/24"},
 	} {
@@ -104,7 +115,20 @@ func TestVerifyRequiresTheExactBoundIncarnation(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	bind(t, api, claim.GetName(), "Releasing", "198.51.100.10")
+	// The claim deleted and recreated under its name after the operation
+	// was created is not the claim the operation was built from, even with
+	// the same address.
+	stamp(created.Add(2 * time.Second))
+	if err := Verify(ctx, api, operation, "DeviceInstallation", good); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("a claim recreated after its operation verified: %v", err)
+	}
+	stamp(created)
+	unstamped := &ops.DeviceInstallation{}
+	unstamped.Name, unstamped.Namespace = operation.Name, operation.Namespace
+	if err := Verify(ctx, api, unstamped, "DeviceInstallation", good); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("an operation with no creation time verified: %v", err)
+	}
+	claim = bind(t, api, claim.GetName(), "Releasing", "198.51.100.10")
 	if err := Verify(ctx, api, operation, "DeviceInstallation", good); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("unbound claim verified: %v", err)
 	}

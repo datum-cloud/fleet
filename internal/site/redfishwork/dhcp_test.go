@@ -32,7 +32,7 @@ func newRequest(method, url, body string) (*http.Request, error) {
 }
 
 func bootNetwork() *ops.BootNetworkInput {
-	return &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: "alloc-example-install-boot", UID: "00000000-0000-4000-8000-000000000501"}, Address: address}
+	return &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: "alloc-example-install-boot"}, Address: address}
 }
 
 // synchronizer stands in for one Kea instance and its synchronizer: each

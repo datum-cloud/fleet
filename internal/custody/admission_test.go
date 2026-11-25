@@ -10,6 +10,7 @@ import (
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/bootaddress"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -281,7 +282,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		// names it.
 		claim := func(request, phase, address string) *ops.BootNetworkInput {
 			created := e.ipClaim(bootaddress.ClaimName(name(request)), name(request), "DeviceInstallation", phase, address)
-			return &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: created.GetName(), UID: string(created.GetUID())}, Address: address}
+			return &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: created.GetName()}, Address: address}
 		}
 		withAddress := func(request string, input *ops.BootNetworkInput) *ops.DeviceInstallation {
 			operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: name(request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
@@ -291,16 +292,30 @@ func TestAdmissionPreconditions(t *testing.T) {
 			e.create(operation)
 			return operation
 		}
-		otherUID := claim("other-uid", "Bound", "198.51.100.10")
-		otherUID.AddressClaim.UID = "00000000-0000-4000-8000-0000000009ff"
+		// A claim deleted and recreated under its name, with the same labels
+		// and address, after its operation was created is not the claim the
+		// operation was built from.
+		recreated := claim("recreated", "Bound", "198.51.100.10")
+		recreatedOperation := withAddress("recreated", recreated)
+		old := &unstructured.Unstructured{}
+		old.SetGroupVersionKind(bootaddress.GVK)
+		if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: "default", Name: recreated.AddressClaim.Name}, old); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.admin.Delete(e.ctx, old); err != nil {
+			t.Fatal(err)
+		}
+		// Creation times have one-second resolution.
+		time.Sleep(1100 * time.Millisecond)
+		claim("recreated", "Bound", "198.51.100.10")
 		otherAddress := claim("other-address", "Bound", "198.51.100.11")
 		otherAddress.Address = "198.51.100.99"
 		good := claim("bound", "Bound", "198.51.100.13")
 		refused := []*ops.DeviceInstallation{
-			withAddress("other-uid", otherUID),
+			recreatedOperation,
 			withAddress("other-address", otherAddress),
 			withAddress("unbound", claim("unbound", "Pending", "198.51.100.12")),
-			withAddress("missing", &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: bootaddress.ClaimName(name("missing")), UID: good.AddressClaim.UID}, Address: good.Address}),
+			withAddress("missing", &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: bootaddress.ClaimName(name("missing"))}, Address: good.Address}),
 			// Another operation's bound claim is not this operation's.
 			withAddress("foreign", good),
 		}
