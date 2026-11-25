@@ -149,6 +149,12 @@ proposal's API names are provisional. Each piece below is marked
   missing report fails the install. Fleet does not own the installed OS, so
   success never depends on what the installed OS prints. A direct kernel boot,
   which has one initrd, refuses bootstrap data.
+- **Lab first-boot evidence.** On its first disk boot, the lab guest checks
+  that the user data and keys sit where NoCloud and SSH read them and prints
+  the salted digest on a separate line. The multi-plane evidence requires that
+  line for consumer A's install; no worker reads it. The lab guest has no
+  cloud-init, so this proves the booted system found the data in place, not
+  that a datasource consumed it.
 
 ## Not implemented yet
 

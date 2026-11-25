@@ -179,6 +179,12 @@ def bootstrap_line(provider, o, receipt):
     return 'FLEET-BOOTSTRAP:%s:%s' % (receipt, digest)
 
 
+def guest_line(installer_line):
+    """The line the lab guest prints on first boot for the same receipt and
+    digest. It is lab evidence, never a condition of the install's success."""
+    return 'FLEET-GUEST-' + installer_line[len('FLEET-'):]
+
+
 def bootstrap_gone():
     """No copy of a payload remains once the lifecycle ends: not in the
     provider's sealed store, and not at the cell, which federation clears
@@ -225,6 +231,12 @@ def libvirt_provider():
             lines = [line.strip() for line in installer_log.read_text(errors='replace').splitlines()] if installer_log.exists() else []
             if lines.count(seeded) != 1 or sum(1 for l in lines if l.startswith('FLEET-BOOTSTRAP:')) != 1:
                 fail('the installer did not verify exactly the admitted bootstrap data on disk')
+            # Lab evidence only: the booted guest found the same data where
+            # it reads it. The worker never waits for this line.
+            disk_log = directory / 'disk.log'
+            lines = [line.strip() for line in disk_log.read_text(errors='replace').splitlines()] if disk_log.exists() else []
+            if lines.count(guest_line(seeded)) != 1 or sum(1 for l in lines if l.startswith('FLEET-GUEST-BOOTSTRAP:')) != 1:
+                fail('the booted guest did not find exactly the admitted bootstrap data on first boot')
             bootstrapped.append(uid)
         for filename, marker in (('installer.log', 'FLEET-INSTALLED:'), ('disk.log', 'FLEET-DISK-BOOT:')):
             p = directory / filename
@@ -295,8 +307,9 @@ def redfish_provider():
         seeded = bootstrap_line(provider, o, boot['receipt']) if o['kind'] == 'DeviceInstallation' else None
         if seeded:
             bootstrapped.append(o['operation'])
-        # The installer prints its bootstrap check just before its own receipt.
-        want = (([seeded] if seeded else []) + ['FLEET-INSTALLED:' + boot['receipt'], 'FLEET-DISK-BOOT:' + boot['receipt']]) if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
+        # The installer prints its bootstrap check just before its own receipt,
+        # and the lab guest its first-boot report just before the disk receipt.
+        want = (([seeded] if seeded else []) + ['FLEET-INSTALLED:' + boot['receipt']] + ([guest_line(seeded)] if seeded else []) + ['FLEET-DISK-BOOT:' + boot['receipt']]) if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
         for line in want:
             if console.count(line) != 1:
                 fail('expected exactly one exact console receipt %s for %s' % (line.split(':')[0], o['kind']))

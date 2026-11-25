@@ -4,6 +4,14 @@ mount -t proc proc /proc 2>/dev/null || true
 exec >/dev/ttyS0 2>&1
 # Only the disk-root boot emits completion; installer completion is insufficient.
 if grep -Eq '^/dev/vda1 / ext4 ' /proc/mounts && test -s /fleet-receipt; then
+ # Lab evidence only, never a worker check: the booted system finds the
+ # bootstrap data where its NoCloud datasource and SSH read it, and reports
+ # the salted digest. This lab guest has no cloud-init.
+ if test -s /fleet-bootstrap/data && cmp -s /fleet-bootstrap/user-data /var/lib/cloud/seed/nocloud/user-data &&
+  cmp -s /fleet-bootstrap/meta-data /var/lib/cloud/seed/nocloud/meta-data &&
+  cmp -s /fleet-bootstrap/authorized_keys /root/.ssh/authorized_keys; then
+  printf 'FLEET-GUEST-BOOTSTRAP:%s:sha256:%s\n' "$(cat /fleet-receipt)" "$(cat /fleet-bootstrap/salt /fleet-bootstrap/data | sha256sum | cut -d' ' -f1)"
+ fi
  printf 'FLEET-DISK-BOOT:%s\n' "$(cat /fleet-receipt)"
 fi
 sync
