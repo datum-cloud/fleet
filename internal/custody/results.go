@@ -123,6 +123,13 @@ func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error
 		default:
 			return fmt.Errorf("a site cannot report phase %q", result.Phase)
 		}
+		// A worker reports only reasons that are shared or that its kind
+		// declares.
+		reason, message := result.Reason, result.Message
+		if reason != "" && !c.Registry.Declared(kind.GVK.Kind, reason, RaisedByWorker) {
+			reason, message = ReasonUndeclared, fmt.Sprintf("the site reported %s, which %s does not declare", reason, kind.GVK.Kind)
+		}
+		result.Reason, result.Message = reason, message
 		var evidence []byte
 		if result.Phase == ops.PhaseSucceeded && kind.EvidenceRequired && len(result.Evidence) == 0 {
 			c.holdUnknown(custody, *active, ReasonInvalidEvidence, "the kind requires evidence, and the site sent none", nil)

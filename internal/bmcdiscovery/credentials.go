@@ -84,3 +84,16 @@ func selectCredential(secrets []corev1.Secret) (cred Credential, found bool, err
 	}
 	return cred, true, nil
 }
+
+// CredentialFor returns the credential for one Device, named
+// "<namespace>/<name>" in project, from the credential Secrets of its site.
+// The site worker uses it, with the same contract as discovery.
+func CredentialFor(secrets []corev1.Secret, project, device string) (Credential, bool, error) {
+	var matched []corev1.Secret
+	for index := range secrets {
+		if deviceKey(&secrets[index], project) == device {
+			matched = append(matched, secrets[index])
+		}
+	}
+	return selectCredential(matched)
+}

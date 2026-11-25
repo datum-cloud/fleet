@@ -203,6 +203,22 @@ func TestExtensionSeams(t *testing.T) {
 		e.requirePhase(refused, ops.PhaseFailed, ReasonNotRetryable)
 	})
 
+	t.Run("a worker result with a reason its kind never declared is recorded as UndeclaredReason", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		operation := e.staffOp(device, "ok")
+		e.settle(device.Name)
+		active := e.custody(device.Name).Spec.ActiveOperation
+		if err := e.coord.AcceptResult(e.ctx, SiteResult{Site: testSite, Device: device.Name, Operation: active.OperationReference, Fence: active.Fence, Phase: ops.PhaseFailed, Reason: "InventedAtTheSite"}); err != nil {
+			t.Fatal(err)
+		}
+		e.settle(device.Name)
+		status := e.requirePhase(operation, ops.PhaseFailed, ReasonUndeclared)
+		if !strings.Contains(status.Message, "InventedAtTheSite") {
+			t.Fatalf("message = %s", status.Message)
+		}
+	})
+
 	t.Run("a worker refusal with nothing sent ends Failed and returns a Service holder to None", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
