@@ -94,13 +94,17 @@ ph flux-platform 1800 "${flux[@]}" wait "$state" --cluster cell --cluster hub --
 ph milo-bootstrap 1200 python3 hack/multiplane/milo.py "$state" "$prefix"
 ph flux-milo 900 "${flux[@]}" wait "$state" --cluster platform --timeout 600
 ph federation-enrollment 600 python3 hack/multiplane/roles.py "$state"
-python3 - "$state" <<'PY'
+# Redfish mode enrolls the per-Device BMC credentials and the lab BMC's TLS
+# key first: fixture discovery reports that key's digest.
+[[ $provider != redfish ]] || ph redfish-enroll 120 python3 hack/multiplane/redfish_steps.py enroll "$state"
+python3 - "$state" "$provider" <<'PY'
 import json,pathlib,sys
-s=pathlib.Path(sys.argv[1]).resolve();c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'PrivateKubeconfig':str(s/'private.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip()};(s/'acceptance.json').write_text(json.dumps(c))
+s=pathlib.Path(sys.argv[1]).resolve()
+enrollment=json.loads((s/'redfish'/'fixture-enrollment.json').read_text() if sys.argv[2]=='redfish' else pathlib.Path('config/site/base/enrollment.json').read_text())
+c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip(),'Enrollment':enrollment};(s/'acceptance.json').write_text(json.dumps(c))
 PY
 ph seed 600 "$state/fleet-multiplane-host" seed --config "$state/acceptance.json"
-ph scoped-asset 120 sh -c '"$1/fleet-multiplane-host" asset --config "$1/acceptance.json" > "$1/scoped-asset" && echo "scoped asset recorded"' sh "$state"
-[[ $provider != redfish ]] || ph redfish-enroll 120 python3 hack/multiplane/redfish_steps.py enroll "$state"
+ph coordinator 120 bash hack/multiplane/coordinator.sh start "$state"
 # Revision 2: the Flux-owned shared site services and the HandoffDispatcher
 # instance, dispatch disabled.
 ph flux-site 1200 "${flux[@]}" publish "$state" --revision 2 --site off --purpose 'shared site services and dispatcher, dispatch disabled' --cluster cell --cluster hub --cluster platform --timeout 900

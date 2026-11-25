@@ -2,6 +2,7 @@ package custody
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -33,15 +34,16 @@ var (
 // SiteResult is what a site reports for one operation. It always carries the
 // operation's fence.
 type SiteResult struct {
-	Site      string
-	Device    string
-	Operation ops.OperationReference
-	Fence     int64
+	Site      string                 `json:"site"`
+	Device    string                 `json:"device"`
+	Operation ops.OperationReference `json:"operation"`
+	Fence     int64                  `json:"fence"`
 	// Phase is Dispatched, Verifying, Succeeded, Failed or OutcomeUnknown.
-	Phase    ops.Phase
-	Reason   string
-	Message  string
-	Evidence []byte
+	Phase   ops.Phase `json:"phase"`
+	Reason  string    `json:"reason,omitempty"`
+	Message string    `json:"message,omitempty"`
+	// Evidence is the kind's typed evidence as JSON.
+	Evidence json.RawMessage `json:"evidence,omitempty"`
 }
 
 // update reads custody, applies change and writes it with the

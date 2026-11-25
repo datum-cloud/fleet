@@ -33,6 +33,9 @@ TARGET_B = {'system': 'System-2', 'uuid': '7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b'
 DISK_BYTES = 2 << 30
 LIBVIRT = 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'
 SECRET = 'fleet-site-bmc-credentials'
+TLS_SECRET = 'fleet-site-bmc-tls'
+CREDENTIALS = 'fleet-site-credentials'
+BMC_IP = '10.96.0.81'
 
 
 def now():
@@ -115,17 +118,41 @@ def enroll(s):
     (d / 'bmc-username').write_text('fleet-lab-operator\n')
     # The .token suffix enrolls the value in the harness secret scan.
     (d / 'bmc-password.token').write_text(secrets.token_hex(32) + '\n')
+    # The lab BMC's TLS key is generated per run and never committed. Workers
+    # connect only to this key: its digest is each Device's approved pin.
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', str(d / 'bmc-tls.key'),
+                    '-out', str(d / 'bmc-tls.crt'), '-days', '2', '-subj', '/CN=fleet-lab-bmc', '-addext', 'subjectAltName=IP:%s' % BMC_IP],
+                   check=True, capture_output=True)
+    spki = subprocess.run(['openssl', 'x509', '-in', str(d / 'bmc-tls.crt'), '-pubkey', '-noout'], check=True, capture_output=True).stdout
+    der = subprocess.run(['openssl', 'pkey', '-pubin', '-outform', 'der'], input=spki, check=True, capture_output=True).stdout
+    pin = hashlib.sha256(der).hexdigest()
+    (d / 'bmc-pin').write_text(pin + '\n')
     for p in d.iterdir():
         p.chmod(0o600)
     kubectl(s, '-n', SITE, 'create', 'secret', 'generic', SECRET, '--from-file=username=%s' % (d / 'bmc-username'), '--from-file=password=%s' % (d / 'bmc-password.token'))
+    kubectl(s, '-n', SITE, 'create', 'secret', 'tls', TLS_SECRET, '--cert=%s' % (d / 'bmc-tls.crt'), '--key=%s' % (d / 'bmc-tls.key'))
+    # One credential Secret per Device, by the BMC discovery contract.
+    if kubectl(s, 'get', 'namespace', CREDENTIALS, check=False).returncode != 0:
+        kubectl(s, 'create', 'namespace', CREDENTIALS)
+    enrollment = json.loads(next(l for l in pathlib.Path('config/site/redfish/graph/kustomization.yaml').read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1])
+    fixture = {}
+    for target in enrollment['targets']:
+        namespace, name = target['device'].split('/')
+        secret = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'bmc-' + name, 'namespace': CREDENTIALS, 'labels': {'fleet.datumapis.com/bmc-credential': 'true'},
+                  'annotations': {'fleet.datumapis.com/device-project': 'provider', 'fleet.datumapis.com/device-namespace': namespace, 'fleet.datumapis.com/device-name': name}},
+                  'stringData': {'username': (d / 'bmc-username').read_text().strip(), 'password': (d / 'bmc-password.token').read_text().strip(), 'tlsPublicKeySHA256': pin}}
+        kubectl(s, 'apply', '-f', '-', input=json.dumps(secret))
+        fixture[target['device']] = {'bmcEndpoint': target['endpoint'], 'systemUUID': target['systemUUID'], 'bootMACAddress': target['mac'], 'bmcPublicKeySHA256': pin, 'disks': ['disk-0']}
+    write(d / 'fixture-enrollment.json', fixture)
     write(s / 'evidence' / 'redfish-enrollment.json', {
-        'observedAt': now(), 'credentialSecret': SITE + '/' + SECRET, 'username': 'fleet-lab-operator',
+        'observedAt': now(), 'credentialSecrets': [CREDENTIALS + '/bmc-' + t['device'].split('/')[1] for t in enrollment['targets']], 'username': 'fleet-lab-operator',
         'password': 'synthetic random 256-bit value generated per run; never recorded or committed',
-        'transport': 'plain HTTP Basic on the cell network to the fixed BMC Service 10.96.0.81:8000 (lab seam)',
-        'readers': ['lab BMC adapter (server side)', 'per-operation Redfish worker Pods (client side)'],
-        'enrollment': json.loads(next(l for l in pathlib.Path('config/site/redfish/graph/kustomization.yaml').read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1]),
+        'transport': 'Redfish over TLS to the fixed BMC Service %s:8443, pinned to a key generated per run (lab seam: one key for both lab targets)' % BMC_IP,
+        'pin': pin,
+        'readers': ['lab BMC adapter (server side)', 'per-operation Redfish worker Pods (client side, own Device only)'],
+        'enrollment': enrollment,
         'labTargets': json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text())})
-    print('redfish-enroll: synthetic BMC credential Secret created in the cell; not part of any source revision')
+    print('redfish-enroll: synthetic per-Device BMC credentials and the lab BMC TLS key created in the cell; not part of any source revision')
 
 
 def baseline(s):
@@ -150,7 +177,7 @@ def port_forward(s):
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
     sock.close()
-    p = subprocess.Popen(['kubectl', '--kubeconfig', str(s / 'cell-admin.yaml'), '-n', SITE, 'port-forward', 'svc/fleet-site-bmc', '%d:8000' % port],
+    p = subprocess.Popen(['kubectl', '--kubeconfig', str(s / 'cell-admin.yaml'), '-n', SITE, 'port-forward', 'svc/fleet-site-bmc', '%d:8443' % port],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(60):
         try:
@@ -174,8 +201,8 @@ def discovery_faults(s):
     cases = []
     try:
         def probe(name, creds, system, uuid, want):
-            r = subprocess.run([str(s / 'fleet-multiplane-host'), 'redfish-probe', '--endpoint', 'http://127.0.0.1:%d' % port, '--credentials', str(creds),
-                                '--system', system, '--uuid', uuid], text=True, capture_output=True, timeout=120)
+            r = subprocess.run([str(s / 'fleet-multiplane-host'), 'redfish-probe', '--endpoint', 'https://127.0.0.1:%d' % port, '--credentials', str(creds),
+                                '--system', system, '--uuid', uuid, '--pin', (d / 'bmc-pin').read_text().strip()], text=True, capture_output=True, timeout=120)
             line = (r.stdout.strip().splitlines() or [''])[-1]
             cases.append({'case': name, 'system': system, 'exitCode': r.returncode, 'outcome': line})
             if r.returncode != want:

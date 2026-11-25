@@ -3,20 +3,20 @@
 
 Milo v0.32.5 ignores admission policies stored in a project, so the custody
 contract rests on the CRD schema and CEL rules the project API server itself
-evaluates. This phase installs only the device-operations CRDs into the
-provider project, tries each forbidden change against synthetic objects, and
-requires the API server to refuse it. It then removes the objects and the
-CRDs, so no later phase sees them. It sends nothing to any BMC.
+evaluates. The provider project serves the device-operations CRDs for the
+whole run. This phase tries each forbidden change against synthetic objects
+in the fleet-rules namespace, which the coordinator never reads, requires
+the API server to refuse it, and removes the objects. It sends nothing to
+any BMC.
 """
 import json, pathlib, subprocess, sys
 
 state = pathlib.Path(sys.argv[1]).resolve()
 config = state / 'provider' / 'bootstrap-project.json'
-crds = 'config/components/device-operations/crds/fleet.datumapis.com.yaml'
-# The provider namespace the fixture bootstrap creates. The phase creates no
-# namespace, because a project API may not run a namespace controller to
-# finish deleting one.
-namespace = 'fleet-provider'
+# The namespace the fixture bootstrap creates for this check. The phase
+# creates no namespace, because a project API may not run a namespace
+# controller to finish deleting one.
+namespace = 'fleet-rules'
 objects = (('devicerecovery', 'rules-recovery'), ('devicecustody', 'server-example-001'))
 names = ('devicecustodies', 'deviceinstallations', 'devicewipes', 'devicerecoveries')
 
@@ -51,7 +51,6 @@ def status(kind, name, phase):
 checks = []
 removed = False
 try:
-    kubectl('apply', '-f', crds)
     for name in names:
         kubectl('wait', '--for=condition=Established', 'crd/%s.fleet.datumapis.com' % name, '--timeout=90s')
     envelope = {'creator': {'username': 'staff-example', 'uid': 'staff-example-uid'},
@@ -93,15 +92,16 @@ try:
     mismatch['metadata']['namespace'] = namespace
     refused('custody has the same name as its Device', 'create', '-f', '-', stdin=json.dumps(mismatch))
 finally:
-    cleared = all(kubectl('-n', namespace, 'delete', kind, name, '--ignore-not-found', '--wait=true', '--timeout=120s', check=False).returncode == 0
+    # The rule-check custody carries no finalizer: nothing reconciles this
+    # namespace, so it is deleted at once.
+    removed = all(kubectl('-n', namespace, 'delete', kind, name, '--ignore-not-found', '--wait=true', '--timeout=120s', check=False).returncode == 0
                   for kind, name in objects)
-    removed = cleared and kubectl('delete', '-f', crds, '--ignore-not-found', '--wait=true', '--timeout=120s', check=False).returncode == 0
 
 if not removed:
-    raise SystemExit('custody-crd-rules: the rule-check objects or CRDs could not be removed')
+    raise SystemExit('custody-crd-rules: the rule-check objects could not be removed')
 evidence = state / 'evidence'
 evidence.mkdir(mode=0o700, exist_ok=True)
 path = evidence / 'custody-crd-rules.json'
-path.write_text(json.dumps({'checks': checks, 'crdsRemoved': removed}, indent=1) + '\n')
+path.write_text(json.dumps({'checks': checks, 'objectsRemoved': removed}, indent=1) + '\n')
 path.chmod(0o600)
-print('custody-crd-rules: the provider project API refused every forbidden custody and operation write (%d rules); CRDs removed' % len(checks), flush=True)
+print('custody-crd-rules: the provider project API refused every forbidden custody and operation write (%d rules); objects removed' % len(checks), flush=True)

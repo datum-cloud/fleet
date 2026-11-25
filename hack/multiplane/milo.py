@@ -8,8 +8,12 @@ source revision must never hold:
 - credential enrollment: per-API static tokens and a self-signed serving key,
   written as the milo-apiserver-private Secret (local credential seam);
 - tenant fixture bootstrap through each API: the Project, static-token RBAC
-  grants and the metal CRDs inside the project. Production uses Milo's own
-  project provisioning, service catalog and IAM; this is not that machinery.
+  grants and the metal CRDs inside the project, and in the provider project
+  the inventory and Device custody CRDs. The provider project's Fleet
+  components each get their own token: the Metal provider (management), the
+  custody coordinator, the release controller and fixture discovery.
+  Production uses Milo's own project provisioning, service catalog and IAM;
+  this is not that machinery.
 """
 import argparse, base64, json, os, pathlib, secrets, subprocess, time
 p=argparse.ArgumentParser();p.add_argument('state');p.add_argument('prefix');a=p.parse_args()
@@ -34,7 +38,8 @@ for role in roles:
  d=root/role;ns='milo-'+role
  if not d.exists():
   d.mkdir(mode=0o700)
-  tokens={r:secrets.token_hex(32) for r in ('bootstrap','management','customer')}
+  who=('bootstrap','management','customer')+(('coordinator','release','discovery') if role=='provider' else ())
+  tokens={r:secrets.token_hex(32) for r in who}
   (d/'tokens.csv').write_text('\n'.join(f'{v},{k},{k},'+('system:masters' if k=='bootstrap' else 'fleet-local') for k,v in tokens.items())+'\n')
   run('openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(d/'tls.key'),'-out',str(d/'tls.crt'),'-days','2','-subj','/CN=fleet-local','-addext',f'subjectAltName=DNS:milo-apiserver.{ns}.svc,IP:127.0.0.1',stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   for f in ('tokens.csv','tls.key','tls.crt'):(d/f).chmod(0o600)
@@ -73,6 +78,28 @@ for role in roles:
  ns='fleet-provider' if role=='provider' else 'default'
  apply(config,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}})
  rules=[{'apiGroups':[''],'resources':['namespaces'],'verbs':['get']},{'apiGroups':['metal.datumapis.com'],'resources':['machineclasses','machineprofiles','machinecapacities','machines','installations'],'verbs':['get','list','watch']}]
+ if role=='provider':
+  for crds in ('config/components/inventory/crds/fleet.datumapis.com.yaml','config/components/device-operations/crds/fleet.datumapis.com.yaml'):
+   kubectl(config,'apply','-f',crds,stdout=subprocess.DEVNULL)
+  kubectl(config,'wait','--for=condition=Established','crd','--all','--timeout=90s',stdout=subprocess.DEVNULL)
+  # The CRD rule check writes its synthetic objects here, away from the
+  # coordinator's namespace. A project API runs no namespace controller, so
+  # the namespace is never deleted.
+  apply(config,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':'fleet-rules'}})
+  # The Metal provider records allocations and creates installations; it
+  # reads custody and Devices only to skip taken capacity.
+  rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},
+          {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
+  components={
+   'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},
+                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries'],'verbs':['get','list','watch','delete']},
+                  {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status'],'verbs':['get','update']},
+                  {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}],
+   'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}],
+   'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}]}
+  for who,component in components.items():
+   apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRole','metadata':{'name':'fleet-'+who},'rules':component})
+   apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRoleBinding','metadata':{'name':'fleet-'+who},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':'fleet-'+who},'subjects':[{'kind':'User','name':who}]})
  if role!='provider':rules += [{'apiGroups':['metal.datumapis.com'],'resources':['machines'],'verbs':['update']},{'apiGroups':['metal.datumapis.com'],'resources':['machines/status','installations/status'],'verbs':['update','patch']}]
  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRole','metadata':{'name':'fleet-management'},'rules':rules})
  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRoleBinding','metadata':{'name':'fleet-management'},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':'fleet-management'},'subjects':[{'kind':'User','name':'management'}]})
