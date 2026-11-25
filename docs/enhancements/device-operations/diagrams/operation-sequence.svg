@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" aria-labelledby="title description">
+<title id="title">One Device operation from request to outcome</title><desc id="description">A requester creates an operation, and the admission webhook records its creator. The operation waits in Pending until the Fleet coordinator checks the holder, creator, and authority, then claims the custody slot with one conditional update that raises the fence. A conflict means another writer changed custody first. The coordinator delivers the operation and its sealed inputs to the site. The site raises its stored fence, stops older workers, and refuses any step below its fence. It returns a result with the operation's fence. The coordinator records the result on custody, releasing the slot or setting a recovery hold, and copies it to operation status.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="660" fill="white"/>
+<rect x="15" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="120.0" y="53.0" class="heading" text-anchor="middle">Requester</text>
+<path d="M 120 74 L 120 640" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="255" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="360.0" y="53.0" class="heading" text-anchor="middle">Fleet coordinator</text>
+<path d="M 360 74 L 360 640" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="495" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="600" y="42" class="heading" text-anchor="middle">DeviceCustody</text>
+<text x="600" y="64" class="detail" text-anchor="middle">One per Device</text>
+<path d="M 600 74 L 600 640" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="735" y="20" width="210" height="54" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="840.0" y="53.0" class="heading" text-anchor="middle">Site</text>
+<path d="M 840 74 L 840 640" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="240.0" y="110" class="label" text-anchor="middle">Create; webhook</text>
+<text x="240.0" y="133" class="label" text-anchor="middle">records creator</text>
+<path d="M 120 145 L 360 145" class="line"/>
+<text x="240.0" y="180" class="detail" text-anchor="middle">Pending while busy</text>
+<text x="480.0" y="225" class="label" text-anchor="middle">Check holder and creator;</text>
+<text x="480.0" y="248" class="label" text-anchor="middle">claim slot, raise fence</text>
+<path d="M 360 260 L 600 260" class="line"/>
+<text x="480.0" y="303" class="label" text-anchor="middle">Committed, or conflict</text>
+<path d="M 600 315 L 360 315" class="line" stroke-dasharray="5 4"/>
+<text x="600.0" y="373" class="label" text-anchor="middle">Deliver operation and sealed inputs</text>
+<path d="M 360 385 L 840 385" class="line"/>
+<text x="600.0" y="435" class="label" text-anchor="middle">Raise site fence, stop older workers, act</text>
+<text x="600.0" y="458" class="label" text-anchor="middle">Result with the operation's fence</text>
+<path d="M 840 470 L 360 470" class="line" stroke-dasharray="5 4"/>
+<text x="480.0" y="510" class="label" text-anchor="middle">Record result;</text>
+<text x="480.0" y="533" class="label" text-anchor="middle">release slot, or hold</text>
+<path d="M 360 545 L 600 545" class="line"/>
+<text x="240.0" y="590" class="label" text-anchor="middle">Status copied</text>
+<text x="240.0" y="613" class="label" text-anchor="middle">from custody</text>
+<path d="M 360 625 L 120 625" class="line" stroke-dasharray="5 4"/>
+</svg>
