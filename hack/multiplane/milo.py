@@ -11,7 +11,8 @@ source revision must never hold:
   grants and the metal CRDs inside the project, and in the provider project
   the inventory and Device custody CRDs. The provider project's Fleet
   components each get their own token: the Metal provider (management), the
-  custody coordinator, the release controller and fixture discovery.
+  custody coordinator, the release controller and fixture discovery. A staff
+  token creates recoveries.
   Production uses Milo's own project provisioning, service catalog and IAM;
   this is not that machinery.
 """
@@ -38,7 +39,7 @@ for role in roles:
  d=root/role;ns='milo-'+role
  if not d.exists():
   d.mkdir(mode=0o700)
-  who=('bootstrap','management','customer')+(('coordinator','release','discovery') if role=='provider' else ())
+  who=('bootstrap','management','customer')+(('coordinator','release','discovery','staff') if role=='provider' else ())
   tokens={r:secrets.token_hex(32) for r in who}
   (d/'tokens.csv').write_text('\n'.join(f'{v},{k},{k},'+('system:masters' if k=='bootstrap' else 'fleet-local') for k,v in tokens.items())+'\n')
   run('openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(d/'tls.key'),'-out',str(d/'tls.crt'),'-days','2','-subj','/CN=fleet-local','-addext',f'subjectAltName=DNS:milo-apiserver.{ns}.svc,IP:127.0.0.1',stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -96,7 +97,10 @@ for role in roles:
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status'],'verbs':['get','update']},
                   {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}],
    'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}],
-   'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}]}
+   'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}],
+   # Staff create recoveries and read inventory and custody, nothing else.
+   # The coordinator treats every unconfigured creator as staff.
+   'staff':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicerecoveries'],'verbs':['get','list','watch','create']}]}
   for who,component in components.items():
    apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRole','metadata':{'name':'fleet-'+who},'rules':component})
    apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRoleBinding','metadata':{'name':'fleet-'+who},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':'fleet-'+who},'subjects':[{'kind':'User','name':who}]})
