@@ -61,6 +61,11 @@ live in the provider project. `config/inventory` renders the CRDs alone for a
 legacy management-cluster install and will be removed. See
 [Planning and registering physical devices](../docs/operations/physical-inventory.md).
 
+`config/components/device-operations` registers `DeviceCustody`, the Device
+operation kinds, their ProtectedResources, the coordinator, requester, viewer
+and recovery operator roles, and the creator webhook. It is implemented and
+inert: no root includes it yet. See [device custody](../docs/development/device-custody.md).
+
 `config/base/bmc-discovery` runs read-only BMC discovery for one Milo project
 in a cluster that can reach the BMC network: one replica, no leader election,
 unprivileged. It is in no root here; the deploying repository applies it with

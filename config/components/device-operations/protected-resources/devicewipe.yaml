@@ -1,0 +1,20 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fleet.datumapis.com-devicewipe
+spec:
+  serviceRef:
+    name: fleet.datumapis.com
+  kind: DeviceWipe
+  plural: devicewipes
+  singular: devicewipe
+  # Status has one writer, the coordinator. With subresource authorization
+  # enabled, status writes use devicewipes/status.update and
+  # devicewipes/status.patch instead of updateStatus.
+  permissions: [list, get, watch, create, update, patch, delete, updateStatus]
+  subresources:
+    - name: status
+      permissions: [update, patch]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project

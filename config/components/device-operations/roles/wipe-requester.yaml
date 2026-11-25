@@ -1,0 +1,17 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-wipe-requester
+  annotations:
+    kubernetes.io/display-name: Fleet Device Wipe Requester
+    kubernetes.io/description: The release controller. Creates DeviceWipes during release and reads custody.
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fleet.datumapis.com/devicewipes.create
+    - fleet.datumapis.com/devicewipes.get
+    - fleet.datumapis.com/devicewipes.list
+    - fleet.datumapis.com/devicewipes.watch
+    - fleet.datumapis.com/devicecustodies.get
+    - fleet.datumapis.com/devicecustodies.list
+    - fleet.datumapis.com/devicecustodies.watch

@@ -43,6 +43,18 @@ mandatory ongoing guest agent. Two consumer projects share provider inventory
 without double allocation. Lost responses, stale executors, access revocation,
 and incomplete cleaning cannot cause duplicate effects or premature reuse.
 
+### Device custody and operations
+
+The [device custody and operations work](device-custody.md) replaces
+per-allocation fencing with one custody record per Device, ahead of real
+hardware qualification. Increment A, the inert control-plane foundation, is
+implemented. Increments B (site execution), C (cutover) and D (end-to-end
+failure scenarios) are proposed. An allocation's private facts will live on
+its MachineAllocation, which C implements after B.
+
+Acceptance: the #174 acceptance tests pass, in envtest and in fresh local
+end-to-end runs, with "nothing sent" proven by the lab BMC audit.
+
 ## 4. Adopt rented capacity and managed clusters
 
 Normalize servers.com/NetActuate facts, retain existing identities and

@@ -50,6 +50,14 @@ physical BMC or server, and the production manager does not use it.
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
+[Device custody and operations](device-custody.md) Increment A is implemented
+and inert: the `DeviceCustody` and Device operation kinds, the creator webhook,
+the kind registry and admission rule table, and the coordinator that admits,
+fences, holds, recovers and rebuilds custody. Tests against a real API server
+verify it. No deployment root, manager or staging overlay includes it, and the
+Secret-backed lifecycle is unchanged. Site execution, the cutover and the
+end-to-end failure scenarios are proposed.
+
 ## API group naming
 
 The additive [shared hardware catalog](hardware-catalog.md) implements

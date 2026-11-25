@@ -1,0 +1,16 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-recovery-operator
+  annotations:
+    kubernetes.io/display-name: Fleet Device Recovery Operator
+    kubernetes.io/description: Settle, retry, retire or resolve a Device whose operation outcome is unknown or whose custody is Unverified. Reads MachineAllocations to identify the customer.
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fleet.datumapis.com-device-operations-viewer
+  includedPermissions:
+    - fleet.datumapis.com/devicerecoveries.create
+    - metal.datumapis.com/machineallocations.get
+    - metal.datumapis.com/machineallocations.list
+    - metal.datumapis.com/machineallocations.watch

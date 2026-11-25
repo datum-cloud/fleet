@@ -1,0 +1,10 @@
+# Device custody and operations (#174 at d4d17f9). Implemented and inert: no
+# deployment root includes this component yet, so nothing serves these kinds
+# or calls the webhook.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - crds
+  - protected-resources
+  - roles
+  - webhook.yaml
