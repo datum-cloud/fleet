@@ -246,10 +246,11 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 			return nil, err
 		}
 		// A failed network boot closes its admission at once, so the boot
-		// server stops serving the installer. A worker stopped from outside
-		// leaves it open for its replacement to resume.
+		// server stops serving the installer, and so does a worker stopped at
+		// its deadline, which nothing can resume. A worker stopped from
+		// outside leaves it open for its replacement to resume.
 		fail := func(err error) error {
-			if stage == "installer" && k.PXE && boot.Open && ctx.Err() == nil {
+			if stage == "installer" && k.PXE && boot.Open && (ctx.Err() == nil || site.DeadlinePassed(ctx)) {
 				boot.Open, boot.Closed = false, true
 				_ = k.save(work, boot)
 			}

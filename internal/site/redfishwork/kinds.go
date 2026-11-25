@@ -249,6 +249,15 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 	if err != nil {
 		return nil, err
 	}
+	// A worker stopped at its deadline closes its admission: nothing can
+	// resume the operation, so nothing may boot the server from it. A worker
+	// stopped from outside leaves it open for its replacement.
+	defer func() {
+		if mode != "" && site.DeadlinePassed(ctx) && !boot.Closed {
+			boot.Phase, boot.Closed = "", true
+			_ = c.saveBoot(work, boot)
+		}
+	}()
 	var evidence []ops.StepEvidence
 	for _, ph := range phases {
 		// A phase verified by an earlier worker is done; resume after it.
