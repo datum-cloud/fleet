@@ -209,13 +209,6 @@ func appendEvidence(dir, line string) error {
 	return syncDir(dir)
 }
 
-// ServeBoot serves the boot handler. The write bound matches the boot
-// window: emulated firmware takes minutes to fetch the installer.
-func (c Config) ServeBoot(store *site.Store) error {
-	server := &http.Server{Addr: ":8080", Handler: c.BootHandler(store), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: c.window(), IdleTimeout: 5 * time.Second}
-	return server.ListenAndServe()
-}
-
 // CheckClosedBoot probes a live boot server with every installation's
 // closed admission, and with unknown names, and requires each to be denied.
 // It prints no capability URL.

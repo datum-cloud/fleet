@@ -194,13 +194,6 @@ func appendEvidence(dir, name, line string) error {
 	return parent.Sync()
 }
 
-// Serve listens on :8080. The write bound covers emulated firmware fetching
-// the initrd through the site's NAT path.
-func (b BootServer) Serve(window time.Duration) error {
-	server := &http.Server{Addr: ":8080", Handler: b.Handler(), ReadHeaderTimeout: 5 * time.Second, WriteTimeout: window, IdleTimeout: 5 * time.Second}
-	return server.ListenAndServe()
-}
-
 // CheckClosedBoot probes a live boot server after every admission closed:
 // each admission's per-MAC script and capability URLs, other enrolled MACs,
 // an unsupported and an unguarded artifact, and an unknown identity must

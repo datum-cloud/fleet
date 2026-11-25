@@ -298,7 +298,7 @@ def redfish_provider():
     starts = {'targetA': order, 'targetB': (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').read_text(errors='replace').count(': starting up ')
               if (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').exists() else 0}
     # A install (network, disk), A wipe, B's held install (its network boot
-    # found no boot server), B wipe.
+    # was withheld by the lab boot hook), B wipe.
     if order != ['network', 'disk', 'network', 'network', 'network'] or starts['targetB']:
         fail('expected target A boots network, disk, network, network, network and no target B start; got %s' % starts)
     audit = [json.loads(l) for l in (ev / 'redfish-audit.jsonl').read_text().splitlines()]

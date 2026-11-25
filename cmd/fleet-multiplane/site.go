@@ -245,7 +245,7 @@ func boot(command, origin, extraMAC, syncToken string) error {
 			}
 			return server.ServeDHCP(strings.TrimSpace(string(token)))
 		}
-		return server.Serve(vmwork.DefaultBootWindow * 2)
+		return serveBoot(server.Handler(), vmwork.DefaultBootWindow*2)
 	}
 	if command == "dhcp-feed" {
 		return errors.New("the DHCP reservation feed serves only a Redfish site")
@@ -254,5 +254,6 @@ func boot(command, origin, extraMAC, syncToken string) error {
 	if err != nil {
 		return err
 	}
-	return vm.ServeBoot(store)
+	// Emulated firmware takes minutes to fetch the installer.
+	return serveBoot(vm.BootHandler(store), vmwork.DefaultBootWindow)
 }

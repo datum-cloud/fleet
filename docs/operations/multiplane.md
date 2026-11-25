@@ -327,9 +327,10 @@ The phases are then:
     `podFailurePolicy`. The site store must be unchanged, no status may appear,
     consumer B must stay Bound, and kro must prune them once deleted. In
     Redfish mode the BMC audit must gain no effect.
-14. **Deadline and Machine deletion.** `deadline-admit` stops the site's boot
-    server, with its Flux layer suspended, and restarts the coordinator with a
-    four-minute installation deadline for consumer B's installation only. The
+14. **Deadline and Machine deletion.** `deadline-admit` arms a lab-only hook
+    in the boot service, which then withholds every boot while staying Ready,
+    and restarts the coordinator with a four-minute installation deadline for
+    consumer B's installation only. kro still creates the worker, and the
     installer boot is requested but never served. `machine-delete` has the
     customer delete B's Machine mid-install. One release pass must leave
     custody holding the Device for release with the installation still active
@@ -337,8 +338,8 @@ The phases are then:
     `OutcomeUnknown` with `DeadlineExceeded`, custody to hold it at its fence,
     and its worker to have stopped. A staff `DeviceRecovery` naming the
     held operation at the wrong fence must be refused, with custody, the site
-    store and, in Redfish mode, the BMC audit unchanged. Flux then restores the
-    boot server. The release's wipe must be admitted above the held fence
+    store and, in Redfish mode, the BMC audit unchanged. The hook is then
+    cleared. The release's wipe must be admitted above the held fence
     after the worker stopped, succeed, and clear the hold. `release-status-b`
     requires the deleted Machine to be gone.
 15. **Custody rebuild.** `rebuild` stops the site observer, so the cell cannot
