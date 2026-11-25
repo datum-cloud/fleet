@@ -429,6 +429,35 @@ func (k Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
 	if refusal != nil {
 		return nil, refusal
 	}
+	// Power the guest off first, as a Redfish wipe does: an installation
+	// stopped at its deadline can leave it running. The local VM serves one
+	// guest, so every local domain is the Device's, and the fence and run
+	// lock already stopped every older worker. Sending it again is safe.
+	running := func(ctx context.Context) ([]string, error) {
+		names, err := k.virsh(ctx, "list", "--name")
+		var local []string
+		for _, name := range strings.Fields(names) {
+			if strings.HasPrefix(name, "fleet-local-") {
+				local = append(local, name)
+			}
+		}
+		return local, err
+	}
+	if err := work.Step(ctx, site.Step{
+		Name: "wipe-power-off",
+		Send: func(ctx context.Context) error {
+			names, err := running(ctx)
+			for _, name := range names {
+				if err == nil {
+					_, err = k.virsh(ctx, "destroy", name)
+				}
+			}
+			return err
+		},
+		Idempotent: true,
+	}); err != nil {
+		return nil, err
+	}
 	root := filepath.Join(k.Disks, deviceKey(work.Device))
 	remaining := func() ([]string, error) {
 		paths, err := filepath.Glob(filepath.Join(root, "*", "disk.raw"))
