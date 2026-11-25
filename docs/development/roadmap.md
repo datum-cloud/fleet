@@ -49,8 +49,8 @@ The [device custody and operations work](device-custody.md) replaces
 per-allocation fencing with one custody record per Device, ahead of real
 hardware qualification. Increment A, the inert control-plane foundation, is
 implemented. Increments B (site execution), C (cutover) and D (end-to-end
-failure scenarios) are proposed. C waits on a decision about where an
-allocation's private facts live.
+failure scenarios) are proposed. An allocation's private facts will live on
+its MachineAllocation, which C implements after B.
 
 Acceptance: the #174 acceptance tests pass, in envtest and in fresh local
 end-to-end runs, with "nothing sent" proven by the lab BMC audit.

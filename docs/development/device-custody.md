@@ -14,7 +14,7 @@ marked **implemented and verified**, **implemented and inert**, or
 | --- | --- | --- |
 | A: control-plane foundation | API types and CRDs for `DeviceCustody`, `DeviceInstallation`, `DeviceWipe` and `DeviceRecovery`; CEL rules; IAM resources and roles; the creator webhook; the kind registry and admission rule table; the coordinator's custody reconciler, admission, results, recovery, rebuild and retention; the capacity projector | **Implemented and inert.** Verified with unit tests and with tests against a real API server. No deployment root, manager, or staging overlay includes it. The existing Secret-backed lifecycle is unchanged. |
 | B: site execution | Per-Device fence store and journal, older-worker stop, deadlines, fenced results, per-Device credentials, pinned TLS, the new handoff payload | **Proposed** |
-| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the projector as the only condition writer, removal of the private Secret records | **Proposed.** Blocked on the decision about where an allocation's private facts live. |
+| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the projector as the only condition writer, removal of the private Secret records | **Proposed.** Starts after B. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
 
 ## What Increment A adds
@@ -97,10 +97,16 @@ Each decision lists the open point from the implementation brief it settles.
   retired. The snapshot carries the observed digest, and the site worker must
   check it against the operator-approved pin before sending anything
   (Increment B).
-- **Checks 5 and 6 apply only to kinds that can reach the server.** The Device
-  UID must always match. A `DeviceRecovery` sends nothing, and it must still
-  work when a BMC is unreachable, for example to retire a dead server. This is
-  listed under [Points for a person](#points-for-a-person).
+- **Only `Retire` and `Resolve` skip checks 5 and 6.** A `DeviceRecovery`
+  with `Retire` or `Resolve` skips current discovery and the shared-key check,
+  because it must work when a BMC is unreachable, for example to retire a dead
+  server. The Device UID is always checked. `Settle` still needs current
+  discovery: settling a power hold needs fresh discovery evidence of the power
+  state, as the #174 settlement table says. `Retry` needs no evidence of its
+  own, and it still passes both checks. The settling operation it authorizes
+  goes through normal admission as well. Only a
+  kind that cannot reach the server may skip these checks, and the registry
+  refuses any other.
 - **Names.** Deterministic kinds must use their rule, or they end `Failed`
   with `NameMismatch`. A `DeviceInstallation` is named from its allocation and
   a digest of the Installation UID. A `DeviceWipe` is named from its allocation
@@ -173,6 +179,18 @@ Each value is configurable.
 - The site's fence store must be durable, beside the journal on its retained
   volume, so a site refuses older fences after a restart (Increment B).
 
+### Where an allocation's private facts live (O8)
+
+Decided: the allocation's facts live on its MachineAllocation, in the provider
+project, and only Fleet writes it. This follows the [MachineAllocation
+record](../enhancements/machine-lifecycle/README.md#machineallocation-record)
+of the machine lifecycle: identity, the accepted contract, the hardware
+snapshot, authority and quota evidence, and lifecycle and release obligations.
+Immutable accepted inputs go in spec. Lifecycle goes in status. Each
+allocation is named from its Machine UID, per #174. Nothing secret goes on it,
+and staff roles may read it. Increment C implements this. It replaces the
+private `AssetRecord` and the other Secret records.
+
 ### Release gates (O17)
 
 The gates are the machine lifecycle's release obligations: `Operations`,
@@ -191,6 +209,8 @@ remains.
 - A `DeviceRecovery` does not need a second person in this increment. The
   creator is recorded and the role is narrow. This is listed under [Points for
   a person](#points-for-a-person).
+- Staff roles may read MachineAllocations, because nothing secret is on them.
+  Only the recovery operator role grants that read today.
 - Bootstrap stays refused. A `DeviceInstallation` that names a bootstrap
   reference ends `Failed` with `BootstrapUnsupported`. No role can read a
   Secret, a sealed store, or a bootstrap payload, and a test checks the role
@@ -223,20 +243,15 @@ These need a decision before the increment that depends on them.
 
 - **O1, before C: the interim source of `Prepared` and `Healthy`.** Until it
   is decided, the projector stays unwired.
-- **O8, before C: where an allocation's private facts live.** The accepted
-  requirements, hardware snapshot, network record and inputs, authority and
-  external hold, and binding have no home once the private Secrets are
-  deleted. The proposal is immutable MachineAllocation spec fields written at
-  create, with no consumer secrets. Increment C cannot start until this is
-  approved.
 - **O10: the sealed store for bootstrap payloads.** Bootstrap stays refused in
   every increment until a store is chosen.
-- **Admission checks 5 and 6 for `DeviceRecovery`.** This implementation skips
-  the discovery half of check 5, and check 6, for kinds that cannot reach the
-  server.
-- **A `DeviceRecovery` that no site confirms** ends `Failed`, not
-  `OutcomeUnknown`.
-- **A second person for `DeviceRecovery`.** Not required yet.
+- **A second person for `DeviceRecovery`.** Not required yet. A person
+  accepted this for now, and it stays open for a later decision.
+
+Already decided by a person: [where an allocation's private facts
+live](#where-an-allocations-private-facts-live-o8), that [only `Retire` and
+`Resolve` skip checks 5 and 6](#admission), and that a `DeviceRecovery` that
+no site confirms ends `Failed`, not `OutcomeUnknown`.
 
 ## Adding an operation kind
 
