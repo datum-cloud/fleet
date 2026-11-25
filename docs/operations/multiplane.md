@@ -337,7 +337,7 @@ The phases are then:
     and no wipe. `deadline-hold` requires the installation to end
     `OutcomeUnknown` with `DeadlineExceeded`, custody to hold it at its fence,
     and its worker to have stopped. A staff `DeviceRecovery` naming the
-    held operation at the wrong fence must be refused, with custody, the site
+    held operation at the wrong fence must be refused for `HoldMismatch`, with custody, the site
     store and, in Redfish mode, the BMC audit unchanged. The hook is then
     cleared. The release's wipe must be admitted above the held fence
     after the worker stopped, succeed, and clear the hold. `release-status-b`
