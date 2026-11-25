@@ -80,11 +80,18 @@ func ignoreNoChange(err error) error {
 // a rejected fence; ErrStaleFence is returned either way, so the site
 // deletes its copy.
 func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error {
-	// The evidence hook validates against the operation it is for.
-	operation, _, err := c.get(ctx, result.Operation)
-	if err != nil {
-		return err
+	// The evidence hook validates against the operation it is for. It is
+	// read only when there is evidence to check; a result for an
+	// unregistered kind is rejected as stale below.
+	var operation ops.Operation
+	if kind := c.Registry.Kind(result.Operation.Kind); kind != nil && len(result.Evidence) != 0 {
+		found, _, err := c.get(ctx, result.Operation)
+		if err != nil {
+			return err
+		}
+		operation = found
 	}
+	var err error
 	stale := false
 	err = c.update(ctx, result.Device, func(custody *ops.DeviceCustody) error {
 		stale = false

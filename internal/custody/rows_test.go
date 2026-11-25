@@ -1,6 +1,7 @@
 package custody
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -148,5 +149,20 @@ func TestRowsAndReplacement(t *testing.T) {
 		}
 		e.settle(proven.Name)
 		e.requirePhase(operation, ops.PhaseSucceeded, "")
+	})
+
+	t.Run("a result for an unregistered kind is rejected as stale", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		e.staffOp(device, "ok")
+		e.settle(device.Name)
+		active := e.custody(device.Name).Spec.ActiveOperation
+		err := e.coord.AcceptResult(e.ctx, SiteResult{Site: testSite, Device: device.Name, Operation: ops.OperationReference{Kind: "DeviceInvented", Name: active.Name, UID: active.UID}, Fence: active.Fence, Phase: ops.PhaseSucceeded, Evidence: []byte(`{"after":"On"}`)})
+		if !errors.Is(err, ErrStaleFence) {
+			t.Fatalf("result for an unregistered kind: %v", err)
+		}
+		if rejected := e.custody(device.Name).Spec.RejectedResults; rejected == nil || rejected.Count != 1 {
+			t.Fatalf("rejected = %+v", rejected)
+		}
 	})
 }
