@@ -74,6 +74,7 @@ func main() {
 	results := site.NewResults(store)
 	runner := &site.Runner{Site: siteName, Store: store, Results: results, Access: fixture.Access{Enrollment: enrollment},
 		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}}
+	runner.Kinds["DevicePowerOperation"] = simwork.Power{}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx, Logger: logger}
 	server := newServer(address, siteapi.Handler(dispatcher, store, results, func() (string, error) { return readToken(tokenPath) }), logger)
 	if discover {
@@ -83,7 +84,7 @@ func main() {
 		}
 		go func() {
 			for {
-				if err := fixture.Discover(ctx, api, enrollment, time.Now()); err != nil && ctx.Err() == nil {
+				if err := fixture.DiscoverPower(ctx, api, enrollment, time.Now(), simwork.Observe(store)); err != nil && ctx.Err() == nil {
 					logger.Info("fixture discovery incomplete", "error", err.Error())
 				}
 				select {
