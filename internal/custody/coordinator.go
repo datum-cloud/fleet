@@ -855,6 +855,16 @@ func isRetry(kind *Kind, hold *ops.RecoveryHold, operation ops.Operation) bool {
 // generation, completed an inventory read within DiscoveryMaxAge, and
 // recorded the BMC key at the current endpoint.
 func (c *Coordinator) identityCurrent(device *inventory.Device, now time.Time) *Refusal {
+	return identityRefusal(device, now, c.config().DiscoveryMaxAge)
+}
+
+// DiscoveryCurrent reports whether discovery evidence for the Device is
+// current, by the same rule admission uses.
+func DiscoveryCurrent(device *inventory.Device, now time.Time, maxAge time.Duration) bool {
+	return identityRefusal(device, now, maxAge) == nil
+}
+
+func identityRefusal(device *inventory.Device, now time.Time, maxAge time.Duration) *Refusal {
 	if device.Spec.BMC == nil || device.Spec.Identity.SystemUUID == "" {
 		return refuse(ReasonDeviceIdentityMismatch, "the Device records no BMC endpoint or system UUID")
 	}
@@ -863,8 +873,8 @@ func (c *Coordinator) identityCurrent(device *inventory.Device, now time.Time) *
 		return refuse(ReasonDeviceIdentityMismatch, "discovery has not matched the Device identity at its current generation")
 	}
 	discovery := device.Status.Discovery
-	if discovery == nil || discovery.Inventory == nil || now.Sub(discovery.Inventory.ObservedAt.Time) > c.config().DiscoveryMaxAge {
-		return refuse(ReasonDeviceIdentityMismatch, "discovery is older than %s", c.config().DiscoveryMaxAge)
+	if discovery == nil || discovery.Inventory == nil || now.Sub(discovery.Inventory.ObservedAt.Time) > maxAge {
+		return refuse(ReasonDeviceIdentityMismatch, "discovery is older than %s", maxAge)
 	}
 	if discovery.TLS == nil || discovery.TLS.PublicKeySHA256 == "" || discovery.TLS.Endpoint != device.Spec.BMC.Endpoint {
 		return refuse(ReasonDeviceIdentityMismatch, "discovery has not recorded the BMC key at the current endpoint")

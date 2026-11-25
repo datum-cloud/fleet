@@ -25,6 +25,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/capacity"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/delivery"
 	"go.datum.net/fleet/internal/site/siteapi"
@@ -41,8 +42,12 @@ const (
 
 func main() {
 	options := standalone.DefaultOptions()
-	var phase, coordinatorToken, releaseToken, siteURL, siteToken, siteName, devices string
-	flag.StringVar(&phase, "phase", "", "required: allocate, install, reinstall, release, or coordinate")
+	var phase, coordinatorToken, releaseToken, siteURL, siteToken, siteName, devices, projectorToken, authorToken, approverToken, operatorToken string
+	flag.StringVar(&phase, "phase", "", "required: commission, allocate, install, reinstall, release, or coordinate")
+	flag.StringVar(&projectorToken, "projector-token-file", "", "the capacity projector's ServiceAccount token (coordinate)")
+	flag.StringVar(&authorToken, "plan-author-token-file", "", "the plan author's ServiceAccount token (commission)")
+	flag.StringVar(&approverToken, "plan-approver-token-file", "", "the plan approver's ServiceAccount token (commission)")
+	flag.StringVar(&operatorToken, "operator-token-file", "", "the commissioning operator's ServiceAccount token (commission)")
 	flag.StringVar(&coordinatorToken, "coordinator-token-file", "", "the custody coordinator's ServiceAccount token (phases)")
 	flag.StringVar(&releaseToken, "release-token-file", "", "the release controller's ServiceAccount token (phases)")
 	flag.StringVar(&siteURL, "site-url", "http://fleet-simulator:8080", "the simulator site's API (coordinate)")
@@ -59,7 +64,7 @@ func main() {
 	registry, err := custody.DefaultRegistry()
 	must(err)
 	if phase == "coordinate" {
-		must(coordinate(ctx, config, registry, options.ProviderNamespace, siteName, siteURL, siteToken, strings.Split(devices, ",")))
+		must(coordinate(ctx, config, registry, options.ProviderNamespace, siteName, siteURL, siteToken, projectorToken, strings.Split(devices, ",")))
 		return
 	}
 	if coordinatorToken == "" || releaseToken == "" {
@@ -76,24 +81,35 @@ func main() {
 	must(err)
 	releaseCreator, err := allocation.Creator(ctx, releaseConfig)
 	must(err)
+	offers := &capacity.Projector{Reader: provider, Namespace: options.ProviderNamespace, Cleaning: fixtureResolver}
 	allocator := &allocation.Allocator{
 		Provider: provider, ProviderCreator: providerCreator,
 		Releaser: releaseClient, ReleaseCreator: releaseCreator,
 		Custody:   &custody.Coordinator{Client: coordinatorClient, Registry: registry, Config: custody.Config{Namespace: options.ProviderNamespace, Principals: principals()}},
 		Namespace: options.ProviderNamespace,
 		Cleaning:  fixtureCleaning,
+		Capacity:  offers,
 		// The fixture Device's boot NIC and the simulator's one enrolled disk.
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
-	must(standalone.Runner{Client: provider, Allocator: allocator, Options: options}.Run(ctx, phase))
+	runner := standalone.Runner{Client: provider, Allocator: allocator, Options: options}
+	if phase == standalone.PhaseCommission {
+		runner.Staff, err = staff(ctx, config, authorToken, approverToken, operatorToken)
+		must(err)
+	}
+	must(runner.Run(ctx, phase))
 	fmt.Printf("standalone synthetic smoke phase %s completed\n", phase)
 }
 
 // coordinate is the coordinator process: the custody loop with the simulator
 // as the only site.
-func coordinate(ctx context.Context, config *rest.Config, registry *custody.Registry, namespace, siteName, siteURL, tokenFile string, devices []string) error {
-	if tokenFile == "" {
-		return errors.New("coordinate needs the site token file")
+func coordinate(ctx context.Context, config *rest.Config, registry *custody.Registry, namespace, siteName, siteURL, tokenFile, projectorToken string, devices []string) error {
+	if tokenFile == "" || projectorToken == "" {
+		return errors.New("coordinate needs the site and capacity projector token files")
+	}
+	projectorClient, err := newClient(withToken(config, projectorToken))
+	if err != nil {
+		return err
 	}
 	api, err := newClient(config)
 	if err != nil {
@@ -111,10 +127,46 @@ func coordinate(ctx context.Context, config *rest.Config, registry *custody.Regi
 	}
 	coordinator := &custody.Coordinator{Client: api, Registry: registry, Sites: sites, Config: custody.Config{Namespace: namespace, Principals: principals()}}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	loop := &delivery.Loop{Client: api, Coordinator: coordinator, Namespace: namespace, Courier: &delivery.Courier{Client: api, Registry: registry, Coordinator: coordinator, Sites: sites, Namespace: namespace},
+	projector := &capacity.Projector{Reader: projectorClient, Writer: projectorClient, Namespace: namespace, Cleaning: fixtureResolver}
+	loop := &delivery.Loop{Client: api, Coordinator: coordinator, Namespace: namespace, Capacity: projector, Courier: &delivery.Courier{Client: api, Registry: registry, Coordinator: coordinator, Sites: sites, Namespace: namespace},
 		OnError: func(err error) { logger.Info("coordinator pass incomplete", "error", err.Error()) }}
 	logger.Info("custody coordinator running", "namespace", namespace, "site", siteName)
 	return loop.Run(ctx)
+}
+
+// staff returns the commissioning phase's three people, each with their own
+// token.
+func staff(ctx context.Context, config *rest.Config, author, approver, operator string) (*standalone.Staff, error) {
+	if author == "" || approver == "" || operator == "" {
+		return nil, errors.New("commission needs the plan author, approver and operator token files")
+	}
+	out := &standalone.Staff{}
+	for _, person := range []struct {
+		token   string
+		client  *client.Client
+		creator *ops.Creator
+	}{{author, &out.Author, &out.AuthorCreator}, {approver, &out.Approver, &out.ApproverCreator}, {operator, &out.Operator, &out.OperatorCreator}} {
+		personConfig := withToken(config, person.token)
+		api, err := newClient(personConfig)
+		if err != nil {
+			return nil, err
+		}
+		creator, err := allocation.Creator(ctx, personConfig)
+		if err != nil {
+			return nil, err
+		}
+		*person.client, *person.creator = api, creator
+	}
+	return out, nil
+}
+
+// fixtureResolver is the projector's view of the fixture cleaning policy.
+func fixtureResolver(_ context.Context, name string) (string, error) {
+	digest, err := fixtureCleaning(name)
+	if err != nil {
+		return "", capacity.ErrUnresolved
+	}
+	return digest, nil
 }
 
 func principals() custody.Principals {

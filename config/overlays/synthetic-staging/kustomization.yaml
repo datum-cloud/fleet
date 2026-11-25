@@ -41,6 +41,9 @@ patches:
         value: --synthetic-release-token-file=/var/run/fleet/release/token
       - op: add
         path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-projector-token-file=/var/run/fleet/projector/token
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
         value: --synthetic-site-enrollment-file=/etc/fleet/enrollment/enrollment.json
       - op: add
         path: /spec/template/spec/containers/0/env
@@ -95,6 +98,12 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/volumeMounts/-
         value:
+          name: capacity-projector-token
+          mountPath: /var/run/fleet/projector
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
           name: synthetic-site-enrollment
           mountPath: /etc/fleet/enrollment
           readOnly: true
@@ -114,6 +123,16 @@ patches:
           name: release-controller-token
           secret:
             secretName: fleet-release-controller-auth
+            defaultMode: 0440
+            items:
+              - key: token
+                path: token
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: capacity-projector-token
+          secret:
+            secretName: fleet-capacity-projector-auth
             defaultMode: 0440
             items:
               - key: token

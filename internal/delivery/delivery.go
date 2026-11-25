@@ -182,7 +182,8 @@ func (c *Courier) Collect(ctx context.Context) error {
 }
 
 // Loop is the coordinator process: it reconciles every Device's custody,
-// delivers active operations, collects results and sweeps retention.
+// delivers active operations, collects results, projects capacity status and
+// sweeps retention.
 type Loop struct {
 	Client      client.Reader
 	Coordinator *custody.Coordinator
@@ -192,6 +193,11 @@ type Loop struct {
 	Interval time.Duration
 	// OnError reports a pass's errors. The loop keeps running.
 	OnError func(error)
+	// Capacity, when set, projects every MachineCapacity's status after the
+	// Devices settle, with the capacity projector's own identity.
+	Capacity interface {
+		ProjectAll(ctx context.Context) error
+	}
 	// lastSweep is when retention last ran.
 	lastSweep time.Time
 }
@@ -233,6 +239,11 @@ func (l *Loop) Pass(ctx context.Context) error {
 	}
 	if err := l.Courier.Collect(ctx); err != nil {
 		failed = errors.Join(failed, err)
+	}
+	if l.Capacity != nil {
+		if err := l.Capacity.ProjectAll(ctx); err != nil {
+			failed = errors.Join(failed, fmt.Errorf("capacity: %w", err))
+		}
 	}
 	if time.Since(l.lastSweep) > time.Hour {
 		if _, err := l.Coordinator.SweepRetention(ctx); err != nil {

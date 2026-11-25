@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -89,6 +88,14 @@ type Quota interface {
 // to the digest of the policy record pinned at allocation.
 type CleaningPolicies func(name string) (string, error)
 
+// Offers evaluates, from live inputs, whether a capacity may be offered and
+// the hardware its latest passed commissioning inspected. The capacity
+// projector implements it. The allocator never reads capacity conditions, so
+// editing status cannot make a server allocatable.
+type Offers interface {
+	Offer(ctx context.Context, capacity *fleetv1.MachineCapacity) (bool, fleetv1.Hardware, error)
+}
+
 // Request is one Machine's allocation request, already admitted.
 type Request struct {
 	Machine Machine
@@ -114,6 +121,8 @@ type Allocator struct {
 	Namespace string
 	Quota     Quota
 	Cleaning  CleaningPolicies
+	// Capacity decides which capacity may be offered.
+	Capacity Offers
 	// BootInterface and TargetDisks are pinned on each allocation.
 	BootInterface string
 	TargetDisks   []string
@@ -164,12 +173,12 @@ func (a *Allocator) Allocate(ctx context.Context, request Request) (*fleetv1.Mac
 			tried[allocation.Spec.MachineCapacityRef.Name] = true
 			continue
 		}
-		candidate, device, err := a.candidate(ctx, request, tried)
+		candidate, device, hardware, err := a.candidate(ctx, request, tried)
 		if err != nil {
 			return nil, err
 		}
 		tried[candidate.Name] = true
-		allocation, err = a.newAllocation(request, candidate, device, claim)
+		allocation, err = a.newAllocation(request, candidate, device, hardware, claim)
 		if err != nil {
 			return nil, err
 		}
@@ -204,58 +213,53 @@ func (a *Allocator) claim(ctx context.Context, allocation *fleetv1.MachineAlloca
 	return false, nil
 }
 
-// candidate returns the first eligible capacity, by name, whose Device
-// custody looks free. Custody decides; this only skips Devices that are
+// candidate returns the first capacity, by name, that the projection offers
+// for the profile and whose Device custody looks free, with the hardware its
+// commissioning inspected. Custody decides; this only skips Devices that are
 // visibly taken.
-func (a *Allocator) candidate(ctx context.Context, request Request, tried map[string]bool) (*fleetv1.MachineCapacity, *inventory.Device, error) {
+func (a *Allocator) candidate(ctx context.Context, request Request, tried map[string]bool) (*fleetv1.MachineCapacity, *inventory.Device, fleetv1.Hardware, error) {
 	selector, err := metav1.LabelSelectorAsSelector(&request.Class.Spec.Capacity.MachineCapacities.Selector)
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid MachineClass selector: %w", err)
+		return nil, nil, fleetv1.Hardware{}, fmt.Errorf("invalid MachineClass selector: %w", err)
 	}
 	var capacities fleetv1.MachineCapacityList
 	if err := a.Provider.List(ctx, &capacities, client.InNamespace(a.Namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		return nil, nil, err
+		return nil, nil, fleetv1.Hardware{}, err
 	}
 	sort.Slice(capacities.Items, func(i, j int) bool { return capacities.Items[i].Name < capacities.Items[j].Name })
+	if a.Capacity == nil {
+		return nil, nil, fleetv1.Hardware{}, errors.New("allocation: no capacity evaluator")
+	}
 	for index := range capacities.Items {
 		capacity := &capacities.Items[index]
-		if tried[capacity.Name] || !Eligible(capacity, request.Profile.Spec) || !selector.Matches(labels.Set(capacity.Labels)) {
+		if tried[capacity.Name] || capacity.Spec.AllocationPolicy != "Enabled" || !capacity.DeletionTimestamp.IsZero() || !selector.Matches(labels.Set(capacity.Labels)) {
+			continue
+		}
+		offered, hardware, err := a.Capacity.Offer(ctx, capacity)
+		if err != nil {
+			return nil, nil, fleetv1.Hardware{}, err
+		}
+		if !offered || !matches(request.Profile.Spec, hardware) {
 			continue
 		}
 		device := &inventory.Device{}
 		if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: capacity.Spec.DeviceRef.Name}, device); apierrors.IsNotFound(err) {
 			continue
 		} else if err != nil {
-			return nil, nil, err
+			return nil, nil, fleetv1.Hardware{}, err
 		}
 		state := &ops.DeviceCustody{}
 		if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: device.Name}, state); apierrors.IsNotFound(err) {
 			continue
 		} else if err != nil {
-			return nil, nil, err
+			return nil, nil, fleetv1.Hardware{}, err
 		}
 		if !Free(state, device) {
 			continue
 		}
-		return capacity, device, nil
+		return capacity, device, hardware, nil
 	}
-	return nil, nil, ErrInsufficientCapacity
-}
-
-// Eligible reports whether a capacity may be offered for the profile: its
-// allocation policy is enabled, its Prepared, Healthy and Available
-// conditions are current, and its hardware matches exactly.
-func Eligible(capacity *fleetv1.MachineCapacity, profile fleetv1.MachineProfileSpec) bool {
-	if capacity.Spec.AllocationPolicy != "Enabled" || !capacity.DeletionTimestamp.IsZero() {
-		return false
-	}
-	for _, conditionType := range []string{"Prepared", "Healthy", "Available"} {
-		condition := apiMeta.FindStatusCondition(capacity.Status.Conditions, conditionType)
-		if condition == nil || condition.Status != metav1.ConditionTrue || condition.ObservedGeneration != capacity.Generation {
-			return false
-		}
-	}
-	return matches(profile, capacity.Status.Hardware)
+	return nil, nil, fleetv1.Hardware{}, ErrInsufficientCapacity
 }
 
 // Free reports whether custody shows the Device free: Verified, for this
@@ -266,7 +270,7 @@ func Free(state *ops.DeviceCustody, device *inventory.Device) bool {
 		spec.RecoveryHold == nil && spec.ActiveOperation == nil && inventory.LifecycleOf(device) == inventory.DeviceActive
 }
 
-func (a *Allocator) newAllocation(request Request, capacity *fleetv1.MachineCapacity, device *inventory.Device, claim string) (*fleetv1.MachineAllocation, error) {
+func (a *Allocator) newAllocation(request Request, capacity *fleetv1.MachineCapacity, device *inventory.Device, hardware fleetv1.Hardware, claim string) (*fleetv1.MachineAllocation, error) {
 	if a.Cleaning == nil {
 		return nil, errors.New("allocation: no cleaning policy resolver")
 	}
@@ -286,7 +290,7 @@ func (a *Allocator) newAllocation(request Request, capacity *fleetv1.MachineCapa
 				CPU:               request.Profile.Spec.CPU,
 				Memory:            request.Profile.Spec.Memory,
 			},
-			Hardware:             capacity.Status.Hardware,
+			Hardware:             hardware,
 			Authority:            request.Authority,
 			CleaningPolicyDigest: digest,
 			BootInterface:        a.BootInterface,

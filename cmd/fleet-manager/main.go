@@ -43,6 +43,7 @@ type managerFlags struct {
 	syntheticProviderProjectName, syntheticPublishedClassName   string
 	syntheticPublishedProfileName                               string
 	syntheticCoordinatorTokenFile, syntheticReleaseTokenFile    string
+	syntheticProjectorTokenFile                                 string
 	syntheticEnrollmentFile, syntheticDeviceNamespace           string
 }
 
@@ -55,6 +56,7 @@ func bindFlags(flags *flag.FlagSet) *managerFlags {
 	flags.StringVar(&f.syntheticTokenFile, "synthetic-provider-token-file", "", "file containing the synthetic provider site's bearer token")
 	flags.StringVar(&f.syntheticCoordinatorTokenFile, "synthetic-coordinator-token-file", "", "file containing the custody coordinator's Milo token")
 	flags.StringVar(&f.syntheticReleaseTokenFile, "synthetic-release-token-file", "", "file containing the release controller's Milo token")
+	flags.StringVar(&f.syntheticProjectorTokenFile, "synthetic-projector-token-file", "", "file containing the capacity projector's Milo token")
 	flags.StringVar(&f.syntheticEnrollmentFile, "synthetic-site-enrollment-file", "", "JSON enrollment of the Devices the synthetic provider site serves")
 	flags.StringVar(&f.syntheticDeviceNamespace, "synthetic-device-namespace", "default", "namespace of the Devices, capacities and allocations in the provider project")
 	flags.StringVar(&f.syntheticLocation, "synthetic-location", "us-central-1", "only location accepted by synthetic staging")
@@ -73,12 +75,12 @@ func (f *managerFlags) validate() error {
 		return errors.Join(errFlags, errors.New("--config and --leader-election-namespace are required"))
 	}
 	if !f.syntheticStaging {
-		if f.syntheticConsumerProjectName != "" || f.syntheticProviderProjectName != "" || f.syntheticPublishedClassName != "" || f.syntheticPublishedProfileName != "" || f.syntheticTokenFile != "" || f.syntheticCoordinatorTokenFile != "" || f.syntheticReleaseTokenFile != "" || f.syntheticEnrollmentFile != "" {
+		if f.syntheticConsumerProjectName != "" || f.syntheticProviderProjectName != "" || f.syntheticPublishedClassName != "" || f.syntheticPublishedProfileName != "" || f.syntheticTokenFile != "" || f.syntheticCoordinatorTokenFile != "" || f.syntheticReleaseTokenFile != "" || f.syntheticProjectorTokenFile != "" || f.syntheticEnrollmentFile != "" {
 			return errors.Join(errFlags, errors.New("synthetic flags require --synthetic-staging"))
 		}
 		return nil
 	}
-	if f.syntheticTokenFile == "" || f.syntheticConsumerProjectName == "" || f.syntheticCoordinatorTokenFile == "" || f.syntheticReleaseTokenFile == "" || f.syntheticEnrollmentFile == "" {
+	if f.syntheticTokenFile == "" || f.syntheticConsumerProjectName == "" || f.syntheticCoordinatorTokenFile == "" || f.syntheticReleaseTokenFile == "" || f.syntheticProjectorTokenFile == "" || f.syntheticEnrollmentFile == "" {
 		return errors.Join(errFlags, errors.New("--synthetic-staging requires the provider site token, the coordinator and release controller tokens, the site enrollment, and --synthetic-consumer-project-name"))
 	}
 	if f.syntheticProviderProjectName != "" && (f.syntheticPublishedClassName == "" || f.syntheticPublishedProfileName == "") {

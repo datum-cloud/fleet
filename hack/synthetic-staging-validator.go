@@ -120,6 +120,7 @@ func main() {
 	}
 	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/coordinator", "fleet-custody-coordinator-auth"), "the coordinator token must resolve to its external Secret")
 	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/release", "fleet-release-controller-auth"), "the release controller token must resolve to its external Secret")
+	require(has(m.Args, "--synthetic-projector-token-file=/var/run/fleet/projector/token") && mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/projector", "fleet-capacity-projector-auth"), "the capacity projector needs its own credential")
 	var enrollment core.ConfigMap
 	read("ConfigMap/fleet-synthetic-site-enrollment", &enrollment)
 	for _, pod := range []core.PodSpec{manager.Spec.Template.Spec, provider.Spec.Template.Spec} {
