@@ -2,6 +2,8 @@ package custody
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -46,11 +48,39 @@ func PlanDigest(plan *ops.DeviceCommissioningPlan) (string, error) {
 	return SpecDigest(plan.Spec)
 }
 
-// Qualified reports whether the plan is qualified: an approval with its name
-// names its UID and digest, and a different person created it.
+// ApprovalName is the only name an approval of the plan may have. It is
+// derived from the plan's UID, so an approval of a plan never qualifies
+// another plan recreated under the same name, and an operation or evidence
+// that names the approval pins the plan incarnation without holding its UID.
+func ApprovalName(plan *ops.DeviceCommissioningPlan) string {
+	sum := sha256.Sum256([]byte("fleet.datumapis.com/plan-approval/" + string(plan.UID)))
+	return plan.Name + "-" + hex.EncodeToString(sum[:])[:16]
+}
+
+// PlanReferenceOf is the reference to the plan's current content.
+func PlanReferenceOf(plan *ops.DeviceCommissioningPlan) (ops.PlanReference, error) {
+	digest, err := PlanDigest(plan)
+	if err != nil {
+		return ops.PlanReference{}, err
+	}
+	return ops.PlanReference{Name: plan.Name, Generation: plan.Generation, Digest: digest}, nil
+}
+
+// Pins reports whether the reference names exactly this plan incarnation and
+// its current content.
+func Pins(reference ops.ApprovedPlanReference, plan *ops.DeviceCommissioningPlan) (bool, error) {
+	current, err := PlanReferenceOf(plan)
+	if err != nil {
+		return false, err
+	}
+	return reference.PlanReference == current && reference.Approval == ApprovalName(plan), nil
+}
+
+// Qualified reports whether the plan is qualified: an approval with the
+// plan's approval name names its content, and a different person created it.
 func Qualified(ctx context.Context, reader client.Reader, plan *ops.DeviceCommissioningPlan) (bool, string, error) {
 	approval := &ops.DeviceCommissioningPlanApproval{}
-	if err := reader.Get(ctx, client.ObjectKeyFromObject(plan), approval); apierrors.IsNotFound(err) {
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: plan.Namespace, Name: ApprovalName(plan)}, approval); apierrors.IsNotFound(err) {
 		return false, "the plan has no approval", nil
 	} else if err != nil {
 		return false, "", err
@@ -59,7 +89,7 @@ func Qualified(ctx context.Context, reader client.Reader, plan *ops.DeviceCommis
 }
 
 func qualifies(plan *ops.DeviceCommissioningPlan, approval *ops.DeviceCommissioningPlanApproval) (bool, string, error) {
-	digest, err := PlanDigest(plan)
+	current, err := PlanReferenceOf(plan)
 	if err != nil {
 		return false, "", err
 	}
@@ -67,9 +97,9 @@ func qualifies(plan *ops.DeviceCommissioningPlan, approval *ops.DeviceCommission
 	switch {
 	case !approval.DeletionTimestamp.IsZero() || !plan.DeletionTimestamp.IsZero():
 		return false, "the plan or its approval is being deleted", nil
-	case reference.Name != plan.Name || reference.UID != string(plan.UID):
+	case approval.Name != ApprovalName(plan) || reference.Name != plan.Name:
 		return false, "the approval is for another plan", nil
-	case reference.Digest != digest:
+	case reference != current:
 		return false, "the approval is for different plan content", nil
 	case !distinct(plan.Spec.Creator, approval.Spec.Creator):
 		return false, "the plan's author approved it", nil
@@ -108,7 +138,7 @@ func currentPlan(plans []ops.DeviceCommissioningPlan, approvals []ops.DeviceComm
 	var qualified []*ops.DeviceCommissioningPlan
 	for index := range plans {
 		plan := &plans[index]
-		approval := approvalFor[plan.Name]
+		approval := approvalFor[ApprovalName(plan)]
 		if approval == nil {
 			continue
 		}
@@ -224,8 +254,8 @@ func checkCommissioning(ctx context.Context, admission *Admission) *Refusal {
 	if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: commissioning.Namespace, Name: input.Name}, plan); err != nil {
 		return refuse(ReasonPlanNotQualified, "plan %s could not be read", input.Name)
 	}
-	if string(plan.UID) != input.UID {
-		return refuse(ReasonPlanNotQualified, "plan %s has another UID", input.Name)
+	if input.Approval != ApprovalName(plan) {
+		return refuse(ReasonPlanNotQualified, "the operation names an approval of another plan %s", input.Name)
 	}
 	ok, why, err := Qualified(ctx, admission.Reader, plan)
 	if err != nil {
@@ -234,8 +264,8 @@ func checkCommissioning(ctx context.Context, admission *Admission) *Refusal {
 	if !ok {
 		return refuse(ReasonPlanNotQualified, "%s", why)
 	}
-	digest, err := PlanDigest(plan)
-	if err != nil || digest != input.Digest || !reflect.DeepEqual(plan.Spec.Content, input.Content) {
+	pinned, err := Pins(input.ApprovedPlanReference, plan)
+	if err != nil || !pinned || !reflect.DeepEqual(plan.Spec.Content, input.Content) {
 		return refuse(ReasonPlanMismatch, "the operation's plan is not the approved plan")
 	}
 	current, reason, err := CurrentPlan(ctx, admission.Reader, admission.Device)
@@ -277,7 +307,7 @@ func hasBootInterface(device *inventory.Device) bool {
 func validateCommissioningEvidence(operation ops.Operation, evidence *ops.CommissioningEvidence) error {
 	plan := operation.(*ops.DeviceCommissioning).Spec.Plan
 	switch {
-	case evidence.Plan != plan.PlanReference:
+	case evidence.Plan != plan.ApprovedPlanReference:
 		return errors.New("the evidence names another plan")
 	case len(evidence.Firmware) > 32 || len(evidence.Mismatches) > 32:
 		return errors.New("evidence records at most 32 firmware components and 32 mismatches")

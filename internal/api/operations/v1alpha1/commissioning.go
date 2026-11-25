@@ -7,8 +7,9 @@ import (
 
 // DeviceCommissioningPlan says what commissioning must prove for the Devices
 // its selector matches. Its spec is immutable; a new plan replaces it. A plan
-// is qualified only while a DeviceCommissioningPlanApproval with its name, UID
-// and digest exists and was created by someone other than the plan's creator.
+// is qualified only while a DeviceCommissioningPlanApproval with its approval
+// name, generation and digest exists and was created by someone other than
+// the plan's creator.
 type DeviceCommissioningPlan struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -95,11 +96,21 @@ type DeviceCommissioningPlanApprovalSpec struct {
 	PlanRef PlanReference `json:"planRef"`
 }
 
-// PlanReference names one plan incarnation and the digest of its spec.
+// PlanReference names a plan and pins its content with its generation and
+// the digest of its spec.
 type PlanReference struct {
-	Name   string `json:"name"`
-	UID    string `json:"uid"`
-	Digest string `json:"digest"`
+	Name       string `json:"name"`
+	Generation int64  `json:"generation"`
+	Digest     string `json:"digest"`
+}
+
+// ApprovedPlanReference is a plan reference and the approval that qualified
+// it. The approval's name is derived from the plan's UID, so it pins the plan
+// incarnation: a plan recreated under the same name has another approval
+// name.
+type ApprovedPlanReference struct {
+	PlanReference `json:",inline"`
+	Approval      string `json:"approval"`
 }
 
 // DeviceCommissioning runs a qualified plan on a Device that no customer
@@ -119,14 +130,14 @@ type DeviceCommissioningSpec struct {
 // CommissioningPlanInput names the plan and carries an exact copy of its
 // content, so the site runs exactly what admission checked.
 type CommissioningPlanInput struct {
-	PlanReference `json:",inline"`
-	Content       CommissioningPlanContent `json:"content"`
+	ApprovedPlanReference `json:",inline"`
+	Content               CommissioningPlanContent `json:"content"`
 }
 
 // CommissioningEvidence is the result evidence of a DeviceCommissioning. It
 // never carries a credential or BMC response content.
 type CommissioningEvidence struct {
-	Plan PlanReference `json:"plan"`
+	Plan ApprovedPlanReference `json:"plan"`
 	// Result is the proven verdict. A commissioning whose verdict is proven
 	// ends Succeeded whether the server passed or failed.
 	Result CommissioningResult `json:"result"`

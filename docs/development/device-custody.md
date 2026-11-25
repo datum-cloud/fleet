@@ -846,13 +846,19 @@ which a test pins, because the coordinator lists every registered kind.
 - **Plans.** `DeviceCommissioningPlan` has an immutable spec with a creator, a
   non-empty Device selector, plans it supersedes, the content the site runs,
   and an evidence lifetime of 1 hour to 365 days. Burn-in runs 1 minute to 24
-  hours. `DeviceCommissioningPlanApproval` has the plan's name, and names the
-  plan's UID and the digest of its whole spec (`custody.PlanDigest`). The
-  creator webhook governs both, so each creator is the caller.
-- **Qualified.** An approval qualifies its plan when it names the plan's UID
-  and current digest and its creator is someone else: both creators have a
-  UID, the UIDs differ, and the usernames differ ignoring case. No role both
-  writes and approves plans, which a test pins.
+  hours. No spec holds an object UID. An approval's name is the plan's name
+  and a suffix derived from the plan's UID (`custody.ApprovalName`), and its
+  spec names the plan's generation and the digest of its whole spec
+  (`custody.PlanDigest`). A commissioning names the plan the same way plus
+  the approval's name, which pins the plan incarnation. The creator webhook
+  governs all three, so each creator is the caller.
+- **Qualified.** An approval qualifies its plan when it has the plan's
+  approval name, names the plan's current generation and digest, and its
+  creator is someone else: both creators have a UID, the UIDs differ, and the
+  usernames differ ignoring case. A plan re-created under the same name has
+  another approval name, so it inherits no approval, and no commissioning
+  under the old plan is admitted under it. No role both writes and approves
+  plans, which a test pins.
 - **Residual window.** Admission reads the plan and its approval before the
   custody update, which re-checks only the Device. A plan revoked in between
   can still be admitted once. The projector checks qualification again, so
@@ -867,8 +873,8 @@ which a test pins, because the coordinator lists every registered kind.
 - **Admission.** Two staff rows: from `None`, and from `Service` only to settle
   a commissioning hold. The kind refuses a Device that is not `Active`, one
   without a `primary` interface MAC (`BootInterfaceUnknown`), a plan that is
-  missing, re-created or not qualified (`PlanNotQualified`), a copied content
-  or digest that differs from the plan (`PlanMismatch`), and a plan that is
+  missing, re-created or not qualified (`PlanNotQualified`), a copied
+  content, generation or digest that differs from the plan (`PlanMismatch`), and a plan that is
   not the Device's current plan (`PlanNotCurrent`).
 - **Results.** A proven verdict ends `Succeeded` with result `Passed` or
   `Failed` in its evidence. A `Passed` result must record the serial number,

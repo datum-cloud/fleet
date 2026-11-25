@@ -47,13 +47,9 @@ func (e *env) plan(name, model, author string, supersedes ...string) *ops.Device
 // approve qualifies the plan as the approver.
 func (e *env) approve(plan *ops.DeviceCommissioningPlan, approver string) *ops.DeviceCommissioningPlanApproval {
 	e.t.Helper()
-	digest, err := PlanDigest(plan)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	approval := &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: plan.Name, Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
+	approval := &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: ApprovalName(plan), Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
 		Creator: ops.Creator{Username: approver, UID: approver + "-uid"},
-		PlanRef: ops.PlanReference{Name: plan.Name, UID: string(plan.UID), Digest: digest},
+		PlanRef: e.reference(plan),
 	}}
 	e.create(approval)
 	return approval
@@ -73,15 +69,27 @@ func (e *env) model(device *inventory.Device, model string) {
 	e.discover(device, key, e.clock.Now())
 }
 
-func (e *env) commission(device *inventory.Device, plan *ops.DeviceCommissioningPlan, content ops.CommissioningPlanContent) *ops.DeviceCommissioning {
+// reference is the reference to the plan's current content.
+func (e *env) reference(plan *ops.DeviceCommissioningPlan) ops.PlanReference {
 	e.t.Helper()
-	digest, err := PlanDigest(plan)
+	reference, err := PlanReferenceOf(plan)
 	if err != nil {
 		e.t.Fatal(err)
 	}
+	return reference
+}
+
+func (e *env) commission(device *inventory.Device, plan *ops.DeviceCommissioningPlan, content ops.CommissioningPlanContent) *ops.DeviceCommissioning {
+	e.t.Helper()
+	return e.commissionUnder(device, ops.ApprovedPlanReference{PlanReference: e.reference(plan), Approval: ApprovalName(plan)}, content)
+}
+
+// commissionUnder commissions the Device under an exact plan reference.
+func (e *env) commissionUnder(device *inventory.Device, reference ops.ApprovedPlanReference, content ops.CommissioningPlanContent) *ops.DeviceCommissioning {
+	e.t.Helper()
 	operation := &ops.DeviceCommissioning{ObjectMeta: metav1.ObjectMeta{GenerateName: device.Name + "-commission-", Namespace: "default"}, Spec: ops.DeviceCommissioningSpec{
 		OperationEnvelope: envelope(device, staffUser, service("intake")),
-		Plan:              ops.CommissioningPlanInput{PlanReference: ops.PlanReference{Name: plan.Name, UID: string(plan.UID), Digest: digest}, Content: content},
+		Plan:              ops.CommissioningPlanInput{ApprovedPlanReference: reference, Content: content},
 	}}
 	e.create(operation)
 	return operation
@@ -94,7 +102,7 @@ func (e *env) commissioningEvidence(operation *ops.DeviceCommissioning, result o
 	e.t.Helper()
 	snapshot := e.status(operation).Snapshot
 	started := metav1.NewTime(e.clock.Now())
-	evidence := ops.CommissioningEvidence{Plan: operation.Spec.Plan.PlanReference, Result: result,
+	evidence := ops.CommissioningEvidence{Plan: operation.Spec.Plan.ApprovedPlanReference, Result: result,
 		SerialNumber: snapshot.Extra[SnapshotSerialNumber], SystemUUID: snapshot.SystemUUID, BMCPublicKeySHA256: snapshot.BMCPublicKeySHA256,
 		Hardware: &ops.InspectedHardware{CPU: ops.InspectedCPU{Architecture: "amd64", Cores: 2}, Memory: "2Gi",
 			Disks: []ops.InspectedDisk{{Name: "disk-0", Capacity: "2Gi"}}, Interfaces: []ops.InspectedInterface{{Name: "nic-0"}}},
@@ -149,10 +157,16 @@ func TestCommissioning(t *testing.T) {
 		if err := e.admin.Update(e.ctx, plan); !apierrors.IsInvalid(err) {
 			t.Fatalf("plan update = %v, want Invalid", err)
 		}
-		approval := &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: "crd-other-name", Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
-			Creator: ops.Creator{Username: planApprover, UID: "u"}, PlanRef: ops.PlanReference{Name: "crd-valid", UID: "u", Digest: burnInDigest}}}
-		if err := e.admin.Create(e.ctx, approval); !apierrors.IsInvalid(err) {
-			t.Fatalf("an approval named for another plan: %v, want Invalid", err)
+		for _, name := range []string{"crd-valid", "crd-other-0123456789abcdef", "crd-valid-0123456789abcde"} {
+			approval := &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
+				Creator: ops.Creator{Username: planApprover, UID: "u"}, PlanRef: ops.PlanReference{Name: "crd-valid", Generation: 1, Digest: burnInDigest}}}
+			if err := e.admin.Create(e.ctx, approval); !apierrors.IsInvalid(err) {
+				t.Fatalf("an approval named %s: %v, want Invalid", name, err)
+			}
+		}
+		long := valid(strings.Repeat("p", 237))
+		if err := e.admin.Create(e.ctx, long); !apierrors.IsInvalid(err) {
+			t.Fatalf("a plan name with no room for its approval's suffix: %v, want Invalid", err)
 		}
 	})
 
@@ -173,9 +187,8 @@ func TestCommissioning(t *testing.T) {
 		for _, approver := range []ops.Creator{{Username: "other-name@example.com", UID: planAuthor + "-uid"}, {Username: strings.ToUpper(planAuthor), UID: "different-uid"}} {
 			e, device := next(t, "same-person")
 			plan := e.plan(fmt.Sprintf("same-person-%d", n), "same-person", planAuthor)
-			digest, _ := PlanDigest(plan)
-			e.create(&ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: plan.Name, Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
-				Creator: approver, PlanRef: ops.PlanReference{Name: plan.Name, UID: string(plan.UID), Digest: digest}}})
+			e.create(&ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: ApprovalName(plan), Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
+				Creator: approver, PlanRef: e.reference(plan)}})
 			operation := e.commission(device, plan, plan.Spec.Content)
 			e.settle(device.Name)
 			e.requirePhase(operation, ops.PhaseFailed, ReasonPlanNotQualified)
@@ -194,12 +207,39 @@ func TestCommissioning(t *testing.T) {
 			e.settle(device.Name)
 			return o
 		}(), ops.PhaseFailed, ReasonPlanNotQualified)
-		approval := &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: plan.Name, Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
-			Creator: ops.Creator{Username: planApprover, UID: "x"}, PlanRef: ops.PlanReference{Name: plan.Name, UID: string(plan.UID), Digest: burnInDigest}}}
+		approval := &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: ApprovalName(plan), Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
+			Creator: ops.Creator{Username: planApprover, UID: "x"}, PlanRef: ops.PlanReference{Name: plan.Name, Generation: plan.Generation, Digest: burnInDigest}}}
 		e.create(approval)
 		operation := e.commission(device, plan, plan.Spec.Content)
 		e.settle(device.Name)
 		e.requirePhase(operation, ops.PhaseFailed, ReasonPlanNotQualified)
+	})
+
+	t.Run("a plan recreated under the same name inherits no approval", func(t *testing.T) {
+		e, device := next(t, "recreated")
+		plan := e.plan("recreated-v1", "recreated", planAuthor)
+		e.approve(plan, planApprover)
+		old := ops.ApprovedPlanReference{PlanReference: e.reference(plan), Approval: ApprovalName(plan)}
+		if err := e.admin.Delete(e.ctx, plan); err != nil {
+			t.Fatal(err)
+		}
+		again := e.plan("recreated-v1", "recreated", planAuthor)
+		if again.UID == plan.UID || e.reference(again) != old.PlanReference {
+			t.Fatalf("the recreated plan must differ only in its incarnation: %s %+v", again.UID, e.reference(again))
+		}
+		if ApprovalName(again) == old.Approval {
+			t.Fatal("the recreated plan has the old plan's approval name")
+		}
+		// The old approval still exists, and qualifies neither the recreated
+		// plan nor a commissioning that names it.
+		if ok, _, err := Qualified(e.ctx, e.admin, again); err != nil || ok {
+			t.Fatalf("the recreated plan is qualified by the old approval: %v %v", ok, err)
+		}
+		for _, reference := range []ops.ApprovedPlanReference{old, {PlanReference: old.PlanReference, Approval: ApprovalName(again)}} {
+			operation := e.commissionUnder(device, reference, again.Spec.Content)
+			e.settle(device.Name)
+			e.requirePhase(operation, ops.PhaseFailed, ReasonPlanNotQualified)
+		}
 	})
 
 	t.Run("copied content that differs from the plan is refused", func(t *testing.T) {
@@ -251,7 +291,7 @@ func TestCommissioning(t *testing.T) {
 			t.Fatalf("bystander's current plan = %v, %s, %v (labels %v)", current, reason, err, bystander.Labels)
 		}
 		// Revoking super-v2 makes super-v1 current again.
-		if err := e.admin.Delete(e.ctx, &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: "super-v2", Namespace: "default"}}); err != nil {
+		if err := e.admin.Delete(e.ctx, &ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: ApprovalName(replacement), Namespace: "default"}}); err != nil {
 			t.Fatal(err)
 		}
 		current, _, err = CurrentPlan(e.ctx, e.admin, device)
