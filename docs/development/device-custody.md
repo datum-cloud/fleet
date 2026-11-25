@@ -736,8 +736,11 @@ kind uses the settle hook or `Supersedes`. None of these conflicts with #174.
 This implements the kinds of the [commissioning
 proposal](https://github.com/datum-cloud/fleet/pull/185). Step 1 is
 **implemented and inert**: custody admits, holds and settles commissioning,
-but no site runs its worker, so an admitted commissioning ends
-`OutcomeUnknown` at its deadline.
+but no site runs its worker. Staff with the commissioning operator role can
+still create one. It then holds the Device as `Service` until its deadline
+and ends `OutcomeUnknown`, leaving a commissioning hold that only a later
+commissioning settles. Every mode's coordinator role can read the new kinds,
+which a test pins, because the coordinator lists every registered kind.
 
 - **Plans.** `DeviceCommissioningPlan` has an immutable spec with a creator, a
   non-empty Device selector, plans it supersedes, the content the site runs,
@@ -746,14 +749,20 @@ but no site runs its worker, so an admitted commissioning ends
   plan's UID and the digest of its whole spec (`custody.PlanDigest`). The
   creator webhook governs both, so each creator is the caller.
 - **Qualified.** An approval qualifies its plan when it names the plan's UID
-  and current digest and its creator's username differs from the plan's. No
-  role both writes and approves plans, which a test pins.
+  and current digest and its creator is someone else: both creators have a
+  UID, the UIDs differ, and the usernames differ ignoring case. No role both
+  writes and approves plans, which a test pins.
+- **Residual window.** Admission reads the plan and its approval before the
+  custody update, which re-checks only the Device. A plan revoked in between
+  can still be admitted once. The projector checks qualification again, so
+  that run cannot make a server `Prepared` under a revoked plan.
 - **Current plan.** The qualified plans whose selector matches the Device's
   labels, minus those another of them supersedes. One left is the current
   plan. None left with none matching is `NoCurrentPlan`. More than one, or
   none left because the matching plans supersede each other, is
   `PlanAmbiguous`. A supersession reaches only Devices the superseding plan
-  selects, and revoking it restores the old plan.
+  selects, and revoking it restores the old plan. `supersedes` names plans,
+  so a plan re-created under a superseded name stays superseded.
 - **Admission.** Two staff rows: from `None`, and from `Service` only to settle
   a commissioning hold. The kind refuses a Device that is not `Active`, one
   without a `primary` interface MAC (`BootInterfaceUnknown`), a plan that is
@@ -761,10 +770,15 @@ but no site runs its worker, so an admitted commissioning ends
   or digest that differs from the plan (`PlanMismatch`), and a plan that is
   not the Device's current plan (`PlanNotCurrent`).
 - **Results.** A proven verdict ends `Succeeded` with result `Passed` or
-  `Failed` in its evidence. A `Passed` result must record inspected hardware
-  and a passed burn-in, and a `Failed` result must name the phase that
-  failed, or the evidence proves nothing and the operation ends
+  `Failed` in its evidence. A `Passed` result must record the serial number,
+  system UUID and BMC key the admission snapshot holds, hardware that meets
+  the plan, every firmware baseline at its version, and a passed burn-in at
+  least as long as the plan's. A `Failed` result must name the phase and what
+  failed. Other evidence proves nothing, and the operation ends
   `OutcomeUnknown`. Evidence is limited to 16 KiB.
+- **Retention.** Each existing Device incarnation's latest succeeded
+  commissioning is kept past retention. Once the Device is deleted or
+  re-created, the old incarnation's record ages out normally.
 - **Holds.** A later commissioning that ends `Succeeded` settles a
   commissioning hold. It needs no `Retry`.
 

@@ -14,7 +14,7 @@ import (
 // Config.Retention ago. An operation custody still names, as active or as
 // its recovery hold, is kept, and so is a succeeded retirement until
 // inventory retires the Device. Platform audit records keep the history after
-// that. A kind that KeepsLatest keeps each Device's latest succeeded
+// that. A kind that KeepsLatest keeps each existing Device's latest succeeded
 // operation.
 func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 	cfg := c.config()
@@ -41,8 +41,15 @@ func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 		operations := kind.Items(list)
 		latest := map[types.UID]bool{}
 		if kind.KeepsLatest {
-			for _, operation := range LatestSucceeded(operations) {
-				latest[operation.GetUID()] = true
+			// Only the current incarnation's latest is evidence anyone reads.
+			for reference, operation := range LatestSucceeded(operations) {
+				device, err := c.device(ctx, reference.Name)
+				if err != nil {
+					return deleted, err
+				}
+				if device != nil && string(device.UID) == reference.UID {
+					latest[operation.GetUID()] = true
+				}
 			}
 		}
 		for _, operation := range operations {
@@ -71,17 +78,17 @@ func (c *Coordinator) SweepRetention(ctx context.Context) (int, error) {
 	return deleted, nil
 }
 
-// LatestSucceeded returns, for each Device, the succeeded operation that
-// finished last. Ties break on the higher fence, then the name, so every
-// reader picks the same one.
-func LatestSucceeded(operations []ops.Operation) map[string]ops.Operation {
-	out := map[string]ops.Operation{}
+// LatestSucceeded returns, for each Device incarnation, the succeeded
+// operation that finished last. Ties break on the higher fence, then the
+// name, so every reader picks the same one.
+func LatestSucceeded(operations []ops.Operation) map[ops.DeviceReference]ops.Operation {
+	out := map[ops.DeviceReference]ops.Operation{}
 	for _, operation := range operations {
 		status := operation.OperationStatus()
 		if status.Phase != ops.PhaseSucceeded || status.FinishedAt == nil {
 			continue
 		}
-		device := operation.Envelope().DeviceRef.Name
+		device := operation.Envelope().DeviceRef
 		current, ok := out[device]
 		if !ok || later(operation, current) {
 			out[device] = operation

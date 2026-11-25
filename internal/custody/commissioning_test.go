@@ -87,18 +87,26 @@ func (e *env) commission(device *inventory.Device, plan *ops.DeviceCommissioning
 	return operation
 }
 
-func commissioningEvidence(t *testing.T, operation *ops.DeviceCommissioning, result ops.CommissioningResult) string {
-	t.Helper()
-	evidence := ops.CommissioningEvidence{Plan: operation.Spec.Plan.PlanReference, Result: result, SerialNumber: "serial", SystemUUID: "uuid",
-		Hardware: &ops.InspectedHardware{CPU: ops.InspectedCPU{Architecture: "amd64", Cores: 2}, Memory: "2Gi"},
-		BurnIn:   &ops.BurnInEvidence{Result: ops.BurnInPassed}}
+// commissioningEvidence is evidence the kind accepts for the operation: the
+// identity admission recorded, hardware that meets planContent, and a
+// burn-in as long as the plan's.
+func (e *env) commissioningEvidence(operation *ops.DeviceCommissioning, result ops.CommissioningResult) string {
+	e.t.Helper()
+	snapshot := e.status(operation).Snapshot
+	started := metav1.NewTime(e.clock.Now())
+	evidence := ops.CommissioningEvidence{Plan: operation.Spec.Plan.PlanReference, Result: result,
+		SerialNumber: snapshot.Extra[SnapshotSerialNumber], SystemUUID: snapshot.SystemUUID, BMCPublicKeySHA256: snapshot.BMCPublicKeySHA256,
+		Hardware: &ops.InspectedHardware{CPU: ops.InspectedCPU{Architecture: "amd64", Cores: 2}, Memory: "2Gi",
+			Disks: []ops.InspectedDisk{{Name: "disk-0", Capacity: "2Gi"}}, Interfaces: []ops.InspectedInterface{{Name: "nic-0"}}},
+		Firmware: []ops.FirmwareBaseline{{Component: "BMC", Version: "1.0.0"}},
+		BurnIn:   &ops.BurnInEvidence{Result: ops.BurnInPassed, StartedAt: started, CompletedAt: metav1.NewTime(started.Add(operation.Spec.Plan.Content.BurnIn.Duration.Duration))}}
 	if result == ops.CommissioningFailed {
 		evidence.FailedPhase, evidence.Mismatches = ops.PhaseBurnIn, []string{"memory test failed"}
 		evidence.BurnIn.Result = ops.BurnInFailed
 	}
 	data, err := json.Marshal(evidence)
 	if err != nil {
-		t.Fatal(err)
+		e.t.Fatal(err)
 	}
 	return string(data)
 }
@@ -109,7 +117,7 @@ func TestCommissioning(t *testing.T) {
 	next := func(t *testing.T, model string) (*env, *inventory.Device) {
 		e := root.sub(t)
 		n++
-		name := "commission-" + string(rune('a'+n))
+		name := fmt.Sprintf("commission-%d", n)
 		device := e.verified(name, uid(700+n), fmt.Sprintf("%064x", 1000+n))
 		e.model(device, model)
 		return e, device
@@ -158,6 +166,23 @@ func TestCommissioning(t *testing.T) {
 		e.requirePhase(operation, ops.PhaseFailed, ReasonPlanNotQualified)
 		if custody := e.custody(device.Name); custody.Spec.Fence != before || custody.Spec.Holder.Type != ops.HolderNone {
 			t.Fatalf("a refusal changed custody: %+v", custody.Spec)
+		}
+	})
+
+	t.Run("an approver with the author's UID or another case of the username is the author", func(t *testing.T) {
+		for _, approver := range []ops.Creator{{Username: "other-name@example.com", UID: planAuthor + "-uid"}, {Username: strings.ToUpper(planAuthor), UID: "different-uid"}} {
+			e, device := next(t, "same-person")
+			plan := e.plan(fmt.Sprintf("same-person-%d", n), "same-person", planAuthor)
+			digest, _ := PlanDigest(plan)
+			e.create(&ops.DeviceCommissioningPlanApproval{ObjectMeta: metav1.ObjectMeta{Name: plan.Name, Namespace: "default"}, Spec: ops.DeviceCommissioningPlanApprovalSpec{
+				Creator: approver, PlanRef: ops.PlanReference{Name: plan.Name, UID: string(plan.UID), Digest: digest}}})
+			operation := e.commission(device, plan, plan.Spec.Content)
+			e.settle(device.Name)
+			e.requirePhase(operation, ops.PhaseFailed, ReasonPlanNotQualified)
+			// Remove the plan so the next iteration's Device has one current plan.
+			if err := e.admin.Delete(e.ctx, plan); err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 
@@ -240,15 +265,15 @@ func TestCommissioning(t *testing.T) {
 		for _, name := range []string{"ambiguous-a", "ambiguous-b"} {
 			e.approve(e.plan(name, "ambiguous", planAuthor), planApprover)
 		}
-		current, reason, _ := CurrentPlan(e.ctx, e.admin, device)
-		if current != nil || reason != ReasonPlanAmbiguous {
+		current, reason, err := CurrentPlan(e.ctx, e.admin, device)
+		if current != nil || reason != ReasonPlanAmbiguous || err != nil {
 			t.Fatalf("current = %v, reason %s", current, reason)
 		}
 		// Mutual supersession is ambiguous too, not a cycle that picks one.
 		e.approve(e.plan("cycle-a", "cycle", planAuthor, "cycle-b"), planApprover)
 		e.approve(e.plan("cycle-b", "cycle", planAuthor, "cycle-a"), planApprover)
 		e.model(device, "cycle")
-		if current, reason, _ := CurrentPlan(e.ctx, e.admin, device); current != nil || reason != ReasonPlanAmbiguous {
+		if current, reason, err := CurrentPlan(e.ctx, e.admin, device); current != nil || reason != ReasonPlanAmbiguous || err != nil {
 			t.Fatalf("a supersession cycle gave %v, %s", current, reason)
 		}
 	})
@@ -268,7 +293,7 @@ func TestCommissioning(t *testing.T) {
 			if holder := e.custody(device.Name).Spec.Holder.Type; holder != ops.HolderService {
 				t.Fatalf("holder = %s, want Service", holder)
 			}
-			if err := e.result(device.Name, ops.PhaseSucceeded, commissioningEvidence(t, operation, result)); err != nil {
+			if err := e.result(device.Name, ops.PhaseSucceeded, e.commissioningEvidence(operation, result)); err != nil {
 				t.Fatal(err)
 			}
 			e.settle(device.Name)
@@ -279,18 +304,44 @@ func TestCommissioning(t *testing.T) {
 		}
 	})
 
-	t.Run("a passed verdict without hardware proves nothing", func(t *testing.T) {
-		e, device := next(t, "proof")
-		plan := e.plan("proof-v1", "proof", planAuthor)
-		e.approve(plan, planApprover)
-		operation := e.commission(device, plan, plan.Spec.Content)
-		e.settle(device.Name)
-		data, _ := json.Marshal(ops.CommissioningEvidence{Plan: operation.Spec.Plan.PlanReference, Result: ops.CommissioningPassed})
-		if err := e.result(device.Name, ops.PhaseSucceeded, string(data)); err != nil {
-			t.Fatal(err)
+	t.Run("evidence that does not prove its verdict proves nothing", func(t *testing.T) {
+		for name, mutate := range map[string]func(*ops.CommissioningEvidence){
+			"no hardware":           func(v *ops.CommissioningEvidence) { v.Hardware = nil },
+			"no serial":             func(v *ops.CommissioningEvidence) { v.SerialNumber = "" },
+			"another serial":        func(v *ops.CommissioningEvidence) { v.SerialNumber = "serial-other" },
+			"another key":           func(v *ops.CommissioningEvidence) { v.BMCPublicKeySHA256 = strings.Repeat("0", 64) },
+			"too few cores":         func(v *ops.CommissioningEvidence) { v.Hardware.CPU.Cores = 1 },
+			"other memory":          func(v *ops.CommissioningEvidence) { v.Hardware.Memory = "4Gi" },
+			"small disk":            func(v *ops.CommissioningEvidence) { v.Hardware.Disks[0].Capacity = "1Gi" },
+			"missing firmware":      func(v *ops.CommissioningEvidence) { v.Firmware = nil },
+			"short burn-in":         func(v *ops.CommissioningEvidence) { v.BurnIn.CompletedAt = v.BurnIn.StartedAt },
+			"failed burn-in passed": func(v *ops.CommissioningEvidence) { v.BurnIn.Result = ops.BurnInFailed },
+			"another plan":          func(v *ops.CommissioningEvidence) { v.Plan.Digest = burnInDigest },
+			"failed without phase":  func(v *ops.CommissioningEvidence) { v.Result = ops.CommissioningFailed; v.Mismatches = []string{"x"} },
+			"failed without mismatch": func(v *ops.CommissioningEvidence) {
+				v.Result, v.FailedPhase = ops.CommissioningFailed, ops.PhaseInspect
+			},
+		} {
+			model := "proof-" + strings.ReplaceAll(name, " ", "-")
+			e, device := next(t, model)
+			plan := e.plan(model+"-v1", model, planAuthor)
+			e.approve(plan, planApprover)
+			operation := e.commission(device, plan, plan.Spec.Content)
+			e.settle(device.Name)
+			var evidence ops.CommissioningEvidence
+			if err := json.Unmarshal([]byte(e.commissioningEvidence(operation, ops.CommissioningPassed)), &evidence); err != nil {
+				t.Fatal(err)
+			}
+			mutate(&evidence)
+			data, _ := json.Marshal(evidence)
+			if err := e.result(device.Name, ops.PhaseSucceeded, string(data)); err != nil {
+				t.Fatal(err)
+			}
+			e.settle(device.Name)
+			if status := e.status(operation); status.Phase != ops.PhaseOutcomeUnknown || status.Reason != ReasonInvalidEvidence {
+				t.Fatalf("%s: %s %s (%s)", name, status.Phase, status.Reason, status.Message)
+			}
 		}
-		e.settle(device.Name)
-		e.requirePhase(operation, ops.PhaseOutcomeUnknown, ReasonInvalidEvidence)
 	})
 
 	t.Run("a later commissioning settles a commissioning hold", func(t *testing.T) {
@@ -313,7 +364,7 @@ func TestCommissioning(t *testing.T) {
 		second := e.commission(device, plan, plan.Spec.Content)
 		e.settle(device.Name)
 		e.requirePhase(second, ops.PhaseAdmitted, "")
-		if err := e.result(device.Name, ops.PhaseSucceeded, commissioningEvidence(t, second, ops.CommissioningPassed)); err != nil {
+		if err := e.result(device.Name, ops.PhaseSucceeded, e.commissioningEvidence(second, ops.CommissioningPassed)); err != nil {
 			t.Fatal(err)
 		}
 		e.settle(device.Name)
@@ -330,7 +381,7 @@ func TestCommissioning(t *testing.T) {
 		for range 2 {
 			operation := e.commission(device, plan, plan.Spec.Content)
 			e.settle(device.Name)
-			if err := e.result(device.Name, ops.PhaseSucceeded, commissioningEvidence(t, operation, ops.CommissioningPassed)); err != nil {
+			if err := e.result(device.Name, ops.PhaseSucceeded, e.commissioningEvidence(operation, ops.CommissioningPassed)); err != nil {
 				t.Fatal(err)
 			}
 			e.settle(device.Name)
@@ -346,6 +397,28 @@ func TestCommissioning(t *testing.T) {
 		}
 		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(runs[1]), runs[1]); err != nil {
 			t.Fatalf("the latest commissioning was deleted: %v", err)
+		}
+		// Once the Device is gone, its latest is evidence nobody reads.
+		if err := e.admin.Delete(e.ctx, device); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.coord.SweepRetention(e.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(runs[1]), runs[1]); !apierrors.IsNotFound(err) {
+			t.Fatalf("a deleted Device's commissioning was kept: %v", err)
+		}
+	})
+
+	t.Run("the latest success is per Device incarnation", func(t *testing.T) {
+		older := &ops.DeviceCommissioning{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Spec: ops.DeviceCommissioningSpec{OperationEnvelope: ops.OperationEnvelope{DeviceRef: ops.DeviceReference{Name: "server", UID: "first"}}},
+			Status: ops.OperationStatus{Phase: ops.PhaseSucceeded, FinishedAt: &metav1.Time{Time: time.Now()}}}
+		newer := older.DeepCopyObject().(*ops.DeviceCommissioning)
+		newer.Name, newer.Spec.DeviceRef.UID = "b", "second"
+		newer.Status.FinishedAt = &metav1.Time{Time: time.Now().Add(-time.Hour)}
+		latest := LatestSucceeded([]ops.Operation{older, newer})
+		if len(latest) != 2 || latest[ops.DeviceReference{Name: "server", UID: "second"}].GetName() != "b" {
+			t.Fatalf("latest = %v", latest)
 		}
 	})
 }

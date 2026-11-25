@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sort"
+	"slices"
+	"strings"
 	"time"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -69,16 +71,23 @@ func qualifies(plan *ops.DeviceCommissioningPlan, approval *ops.DeviceCommission
 		return false, "the approval is for another plan", nil
 	case reference.Digest != digest:
 		return false, "the approval is for different plan content", nil
-	case approval.Spec.Creator.Username == "" || approval.Spec.Creator.Username == plan.Spec.Creator.Username:
+	case !distinct(plan.Spec.Creator, approval.Spec.Creator):
 		return false, "the plan's author approved it", nil
 	}
 	return true, "", nil
 }
 
+// distinct reports whether two creators are different people: both are
+// identified, and neither their UIDs nor their usernames match.
+func distinct(author, approver ops.Creator) bool {
+	return author.UID != "" && approver.UID != "" && author.Username != "" && approver.Username != "" &&
+		author.UID != approver.UID && !strings.EqualFold(author.Username, approver.Username)
+}
+
 // CurrentPlan returns the Device's current plan: the one qualified plan whose
 // selector matches the Device and that no other qualified plan matching the
 // Device supersedes. With no such plan, or more than one, it returns nil and
-// the reason.
+// the reason. An error means the plans could not be read.
 func CurrentPlan(ctx context.Context, reader client.Reader, device *inventory.Device) (*ops.DeviceCommissioningPlan, string, error) {
 	var plans ops.DeviceCommissioningPlanList
 	if err := reader.List(ctx, &plans, client.InNamespace(device.Namespace)); err != nil {
@@ -141,18 +150,13 @@ func currentPlan(plans []ops.DeviceCommissioningPlan, approvals []ops.DeviceComm
 	case len(matching) == 0 && len(selecting) > 0:
 		// Every plan that applies is superseded by another that applies:
 		// plans that supersede each other.
-		return nil, ReasonPlanAmbiguous, errors.New("the plans that apply supersede each other")
+		return nil, ReasonPlanAmbiguous, nil
 	case len(matching) == 0:
 		return nil, ReasonNoCurrentPlan, nil
 	case len(matching) == 1:
 		return matching[0], "", nil
 	}
-	names := make([]string, 0, len(matching))
-	for _, plan := range matching {
-		names = append(names, plan.Name)
-	}
-	sort.Strings(names)
-	return nil, ReasonPlanAmbiguous, fmt.Errorf("plans %v all apply", names)
+	return nil, ReasonPlanAmbiguous, nil
 }
 
 // DeviceCommissioningKind is the registry entry for DeviceCommissioning.
@@ -191,24 +195,7 @@ func DeviceCommissioningKind() Kind {
 			{Name: ReasonTargetUnsupported, RaisedBy: RaisedByWorker},
 			{Name: ReasonInputsUnreadable, RaisedBy: RaisedByWorker},
 		},
-		Evidence: StrictEvidence(commissioningEvidenceLimit, func(operation ops.Operation, evidence *ops.CommissioningEvidence) error {
-			plan := operation.(*ops.DeviceCommissioning).Spec.Plan
-			switch {
-			case evidence.Plan != plan.PlanReference:
-				return errors.New("the evidence names another plan")
-			case evidence.Result == ops.CommissioningPassed && (evidence.FailedPhase != "" || len(evidence.Mismatches) != 0 || evidence.Hardware == nil || evidence.BurnIn == nil || evidence.BurnIn.Result != ops.BurnInPassed):
-				return errors.New("a passed commissioning records inspected hardware and a passed burn-in, and no failure")
-			case evidence.Result == ops.CommissioningFailed && evidence.FailedPhase != ops.PhaseInspect && evidence.FailedPhase != ops.PhaseFirmware && evidence.FailedPhase != ops.PhaseBurnIn:
-				return errors.New("a failed commissioning names the phase that failed")
-			case evidence.Result != ops.CommissioningPassed && evidence.Result != ops.CommissioningFailed:
-				return errors.New("the evidence records no result")
-			case len(evidence.Firmware) > 32 || len(evidence.Mismatches) > 32:
-				return errors.New("evidence records at most 32 firmware components and 32 mismatches")
-			case evidence.Hardware != nil && (len(evidence.Hardware.Disks) > 64 || len(evidence.Hardware.Interfaces) > 64):
-				return errors.New("evidence records at most 64 disks and 64 interfaces")
-			}
-			return validateSteps(evidence.Steps)
-		}),
+		Evidence:         StrictEvidence(commissioningEvidenceLimit, validateCommissioningEvidence),
 		EvidenceRequired: true,
 	}
 }
@@ -280,4 +267,88 @@ func hasBootInterface(device *inventory.Device) bool {
 		}
 	}
 	return false
+}
+
+// validateCommissioningEvidence accepts only evidence that proves its
+// verdict. A Passed result records the identity the BMC reported, matching
+// the admission snapshot, hardware that meets the plan, every firmware
+// baseline at its version, and a passed burn-in that ran the plan's
+// duration. A Failed result names the phase and what failed.
+func validateCommissioningEvidence(operation ops.Operation, evidence *ops.CommissioningEvidence) error {
+	plan := operation.(*ops.DeviceCommissioning).Spec.Plan
+	switch {
+	case evidence.Plan != plan.PlanReference:
+		return errors.New("the evidence names another plan")
+	case len(evidence.Firmware) > 32 || len(evidence.Mismatches) > 32:
+		return errors.New("evidence records at most 32 firmware components and 32 mismatches")
+	case evidence.Hardware != nil && (len(evidence.Hardware.Disks) > 64 || len(evidence.Hardware.Interfaces) > 64):
+		return errors.New("evidence records at most 64 disks and 64 interfaces")
+	}
+	if err := validateSteps(evidence.Steps); err != nil {
+		return err
+	}
+	switch evidence.Result {
+	case ops.CommissioningFailed:
+		if evidence.FailedPhase != ops.PhaseInspect && evidence.FailedPhase != ops.PhaseFirmware && evidence.FailedPhase != ops.PhaseBurnIn {
+			return errors.New("a failed commissioning names the phase that failed")
+		}
+		if len(evidence.Mismatches) == 0 {
+			return errors.New("a failed commissioning says what failed")
+		}
+		return nil
+	case ops.CommissioningPassed:
+	default:
+		return errors.New("the evidence records no result")
+	}
+	if evidence.FailedPhase != "" || len(evidence.Mismatches) != 0 {
+		return errors.New("a passed commissioning records no failure")
+	}
+	if evidence.SerialNumber == "" || evidence.SystemUUID == "" || evidence.BMCPublicKeySHA256 == "" {
+		return errors.New("a passed commissioning records the serial number, system UUID and BMC key it read")
+	}
+	// Delivery waits until status records the admission, so the snapshot is
+	// there by the time a result arrives.
+	snapshot := operation.OperationStatus().Snapshot
+	if snapshot == nil {
+		return errors.New("the admission snapshot is not recorded, so the identity cannot be checked")
+	}
+	if !strings.EqualFold(evidence.SystemUUID, snapshot.SystemUUID) || evidence.BMCPublicKeySHA256 != snapshot.BMCPublicKeySHA256 ||
+		!strings.EqualFold(strings.TrimSpace(evidence.SerialNumber), strings.TrimSpace(snapshot.Extra[SnapshotSerialNumber])) {
+		return errors.New("the identity the commissioning read differs from the admission snapshot")
+	}
+	hw, want := evidence.Hardware, plan.Content.Inspection
+	if hw == nil {
+		return errors.New("a passed commissioning records the inspected hardware")
+	}
+	if hw.CPU.Architecture != want.CPU.Architecture || hw.CPU.Cores != want.CPU.Cores {
+		return errors.New("the inspected CPU does not meet the plan")
+	}
+	memory, err := resource.ParseQuantity(hw.Memory)
+	planned, perr := resource.ParseQuantity(want.Memory.Capacity)
+	if err != nil || perr != nil || memory.Cmp(planned) != 0 {
+		return errors.New("the inspected memory does not meet the plan")
+	}
+	minimum, err := resource.ParseQuantity(want.Disks.MinCapacity)
+	if err != nil {
+		return errors.New("the plan's minimum disk capacity does not parse")
+	}
+	var disks int64
+	for _, disk := range hw.Disks {
+		if capacity, err := resource.ParseQuantity(disk.Capacity); err == nil && capacity.Cmp(minimum) >= 0 {
+			disks++
+		}
+	}
+	if disks < want.Disks.Count || int64(len(hw.Interfaces)) < want.Interfaces.Count {
+		return errors.New("the inspected disks or interfaces do not meet the plan")
+	}
+	for _, baseline := range plan.Content.Firmware {
+		if !slices.Contains(evidence.Firmware, baseline) {
+			return fmt.Errorf("firmware %s is not recorded at version %s", baseline.Component, baseline.Version)
+		}
+	}
+	burnIn := evidence.BurnIn
+	if burnIn == nil || burnIn.Result != ops.BurnInPassed || burnIn.CompletedAt.Sub(burnIn.StartedAt.Time) < plan.Content.BurnIn.Duration.Duration {
+		return errors.New("a passed commissioning records a passed burn-in that ran the plan's duration")
+	}
+	return nil
 }
