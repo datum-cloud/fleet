@@ -17,7 +17,9 @@ marked **implemented and verified**, **implemented and inert**, or
 | C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, and the standalone smoke (`task standalone:test`). Verification of the two multi-plane runs, local VM and Redfish, is pending. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
 | Power P1: control plane | `DevicePowerOperation`, its registry entry, rows, checks, evidence and settle hook, its roles, and the Device field for offered reset types. See [Device power operations](#device-power-operations). | **Implemented.** The kind ships with the component in every root C wires, and the creator webhook, standalone's creator policy and each coordinator's access cover it. Nothing creates power operations yet. Discovery fills the reset-type field in a separate change. |
-| Power P2 to P4 | The site worker (on B), customer power from `Machine.spec.powerState` (on C), and the UI | **Proposed** |
+| Power P2: site worker | The power worker behind the site worker contract, registered at Redfish sites | **Implemented.** No end-to-end run admits power yet; see [Gaps that remain](#gaps-that-remain). |
+| Power P3: customer power | The Metal provider's power request from `Machine.spec.powerState`, the projector's proven power, and the simulator's power worker | **Implemented and verified** against a real API server with the simulator site. No running provider calls it yet. |
+| Power P4 | The UI | **Proposed** |
 
 ## What Increment A adds
 
@@ -926,6 +928,17 @@ The lab BMC records `LastResetTime` and adds faults for a withheld request, a
 hidden reset time and an identity swap, as [the Redfish
 lab](../operations/redfish-lab.md) describes.
 
+### Customer power
+
+| Piece | Decision |
+| --- | --- |
+| Request | The Metal provider asks the allocator for the Machine's power. `powerState` `On` is the action `On`, and `Off` is `ForceOff`. The operation is named from the allocation and the Machine generation, so a refused one is not created again until the generation changes. |
+| When it is due | When `powerState` differs from the Machine's observed power, or when this allocation's request for another action has not run yet, so a newer request replaces it. Observed power must be `On` or `Off`. Every Machine defaults to `Off`, so power not yet observed, or `Unknown`, asks for nothing, and no server is forced off before its power is known. |
+| During a power hold | Observed power is `Unknown`, so nothing is created. After staff apply a `Retry`, the provider creates the retry under the foundation's retry name, repeating the held operation's inputs, and only while `powerState` still maps to the held action. Otherwise staff settle the hold, and the newer request runs after it. |
+| Observed power | The manager's power projector stays the only writer of `Machine.status.power`. It reports `Unknown` during any hold or unverified custody, and otherwise the newer of discovery's power state and the state custody's last succeeded power operation proved, a tie going to the operation. When any other operation except a recovery finished at or after discovery's read, power is `Unknown` until discovery reads it again, because that operation may have changed it. |
+| Simulator | The simulator site registers a power worker for its simulated servers, and its fixture discovery reports each server's power and offers every action. A restart is proven only by the server's reset time moving to the command. A test-only fault makes a server ignore resets, so a power operation ends unknown. |
+| Not yet wired | No running provider calls the power request. The synthetic staging provider accepts only Machines that ask for power `Off`, and the harness runners do not change power. |
+
 ### Gaps that remain
 
 Each needs a change in the foundation or the harness, and none is worked
@@ -937,7 +950,11 @@ around here.
   `ResetTypeNotOffered`, and a `Settle` has no real power state to cite. The
   power phases need real BMC discovery in the Redfish run, with discovery
   recording reset types, or fixture discovery that reports them.
-
+- **The two-minute start window against delivery latency.** A power worker
+  that starts more than two minutes after admission refuses as `Stale`, with
+  nothing sent. The multi-plane harness allows up to about eight minutes for
+  Karmada delivery, kro and the worker Pod, so a slow delivery would fail a
+  power operation safely once a run admits one.
 - **A kind check cannot wait.** Rule 7 now runs before rule 5, and a kind
   check can only refuse. A provider power operation whose discovery is not
   current therefore ends `Failed` with `DiscoveryNotCurrent`. #174 says it
@@ -987,6 +1004,7 @@ a real API server:
 | CRD contract, roles, and that nothing ships the component or the test-only kinds | `TestCRDContract`, `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets`, `TestComponentIsInert` |
 | Power: each refusal with custody unchanged, both rows and every other pair, staff racing an allocation, replacement only by the provider row and waiting under a hold, expiry, an early staff retry settling after `Retry`, `Settle` evidence, required evidence | `TestPowerOperations` |
 | Power: CEL inputs and evidence pruning, checks, input digest, evidence bounds, registration | `TestPowerCRDRules`, `TestPowerChecks`, `TestPowerInputDigestIsStable`, `TestPowerEvidenceIsTypedAndBounded`, `TestPowerRegistration` |
+| Customer power: power under an allocation, waiting behind an installation, a newer request replacing a pending one, a hold reporting `Unknown` through release and settling with fresh discovery, a retry repeating only the held action | `TestCustomerPower` |
 | Power worker: one reset per action and its proof, sending nothing when already in the requested state, each refusal with nothing sent, a lost response, a request never applied, an unprovable restart, a swap after the command, a resumed worker, two workers for one assignment | `go test ./internal/site/powerwork` |
 | The BMC's reset time and the lab's power faults | `TestObserveReadsTheLastResetTime`; the lab adapter self-test |
 
