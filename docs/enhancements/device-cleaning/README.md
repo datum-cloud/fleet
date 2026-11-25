@@ -92,8 +92,14 @@ assurance levels. It changes these parts of that design:
 - **[Operations](../device-operations/README.md#operations):** `DeviceWipe`
   carries a [cleaning plan](#planning-a-release) instead of a policy digest
   and target disks, and its deadline comes from the plan.
-- **[Unknown outcomes](../device-operations/README.md#unknown-outcomes):**
-  `DeviceRecovery` gains a `DisposeDrive` decision.
+- **[Operations](../device-operations/README.md#operations):**
+  `DeviceInstallation` target disks resolve through the [pinned
+  manifest](#pinning-at-allocation).
+- **[Operations](../device-operations/README.md#operations) and
+  [admission](../device-operations/README.md#admission):** `DeviceRecovery`
+  gains a `DisposeDrive` decision, admitted for a `Release` holder without a
+  recovery hold. A `Release` holder in custody records disposed drives. See
+  [Planning a release](#planning-a-release).
 - **[Capacity status](../device-operations/README.md#capacity-status):**
   `Available` adds the [cleaning check](#capacity-status).
 
@@ -140,7 +146,7 @@ spec:
       verify: {mode: Canary, samples: 64}
       timePerTiB: 3h
   # The drive models and firmware that passed hardware qualification, and the
-  # methods each passed. Required for every Purge method.
+  # methods each passed. A Purge method runs only on a qualified drive.
   qualified:
     - {model: EXAMPLE-NVME-3840, firmware: [EX1.2, EX1.3],
        methods: [CryptographicErase, BlockErase], alwaysEncrypts: true}
@@ -217,7 +223,7 @@ digest, the SHA-256 of its canonical spec, and copies into the allocation:
 The allocator names drives `disk-0`, `disk-1`, and so on, at pin time. Names
 stay fixed for the allocation, and installations resolve target disks through
 the manifest. Allocation refuses a server that is not
-[covered](#capacity-status). Later changes to the policy or discovery do not
+[covered](#capacity-status), with reason `CleaningUncovered`. Later changes to the policy or discovery do not
 change the pin.
 
 ### Planning a release
@@ -228,18 +234,24 @@ controller uses it to create a wipe, and admission uses it to check one.
 - Every manifest drive gets a step. Its methods are the rule's methods that are
   qualified for the drive, or all of them for a Clear rule.
 - A drive that discovery reports now and the manifest lacks also gets a step,
-  planned with the pinned policy. The customer could have written to it.
+  planned with the pinned policy and named with the next free `disk-N`. The
+  customer could have written to it.
 - A manifest drive that discovery no longer reports blocks the plan, with
   reason `DriveMissing`.
 - A drive with no planned method blocks the plan, with reason
   `DriveUncovered`.
 
-A blocked plan creates no wipe. The release controller records the reason in
-the allocation's status, and the `Cleaning` gate stays open. Staff can record
-the disposal of a missing drive with a `DeviceRecovery` decision
-`DisposeDrive`, which names the drive and how it was destroyed or removed. The
-planner then omits that drive. Replacing a drive does not settle the missing
-one.
+A blocked plan creates no wipe, and the `Cleaning` gate stays open. The
+release controller, which already writes the allocation's release status,
+records the reason there.
+
+Staff settle a missing drive with a `DeviceRecovery` decision `DisposeDrive`.
+It names the drive and how it was destroyed or removed, with a reference.
+Admission accepts it only when the holder is `Release`, no operation is active,
+and the drive is in the manifest but absent from current discovery. No recovery
+hold is needed. The coordinator records the disposal in custody with the
+holder, and the planner omits that drive. The record ends when the holder
+leaves `Release`. Replacing a drive does not settle the missing one.
 
 The `DeviceWipe` carries the plan:
 
@@ -282,14 +294,16 @@ today, and ejects every BMC virtual media. It then boots the pinned wipe
 environment over the network once. The boot server refuses a second boot under
 the same admission, so the environment never runs twice for one wipe.
 
-Before it changes anything, the wipe environment:
+Before it erases anything, the wipe environment:
 
 1. lists every block device, NVMe controller, and namespace;
 2. matches each drive to a planned drive by serial number, model, and
    firmware;
-3. restores a host-protected area that shrank a drive; and
+3. restores a host-protected area that shrank a drive, the only change it
+   makes before erasing; and
 4. stops with reason `MediaMismatch` if a planned drive is missing, an
-   unplanned device exists, or a drive's size still differs from the plan.
+   unplanned device exists, a device configuration overlay hides capacity, or
+   a drive's size still differs from the plan.
 
 For NVMe, a Sanitize covers the whole controller. Before a `Format` or
 `Overwrite`, the environment deletes every namespace and creates one that spans
@@ -350,8 +364,9 @@ Evidence never carries data read from a drive.
 The coordinator, not the site, decides whether a wipe succeeded. It accepts a
 `Succeeded` result only when every planned drive has an entry with the planned
 identity, a method from its planned list, a completed erase, and a passed check.
-It derives each method's assurance itself. A result that falls short ends
-`OutcomeUnknown` with one of these reasons, and the server gets a recovery hold:
+It derives each method's assurance itself. The kind's evidence check returns
+one of these reasons, the coordinator records it, and the result ends
+`OutcomeUnknown` with a recovery hold:
 
 | Reason | Meaning |
 | --- | --- |
@@ -374,8 +389,7 @@ server reports reason `CleaningUncovered`.
 ### What the lab proves
 
 The lab runs virtual machines behind the DMTF Redfish Interface Emulator.
-Today it proves only `Overwrite` with `Full` verification on one virtual disk,
-and the journaling and recovery around it.
+Today it proves only `Overwrite` with `Full` verification on one virtual disk.
 
 With this work, the lab adapter reports drives with serial numbers, models, and
 firmware, and the lab machines get emulated NVMe drives. The lab can then also
@@ -383,8 +397,9 @@ prove:
 
 - drive inventory, the manifest, planning, and blocked plans;
 - matching drives by serial number, and refusing a missing or extra drive;
-- the evidence check and every shortfall reason; and
-- falling back when a drive refuses a method.
+- the evidence check and every shortfall reason;
+- falling back when a drive refuses a method; and
+- step journaling, and that a stopped wipe is never booted again.
 
 Whether the emulated NVMe drive implements `Format` and Sanitize must be
 checked before the lab claims either.
@@ -399,7 +414,8 @@ policy lists for it.
 Record these decisions before implementation:
 
 - Who approves a hardware qualification, and where its results live.
-- Who can record `DisposeDrive`, and whether a second person must confirm it.
+- Who can record `DisposeDrive`, whether a second person must confirm it, and
+  whether admitting it without a recovery hold is acceptable.
 - Which roles can create a CleaningPolicy.
 
 ### Acceptance tests
