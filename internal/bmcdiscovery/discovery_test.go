@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -587,7 +588,9 @@ func TestEndToEndOverTLS(t *testing.T) {
 		"/redfish/v1/Managers":     `{"Members":[{"@odata.id":"/redfish/v1/Managers/BMC"}]}`,
 		"/redfish/v1/Managers/BMC": `{"Id":"BMC","Model":"Example BMC","FirmwareVersion":"1.2.3"}`,
 		"/redfish/v1/Systems":      `{"Members":[{"@odata.id":"/redfish/v1/Systems/1"}]}`,
-		"/redfish/v1/Systems/1":    `{"Id":"1","UUID":"00000000-0000-4000-8000-000000000001","Model":"Example 1U","SerialNumber":"SYNTHETIC-0001","PowerState":"Off"}`,
+		"/redfish/v1/Systems/1": `{"Id":"1","UUID":"00000000-0000-4000-8000-000000000001","Model":"Example 1U","SerialNumber":"SYNTHETIC-0001","PowerState":"Off",
+			"Actions":{"#ComputerSystem.Reset":{"target":"/redfish/v1/Systems/1/Actions/ComputerSystem.Reset","@Redfish.ActionInfo":"/redfish/v1/Systems/1/ResetActionInfo"}}}`,
+		"/redfish/v1/Systems/1/ResetActionInfo": `{"Parameters":[{"Name":"ResetType","Required":"true","DataType":"String","AllowableValues":["On","ForceOff","ForceRestart"]}]}`,
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, authed := r.BasicAuth()
@@ -639,6 +642,11 @@ func TestEndToEndOverTLS(t *testing.T) {
 	}
 	if c := condition(t, got.Status, inventory.ConditionIdentityMatched); c.Status != metav1.ConditionTrue {
 		t.Fatalf("IdentityMatched = %+v", c)
+	}
+	// Offered reset types come from the ActionInfo, read with a GET; the
+	// action itself is never invoked.
+	if types := got.Status.Discovery.Inventory.Systems[0].ResetTypes; !slices.Equal(types, []string{"On", "ForceOff", "ForceRestart"}) {
+		t.Fatalf("resetTypes = %v", types)
 	}
 	mu.Lock()
 	defer mu.Unlock()
