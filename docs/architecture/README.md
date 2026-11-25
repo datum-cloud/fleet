@@ -36,6 +36,7 @@ Key principles to carry into the detailed design:
 | How is Bare Metal registered and renamed safely? | [Service registration and rollout](#service-registration-and-rollout) |
 | What are the machine resources and project boundaries? | [Machine lifecycle API design](../enhancements/machine-lifecycle/README.md#api-design) |
 | How are reservations and concurrent operations coordinated? | [Durable coordination](../enhancements/machine-lifecycle/README.md#durable-coordination) |
+| How are physical actions on one server serialized? | [Device custody and operations](../enhancements/device-operations/README.md) |
 | How are provider effects recovered safely? | [Provider execution and recovery](../enhancements/machine-lifecycle/README.md#provider-execution-and-recovery) |
 | What happens on release or project deletion? | [Release and project lifecycle](../enhancements/machine-lifecycle/README.md#release-and-project-lifecycle) |
 | How is a server's power changed? | [Device power operations](../enhancements/device-power/README.md) |

@@ -196,6 +196,11 @@ func uniqueStrings(values []string) []string {
 	return result
 }
 
+// routePrivate routes only records whose owner validated the complete record.
+// An undecodable record routes nowhere, even by its claim-uid label: the label
+// carries no project or claim name, and routing never trusts an unvalidated
+// field. Removing such a record therefore wakes no claim; the operator
+// procedure deletes the Machine before removing its records.
 func routePrivate(secret *corev1.Secret, privateNamespace string) (controller.PrivateRecordRoute, bool) {
 	if secret == nil || privateNamespace == "" || secret.Namespace != privateNamespace {
 		return controller.PrivateRecordRoute{}, false

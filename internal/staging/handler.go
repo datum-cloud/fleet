@@ -137,17 +137,17 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	admission := controller.AdmissionAuthority{PrincipalUID: "synthetic-staging:" + string(h.Project.UID), DecisionID: "synthetic-staging:" + string(claim.UID)}
 	if crossProject {
 		if err := h.Coordinator.EnsureClaimCustody(ctx, &claim, namespace.UID, admission, h.Project); err != nil {
-			return manager.Outcome{RetryError: err}
+			return h.lifecycleError(ctx, &claim, err)
 		}
 		authority, hold := syntheticCrossProjectAuthority(claim.UID, claim.Namespace, h.Project, h.ProviderProject)
 		if err := h.Coordinator.RetainClaimAuthority(ctx, claim.UID, h.Project, h.ProviderProject, authority); err != nil {
-			return manager.Outcome{RetryError: err}
+			return h.lifecycleError(ctx, &claim, err)
 		}
 		if err := h.Coordinator.RetainAllocationAuthority(ctx, claim.UID, h.Project, h.ProviderProject, authority, hold); err != nil {
-			return manager.Outcome{RetryError: err}
+			return h.lifecycleError(ctx, &claim, err)
 		}
 	} else if err := h.Coordinator.EnsureClaimCustody(ctx, &claim, namespace.UID, admission); err != nil {
-		return manager.Outcome{RetryError: err}
+		return h.lifecycleError(ctx, &claim, err)
 	}
 	if !contains(claim.Finalizers, controller.MachineFinalizer) {
 		updated := claim.DeepCopyObject().(*fleetv1.Machine)
@@ -171,13 +171,8 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	if errors.Is(err, controller.ErrInsufficientCapacity) {
 		return h.pending(ctx, &claim, "InsufficientCapacity", "No matching synthetic machine is currently available.", nil)
 	}
-	if errors.Is(err, controller.ErrLegacyRecord) {
-		// Retrying cannot make a pre-exact allocation valid. Report it as
-		// explicitly not bound and not ready; deletion releases it.
-		return h.pending(ctx, &claim, controller.ReasonLegacyCustodyRecord, legacyCustodyMessage, nil)
-	}
 	if err != nil {
-		return manager.Outcome{RetryError: err}
+		return h.lifecycleError(ctx, &claim, err)
 	}
 	for i := range list.Items {
 		if list.Items[i].UID == record.MachineUID {
@@ -212,6 +207,18 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	}
 	return manager.Outcome{}
 }
+
+// lifecycleError reports a private record of this Machine that cannot be
+// decoded as not bound and not ready, without retrying: retrying cannot make
+// the record readable. Every other error is retried.
+func (h Handler) lifecycleError(ctx context.Context, claim *fleetv1.Machine, err error) manager.Outcome {
+	if errors.Is(err, controller.ErrRecordUnreadable) {
+		return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
+	}
+	return manager.Outcome{RetryError: err}
+}
+
+const unreadableRecordMessage = "A private lifecycle record for this Machine cannot be decoded. Fleet will not allocate, install, or release through it; an operator must remove the record."
 
 func (h Handler) dependency(ctx context.Context, claim *fleetv1.Machine, reason string, err error) manager.Outcome {
 	if apierrors.IsNotFound(err) {
@@ -267,11 +274,19 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 		if errors.Is(err, controller.ErrRecordInvalid) && (claim == nil || !contains(claim.Finalizers, controller.MachineFinalizer)) {
 			return manager.Outcome{}
 		}
+		// The finalizer stays until an operator removes the record; see
+		// docs/development/README.md.
+		if errors.Is(err, controller.ErrRecordUnreadable) {
+			return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
+		}
 		return manager.Outcome{RetryError: err}
 	}
 	if crossProject && result.ExternalSettlementRequired {
 		authority, hold := syntheticCrossProjectAuthority(uid, namespace, h.Project, h.ProviderProject)
 		result, err = h.Coordinator.CompleteExternalRelease(ctx, uid, authority, hold, h.Project)
+		if errors.Is(err, controller.ErrRecordUnreadable) {
+			return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
+		}
 		if err != nil {
 			return manager.Outcome{RetryError: err}
 		}
@@ -342,8 +357,6 @@ func syntheticCrossProjectAuthority(claimUID types.UID, namespace string, consum
 	hold := controller.ExternalHoldRef{Provider: "synthetic-staging", Namespace: namespace, Name: "machine-" + digest[:24], UID: types.UID("synthetic-" + string(claimUID))}
 	return authority, hold
 }
-
-const legacyCustodyMessage = "Private custody for this Machine was accepted before MachineProfile CPU and memory became exact and cannot be resumed. Delete the Machine to release the allocation through verified cleanup."
 
 func admissionReason(crossProject bool) string {
 	if crossProject {
