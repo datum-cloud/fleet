@@ -35,6 +35,8 @@ type hypervisor struct {
 	hold bool
 	// noReceipt makes the guest print no receipt.
 	noReceipt bool
+	// stuck makes destroy leave the domain running.
+	stuck bool
 }
 
 var receiptArg = regexp.MustCompile(`fleet.receipt=([0-9a-f]{64})`)
@@ -73,6 +75,10 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 		h.running[name] = log
 		if !h.hold {
 			delete(h.running, name)
+		}
+	case "destroy":
+		if !h.stuck {
+			delete(h.running, args[1])
 		}
 	case "list":
 		var names []string
@@ -164,14 +170,26 @@ func TestInstallThenWipe(t *testing.T) {
 	}
 }
 
-// TestAWipeWithARunningDomainIsNotProven keeps a disk in use from counting
-// as wiped.
-func TestAWipeWithARunningDomainIsNotProven(t *testing.T) {
+// TestAWipePowersOffARunningDomain powers off a guest an earlier worker left
+// running, then wipes.
+func TestAWipePowersOffARunningDomain(t *testing.T) {
 	r := newRig(t)
 	r.vm.running["fleet-local-0000000000000000"] = "console"
+	result, err := r.runner.Run(context.Background(), r.assignment("DeviceWipe", "00000000-0000-4000-8000-000000000208", 2, wipeSpec()))
+	if err != nil || result.Phase != ops.PhaseSucceeded || len(r.vm.running) != 0 {
+		t.Fatalf("wipe with a running domain = %+v, %v, running %v", result, err, r.vm.running)
+	}
+}
+
+// TestAWipeWithADomainThatKeepsRunningIsNotProven keeps a disk in use from
+// counting as wiped.
+func TestAWipeWithADomainThatKeepsRunningIsNotProven(t *testing.T) {
+	r := newRig(t)
+	r.vm.running["fleet-local-0000000000000000"] = "console"
+	r.vm.stuck = true
 	result, err := r.runner.Run(context.Background(), r.assignment("DeviceWipe", "00000000-0000-4000-8000-000000000203", 2, wipeSpec()))
 	if err != nil || result.Phase == ops.PhaseSucceeded {
-		t.Fatalf("wipe with a running domain = %+v, %v", result, err)
+		t.Fatalf("wipe with a domain that keeps running = %+v, %v", result, err)
 	}
 }
 
