@@ -197,7 +197,7 @@ with tempfile.TemporaryDirectory() as tmp:
     for name, text in (('steps', steps), ('evidence', evidence), ('harness', harness.read_text())):
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
-    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'commission', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
+    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'commission-dispatch', 'commission', 'commission-settle', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
              'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
              'reflection-faults', 'release', 'release-status-a',
              'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b',
@@ -275,6 +275,12 @@ with tempfile.TemporaryDirectory() as tmp:
     for f in ('flux-tools', 'topology', 'flux-source', 'flux-bootstrap-$c', 'flux-platform', 'flux-milo', 'federation-enrollment', 'flux-site', 'flux-verify'):
         check('bootstrap phase present: ' + f, 'ph %s ' % f in run_sh or 'ph "%s" ' % f in run_sh)
     check('dispatch is a source revision', "--site dispatch" in steps and 'patch handoffdispatcher' not in steps)
+    # Dispatch is on only around the commission phase, off again before
+    # allocation, and on again for the install while the hub is paused.
+    publishes = [line.split('--revision ')[1].split(' --purpose')[0] for line in steps.splitlines() if 'flux publish' in line]
+    check('dispatch revisions bracket the commission phase', publishes == ['3 --site dispatch', '4 --site off', '5 --site dispatch'], str(publishes))
+    for name, text in (('local VM', sequence), ('Redfish', redfish_sequence)):
+        check('dispatch is off again before allocation: ' + name, 0 < text.find('step commission-dispatch ') < text.find('ph commission ') < text.find('step commission-settle ') < text.find('ph allocate '))
     check('fault injection suspends Flux first', 'suspend milo-consumer-a true' in steps and '"suspend":true' in (root / 'hack/multiplane/reflection-faults.py').read_text())
     check('RBAC revocation repaired by Flux, not the harness', "'apply'" not in (root / 'hack/multiplane/verify-rbac.py').read_text())
     for path in ('config/site/base/site.yaml', 'config/site/graph/rgd.yaml', 'config/site/instance/dispatcher.yaml', 'config/multiplane/coordination/crd.yaml',

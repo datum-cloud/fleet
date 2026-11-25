@@ -92,6 +92,42 @@ def observation(state, name):
     return (get(state, '-n', NS, 'get', 'machineallocationhandoff', name).get('status') or {}).get('observation')
 
 
+# The completed commissioning's handoff names, recorded once dispatch is off
+# again. The install's checks ignore exactly these and count everything else.
+COMMISSIONED = 'commission-handoffs'
+
+
+def commissioning_handoffs(items):
+    """The commissioning's handoffs, which must be the only assignments the
+    cell holds after the commission phase."""
+    kinds = {h['metadata']['name']: json.loads(h['spec']['assignmentJSON'])['operation']['kind'] for h in items}
+    names = sorted(n for n, kind in kinds.items() if kind == 'DeviceCommissioning')
+    if len(names) != 1 or len(kinds) != 1:
+        raise SystemExit('expected exactly one assignment, the commissioning\'s, after the commission phase: %s' % sorted(kinds.items()))
+    return names
+
+
+def commissioned(state):
+    path = pathlib.Path(state) / COMMISSIONED
+    if not path.exists():
+        raise SystemExit('no commissioning handoff was recorded after the commission phase')
+    return set(path.read_text().split())
+
+
+def install_assignments(items, done):
+    """Every assignment handoff except the completed commissioning's."""
+    return sorted(h['metadata']['name'] for h in items if h['metadata']['name'] not in done)
+
+
+def install_jobs(jobs, done):
+    """Every worker Job except the completed commissioning's."""
+    return sorted(j['metadata']['name'] for j in jobs if j['metadata']['name'] not in {'w-' + n for n in done})
+
+
+def assignment_items(state, config='cell-admin.yaml'):
+    return get(state, '-n', NS, 'get', 'machineallocationhandoffs', '-l', ROLE_LABEL + '=assignment', config=config)['items']
+
+
 DEVICE = 'fleet-provider/synthetic-device-central-01'
 OTHER_DEVICE = 'fleet-provider/synthetic-device-central-02'
 
@@ -343,6 +379,16 @@ def main():
         print(running_pod(state, rest[0], ('Pending', 'Running')))
     elif cmd == 'job':
         print(json.dumps(job(state, rest[0]), sort_keys=True))
+    elif cmd == 'record-commissioning':
+        names = commissioning_handoffs(assignment_items(state))
+        path = pathlib.Path(state) / COMMISSIONED
+        path.write_text('\n'.join(names) + '\n')
+        path.chmod(0o600)
+        print('\n'.join(names))
+    elif cmd == 'install-assignments':
+        print('\n'.join(install_assignments(assignment_items(state), commissioned(state))))
+    elif cmd == 'install-jobs':
+        print('\n'.join(install_jobs(get(state, '-n', SITE, 'get', 'jobs')['items'], commissioned(state))))
     elif cmd == 'worker-rbac':
         worker_rbac(state, rest[0])
     elif cmd == 'record-pod-interrupt':

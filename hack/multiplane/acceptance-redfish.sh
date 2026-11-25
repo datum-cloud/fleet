@@ -21,8 +21,10 @@ rf baseline 300
 rf discovery-faults 600
 # Commissioning, not a fixture, takes the registered server from Disabled
 # to Available: a plan, a second person's approval, a commissioning, and the
-# capacity operator enabling it.
+# capacity operator enabling it. Dispatch is on only while it runs.
+step commission-dispatch 900
 ph commission 1800 "$host" commission --config "$state/acceptance.json"
+step commission-settle 900
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"
 step verify-contention 120
 step tenant-isolation 300

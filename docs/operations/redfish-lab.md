@@ -358,7 +358,9 @@ and `Healthy`; and a capacity operator enables it with the fixture cleaning
 policy and the `local` pool. The phase ends when the projector reports the
 capacity `Available`. The local VM mode runs the same phase with the
 simulated commissioning worker, which reads the hardware the site enrollment
-records.
+records. The burn-in runs in a worker Job, so dispatch is on only while the
+phase runs and off again before allocation. The install's checks ignore the
+commissioning's handoff and Job, and count everything else.
 
 **Redfish phases:**
 

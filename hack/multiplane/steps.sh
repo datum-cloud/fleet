@@ -32,8 +32,13 @@ wait_api() {
  echo "API did not recover: $(basename "$1")" >&2; return 1
 }
 assignments=coordination.fleet.datumapis.com/role=assignment
-# The site results the observer publishes: only it writes handoff status.
-local_phase() { cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o jsonpath='{.items[*].status.observation.result.phase}'; }
+# The site result the observer published for the install's handoff: only it
+# writes handoff status.
+local_phase() { cell -n "$ns" get machineallocationhandoff "$(cat "$state/install-handoff")" -o jsonpath='{.status.observation.result.phase}'; }
+# Every assignment handoff and worker Job except the completed commissioning's.
+install_assignments() { py install-assignments "$state"; }
+install_jobs() { py install-jobs "$state"; }
+dispatch_is() { [[ $(site get handoffdispatcher dispatcher -o jsonpath='{.spec.dispatch}') == "$1" ]]; }
 # Provider-project custody digest: the spec, phase and fence of every custody
 # record, operation and allocation; the records never leave memory.
 custody_digest() { "${harness[@]}" custody-digest --state "$state"; }
@@ -104,7 +109,7 @@ case "$step" in
   audit_mark
   "$host" tenant-isolation --config "$state/acceptance.json"
   [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for an unheld tenant' >&2; exit 1; }
-  [[ -z $(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o name) ]] || { echo 'an assignment was delivered for an unheld tenant' >&2; exit 1; }
+  [[ -z $(install_assignments) ]] || { echo 'an assignment was delivered for an unheld tenant' >&2; exit 1; }
   audit_unchanged
   ;;
  import-inert)
@@ -112,6 +117,26 @@ case "$step" in
   ;;
  staff-access)
   scenario staff-access "$state"
+  ;;
+ commission-dispatch)
+  # The commissioning's burn-in runs in a worker Job, so dispatch is on while
+  # the commission phase runs. Nothing is allocated yet, so no other
+  # assignment can reach the cell.
+  [[ -z $(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o name) ]] || { echo 'an assignment exists before commissioning' >&2; exit 1; }
+  flux publish "$state" --revision 3 --site dispatch --purpose 'enable dispatch for commissioning' --cluster cell --timeout 600 >/dev/null
+  dispatch_is true || { echo 'commissioning dispatch revision not applied' >&2; exit 1; }
+  printf 'commission-dispatch: dispatch on through cell Flux before any assignment existed\n'
+  ;;
+ commission-settle)
+  # The commission phase saw the commissioning succeed. Record its handoff,
+  # the only assignment so far, then turn dispatch off so the install's
+  # delivery is again proven before any of its workers can exist.
+  py record-commissioning "$state" >/dev/null
+  flux publish "$state" --revision 4 --site off --purpose 'disable dispatch after commissioning' --cluster cell --timeout 600 >/dev/null
+  dispatch_is false || { echo 'dispatch-off revision not applied' >&2; exit 1; }
+  for _ in $(seq 1 120); do [[ -z $(site get jobs -o name) ]] && break; sleep 1; done
+  [[ -z $(site get jobs -o name) ]] || { echo 'kro kept a worker Job with dispatch off' >&2; exit 1; }
+  printf 'commission-settle: commissioning handoff recorded; cell Flux turned dispatch off and kro removed its worker Job\n'
   ;;
  deadline-admit)
   # Consumer B's installation is admitted under a six-minute deadline with
@@ -181,7 +206,7 @@ JSON
   ;;
  await-delivery)
   for _ in $(seq 1 120); do
-   names=$(cell -n "$ns" get machineallocationhandoffs -l "$assignments" -o jsonpath='{.items[*].metadata.name}')
+   names=$(install_assignments)
    [[ -z $names ]] || break
    sleep 1
   done
@@ -189,9 +214,10 @@ JSON
   [[ $(wc -w <<<"$names") -eq 1 ]] || { echo 'more than one delivered assignment' >&2; exit 1; }
   printf '%s\n' "$names" > "$state/install-handoff"
   [[ -z $(local_phase) ]] || { echo 'cell status existed before any worker started' >&2; exit 1; }
-  site wait --for=jsonpath='{.status.deliveredHandoffs}'=1 handoffdispatcher/dispatcher --timeout=120s >/dev/null
-  [[ -z $(site get jobs -o name) ]] || { echo 'worker Job exists before dispatch' >&2; exit 1; }
-  printf 'delivery: Karmada delivered exactly one retained assignment; kro observed it; no worker Job before dispatch\n'
+  # kro counts the commissioning's retained handoff too.
+  site wait --for=jsonpath='{.status.deliveredHandoffs}'=$(( $(wc -l < "$state/commission-handoffs") + 1 )) handoffdispatcher/dispatcher --timeout=120s >/dev/null
+  [[ -z $(install_jobs) ]] || { echo 'worker Job exists before dispatch' >&2; exit 1; }
+  printf 'delivery: Karmada delivered exactly one retained install assignment; kro observed it; no worker Job before dispatch\n'
   ;;
  partition)
   # Consumer A's API is Flux-managed: suspend its Kustomization, then stop it.
@@ -199,14 +225,16 @@ JSON
   platform -n milo-consumer-a scale deployment/milo-apiserver --replicas=0 >/dev/null
   platform -n milo-consumer-a wait --for=delete pod -l app.kubernetes.io/name=milo-apiserver --timeout=120s >/dev/null
   python3 hack/multiplane/fault_guard.py record "$state" platform-admin.yaml kustomization milo-consumer-a milo-consumer-a milo-apiserver flux-partition
+  dispatch_is false || { echo 'dispatch is on before the partition' >&2; exit 1; }
+  [[ -z $(install_jobs) ]] || { echo 'worker Job exists before the partition' >&2; exit 1; }
   docker pause "$prefix-hub-control-plane" >/dev/null
-  printf 'partition: consumer-a API stopped (its Flux Kustomization suspended) and hub paused before any worker Job exists\n'
+  printf 'partition: consumer-a API stopped (its Flux Kustomization suspended) and hub paused before any install worker Job exists\n'
   ;;
  dispatch)
   # Dispatch is a source revision, reconciled by the cell's own Flux from the
   # registry while the hub is paused; kro then creates per-operation RBAC and the Job.
-  flux publish "$state" --revision 3 --site dispatch --purpose 'enable dispatch' --cluster cell --timeout 600 >/dev/null
-  [[ $(site get handoffdispatcher dispatcher -o jsonpath='{.spec.dispatch}') == true ]] || { echo 'dispatch revision not applied' >&2; exit 1; }
+  flux publish "$state" --revision 5 --site dispatch --purpose 'enable dispatch' --cluster cell --timeout 600 >/dev/null
+  dispatch_is true || { echo 'dispatch revision not applied' >&2; exit 1; }
   name=$(cat "$state/install-handoff")
   for _ in $(seq 1 120); do site get job "w-$name" >/dev/null 2>&1 && break; sleep 1; done
   py job "$state" "$name" > "$state/k8s-dispatch-job.json"
@@ -271,7 +299,7 @@ JSON
   printf 'resume: replacement worker completed the exact interrupted operation at its fence; one install operation; observer published the stored result\n'
   ;;
  partition-readiness)
-  # The platform's root sync must apply r3 (pushed during the partition) with
+  # The platform's root sync must apply r5 (pushed during the partition) with
   # consumer A still suspended, and the suspension must survive it unchanged.
   flux wait "$state" --cluster platform --timeout 300 >/dev/null
   rev=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[-1]["fluxRevision"])' "$state/flux-revisions.json")

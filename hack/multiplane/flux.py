@@ -861,7 +861,7 @@ def worker_objects(state):
 
 
 def handoff_outcome(s, handoff):
-    """The install handoff's outcome on the cell. Once the coordinator
+    """An operation handoff's outcome on the cell. Once the coordinator
     accepted the result it labels the handoff answered and the cell deletes
     its copy, so an answered handoff counts as Succeeded only when the
     provider project's operation for it succeeded."""
@@ -872,7 +872,7 @@ def handoff_outcome(s, handoff):
     if obj['metadata'].get('labels', {}).get('coordination.fleet.datumapis.com/answered') != 'true':
         return None
     operation = json.loads(obj['spec']['assignmentJSON'])['operation']
-    kind = {'DeviceInstallation': 'deviceinstallation', 'DeviceWipe': 'devicewipe'}[operation['kind']]
+    kind = {'DeviceInstallation': 'deviceinstallation', 'DeviceWipe': 'devicewipe', 'DeviceCommissioning': 'devicecommissioning'}[operation['kind']]
     r = subprocess.run(['kubectl', '--kubeconfig', str(s / 'provider' / 'bootstrap-project.json'), '-n', 'fleet-provider', 'get', kind, operation['name'], '-o', 'json'], text=True, capture_output=True)
     if r.returncode != 0:
         return None

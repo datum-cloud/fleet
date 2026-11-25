@@ -2,7 +2,8 @@
 """Explicit test-only hub status fault injection; no simulated federation relay.
 
 The install's result is already accepted, so the coordinator answered its
-handoff and the cell deleted its copy. With Karmada stopped, the harness
+handoff and the cell deleted its copy. The completed commissioning's handoff
+is ignored; every other assignment counts. With Karmada stopped, the harness
 reopens that handoff (removes its answered label) and reflects one forged
 result at a time, each wrong in exactly one attribute. The custody
 coordinator must ignore every one: custody stays unchanged and the handoff
@@ -11,13 +12,15 @@ stays unanswered. The label and the real status are restored afterwards.
 import copy,datetime,json,pathlib,subprocess,sys,time
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 import harness  # noqa: E402  (provider custody digest)
+import k8s_evidence  # noqa: E402  (the commissioning's recorded handoff)
 s=pathlib.Path(sys.argv[1]);hub=s/'hub-admin.yaml';host=s/'host.yaml'
 ANSWERED='coordination.fleet.datumapis.com/answered'
 def k(config,*args,input=None):return subprocess.run(['kubectl','--kubeconfig',str(config),'--request-timeout=20s',*args],input=input,text=True,capture_output=True,check=True).stdout
 def handoff():return json.loads(k(hub,'-n','fleet-coordination','get','machineallocationhandoff',name,'-o','json'))
 items=json.loads(k(hub,'-n','fleet-coordination','get','machineallocationhandoffs','-l','coordination.fleet.datumapis.com/role=assignment','-o','json'))['items']
-if len(items)!=1:raise SystemExit('run reflection faults after install and before the release wipe')
-obj=items[0];original=obj.get('status');name=obj['metadata']['name']
+done=k8s_evidence.commissioned(s);installs=k8s_evidence.install_assignments(items,done)
+if len(installs)!=1:raise SystemExit('run reflection faults after install and before the release wipe')
+obj=next(h for h in items if h['metadata']['name']==installs[0]);original=obj.get('status');name=obj['metadata']['name']
 if obj['metadata'].get('labels',{}).get(ANSWERED)!='true':raise SystemExit('the install result is not answered yet')
 if len((original or {}).get('reflected',[]))!=1:raise SystemExit('no real reflected observation to test')
 assignment=json.loads(obj['spec']['assignmentJSON'])

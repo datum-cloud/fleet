@@ -233,7 +233,13 @@ The phases are then:
    Redfish mode the BMC audit must hold no effect. `staff-access` requires
    the staff identity to read custody and list recoveries, and to be
    forbidden Secrets, every other operation, allocations and custody writes.
-   Staff hold no consumer-project or hub credential.
+   Staff hold no consumer-project or hub credential. `commission` then takes
+   the registered server from `Disabled` to `Available`
+   ([Redfish lab](redfish-lab.md) describes the phase). Its burn-in runs in a
+   worker Job, so `commission-dispatch` turns dispatch on (r3) while no
+   assignment exists, and `commission-settle` records the commissioning's
+   handoff as the only one and turns dispatch off again (r4) until kro has
+   removed its Job. Later checks ignore exactly that handoff and Job.
 2. **Contention.** Two consumers request one provider capacity. Custody grants one
    allocation; `verify-contention` independently reads Bound for A and
    Pending/InsufficientCapacity for B, and requires custody to name the one
@@ -247,11 +253,13 @@ The phases are then:
    and raises the Device's fence, then writes one immutable hub handoff carrying
    that exact assignment, before any effect. `await-delivery` requires the
    following:
-   - exactly one Karmada-delivered assignment handoff;
-   - kro reporting that handoff in `HandoffDispatcher.status.deliveredHandoffs`;
-   - no cell status and no worker Job.
+   - exactly one Karmada-delivered assignment handoff besides the
+     commissioning's, which the cell retains after it succeeded;
+   - kro reporting both handoffs in `HandoffDispatcher.status.deliveredHandoffs`;
+   - no cell status for the install and no worker Job other than the
+     commissioning's.
 4. **Partition.** Suspend consumer A's Flux Kustomization, stop its API and pause
-   the hub. `dispatch` then publishes revision 3, which sets `dispatch: true`.
+   the hub. `dispatch` then publishes revision 5, which sets `dispatch: true`.
    The cell's own Flux reconciles it from the registry with no hub access. kro
    creates the per-operation ServiceAccount, Role, RoleBinding and Job from its
    local replica.
@@ -273,7 +281,7 @@ The phases are then:
    receipt and one disk-boot receipt in the guest serial logs. `worker-rbac`
    then proves the worker token can read only its own handoff: no list, no
    other names, no status or spec writes, no Secrets, no site writes.
-8. **Readiness under partition.** The platform's root sync first reconciles r3
+8. **Readiness under partition.** The platform's root sync first reconciles r5
    while consumer A stays suspended at the same UID and generation, with no
    Pods (`flux-partition.json`). Consumer A's Kustomization is then resumed and
    Flux restores its API. The install Job is
