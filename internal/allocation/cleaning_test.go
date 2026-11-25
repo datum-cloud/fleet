@@ -88,8 +88,8 @@ func TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated(t *testing.T) {
 			e := startEnv(t)
 			device := e.server(1)
 			setup(e)
-			if _, err := e.allocator.Allocate(e.ctx, e.request(1)); !errors.Is(err, ErrInsufficientCapacity) {
-				t.Fatalf("allocate = %v, want ErrInsufficientCapacity", err)
+			if _, err := e.allocator.Allocate(e.ctx, e.request(1)); !errors.Is(err, ErrInsufficientCapacity) || !errors.Is(err, ErrCleaningUncovered) {
+				t.Fatalf("allocate = %v, want ErrInsufficientCapacity that says the cleaning policy was not usable", err)
 			}
 			if found, err := e.allocator.Get(e.ctx, machine(1)); err != nil || found != nil {
 				t.Fatalf("allocation = %v, %v", found, err)

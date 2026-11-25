@@ -15,6 +15,7 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -77,6 +78,15 @@ func TestPolicyAgainstAPIServer(t *testing.T) {
 	fallback.Rules[0].Methods = append(fallback.Rules[0].Methods, ops.MethodOverwrite)
 	if err := admin.Create(ctx, policy("fallback", fallback)); !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "below the policy's Purge") {
 		t.Fatalf("a fallback below the assurance = %v, want the webhook to refuse it", err)
+	}
+	// The schema refuses a time bound that is not a duration, so no stored
+	// policy fails to decode.
+	malformed := &unstructured.Unstructured{Object: map[string]any{"apiVersion": ops.GroupVersion.String(), "kind": "CleaningPolicy",
+		"metadata": map[string]any{"name": "malformed", "namespace": "default"},
+		"spec": map[string]any{"assurance": "Clear", "rules": []any{map[string]any{"name": "r", "match": map[string]any{"protocol": "NVMe", "mediaType": "SSD"},
+			"methods": []any{"Overwrite"}, "verify": map[string]any{"mode": "Full"}, "timePerTiB": "abc"}}}}}
+	if err := admin.Create(ctx, malformed); !apierrors.IsInvalid(err) {
+		t.Fatalf("a time bound that is not a duration = %v, want Invalid", err)
 	}
 	valid := policy("valid", purgePolicy())
 	if err := admin.Create(ctx, valid); err != nil {

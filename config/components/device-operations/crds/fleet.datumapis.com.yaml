@@ -1159,7 +1159,7 @@ spec:
                       properties:
                         mode: {type: string, enum: [Full, Canary]}
                         samples: {type: integer, format: int32, minimum: 0, maximum: 1024}
-                    timePerTiB: {type: string, minLength: 1, maxLength: 32}
+                    timePerTiB: {type: string, minLength: 1, maxLength: 32, pattern: '^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$'}
               qualified:
                 type: array
                 maxItems: 32

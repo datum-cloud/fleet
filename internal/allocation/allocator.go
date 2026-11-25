@@ -176,6 +176,7 @@ func (a *Allocator) Allocate(ctx context.Context, request Request) (*fleetv1.Mac
 		}
 	}
 	tried := map[string]bool{}
+	var uncovered error
 	for {
 		allocation, err := a.Get(ctx, request.Machine)
 		if err != nil {
@@ -190,6 +191,9 @@ func (a *Allocator) Allocate(ctx context.Context, request Request) (*fleetv1.Mac
 			continue
 		}
 		candidate, device, err := a.candidate(ctx, request, tried)
+		if errors.Is(err, ErrInsufficientCapacity) && uncovered != nil {
+			return nil, fmt.Errorf("%w; skipped: %w", err, uncovered)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -197,7 +201,9 @@ func (a *Allocator) Allocate(ctx context.Context, request Request) (*fleetv1.Mac
 		allocation, err = a.newAllocation(ctx, request, candidate, device, claim)
 		if errors.Is(err, ErrCleaningUncovered) {
 			// Capacity without a usable cleaning policy is not eligible.
-			// Nothing was claimed; try the next candidate.
+			// Nothing was claimed; try the next candidate, and report why
+			// if none is left.
+			uncovered = err
 			continue
 		}
 		if err != nil {

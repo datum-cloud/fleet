@@ -37,7 +37,7 @@ func TestWebhook(t *testing.T) {
 		allowed bool
 	}{
 		{"valid create", review(t, admissionv1.Create, "cleaningpolicies", valid), true},
-		{"valid update", review(t, admissionv1.Update, "cleaningpolicies", valid), true},
+		{"update", review(t, admissionv1.Update, "cleaningpolicies", valid), false},
 		{"fallback below assurance", review(t, admissionv1.Create, "cleaningpolicies", fallback), false},
 		{"unknown field", review(t, admissionv1.Create, "cleaningpolicies", unknown), false},
 		{"another resource", review(t, admissionv1.Create, "devicewipes", valid), false},

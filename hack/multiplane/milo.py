@@ -87,9 +87,11 @@ for role in roles:
   # the namespace is never deleted.
   apply(config,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':'fleet-rules'}})
   # The Metal provider records allocations and creates installations; it
-  # reads custody and Devices only to skip taken capacity.
+  # reads custody and Devices only to skip taken capacity, and gets the
+  # CleaningPolicy each allocation pins.
   rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},
-          {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
+          {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']},
+          {'apiGroups':['fleet.datumapis.com'],'resources':['cleaningpolicies'],'verbs':['get']}]
   components={
    'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries'],'verbs':['get','list','watch','delete']},

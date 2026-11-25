@@ -13,14 +13,16 @@ import (
 // WebhookPath is where the policy webhook is served.
 const WebhookPath = "/validate-cleaning-policy"
 
-// Webhook rejects a CleaningPolicy that Validate rejects. The CRD keeps the
-// spec immutable; this checks what a schema cannot, such as a fallback method
-// below the policy's assurance. It reads nothing and keeps no state.
+// Webhook rejects a new CleaningPolicy that Validate rejects. It checks what a
+// schema cannot, such as a fallback method below the policy's assurance. It
+// sees only creates: the CRD keeps the spec immutable, so an update can only
+// change metadata, and a stricter Validate later must not block that. It
+// reads nothing and keeps no state.
 type Webhook struct{}
 
 func (Webhook) Handle(_ context.Context, request admission.Request) admission.Response {
 	if request.Resource.Group != ops.GroupVersion.Group || request.Resource.Resource != "cleaningpolicies" || request.SubResource != "" ||
-		(request.Operation != admissionv1.Create && request.Operation != admissionv1.Update) {
+		request.Operation != admissionv1.Create {
 		return admission.Denied("unsupported cleaning policy admission request")
 	}
 	var policy ops.CleaningPolicy
