@@ -1,4 +1,4 @@
-# Device custody and operations (#174 at 3907eec). Implemented and inert: no
+# Device custody and operations (#174 at abb1f88). Implemented and inert: no
 # deployment root includes this component yet, so nothing serves these kinds
 # or calls the webhook.
 apiVersion: kustomize.config.k8s.io/v1beta1

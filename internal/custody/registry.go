@@ -1,5 +1,5 @@
 // Package custody implements Device custody and coordinator admission, as
-// proposed in datum-cloud/fleet#174 at 3907eec.
+// proposed in datum-cloud/fleet#174 at abb1f88.
 //
 // The Coordinator is the only writer of DeviceCustody and of operation status.
 // Every custody change is one Update carrying the resourceVersion it read; on
@@ -197,28 +197,30 @@ func refuse(reason, format string, args ...any) *Refusal {
 // Shared refusal and cancellation reasons. Kinds add their own; the set is
 // open.
 const (
-	ReasonUnverified         = "Unverified"
-	ReasonNoMatchingRule     = "NoMatchingRule"
-	ReasonHolderMismatch     = "HolderMismatch"
-	ReasonOperationActive    = "OperationActive"
-	ReasonIdentityMismatch   = "IdentityMismatch"
-	ReasonIdentityNotCurrent = "IdentityNotCurrent"
-	ReasonSharedPublicKey    = "SharedPublicKey"
-	ReasonRecoveryHold       = "RecoveryHold"
-	ReasonNameMismatch       = "NameMismatch"
-	ReasonExpired            = "Expired"
-	ReasonSuperseded         = "Superseded"
-	ReasonWithdrawn          = "Withdrawn"
-	ReasonDeadlineExceeded   = "DeadlineExceeded"
-	ReasonSiteNotConfirmed   = "SiteNotConfirmed"
-	ReasonSiteUnknown        = "SiteCouldNotProve"
-	ReasonInvalidEvidence    = "InvalidEvidence"
-	ReasonUndeclared         = "UndeclaredReason"
-	ReasonSnapshotInvalid    = "SnapshotInvalid"
+	// The shared admission reasons of #174, named as it names them, with
+	// the rule each refuses. NameMismatch and the outcome reasons below are
+	// this implementation's additions.
+	ReasonCustodyUnverified      = "CustodyUnverified"      // rule 1
+	ReasonCreatorNotPermitted    = "CreatorNotPermitted"    // rule 2
+	ReasonHolderMismatch         = "HolderMismatch"         // rule 2 or 3
+	ReasonOperationInProgress    = "OperationInProgress"    // rule 4
+	ReasonDeviceIdentityMismatch = "DeviceIdentityMismatch" // rule 5
+	ReasonSharedPublicKey        = "SharedPublicKey"
+	ReasonRecoveryHold           = "RecoveryHold"
+	ReasonNameMismatch           = "NameMismatch"
+	ReasonExpired                = "Expired"
+	ReasonSuperseded             = "Superseded"
+	ReasonWithdrawn              = "Withdrawn"
+	ReasonDeadlineExceeded       = "DeadlineExceeded"
+	ReasonSiteNotConfirmed       = "SiteNotConfirmed"
+	ReasonSiteUnknown            = "SiteCouldNotProve"
+	ReasonInvalidEvidence        = "InvalidEvidence"
+	ReasonUndeclared             = "UndeclaredReason"
+	ReasonSnapshotInvalid        = "SnapshotInvalid"
 )
 
 // sharedReasons are the reasons every kind may raise.
-var sharedReasons = []string{ReasonUnverified, ReasonNoMatchingRule, ReasonHolderMismatch, ReasonOperationActive, ReasonIdentityMismatch, ReasonIdentityNotCurrent,
+var sharedReasons = []string{ReasonCustodyUnverified, ReasonCreatorNotPermitted, ReasonHolderMismatch, ReasonOperationInProgress, ReasonDeviceIdentityMismatch,
 	ReasonSharedPublicKey, ReasonRecoveryHold, ReasonNameMismatch, ReasonExpired, ReasonSuperseded, ReasonWithdrawn, ReasonDeadlineExceeded,
 	ReasonSiteNotConfirmed, ReasonSiteUnknown, ReasonInvalidEvidence, ReasonUndeclared, ReasonSnapshotInvalid}
 

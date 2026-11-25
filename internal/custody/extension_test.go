@@ -77,9 +77,9 @@ func TestExtensionSeams(t *testing.T) {
 		// Each kind's newest pending operation replaces only that kind's
 		// older one.
 		e.requirePhase(olderInstall, ops.PhaseCancelled, ReasonSuperseded)
-		e.requirePhase(newerInstall, ops.PhasePending, ReasonOperationActive)
+		e.requirePhase(newerInstall, ops.PhasePending, ReasonOperationInProgress)
 		e.requirePhase(older, ops.PhaseCancelled, ReasonSuperseded)
-		e.requirePhase(newer, ops.PhasePending, ReasonOperationActive)
+		e.requirePhase(newer, ops.PhasePending, ReasonOperationInProgress)
 	})
 
 	t.Run("kinds add bounded snapshot fields that the hold and the settle hook keep", func(t *testing.T) {

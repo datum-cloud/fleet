@@ -1,5 +1,5 @@
 // Package v1alpha1 holds Device custody and the Device operation kinds in
-// fleet.datumapis.com, as proposed in datum-cloud/fleet#174 at 3907eec.
+// fleet.datumapis.com, as proposed in datum-cloud/fleet#174 at abb1f88.
 //
 // DeviceCustody is a coordination record, like a Lease: its fields live in
 // spec and the coordinator is their only writer. Every operation kind shares
@@ -161,6 +161,10 @@ type RecoveryHold struct {
 	// RetryAuthorizedBy names the DeviceRecovery with Retry that lets the
 	// held operation's requester create one settling operation.
 	RetryAuthorizedBy *OperationReference `json:"retryAuthorizedBy,omitempty"`
+	// Retries counts the DeviceRecovery Retry decisions applied to this
+	// hold. A requester whose names carry a retry count, such as power's
+	// Machine generation and retry count, names its next operation from it.
+	Retries int32 `json:"retries,omitempty"`
 }
 
 // RejectedResults records site results the coordinator refused because their

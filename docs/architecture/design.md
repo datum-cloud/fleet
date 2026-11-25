@@ -11,7 +11,7 @@ replacement for the source proposals or a claim that their APIs exist.
 | --- | --- | --- |
 | [infra #5782: Fleet infrastructure management service](https://github.com/datum-cloud/infra/pull/5782) | `51781e2456367be82281e1443ca56d0686311133` | Service architecture, inventory, shared allocation, capacity publication, provisioning, OS configuration, and cluster lifecycle. Open draft at review time. |
 | [infra #7705: Node services and consumer pool gates](https://github.com/datum-cloud/infra/pull/7705) | `a712d2d3aaddcdc4d81c09d7f4cdd139bef06631` | Node services, consumer-owned pool sizing and gates, procurement guardrails, and regional independence. Open; targets the #5782 proposal branch. |
-| [fleet #174: Device custody and operations](https://github.com/datum-cloud/fleet/pull/174) | `3907eec183616cfc6f08580d32447cd2887442a8` | Per-Device custody, one operation envelope, admission by conditional custody update, site fencing, recovery holds and custody rebuild. Open draft; [implementation status](../development/device-custody.md). |
+| [fleet #174: Device custody and operations](https://github.com/datum-cloud/fleet/pull/174) | `abb1f880e46660690a405ab15ff627916d103812` | Per-Device custody, one operation envelope, admission by conditional custody update, site fencing, recovery holds and custody rebuild. Open draft; [implementation status](../development/device-custody.md). |
 
 Read the [core proposal at its reviewed revision][proposal] and the
 [extension at its reviewed revision][extension]. The latter includes the core

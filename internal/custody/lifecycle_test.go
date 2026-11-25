@@ -190,14 +190,14 @@ func TestLifecycle(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond)
 		third := e.installation(device, "alloc-q", "request-third")
 		e.settle(device.Name)
-		e.requirePhase(second, ops.PhasePending, ReasonOperationActive)
-		e.requirePhase(third, ops.PhasePending, ReasonOperationActive)
+		e.requirePhase(second, ops.PhasePending, ReasonOperationInProgress)
+		e.requirePhase(third, ops.PhasePending, ReasonOperationInProgress)
 		if err := e.result(device.Name, ops.PhaseSucceeded, ""); err != nil {
 			t.Fatal(err)
 		}
 		e.settle(device.Name)
 		e.requirePhase(second, ops.PhaseAdmitted, "")
-		e.requirePhase(third, ops.PhasePending, ReasonOperationActive)
+		e.requirePhase(third, ops.PhasePending, ReasonOperationInProgress)
 	})
 
 	t.Run("a newer pending operation supersedes an older one for the same authority", func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestLifecycle(t *testing.T) {
 		newer := e.providerOp(device, "alloc-s", "newer")
 		e.settle(device.Name)
 		e.requirePhase(older, ops.PhaseCancelled, ReasonSuperseded)
-		e.requirePhase(newer, ops.PhasePending, ReasonOperationActive)
+		e.requirePhase(newer, ops.PhasePending, ReasonOperationInProgress)
 	})
 
 	t.Run("a holder change cancels pending operations that no longer match", func(t *testing.T) {
@@ -227,7 +227,7 @@ func TestLifecycle(t *testing.T) {
 		e.settle(device.Name)
 		pending := e.installation(device, "alloc-c", "request-b")
 		e.settle(device.Name)
-		e.requirePhase(pending, ops.PhasePending, ReasonOperationActive)
+		e.requirePhase(pending, ops.PhasePending, ReasonOperationInProgress)
 		// The Machine is deleted while the installation runs.
 		if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-c"); err != nil {
 			t.Fatal(err)

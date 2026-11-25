@@ -4,7 +4,7 @@
 
 This page records how Fleet implements the [device custody and operations
 proposal](https://github.com/datum-cloud/fleet/pull/174) (#174, pinned at
-`3907eec`). The proposal's API names are provisional. Each piece below is
+`abb1f88`). The proposal's API names are provisional. Each piece below is
 marked **implemented and verified**, **implemented and inert**, or
 **proposed**.
 
@@ -53,7 +53,7 @@ Each decision lists the open point from the implementation brief it settles.
 ### Who created an operation (O14)
 
 - The client sets `spec.creator` to its own username and UID. The webhook
-  rejects any other value and any change. That is how #174 at `3907eec` reads,
+  rejects any other value and any change. That is how #174 at `abb1f88` reads,
   so "clients cannot set the creator" becomes "clients can set only
   themselves". CEL also makes the creator immutable, as part of the spec.
 - Milo's root API server calls the webhook, because Milo v0.32.5 does not
@@ -88,11 +88,26 @@ Each decision lists the open point from the implementation brief it settles.
 - **Phases for refusals (O5).** A refusal ends `Failed` with a reason, and
   nothing is sent. Expired, superseded and no-longer-matching operations end
   `Cancelled`. A `Pending` operation whose holder no longer matches is
-  `Cancelled`. One that never matched is `Failed`. The shared reasons are
-  `Unverified`, `NoMatchingRule`, `HolderMismatch`, `OperationActive`,
-  `IdentityMismatch`, `IdentityNotCurrent`, `SharedPublicKey`, `RecoveryHold`,
-  `NameMismatch`, `Expired`, `Superseded`, `Withdrawn`, `DeadlineExceeded` and
-  `SiteNotConfirmed`. Kinds add their own.
+  `Cancelled`. One that never matched is `Failed`. Kinds add their own
+  reasons.
+- **Shared reasons.** The admission reasons use the names of #174's table:
+
+  | Reason | Admission rule |
+  | --- | --- |
+  | `CustodyUnverified` | 1 |
+  | `CreatorNotPermitted` | 2 |
+  | `HolderMismatch` | 2 or 3 |
+  | `OperationInProgress` | 4 |
+  | `DeviceIdentityMismatch` | 5, both a mismatched identity and discovery that is not current |
+  | `SharedPublicKey` | 6 |
+  | `RecoveryHold` | A hold admits only its settling operations |
+  | `Expired` | Not admitted in time; ends `Cancelled` |
+
+  Rule 7 is a kind's own checks of its inputs, with its own reasons. This
+  implementation adds `NameMismatch`, for a deterministic kind that is not
+  named by its rule, and outcome reasons: `Superseded`, `Withdrawn`,
+  `DeadlineExceeded`, `SiteNotConfirmed`, `SiteCouldNotProve`,
+  `InvalidEvidence`, `SnapshotInvalid` and `UndeclaredReason`.
 - **Current identity (O9).** Identity is current when BMC discovery reports
   `IdentityMatched` true for the Device's current generation, its last complete
   inventory read is at most two hours old (twice the default discovery
@@ -275,7 +290,7 @@ these seams. Each is decided here.
 | 3 | Kinds add bounded snapshot fields | `SnapshotExtra` adds up to 16 camelCase fields of at most 256 bytes each. The snapshot goes to the operation, the active operation, the hold, and the site. | Implemented and inert |
 | 4 | The settle hook sees the hold's end time, its deadline and current Device status | The hold records when it ended (`Since`), the operation's deadline and its snapshot. The hook gets the Device as read when the recovery is admitted and again when it is applied. A hold that rebuild created has `Since` set to the rebuild time, and copies the deadline and snapshot from the operation's status, so both are absent for an operation whose status never recorded them. A hook checks for that. | Implemented and inert |
 | 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal with an undeclared reason ends `UndeclaredReason`. A recovery's refusal may carry the held kind's declared reason only when it comes from that kind's settle hook. | Implemented and inert. Worker reasons are checked when results arrive, in B. |
-| 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock. | Implemented and inert |
+| 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock: a wipe, and, per #174 at `abb1f88`, power, whose hold settles with `Settle` and fresh discovery evidence or with `Retry` and a later power operation. A hold counts the `Retry` decisions applied to it. A deterministic name may carry that count, as power names an operation from its Machine generation and retry count; the kind's check compares the count with the hold's. | Implemented and inert |
 | 7 | End-to-end proof that Milo enforces the CRD rules | The `custody-crd-rules` phase of both local end-to-end runs installs only these CRDs into the provider project, requires the project API to refuse eight forbidden writes, and removes them. | Implemented and verified in the local end-to-end runs |
 | 8 | Journal steps carry a kind's payload | A step records a bounded payload, such as the send time or the power state before. Observation after a crash reads it. | Proposed for B |
 | 9 | Delivery carries the admission time, and kinds declare a start-by window | A worker that starts after the window refuses as `Stale`, with nothing sent. | Proposed for B |
@@ -312,7 +327,9 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    - a digest of its exact inputs (`custody.SpecDigest` covers the whole
      spec);
    - its naming rule: `DeterministicName` with a `Name` function for provider
-     and release kinds, or `GeneratedName` for staff kinds;
+     and release kinds, or `GeneratedName` for staff kinds. A name may
+     include a retry count from the spec; a kind that does checks it against
+     the hold's `Retries`;
    - its `Deadline`, and `Effectful` if it can reach the server;
    - `Supersedes`, if a newer pending operation of the same kind and the
      same authority should cancel an older one, as power needs. It never

@@ -240,7 +240,7 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 		}
 		return nil
 	}
-	return refuse(ReasonNoMatchingRule, "unknown decision %q", spec.Decision)
+	return refuse(ReasonCreatorNotPermitted, "unknown decision %q", spec.Decision)
 }
 
 // resolveMatchesAllocations requires the holder a Resolve records to agree
@@ -293,6 +293,7 @@ func applyRecovery(ctx context.Context, apply *ApplyContext) (*ops.DeviceCustody
 	case ops.DecisionRetry:
 		hold := *spec.RecoveryHold
 		hold.RetryAuthorizedBy = &reference
+		hold.Retries++
 		spec.RecoveryHold = &hold
 	case ops.DecisionRetire:
 		spec.RecoveryHold = nil

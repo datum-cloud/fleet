@@ -65,7 +65,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.sites.forget(device.Name)
 		staff := e.staffOp(device, "ok")
 		e.settle(device.Name)
-		e.requirePhase(staff, ops.PhaseFailed, ReasonUnverified)
+		e.requirePhase(staff, ops.PhaseFailed, ReasonCustodyUnverified)
 		e.requireUntouched(device.Name, custody.Spec.Fence)
 	})
 
@@ -87,7 +87,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.create(wipe)
 		e.settle(device.Name)
 		for _, operation := range []ops.Operation{spoof, service, named, wipe} {
-			e.requirePhase(operation, ops.PhaseFailed, ReasonNoMatchingRule)
+			e.requirePhase(operation, ops.PhaseFailed, ReasonCreatorNotPermitted)
 		}
 		e.requireUntouched(device.Name, fence)
 	})
@@ -144,7 +144,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.requirePhase(running, ops.PhaseAdmitted, "")
 		waiting := e.providerOp(queued, "alloc-queue", "b")
 		e.settle(queued.Name)
-		e.requirePhase(waiting, ops.PhasePending, ReasonOperationActive)
+		e.requirePhase(waiting, ops.PhasePending, ReasonOperationInProgress)
 		if err := e.result(queued.Name, ops.PhaseSucceeded, ""); err != nil {
 			t.Fatal(err)
 		}
@@ -161,7 +161,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		operation.Spec.DeviceRef.UID = "00000000-0000-4000-8000-ffffffffffff"
 		e.create(operation)
 		e.settle(device.Name)
-		e.requirePhase(operation, ops.PhaseFailed, ReasonIdentityMismatch)
+		e.requirePhase(operation, ops.PhaseFailed, ReasonDeviceIdentityMismatch)
 		e.requireUntouched(device.Name, fence)
 	})
 
@@ -173,7 +173,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.discover(device, fmt.Sprintf("%064x", n), e.clock.Now().Add(-DefaultDiscoveryMaxAge-time.Minute))
 		old := e.staffOp(device, "ok")
 		e.settle(device.Name)
-		e.requirePhase(old, ops.PhaseFailed, ReasonIdentityNotCurrent)
+		e.requirePhase(old, ops.PhaseFailed, ReasonDeviceIdentityMismatch)
 		// Discovery that did not match identity.
 		e.discover(device, fmt.Sprintf("%064x", n), e.clock.Now())
 		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(device), device); err != nil {
@@ -185,7 +185,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		}
 		mismatched := e.staffOp(device, "ok")
 		e.settle(device.Name)
-		e.requirePhase(mismatched, ops.PhaseFailed, ReasonIdentityMismatch)
+		e.requirePhase(mismatched, ops.PhaseFailed, ReasonDeviceIdentityMismatch)
 		e.requireUntouched(device.Name, fence)
 	})
 

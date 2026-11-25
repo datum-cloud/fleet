@@ -118,10 +118,10 @@ func TestRecovery(t *testing.T) {
 		fence := e.custody(device.Name).Spec.Fence
 		settle := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionSettle, Hold: heldRef(hold), Evidence: ops.RecoveryEvidence{ObservedAt: metav1.NewTime(e.clock.Now().Add(time.Minute)), Summary: "s", Data: map[string]string{"state": "On"}}})
 		e.settle(device.Name)
-		e.requirePhase(settle, ops.PhaseFailed, ReasonIdentityNotCurrent)
+		e.requirePhase(settle, ops.PhaseFailed, ReasonDeviceIdentityMismatch)
 		retry := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
 		e.settle(device.Name)
-		e.requirePhase(retry, ops.PhaseFailed, ReasonIdentityNotCurrent)
+		e.requirePhase(retry, ops.PhaseFailed, ReasonDeviceIdentityMismatch)
 		e.requireUntouched(device.Name, fence)
 		e.device(fmt.Sprintf("server-twin-%03d", n), uid(900+n), key)
 		retire := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetire, Hold: heldRef(hold)})
@@ -266,7 +266,7 @@ func TestRecovery(t *testing.T) {
 		e.sites.report(device.Name, e.custody(device.Name).Spec.Fence)
 		e.settle(device.Name)
 		e.requirePhase(retry, ops.PhaseSucceeded, "")
-		if got := e.custody(device.Name).Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy == nil || got.RetryAuthorizedBy.UID != string(retry.UID) {
+		if got := e.custody(device.Name).Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy == nil || got.RetryAuthorizedBy.UID != string(retry.UID) || got.Retries != 1 {
 			t.Fatalf("retry not recorded: %+v", got)
 		}
 		second := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
@@ -540,7 +540,7 @@ func TestRebuild(t *testing.T) {
 		// Only a Resolve recovery is admitted.
 		staff := e.staffOp(replacement, "ok")
 		e.settle(name)
-		e.requirePhase(staff, ops.PhaseFailed, ReasonUnverified)
+		e.requirePhase(staff, ops.PhaseFailed, ReasonCustodyUnverified)
 		resolve := e.recovery(replacement, ops.DeviceRecoverySpec{Decision: ops.DecisionResolve, Resolve: &ops.ResolveInput{Holder: ops.HolderNone}})
 		e.settle(name)
 		e.sites.report(name, e.custody(name).Spec.Fence)

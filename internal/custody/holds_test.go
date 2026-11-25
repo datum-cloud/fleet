@@ -99,7 +99,7 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		device := next()
 		e.allocation(device, "alloc-r-"+device.Name, "Releasing")
 		wipe := e.wipe(device, "alloc-r-"+device.Name, 1)
-		wipe.Status = ops.OperationStatus{Phase: ops.PhasePending, Reason: ReasonOperationActive}
+		wipe.Status = ops.OperationStatus{Phase: ops.PhasePending, Reason: ReasonOperationInProgress}
 		if err := e.admin.Status().Update(e.ctx, wipe); err != nil {
 			t.Fatal(err)
 		}

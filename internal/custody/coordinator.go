@@ -665,7 +665,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	}
 	rows := c.Registry.matchRows(kind, operation, class)
 	if len(rows) == 0 {
-		return fail(ReasonNoMatchingRule, "no row admits %s from a %s creator with this authority", kind.GVK.Kind, class)
+		return fail(ReasonCreatorNotPermitted, "no row admits %s from a %s creator with this authority", kind.GVK.Kind, class)
 	}
 	switch kind.Naming {
 	case DeterministicName:
@@ -678,12 +678,12 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 	}
 	if envelope.DeviceRef.UID != string(device.UID) {
-		return fail(ReasonIdentityMismatch, "deviceRef.uid does not match the Device")
+		return fail(ReasonDeviceIdentityMismatch, "deviceRef.uid does not match the Device")
 	}
 	// Precondition 1: custody state.
 	rows = slices.DeleteFunc(rows, func(rule Rule) bool { return rule.custodyState() != custody.Spec.State })
 	if len(rows) == 0 {
-		return c.wait(class, ReasonUnverified, "custody is Unverified and admits only a DeviceRecovery with Resolve")
+		return c.wait(class, ReasonCustodyUnverified, "custody is Unverified and admits only a DeviceRecovery with Resolve")
 	}
 	// Preconditions 2 and 3: holder and allocation.
 	holder := custody.Spec.Holder
@@ -716,9 +716,9 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	// Precondition 4: one active operation.
 	if custody.Spec.ActiveOperation != nil || (row.Queue && queueAhead) {
 		if row.Queue {
-			return decision{phase: ops.PhasePending, reason: ReasonOperationActive, message: "waiting for the running operation"}
+			return decision{phase: ops.PhasePending, reason: ReasonOperationInProgress, message: "waiting for the running operation"}
 		}
-		return fail(ReasonOperationActive, "another operation is running, and staff operations never wait")
+		return fail(ReasonOperationInProgress, "another operation is running, and staff operations never wait")
 	}
 	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval}
 	// Preconditions 5 and 6: current discovery and a unique BMC key.
@@ -773,18 +773,18 @@ func (c *Coordinator) settlesHold(kind *Kind, hold ops.RecoveryHold) bool {
 // recorded the BMC key at the current endpoint.
 func (c *Coordinator) identityCurrent(device *inventory.Device, now time.Time) *Refusal {
 	if device.Spec.BMC == nil || device.Spec.Identity.SystemUUID == "" {
-		return refuse(ReasonIdentityNotCurrent, "the Device records no BMC endpoint or system UUID")
+		return refuse(ReasonDeviceIdentityMismatch, "the Device records no BMC endpoint or system UUID")
 	}
 	condition := meta.FindStatusCondition(device.Status.Conditions, inventory.ConditionIdentityMatched)
 	if condition == nil || condition.Status != metav1.ConditionTrue || condition.ObservedGeneration != device.Generation {
-		return refuse(ReasonIdentityMismatch, "discovery has not matched the Device identity at its current generation")
+		return refuse(ReasonDeviceIdentityMismatch, "discovery has not matched the Device identity at its current generation")
 	}
 	discovery := device.Status.Discovery
 	if discovery == nil || discovery.Inventory == nil || now.Sub(discovery.Inventory.ObservedAt.Time) > c.config().DiscoveryMaxAge {
-		return refuse(ReasonIdentityNotCurrent, "discovery is older than %s", c.config().DiscoveryMaxAge)
+		return refuse(ReasonDeviceIdentityMismatch, "discovery is older than %s", c.config().DiscoveryMaxAge)
 	}
 	if discovery.TLS == nil || discovery.TLS.PublicKeySHA256 == "" || discovery.TLS.Endpoint != device.Spec.BMC.Endpoint {
-		return refuse(ReasonIdentityNotCurrent, "discovery has not recorded the BMC key at the current endpoint")
+		return refuse(ReasonDeviceIdentityMismatch, "discovery has not recorded the BMC key at the current endpoint")
 	}
 	return nil
 }
