@@ -200,8 +200,11 @@ Job/observer/coordinator split are unchanged:
 
 **Lab drives are emulated NVMe.** Each Redfish lab target has one QEMU NVMe
 drive with a fixed serial number, attached with QEMU arguments because the lab's
-libvirt has no NVMe disk bus. The drive's boot index follows the network
-interface, so a network boot still goes first. The installer and wipe
+libvirt has no NVMe disk bus. libvirt therefore neither labels nor chowns the
+disk file, which works because the lab's libvirt runs QEMU as root with no
+security driver. libvirt 9.0 starts QEMU with `-boot strict=on` and gives the
+network interface boot index 1 for a network boot. The drive has boot index 2,
+so a network boot still goes first and a disk boot finds the drive. The installer and wipe
 environment use the NVMe drive when one exists and the virtio disk otherwise,
 which is what local VM targets have.
 

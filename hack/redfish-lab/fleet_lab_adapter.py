@@ -117,15 +117,16 @@ def domain_xml(t, boot):
     # Persistent lab target: fixed UUID, MAC, disk and console. Only the boot
     # device changes, from the Redfish boot override at power-on. The disk is
     # an emulated NVMe drive with the target's fixed serial number, attached
-    # with QEMU arguments because this libvirt has no NVMe disk bus. It carries
-    # boot index 2, after the network interface libvirt indexes for a network
-    # boot.
+    # with QEMU arguments because this libvirt has no NVMe disk bus, so libvirt
+    # neither labels nor chowns the disk file: the lab's libvirt runs QEMU as
+    # root with no security driver. libvirt 9.0 emits -boot strict=on and gives
+    # the NIC boot index 1 for a network boot; the drive's boot index 2 keeps it
+    # bootable in both modes.
     return ("<domain type='qemu' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'><name>{domain}</name><uuid>{uuid}</uuid><memory unit='MiB'>2048</memory><vcpu>2</vcpu>"
             "<cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features>"
             "<os><type arch='x86_64' machine='pc'>hvm</type><boot dev='{boot}'/></os>"
             "<on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash>"
             "<devices><emulator>/usr/bin/qemu-system-x86_64</emulator>"
-
             "<interface type='network'><source network='" + NETWORK + "'/><mac address='{mac}'/><model type='e1000'/></interface>"
             "<serial type='file'><source path='{console}' append='on'/><target port='0'/></serial>"
             "</devices><qemu:commandline>"
