@@ -1195,14 +1195,18 @@ spec:
                   name:
                     type: string
                     minLength: 1
-                    maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
+                    maxLength: 236
+                  generation:
+                    type: integer
+                    format: int64
+                    minimum: 1
                   digest:
                     type: string
                     pattern: ^sha256:[0-9a-f]{64}$
+                  approval:
+                    type: string
+                    minLength: 18
+                    maxLength: 253
                   content:
                     type: object
                     properties:
@@ -1289,7 +1293,7 @@ spec:
                               message: burn-in runs from 1 minute to 24 hours
                         required: [image, duration]
                     required: [inspection, burnIn]
-                required: [name, uid, digest, content]
+                required: [name, generation, digest, approval, content]
             required:
             - creator
             - deviceRef
@@ -1561,6 +1565,9 @@ spec:
               message: the spec is immutable after create
         required:
         - spec
+        x-kubernetes-validations:
+        - rule: size(self.metadata.name) <= 236
+          message: a plan's name leaves room for its approval's suffix
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1620,15 +1627,15 @@ spec:
                   name:
                     type: string
                     minLength: 1
-                    maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
+                    maxLength: 236
+                  generation:
+                    type: integer
+                    format: int64
+                    minimum: 1
                   digest:
                     type: string
                     pattern: ^sha256:[0-9a-f]{64}$
-                required: [name, uid, digest]
+                required: [name, generation, digest]
             required:
             - creator
             - planRef
@@ -1638,5 +1645,5 @@ spec:
         required:
         - spec
         x-kubernetes-validations:
-        - rule: self.metadata.name == self.spec.planRef.name
-          message: an approval has the name of the plan it approves
+        - rule: self.metadata.name.startsWith(self.spec.planRef.name + '-') && size(self.metadata.name) == size(self.spec.planRef.name) + 17
+          message: an approval's name is its plan's name and a suffix derived from the plan's UID
