@@ -3,7 +3,8 @@
 
 Exit codes are part of the harness contract (see docs/operations/multiplane.md):
 0 passed, 1 failed, 2 preflight failed, 3 blocked by implementation readiness,
-4 bounded wait expired, 64 usage. Nothing here deletes resources.
+4 bounded wait expired, 5 a resumed run completed (never a pass), 64 usage.
+Nothing here deletes resources.
 """
 import argparse
 import datetime
@@ -21,9 +22,9 @@ import time
 
 PROFILE = os.environ.get('FLEET_MULTIPLANE_PROFILE', 'fleet-acceptance-tcg')
 CONTEXT = 'colima-' + PROFILE
-EXIT_PASSED, EXIT_FAILED, EXIT_PREFLIGHT, EXIT_BLOCKED, EXIT_TIMEOUT, EXIT_USAGE = 0, 1, 2, 3, 4, 64
+EXIT_PASSED, EXIT_FAILED, EXIT_PREFLIGHT, EXIT_BLOCKED, EXIT_TIMEOUT, EXIT_RESUMED, EXIT_USAGE = 0, 1, 2, 3, 4, 5, 64
 STATUS_BY_EXIT = {EXIT_PASSED: 'passed', EXIT_FAILED: 'failed', EXIT_PREFLIGHT: 'preflight-failed',
-                  EXIT_BLOCKED: 'blocked', EXIT_TIMEOUT: 'timeout', EXIT_USAGE: 'usage'}
+                  EXIT_BLOCKED: 'blocked', EXIT_TIMEOUT: 'timeout', EXIT_RESUMED: 'resumed', EXIT_USAGE: 'usage'}
 # A run or phase ended by a signal exits 128 plus the signal number.
 INTERRUPT_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 # run.sh writes these markers as its last act, so exit 0 without one is an
@@ -133,7 +134,7 @@ def live_run(prefix):
     return None
 
 
-def contention_checks(check, wait=0):
+def contention_checks(check, wait=0, allow_prefix=None):
     """Checks another run on the profile can change. run.sh repeats them while
     it holds the runtime lock, so no two runs can both pass them. With wait,
     containers of a live run that does not take the lock (an older checkout)
@@ -141,6 +142,7 @@ def contention_checks(check, wait=0):
     deadline, last, expired = time.monotonic() + wait, 0.0, False
     while True:
         code, active = running_fleet_containers()
+        active = [n for n in active if not (allow_prefix and n.startswith(allow_prefix + '-'))]
         prefixes = sorted({m.group(0) for m in (re.match(r'^fleet-mp-[a-f0-9]{8}', n) for n in active) if m})
         owners = {p: live_run(p) for p in prefixes} if wait and code == 0 else {}
         waitable = active and len(prefixes) and all(owners.values()) and all(n.startswith(tuple(prefixes)) for n in active)
@@ -210,7 +212,7 @@ def preflight(args):
         # The wait for a run without the lock shares the lock's bound.
         lock_record = evidence_dir(args.state) / 'lock.json'
         waited = json.loads(lock_record.read_text()).get('waitedSeconds', 0) if lock_record.exists() else 0
-        expired = contention_checks(check, max(0, args.wait - int(waited)))
+        expired = contention_checks(check, max(0, args.wait - int(waited)), args.allow_prefix)
         # Sources edited while the run queued are gated again, under the lock.
         gated = pathlib.Path(args.state) / 'readiness-SHA256'
         if gated.exists() and gated.read_text().strip() != readiness_digest(args.root):
@@ -474,6 +476,88 @@ def lock(args):
     return 0
 
 
+# ---------------------------------------------------------------- resume
+
+# Each suite's script and how its phase helpers name phases.
+SUITE_SCRIPTS = {('acceptance', 'libvirt'): 'acceptance.sh', ('acceptance', 'redfish'): 'acceptance-redfish.sh',
+                 ('flux-qualification', 'libvirt'): 'flux-qualification.sh', ('flux-qualification', 'redfish'): 'flux-qualification.sh'}
+HELPER_PREFIX = {'ph': '', 'step': '', 'flux': 'flux-', 'rf': 'redfish-'}
+RESUMABLE = ('failed', 'timeout', 'interrupted')
+
+
+def suite_phases(suite, provider, root=None):
+    script = (pathlib.Path(root) if root else pathlib.Path(__file__).resolve().parent) / SUITE_SCRIPTS[(suite, provider)]
+    names = []
+    for line in script.read_text().splitlines():
+        m = re.match(r'^(ph|step|flux|rf) ([a-z0-9-]+) ', line)
+        if m:
+            names.append(HELPER_PREFIX[m.group(1)] + m.group(2))
+    return names
+
+
+def find_state(target):
+    if re.match(r'^fleet-mp-[a-f0-9]{8}$', target):
+        roots = {pathlib.Path(os.environ.get('FLEET_MULTIPLANE_STATE_ROOT', '/tmp')), pathlib.Path('/tmp')}
+        for state in (d for r in roots for d in r.glob('fleet-multiplane.*')):
+            try:
+                if (state / 'prefix').read_text().strip() == target:
+                    return state
+            except OSError:
+                continue
+        return None
+    state = pathlib.Path(target)
+    return state if (state / 'prefix').exists() else None
+
+
+def resume_plan(args):
+    """Prepare a failed run's retained state to be resumed at one of its suite's
+    phases. Prints the state directory and the phase. The earlier attempts'
+    phase records and results are kept beside the new ones."""
+    def refuse(message):
+        print('resume: ' + message, file=sys.stderr)
+        return EXIT_USAGE
+    state = find_state(args.target)
+    if state is None:
+        return refuse('no retained run state for %s' % args.target)
+    prefix = (state / 'prefix').read_text().strip()
+    if not re.match(r'^fleet-mp-[a-f0-9]{8}$', prefix):
+        return refuse('unexpected prefix in %s' % state)
+    ev = state / 'evidence'
+    # result.json is the run's last act, so its presence means the run ended.
+    if not (ev / 'result.json').exists():
+        return refuse('%s has no result: the run is still going, or was killed before it could stop its containers' % state)
+    previous = json.loads((ev / 'result.json').read_text())
+    if previous['status'] not in RESUMABLE:
+        return refuse('%s ended %s; only a failed, timed-out or interrupted run can be resumed' % (state, previous['status']))
+    suite = (state / 'suite').read_text().strip() if (state / 'suite').exists() else 'acceptance'
+    provider = (state / 'site-provider').read_text().strip()
+    names = suite_phases(suite, provider)
+    phase_name = args.phase or previous.get('failedPhase')
+    if phase_name not in names:
+        return refuse('%s is not a phase of the %s suite; a run that failed before the suite started cannot be resumed, so start a fresh run' % (phase_name, suite))
+    if not (state / 'fleet-multiplane-host').exists() or not (state / 'acceptance.json').exists():
+        return refuse('%s no longer holds its credentials and binaries' % state)
+    attempt = 1 + sum(1 for _ in ev.glob('resume-*.json'))
+    for name in ('phases.jsonl', 'result.json'):
+        if (ev / name).exists():
+            (ev / name).replace(ev / name.replace('.', '-attempt%d.' % (attempt - 1), 1))
+    for name in ('current-phase', 'completed', 'skip-until'):
+        (state / name).unlink(missing_ok=True)
+    # The Go sources the run's readiness gate covered and its binaries came from.
+    gated = state / 'readiness-SHA256'
+    original = gated.read_text().strip() if gated.exists() else None
+    record = {'attempt': attempt, 'from': phase_name, 'resumedAt': now(), 'previousStatus': previous['status'],
+              'previousFailedPhase': previous.get('failedPhase'), 'binariesFromOriginalRun': True, 'binarySourceChanged': None if original is None else original != readiness_digest('.')}
+    write_json(ev / ('resume-%d.json' % attempt), record)
+    write_json(state / 'resume.json', record)
+    if record['binarySourceChanged']:
+        print('resume: Go sources changed since this run built its binaries and site image; the resumed run tests the original binaries',
+              file=sys.stderr)
+    print(state)
+    print(phase_name)
+    return 0
+
+
 # ---------------------------------------------------------------- phases
 
 def phase(args):
@@ -483,6 +567,16 @@ def phase(args):
     logs.mkdir(mode=0o700, exist_ok=True)
     log = logs / (args.name + '.log')
     started = time.monotonic()
+    # A resumed run skips the suite's phases before the one it resumes from.
+    skip = state / 'skip-until'
+    if skip.exists():
+        target = skip.read_text().strip()
+        if args.name != target:
+            print('--- %s skipped: resumed from %s' % (args.name, target), flush=True)
+            with open(evidence_dir(state) / 'phases.jsonl', 'a') as f:
+                f.write(json.dumps({'name': args.name, 'status': 'skipped', 'resumedFrom': target, 'startedAt': now()}, sort_keys=True) + '\n')
+            return 0
+        skip.unlink()
     record = {'name': args.name, 'startedAt': now(), 'timeoutSeconds': args.timeout}
     print('==> %s (bound %ss)' % (args.name, args.timeout), flush=True)
     # A signal stops the phase's command and records the phase interrupted.
@@ -773,20 +867,27 @@ def result(args):
             status = 'preflight-passed'
         else:
             status, code = 'interrupted', EXIT_FAILED
-    failed = next((p for p in phases if p['status'] != 'passed'), None)
+    failed = next((p for p in phases if p['status'] not in ('passed', 'skipped')), None)
     running = state / 'current-phase'
     if failed is None and status != 'passed' and running.exists():
         failed = {'name': running.read_text().strip()}
     lock_record = json.loads((ev / 'lock.json').read_text()) if (ev / 'lock.json').exists() else None
+    # A resumed run reran only some phases over a retained topology: even when
+    # it completes, it is never an acceptance pass.
+    resumed = json.loads((state / 'resume.json').read_text()) if (state / 'resume.json').exists() else None
+    if resumed and status == 'passed':
+        status, code = 'resumed', EXIT_RESUMED
     if failed is None and lock_record and lock_record['status'] != 'acquired':
         failed = {'name': 'runtime-lock'}
     summary = ev / 'summary.json'
     value = {'schemaVersion': 1, 'observedAt': now(), 'status': status, 'exitCode': code, 'prefix': prefix, 'suite': suite,
              'failedPhase': failed['name'] if failed else None, 'phases': phases,
+             'resumed': resumed,
              'runtimeLock': {k: lock_record.get(k) for k in ('status', 'positionAtQueue', 'waitedSeconds')} if lock_record else None, 'retainedContainers': retained,
              'stateDirectory': str(state), 'evidenceDirectory': str(ev),
              'summary': 'summary.json' if summary.exists() and status == 'passed' else None,
-             'custody': 'released and verified' if status == 'passed' else 'Unknown: inspect private state before any cleanup',
+             'custody': 'released and verified' if status == 'passed' else
+             'released and verified in a resumed run; not an acceptance pass' if status == 'resumed' else 'Unknown: inspect private state before any cleanup',
              'productionAuthority': False}
     write_json(ev / 'result.json', value)
     print('RESULT %s suite=%s exit=%s evidence=%s' % (status, suite, code, ev / 'result.json'))
@@ -804,6 +905,10 @@ def main():
     s.add_argument('--skip-tests', action='store_true')
     s.add_argument('--checks', choices=('all', 'host', 'contention'), default='all')
     s.add_argument('--wait', type=int, default=0, help='contention: seconds to wait for a live run without the lock')
+    s.add_argument('--allow-prefix', help="contention: a resumed run's own retained containers")
+    s = sub.add_parser('resume-plan')
+    s.add_argument('--target', required=True)
+    s.add_argument('--from', dest='phase')
     s = sub.add_parser('lock')
     s.add_argument('--state', required=True)
     s.add_argument('--owner', type=int, required=True)
@@ -837,7 +942,7 @@ def main():
             a.command = a.command[1:]
         if not a.command or not re.match(r'^[a-z0-9-]+$', a.name):
             return EXIT_USAGE
-    return {'preflight': preflight, 'lock': lock, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd, 'custody-digest': custody_cmd,
+    return {'preflight': preflight, 'lock': lock, 'resume-plan': resume_plan, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd, 'custody-digest': custody_cmd,
             'scan': scan, 'result': result}[a.cmd](a)
 
 

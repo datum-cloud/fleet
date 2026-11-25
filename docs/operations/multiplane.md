@@ -106,6 +106,7 @@ values are recorded in `sysctl.json`. Options:
 | `--keep` | After a pass, stop instead of delete this run's containers |
 | `--leave-running` | After a failure, leave containers running for live diagnosis instead of stopping them |
 | `--skip-readiness-tests` | Skip the implementation test gate (diagnosis only) |
+| `--resume STATE\|PREFIX [--from PHASE]` | Debugging only: restart a failed run's retained topology at a suite phase, by default its failed phase ([details](#resuming-a-failed-run)) |
 
 Preflight records `evidence/preflight.json`. Prerequisite checks cover tools,
 the exact Docker context socket, reachability, architecture, memory, CPUs, free
@@ -172,7 +173,8 @@ Exit codes and `evidence/result.json` status:
 | 3 | `blocked` | Implementation readiness gate failed | None created |
 | 4 | `timeout` | A bounded phase expired; its process group was terminated | Stopped and retained as for 1 |
 | 4 | `timeout` | The wait for the runtime lock, or for a run without the lock, expired | None created |
-| 64 | `usage` | Invalid option | None created |
+| 5 | `resumed` | A resumed run reached its last line. It is never an acceptance pass | As for 0 |
+| 64 | `usage` | Invalid option, or a run that cannot be resumed | None created |
 | 129, 130, 143 | `interrupted` | The run received HUP, INT or TERM. It stops every phase it started, records the phase it was in as `interrupted`, and names it as the failed phase | Stopped and retained as for 1 |
 | 1 | `interrupted` | The run exited 0 before its last line, so nothing proves it finished | Stopped and retained as for 1 |
 
@@ -471,11 +473,41 @@ prefixes. The original limit of 128 inotify instances was insufficient for this
 API count: the real Karmada webhook exited with `too many open files`. The bounded
 value 1024 resolves that local prerequisite.
 
+### Resuming a failed run
+
+To debug a late failure without rebuilding everything, resume the failed run:
+
+```sh
+task multiplane:acceptance -- --resume /tmp/fleet-multiplane.REPLACE --from deadline-admit
+# or by its prefix; --from defaults to the failed phase:
+hack/multiplane/run.sh --resume fleet-mp-REPLACE
+```
+
+A resumed run takes the lock like any run, keeps the retained run's state
+directory, suite and site provider, and starts its stopped containers. It
+waits until every API, Flux and the site are available, restarts the
+coordinator, and runs the suite from the named phase. It records each earlier
+suite phase as `skipped`. It refuses a run that passed, a run with no result
+(still going, or killed before it stopped its containers), and a phase
+outside the suite: a run that failed during bootstrap must be run fresh.
+
+A resumed run reuses the retained run's binaries and site image, so Go
+changes made since then are not under test; `resume-<N>.json` records
+whether the Go sources changed. Each attempt's phase records and result are
+kept as `phases-attempt<N>.jsonl` and `result-attempt<N>.json`.
+
+A resumed run is never an acceptance pass. Its `result.json` carries the
+resume record. When it completes, its status is `resumed` and it exits 5;
+when it fails, it records the failure like any run. Only a fresh run whose
+every phase passed and that reached teardown counts. After debugging with
+`--resume`, a final fresh run is still required.
+
 Offline harness tests run in CI and locally with `task multiplane:test-harness`.
 They use fake runtime tools to cover preflight outcomes, the runtime lock
 (concurrent starts, arrival order, release on exit and TERM, recovery from a
 killed holder, waiter or unreaped owner, the bounded wait, the checks repeated
-under the lock, waiting for a live run without the lock), Flux source staging
+under the lock, waiting for a live run without the lock), resuming (refusals,
+skipped phases, the `resumed` result), Flux source staging
 (credential refusal, revision variants, rendering), push records, reconcile waits
 (stale acknowledgements rejected, stripped requests reissued), fault-guard
 suspension and root-revision receipts, bounded phase timeouts

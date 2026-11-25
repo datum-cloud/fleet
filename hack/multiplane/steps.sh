@@ -262,6 +262,30 @@ JSON
   py record-job-interrupt "$state" "$old_job" "$new_job" "$(cat "$state/interrupt-job-pod-before")" "$pod"
   printf 'interrupt-job: running worker Job deleted mid-install; kro recreated it under a new UID for the same operation\n'
   ;;
+ resume-topology)
+  # A resumed run: bring this run's stopped or paused topology back, the
+  # registry first, then wait for every API, Flux and the site before the
+  # coordinator restarts.
+  for suffix in registry platform-control-plane hub-control-plane cell-control-plane; do
+   name="$prefix-$suffix"
+   docker inspect "$name" >/dev/null 2>&1 || { echo "retained container missing: $name" >&2; exit 1; }
+   [[ $(docker inspect -f '{{.State.Paused}}' "$name") != true ]] || docker unpause "$name" >/dev/null
+   [[ $(docker inspect -f '{{.State.Running}}' "$name") == true ]] || docker start "$name" >/dev/null
+  done
+  # stop.sh restored the inotify limit; set it again, keeping the earlier record.
+  [[ ! -f $state/sysctl.json ]] || mv "$state/sysctl.json" "$state/sysctl-before-resume-$(date +%s).json"
+  python3 hack/multiplane/sysctl.py "$state" set >/dev/null
+  for config in platform-admin.yaml host.yaml cell-admin.yaml; do wait_api "$state/$config"; done
+  k "$state/host.yaml" -n karmada-system wait --for=condition=Available deployment --all --timeout=300s >/dev/null
+  cell -n kro-system wait --for=condition=Available deployment --all --timeout=300s >/dev/null
+  for d in fleet-site-runtime fleet-site-boot fleet-site-observer $(redfish && echo fleet-site-bmc); do
+   site wait --for=condition=Available "deployment/$d" --timeout=300s >/dev/null
+  done
+  for config in "$state"/*/bootstrap.json; do [[ ! -f $config ]] || wait_api "$config"; done
+  flux wait "$state" --cluster platform --cluster hub --cluster cell --timeout 600 >/dev/null
+  bash hack/multiplane/coordinator.sh start "$state" >/dev/null
+  printf 'resume-topology: retained containers running; every API, Flux and the site available; coordinator restarted\n'
+  ;;
  complete)
   # The Flux qualification suite: the one install runs to completion without
   # interruption before the GitOps scenarios disturb its surroundings.
