@@ -167,7 +167,8 @@ kind shares.
 
 Power adds these reasons. The coordinator checks compare the action and the
 expected UUID with the Device record and discovery, under the admission rule
-for a kind's own inputs. The worker checks run before the command. None sends
+for a kind's own inputs. `DiscoveryNotCurrent` guards those comparisons by
+refusing stale discovery. The worker checks run before the command. None sends
 a command:
 
 | Reason | Refused by | When |
