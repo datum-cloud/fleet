@@ -454,12 +454,13 @@ def dhcp_synced(s):
             if not first <= tuple(int(x) for x in network['address'].split('.')) <= last:
                 die('%s %s boot address %s is outside the lab IPAM range' % (o['kind'], o['metadata']['name'], network['address']))
             ops.append({'kind': o['kind'], 'name': o['metadata']['name'], 'uid': o['metadata']['uid'], 'phase': o.get('status', {}).get('phase'),
-                        'address': network['address'], 'claimUID': network['addressClaim']['uid'],
+                        'address': network['address'], 'claim': network['addressClaim']['name'],
                         'snapshotMAC': (o.get('status', {}).get('snapshot') or {}).get('bootMACAddress', '').lower()})
     kinds = [o['kind'] for o in ops]
     if kinds.count('DeviceInstallation') < 2 or kinds.count('DeviceWipe') < 2:
         die('expected at least two installations and two wipes, got %s' % kinds)
-    if len({o['claimUID'] for o in ops}) != len(ops):
+    # Claim names derive from operation names, which differ per operation.
+    if len({o['claim'] for o in ops}) != len(ops):
         die('two operations shared one boot address claim')
     leftover = provider('get', 'ipclaims')
     if leftover:
