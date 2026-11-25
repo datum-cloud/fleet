@@ -181,7 +181,7 @@ server, because Milo does not apply admission policies stored in a project.
 | --- | --- | --- | --- | --- |
 | `DeviceInstallation` | Fleet provider for Metal | `allocationRef` | `Allocation` | Image digest, bootstrap reference and digest, boot interface, target disks |
 | `DevicePowerOperation` | Fleet provider for Metal | `allocationRef` | `Allocation` | Power action |
-| `DevicePowerOperation` | Staff power operator | `serviceRequest` | `None` | Power action, reason, expected system UUID |
+| `DevicePowerOperation` | Staff power operator | `serviceRequest` | `None`, or `Service` under a power hold | Power action, reason, expected system UUID |
 | `DeviceWipe` | Release controller | `allocationRef` | `Release` | Cleaning policy digest pinned at allocation, target disks |
 | `DeviceCommissioning` | Staff commissioning operator | `serviceRequest` | `None`, or `Service` under a commissioning hold | Commissioning plan and digest |
 | `DeviceRecovery` | Staff recovery operator | `serviceRequest` | Any with a recovery hold, or `Unverified` custody | Evidence and a decision: `Settle`, `Retry`, `Retire`, or `Resolve` |
@@ -209,9 +209,11 @@ spec:
 ```
 
 Provider and release operations get names from the allocation and the request:
-the Installation for installs, the Machine generation and its `Retry` count for
-power, and the step number for wipes. Staff operations get generated names,
-because each one is a new request.
+the Installation for installs, the Machine generation for power, and the step
+number for wipes. Staff operations get generated names, because each one is a
+new request. An operation created after a `Retry` takes the held operation's
+name plus `-retry-` and the number of `Retry` decisions for that operation,
+which custody records with the hold.
 
 The operation phases are those of the [machine lifecycle
 operation](../machine-lifecycle/README.md#provider-execution-and-recovery),
@@ -253,19 +255,15 @@ only if all of these hold:
 A kind can add checks of its own inputs, such as the expected system UUID, and
 its own refusal reasons. Every kind uses these shared reasons:
 
-| Reason | Rule |
+| Reason | Refused by |
 | --- | --- |
-| `CustodyUnverified` | 1 |
-| `CreatorNotPermitted` | 2 |
-| `HolderMismatch` | 2 or 3 |
-| `OperationInProgress` | 4 |
-| `RecoveryHold` | A hold admits only its settling operations |
-| `DeviceIdentityMismatch` | 5 |
-| `SharedPublicKey` | 6 |
-| `Expired` | Not admitted in time; the operation ends as `Cancelled` |
-
-Under a recovery hold, only the operations in [Unknown
-outcomes](#unknown-outcomes) are admitted.
+| `CustodyUnverified` | Rule 1 |
+| `CreatorNotPermitted` | Rule 2 |
+| `HolderMismatch` | Rule 2 or 3 |
+| `OperationInProgress` | Rule 4 |
+| `DeviceIdentityMismatch` | Rule 5 |
+| `SharedPublicKey` | Rule 6 |
+| `RecoveryHold` | A [recovery hold](#unknown-outcomes) |
 
 The update sets the active operation, raises the fence, and sets a deadline. A
 staff operation admitted from holder `None` also sets the holder to `Service`.
@@ -274,13 +272,16 @@ evaluates again.
 
 Provider and release operations wait in `Pending` while another operation
 runs, and are admitted oldest first. A newer power operation for the same
-allocation cancels an older pending one. When the holder changes, the
-coordinator cancels every pending operation that no longer matches it.
+allocation cancels an older pending one, except an operation that settles a
+hold. Other operations wait in `Pending` until the hold is settled. When the
+holder changes, the coordinator cancels every pending operation that no longer
+matches it.
 
 Staff operations never wait behind another operation. Admission refuses a staff
 operation that cannot run now, because a queued request could run after its
 reason is gone. A staff operation not admitted within five minutes, for
-example because the coordinator is down, expires.
+example because the coordinator is down, ends as `Cancelled` with reason
+`Expired`.
 
 Metal admission, including IAM, entitlement, and quota, still follows the
 [machine lifecycle admission
@@ -349,7 +350,9 @@ the site reports the raised fence.
 
 - `Settle` clears the hold. It returns a `Service` holder to `None` and leaves
   an `Allocation` or `Release` holder in place.
-- `Retry` lets the held operation's requester create one settling operation.
+- `Retry` lets the held operation's requester create one settling operation,
+  where the settlement table requires it. The `Retry` is used when that
+  operation is admitted.
   Fleet never retries an operation automatically.
 - `Retire` sets a `Service` or `Release` holder to `Retired`. Retiring from
   `Release` records how the disks were disposed of.
@@ -377,7 +380,8 @@ history after that.
 
 If custody is missing for an existing Device, for example after a restore, the
 coordinator creates it as `Unverified`. An `Unverified` server cannot be
-allocated and admits only a `DeviceRecovery` with `Resolve`. The coordinator rebuilds custody from:
+allocated and admits only a `DeviceRecovery` with `Resolve`. The coordinator
+rebuilds custody from:
 
 - the Device's inventory lifecycle and `Retire` recoveries, which set
   `Retired`;
