@@ -229,8 +229,8 @@ func TestAnOmittedHealthIsNotAFault(t *testing.T) {
 	}
 }
 
-// A drive listed under Storage and SimpleStorage counts once, and a drive
-// under a Chassis is read.
+// A drive listed under Storage and SimpleStorage, or linked twice, counts
+// once, and a drive under a Chassis is read.
 func TestADriveListedTwiceCountsOnce(t *testing.T) {
 	l := newLab(t)
 	l.both = true

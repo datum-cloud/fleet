@@ -19,7 +19,7 @@ type Hardware struct {
 	UUID         string
 	// Healthy is false when the System or any present component reports
 	// Warning or Critical health. Redfish allows a component to omit its
-	// health, and an omitted health is not a fault.
+	// health, and an omitted health counts as healthy.
 	Healthy    bool
 	Unhealthy  []string
 	Processors []Processor
@@ -53,7 +53,7 @@ type status struct {
 }
 
 // skip reports whether a component is not present to judge. ok reports
-// whether a present component reports no fault.
+// whether a present component reports neither Warning nor Critical.
 func (s status) skip() bool { return s.State == "Absent" || s.State == "Disabled" }
 func (s status) ok() bool   { return s.Health != "Warning" && s.Health != "Critical" }
 
@@ -78,6 +78,8 @@ func (c *Client) Hardware(ctx context.Context, sys System) (Hardware, error) {
 		return Hardware{}, err
 	}
 	hw := Hardware{SerialNumber: strings.TrimSpace(doc.SerialNumber), UUID: canonicalUUID(doc.UUID), Healthy: true}
+	// Two Storage controllers may link the same drive; it counts once.
+	seen := map[string]bool{}
 	check := func(name string, s status) {
 		if !s.skip() && !s.ok() {
 			hw.Healthy = false
@@ -165,6 +167,10 @@ func (c *Client) Hardware(ctx context.Context, sys System) (Hardware, error) {
 			if err != nil || !(strings.HasPrefix(dp, sys.Path+"/") || strings.HasPrefix(dp, "/redfish/v1/Chassis/")) {
 				return errors.New("redfish: drive outside the System and its Chassis")
 			}
+			if seen[dp] {
+				continue
+			}
+			seen[dp] = true
 			var drive struct {
 				Name          string
 				CapacityBytes int64

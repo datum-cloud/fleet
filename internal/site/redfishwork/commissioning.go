@@ -120,8 +120,11 @@ func (k Commissioning) Run(ctx context.Context, work *site.Work) (any, error) {
 		return nil, err
 	}
 	evidence.Steps = steps
-	started, _ := work.JournaledAt(burnInPhase.name + "-power-on")
-	completed, _ := work.JournaledAt(burnInPhase.name + "-verified")
+	started, on := work.JournaledAt(burnInPhase.name + "-power-on")
+	completed, verified := work.JournaledAt(burnInPhase.name + "-verified")
+	if !on || !verified {
+		return nil, errors.New("the journal does not record when burn-in began and ended")
+	}
 	evidence.BurnIn = &ops.BurnInEvidence{Result: result, StartedAt: metaNow(started), CompletedAt: metaNow(completed)}
 	if result != ops.BurnInPassed {
 		return fail(evidence, ops.PhaseBurnIn, []string{"the burn-in image reported a failure"})
