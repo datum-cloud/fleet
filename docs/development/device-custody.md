@@ -884,12 +884,14 @@ against a real API server.
 
 This section records how Fleet implements the power kind of the [device power
 operations proposal](https://github.com/datum-cloud/fleet/pull/173) (#173,
-pinned at `d6744ab`) on this foundation. Step P1 is **implemented**: the
-coordinator admits, holds and settles power operations in every mode the
-cutover wires, but no site worker runs them and nothing creates them. It
-follows [Adding an operation kind](#adding-an-operation-kind), and adds no
-change to the coordinator. The kind joins the creator webhook's governed
-kinds, standalone's creator policy and each coordinator's access, and
+pinned at `d6744ab`) on this foundation. Step P1, the control plane, is
+**implemented**: the coordinator admits, holds and settles power operations in
+every mode the cutover wires. Step P2, the site worker, is **implemented**
+behind the site worker contract. Nothing creates power operations yet. It
+follows [Adding an operation kind](#adding-an-operation-kind). It changes
+neither the coordinator nor the site framework, and the worker adds only
+reasons to the kind's reason table. The kind joins the creator webhook's
+governed kinds, standalone's creator policy and each coordinator's access, and
 `TestEveryOperationKindIsGoverned` requires every operation kind to be
 governed.
 
@@ -907,13 +909,26 @@ governed.
 | Roles | The **device power operator** inherits the viewer and creates only `DevicePowerOperation`. It does not read MachineAllocations. The **device power requester** is the Fleet provider for Metal's role. The viewer and coordinator cover the new kind. |
 | Discovery | Power reads the `ComputerSystem.Reset` types the Device's observed System offers. This change adds only that field, in the Go type and the CRD. BMC discovery starts recording it, with GETs only, in a separate change. Until then every action is refused with `ResetTypeNotOffered`. |
 
-The worker reasons `Stale`, `NotPoweredOn` and `PowerStateNotSettled` before
-a command, the start-by window and the journal payload arrive with the worker
-in B.
+### The power worker
+
+| Piece | Decision |
+| --- | --- |
+| Before the command | The framework checks the credential, the pin and the System's identity. The worker then checks the expected system UUID against that System (`SystemUUIDMismatch`) and that the BMC still offers the action (`ResetTypeNotOffered`). It reads the power state once: a transition state refuses with `PowerStateNotSettled`, and a restart or power cycle of a server that is off refuses with `NotPoweredOn`. Each refusal sends nothing and ends `Failed`. |
+| Start-by window | Two minutes after admission. A later start with nothing sent ends `Failed` with the shared reason `Stale`. |
+| Already in the requested state | `On` of a server that is on and `ForceOff` of one that is off send nothing and succeed, with no `requestSentAt`. |
+| The one reset | One journaled step. Its payload records when the command was sent, the power state read before it, and the BMC's `LastResetTime` as the baseline. A response the BMC returns refusing the command is an error. A lost response is not: the worker watches for the effect. |
+| Success | `On` and `ForceOff`: the requested state appears within three minutes of the command. A restart or power cycle: the BMC's `LastResetTime` moves past the baseline, or the worker sees the server off, and then the server is on again. `resetEvidence` records which. When the BMC reported no reset time before the command, only seeing the server off proves a restart. |
+| Crash or lost response | A resumed worker reads the journaled payload instead of reading the server again, and watches for the effect. It never sends a second reset. |
+| Not proven | A reset whose effect does not appear in time, a BMC that refused the command, and a BMC that starts reporting another system after the command all end `OutcomeUnknown`, which places a recovery hold. |
+| Registration | The worker is `DevicePowerOperation` in a site's worker kinds. No site binary registers it until the cutover. |
+
+The lab BMC records `LastResetTime` and adds faults for a withheld request, a
+hidden reset time and an identity swap, as [the Redfish
+lab](../operations/redfish-lab.md) describes.
 
 ### Gaps that remain
 
-Both need a change in the foundation, and neither is worked around here.
+Each needs a change in the foundation, and none is worked around here.
 
 - **A kind check cannot wait.** Rule 7 now runs before rule 5, and a kind
   check can only refuse. A provider power operation whose discovery is not
@@ -927,7 +942,18 @@ Both need a change in the foundation, and neither is worked around here.
   it cannot require what only a success must prove: reset proof for a restart
   or power cycle, and `power.after` in the requested state. A `Succeeded`
   restart with no reset proof is accepted, and so is a `Succeeded` result
-  whose evidence is the empty object `{}`.
+  whose evidence is the empty object `{}`. The worker never reports such a
+  success, so this costs only the coordinator's second check.
+- **A swap before the command is reported as `DeviceIdentityMismatch`.** The
+  framework verifies the System's identity before a kind runs, with the
+  shared reason. #173 names this refusal `SystemUUIDMismatch` at the worker.
+  Power raises `SystemUUIDMismatch` only for a swap after the framework's
+  check.
+- **A command the BMC refused ends `OutcomeUnknown`, not `Failed`.** Once a
+  step is journaled, the framework ends any refusal as `OutcomeUnknown`.
+  #173 asks for `Failed` when the BMC refused and the power state did not
+  change. The result is safe, but it places a hold that a recovery must
+  settle.
 
 ## Tests
 
@@ -953,6 +979,8 @@ a real API server:
 | CRD contract, roles, and that nothing ships the component or the test-only kinds | `TestCRDContract`, `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets`, `TestComponentIsInert` |
 | Power: each refusal with custody unchanged, both rows and every other pair, staff racing an allocation, replacement only by the provider row and waiting under a hold, expiry, an early staff retry settling after `Retry`, `Settle` evidence, required evidence | `TestPowerOperations` |
 | Power: CEL inputs and evidence pruning, checks, input digest, evidence bounds, registration | `TestPowerCRDRules`, `TestPowerChecks`, `TestPowerInputDigestIsStable`, `TestPowerEvidenceIsTypedAndBounded`, `TestPowerRegistration` |
+| Power worker: one reset per action and its proof, sending nothing when already in the requested state, each refusal with nothing sent, a lost response, a request never applied, an unprovable restart, a swap after the command, a resumed worker, two workers for one assignment | `go test ./internal/site/powerwork` |
+| The BMC's reset time and the lab's power faults | `TestObserveReadsTheLastResetTime`; the lab adapter self-test |
 
 Increment A has no site, so "nothing was sent" means custody admitted nothing
 and the fence did not rise. Increment D proves it with the lab BMC audit.
