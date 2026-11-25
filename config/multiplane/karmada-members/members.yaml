@@ -28,6 +28,13 @@ spec:
       labelSelector:
         matchLabels:
           coordination.fleet.datumapis.com/cell: "${FLEET_CELL}"
+    # An assignment's bootstrap payload travels beside its handoff. Deleting
+    # it on the hub deletes the cell's copy.
+    - apiVersion: coordination.fleet.datumapis.com/v1alpha1
+      kind: MachineAllocationPayload
+      labelSelector:
+        matchLabels:
+          coordination.fleet.datumapis.com/cell: "${FLEET_CELL}"
   placement:
     clusterAffinity:
       clusterNames:

@@ -36,6 +36,8 @@ def emit(v): print(json.dumps(v)); sys.exit(0)
 if config.endswith('worker-kubeconfig.json'):
     if args[-3:] == ['get', 'machineallocationhandoff', world['handoff']] or args[-5:-2] == ['get', 'machineallocationhandoff', world['handoff']]:
         print('machineallocationhandoff/' + world['handoff']); sys.exit(0)
+    if args[:2] == ['auth', 'can-i'] and args[3] == 'machineallocationpayload/' + world['handoff'] + '-payload':
+        print('yes'); sys.exit(0)
     print('Error from server (Forbidden): denied', file=sys.stderr); sys.exit(1)
 if args[:3] == ['config', 'view', '--raw']:
     emit({'clusters': [{'cluster': {}}], 'contexts': [{'context': {}}], 'users': []})
@@ -69,7 +71,7 @@ if kind == 'pvc': emit({'metadata': {'uid': 'pvc-uid'}, 'spec': {'volumeName': '
 if kind == 'pv': emit({'metadata': {'uid': 'pv-uid'}, 'spec': {'persistentVolumeReclaimPolicy': 'Retain'}})
 if kind == 'machine':
     emit(world['machines'][config.split('/')[-2]])
-if kind == 'role': emit({'metadata': {'labels': {'kro.run/node-id': 'workerRoles'}}, 'rules': [{'resourceNames': [world['handoff']], 'verbs': ['get']}]})
+if kind == 'role': emit({'metadata': {'labels': {'kro.run/node-id': 'workerRoles'}}, 'rules': [{'resourceNames': [world['handoff']], 'verbs': ['get']}, {'resourceNames': [world['handoff'] + '-payload'], 'verbs': ['get']}]})
 if kind == 'machineallocationhandoffs': emit({'items': world['handoffs']})
 if kind == 'machineallocationhandoff': emit({'metadata': {'name': name}, 'spec': {}, 'status': world.get('statuses', {}).get(name)})
 sys.exit(1)

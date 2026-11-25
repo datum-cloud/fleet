@@ -92,7 +92,9 @@ spec:
                 operator: In
                 values: [assignment]
     # Per-operation identity and policy: each worker may read exactly its own
-    # handoff and nothing else. It has no status, list or Secret permission.
+    # handoff and its own payload, which exists only for an operation with
+    # bootstrap data, and nothing else. It has no status, list or Secret
+    # permission.
     # The fleet-site-kro-worker-identity admission policy enforces this shape.
     - id: workerAccounts
       includeWhen:
@@ -121,6 +123,10 @@ spec:
           - apiGroups: [coordination.fleet.datumapis.com]
             resources: [machineallocationhandoffs]
             resourceNames: ["${handoff.metadata.name}"]
+            verbs: [get]
+          - apiGroups: [coordination.fleet.datumapis.com]
+            resources: [machineallocationpayloads]
+            resourceNames: ["${handoff.metadata.name + '-payload'}"]
             verbs: [get]
     - id: workerBindings
       includeWhen:

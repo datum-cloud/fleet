@@ -7,7 +7,11 @@
 # Jobs and ServiceAccounts in fleet-site, Roles and RoleBindings in
 # fleet-coordination. kro holds no Deployment, Service, volume, ConfigMap or
 # Secret write and no handoff spec or status write. To create a per-operation
-# Role granting get on one handoff, kro itself must hold that get permission.
+# Role granting get on one handoff and on its one payload, kro itself must
+# hold get on both kinds, and it holds nothing more on payloads: no list,
+# watch or write, and no escalate or bind. The worker identity policy admits
+# only the per-operation Role and binding shapes, and the cluster RBAC policy
+# refuses every cluster-wide Role or binding kro writes.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -59,6 +63,9 @@ rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [roles, rolebindings]
     verbs: [create, update, patch, delete]
+  - apiGroups: [coordination.fleet.datumapis.com]
+    resources: [machineallocationpayloads]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -158,11 +165,16 @@ spec:
     - expression: "variables.kind != 'serviceaccounts' || request.namespace == 'fleet-site'"
       message: worker ServiceAccounts live in fleet-site
     - expression: >-
-        variables.kind != 'roles' || (has(object.rules) && size(object.rules) == 1 &&
-        object.rules.all(r, r.apiGroups == ['coordination.fleet.datumapis.com'] &&
-        r.resources == ['machineallocationhandoffs'] && r.verbs == ['get'] &&
-        has(r.resourceNames) && r.resourceNames == [variables.handoff]))
-      message: a worker Role may grant only get on its own handoff
+        variables.kind != 'roles' || (has(object.rules) && size(object.rules) == 2 &&
+        object.rules[0].apiGroups == ['coordination.fleet.datumapis.com'] &&
+        object.rules[0].resources == ['machineallocationhandoffs'] && object.rules[0].verbs == ['get'] &&
+        has(object.rules[0].resourceNames) && object.rules[0].resourceNames == [variables.handoff] &&
+        !has(object.rules[0].nonResourceURLs) &&
+        object.rules[1].apiGroups == ['coordination.fleet.datumapis.com'] &&
+        object.rules[1].resources == ['machineallocationpayloads'] && object.rules[1].verbs == ['get'] &&
+        has(object.rules[1].resourceNames) && object.rules[1].resourceNames == [variables.handoff + '-payload'] &&
+        !has(object.rules[1].nonResourceURLs))
+      message: a worker Role may grant only get on its own handoff and on its own payload
     - expression: >-
         variables.kind != 'rolebindings' || (object.roleRef.kind == 'Role' &&
         object.roleRef.name == object.metadata.name && has(object.subjects) && size(object.subjects) == 1 &&
@@ -175,4 +187,28 @@ kind: ValidatingAdmissionPolicyBinding
 metadata: {name: fleet-site-kro-worker-identity}
 spec:
   policyName: fleet-site-kro-worker-identity
+  validationActions: [Deny]
+---
+# kro holds no cluster-wide RBAC write, and this refuses one anyway: a graph
+# revision must never create or change a ClusterRole or ClusterRoleBinding.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: fleet-site-kro-cluster-rbac}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - {apiGroups: [rbac.authorization.k8s.io], apiVersions: ["*"], resources: [clusterroles, clusterrolebindings], operations: [CREATE, UPDATE, DELETE]}
+  matchConditions:
+    - name: kro-controller
+      expression: "request.userInfo.username == 'system:serviceaccount:kro-system:kro'"
+  validations:
+    - expression: "false"
+      message: kro may not write cluster-wide RBAC
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: fleet-site-kro-cluster-rbac}
+spec:
+  policyName: fleet-site-kro-cluster-rbac
   validationActions: [Deny]

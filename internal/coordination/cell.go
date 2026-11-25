@@ -2,10 +2,12 @@ package coordination
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
@@ -49,6 +51,15 @@ func (c *Cell) assignment(object *unstructured.Unstructured) (site.Assignment, S
 	if err := json.Unmarshal([]byte(spec.AssignmentJSON), &assignment); err != nil || assignment.Device != spec.Device || object.GetName() != AssignmentName(assignment) || spec.Credential != site.CredentialSecretName(assignment.Device) {
 		return site.Assignment{}, spec, ErrNotDelivered
 	}
+	// The handoff names a payload object exactly when the admitted inputs
+	// name a payload, and only under its derived name.
+	want := ""
+	if assignment.Sealed() != nil {
+		want = PayloadName(assignment)
+	}
+	if spec.Payload != want {
+		return site.Assignment{}, spec, ErrNotDelivered
+	}
 	return assignment, spec, nil
 }
 
@@ -67,9 +78,64 @@ func (c *Cell) Work(ctx context.Context, name string, runner *site.Runner) error
 	if assignment.Operation.Kind == "DeviceRecovery" {
 		return runner.Fence(ctx, assignment)
 	}
+	// Federation can deliver the handoff before the payload object. The
+	// worker exits to be retried, and stores no result, until it arrives.
+	if assignment.Sealed() != nil {
+		if runner.Payloads == nil {
+			return ErrNotDelivered
+		}
+		if payload, err := runner.Payloads.Get(ctx, assignment); err != nil || payload == nil {
+			return ErrPayloadPending
+		}
+	}
 	_, err = runner.Run(ctx, assignment)
 	return err
 }
+
+// ErrPayloadPending means the assignment's payload object has not reached
+// the cell yet. The worker sends nothing and is retried.
+var ErrPayloadPending = errors.New("coordination: the bootstrap payload has not reached the cell")
+
+// HandoffPayloads reads an assignment's payload from the one
+// MachineAllocationPayload federation delivered for it. The worker may get
+// exactly that object, and may list, watch, change or delete none. The cell
+// keeps the payload only until the coordinator answers the result: the hub
+// then deletes its object, and federation deletes the cell's copy. So
+// Delete and Prune have nothing a worker can do.
+type HandoffPayloads struct {
+	API       dynamic.Interface
+	Namespace string
+	Cell      string
+}
+
+var _ site.Payloads = HandoffPayloads{}
+
+func (s HandoffPayloads) Get(ctx context.Context, assignment site.Assignment) (*site.Payload, error) {
+	object, err := s.API.Resource(PayloadResource).Namespace(s.Namespace).Get(ctx, PayloadName(assignment), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cell, _, _ := unstructured.NestedString(object.Object, "spec", "cell"); cell != s.Cell || object.GetLabels()[CellLabel] != s.Cell || object.GetLabels()[RoleLabel] != RolePayload {
+		return nil, ErrNotDelivered
+	}
+	encoded, _, _ := unstructured.NestedString(object.Object, "spec", "payload")
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, err
+	}
+	var payload site.Payload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
+func (HandoffPayloads) Delete(context.Context, site.Assignment) error { return nil }
+
+func (HandoffPayloads) Prune(context.Context, string) error { return nil }
 
 // Publish writes the observation of one handoff: the Device's stored fences
 // and, for an assignment, its stored result. It deletes the site's copy of a

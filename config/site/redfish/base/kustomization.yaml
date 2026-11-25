@@ -34,7 +34,7 @@ patches:
     patch: |-
       - op: test
         path: /spec/validations/2/message
-        value: a worker Role may grant only get on its own handoff
+        value: a worker Role may grant only get on its own handoff and on its own payload
       - op: replace
         path: /spec/matchConstraints/namespaceSelector/matchExpressions/0/values
         value: [fleet-site, fleet-coordination, fleet-site-credentials]
@@ -46,7 +46,13 @@ patches:
             (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == [''] &&
             r.resources == ['secrets'] && r.verbs == ['get'] && has(r.resourceNames) && size(r.resourceNames) == 1 &&
             r.resourceNames.all(n, n.matches('^bmc-[a-f0-9]{20}$')))) :
-            (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == ['coordination.fleet.datumapis.com'] &&
-            r.resources == ['machineallocationhandoffs'] && r.verbs == ['get'] &&
-            has(r.resourceNames) && r.resourceNames == [variables.handoff])))
-          message: a worker Role may grant only get on its own handoff, or get on one named BMC credential
+            (has(object.rules) && size(object.rules) == 2 &&
+            object.rules[0].apiGroups == ['coordination.fleet.datumapis.com'] &&
+            object.rules[0].resources == ['machineallocationhandoffs'] && object.rules[0].verbs == ['get'] &&
+            has(object.rules[0].resourceNames) && object.rules[0].resourceNames == [variables.handoff] &&
+            !has(object.rules[0].nonResourceURLs) &&
+            object.rules[1].apiGroups == ['coordination.fleet.datumapis.com'] &&
+            object.rules[1].resources == ['machineallocationpayloads'] && object.rules[1].verbs == ['get'] &&
+            has(object.rules[1].resourceNames) && object.rules[1].resourceNames == [variables.handoff + '-payload'] &&
+            !has(object.rules[1].nonResourceURLs)))
+          message: a worker Role may grant only get on its own handoff and on its own payload, or get on one named BMC credential

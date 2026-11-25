@@ -9,6 +9,7 @@ package coordination
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,10 @@ const (
 	RoleLabel      = "coordination.fleet.datumapis.com/role"
 	RoleAssignment = "assignment"
 	RoleReport     = "report"
+	// RolePayload labels the MachineAllocationPayload that carries an
+	// assignment's bootstrap payload to its cell, beside the handoff and
+	// never inside it.
+	RolePayload = "payload"
 	// AnsweredLabel marks an assignment whose result the coordinator
 	// answered. The cell then deletes its copy of the result.
 	AnsweredLabel = "coordination.fleet.datumapis.com/answered"
@@ -61,6 +66,11 @@ type Spec struct {
 	// site, derived from the Device. The site grants the assignment's worker
 	// get on exactly that Secret. A report handoff has none.
 	Credential string `json:"credential,omitempty"`
+	// Payload is the name of the MachineAllocationPayload that carries the
+	// assignment's bootstrap payload, set exactly when the admitted inputs
+	// name one. The site grants the assignment's worker get on exactly that
+	// object.
+	Payload string `json:"payload,omitempty"`
 }
 
 // FenceReport is the cell's stored fences for the Device.
@@ -100,6 +110,17 @@ type HubStatus struct {
 func AssignmentName(assignment site.Assignment) string {
 	return "op-" + digest(assignment.Device + "/" + assignment.Key())[:40]
 }
+
+// PayloadName is the only name the object carrying an assignment's
+// bootstrap payload may have.
+func PayloadName(assignment site.Assignment) string { return AssignmentName(assignment) + "-payload" }
+
+// PayloadResource carries bootstrap payloads. It is its own kind, not a
+// Secret, so permission on it reaches nothing else.
+var PayloadResource = schema.GroupVersionResource{Group: Resource.Group, Version: Resource.Version, Resource: "machineallocationpayloads"}
+
+// PayloadKind is the kind of PayloadResource.
+const PayloadKind = "MachineAllocationPayload"
 
 // ReportName is the only name a Device's report handoff may have.
 func ReportName(device string) string { return "fence-" + digest(device)[:40] }
@@ -184,22 +205,62 @@ func (h *Hub) ensure(ctx context.Context, name, role string, spec Spec) (*unstru
 	return object, nil
 }
 
-// ErrBootstrapUnsupported means the federation transport does not yet
-// carry bootstrap payloads to a cell. The assignment is not delivered.
-// Admission refuses such an operation first, because Hub does not report
-// that it carries payloads.
-var ErrBootstrapUnsupported = errors.New("coordination: federation does not carry bootstrap payloads yet")
+// CarriesPayloads is true: the hub delivers a payload as its own object
+// beside the handoff.
+func (h *Hub) CarriesPayloads() bool { return true }
 
+// Deliver writes the payload object, if the assignment's admitted inputs
+// name one, and then the handoff that names it, so a cell never sees a
+// handoff whose payload was never written.
 func (h *Hub) Deliver(ctx context.Context, assignment site.Assignment, payload *site.Payload) error {
-	if payload != nil || assignment.Sealed() != nil {
-		return ErrBootstrapUnsupported
+	spec := Spec{Cell: h.Cell, Device: assignment.Device, Credential: site.CredentialSecretName(assignment.Device)}
+	if (payload != nil) != (assignment.Sealed() != nil) || (payload != nil && !payload.Matches(assignment.Sealed())) {
+		return ErrConflict
+	}
+	if payload != nil {
+		spec.Payload = PayloadName(assignment)
+		if err := h.ensurePayload(ctx, spec.Payload, *payload); err != nil {
+			return err
+		}
 	}
 	data, err := json.Marshal(assignment)
 	if err != nil {
 		return err
 	}
-	_, err = h.ensure(ctx, AssignmentName(assignment), RoleAssignment, Spec{Cell: h.Cell, Device: assignment.Device, AssignmentJSON: string(data), Credential: site.CredentialSecretName(assignment.Device)})
+	spec.AssignmentJSON = string(data)
+	_, err = h.ensure(ctx, AssignmentName(assignment), RoleAssignment, spec)
 	return err
+}
+
+func (h *Hub) payloads() dynamic.ResourceInterface {
+	return h.API.Resource(PayloadResource).Namespace(h.Namespace)
+}
+
+// ensurePayload creates the payload object, or requires the existing one to
+// hold the same payload.
+func (h *Hub) ensurePayload(ctx context.Context, name string, payload site.Payload) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	object := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": PayloadResource.GroupVersion().String(), "kind": PayloadKind,
+		"metadata": map[string]any{"name": name, "namespace": h.Namespace, "labels": map[string]any{CellLabel: h.Cell, RoleLabel: RolePayload}},
+		"spec":     map[string]any{"cell": h.Cell, "payload": base64.StdEncoding.EncodeToString(data)},
+	}}
+	existing, err := h.payloads().Create(ctx, object, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		existing, err = h.payloads().Get(ctx, name, metav1.GetOptions{})
+	}
+	if err != nil {
+		return err
+	}
+	stored, _, _ := unstructured.NestedString(existing.Object, "spec", "payload")
+	cell, _, _ := unstructured.NestedString(existing.Object, "spec", "cell")
+	if stored != base64.StdEncoding.EncodeToString(data) || cell != h.Cell || existing.GetLabels()[CellLabel] != h.Cell || existing.GetLabels()[RoleLabel] != RolePayload {
+		return ErrConflict
+	}
+	return nil
 }
 
 // reflected returns the one valid observation of this cell.
@@ -266,9 +327,16 @@ func namespaceOf(device string) string {
 	return ""
 }
 
-// Forget marks the assignment answered, so the cell deletes its copy.
+// Forget deletes the assignment's payload object, which removes the cell's
+// copy too, and then marks the assignment answered, so the cell deletes its
+// copy of the result. A crash between the two deletes the Secret again on
+// the retry.
 func (h *Hub) Forget(ctx context.Context, stored site.Stored) error {
-	name := AssignmentName(site.Assignment{Device: stored.Device, Operation: stored.Result.Operation, Fence: stored.Result.Fence})
+	assignment := site.Assignment{Device: stored.Device, Operation: stored.Result.Operation, Fence: stored.Result.Fence}
+	name := AssignmentName(assignment)
+	if err := h.payloads().Delete(ctx, PayloadName(assignment), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
 	patch := []byte(`{"metadata":{"labels":{"` + AnsweredLabel + `":"true"}}}`)
 	_, err := h.api().Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
 	if apierrors.IsNotFound(err) {
