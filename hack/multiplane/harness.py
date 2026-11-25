@@ -26,12 +26,13 @@ STATUS_BY_EXIT = {EXIT_PASSED: 'passed', EXIT_FAILED: 'failed', EXIT_PREFLIGHT: 
 DEBIAN = 'debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc'
 # Subcommands and errors the live harness depends on. A missing one blocks before any resource exists.
 REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
-                                                     'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer')) + ('multiplane.ErrLocationNotServed',)
+                                                     'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
+                                                     'admit-install-b', 'recovery-mismatch', 'probe-unallocatable')) + ('multiplane.ErrLocationNotServed',)
 READINESS_PACKAGES = ('./internal/coordination', './internal/custody', './internal/site/...', './internal/multiplane', './cmd/fleet-multiplane')
 # Redfish mode (run.sh --redfish) adds its executor and probe to the readiness gate.
 PROVIDER = os.environ.get('FLEET_SITE_PROVIDER', 'libvirt')
 if PROVIDER == 'redfish':
-    REQUIRED_SOURCE_MARKERS += ('"redfish-probe"', '"install-b"', 'redfish.NewPinnedClient')
+    REQUIRED_SOURCE_MARKERS += ('"redfish-probe"', 'redfish.NewPinnedClient')
     READINESS_PACKAGES += ('./internal/redfish',)
 # The one Device the acceptance allocates, as the site store names it. In
 # Redfish mode it is enrolled as lab target A (System-1), a persistent domain.

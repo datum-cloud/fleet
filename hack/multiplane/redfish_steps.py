@@ -224,9 +224,11 @@ def discovery_faults(s):
     before = len(audit(s))
     cases = []
     try:
-        def probe(name, creds, system, uuid, want):
+        pin = (d / 'bmc-pin').read_text().strip()
+
+        def probe(name, creds, system, uuid, want, pin=pin):
             r = subprocess.run([str(s / 'fleet-multiplane-host'), 'redfish-probe', '--endpoint', 'https://127.0.0.1:%d' % port, '--credentials', str(creds),
-                                '--system', system, '--uuid', uuid, '--pin', (d / 'bmc-pin').read_text().strip()], text=True, capture_output=True, timeout=120)
+                                '--system', system, '--uuid', uuid, '--pin', pin], text=True, capture_output=True, timeout=120)
             line = (r.stdout.strip().splitlines() or [''])[-1]
             cases.append({'case': name, 'system': system, 'exitCode': r.returncode, 'outcome': line})
             if r.returncode != want:
@@ -241,6 +243,13 @@ def discovery_faults(s):
             probe('ResetType On not advertised (injected)', good, TARGET_A['system'], TARGET_A['uuid'], 11)
         finally:
             bmc(s, 'python3', '/opt/fleet-lab/fleet_lab_adapter.py', 'fault', 'clear')
+        # Another key's digest: the TLS handshake fails before any request,
+        # so the BMC audit gains nothing.
+        other = pin[:-1] + ('0' if pin[-1] != '0' else '1')
+        seen = len(audit(s))
+        probe('a TLS key other than the pin', good, TARGET_A['system'], TARGET_A['uuid'], 13, pin=other)
+        if len(audit(s)) != seen:
+            die('a probe with the wrong pin reached the BMC')
         probe('target A after the fault is cleared', good, TARGET_A['system'], TARGET_A['uuid'], 0)
     finally:
         pf.kill()
@@ -255,7 +264,7 @@ def discovery_faults(s):
                                                                'client': 'internal/redfish discovery through fleet-multiplane redfish-probe', 'cases': cases,
                                                                'auditRequests': len(window), 'mutatingRequests': 0,
                                                                'rejectedRequests': sum(1 for e in window if e['principal'] == 'rejected')})
-    print('redfish-discovery-faults: real emulator discovery selected each enrolled System exactly; wrong credential, swapped or unknown identity and an unadvertised ResetType were refused with GETs only')
+    print('redfish-discovery-faults: real emulator discovery selected each enrolled System exactly; wrong credential, swapped or unknown identity and an unadvertised ResetType were refused with GETs only; a TLS key other than the pin reached no request')
 
 
 def arm_lost_response(s):
@@ -378,7 +387,21 @@ def isolation(s):
     print('redfish-isolation: target B never started, never received a Redfish effect and its disk is unchanged; target A disk independently hashes as all zeroes after the final cleanup')
 
 
+def audit_mark(s):
+    """Record the BMC audit's length for a later audit-unchanged."""
+    (s / 'redfish' / 'audit-mark').write_text('%d\n' % len(audit(s)))
+
+
+def audit_unchanged(s):
+    """No request after the mark carried an effect."""
+    mark = int((s / 'redfish' / 'audit-mark').read_text())
+    effects = mutating(audit(s)[mark:])
+    if effects:
+        die('the BMC received an effect: %s' % [{k: e.get(k) for k in ('method', 'path', 'resetType')} for e in effects])
+
+
 if __name__ == '__main__':
     step, state = sys.argv[1], pathlib.Path(sys.argv[2])
     {'enroll': enroll, 'baseline': baseline, 'discovery-faults': discovery_faults, 'arm-lost-response': arm_lost_response,
-     'lost-response': lost_response, 'bmc-interrupt': bmc_interrupt, 'isolation': isolation}[step](state)
+     'lost-response': lost_response, 'bmc-interrupt': bmc_interrupt, 'isolation': isolation,
+     'audit-mark': audit_mark, 'audit-unchanged': audit_unchanged}[step](state)

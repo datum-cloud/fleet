@@ -68,7 +68,8 @@ with tempfile.TemporaryDirectory() as tmp:
         d = pathlib.Path(tempfile.mkdtemp(dir=tmp)); d.chmod(0o700); return d
 
     good_root = tmp / 'good'; (good_root / 'cmd/fleet-multiplane').mkdir(parents=True)
-    markers = ['seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer']
+    markers = ['seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse', 'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
+               'admit-install-b', 'recovery-mismatch', 'probe-unallocatable']
     (good_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers) + ' multiplane.ErrLocationNotServed')
     bad_root = tmp / 'bad'; (bad_root / 'cmd/fleet-multiplane').mkdir(parents=True)
     (bad_root / 'cmd/fleet-multiplane/main.go').write_text(' '.join('"%s"' % m for m in markers))
@@ -189,10 +190,11 @@ with tempfile.TemporaryDirectory() as tmp:
     for name, text in (('steps', steps), ('evidence', evidence), ('harness', harness.read_text())):
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
-    order = ['custody-crd-rules', 'allocate', 'verify-contention', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
+    order = ['custody-crd-rules', 'import-inert', 'staff-access', 'allocate', 'verify-contention', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
              'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
              'reflection-faults', 'release', 'release-status-a',
-             'reuse', 'reuse-status', 'delivery-faults', 'release-b', 'release-status-b', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
+             'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b',
+             'rebuild', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
     positions = [sequence.find(' ' + name + ' ') for name in order]
     check('acceptance phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
     for name in order:
