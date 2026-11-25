@@ -69,8 +69,12 @@ routing = json.loads((s / 'routing.json').read_text())
 if len(routing) != 2 or any(x['namespace'] != 'default' or x['watch'] != 'Added exact UID' for x in routing) or routing[0]['namespaceUID'] == routing[1]['namespaceUID'] or routing[0]['projectUID'] == routing[1]['projectUID']:
     fail('missing independent native project create/watch evidence')
 
+custody_rules = json.loads((ev / 'custody-crd-rules.json').read_text())
+if not custody_rules.get('crdsRemoved') or len(custody_rules.get('checks', [])) != 8 or not all(c.get('refused') for c in custody_rules['checks']):
+    fail('the provider project API did not refuse every forbidden custody write')
+
 phases = (s / 'phases.log').read_text()
-markers = ('Verified forbidden observer/project/hub writes', 'allocate: verified', 'contention: consumer-a Bound', 'delivery: Karmada delivered exactly one',
+markers = ('custody-crd-rules: the provider project API refused every forbidden custody and operation write', 'Verified forbidden observer/project/hub writes', 'allocate: verified', 'contention: consumer-a Bound', 'delivery: Karmada delivered exactly one',
            'kro created the worker Job and per-operation RBAC', 'worker-rbac: per-operation ServiceAccount', 'interrupt-pod: worker Pod force-deleted',
            'interrupt-job: running worker Job deleted mid-install', 'resume: replacement worker completed the exact interrupted operation',
            'worker Job is Complete while hub/consumer disconnected; public Ready stayed False', 'install: verified', 'lifecycle: runtime, boot and observer Pods',
@@ -347,6 +351,7 @@ summary = {
         'installerStarts': starts,
         'reflectionRejections': ['wrong-cell', 'stale', 'duplicate', 'future', 'wrong-intent', 'wrong-digest', 'wrong-operation', 'incomplete', 'missing'],
         'wrongLocationDeniedBeforeAllocation': json.loads((ev / 'wrong-location.json').read_text()),
+        'custodyCRDRules': custody_rules,
         'releasedProjection': {'consumerA': {'machine': 'Released, Bound False, Ready False, no currentInstallationRef, no Fleet finalizer', 'installation': 'Released, Ready False'},
                                'consumerB': {'machine': 'Released, Bound False, Ready False, no currentInstallationRef, no Fleet finalizer'}},
         'cleanupAndReuse': {'epochs': epochs, 'cleanups': len(cleanups), 'domainsAfterCleanup': [], 'disksAfterCleanup': 0},

@@ -14,6 +14,7 @@ rf() { ph "redfish-$1" "$2" python3 hack/multiplane/redfish_steps.py "$1" "$stat
 flux() { ph "flux-$1" "$2" python3 hack/multiplane/flux.py "$1" "$state"; }
 
 ph rbac 600 python3 hack/multiplane/verify-rbac.py "$state"
+ph custody-crd-rules 600 python3 hack/multiplane/custody_crd_rules.py "$state"
 rf baseline 300
 rf discovery-faults 600
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"

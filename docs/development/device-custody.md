@@ -263,6 +263,28 @@ remains.
   as written would make every server unallocatable, because commissioning is
   not built.
 
+### Extension points for power and commissioning
+
+The agent rebuilding `DevicePowerOperation` on this foundation asked for
+these seams. Each is decided here.
+
+| # | Seam | Decision | Status |
+| --- | --- | --- | --- |
+| 1 | Kind checks see the Device the snapshot records, an injected clock and the discovery interval | Checks get the Device object the snapshot is built from, `Admission.Now` and `Admission.DiscoveryInterval`. Before the custody update, the coordinator reads the Device again. If its resourceVersion changed, it decides again, so discovery cannot change between the check and the update unseen. | Implemented and inert |
+| 2 | Pending replacement is scoped to the kind and the authority | A newer pending operation replaces only an older one of the same kind under the same authority. A power request never cancels a pending installation. | Implemented and inert |
+| 3 | Kinds add bounded snapshot fields | `SnapshotExtra` adds up to 16 camelCase fields of at most 256 bytes each. The snapshot goes to the operation, the active operation, the hold, and the site. | Implemented and inert |
+| 4 | The settle hook sees the hold's end time, its deadline and current Device status | The hold records when it ended (`Since`), the operation's deadline and its snapshot. The hook gets the Device as read when the recovery is admitted and again when it is applied. | Implemented and inert |
+| 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal with an undeclared reason ends `UndeclaredReason`. | Implemented and inert. Worker reasons are checked when results arrive, in B. |
+| 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock. | Implemented and inert |
+| 7 | End-to-end proof that Milo enforces the CRD rules | The `custody-crd-rules` phase of both local end-to-end runs installs only these CRDs into the provider project, requires the project API to refuse eight forbidden writes, and removes them. | Implemented and verified in the local end-to-end runs |
+| 8 | Journal steps carry a kind's payload | A step records a bounded payload, such as the send time or the power state before. Observation after a crash reads it. | Proposed for B |
+| 9 | Delivery carries the admission time, and kinds declare a start-by window | A worker that starts after the window refuses as `Stale`, with nothing sent. | Proposed for B |
+| 10 | The TLS and identity check is separate from install capabilities | The framework verifies the pin and the System only. Each kind checks the capabilities it uses, such as the Pxe and Hdd boot targets, against a pinned client bound to the verified System. | Proposed for B |
+| 11 | A worker refusal with nothing sent ends `Failed` | It ends `Failed` under the operation's fence and returns a `Service` holder to `None`. It never ends `OutcomeUnknown`. | Implemented in the coordinator; the worker side arrives in B |
+| 12 | The single writer of `Machine.status.power` | The manager's Machine status projector stays the only writer. It reads the custody of the Machine's allocation: while a recovery hold exists it reports power `Unknown`, and otherwise it reports the power state of the last succeeded power operation's evidence or of discovery, whichever is newer. | Proposed for C |
+
+None of these conflicts with #174.
+
 ## Points for a person
 
 These need a decision before the increment that depends on them.
@@ -292,13 +314,24 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    - its naming rule: `DeterministicName` with a `Name` function for provider
      and release kinds, or `GeneratedName` for staff kinds;
    - its `Deadline`, and `Effectful` if it can reach the server;
-   - `Supersedes`, if a newer pending operation for the same authority should
-     cancel an older one, as power needs;
+   - `Supersedes`, if a newer pending operation of the same kind and the
+     same authority should cancel an older one, as power needs. It never
+     cancels another kind's operation;
    - `Check` for kind-specific admission checks. They run after the shared
      preconditions, before the custody update, and return a named refusal,
-     such as power's `SystemUUIDMismatch` or `DiscoveryNotCurrent`;
+     such as power's `SystemUUIDMismatch` or `DiscoveryNotCurrent`. A check
+     sees the same Device object the snapshot records, the coordinator's
+     injected clock as `Admission.Now`, and `Admission.DiscoveryInterval`;
+   - `Reasons`, every refusal reason the kind raises, each marked as raised
+     by the coordinator, the worker, or both. A refusal with a reason that is
+     neither shared nor declared is recorded as `UndeclaredReason`;
+   - `SnapshotExtra`, for bounded fields the kind adds to the snapshot, such
+     as the reset types discovery offered. The worker and a recovery see
+     what admission saw;
    - `Settles`, the held kinds a success settles, with `RequiresRetry` when a
-     `DeviceRecovery` `Retry` must come first.
+     `DeviceRecovery` `Retry` must come first. It may be empty;
+   - `Retryable`, if a `DeviceRecovery` with `Retry` applies to the kind's
+     holds.
 
    Embed `OperationEnvelope` inline in the spec, and use `OperationStatus` as
    the status. Add the CRD with the same envelope, the immutable-spec rule and
@@ -319,8 +352,10 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    data are rejected, and the result then proves nothing. Evidence never
    carries a credential or a raw BMC response. If a `DeviceRecovery` `Settle`
    can settle a hold of the kind, set `RecoverySettle` to validate the staff
-   evidence. Power, for example, accepts only a power state that discovery
-   read after the operation ended.
+   evidence. The hook sees the hold, with when the held operation ended
+   (`Since`), its deadline and its admission snapshot, and the Device as read
+   when the hook runs. Power, for example, accepts only a power state that
+   discovery read after the operation ended.
 
 Test the kind with the shared harness in `internal/custody`: register it
 beside the defaults, and run its refusals, admission, results and holds
@@ -341,6 +376,7 @@ a real API server:
 | Two allocators, allocator against staff, two coordinators, admission against a holder change, two Devices, a lost claim response | `TestConcurrency` |
 | A claim and its installation landing between the custody read and the operation list | `TestARefusalNeverUsesCustodyReadBeforeAHolderChange` |
 | Admission above the fence a site has seen; a recovery confirmed only by the stopped fence; a held operation never a candidate | `TestFencesFollowTheSiteReport`, `TestAHeldOperationIsNeverACandidate` |
+| The extension points: the Device the checks see, scoped replacement, snapshot fields, the settle hook's hold fields, declared reasons, `Retryable`, a worker refusal returning a staff holder to `None` | `TestExtensionSeams`, `TestRegistryValidatesDeclaredReasons` |
 | A crash between each pair of custody and status writes, with dropped and lost responses | `TestWriteOrderCrashRecovery` |
 | CEL rules | `TestCRDRules` |
 | Seams, rows, principals, ordering, evidence bounds, capacity for every input | `TestRegistryRejectsIncompleteKindsAndRows`, `TestAddingRowsLeavesExistingRowsAlone`, `TestPrincipals`, `TestCandidatesOrderOldestFirstWithADeterministicTieBreak`, `TestEvidenceIsTypedAndBounded`, `TestCapacityProjection` |
@@ -349,3 +385,8 @@ a real API server:
 
 Increment A has no site, so "nothing was sent" means custody admitted nothing
 and the fence did not rise. Increment D proves it with the lab BMC audit.
+
+Both local end-to-end runs include the `custody-crd-rules` phase. It proves
+that a Milo project API refuses every write the CRD rules forbid, which
+envtest alone cannot show, because Milo ignores admission policies stored in a
+project.

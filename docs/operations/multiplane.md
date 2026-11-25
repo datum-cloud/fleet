@@ -153,6 +153,7 @@ mode-0700 `/tmp/fleet-multiplane.*` state directory (override the parent with
 | `summary.json` | Pass only: allowlisted scenario evidence, operations, digests, receipt hashes, qualification flags |
 | `flux-verify.json`, `flux-initial.json`, `flux-rbac-restore.json`, `flux-drift.json`, `flux-graph-lifecycle.json`, `flux-restart.json`, `flux-fail-closed.json`, `flux-retention.json`, `flux-final.json`, `flux-ownership-final.json`, `flux-reconciles.json`, `flux-partition.json`, `flux-reflection-suspension.json`, `gitops-r<N>.SHA256SUMS` | Flux source revisions and digests, Ready/generation/revision of every Kustomization and HelmRelease, inventories and single-writer ownership, and each GitOps scenario ([details](gitops.md#acceptance-coverage)) |
 | `kro-rbac.json` | kro's allowed and denied verbs and each admission probe's outcome |
+| `custody-crd-rules.json` | Each forbidden custody or operation write and whether the provider project API refused it, and that the CRDs were removed |
 | `kubernetes-execution.json` | kro version, image and RGD/instance state; Flux-owned site Deployments; retained volume identity; every worker Job's UID, conditions, Pods, exit codes and policies; per-operation RBAC |
 | `interrupt.json`, `lifecycle.json`, `delivery-faults.json`, `wrong-location.json` | Scenario-specific observations, no secrets |
 | `source-SHA256SUMS`, `binary-SHA256SUMS`, `image-id`, `sysctl.json`, `teardown.json` | Tested inputs and teardown record |
@@ -201,6 +202,14 @@ The phases are then:
    not the harness, then restores the binding. Finally, as kro's own identity,
    it proves the narrowed grant and the admission policies on kro's writes
    ([trust model](site-execution.md#ownership-and-trust-model)).
+   `custody-crd-rules` then installs only the [Device custody](../development/device-custody.md)
+   CRDs into the provider project. It requires the project API to refuse eight
+   writes their CEL rules forbid: changing an operation's spec or creator,
+   moving a phase backward or out of an ended phase, setting both authorities,
+   lowering a custody fence, leaving `Retired`, and naming custody after
+   another Device. It then removes the objects and the CRDs. Milo ignores
+   admission policies stored in a project, so this proves the rules hold
+   there. It sends nothing to any server.
 2. **Contention.** Two consumers request one provider capacity. One binding
    succeeds; `verify-contention` independently reads Bound for A and
    Pending/InsufficientCapacity for B.

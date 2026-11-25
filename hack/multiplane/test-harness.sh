@@ -183,17 +183,26 @@ with tempfile.TemporaryDirectory() as tmp:
     for name, text in (('steps', steps), ('evidence', evidence), ('harness', harness.read_text())):
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
-    order = ['allocate', 'verify-contention', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
+    order = ['custody-crd-rules', 'allocate', 'verify-contention', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
              'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
              'reflection-faults', 'release', 'release-status-a',
              'reuse', 'reuse-status', 'delivery-faults', 'release-b', 'release-status-b', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
     positions = [sequence.find(' ' + name + ' ') for name in order]
     check('acceptance phase order', all(p >= 0 for p in positions) and positions == sorted(positions), str(list(zip(order, positions))))
     for name in order:
-        if name in ('allocate', 'admit-install', 'install', 'install-repeat', 'release', 'reuse', 'release-b', 'reflection-faults', 'evidence',
+        if name in ('custody-crd-rules', 'allocate', 'admit-install', 'install', 'install-repeat', 'release', 'reuse', 'release-b', 'reflection-faults', 'evidence',
                     'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'):
             continue
         check('step implemented: ' + name, ' %s)' % name in steps or '|%s)' % name in steps or ' %s|' % name in steps)
+
+    # The custody CRD rule phase proves the project API enforces the CEL
+    # rules, then removes everything it installed, in both modes.
+    rules = (root / 'hack/multiplane/custody_crd_rules.py').read_text()
+    redfish_sequence = (root / 'hack/multiplane/acceptance-redfish.sh').read_text()
+    check('custody CRD rules run in both modes', 'ph custody-crd-rules ' in sequence and 'ph custody-crd-rules ' in redfish_sequence)
+    check('custody CRD rules install only the component CRDs and remove them', rules.count('config/components/device-operations/crds/fleet.datumapis.com.yaml') == 1
+          and "'delete', '-f', crds" in rules and "'delete', kind, name" in rules and "'Namespace'" not in rules)
+    check('custody CRD rules evidence is checked', "custody-crd-rules.json" in evidence and 'custody-crd-rules: the provider project API refused' in evidence)
 
     # The kro graph and the worker exit-code contract must agree. kro owns only
     # per-operation workers: the shared services and the durable site volume are

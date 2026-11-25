@@ -11,6 +11,7 @@ step() { ph "$1" "$2" bash hack/multiplane/steps.sh "$1" "$state"; }
 flux() { ph "flux-$1" "$2" python3 hack/multiplane/flux.py "$1" "$state"; }
 
 ph rbac 600 python3 hack/multiplane/verify-rbac.py "$state"
+ph custody-crd-rules 600 python3 hack/multiplane/custody_crd_rules.py "$state"
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"
 step verify-contention 120
 ph admit-install 900 "$host" admit-install --config "$state/acceptance.json"
