@@ -13,12 +13,14 @@
 package machineadmission
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"slices"
 
 	iam "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
+	"gomodules.xyz/jsonpatch/v2"
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -62,10 +64,12 @@ func supported(request admission.Request) bool {
 
 // decode reads the object with exact, case-sensitive keys, as the API
 // server does. encoding/json into a struct would match keys without regard
-// to case.
+// to case. Numbers stay exact, although nothing is re-encoded from them.
 func decode(raw []byte) (map[string]any, map[string]any, error) {
 	var object map[string]any
-	if err := json.Unmarshal(raw, &object); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&object); err != nil {
 		return nil, nil, err
 	}
 	spec, ok := object["spec"].(map[string]any)
@@ -114,20 +118,25 @@ func (Mutator) Handle(_ context.Context, request admission.Request) admission.Re
 	if err != nil {
 		return admission.Denied("the Machine could not be decoded")
 	}
-	spec["creator"] = map[string]any{"username": creator.Username, "uid": creator.UID}
+	metadata, ok := object["metadata"].(map[string]any)
+	if !ok {
+		return admission.Denied("the Machine could not be decoded")
+	}
+	// Patch only the two fields, so nothing else in the request is
+	// re-encoded.
+	value := map[string]any{"username": creator.Username, "uid": creator.UID}
+	patches := []jsonpatch.JsonPatchOperation{jsonpatch.NewOperation("add", "/spec/creator", value)}
+	if _, ok := spec["creator"]; ok {
+		patches[0] = jsonpatch.NewOperation("replace", "/spec/creator", value)
+	}
 	if !slices.Contains(finalizers(object), allocation.MachineFinalizer) {
-		metadata, ok := object["metadata"].(map[string]any)
-		if !ok {
-			return admission.Denied("the Machine could not be decoded")
+		if existing, ok := metadata["finalizers"].([]any); ok && existing != nil {
+			patches = append(patches, jsonpatch.NewOperation("add", "/metadata/finalizers/-", allocation.MachineFinalizer))
+		} else {
+			patches = append(patches, jsonpatch.NewOperation("add", "/metadata/finalizers", []string{allocation.MachineFinalizer}))
 		}
-		existing, _ := metadata["finalizers"].([]any)
-		metadata["finalizers"] = append(existing, allocation.MachineFinalizer)
 	}
-	mutated, err := json.Marshal(object)
-	if err != nil {
-		return admission.Denied("the Machine could not be encoded")
-	}
-	return admission.PatchResponseFromRaw(request.Object.Raw, mutated)
+	return admission.Patched("the creator is the caller", patches...)
 }
 
 func (Validator) Handle(_ context.Context, request admission.Request) admission.Response {

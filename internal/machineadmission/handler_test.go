@@ -1,8 +1,11 @@
 package machineadmission
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
@@ -157,6 +160,85 @@ func TestValidator(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if response := (Validator{}).Handle(context.Background(), test.request); response.Allowed != test.allowed {
 				t.Fatalf("allowed = %v: %s", response.Allowed, response.Result.Message)
+			}
+		})
+	}
+}
+
+// TestMutatorPatchesOnlyTheCreatorAndFinalizer covers request shapes a
+// client could send to keep its own creator or to disturb other fields.
+func TestMutatorPatchesOnlyTheCreatorAndFinalizer(t *testing.T) {
+	user := actor("customer-example", "consumer-example")
+	for name, raw := range map[string]string{
+		"a null creator":        `{"metadata":{"name":"m"},"spec":{"creator":null}}`,
+		"a string creator":      `{"metadata":{"name":"m"},"spec":{"creator":"customer-example"}}`,
+		"a capitalized Creator": `{"metadata":{"name":"m"},"spec":{"Creator":{"username":"other","uid":"other-uid"}}}`,
+		"null finalizers":       `{"metadata":{"name":"m","finalizers":null},"spec":{}}`,
+		"a large integer":       `{"metadata":{"name":"m"},"spec":{"big":9007199254740993}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := Mutator{}.Handle(context.Background(), request(admissionv1.Create, user, runtime.RawExtension{Raw: []byte(raw)}, runtime.RawExtension{}))
+			if !response.Allowed {
+				t.Fatalf("refused: %s", response.Result.Message)
+			}
+			patches, err := json.Marshal(response.Patches)
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch, err := jsonpatch.DecodePatch(patches)
+			if err != nil {
+				t.Fatal(err)
+			}
+			patched, err := patch.Apply([]byte(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stored map[string]any
+			decoder := json.NewDecoder(bytes.NewReader(patched))
+			decoder.UseNumber()
+			if err := decoder.Decode(&stored); err != nil {
+				t.Fatal(err)
+			}
+			spec := stored["spec"].(map[string]any)
+			if creator, _ := spec["creator"].(map[string]any); creator["username"] != "customer-example" || creator["uid"] != "customer-example-uid" {
+				t.Fatalf("creator = %v", spec["creator"])
+			}
+			if finalizers, _ := stored["metadata"].(map[string]any)["finalizers"].([]any); len(finalizers) != 1 || finalizers[0] != allocation.MachineFinalizer {
+				t.Fatalf("finalizers = %v", finalizers)
+			}
+			// Other fields pass through untouched, including a key that only
+			// differs in case and an integer above 2^53.
+			for key, value := range spec {
+				if key != "creator" && !strings.Contains(raw, fmt.Sprintf("%q:", key)) {
+					t.Fatalf("unexpected field %s = %v", key, value)
+				}
+			}
+			if big, ok := spec["big"]; ok && big.(json.Number).String() != "9007199254740993" {
+				t.Fatalf("big = %v", big)
+			}
+			if _, ok := spec["Creator"]; strings.Contains(raw, `"Creator"`) && !ok {
+				t.Fatal("the Creator field was removed")
+			}
+		})
+	}
+	t.Run("a Machine without metadata", func(t *testing.T) {
+		if response := (Mutator{}).Handle(context.Background(), request(admissionv1.Create, user, runtime.RawExtension{Raw: []byte(`{"spec":{}}`)}, runtime.RawExtension{})); response.Allowed {
+			t.Fatal("allowed")
+		}
+	})
+}
+
+func TestValidatorRefusesMalformedCreators(t *testing.T) {
+	user := actor("customer-example", "consumer-example")
+	for name, raw := range map[string]string{
+		"a null creator":   `{"metadata":{"finalizers":["` + allocation.MachineFinalizer + `"]},"spec":{"creator":null}}`,
+		"a string creator": `{"metadata":{"finalizers":["` + allocation.MachineFinalizer + `"]},"spec":{"creator":"customer-example"}}`,
+		"only a Creator":   `{"metadata":{"finalizers":["` + allocation.MachineFinalizer + `"]},"spec":{"Creator":{"username":"customer-example","uid":"customer-example-uid"}}}`,
+		"null finalizers":  `{"metadata":{"finalizers":null},"spec":{"creator":{"username":"customer-example","uid":"customer-example-uid"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if response := (Validator{}).Handle(context.Background(), request(admissionv1.Create, user, runtime.RawExtension{Raw: []byte(raw)}, runtime.RawExtension{})); response.Allowed {
+				t.Fatal("allowed")
 			}
 		})
 	}
