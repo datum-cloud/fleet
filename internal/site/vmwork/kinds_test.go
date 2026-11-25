@@ -3,6 +3,7 @@ package vmwork
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,6 +38,8 @@ type hypervisor struct {
 	noReceipt bool
 	// stuck makes destroy leave the domain running.
 	stuck bool
+	// exited makes destroy fail because the guest exited first.
+	exited bool
 }
 
 var receiptArg = regexp.MustCompile(`fleet.receipt=([0-9a-f]{64})`)
@@ -77,6 +80,10 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 			delete(h.running, name)
 		}
 	case "destroy":
+		if h.exited {
+			delete(h.running, args[1])
+			return "", errors.New("error: domain is not running")
+		}
 		if !h.stuck {
 			delete(h.running, args[1])
 		}
@@ -181,6 +188,18 @@ func TestAWipePowersOffARunningDomain(t *testing.T) {
 	}
 }
 
+// TestAWipeToleratesAGuestThatExitsBeforeItsDestroy treats a guest that
+// stopped between the list and the destroy as powered off.
+func TestAWipeToleratesAGuestThatExitsBeforeItsDestroy(t *testing.T) {
+	r := newRig(t)
+	r.vm.running["fleet-local-0000000000000000"] = "console"
+	r.vm.exited = true
+	result, err := r.runner.Run(context.Background(), r.assignment("DeviceWipe", "00000000-0000-4000-8000-000000000209", 2, wipeSpec()))
+	if err != nil || result.Phase != ops.PhaseSucceeded {
+		t.Fatalf("wipe after the guest exited = %+v, %v", result, err)
+	}
+}
+
 // TestAWipeWithADomainThatKeepsRunningIsNotProven keeps a disk in use from
 // counting as wiped.
 func TestAWipeWithADomainThatKeepsRunningIsNotProven(t *testing.T) {
@@ -277,8 +296,8 @@ func TestTheBootServerServesOnlyAnOpenAdmissionAtTheStoredFence(t *testing.T) {
 	}
 }
 
-// TestAFailedNetworkBootClosesItsAdmission stops serving the installer as
-// soon as a network-boot installation fails.
+// TestAWorkerStoppedAtItsDeadlineClosesItsAdmission stops serving the
+// installer once nothing can resume the installation.
 func TestAWorkerStoppedAtItsDeadlineClosesItsAdmission(t *testing.T) {
 	r := newRig(t)
 	r.config.PXE = true
@@ -298,6 +317,8 @@ func TestAWorkerStoppedAtItsDeadlineClosesItsAdmission(t *testing.T) {
 	}
 }
 
+// TestAFailedNetworkBootClosesItsAdmission stops serving the installer as
+// soon as a network-boot installation fails.
 func TestAFailedNetworkBootClosesItsAdmission(t *testing.T) {
 	r := newRig(t)
 	r.config.PXE = true

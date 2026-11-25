@@ -59,9 +59,11 @@ func TestAnArmedWithholdDeniesEveryBootRequest(t *testing.T) {
 }
 
 // TestOnlyTheLabSiteSourceSetsTheWithholdHook keeps the hook out of
-// production: only the boot service of the local multi-plane site's Flux
-// source sets the variable, no production root references that source, and
-// no other package names the variable.
+// production. The primary control is the binary: only this acceptance
+// binary reads the variable, and no production image runs it. The test adds
+// that only the boot service of the local multi-plane site's Flux source
+// sets the variable, that no other configuration includes or points a Flux
+// path at that source, and that no other package names the variable.
 func TestOnlyTheLabSiteSourceSetsTheWithholdHook(t *testing.T) {
 	root := filepath.Join("..", "..")
 	var setters []string
@@ -79,6 +81,9 @@ func TestOnlyTheLabSiteSourceSetsTheWithholdHook(t *testing.T) {
 			setters = append(setters, rel)
 		}
 		lab := strings.HasPrefix(rel, filepath.Join("config", "site")+string(filepath.Separator)) || strings.HasPrefix(rel, filepath.Join("config", "multiplane")+string(filepath.Separator))
+		if !lab && filepath.Ext(path) != ".md" && strings.Contains(text, "config/site") {
+			t.Errorf("%s points at the lab site source", rel)
+		}
 		if !lab && filepath.Base(path) == "kustomization.yaml" {
 			for _, line := range strings.Split(text, "\n") {
 				entry := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
