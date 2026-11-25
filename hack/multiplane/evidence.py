@@ -89,7 +89,8 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'probe-unallocatable: no eligible capacity while custody is Unverified', 'rebuild-verified: custody Verified',
            'wrong-location: denied before allocation', 'Flux restored the binding', 'flux-verify: 3 clusters Ready', 'cell Flux applied the dispatch revision',
            'Flux restored consumer-a', 'Flux on every cluster Ready at the current revision',
-           'kro RBAC and admission confine it to per-operation objects', 'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
+           'kro RBAC and admission confine it to per-operation objects', 'flux-retention: removing the volume claim',
+           'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
 if REDFISH:
     markers += ('bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified', 'bmc-self-test: upstream emulator and lab adapter self-test passed',
                 'redfish-enroll: synthetic per-Device BMC credentials', 'redfish-baseline: both lab target disks present', 'redfish-discovery-faults: real emulator discovery',
@@ -408,7 +409,8 @@ if pv['spec']['persistentVolumeReclaimPolicy'] != 'Retain' or sorted(deployments
 arch = out('docker', 'info', '--format', '{{.Architecture}}').strip()
 # The GitOps behavior scenarios run in the Flux qualification suite, which
 # verifies its own evidence; these files are the acceptance suite's.
-flux_files = ('flux-verify.json', 'flux-initial.json', 'flux-rbac-restore.json', 'flux-final.json', 'flux-ownership-final.json', 'kro-rbac.json')
+flux_files = ('flux-verify.json', 'flux-initial.json', 'flux-rbac-restore.json', 'flux-retention.json', 'flux-final.json', 'flux-ownership-final.json',
+              'kro-rbac.json')
 for name in flux_files:
     if not (ev / name).exists():
         fail('missing Flux evidence ' + name)

@@ -81,9 +81,10 @@ ServiceAccounts.
 `kustomize.toolkit.fluxcd.io/name` label, appears in exactly that layer's
 inventory, and carries no kro label or owner reference. Every object kro writes
 is a `w-<handoff>` Job, ServiceAccount, Role or RoleBinding, has a kro node
-label, and is in no Flux inventory. `flux-verify` (before dispatch),
-`flux-graph-lifecycle` (with workers present), `flux-drift` and `flux-final`
-each run this audit (`flux.py ownership`). This audit uses labels, owner
+label, and is in no Flux inventory. In the acceptance runs, `flux-verify`
+(before dispatch) and `flux-final` run this audit (`flux.py ownership`); the
+Flux qualification suite also runs it in `flux-graph-lifecycle` (with workers
+present) and `flux-drift`. This audit uses labels, owner
 references, RBAC and inventories, not server-recorded `managedFields`. Shared
 inventory membership is matched by namespace/name prefix rather than kind, so
 same-named resources can satisfy each other; the base inventory is not checked
@@ -106,7 +107,7 @@ observer Deployments and the boot Service through `externalRef` with
 `readyWhen`. kro v0.9.4 treats a missing or unready reference as pending data.
 It then creates no new worker object and **disables pruning** for that
 reconcile, so a shared-service outage never deletes an existing Job. Shared
-infrastructure does not depend on kro: in `flux-fail-closed`, a broken kro
+infrastructure does not depend on kro: in `flux-fail-closed` (Flux qualification suite), a broken kro
 release blocks only the graph and the dispatcher, while the base and services
 layers apply the same revision without restarting any service.
 
@@ -206,7 +207,7 @@ objects. This sequence is proposed only.
   range) and comes from the environment's `FLEET_BOOT_SERVICE_IP`. Flux
   substitutes it into the runtime and boot Deployments, and kro reads it from
   the Service for the workers. A recreated Service therefore keeps the boot
-  origin that running Pods were configured with; `flux-drift` deletes it and
+  origin that running Pods were configured with; `flux-drift` (Flux qualification suite) deletes it and
   proves this. The runtime
   entrypoint adds a `mangle` chain: traffic from the bridge may reach only
   local addresses (DHCP), broadcast, and the boot Service port. Everything
@@ -273,7 +274,7 @@ objects. This sequence is proposed only.
   instance or graph can delete it. kro v0.9.4 skips external references when it
   deletes an instance.
 - **Operation graph lifecycle cannot remove shared infrastructure.**
-  `flux-graph-lifecycle` suspends the dispatcher's Flux layer and deletes the
+  `flux-graph-lifecycle` (Flux qualification suite) suspends the dispatcher's Flux layer and deletes the
   `HandoffDispatcher` instance. kro removes only that handoff's Job,
   ServiceAccount, Role and RoleBinding. Every shared object keeps its UID,
   including the Deployments, Service, ServiceAccounts, RBAC, admission policies,
@@ -363,7 +364,8 @@ pending.
 | Behavior | Status |
 | --- | --- |
 | Flux-owned shared site services and storage; kro-created per-operation RBAC and bounded worker Jobs on a real cell API | Implemented and exercised by `task multiplane:acceptance` |
-| Single-writer ownership audit, shared Service drift repair by Flux, graph lifecycle leaving shared services and storage untouched | Implemented and exercised (`flux-verify`, `flux-drift`, `flux-graph-lifecycle`, `flux-final`) |
+| Single-writer ownership audit | Implemented and exercised by the acceptance runs (`flux-verify`, `flux-final`) |
+| Shared Service drift repair by Flux, graph lifecycle leaving shared services and storage untouched | Implemented and exercised by the Flux qualification suite (`flux-drift`, `flux-graph-lifecycle`) |
 | Narrowed kro RBAC and admission policies on kro's writes | Implemented and exercised (`rbac`, `kro-rbac.json`); every dispatched Job and its RBAC passed them |
 | In-place migration of an existing site from kro-owned shared services | Proposed only ([trust model](#ownership-and-trust-model)) |
 | Pod loss and Job deletion mid-install resuming the same operation with one installer start | Implemented and exercised |

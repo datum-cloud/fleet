@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The Flux qualification suite (run.sh --suite flux-qualification): the GitOps
-# behavior scenarios over an already bootstrapped topology. One installation
+# behavior scenarios that test Fleet's packaging, over an already bootstrapped topology. One installation
 # runs to completion first, so each scenario proves Flux leaves a delivered
 # handoff, its Job, the journal, the volume and custody untouched. The Device
 # is then released, so the run ends with custody released and verified. Each
@@ -24,7 +24,6 @@ flux graph-lifecycle 1200
 flux drift 900
 flux restart 1200
 flux fail-closed 1500
-flux retention 1500
 ph release 2400 "$host" release --config "$state/acceptance.json"
 step release-status-a 120
 step flux-final 900

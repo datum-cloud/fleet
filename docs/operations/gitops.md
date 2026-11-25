@@ -109,10 +109,8 @@ hash.
 | r1 | Platform services: Milo, Karmada, host RBAC, Karmada API configuration, kro, site base and graph |
 | r2 | Adds the shared site services and the `HandoffDispatcher` instance with `dispatch: false` once the scoped asset is known |
 | r3 | `dispatch: true`, pushed while the hub is paused; the cell's Flux applies it from the registry |
-| r4 | Fail-closed: kro chart pinned to a digest no registry serves |
-| r5 | Recovery: pinned kro chart restored |
-| r6 | Retention: the site store PVC removed from the source |
-| r7 | Retention: the PVC restored to the source |
+| r4 | Acceptance: retention, the site store PVC removed from the source. Flux qualification: fail-closed, kro chart pinned to a digest no registry serves |
+| r5 | Acceptance: retention, the PVC restored to the source. Flux qualification: recovery, pinned kro chart restored |
 
 ## Versions and pins
 
@@ -208,8 +206,8 @@ has the same effect as the
 
 These phases run in addition to the existing scenarios; see
 [acceptance phases](multiplane.md#acceptance-phases). `flux-graph-lifecycle`,
-`flux-drift`, `flux-restart`, `flux-fail-closed` and `flux-retention` run only
-in the [Flux qualification suite](multiplane.md#flux-qualification-suite); the
+`flux-drift`, `flux-restart` and `flux-fail-closed` run only in the
+[Flux qualification suite](multiplane.md#flux-qualification-suite); the
 others run in both acceptance modes.
 
 | Phase | Asserts | Evidence |
@@ -223,7 +221,7 @@ others run in both acceptance modes.
 | `flux-drift` | Five out-of-band changes are each corrected by Flux, with the site store, Jobs, PVC/PV and custody unchanged. helm-controller restores the kro Deployment scaled to 0 (same UID). kustomize-controller recreates the Karmada interpreter deleted on the Karmada API, and reverts a widened `fleet-site-kro` grant. As `fleet-site-services-reconciler`, it recreates the deleted shared boot Service under a new UID with the same fixed ClusterIP, ports and selector, and no kro label. It also restores the shared observer Deployment scaled to 0 (same UID). The dispatcher returns to `ACTIVE` and the ownership audit passes. | `flux-drift.json` |
 | `flux-restart` | Every Flux controller Pod on the three clusters is deleted. Each source, Kustomization and HelmRelease then acknowledges a request token issued after the restart. No Helm release revision, inventory, Job, site store or custody changes. | `flux-restart.json`, `flux-reconciles.json` |
 | `flux-fail-closed` | r4 leaves the kro chart source and Kustomization not Ready. The graph and dispatcher report `DependencyNotReady` and their new revision is not applied (marker unchanged). The site base and shared services layers are Ready at r4, with every shared object UID and Deployment generation unchanged. The running kro Deployment and site are untouched. r5 converges. | `flux-fail-closed.json` |
-| `flux-retention` | r6 drops the PVC from the inventory without deleting it (same PVC/PV UID, site store and custody). r7 re-adopts the same claim. | `flux-retention.json` |
+| `flux-retention` | r4 drops the PVC from the inventory without deleting it (same PVC/PV UID, site store and custody). r5 re-adopts the same claim. | `flux-retention.json` |
 | `flux-final` | All three clusters are at the final revision with nothing suspended, and the ownership audit passes with the cleanup workers present | `flux-final.json`, `flux-ownership-final.json` |
 
 ## What is not production

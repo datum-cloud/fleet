@@ -207,7 +207,7 @@ mode-0700 `/tmp/fleet-multiplane.*` state directory (override the parent with
 | `phases.jsonl` | One record per bounded phase: name, status, exit code, bound, duration |
 | `preflight.json` | Each prerequisite and readiness check |
 | `summary.json` | Written when the evidence checks pass, with `acceptance: evidence-verified` and the `suite` that ran: allowlisted scenario evidence, operations, digests, receipt hashes, qualification flags. It does not say the run passed; `result.json` does, and names the suite |
-| `flux-verify.json`, `flux-initial.json`, `flux-rbac-restore.json`, `flux-final.json`, `flux-ownership-final.json`, `flux-reconciles.json`, `flux-partition.json`, `flux-reflection-suspension.json`, `gitops-r<N>.SHA256SUMS` | Flux source revisions and digests, Ready/generation/revision of every Kustomization and HelmRelease, inventories and single-writer ownership, and each GitOps scenario ([details](gitops.md#acceptance-coverage)). The Flux qualification suite adds `flux-graph-lifecycle.json`, `flux-drift.json`, `flux-restart.json`, `flux-fail-closed.json` and `flux-retention.json` |
+| `flux-verify.json`, `flux-initial.json`, `flux-rbac-restore.json`, `flux-retention.json`, `flux-final.json`, `flux-ownership-final.json`, `flux-reconciles.json`, `flux-partition.json`, `flux-reflection-suspension.json`, `gitops-r<N>.SHA256SUMS` | Flux source revisions and digests, Ready/generation/revision of every Kustomization and HelmRelease, inventories and single-writer ownership, and each GitOps scenario ([details](gitops.md#acceptance-coverage)). The Flux qualification suite adds `flux-graph-lifecycle.json`, `flux-drift.json`, `flux-restart.json` and `flux-fail-closed.json` |
 | `kro-rbac.json` | kro's allowed and denied verbs and each admission probe's outcome |
 | `custody-crd-rules.json` | Each forbidden custody or operation write and whether the provider project API refused it, and that the CRDs were removed |
 | `kubernetes-execution.json` | kro version, image and RGD/instance state; Flux-owned site Deployments; retained volume identity; every worker Job's UID, conditions, Pods, exit codes and policies; per-operation RBAC |
@@ -344,8 +344,10 @@ The phases are then:
     - domains;
     - consumer A's Ready/Bound allocation.
 
-    The restarted observer must republish. The GitOps behavior scenarios that
-    once followed run in the [Flux qualification suite](#flux-qualification-suite).
+    The restarted observer must republish. Then `flux-retention` checks that
+    the site volume, with the journal, is retained when its claim is removed
+    from the source. The other GitOps behavior scenarios that once followed run
+    in the [Flux qualification suite](#flux-qualification-suite).
 11. **Invalid and stale results.** With the Karmada `HelmRelease` suspended and its
     controller stopped, the harness reopens the answered install handoff and
     substitutes one attribute of the real reflected result at a time: wrong
@@ -428,15 +430,15 @@ releases the Device and verifies the release:
 - `flux-drift`: Flux corrects drift, including the shared boot Service and
   observer;
 - `flux-restart`: controllers restart without duplicate effects;
-- `flux-fail-closed`: a broken kro release blocks only the dispatcher layers;
-- `flux-retention`: the site volume is retained when its claim is removed from
-  the source.
+- `flux-fail-closed`: a broken kro release blocks only the dispatcher layers.
 
 Each scenario checks that the delivered handoff's Job, the journal, the volume
 and custody are unchanged ([coverage](gitops.md#acceptance-coverage)). The
 acceptance runs keep Flux bootstrap, site install, `flux-verify`, every Flux
-fault guard and `flux-final`, so they still prove the services Fleet runs on
-are Flux-installed, single-writer and converged.
+fault guard, `flux-retention` and `flux-final`, so they still prove the
+services Fleet runs on are Flux-installed, single-writer and converged, and
+that the journal volume survives its source. The suite does not repeat
+`flux-retention`.
 
 Run the suite, and require it to pass, when a change touches any of the
 following:
@@ -445,7 +447,7 @@ following:
 - the Flux harness, `flux.py`, or the suite's own phases;
 - the pinned Flux, kro or Karmada versions.
 
-Also run it once on the exact head before a merge to the staging branch. Add
+Also run it once on the exact head before merging the change. Add
 `--redfish` when the change touches the Redfish site packaging. A pass of the
 suite never stands in for an acceptance pass, and an acceptance pass is not a
 Flux qualification: `result.json` and `summary.json` name the suite that ran.

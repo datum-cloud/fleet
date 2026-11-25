@@ -1113,7 +1113,7 @@ def retention(args):
 # its evidence file and the line its phase prints on success.
 SCENARIOS = {'graph-lifecycle': 'flux-graph-lifecycle: deleting the dispatcher removed only kro per-operation objects',
              'drift': 'flux-drift: helm-controller restored kro', 'restart': 'flux-restart: every Flux controller',
-             'fail-closed': 'flux-fail-closed: absent kro chart digest', 'retention': 'flux-retention: removing the volume claim'}
+             'fail-closed': 'flux-fail-closed: absent kro chart digest'}
 
 
 def qualification_evidence(args):
