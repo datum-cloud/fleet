@@ -3,12 +3,14 @@ package cleaning
 import (
 	"context"
 	"encoding/pem"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
@@ -81,12 +83,24 @@ func TestPolicyAgainstAPIServer(t *testing.T) {
 	}
 	// The schema refuses a time bound that is not a duration, so no stored
 	// policy fails to decode.
-	malformed := &unstructured.Unstructured{Object: map[string]any{"apiVersion": ops.GroupVersion.String(), "kind": "CleaningPolicy",
-		"metadata": map[string]any{"name": "malformed", "namespace": "default"},
-		"spec": map[string]any{"assurance": "Clear", "rules": []any{map[string]any{"name": "r", "match": map[string]any{"protocol": "NVMe", "mediaType": "SSD"},
-			"methods": []any{"Overwrite"}, "verify": map[string]any{"mode": "Full"}, "timePerTiB": "abc"}}}}}
-	if err := admin.Create(ctx, malformed); !apierrors.IsInvalid(err) {
-		t.Fatalf("a time bound that is not a duration = %v, want Invalid", err)
+	raw := func(name, bound string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": ops.GroupVersion.String(), "kind": "CleaningPolicy",
+			"metadata": map[string]any{"name": name, "namespace": "default"},
+			"spec": map[string]any{"assurance": "Clear", "rules": []any{map[string]any{"name": "r", "match": map[string]any{"protocol": "NVMe", "mediaType": "SSD"},
+				"methods": []any{"Overwrite"}, "verify": map[string]any{"mode": "Full"}, "timePerTiB": bound}}}}}
+	}
+	for i, bound := range []string{"1h", "1.5h", "1h30m", "0.5µs", "90s"} {
+		if _, err := time.ParseDuration(bound); err != nil {
+			t.Fatal(err)
+		}
+		if err := admin.Create(ctx, raw(fmt.Sprintf("bound-%d", i), bound)); err != nil {
+			t.Fatalf("time bound %q = %v, want accepted", bound, err)
+		}
+	}
+	for i, bound := range []string{"abc", `1\x5h`, "1", "-1h", "1h "} {
+		if err := admin.Create(ctx, raw(fmt.Sprintf("malformed-%d", i), bound)); !apierrors.IsInvalid(err) {
+			t.Fatalf("time bound %q = %v, want Invalid", bound, err)
+		}
 	}
 	valid := policy("valid", purgePolicy())
 	if err := admin.Create(ctx, valid); err != nil {

@@ -701,13 +701,14 @@ real API server. The rest of #183 is **proposed**.
   check a method does not allow, or that qualifies `CryptographicErase` for a
   model that does not always encrypt. The `fleet-registration` server serves it
   as a webhook at `/validate-cleaning-policy` in `config/milo`, for creates
-  only, because the spec cannot change. The synthetic
-  Milo root and the standalone cluster have no such webhook.
+  only, because the spec cannot change. The synthetic Milo root and the
+  standalone cluster have no such webhook.
 - **Pinning.** The allocator reads the capacity's policy, validates it again,
   and copies its name, UID, SHA-256 digest and spec into the MachineAllocation.
   Capacity whose policy is missing or invalid is skipped, and nothing is
-  claimed. If no capacity is left, the error names the skipped policy. Each release `DeviceWipe` names the pinned policy, so release does
-  not need the policy to exist.
+  claimed. If no capacity is left, the error names the skipped policy. Each
+  release `DeviceWipe` names the pinned policy, so release does not need the
+  policy to exist.
 - **Fixtures.** The standalone fixtures and the multi-plane seed create a
   `Clear` policy that overwrites and reads back, the only method the sites run.
   Synthetic staging has no fixture: an operator must create the policy that its

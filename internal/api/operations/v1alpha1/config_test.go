@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -316,5 +317,26 @@ func TestPhases(t *testing.T) {
 		if _, ok := loadCRDs(t)[kind]; !ok {
 			t.Fatalf("missing %s", kind)
 		}
+	}
+}
+
+// TestPinnedPolicySchemaMatchesThePolicy keeps the MachineAllocation's copy of
+// a CleaningPolicy spec as strict as the policy itself, so every policy the
+// allocator pins can be stored.
+func TestPinnedPolicySchemaMatchesThePolicy(t *testing.T) {
+	policy := loadCRDs(t)["CleaningPolicy"].Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+	var pinned *extensionsv1.JSONSchemaProps
+	for _, crd := range decodeAll[extensionsv1.CustomResourceDefinition](t, filepath.Join(configRoot, "base", "crd", "metal.datumapis.com.yaml")) {
+		if crd.Spec.Names.Kind == "MachineAllocation" {
+			copied := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["cleaningPolicy"].Properties["spec"]
+			pinned = &copied
+		}
+	}
+	if pinned == nil {
+		t.Fatal("MachineAllocation has no cleaningPolicy.spec")
+	}
+	policy.XValidations = nil
+	if !reflect.DeepEqual(policy, *pinned) {
+		t.Fatal("MachineAllocation.spec.cleaningPolicy.spec differs from the CleaningPolicy spec schema")
 	}
 }
