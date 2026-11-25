@@ -333,7 +333,7 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 		record(stage)
 	}
 	if payload := work.Bootstrap(); payload != nil {
-		evidence.Bootstrap = payload.Digest
+		evidence.InstallerVerifiedBootstrap = payload.Digest
 	}
 	return evidence, nil
 }
@@ -401,8 +401,9 @@ func (k Installation) domainXML(work *site.Work, boot Boot, stage string) string
 	return fmt.Sprintf(`<domain type='%s'><name>%s</name><memory unit='MiB'>2048</memory><vcpu>2</vcpu><cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features><os><type arch='x86_64' machine='pc'>hvm</type>%s</os><on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash><devices>%s<emulator>/usr/bin/qemu-system-x86_64</emulator><disk type='file' device='disk'><driver name='qemu' type='raw'/><source file='%s/disk.raw'/><target dev='vda' bus='virtio'/></disk><serial type='file'><source path='%s/%s.log'/><target port='0'/></serial></devices></domain>`, domainType, domain(work.Key()), bootXML, nic, dir, dir, stage)
 }
 
-// bootstrapLine is the console line the installed system prints for the
-// admitted bootstrap data, or a line no guest prints when there is none.
+// bootstrapLine is the console line the installer prints after it reads the
+// admitted bootstrap data back from the target disk, or a line no guest
+// prints when there is none.
 func bootstrapLine(work *site.Work, boot Boot) string {
 	if payload := work.Bootstrap(); payload != nil {
 		return site.BootstrapLine(boot.Receipt, payload.Digest)
@@ -439,10 +440,10 @@ func (k Installation) waitReceipt(ctx context.Context, work *site.Work, boot Boo
 			if count != 1 {
 				return errors.New("the guest stopped without exactly one boot receipt")
 			}
-			// The installed system proves it found exactly the admitted
-			// bootstrap data on its own disk, by its salted digest.
-			if stage == "disk" && work.Bootstrap() != nil && bootstrapped != 1 {
-				return errors.New("the installed system did not report the admitted bootstrap data")
+			// The installer read the seed back from the target disk and
+			// reported its salted digest; the installed OS is not asked.
+			if stage == "installer" && work.Bootstrap() != nil && bootstrapped != 1 {
+				return errors.New("the installer did not verify the admitted bootstrap data on disk")
 			}
 			file, err := os.OpenFile(log, os.O_RDWR, 0)
 			if err != nil {

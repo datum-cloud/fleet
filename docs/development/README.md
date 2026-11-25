@@ -43,8 +43,9 @@ smoke verifies it. The end-to-end failure scenarios (Increment D) are proposed.
 admission resolves through a publication record and checks against the
 server's architecture and firmware mode. The sealed bootstrap store and its
 delivery through federation to the local VM and Redfish guests are
-**implemented**; the multi-plane runs that prove the guest receives the data
-are pending.
+**implemented**: the installer verifies the data on the target disk before
+the install succeeds. The multi-plane runs that prove it in the lab are
+pending.
 
 The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
 the [local VM site](../operations/local-vm.md) with native Milo project APIs, the

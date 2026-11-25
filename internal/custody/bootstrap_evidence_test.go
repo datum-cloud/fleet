@@ -21,11 +21,11 @@ func TestInstallEvidenceMustProveTheAdmittedBootstrap(t *testing.T) {
 		evidence  string
 		ok        bool
 	}{
-		{"the admitted digest", with, `{"steps":[{"name":"disk","completedAt":"2026-11-25T00:00:00Z"}],"bootstrap":"` + digest + `"}`, true},
+		{"the admitted digest", with, `{"steps":[{"name":"disk","completedAt":"2026-11-25T00:00:00Z"}],"installerVerifiedBootstrap":"` + digest + `"}`, true},
 		{"no bootstrap proof", with, `{"steps":[{"name":"disk","completedAt":"2026-11-25T00:00:00Z"}]}`, false},
-		{"another digest", with, `{"bootstrap":"sha256:` + strings.Repeat("cd", 32) + `"}`, false},
+		{"another digest", with, `{"installerVerifiedBootstrap":"sha256:` + strings.Repeat("cd", 32) + `"}`, false},
 		{"none admitted, none handed", without, `{"steps":[{"name":"disk","completedAt":"2026-11-25T00:00:00Z"}]}`, true},
-		{"none admitted, some handed", without, `{"bootstrap":"` + digest + `"}`, false},
+		{"none admitted, some handed", without, `{"installerVerifiedBootstrap":"` + digest + `"}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := evidence(test.operation, []byte(test.evidence))

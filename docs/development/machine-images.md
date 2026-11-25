@@ -14,7 +14,7 @@ proposal's API names are provisional. Each piece below is marked
 | --- | --- | --- |
 | 1: image catalog | `MachineImage` and `MachineImagePublication` kinds, publication, admission-time resolution to a pinned digest, architecture and firmware mode checks, the worker's firmware mode check, and IAM | **Implemented and verified.** The CRD rules are checked with the API server's own schema validator, resolution and publication with a fake API server, and installs of a resolved image against a real API server and in the standalone smoke. The multi-plane runs are not yet verified. |
 | 2: sealed bootstrap store | `SealedPayload`, the coordinator's check and sweep, delivery to the operation's worker, deletion at the site, IAM | **Implemented and verified** through the simulator site, by unit tests, tests against a real API server, and the standalone smoke. Admission refuses bootstrap data for a Device served through federation, which the local VM and Redfish labs use. |
-| 3: lab delivery | Federation carries a payload to the cell, the local VM and Redfish boot services hand it to the installer, and the installed system reports it | **Implemented**, verified by unit tests and tests against a real API server. The local VM and Redfish multi-plane runs are pending. |
+| 3: lab delivery | Federation carries a payload to the cell, the local VM and Redfish boot services hand it to the installer, and the installer verifies it on the target disk | **Implemented**, verified by unit tests and tests against a real API server. The local VM and Redfish multi-plane runs are pending. |
 
 ## What increment 1 adds
 
@@ -103,10 +103,11 @@ proposal's API names are provisional. Each piece below is marked
   fence, for a newer operation or a recovery, which removes every payload
   below it, including one whose worker never ran. A worker stopped from
   outside keeps it for its replacement.
-- **Evidence.** A successful install's evidence names the digest of the data
-  the worker handed to the server, recomputed from what it handed. Custody
-  accepts a success only if that equals the admitted digest, and only if it is
-  empty when there was no bootstrap data.
+- **Evidence.** A successful install's evidence records, as installer-verified,
+  the salted digest of the bootstrap data on the target disk: the simulator
+  recomputes it from what it wrote, and a lab installer from what it read
+  back. Custody accepts a success only if it equals the admitted digest, and
+  only if it is empty when there was no bootstrap data.
 - **IAM.** Only the coordinator role reads `SealedPayload`; the installation
   requester may only create it. A test walks every Milo role the repository
   ships, resolves inheritance, and fails if any other role can read it or holds
@@ -141,11 +142,13 @@ proposal's API names are provisional. Each piece below is marked
   seed when the admission closes, when the operation's result is stored
   however it ended, and when a newer fence for the Device is raised, so no
   failed, expired or superseded install leaves it behind. The installer copies
-  it to the disk, puts the user data where NoCloud reads it and the keys in
-  the default user's `authorized_keys`. On its first disk boot the installed
-  system prints the salted digest of what it found, and the worker requires
-  exactly that line before it reports success. A direct kernel boot, which has
-  one initrd, refuses bootstrap data.
+  the seed to the target disk, puts the user data where NoCloud reads it and
+  the keys in the default user's `authorized_keys`, reads it all back from the
+  disk past the page cache, and reports the salted digest. The worker requires
+  exactly that digest before it lets the disk boot run; a wrong, truncated or
+  missing report fails the install. Fleet does not own the installed OS, so
+  success never depends on what the installed OS prints. A direct kernel boot,
+  which has one initrd, refuses bootstrap data.
 
 ## Not implemented yet
 

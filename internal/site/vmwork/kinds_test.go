@@ -40,8 +40,8 @@ type hypervisor struct {
 	hold bool
 	// noReceipt makes the guest print no receipt.
 	noReceipt bool
-	// bootstrap, given the receipt, is the extra line the installed
-	// system prints on its disk boot.
+	// bootstrap, given the receipt, is the extra line the installer prints
+	// after it reads the seed back from the target disk.
 	bootstrap func(receipt string) string
 	// networkReceipt is the receipt a network boot's script carries, as the
 	// boot server reads it from the open admission.
@@ -79,7 +79,7 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 			}
 		}
 		console := "booting\n" + marker + receipt + "\n"
-		if marker == "FLEET-DISK-BOOT:" && h.bootstrap != nil {
+		if marker == "FLEET-INSTALLED:" && h.bootstrap != nil {
 			console = "booting\n" + h.bootstrap(receipt) + "\n" + marker + receipt + "\n"
 		}
 		if h.noReceipt {
@@ -348,19 +348,29 @@ func (r *rig) sealedInstall(uid string, fence int64) (site.Assignment, site.Payl
 	return assignment, payload
 }
 
-// TestBootstrapDataReachesTheInstalledSystem: a network install loads the
-// seed as a second initrd, the installed system reports the salted digest
-// of the data it found, and the evidence names it. A guest that reports
-// other data, or none, does not succeed, and the seed is dropped either way.
-func TestBootstrapDataReachesTheInstalledSystem(t *testing.T) {
+// TestTheInstallerVerifiesBootstrapDataOnDisk: a network install loads the
+// seed as a second initrd, the installer reads it back from the target disk
+// and reports its salted digest, and the evidence records it as
+// installer-verified. An installer that reads back a wrong or truncated
+// seed, or reports nothing, fails the install before the disk boot, and the
+// seed is dropped either way. The installed OS is not asked to prove
+// anything.
+func TestTheInstallerVerifiesBootstrapDataOnDisk(t *testing.T) {
+	truncated := func(receipt, _ string) string {
+		hash := sha256.New()
+		hash.Write(bytes.Repeat([]byte{9}, 32))
+		hash.Write([]byte(`{"userData":"#cloud-config\n"`))
+		return site.BootstrapLine(receipt, "sha256:"+hex.EncodeToString(hash.Sum(nil)))
+	}
 	for name, test := range map[string]struct {
 		line func(receipt, digest string) string
 		ok   bool
 	}{
-		"the admitted data": {func(receipt, digest string) string { return site.BootstrapLine(receipt, digest) }, true},
-		"other data":        {func(receipt, _ string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }, false},
-		"no bootstrap line": {func(string, string) string { return "" }, false},
-		"another receipt":   {func(_, digest string) string { return site.BootstrapLine(strings.Repeat("e", 64), digest) }, false},
+		"the admitted seed":      {func(receipt, digest string) string { return site.BootstrapLine(receipt, digest) }, true},
+		"a wrong seed read back": {func(receipt, _ string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }, false},
+		"a truncated seed":       {truncated, false},
+		"no verification line":   {func(string, string) string { return "" }, false},
+		"another receipt":        {func(_, digest string) string { return site.BootstrapLine(strings.Repeat("e", 64), digest) }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t)
@@ -383,13 +393,13 @@ func TestBootstrapDataReachesTheInstalledSystem(t *testing.T) {
 				t.Fatalf("admission after the install = open %v, seed %d bytes, %v, %v", boot.Open, len(boot.Seed), found, err)
 			}
 			if !test.ok {
-				if result.Phase == ops.PhaseSucceeded {
-					t.Fatalf("result = %+v", result)
+				if result.Phase == ops.PhaseSucceeded || r.vm.creates != 1 {
+					t.Fatalf("result = %+v after %d boots; a failed check must stop before the disk boot", result, r.vm.creates)
 				}
 				return
 			}
 			var evidence ops.InstallationEvidence
-			if result.Phase != ops.PhaseSucceeded || json.Unmarshal(result.Evidence, &evidence) != nil || evidence.Bootstrap != payload.Digest {
+			if result.Phase != ops.PhaseSucceeded || json.Unmarshal(result.Evidence, &evidence) != nil || evidence.InstallerVerifiedBootstrap != payload.Digest {
 				t.Fatalf("result = %+v, evidence %+v", result, evidence)
 			}
 		})

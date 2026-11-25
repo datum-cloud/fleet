@@ -185,7 +185,7 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 	}
 	evidence := ops.InstallationEvidence{Steps: steps}
 	if payload := work.Bootstrap(); payload != nil {
-		evidence.Bootstrap = payload.Digest
+		evidence.InstallerVerifiedBootstrap = payload.Digest
 	}
 	return evidence, nil
 }
@@ -430,11 +430,13 @@ func (c Config) complete(ctx context.Context, work *site.Work, boot Boot, ph pha
 			if power.State == "Off" {
 				if seen == 1 {
 					if ph.mode != "" {
-						return c.verifyDelivery(work, len(boot.Seed) > 0)
+						if err := c.verifyDelivery(work, len(boot.Seed) > 0); err != nil {
+							return err
+						}
 					}
-					// The installed system proves it found exactly the
-					// admitted bootstrap data on its own disk.
-					if ph.name == "disk" && work.Bootstrap() != nil {
+					// The installer read the seed back from the target disk
+					// and reported its salted digest.
+					if ph.name == "installer" && work.Bootstrap() != nil {
 						return c.verifyBootstrap(work, boot)
 					}
 					return nil
@@ -509,8 +511,9 @@ func (c Config) deliveries(work *site.Work) map[string]bool {
 	return done
 }
 
-// verifyBootstrap requires exactly one console line in which the installed
-// system reports the admitted bootstrap data's salted digest.
+// verifyBootstrap requires exactly one console line in which the installer
+// reports the salted digest of the bootstrap data it read back from the
+// target disk.
 func (c Config) verifyBootstrap(work *site.Work, boot Boot) error {
 	data, err := os.ReadFile(filepath.Join(c.ConsoleRoot, filepath.Base(conn(work).Target.Console)))
 	if err != nil {
@@ -523,7 +526,7 @@ func (c Config) verifyBootstrap(work *site.Work, boot Boot) error {
 		}
 	}
 	if n != 1 {
-		return errors.New("the installed system did not report the admitted bootstrap data")
+		return errors.New("the installer did not verify the admitted bootstrap data on disk")
 	}
 	return nil
 }

@@ -353,10 +353,10 @@ type SealedPayloadSpec struct {
 // InstallationEvidence is the result evidence of a DeviceInstallation.
 type InstallationEvidence struct {
 	Steps []StepEvidence `json:"steps,omitempty"`
-	// Bootstrap is the digest of the bootstrap data the worker handed to
-	// the server, recomputed from what it handed. It is the operation's
-	// salted digest, never a hash of the data alone.
-	Bootstrap string `json:"bootstrap,omitempty"`
+	// InstallerVerifiedBootstrap is the salted digest of the bootstrap data
+	// the installer read back from the target disk, never a hash of the data
+	// alone. Success rests on the installer's check, not on the installed OS.
+	InstallerVerifiedBootstrap string `json:"installerVerifiedBootstrap,omitempty"`
 }
 
 // StepEvidence records one journaled step. It never carries a BMC response.

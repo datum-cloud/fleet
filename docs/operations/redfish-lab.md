@@ -393,10 +393,11 @@ receipts. The site framework's tests in `internal/site` run against TLS stubs.
 Together they cover:
 
 - an install with both phases and one power-on each, a wipe that checks the
-  enrolled disk, bootstrap data the installed system must report by its
-  salted digest, and bootstrap data refused when the site holds no payload
+  enrolled disk, bootstrap data the installer must verify on the target disk
+  by its salted digest before the disk boot, and bootstrap data refused when
+  the site holds no payload
   (`TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`,
-  `TestBootstrapDataReachesTheInstalledSystemOverRedfish`,
+  `TestTheInstallerVerifiesBootstrapDataOverRedfish`,
   `TestBootstrapWithoutAPayloadSendsNothing`);
 - a worker interrupted in either phase that resumes without a second power-on
   (`TestAnInterruptedWorkerResumesWithoutASecondOn`,

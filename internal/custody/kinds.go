@@ -138,14 +138,14 @@ func DeviceInstallationKind() Kind {
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
 		Reasons: append([]Reason{{Name: ReasonBootstrapUnavailable, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonImageIncompatible, RaisedBy: RaisedByWorker}}, workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(operation ops.Operation, evidence *ops.InstallationEvidence) error {
-			// A success must prove the server was handed exactly the admitted
-			// bootstrap data, and nothing when there was none.
+			// A success must prove the installer verified exactly the admitted
+			// bootstrap data on the target disk, and nothing when there was none.
 			want := ""
 			if reference := operation.(*ops.DeviceInstallation).Spec.Bootstrap; reference != nil {
 				want = reference.Digest
 			}
-			if evidence.Bootstrap != want {
-				return errors.New("the evidence does not prove the admitted bootstrap data was handed to the server")
+			if evidence.InstallerVerifiedBootstrap != want {
+				return errors.New("the evidence does not prove the installer verified the admitted bootstrap data on disk")
 			}
 			return validateSteps(evidence.Steps)
 		}),

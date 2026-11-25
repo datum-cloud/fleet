@@ -157,7 +157,7 @@ func (Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 	if server.Booted != spec.Image.Digest {
 		return nil, &custody.Refusal{Reason: site.ReasonStep, Message: "the simulated server did not boot the installed image"}
 	}
-	evidence.Bootstrap = server.Bootstrap
+	evidence.InstallerVerifiedBootstrap = server.Bootstrap
 	return evidence, nil
 }
 

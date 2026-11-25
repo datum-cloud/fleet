@@ -54,8 +54,8 @@ type lab struct {
 	bootRoot  string
 	store     *site.Store
 	operation string
-	// bootstrap, given the receipt, is the extra line the installed
-	// system prints on its disk boot.
+	// bootstrap, given the receipt, is the extra line the installer prints
+	// after it reads the seed back from the target disk.
 	bootstrap func(receipt string) string
 	// seeded records whether the network boot's script loaded the seed.
 	seeded bool
@@ -152,11 +152,11 @@ func (l *lab) boot(target string) {
 		l.mu.Unlock()
 		l.deliver()
 		line = "FLEET-INSTALLED:" + boot.Receipt
-	case target == "Hdd":
-		line = "FLEET-DISK-BOOT:" + boot.Receipt
 		if l.bootstrap != nil {
 			line = l.bootstrap(boot.Receipt) + "\n" + line
 		}
+	case target == "Hdd":
+		line = "FLEET-DISK-BOOT:" + boot.Receipt
 	}
 	file, err := os.OpenFile(l.console, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err == nil {
@@ -399,10 +399,11 @@ func TestAServerThatNeverPowersOffEndsTheStep(t *testing.T) {
 	}
 }
 
-// TestBootstrapDataReachesTheInstalledSystemOverRedfish: the network boot
-// loads the seed, and the install succeeds only if the installed system
-// reports the admitted data's salted digest.
-func TestBootstrapDataReachesTheInstalledSystemOverRedfish(t *testing.T) {
+// TestTheInstallerVerifiesBootstrapDataOverRedfish: the network boot loads
+// the seed, and the install succeeds only if the installer reports the
+// admitted data's salted digest after reading it back from the disk. A
+// failed check stops before the disk boot.
+func TestTheInstallerVerifiesBootstrapDataOverRedfish(t *testing.T) {
 	salt := make([]byte, 32)
 	data := []byte(`{"sshAuthorizedKeys":"ssh-ed25519 AAAAExampleOnly\n"}`)
 	hash := sha256.New()
@@ -413,9 +414,9 @@ func TestBootstrapDataReachesTheInstalledSystemOverRedfish(t *testing.T) {
 		line func(receipt string) string
 		ok   bool
 	}{
-		"the admitted data": {func(receipt string) string { return site.BootstrapLine(receipt, payload.Digest) }, true},
-		"other data":        {func(receipt string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }, false},
-		"no bootstrap line": {func(string) string { return "booted" }, false},
+		"the admitted seed":      {func(receipt string) string { return site.BootstrapLine(receipt, payload.Digest) }, true},
+		"a wrong seed read back": {func(receipt string) string { return site.BootstrapLine(receipt, "sha256:"+strings.Repeat("0", 64)) }, false},
+		"no verification line":   {func(string) string { return "booted" }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			l := newLab(t)
@@ -444,8 +445,11 @@ func TestBootstrapDataReachesTheInstalledSystemOverRedfish(t *testing.T) {
 			}
 			var evidence ops.InstallationEvidence
 			_ = json.Unmarshal(result.Evidence, &evidence)
-			if succeeded := result.Phase == ops.PhaseSucceeded; succeeded != test.ok || (test.ok && evidence.Bootstrap != payload.Digest) {
+			if succeeded := result.Phase == ops.PhaseSucceeded; succeeded != test.ok || (test.ok && evidence.InstallerVerifiedBootstrap != payload.Digest) {
 				t.Fatalf("result = %+v, evidence %+v", result, evidence)
+			}
+			if !test.ok && l.onCount() != 1 {
+				t.Fatalf("a failed check powered the server on %d times; it must stop before the disk boot", l.onCount())
 			}
 		})
 	}

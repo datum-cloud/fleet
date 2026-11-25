@@ -167,15 +167,15 @@ def custody_evidence(store, ops, provider, a, b):
 
 
 def bootstrap_line(provider, o, receipt):
-    """The console line the installed system must print for an install's
-    bootstrap data, or None. The operation's evidence must name the same
-    salted digest the guest reports."""
+    """The console line the installer must print after it reads an install's
+    bootstrap data back from the target disk, or None. The operation's
+    evidence must record the same salted digest as installer-verified."""
     p = provider[o['operation']]
     digest = (p['spec'].get('bootstrap') or {}).get('digest')
     if not digest:
         return None
-    if ((p.get('status') or {}).get('evidence') or {}).get('bootstrap') != digest:
-        fail('%s succeeded without evidence of its bootstrap data' % p['metadata']['name'])
+    if ((p.get('status') or {}).get('evidence') or {}).get('installerVerifiedBootstrap') != digest:
+        fail('%s succeeded without the installer verifying its bootstrap data' % p['metadata']['name'])
     return 'FLEET-BOOTSTRAP:%s:%s' % (receipt, digest)
 
 
@@ -221,10 +221,10 @@ def libvirt_provider():
             if not any('write-complete ' + name + ' bytes=' in line for line in written.splitlines()):
                 fail('missing completed broker write for ' + name)
         if seeded:
-            disk_log = directory / 'disk.log'
-            lines = [line.strip() for line in disk_log.read_text(errors='replace').splitlines()] if disk_log.exists() else []
+            installer_log = directory / 'installer.log'
+            lines = [line.strip() for line in installer_log.read_text(errors='replace').splitlines()] if installer_log.exists() else []
             if lines.count(seeded) != 1 or sum(1 for l in lines if l.startswith('FLEET-BOOTSTRAP:')) != 1:
-                fail('the installed system did not report exactly the admitted bootstrap data')
+                fail('the installer did not verify exactly the admitted bootstrap data on disk')
             bootstrapped.append(uid)
         for filename, marker in (('installer.log', 'FLEET-INSTALLED:'), ('disk.log', 'FLEET-DISK-BOOT:')):
             p = directory / filename
@@ -250,7 +250,7 @@ def libvirt_provider():
         starts[uid] = {'qemuStarts': len(blocks), 'networkInstallerStarts': len(network), 'diskOnlyStarts': len(disk_only)}
         if len(blocks) != 2 or len(network) != 1 or len(disk_only) != 1 or blocks.index(network[0]) != 0:
             fail('expected exactly one network installer start followed by one disk-only start, got %s' % starts[uid])
-    # Consumer A's install carries bootstrap data; the guest proved it.
+    # Consumer A's install carries bootstrap data; the installer verified it.
     if len(bootstrapped) != 1 or bootstrapped[0] != ops[0]['operation']:
         fail('expected consumer A\'s install, and only it, to report bootstrap data; got %s' % bootstrapped)
     bootstrap_gone()
@@ -295,8 +295,8 @@ def redfish_provider():
         seeded = bootstrap_line(provider, o, boot['receipt']) if o['kind'] == 'DeviceInstallation' else None
         if seeded:
             bootstrapped.append(o['operation'])
-        # The installed system prints its bootstrap report just before its disk receipt.
-        want = (['FLEET-INSTALLED:' + boot['receipt']] + ([seeded] if seeded else []) + ['FLEET-DISK-BOOT:' + boot['receipt']]) if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
+        # The installer prints its bootstrap check just before its own receipt.
+        want = (([seeded] if seeded else []) + ['FLEET-INSTALLED:' + boot['receipt'], 'FLEET-DISK-BOOT:' + boot['receipt']]) if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
         for line in want:
             if console.count(line) != 1:
                 fail('expected exactly one exact console receipt %s for %s' % (line.split(':')[0], o['kind']))

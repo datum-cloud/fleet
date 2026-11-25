@@ -119,7 +119,7 @@ func TestBootstrapReachesTheServerAndEveryCopyIsDeleted(t *testing.T) {
 		t.Fatalf("the server was handed %q, want %q: %v", server.Bootstrap, reference.Digest, err)
 	}
 	var evidence ops.InstallationEvidence
-	if err := json.Unmarshal(operation.Status.Evidence.Raw, &evidence); err != nil || evidence.Bootstrap != reference.Digest {
+	if err := json.Unmarshal(operation.Status.Evidence.Raw, &evidence); err != nil || evidence.InstallerVerifiedBootstrap != reference.Digest {
 		t.Fatalf("evidence = %+v, %v", evidence, err)
 	}
 	// The ended operation's payload, the orphan and the concurrent loser are
