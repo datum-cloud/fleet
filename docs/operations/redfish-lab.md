@@ -82,7 +82,9 @@ does not fork or patch upstream files.
 | `ComputerSystem.Reset` with `On`, `ForceOff` and `ForceRestart` applied to one exact persistent libvirt domain per System | Adapter (replaces upstream's in-memory handler for the two lab Systems) |
 | `PowerState` read from libvirt on every System read | Adapter |
 | `Boot` source override (`Pxe` or `Hdd`, `Once`), persisted in NVRAM state on the site volume and consumed at power-on | Adapter |
-| `ResetType` and boot `AllowableValues` narrowed to what the adapter implements; System `UUID` set from the lab target | Adapter |
+| `ResetType` and boot `AllowableValues` narrowed to what the adapter implements; System `UUID` and `SerialNumber` set from the lab target | Adapter |
+| The upstream sample `Storage` (six 900 GB drives that no lab target has) hidden, so the populated `SimpleStorage` describes each target's one 2 GiB disk | Adapter |
+| A one-component firmware inventory (`UpdateService`, `BMC` at `fleet-lab-1.0`) for commissioning plans to name | Adapter, lab only |
 | Definition of the lab domains and the provisioning network, re-created with the same identity if the runtime loses them | Adapter |
 | Append-only request audit: method, path, status, principal class, ResetType, boot override, effect and fault. It never records bodies or credentials. | Adapter |
 | `DELETE /redfish/v1/reset` and non-Redfish paths | Refused by the adapter |
@@ -345,6 +347,18 @@ synthetic credential and TLS Secrets, one credential Secret per Device, and the
 fixture enrollment. The coordinator runs on the workstation
 (`hack/multiplane/coordinator.sh`), and a separate discovery identity writes
 fixture discovery for the lab Devices. Real BMC discovery is not part of this run.
+
+**Commissioning, before allocation:** the `commission` phase takes the
+registered lab Device from `Disabled` to `Available`. A plan author writes a
+plan for the lab target's hardware, the lab firmware and a one-minute
+burn-in of the site's boot image; a second identity approves it; an operator
+commissions target A, which the site's Redfish worker inspects, checks and
+burns in through the lab BMC; the projector makes the capacity `Prepared`
+and `Healthy`; and a capacity operator enables it with the fixture cleaning
+policy and the `local` pool. The phase ends when the projector reports the
+capacity `Available`. The local VM mode runs the same phase with the
+simulated commissioning worker, which reads the hardware the site enrollment
+records.
 
 **Redfish phases:**
 

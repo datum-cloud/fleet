@@ -18,6 +18,7 @@ import (
 	"go.datum.net/fleet/internal/site"
 	"go.datum.net/fleet/internal/site/fixture"
 	"go.datum.net/fleet/internal/site/redfishwork"
+	"go.datum.net/fleet/internal/site/simwork"
 	"go.datum.net/fleet/internal/site/vmwork"
 )
 
@@ -168,7 +169,9 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 			return nil, err
 		}
 		runner.Access = fixture.Access{Enrollment: enrollment}
-		runner.Kinds = map[string]site.Kind{"DeviceInstallation": vmwork.Installation{Config: vm}, "DeviceWipe": vmwork.Wipe{Config: vm}}
+		// The local VM site has no BMC, so it commissions from the hardware
+		// its enrollment records, as the simulator does.
+		runner.Kinds = map[string]site.Kind{"DeviceInstallation": vmwork.Installation{Config: vm}, "DeviceWipe": vmwork.Wipe{Config: vm}, "DeviceCommissioning": simwork.Commissioning{}}
 		return runner, nil
 	}
 	work, enrollment, err := redfishConfig()
@@ -192,7 +195,14 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 		targets[target.Device] = target
 	}
 	runner.Access = site.RedfishAccess{Credentials: site.SecretCredentials{Reader: reader, Namespace: namespace, Project: project}, Targets: targets}
-	runner.Kinds = map[string]site.Kind{"DeviceInstallation": redfishwork.Installation{Config: work}, "DeviceWipe": redfishwork.Wipe{Config: work}}
+	// The site's one boot image is the burn-in image a plan must pin.
+	image, err := siteImage()
+	if err != nil {
+		return nil, err
+	}
+	_, digest, _ := strings.Cut(image, "@")
+	runner.Kinds = map[string]site.Kind{"DeviceInstallation": redfishwork.Installation{Config: work}, "DeviceWipe": redfishwork.Wipe{Config: work},
+		"DeviceCommissioning": redfishwork.Commissioning{Config: work, BurnInDigest: digest}}
 	return runner, nil
 }
 

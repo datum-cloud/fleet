@@ -53,6 +53,14 @@ class AdapterTest(unittest.TestCase):
     def test_3_system_identity_and_capabilities(self):
         s = self.app.get('/redfish/v1/Systems/System-1', headers=AUTH).json
         self.assertEqual(s['UUID'], '7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a')
+        self.assertEqual(s['SerialNumber'], 'serial-synthetic-device-central-01')
+        self.assertNotIn('Storage', s)
+        self.assertEqual(self.app.get('/redfish/v1/Systems/System-1/Storage', headers=AUTH).status_code, 404)
+        disks = self.app.get(s['SimpleStorage']['@odata.id'] + '/VirtIO-0', headers=AUTH).json['Devices']
+        self.assertEqual([d['CapacityBytes'] for d in disks], [2147483648])
+        self.assertEqual(self.app.get('/redfish/v1/', headers=AUTH).json['UpdateService'], {'@odata.id': '/redfish/v1/UpdateService'})
+        inventory = self.app.get('/redfish/v1/UpdateService/FirmwareInventory', headers=AUTH).json['Members']
+        self.assertEqual(self.app.get(inventory[0]['@odata.id'], headers=AUTH).json['Version'], 'fleet-lab-1.0')
         self.assertEqual(s['PowerState'], 'Off')
         self.assertEqual(s['Boot']['BootSourceOverrideTarget@Redfish.AllowableValues'], ['None', 'Pxe', 'Hdd'])
         info = self.app.get(s['Actions']['#ComputerSystem.Reset']['@Redfish.ActionInfo'], headers=AUTH).json

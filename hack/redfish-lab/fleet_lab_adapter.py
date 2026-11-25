@@ -13,7 +13,11 @@ authentication. This module, loaded into the same Flask process, adds only:
   * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
   * an append-only request audit log (no bodies, no credentials);
-  * bounded, one-shot lab fault injection driven by a state file.
+  * bounded, one-shot lab fault injection driven by a state file;
+  * each lab target's own serial number, its real storage only (the
+    upstream sample Storage with six 900 GB drives is hidden, so the
+    populated SimpleStorage describes the lab disk), and a one-component
+    firmware inventory, so commissioning can inspect lab hardware.
 
 It is never part of Fleet's production code. It is the only component in
 Redfish mode that talks to libvirt; provisioning workers have no libvirt
@@ -43,6 +47,8 @@ PORT = int(os.environ.get('FLEET_BMC_PORT', '8443'))
 # workers reach it only over a connection pinned to that key.
 TLS_DIR = os.environ.get('FLEET_BMC_TLS', '/etc/fleet-bmc-tls')
 RESET_TYPES = ('On', 'ForceOff', 'ForceRestart')
+# The lab firmware inventory: one component a commissioning plan can name.
+FIRMWARE = {'Id': 'BMC', 'Name': 'Fleet lab BMC firmware', 'Version': 'fleet-lab-1.0'}
 BOOT_TARGETS = ('None', 'Pxe', 'Hdd')
 BOOT_ENABLED = ('Disabled', 'Once')
 NETWORK = 'fleet-lab-pxe'
@@ -211,6 +217,8 @@ def create_app(targets, state, credentials, boot_ip):
     def publish(sid, power=None):
         m = cs.members[sid]
         m['UUID'] = targets[sid]['uuid']
+        m['SerialNumber'] = targets[sid]['serial']
+        m.pop('Storage', None)
         m['Name'] = targets[sid]['name']
         m['Manufacturer'] = 'DMTF Redfish Interface Emulator (Fleet lab adapter)'
         m['Model'] = 'libvirt/QEMU lab target'
@@ -272,6 +280,15 @@ def create_app(targets, state, credentials, boot_ip):
             request_context.principal, request_context.detail = 'rejected', {'fault': 'reject-auth'}
             return challenge()
         request_context.principal = 'authenticated'
+        if request.method == 'GET':
+            if path == '/redfish/v1/UpdateService':
+                return {'@odata.id': path, 'Id': 'UpdateService', 'Name': 'Update Service', 'FirmwareInventory': {'@odata.id': path + '/FirmwareInventory'}}
+            if path == '/redfish/v1/UpdateService/FirmwareInventory':
+                return {'@odata.id': path, 'Name': 'Firmware Inventory', 'Members': [{'@odata.id': path + '/BMC'}], 'Members@odata.count': 1}
+            if path == '/redfish/v1/UpdateService/FirmwareInventory/BMC':
+                return dict(FIRMWARE, **{'@odata.id': path})
+            if re.fullmatch(r'/redfish/v1/Systems/[^/]+/Storage(/.*)?', path):
+                return error(404, 'the lab target has no Storage; its disk is under SimpleStorage')
         m = re.fullmatch(r'/redfish/v1/Systems/([^/]+)(/Actions/ComputerSystem\.Reset|/ResetActionInfo)?', path)
         if not m:
             return None
@@ -336,6 +353,15 @@ def create_app(targets, state, credentials, boot_ip):
             request_context.detail['fault'] = 'drop-response-after-effect'
             time.sleep(min(int(drop.get('seconds', 45)), 120))
         return '', 204
+
+    @g.app.after_request
+    def firmware_link(response):
+        # The upstream service root has no UpdateService; link the lab's.
+        if request.method == 'GET' and (request.path.rstrip('/') or '/') == '/redfish/v1' and response.is_json:
+            root = response.get_json()
+            root['UpdateService'] = {'@odata.id': '/redfish/v1/UpdateService'}
+            response.set_data(json.dumps(root))
+        return response
 
     @g.app.after_request
     def audit(response):

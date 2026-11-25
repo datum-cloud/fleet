@@ -786,9 +786,10 @@ The boot interface is fixed at `primary`, like the allocator's in every mode.
 
 ### The Redfish commissioning worker
 
-The Redfish worker for `DeviceCommissioning` is **implemented and inert**. It
-is tested against a TLS BMC stub, and no site registers it yet, so the lab
-emulator has not run it.
+The Redfish worker for `DeviceCommissioning` is **implemented**. It is tested
+against a TLS BMC stub, and the multi-plane Redfish site registers it with its
+boot image's digest as the only burn-in image it serves. See [Capacity
+status](#capacity-status) for the end-to-end run.
 
 - **Preflight.** It reads the system's identity, processors, memory, storage,
   network interfaces and firmware inventory with GETs only, and compares them
@@ -863,10 +864,16 @@ inputs, and nothing else writes them.
   and that the author cannot approve.
 - **Multi-plane.** The provider project gets the projector, the three staff
   identities and a capacity operator, and the Metal provider reads
-  commissioning evidence. The seed no longer writes capacity conditions, and
-  nothing in this increment commissions the run's server, so neither
-  multi-plane run can allocate at this increment. The end-to-end increment
-  adds the commissioning phase; no multi-plane result exists before it.
+  commissioning evidence. The seed records target A's capacity as
+  registration does: `Disabled`, named from the Device UID, with no cleaning
+  policy or pool. A `commission` phase before `allocate` writes and approves
+  the lab plan, commissions the Device, waits for `Prepared` and `Healthy`,
+  and enables the capacity with the fixture cleaning policy and the `local`
+  pool. The Redfish site commissions with the Redfish worker; the local VM
+  site uses the simulated worker. The local Milo installs no registration
+  webhook, so the enabling update is not checked by it there; the webhook is
+  verified against a real API server instead. Whether both runs pass is
+  recorded below as each run completes.
 - **Synthetic staging.** The staging handler no longer writes capacity
   status; the projector does.
 

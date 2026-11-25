@@ -14,6 +14,10 @@ ph rbac 600 python3 hack/multiplane/verify-rbac.py "$state"
 ph custody-crd-rules 600 python3 hack/multiplane/custody_crd_rules.py "$state"
 step import-inert 300
 step staff-access 120
+# Commissioning, not a fixture, takes the registered server from Disabled
+# to Available: a plan, a second person's approval, a commissioning, and the
+# capacity operator enabling it.
+ph commission 1800 "$host" commission --config "$state/acceptance.json"
 ph allocate 900 "$host" allocate --config "$state/acceptance.json"
 step verify-contention 120
 step tenant-isolation 300

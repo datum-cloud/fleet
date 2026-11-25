@@ -18,6 +18,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/registration"
 )
 
 // Seed uses bootstrap only for provider facts and publication: the profile,
@@ -28,14 +29,10 @@ import (
 func Seed(ctx context.Context, c Config) error {
 	var profile fleet.MachineProfile
 	var class fleet.MachineClass
-	var capacity fleet.MachineCapacity
 	if err := json.Unmarshal([]byte(`{"metadata":{"name":"local-profile"},"spec":{"cpu":{"architecture":"amd64","cores":2},"memory":{"capacity":"2Gi"}}}`), &profile); err != nil {
 		return err
 	}
-	if err := json.Unmarshal([]byte(`{"metadata":{"name":"local-class"},"spec":{"profilePolicy":{"allowedProfiles":[{"name":"local-profile"}],"customProfiles":{"enabled":false}},"capacity":{"machineCapacities":{"namespace":"fleet-provider","selector":{"matchLabels":{"pool":"local"}}}}}}`), &class); err != nil {
-		return err
-	}
-	if err := json.Unmarshal([]byte(`{"metadata":{"name":"local-capacity","namespace":"fleet-provider","labels":{"pool":"local"}},"spec":{"deviceRef":{"name":"`+Device+`"},"allocationPolicy":"Enabled","cleaningPolicyRef":{"name":"local-cleaning"},"reclaimPolicy":"Retain"}}`), &capacity); err != nil {
+	if err := json.Unmarshal([]byte(`{"metadata":{"name":"local-class"},"spec":{"profilePolicy":{"allowedProfiles":[{"name":"local-profile"}],"customProfiles":{"enabled":false}},"capacity":{"machineCapacities":{"namespace":"fleet-provider","selector":{"matchLabels":{"`+PoolLabel+`":"`+Pool+`"}}}}}}`), &class); err != nil {
 		return err
 	}
 	provider, err := API(filepath.Join(c.State, "provider", "bootstrap-project.json"))
@@ -46,10 +43,16 @@ func Seed(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
-	for _, obj := range append([]client.Object{&profile, &class, &capacity}, devices...) {
+	for _, obj := range append([]client.Object{&profile, &class}, devices...) {
 		if err := ensure(ctx, provider, obj); err != nil {
 			return err
 		}
+	}
+	// The Device is registered as staff register it: Disabled, with no
+	// cleaning policy or pool, and named from the Device UID. Commissioning
+	// and enabling it are later phases.
+	if err := ensure(ctx, provider, registered(devices[0].(*inventory.Device))); err != nil {
+		return err
 	}
 	class.Status.EvaluatedRevision = "local-fixture-v1"
 	if err := provider.Status().Update(ctx, &class); err != nil {
@@ -146,7 +149,7 @@ func enrolledDevices(c Config) ([]client.Object, error) {
 			return nil, errors.New("an enrolled Device is outside the provider's Device namespace")
 		}
 		target := c.Enrollment[key]
-		out = append(out, &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace}, Spec: inventory.DeviceSpec{
+		out = append(out, &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{HardwareModelLabel: HardwareModel}}, Spec: inventory.DeviceSpec{
 			ClaimRef:   inventory.LocalReference{Name: "claim-" + name},
 			Identity:   inventory.DeviceIdentity{Model: "synthetic", Serial: "serial-" + name, SystemUUID: target.SystemUUID},
 			BMC:        &inventory.BMC{Endpoint: target.BMCEndpoint},
@@ -157,4 +160,14 @@ func enrolledDevices(c Config) ([]client.Object, error) {
 		return nil, errors.New("the cell enrolls no Device")
 	}
 	return out, nil
+}
+
+// registered is the capacity registration creates for the Device as read.
+func registered(device *inventory.Device) *fleet.MachineCapacity {
+	return &fleet.MachineCapacity{
+		ObjectMeta: metav1.ObjectMeta{Name: registration.CapacityName(device.UID), Namespace: device.Namespace, Annotations: map[string]string{
+			registration.DeviceUIDAnnotation: string(device.UID), registration.DeviceVersionAnnotation: device.ResourceVersion, registration.OperationAnnotation: "multiplane-seed",
+		}},
+		Spec: fleet.MachineCapacitySpec{DeviceRef: fleet.LocalReference{Name: device.Name}, AllocationPolicy: "Disabled", ReclaimPolicy: "Retain"},
+	}
 }

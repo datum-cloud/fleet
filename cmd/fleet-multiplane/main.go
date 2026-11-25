@@ -65,7 +65,7 @@ func run() error {
 		return multiplane.Coordinate(ctx, config, *installationDeadline, func(err error) {
 			fmt.Fprintf(os.Stderr, "%s coordinator: pass incomplete: %v\n", time.Now().UTC().Format(time.RFC3339), err)
 		})
-	case "seed", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
+	case "seed", "commission", "allocate", "install", "admit-install", "admit-install-b", "release", "release-b", "reuse", "recovery-mismatch", "probe-unallocatable", "tenant-isolation":
 		return phase(os.Args[1], *configPath, *once)
 	case "redfish-probe":
 		return probe(*endpoint, *credentials, *system, *uuid, *pin)
@@ -145,7 +145,7 @@ func phase(name, configPath string, once bool) error {
 		return err
 	}
 	action := map[string]func(context.Context) error{
-		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install,
+		"commission": r.Commission, "allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install,
 		"release": r.Release, "release-b": r.ReleaseSecond, "reuse": r.Reuse,
 		"admit-install-b": r.AdmitInstallSecond, "recovery-mismatch": r.RecoveryMismatch, "probe-unallocatable": r.ProbeUnallocatable, "tenant-isolation": r.TenantIsolation,
 	}[name]
