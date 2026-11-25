@@ -1,9 +1,13 @@
-# Inventory-backed capacity registration, stage 1
+# Inventory-backed capacity registration
 
 [Implementation status](README.md) · [Inventory proposal](../proposals/fleet-management/inventory.md) · [Enrollment contract](../proposals/fleet-management/bare-metal-provisioning.md#enrollment-and-explicit-preparation)
 
-This implements an inert registration boundary, not hardware enrollment,
-preparation, allocation, or verification. It supersedes the blocker-only UI
+Stage 1 registers inert, `Disabled` capacity. [Stage 2](#stage-2) lets
+registered capacity be enabled, removed when orphaned, and written only by
+the capacity projector, as the [commissioning
+proposal](https://github.com/datum-cloud/fleet/pull/185) describes. Sections
+below that describe stage 1 say where stage 2 changed them. Registration is
+not hardware enrollment, preparation, allocation or verification. It supersedes the blocker-only UI
 guardrail in PR140 (`12439e1fdf0d229352b4e32c27d9985993ca117d`). The synthetic
 name-derived Device reference, invented cleaning default, allocation checkbox,
 and unrestricted frontend create helper remain removed. Existing capacity
@@ -124,9 +128,10 @@ that project's client is used. `internal/registration/tenancy_test.go` and
 `tenancy_envtest_test.go` pin both checks with project clients and
 SubjectAccessReview stubs that fail the test if they are called.
 
-**The scope check is currently the only limit on what a certificate holder can
-learn.** The webhook does not yet check who is calling it
-([#149](https://github.com/datum-cloud/fleet/issues/149)). Any holder of a
+**Stage 1 did not check who called the webhook**
+([#149](https://github.com/datum-cloud/fleet/issues/149)); stage 2 does, as
+[Who may call the webhook](#who-may-call-the-webhook) describes. Before that
+change: Any holder of a
 client certificate from the webhook's client CA can post an AdmissionReview
 directly and read the verdict, and a verdict can name Devices and their
 lifecycle. Such a caller writes the review's user and extras itself, so the
@@ -191,8 +196,9 @@ without the marker that reaches it anyway is allowed without reading Devices
 or the provider project. A marked request is handled as before: creates are
 gated in full, and updates, deletes and any routed subresource are denied.
 
-**Status writes are not routed.** `machinecapacities/status` is not in the
-rule. Stage 1 has no status writer for inventory-backed capacity, but a
+**Stage 2 routes status writes** to registered capacity and admits them only
+from the capacity projector; see [Stage 2](#stage-2). In stage 1,
+`machinecapacities/status` was not in the rule. Stage 1 has no status writer for inventory-backed capacity, but a
 provider may need one later, and the webhook would then have to be changed
 first. Status writes are governed by RBAC alone; in the packaged IAM roles
 only the capacity projector role holds `machinecapacities.updateStatus`. This is
@@ -266,13 +272,13 @@ No reservation store closes this, by decision. The consequences are bounded:
 - Any future transition that enables capacity must recheck duplicates against
   live Devices at that time.
 
-**This race is open, and it blocks stage 2.** The bounds above hold only while
+**In stage 1 this race was open, and it blocked stage 2.** Stage 2 makes it
+harmless rather than closing it; see [The duplicate race](#the-duplicate-race). The bounds above hold only while
 inventory-backed capacity stays `Disabled`. Allocation must not be enabled for
 inventory-backed capacity, by the webhook allowing an update out of
 `Disabled` or by any other path, until this race is closed. A recheck at
 enable time narrows the window but does not close it, because a duplicate
-Device can still appear after the recheck. See
-[Stage 2 blockers](#stage-2-blockers).
+Device can still appear after the recheck.
 
 Two registrations racing for two already-existing Devices that share an alias
 both fail, because each sees the other Device. Device status has no writer
@@ -522,7 +528,8 @@ The resulting orphaned capacity is in this state:
   `capacity default/<name> has unresolved physical identity`.
   `TestOrphanedCapacityBlocksUnrelatedRegistration` pins this.
 
-Remediation, in stage 1:
+Stage 2 removes such capacity directly: see [Removing orphaned
+capacity](#removing-orphaned-capacity). The stage-1 remediation, still valid:
 
 1. Re-record the deleted machine as a Device under its **old name**, with its
    original serial and system UUID, created directly in `Retired` (a Device
@@ -536,13 +543,8 @@ Remediation, in stage 1:
    Retired Device: the policy admits that delete, and the capacity would be
    orphaned again.
 
-There is no stage-1 path that removes the orphaned capacity itself in an
-environment where the registration webhook is installed. Removing it would
-mean taking the webhook out of the admission path, which unfences every
-inventory-backed capacity write while it is out, so it needs a separately
-reviewed change, not an operator action. Clean up orphaned capacity directly
-only in environments where the registration webhook is not installed, such as
-synthetic ones.
+In stage 1 nothing could remove the orphaned capacity itself while the
+webhook was installed.
 
 ## Production packaging and rollout
 
@@ -645,23 +647,94 @@ kubectl -n fleet-system delete configmap fleet-registration-control --ignore-not
 Environments that never deployed the registration service have none of these
 objects and nothing to clean.
 
-## Stage 2 blockers
+## Stage 2
 
-Stage 1 is safe because inventory-backed capacity never leaves `Disabled`.
-These must be resolved before any stage lets it:
+Stage 1 kept registered capacity `Disabled` until three blockers closed. Stage
+2 closes each, and lets capacity be enabled. It is **implemented**, and
+verified by tests against a real API server behind the packaged webhook
+(`TestStageTwoEnablesRegisteredCapacity`) and by handler tests.
 
-1. **Close the duplicate race.** Allocation must not be enabled for
-   inventory-backed capacity until the
-   [same-serial race](#the-documented-duplicate-race) is closed. A recheck at
-   enable time is not enough on its own.
-2. **Give orphaned capacity a way out.** Capacity whose Device was deleted
-   [cannot be removed](#deleting-a-device) while the webhook is installed, and
-   it blocks every registration in the provider scope until its Device is
-   re-recorded.
-3. **Authenticate the webhook's caller**
-   ([#149](https://github.com/datum-cloud/fleet/issues/149)). Until then the
-   [provider-project scope check](#provider-project-scope) is the only limit
-   on what a certificate holder can learn.
+### Enabling registered capacity
+
+The webhook admits an update of registered capacity that changes only
+`spec.allocationPolicy`, `spec.cleaningPolicyRef` and the
+`fleet.datumapis.com/capacity-pool` label. Every other change, including the
+registration annotations and other labels, is denied.
+
+- While the capacity is `Disabled`, the three fields change freely.
+- While it is `Enabled`, the only permitted change is to `Disabled`.
+- Moving to `Enabled` requires, at the time of the update: the caller's
+  `update` permission on the capacity and `get` on its Device; the annotated
+  Device incarnation, `Active` and not deleting; a pool label; a cleaning
+  policy that resolves; and no other Device in the provider scope, Retired
+  ones included, that shares an identity alias.
+
+Enabling does not require commissioning. The capacity projector offers the
+capacity only once it is `Prepared` and `Healthy`.
+
+**The pool label.** The capacity operator sets the pool label at registration
+or while the capacity is `Disabled`. It is frozen while the capacity is
+`Enabled`, so a MachineClass never gains or loses capacity without the
+capacity being disabled first.
+
+**The cleaning policy.** The webhook resolves the policy name through a
+resolver that returns a digest, `ErrUnresolved`, or another error. The
+cleaning policy owner provides the production resolver; until then the
+webhook uses one that resolves nothing, so no registered capacity can be
+enabled in production.
+
+### The duplicate race
+
+The race in [The documented duplicate race](#the-documented-duplicate-race)
+is not prevented: no object can make one Device's create and another
+Device's registration atomic. Stage 2 makes the duplicate harmless instead.
+
+- Commissioning reads the serial number and system UUID from the BMC and
+  fails if they differ from the Device's. Admission refuses a BMC key that
+  another Device records. A `Prepared` server is the one its record names.
+- Enabling, the projector's `Available`, and the allocator each refuse a
+  Device with a duplicate, at the moment they act.
+- The window left is between the allocator's check and its custody claim. A
+  duplicate recorded in it does not change which server the customer gets.
+  The provider host tuple is not proven by the BMC; for that alias the
+  recheck is the only protection.
+
+To resolve a conflict, correct the wrong record's identity, or move it to
+`Decommissioning`, then `Retired`, and delete it.
+
+### Removing orphaned capacity
+
+The webhook admits the delete of registered capacity when it is `Disabled`;
+its annotated Device is missing, another incarnation, or `Retired`; no
+MachineAllocation that is not `Released` names it; and the caller may delete
+it. Those facts cannot change between the check and the delete: enabling
+needs an `Active` Device of the annotated incarnation, and allocation needs
+`Enabled` capacity. Any other delete of registered capacity is still denied.
+
+### Status writes
+
+`machinecapacities/status` is in the webhook rule. A status write to
+registered capacity is admitted only from a username in
+`--capacity-projectors`. The webhook fails closed, so an outage stops status
+updates. The allocator evaluates capacity from live evidence and never reads
+the conditions, so stale or edited status cannot make a server allocatable.
+Status writes to unmarked capacity are still not routed.
+
+### Who may call the webhook
+
+The webhook accepts a client only if its certificate chains to the dedicated
+client CA **and** its subject common name is in `--client-identities`. Any
+other certificate is refused during the TLS handshake, before a request is
+read. The flag is required. The environment must keep the CA dedicated to the
+API servers that call the webhook; the identity list is a second check, not a
+replacement for that.
+
+### Configuration
+
+| Flag | Meaning |
+| --- | --- |
+| `--client-identities` | Required. Subjects of the API-server webhook client certificates. The base manifest carries a placeholder that admits no caller. |
+| `--capacity-projectors` | Usernames of the capacity projector. Empty denies every status write to registered capacity. |
 
 ## UI
 
@@ -682,12 +755,9 @@ retry in that form, and asks the operator to check whether the derived capacity
 exists. A repeat cannot create a second record. The unfenced legacy deletion
 helper is never used for rollback.
 
-Registration sets no `fleet.datumapis.com/capacity-pool` label, so no
-MachineClass selects registered capacity. The webhook does not inspect labels
-on create, but it denies every later update, so a label set at registration
-could never be corrected, and registered capacity stays `Disabled` in this
-stage anyway. Which writer sets the pool label, at registration or when a
-future stage enables capacity, is undecided.
+The registration form sets no pool label. The capacity operator sets it
+while the capacity is `Disabled`; see [Enabling registered
+capacity](#enabling-registered-capacity). The UI does not yet edit it.
 
 ## Verification
 

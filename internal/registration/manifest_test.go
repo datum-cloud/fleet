@@ -53,7 +53,7 @@ func TestPackagedWebhookFencesOnlyInventoryBackedCapacity(t *testing.T) {
 		t.Fatal("capacity webhook must have exactly one rule")
 	}
 	rule := webhook.Rules[0]
-	if !slices.Equal(rule.APIGroups, []string{"metal.datumapis.com"}) || !slices.Equal(rule.APIVersions, []string{"v1alpha1"}) || !slices.Equal(rule.Resources, []string{"machinecapacities"}) || !slices.Equal(rule.Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}) || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
+	if !slices.Equal(rule.APIGroups, []string{"metal.datumapis.com"}) || !slices.Equal(rule.APIVersions, []string{"v1alpha1"}) || !slices.Equal(rule.Resources, []string{"machinecapacities", "machinecapacities/status"}) || !slices.Equal(rule.Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update, admissionregistrationv1.Delete}) || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
 		t.Fatalf("capacity webhook rule drifted: %+v", rule)
 	}
 	// The condition's literals must stay in step with the handler's marker.

@@ -35,11 +35,7 @@ func NewHandler(authority string, projects []string, root client.Client, templat
 // Authorize evaluates the caller's own permission with a SubjectAccessReview
 // carrying the caller's username, UID, groups and extras. The service's
 // credentials evaluate the review; they never stand in for the caller.
-func Authorize(ctx context.Context, project Project, actor authenticationv1.UserInfo, group, resource, name string) error {
-	verb := "get"
-	if resource == "machinecapacities" {
-		verb = "create"
-	}
+func Authorize(ctx context.Context, project Project, actor authenticationv1.UserInfo, verb, group, resource, name string) error {
 	extra := map[string]authorizationv1.ExtraValue{}
 	for key, values := range actor.Extra {
 		extra[key] = authorizationv1.ExtraValue(append([]string(nil), values...))
