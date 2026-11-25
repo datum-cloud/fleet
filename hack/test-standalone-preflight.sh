@@ -64,7 +64,12 @@ cat >"$temporary/kustomize" <<'EOF'
 #!/bin/sh
 set -eu
 case "$*" in
-  'build config/base/crd') echo 'kind: CustomResourceDefinition' ;;
+  # The smoke installs the Metal, inventory and Device custody CRDs
+  # together, and every one must be Established before any fixture.
+  'build config/base/crd' | 'build config/components/inventory/crds' | 'build config/components/device-operations/crds')
+    touch "$ORDER_DIRECTORY/built-$(echo "$2" | tr / -)"
+    echo 'kind: CustomResourceDefinition'
+    ;;
   'build config/standalone')
     test -f "$ORDER_DIRECTORY/established"
     echo 'kind: Installation'
@@ -82,6 +87,9 @@ case " $* " in
   *" apply -f "*)
     for argument do manifest=$argument; done
     if grep -q 'CustomResourceDefinition' "$manifest"; then
+      for crds in config-base-crd config-components-inventory-crds config-components-device-operations-crds; do
+        test -f "$ORDER_DIRECTORY/built-$crds"
+      done
       touch "$ORDER_DIRECTORY/crds-applied"
     else
       test -f "$ORDER_DIRECTORY/established"
