@@ -388,7 +388,15 @@ func (e *env) allocation(device *inventory.Device, name, phase string) *metal.Ma
 		e.t.Fatal(err)
 	}
 	allocation := &metal.MachineAllocation{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: metal.MachineAllocationSpec{
-		MachineRef: metal.ProjectNamespacedReference{Project: "consumer-example", Namespace: "default", Name: "machine-" + name}, MachineCapacityRef: metal.NamespacedReference{Namespace: "default", Name: capacityName},
+		MachineRef:         metal.AllocatedMachineReference{Project: "consumer-example", ProjectUID: uid(900), Namespace: "default", Name: "machine-" + name, UID: uid(901)},
+		MachineCapacityRef: metal.NamespacedReference{Namespace: "default", Name: capacityName},
+		DeviceRef:          metal.AllocatedDeviceReference{Name: device.Name, UID: string(device.UID)},
+		Accepted: metal.AcceptedContract{MachineClassRef: metal.UIDReference{Name: "class-example", UID: uid(902)}, MachineProfileRef: metal.UIDReference{Name: "profile-example", UID: uid(903)},
+			CPU: metal.CPURequirement{Architecture: "amd64", Cores: 2}, Memory: metal.MemoryRequirement{Capacity: "2Gi"}},
+		Authority:            metal.AllocationAuthority{Principal: "fixture", Decision: "fixture-" + name},
+		CleaningPolicyDigest: policyDigest,
+		BootInterface:        "primary",
+		TargetDisks:          []string{"disk-0"},
 	}}
 	e.create(allocation)
 	if phase != "" {

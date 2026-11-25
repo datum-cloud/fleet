@@ -355,23 +355,77 @@ spec:
           metadata: {type: object}
           spec:
             type: object
-            required: [machineRef, machineCapacityRef]
+            required: [machineRef, machineCapacityRef, deviceRef, accepted, hardware, authority, cleaningPolicyDigest, bootInterface, targetDisks]
             x-kubernetes-validations:
             - {rule: 'self == oldSelf', message: MachineAllocation identity and endpoints are immutable}
             properties:
               machineRef:
                 type: object
-                required: [project, namespace, name]
+                required: [project, projectUID, namespace, name, uid]
                 properties:
                   project: {type: string, minLength: 1}
+                  projectUID: {type: string, minLength: 1}
                   namespace: {type: string, minLength: 1}
                   name: {type: string, minLength: 1}
+                  uid: {type: string, minLength: 1}
               machineCapacityRef:
                 type: object
                 required: [namespace, name]
                 properties:
                   namespace: {type: string, minLength: 1}
                   name: {type: string, minLength: 1}
+              deviceRef:
+                type: object
+                required: [name, uid]
+                properties:
+                  name: {type: string, minLength: 1}
+                  uid: {type: string, minLength: 1}
+              accepted:
+                type: object
+                required: [machineClassRef, machineProfileRef, cpu, memory]
+                properties:
+                  machineClassRef:
+                    type: object
+                    required: [name, uid]
+                    properties:
+                      name: {type: string, minLength: 1}
+                      uid: {type: string, minLength: 1}
+                  machineProfileRef:
+                    type: object
+                    required: [name, uid]
+                    properties:
+                      name: {type: string, minLength: 1}
+                      uid: {type: string, minLength: 1}
+                  cpu:
+                    type: object
+                    required: [architecture, cores]
+                    properties:
+                      architecture: {type: string, minLength: 1, maxLength: 63}
+                      cores: {type: integer, format: int64, minimum: 1}
+                  memory:
+                    type: object
+                    required: [capacity]
+                    properties:
+                      capacity: {type: string, minLength: 1}
+              hardware: {type: object, x-kubernetes-preserve-unknown-fields: true}
+              authority:
+                type: object
+                required: [principal, decision]
+                properties:
+                  principal: {type: string, minLength: 1, maxLength: 253}
+                  decision: {type: string, minLength: 1, maxLength: 253}
+              quotaClaimRef:
+                type: object
+                required: [name]
+                properties:
+                  name: {type: string, minLength: 1}
+              cleaningPolicyDigest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+              bootInterface: {type: string, minLength: 1, maxLength: 63}
+              targetDisks:
+                type: array
+                minItems: 1
+                maxItems: 16
+                items: {type: string, minLength: 1, maxLength: 63}
           status:
             type: object
             x-kubernetes-validations:
@@ -379,6 +433,12 @@ spec:
               message: a released MachineAllocation is terminal
             properties:
               phase: {type: string, enum: [Pending, Active, Releasing, Released, Unknown]}
+              wipe:
+                type: object
+                required: [name, step]
+                properties:
+                  name: {type: string, minLength: 1}
+                  step: {type: integer, format: int32, minimum: 1}
               conditions:
                 type: array
                 items: {type: object, x-kubernetes-preserve-unknown-fields: true}

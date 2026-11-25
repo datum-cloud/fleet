@@ -335,22 +335,90 @@ type InstallationStatus struct {
 	Conditions  []metav1.Condition `json:"conditions,omitempty"`
 }
 
-// MachineAllocation is a protected, service-owned record. Its generated name is
-// the allocation identity. The spec is immutable and release is terminal.
+// MachineAllocation is a protected, service-owned record in the provider
+// project, in the namespace of its Device. It holds an allocation's private
+// facts: which Machine holds which Device, the contract Fleet accepted, the
+// hardware it saw, and the authority it acted on. Nothing secret is on it.
+// Its name derives from the Machine's UID, so each Machine gets one
+// allocation. Fleet writes the spec once and the API server keeps it
+// immutable; status carries the lifecycle, and release is terminal.
 type MachineAllocationSpec struct {
-	MachineRef         ProjectNamespacedReference `json:"machineRef"`
-	MachineCapacityRef NamespacedReference        `json:"machineCapacityRef"`
+	MachineRef         AllocatedMachineReference `json:"machineRef"`
+	MachineCapacityRef NamespacedReference       `json:"machineCapacityRef"`
+	DeviceRef          AllocatedDeviceReference  `json:"deviceRef"`
+	Accepted           AcceptedContract          `json:"accepted"`
+	// Hardware is the capacity's hardware when Fleet allocated it.
+	Hardware  Hardware            `json:"hardware"`
+	Authority AllocationAuthority `json:"authority"`
+	// QuotaClaimRef names the quota claim Fleet reserved before the
+	// allocation, in the Machine's namespace. It is absent where no quota
+	// system serves the consumer.
+	QuotaClaimRef *LocalReference `json:"quotaClaimRef,omitempty"`
+	// CleaningPolicyDigest pins the cleaning policy record the release
+	// wipes under.
+	CleaningPolicyDigest string `json:"cleaningPolicyDigest"`
+	// BootInterface and TargetDisks are what installations and wipes for
+	// this allocation use.
+	BootInterface string   `json:"bootInterface"`
+	TargetDisks   []string `json:"targetDisks"`
 }
 
-type ProjectNamespacedReference struct {
-	Project   string `json:"project"`
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
+// AllocatedMachineReference names one Machine incarnation in one consumer
+// project incarnation.
+type AllocatedMachineReference struct {
+	Project    string `json:"project"`
+	ProjectUID string `json:"projectUID"`
+	Namespace  string `json:"namespace"`
+	Name       string `json:"name"`
+	UID        string `json:"uid"`
 }
+
+// AllocatedDeviceReference names one Device incarnation in the allocation's
+// namespace.
+type AllocatedDeviceReference struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
+}
+
+// AcceptedContract is the class and profile Fleet accepted, with the exact
+// CPU and memory it allocated against.
+type AcceptedContract struct {
+	MachineClassRef   UIDReference      `json:"machineClassRef"`
+	MachineProfileRef UIDReference      `json:"machineProfileRef"`
+	CPU               CPURequirement    `json:"cpu"`
+	Memory            MemoryRequirement `json:"memory"`
+}
+
+type UIDReference struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
+}
+
+// AllocationAuthority is the admission decision Fleet acted on.
+type AllocationAuthority struct {
+	Principal string `json:"principal"`
+	Decision  string `json:"decision"`
+}
+
+// MachineAllocation phases.
+const (
+	AllocationPending   = "Pending"
+	AllocationActive    = "Active"
+	AllocationReleasing = "Releasing"
+	AllocationReleased  = "Released"
+)
 
 type MachineAllocationStatus struct {
-	Phase      string             `json:"phase,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// Wipe is the latest DeviceWipe the release created.
+	Wipe       *WipeReference     `json:"wipe,omitempty"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// WipeReference names a release's DeviceWipe and its step.
+type WipeReference struct {
+	Name string `json:"name"`
+	Step int32  `json:"step"`
 }
 
 type MachineAllocation struct {

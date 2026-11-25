@@ -187,26 +187,17 @@ func appendOnce(list []string, value string) []string {
 	return append(list, value)
 }
 
-// LiveAllocations returns the MachineAllocations that are not Released and
-// whose MachineCapacity is backed by the Device.
+// LiveAllocations returns the MachineAllocations in the Device's namespace
+// that are not Released and name this Device incarnation.
 func LiveAllocations(ctx context.Context, reader client.Reader, device *inventory.Device) ([]metal.MachineAllocation, error) {
 	var allocations metal.MachineAllocationList
-	if err := reader.List(ctx, &allocations); err != nil {
+	if err := reader.List(ctx, &allocations, client.InNamespace(device.Namespace)); err != nil {
 		return nil, err
 	}
 	var out []metal.MachineAllocation
 	for _, allocation := range allocations.Items {
-		if allocation.Status.Phase == "Released" {
-			continue
-		}
-		capacity := &metal.MachineCapacity{}
-		reference := allocation.Spec.MachineCapacityRef
-		if err := reader.Get(ctx, client.ObjectKey{Namespace: reference.Namespace, Name: reference.Name}, capacity); apierrors.IsNotFound(err) {
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-		if capacity.Namespace == device.Namespace && capacity.Spec.DeviceRef.Name == device.Name {
+		reference := allocation.Spec.DeviceRef
+		if allocation.Status.Phase != metal.AllocationReleased && reference.Name == device.Name && reference.UID == string(device.UID) {
 			out = append(out, allocation)
 		}
 	}
