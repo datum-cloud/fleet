@@ -244,10 +244,11 @@ controller uses it to create a wipe, and admission uses it to check one.
 - A drive with no planned method gets a step marked `Uncovered`.
 
 Fleet cannot account for the data on a `Missing` or `Uncovered` drive. The
-release controller waits 10 minutes for discovery to report the drive again,
+release controller waits 10 minutes for the plan to cover every drive again,
 so a brief gap in discovery does not hold the server. The wait is fixed, not a
-policy setting, and each blocked plan gets its own. If the drive is still
-`Missing` or `Uncovered`, the release controller creates the wipe. The
+policy setting, and it starts again after each hold is settled. If a drive is
+still `Missing` or `Uncovered` when it ends, the release controller creates the
+wipe. The
 coordinator admits it, sends nothing, and ends it `OutcomeUnknown` with reason
 `DriveMissing` or `DriveUncovered`. The server gets a recovery hold, and the
 `Cleaning` gate stays open.
@@ -450,8 +451,11 @@ These tests are required and not implemented:
   the policy is deleted.
 - Allocation refuses a server with a drive no rule covers, or a drive only one
   inventory source reports.
-- A drive is removed during an allocation. Release holds the server with
-  `DriveMissing` until staff record `DisposeDrive` under that hold.
+- A drive is removed during an allocation. Release waits 10 minutes, then
+  holds the server with `DriveMissing` until a recovery operator records
+  `DisposeDrive` under that hold.
+- A drive is missing from discovery for less than 10 minutes, and release
+  wipes it without holding the server.
 - The wipe environment finds an unplanned device and stops before erasing.
 - A drive refuses its first method, and the next method's evidence closes the
   gate.
