@@ -38,7 +38,10 @@ STATE = os.environ.get('FLEET_BMC_STATE', '/var/lib/fleet-bmc')
 CREDENTIALS = os.environ.get('FLEET_BMC_CREDENTIALS', '/etc/fleet-bmc-credentials')
 LIBVIRT_URI = os.environ.get('FLEET_LIBVIRT_URI', 'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock')
 VIRSH = os.environ.get('FLEET_VIRSH', 'virsh')
-PORT = int(os.environ.get('FLEET_BMC_PORT', '8000'))
+PORT = int(os.environ.get('FLEET_BMC_PORT', '8443'))
+# The lab BMC serves TLS with a key the harness generates per run, so Fleet
+# workers reach it only over a connection pinned to that key.
+TLS_DIR = os.environ.get('FLEET_BMC_TLS', '/etc/fleet-bmc-tls')
 RESET_TYPES = ('On', 'ForceOff', 'ForceRestart')
 BOOT_TARGETS = ('None', 'Pxe', 'Hdd')
 BOOT_ENABLED = ('Disabled', 'Once')
@@ -376,7 +379,8 @@ def main():
         boot_ip = os.environ.get('FLEET_BOOT_IP', '')
         if not re.fullmatch(r'\d+\.\d+\.\d+\.\d+', boot_ip):
             raise SystemExit('FLEET_BOOT_IP must be the boot Service IPv4 address')
-        create_app(load_targets(), STATE, CREDENTIALS, boot_ip).run(host='0.0.0.0', port=PORT, threaded=True)
+        tls = (os.path.join(TLS_DIR, 'tls.crt'), os.path.join(TLS_DIR, 'tls.key'))
+        create_app(load_targets(), STATE, CREDENTIALS, boot_ip).run(host='0.0.0.0', port=PORT, threaded=True, ssl_context=tls)
     elif sys.argv[1:2] == ['fault']:
         fault_cli(sys.argv[2:])
     else:

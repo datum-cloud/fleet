@@ -104,7 +104,7 @@ func (c *Cell) Publish(ctx context.Context, object *unstructured.Unstructured, s
 	default:
 		return ErrNotDelivered
 	}
-	seen, stopped, err := store.Current(device)
+	seen, stopped, err := store.Peek(device)
 	if err != nil {
 		return err
 	}

@@ -193,7 +193,7 @@ func runner(t *testing.T, l *lab) *site.Runner {
 	return &site.Runner{
 		Site: "site-example-a", Store: store, Results: site.NewResults(store),
 		Access: site.RedfishAccess{Credentials: credentials{pin: l.pin()},
-			Targets: site.StaticTargets{device: {AssetID: "server-example-001", Endpoint: l.server.URL, SystemID: "A", SystemUUID: uuid, MAC: mac, DiskBytes: diskBytes, Console: filepath.Base(l.console)}}},
+			Targets: site.StaticTargets{device: {Device: "server-example-001", Endpoint: l.server.URL, SystemID: "A", SystemUUID: uuid, MAC: mac, DiskBytes: diskBytes, Console: filepath.Base(l.console)}}},
 		Kinds: map[string]site.Kind{"DeviceInstallation": Installation{config}, "DeviceWipe": Wipe{config}},
 		Poll:  10 * time.Millisecond,
 	}

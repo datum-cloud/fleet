@@ -20,19 +20,6 @@ spec:
   sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
   path: ./config/multiplane/karmada
 ---
-# Private custody namespace and the custodian identity on the host API.
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata: {name: fleet-host, namespace: flux-system}
-spec:
-  interval: 10m
-  retryInterval: 30s
-  timeout: 5m
-  prune: true
-  wait: true
-  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
-  path: ./config/multiplane/host
----
 # Handoff CRD and namespace on the Karmada API. prune false: never
 # garbage-collect a CRD with retained intent (as datum-cloud/infra karmada-crds).
 apiVersion: kustomize.toolkit.fluxcd.io/v1

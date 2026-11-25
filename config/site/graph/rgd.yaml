@@ -1,13 +1,13 @@
 # kro ResourceGraphDefinition for one selected local cell. For each delivered
-# MachineAllocationHandoff it creates one bounded worker Job with its own
+# assignment handoff it creates one bounded worker Job with its own
 # ServiceAccount, Role and RoleBinding, and nothing else. The shared site
 # services, their boot Service and the journal volume are owned by the cell's
 # Flux (config/site/services, config/site/base); this graph only references
 # them, so deleting the instance or the graph cannot delete them.
 #
 # Every resource here is derived execution state: none of it allocates, admits,
-# completes or releases anything. Management trusts only Karmada-reflected,
-# journal-derived handoff status.
+# completes or releases anything. The coordinator trusts only the
+# Karmada-reflected status the observer derives from the site store.
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
@@ -22,7 +22,6 @@ spec:
     group: site.fleet.datumapis.com
     spec:
       cell: string | required=true
-      scopedAsset: string | required=true
       # Workers are created only after dispatch is enabled. The acceptance uses
       # this to prove delivery and retention before any effect can start.
       dispatch: boolean | default=false
@@ -75,8 +74,9 @@ spec:
         kind: Deployment
         metadata:
           name: fleet-site-observer
-    # Delivered intent for this cell, watched by kro. The workers re-validate
-    # the cell, name and exact request; selection here is not authority.
+    # Delivered assignments for this cell, watched by kro. Fence report
+    # handoffs start no worker. The workers re-validate the cell, name and
+    # exact assignment; selection here is not authority.
     - id: handoffs
       externalRef:
         apiVersion: coordination.fleet.datumapis.com/v1alpha1
@@ -88,6 +88,9 @@ spec:
               - key: coordination.fleet.datumapis.com/cell
                 operator: In
                 values: ["${schema.spec.cell}"]
+              - key: coordination.fleet.datumapis.com/role
+                operator: In
+                values: [assignment]
     # Per-operation identity and policy: each worker may read exactly its own
     # handoff and nothing else. It has no status, list or Secret permission.
     # The fleet-site-kro-worker-identity admission policy enforces this shape.
@@ -142,10 +145,10 @@ spec:
           apiGroup: rbac.authorization.k8s.io
           kind: Role
           name: ${"w-" + handoff.metadata.name}
-    # One bounded Job per delivered operation. The Job controller retries and
-    # replaces Pods; every Pod replays the same retained operation from the
-    # journal. Job completion is not readiness: only the observer publishes,
-    # and only management validates the reflected result. The Job runs the
+    # One bounded Job per delivered assignment. The Job controller retries
+    # and replaces Pods; every Pod resumes the same assignment from the site
+    # store's journal. Job completion is not readiness: only the observer
+    # publishes, and only the coordinator accepts the reflected result. The Job runs the
     # runtime's image (the fleet-site-kro-worker-jobs admission policy also
     # requires it) and reaches the runtime only through its libvirt socket.
     - id: workers
@@ -172,13 +175,13 @@ spec:
           backoffLimit: 6
           activeDeadlineSeconds: 3600
           # A replacement Pod starts only after the previous Pod is terminal,
-          # so two workers for one operation never overlap; the journal lock
-          # is the second guard.
+          # so two workers for one operation never overlap; the Device's run
+          # lock is the second guard.
           podReplacementPolicy: Failed
           podFailurePolicy:
             rules:
-              # Exit 65: fenced, conflicting or invalid authority. Retrying
-              # cannot change it; fail without another attempt.
+              # Exit 65: a handoff not for this cell, or an assignment below
+              # the Device's stored fence. Retrying cannot change it.
               - action: FailJob
                 onExitCodes: {containerName: worker, operator: In, values: [65]}
               - action: Ignore
@@ -196,9 +199,13 @@ spec:
                 - name: worker
                   image: ${hypervisor.spec.template.spec.containers[0].image}
                   imagePullPolicy: IfNotPresent
-                  command: [fleet-multiplane, site-worker, --handoff, "${handoff.metadata.name}", --cell, "${schema.spec.cell}", --scoped-asset, "${schema.spec.scopedAsset}"]
+                  command: [fleet-multiplane, site-worker, --handoff, "${handoff.metadata.name}", --cell, "${schema.spec.cell}"]
                   env:
                     - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
+                    # The site's enrollment of the Devices it serves.
+                    - name: FLEET_SITE_ENROLLMENT
+                      valueFrom:
+                        configMapKeyRef: {name: fleet-site-enrollment, key: enrollment.json}
                     - {name: FLEET_BOOT_ORIGIN, value: "${'http://' + bootService.spec.clusterIP + ':8080'}"}
                     - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
                     - {name: FLEET_LIBVIRT_URI, value: "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock"}

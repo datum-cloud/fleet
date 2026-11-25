@@ -78,7 +78,7 @@ spec:
         - name: state
           persistentVolumeClaim: {claimName: fleet-site-state}
 ---
-# Boot service: journal read-only; writes only its own delivery evidence.
+# Boot service: site store read-only; writes only its own delivery evidence.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -123,7 +123,8 @@ spec:
         - name: state
           persistentVolumeClaim: {claimName: fleet-site-state}
 ---
-# Observer: the only handoff status writer, from the journal only.
+# Observer: the only handoff status writer. It reports the site store's fences
+# and results, and deletes a result once the coordinator answered it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -143,7 +144,7 @@ spec:
         - name: observer
           image: "${FLEET_SITE_IMAGE}"
           imagePullPolicy: IfNotPresent
-          command: [fleet-multiplane, site-observer, --cell, "${FLEET_CELL}", --scoped-asset, "${FLEET_SCOPED_ASSET}", --interval, 10s]
+          command: [fleet-multiplane, site-observer, --cell, "${FLEET_CELL}", --interval, 10s]
           env:
             - {name: FLEET_LOCAL_VM_ACCEL, value: tcg}
           securityContext:
@@ -155,7 +156,7 @@ spec:
             requests: {cpu: 20m, memory: 32Mi}
             limits: {memory: 128Mi}
           volumeMounts:
-            - {name: state, mountPath: /var/lib/fleet-local, subPath: journal, readOnly: true}
+            - {name: state, mountPath: /var/lib/fleet-local, subPath: journal}
       volumes:
         - name: state
           persistentVolumeClaim: {claimName: fleet-site-state}

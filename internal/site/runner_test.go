@@ -193,7 +193,7 @@ func newFixture(t *testing.T, uuid string) *fixture {
 		Site: "site-example-a", Store: store, Results: NewResults(store),
 		Access: &RedfishAccess{
 			Credentials: fixedCredentials{credential: bmcdiscovery.Credential{Username: "operator", Password: "synthetic-secret", Pin: b.pin()}, found: true},
-			Targets:     StaticTargets{testDevice: {AssetID: "server-example-001", Endpoint: b.server.URL, SystemID: "A", SystemUUID: testUUID, MAC: testMAC}},
+			Targets:     StaticTargets{testDevice: {Device: "server-example-001", Endpoint: b.server.URL, SystemID: "A", SystemUUID: testUUID, MAC: testMAC}},
 		},
 		Kinds: map[string]Kind{"DeviceInstallation": kind},
 		Poll:  10 * time.Millisecond,

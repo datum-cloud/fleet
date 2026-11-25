@@ -6,21 +6,10 @@ kind: Kustomization
 resources:
   - ../../base
   - bmc.yaml
+  - credentials.yaml
 patches:
   - target: {kind: ValidatingAdmissionPolicy, name: fleet-site-kro-worker-jobs}
     patch: |-
-      # Guard: fail the build if the shared policy's volume rule moved.
-      - op: test
-        path: /spec/validations/5/message
-        value: a worker Job may mount only the site journal claim and emptyDir
-      - op: replace
-        path: /spec/validations/5
-        value:
-          expression: >-
-            !has(variables.pod.volumes) || variables.pod.volumes.all(v,
-            (has(v.persistentVolumeClaim) && v.persistentVolumeClaim.claimName == 'fleet-site-state') || has(v.emptyDir) ||
-            (has(v.secret) && v.secret.secretName == 'fleet-site-bmc-credentials'))
-          message: a Redfish worker Job may mount only the site journal claim, emptyDir and the BMC credential
       # Redfish workers reach the lab hardware only through Redfish: no
       # libvirt socket mount and no libvirt URI, and the Redfish provider.
       - op: add
@@ -38,3 +27,24 @@ patches:
             c.env.exists(e, e.name == 'FLEET_SITE_PROVIDER' && has(e.value) && e.value == 'redfish') &&
             !c.env.exists(e, e.name == 'FLEET_LIBVIRT_URI'))
           message: a Redfish worker Job must select the Redfish provider and carry no libvirt URI
+  # kro may create, in fleet-site-credentials, only a per-operation Role
+  # that lists Secrets, bound to that operation's own ServiceAccount.
+  - target: {kind: ValidatingAdmissionPolicy, name: fleet-site-kro-worker-identity}
+    patch: |-
+      - op: test
+        path: /spec/validations/2/message
+        value: a worker Role may grant only get on its own handoff
+      - op: replace
+        path: /spec/matchConstraints/namespaceSelector/matchExpressions/0/values
+        value: [fleet-site, fleet-coordination, fleet-site-credentials]
+      - op: replace
+        path: /spec/validations/2
+        value:
+          expression: >-
+            variables.kind != 'roles' || (request.namespace == 'fleet-site-credentials' ?
+            (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == [''] &&
+            r.resources == ['secrets'] && r.verbs == ['list'] && !has(r.resourceNames))) :
+            (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == ['coordination.fleet.datumapis.com'] &&
+            r.resources == ['machineallocationhandoffs'] && r.verbs == ['get'] &&
+            has(r.resourceNames) && r.resourceNames == [variables.handoff])))
+          message: a worker Role may grant only get on its own handoff, or list on the site's BMC credentials

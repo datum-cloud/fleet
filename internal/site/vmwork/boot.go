@@ -108,7 +108,7 @@ func admission(store *site.Store, key, token string, now time.Time) (Boot, bool)
 		if record.Name != key || json.Unmarshal(record.Data, &boot) != nil || !boot.Open || boot.Closed || !now.Before(boot.Expires) || len(boot.Token) != 64 || subtle.ConstantTimeCompare([]byte(token), []byte(boot.Token)) != 1 {
 			continue
 		}
-		if fence, _, err := store.Current(record.Device); err == nil && fence == boot.Fence {
+		if fence, _, err := store.Peek(record.Device); err == nil && fence == boot.Fence {
 			return boot, true
 		}
 	}

@@ -1,0 +1,1 @@
+{"fleet-provider/synthetic-device-central-01": {"bmcEndpoint": "https://[2001:db8::51]", "systemUUID": "00000000-0000-4000-8000-000000000051", "bootMACAddress": "52:54:00:77:00:02", "bmcPublicKeySHA256": "5151515151515151515151515151515151515151515151515151515151515151", "disks": ["disk-0"]}}

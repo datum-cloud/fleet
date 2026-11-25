@@ -1,8 +1,10 @@
 # Redfish-mode dispatcher graph: the shared graph with the worker template
-# switched to the Redfish provider. Workers mount the journal, the boot
-# evidence and the lab console capture (all read-only except the journal) and
-# the synthetic BMC credential; they have no libvirt socket. The worker also
-# waits for the Flux-owned lab BMC through an externalRef.
+# switched to the Redfish workers. Workers mount the site store, the boot
+# evidence and the lab console capture (all read-only except the store); they
+# have no libvirt socket. Each worker reads its Device's own BMC credential
+# Secret, by the BMC discovery contract, from fleet-site-credentials; there
+# is no shared credential. The worker also waits for the Flux-owned lab BMC
+# through an externalRef.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -19,15 +21,16 @@ patches:
           - {name: FLEET_SITE_PROVIDER, value: redfish}
           - {name: FLEET_BOOT_ORIGIN, value: "${'http://' + bootService.spec.clusterIP + ':8080'}"}
           - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
-          - {name: FLEET_REDFISH_CREDENTIALS, value: /etc/fleet-redfish}
           - {name: FLEET_REDFISH_CONSOLE, value: /var/lib/fleet-lab-console}
-          # Explicit site enrollment: each physical asset ID maps to exactly one
-          # BMC endpoint, Redfish System (Id and UUID), NIC and console capture.
+          - {name: FLEET_SITE_CREDENTIALS_NAMESPACE, value: fleet-site-credentials}
+          - {name: FLEET_SITE_PROJECT, value: provider}
+          # Explicit site enrollment: each Device maps to exactly one BMC
+          # endpoint, Redfish System (Id and UUID), NIC and console capture.
           # The lab's dnsmasq hands out static leases, so DHCP is "static" and
           # targets carry no provisioning attachment. Only target A is
           # published as capacity; target B is enrolled to prove isolation.
           - name: FLEET_REDFISH_ENROLLMENT
-            value: '{"dhcp":"static","targets":[{"assetID":"fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-01","endpoint":"http://10.96.0.81:8000","systemID":"System-1","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a","mac":"52:54:00:77:01:0a","diskBytes":2147483648,"console":"target-a.log"},{"assetID":"fleet-provider/fleet.datumapis.com/Device/synthetic-device-central-02","endpoint":"http://10.96.0.81:8000","systemID":"System-2","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b","mac":"52:54:00:77:01:0b","diskBytes":2147483648,"console":"target-b.log"}]}'
+            value: '{"dhcp":"static","targets":[{"device":"fleet-provider/synthetic-device-central-01","endpoint":"https://10.96.0.81:8443","systemID":"System-1","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a","mac":"52:54:00:77:01:0a","diskBytes":2147483648,"console":"target-a.log"},{"device":"fleet-provider/synthetic-device-central-02","endpoint":"https://10.96.0.81:8443","systemID":"System-2","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b","mac":"52:54:00:77:01:0b","diskBytes":2147483648,"console":"target-b.log"}]}'
           - {name: HOME, value: /tmp}
       - op: replace
         path: /spec/resources/9/template/spec/template/spec/containers/0/volumeMounts
@@ -35,16 +38,59 @@ patches:
           - {name: state, mountPath: /var/lib/fleet-local, subPath: journal}
           - {name: state, mountPath: /var/lib/fleet-boot, subPath: boot-evidence, readOnly: true}
           - {name: state, mountPath: /var/lib/fleet-lab-console, subPath: lab-console, readOnly: true}
-          - {name: credentials, mountPath: /etc/fleet-redfish, readOnly: true}
           - {name: tmp, mountPath: /tmp}
-      - op: add
-        path: /spec/resources/9/template/spec/template/spec/volumes/-
-        value:
-          name: credentials
-          secret: {secretName: fleet-site-bmc-credentials, defaultMode: 0400}
       - op: add
         path: /spec/resources/9/template/metadata/annotations/fleet.datumapis.com~1bmc
         value: ${bmc.metadata.name}
+      # Each worker may read the BMC credential Secrets of the site, and
+      # chooses its Device's by the discovery contract's annotations.
+      - op: add
+        path: /spec/resources/-
+        value:
+          id: workerCredentialRoles
+          includeWhen:
+            - ${schema.spec.dispatch}
+          forEach:
+            - handoff: ${handoffs}
+          template:
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: Role
+            metadata:
+              name: ${"w-" + handoff.metadata.name}
+              namespace: fleet-site-credentials
+              labels: {app.kubernetes.io/name: fleet-site-worker}
+            rules:
+              - apiGroups: [""]
+                resources: [secrets]
+                verbs: [list]
+      - op: add
+        path: /spec/resources/-
+        value:
+          id: workerCredentialBindings
+          includeWhen:
+            - ${schema.spec.dispatch}
+          forEach:
+            - handoff: ${handoffs}
+          template:
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: RoleBinding
+            metadata:
+              name: ${"w-" + handoff.metadata.name}
+              namespace: fleet-site-credentials
+              labels: {app.kubernetes.io/name: fleet-site-worker}
+              annotations:
+                fleet.datumapis.com/roles: ${string(size(workerCredentialRoles))}
+            subjects:
+              - kind: ServiceAccount
+                name: ${"w-" + handoff.metadata.name}
+                namespace: fleet-site
+            roleRef:
+              apiGroup: rbac.authorization.k8s.io
+              kind: Role
+              name: ${"w-" + handoff.metadata.name}
+      - op: add
+        path: /spec/resources/9/template/metadata/annotations/fleet.datumapis.com~1credentials
+        value: ${string(size(workerCredentialBindings))}
       - op: add
         path: /spec/resources/-
         value:

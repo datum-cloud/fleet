@@ -4,3 +4,12 @@ resources:
   - site.yaml
   - kro.yaml
   - reconcilers.yaml
+# The local VM site's enrollment of the one synthetic Device it serves: the
+# identity its fixture Device records and the key digest fixture discovery
+# reports. Synthetic data only. The Redfish site enrolls its targets in its
+# graph instead.
+configMapGenerator:
+  - name: fleet-site-enrollment
+    namespace: fleet-site
+    files: [enrollment.json]
+    options: {disableNameSuffixHash: true}

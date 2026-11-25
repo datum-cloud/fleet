@@ -488,7 +488,7 @@ func OpenAdmission(store *site.Store, mac string, now time.Time) (Boot, bool, er
 		if json.Unmarshal(record.Data, &boot) != nil || boot.MAC != strings.ToLower(mac) || boot.Phase == "" || boot.Closed || !now.Before(boot.Expires) {
 			continue
 		}
-		fence, _, err := store.Current(record.Device)
+		fence, _, err := store.Peek(record.Device)
 		if err != nil {
 			return Boot{}, false, err
 		}

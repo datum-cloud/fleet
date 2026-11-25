@@ -15,5 +15,4 @@ metadata:
     fleet.datumapis.com/source-marker: "${FLEET_SOURCE_MARKER}"
 spec:
   cell: "${FLEET_CELL}"
-  scopedAsset: "${FLEET_SCOPED_ASSET}"
   dispatch: ${FLEET_SITE_DISPATCH}
