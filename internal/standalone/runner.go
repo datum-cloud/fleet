@@ -223,6 +223,9 @@ func (r Runner) release(ctx context.Context) error {
 			return err
 		}
 		if current != nil {
+			// A drive that cannot be cleaned keeps the release waiting. Name
+			// it if the wait times out, rather than reporting only a timeout.
+			var blocked error
 			if err := r.await(ctx, "the first allocation is Released", func() (bool, error) {
 				if err := r.Client.Get(ctx, client.ObjectKeyFromObject(current), current); err != nil {
 					return false, err
@@ -231,8 +234,14 @@ func (r Runner) release(ctx context.Context) error {
 				if errors.Is(err, allocation.ErrWipeFailed) {
 					return false, err
 				}
+				if errors.Is(err, allocation.ErrCleaningBlocked) {
+					blocked = err
+				}
 				return released, nil
 			}); err != nil {
+				if blocked != nil {
+					return fmt.Errorf("%w: %v", err, blocked)
+				}
 				return err
 			}
 		}

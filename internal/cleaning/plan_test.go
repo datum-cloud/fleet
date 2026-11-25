@@ -137,3 +137,41 @@ func withCapacity(d inventory.ObservedDrive, bytes int64) inventory.ObservedDriv
 	d.CapacityBytes = bytes
 	return d
 }
+
+// TestPlanRequiresThePinnedIdentity marks a pinned drive Uncovered when its
+// model, protocol, media type or capacity changed, even though a rule of the
+// pinned policy would still clean the drive it reports now.
+func TestPlanRequiresThePinnedIdentity(t *testing.T) {
+	overwrite := func(name string, protocol ops.DriveProtocol, media ops.MediaType) ops.CleaningRule {
+		return ops.CleaningRule{Name: name, Match: ops.DriveMatch{Protocol: protocol, MediaType: media}, Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: ops.VerifySpec{Mode: ops.VerifyFull}, TimePerTiB: hour}
+	}
+	policy := ops.CleaningPolicySpec{Assurance: ops.AssuranceClear, Rules: []ops.CleaningRule{
+		overwrite("nvme-ssd", ops.ProtocolNVMe, ops.MediaSSD), overwrite("nvme-hdd", ops.ProtocolNVMe, ops.MediaHDD), overwrite("sata-ssd", ops.ProtocolSATA, ops.MediaSSD)}}
+	pinned := nvme("SN-A", "EX1.3")
+	manifest, err := Manifest(policy, storage(pinned))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*inventory.ObservedDrive){
+		"unchanged":  func(*inventory.ObservedDrive) {},
+		"firmware":   func(d *inventory.ObservedDrive) { d.Firmware = "EX9.9" },
+		"model":      func(d *inventory.ObservedDrive) { d.Model = "OTHER-MODEL" },
+		"protocol":   func(d *inventory.ObservedDrive) { d.Protocol = "SATA" },
+		"media type": func(d *inventory.ObservedDrive) { d.MediaType = "HDD" },
+		"capacity":   func(d *inventory.ObservedDrive) { d.CapacityBytes = 1 << 30 },
+	} {
+		now := pinned
+		change(&now)
+		plan, err := Plan(policy, manifest, storage(now), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := ops.DriveState("")
+		if name != "unchanged" && name != "firmware" {
+			want = ops.DriveUncovered
+		}
+		if len(plan) != 1 || plan[0].State != want {
+			t.Errorf("%s: plan = %+v, want state %q", name, plan, want)
+		}
+	}
+}

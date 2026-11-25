@@ -593,6 +593,9 @@ type decision struct {
 	row     Rule
 	settles *ops.HeldOperationReference
 	extra   map[string]string
+	// hold, when set, admits the operation and ends it OutcomeUnknown at
+	// once with this reason. Nothing is delivered.
+	hold *Refusal
 }
 
 // admit evaluates pending candidates and admits at most one with a single
@@ -822,7 +825,16 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 			return fail(ReasonSnapshotInvalid, "%s", err.Error())
 		}
 	}
-	return decision{row: row, settles: settles, extra: extra}
+	var hold *Refusal
+	if kind.HoldOnAdmit != nil {
+		if refusal := kind.HoldOnAdmit(ctx, admission); refusal != nil {
+			if !c.Registry.Declared(kind.GVK.Kind, refusal.Reason, RaisedByCoordinator) {
+				return fail(ReasonUndeclared, "the %s hold reason %s is not declared", kind.GVK.Kind, refusal.Reason)
+			}
+			hold = refusal
+		}
+	}
+	return decision{row: row, settles: settles, extra: extra, hold: hold}
 }
 
 // wait returns Pending for queue rows and Failed otherwise.
@@ -974,6 +986,11 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 				hold.RetryAuthorizedBy = nil
 			}
 		}
+	}
+	// An outcome already unproven is held in the same update, so the
+	// operation is never active and never delivered.
+	if d.hold != nil {
+		c.holdUnknown(custody, *active, d.hold.Reason, d.hold.Message, nil)
 	}
 	outcome, err := c.writeCustody(ctx, custody)
 	outcome.RequeueAfter = 0

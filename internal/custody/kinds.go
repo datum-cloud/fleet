@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	metal "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/cleaning"
@@ -42,10 +43,13 @@ const (
 	// A wipe's plan is not what the shared planner makes from its
 	// allocation's pin and current discovery.
 	ReasonPlanMismatch = "PlanMismatch"
-	// A wipe plans a drive it cannot clean. These refuse the wipe until the
-	// recovery hold that #183 specifies replaces the refusal.
+	// A wipe plans a drive it cannot clean. The wipe is admitted and held
+	// at once: nothing is sent, and DisposeDrive settles the hold.
 	ReasonDriveMissing   = "DriveMissing"
 	ReasonDriveUncovered = "DriveUncovered"
+	// A DisposeDrive names a drive the held wipe did not hold for, or one
+	// discovery still reports.
+	ReasonDisposalInvalid = "DisposalInvalid"
 	// Reasons every site's install and wipe workers raise.
 	ReasonTargetUnsupported = "TargetUnsupported"
 	ReasonTargetDisks       = "TargetDisksUnknown"
@@ -151,9 +155,10 @@ func DeviceWipeKind() Kind {
 		Effectful: true,
 		// A wipe after release settles an installation hold. A held wipe is
 		// settled by a later wipe only after a DeviceRecovery with Retry.
-		Settles:   []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
-		Retryable: true,
-		Check:     checkWipePlan,
+		Settles:     []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
+		Retryable:   true,
+		Check:       checkWipePlan,
+		HoldOnAdmit: holdUncleanableDrive,
 		Reasons: append([]Reason{{Name: ReasonPlanMismatch, RaisedBy: RaisedByCoordinator}, {Name: ReasonDriveMissing, RaisedBy: RaisedByCoordinator},
 			{Name: ReasonDriveUncovered, RaisedBy: RaisedByCoordinator}}, workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.WipeEvidence) error {
@@ -180,14 +185,21 @@ func checkWipePlan(ctx context.Context, admission *Admission) *Refusal {
 		return refuse(ReasonPlanMismatch, "the wipe's allocation cannot be read: %v", err)
 	}
 	pin := allocation.Spec.CleaningPolicy
-	plan, err := cleaning.Plan(pin.Spec, allocation.Spec.Drives, cleaning.StorageOf(admission.Device), nil)
+	plan, err := cleaning.Plan(pin.Spec, allocation.Spec.Drives, cleaning.StorageOf(admission.Device), DisposedDriveNames(admission.Custody))
 	if err != nil {
 		return refuse(ReasonPlanMismatch, "the wipe cannot be planned: %v", err)
 	}
 	if wipe.Spec.Policy != pin.CleaningPolicyReference || wipe.Spec.Assurance != pin.Spec.Assurance || !equality.Semantic.DeepEqual(wipe.Spec.Drives, plan) {
 		return refuse(ReasonPlanMismatch, "the wipe's plan differs from the plan its allocation and current discovery give")
 	}
-	for _, d := range plan {
+	return nil
+}
+
+// holdUncleanableDrive holds a wipe whose checked plan has a drive it cannot
+// clean: Fleet cannot account for that drive's data, so the outcome is
+// already unknown. Nothing is sent.
+func holdUncleanableDrive(_ context.Context, admission *Admission) *Refusal {
+	for _, d := range admission.Operation.(*ops.DeviceWipe).Spec.Drives {
 		switch d.State {
 		case ops.DriveMissing:
 			return refuse(ReasonDriveMissing, "drive %s (%s) is pinned but discovery no longer reports it", d.Name, d.SerialNumber)
@@ -196,6 +208,23 @@ func checkWipePlan(ctx context.Context, admission *Admission) *Refusal {
 		}
 	}
 	return nil
+}
+
+// DisposedDriveNames returns the drives a Release holder records as disposed.
+func DisposedDriveNames(custody *ops.DeviceCustody) []string {
+	var names []string
+	if custody != nil && custody.Spec.Holder.Type == ops.HolderRelease {
+		for _, d := range custody.Spec.Holder.DisposedDrives {
+			names = append(names, d.Name)
+		}
+	}
+	return names
+}
+
+// drivesHold reports whether a hold is a wipe held for a drive it could not
+// clean, which only DisposeDrive or Retire settles.
+func drivesHold(hold *ops.RecoveryHold) bool {
+	return hold != nil && hold.Kind == "DeviceWipe" && (hold.Reason == ReasonDriveMissing || hold.Reason == ReasonDriveUncovered)
 }
 
 // DeviceRecoveryKind is the registry entry for DeviceRecovery. It sends
@@ -217,7 +246,8 @@ func DeviceRecoveryKind() Kind {
 		Deadline: RecoveryDeadline,
 		Variant:  func(operation ops.Operation) string { return string(operation.(*ops.DeviceRecovery).Spec.Decision) },
 		Reasons: []Reason{{Name: ReasonHoldMismatch, RaisedBy: RaisedByCoordinator}, {Name: ReasonNotSettleable, RaisedBy: RaisedByCoordinator}, {Name: ReasonNotRetryable, RaisedBy: RaisedByCoordinator},
-			{Name: ReasonRetryAuthorized, RaisedBy: RaisedByCoordinator}, {Name: ReasonDisposalRequired, RaisedBy: RaisedByCoordinator}, {Name: ReasonInvalidResolve, RaisedBy: RaisedByCoordinator}},
+			{Name: ReasonRetryAuthorized, RaisedBy: RaisedByCoordinator}, {Name: ReasonDisposalRequired, RaisedBy: RaisedByCoordinator}, {Name: ReasonInvalidResolve, RaisedBy: RaisedByCoordinator},
+			{Name: ReasonDisposalInvalid, RaisedBy: RaisedByCoordinator}},
 		// Retire and Resolve must work on a server whose BMC is
 		// unreachable. Settle and Retry still need current discovery.
 		SkipsDiscovery: func(operation ops.Operation) bool {
@@ -230,7 +260,7 @@ func DeviceRecoveryKind() Kind {
 		Apply: applyRecovery,
 		Clears: func(operation ops.Operation) *ops.HeldOperationReference {
 			spec := operation.(*ops.DeviceRecovery).Spec
-			if spec.Decision == ops.DecisionSettle || spec.Decision == ops.DecisionRetire {
+			if spec.Decision == ops.DecisionSettle || spec.Decision == ops.DecisionRetire || spec.Decision == ops.DecisionDisposeDrive {
 				return spec.Hold
 			}
 			return nil
@@ -274,6 +304,9 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 		}
 		return held.RecoverySettle(ctx, &RecoverySettleContext{Hold: *hold, Recovery: recovery, Device: admission.Device, Custody: custody, Now: admission.Now})
 	case ops.DecisionRetry:
+		if drivesHold(hold) {
+			return refuse(ReasonNotRetryable, "a retried wipe would plan the same drive; record DisposeDrive or retire the server")
+		}
 		if hold.RetryAuthorizedBy != nil {
 			return refuse(ReasonRetryAuthorized, "a retry is already authorized for this hold")
 		}
@@ -293,8 +326,46 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 			return refuse(ReasonDisposalRequired, "retiring from Release records how the disks were disposed of")
 		}
 		return nil
+	case ops.DecisionDisposeDrive:
+		_, refusal := disposedDrive(ctx, recovery, custody, admission)
+		return refusal
 	}
 	return refuse(ReasonCreatorNotPermitted, "unknown decision %q", spec.Decision)
+}
+
+// disposedDrive checks a DisposeDrive and returns the disposed drive's serial
+// number. The hold must be a wipe held for a drive it could not clean, the
+// holder Release, the drive one that wipe planned as Missing or Uncovered and
+// not already disposed of, and discovery must no longer report it: an
+// uncovered drive is pulled before its disposal is recorded.
+func disposedDrive(ctx context.Context, recovery *ops.DeviceRecovery, custody *ops.DeviceCustody, admission *Admission) (string, *Refusal) {
+	hold, drive := custody.Spec.RecoveryHold, recovery.Spec.Drive
+	switch {
+	case !drivesHold(hold):
+		return "", refuse(ReasonNotSettleable, "DisposeDrive settles only a wipe held for a drive it could not clean")
+	case custody.Spec.Holder.Type != ops.HolderRelease:
+		return "", refuse(ReasonDisposalInvalid, "DisposeDrive applies only while the server is in Release")
+	case drive == nil || drive.Reference == "":
+		return "", refuse(ReasonDisposalInvalid, "DisposeDrive names the drive and a disposal reference")
+	case slices.Contains(DisposedDriveNames(custody), drive.Name):
+		return "", refuse(ReasonDisposalInvalid, "drive %s is already disposed of", drive.Name)
+	}
+	if admission.Reader == nil {
+		return "", refuse(ReasonDisposalInvalid, "the held wipe could not be read")
+	}
+	wipe := &ops.DeviceWipe{}
+	if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: recovery.Namespace, Name: hold.Name}, wipe); err != nil || string(wipe.UID) != hold.UID {
+		return "", refuse(ReasonDisposalInvalid, "the held wipe could not be read")
+	}
+	i := slices.IndexFunc(wipe.Spec.Drives, func(d ops.PlannedDrive) bool { return d.Name == drive.Name && d.State != "" })
+	if i < 0 {
+		return "", refuse(ReasonDisposalInvalid, "the held wipe did not hold for drive %s", drive.Name)
+	}
+	serial := wipe.Spec.Drives[i].SerialNumber
+	if storage := cleaning.StorageOf(admission.Device); storage == nil || slices.ContainsFunc(storage.Drives, func(d inventory.ObservedDrive) bool { return d.SerialNumber == serial }) {
+		return "", refuse(ReasonDisposalInvalid, "discovery still reports drive %s (%s), or reports no drives; pull it first", drive.Name, serial)
+	}
+	return serial, nil
 }
 
 // resolveMatchesAllocations requires the holder a Resolve records to agree
@@ -353,6 +424,15 @@ func applyRecovery(ctx context.Context, apply *ApplyContext) (*ops.DeviceCustody
 	case ops.DecisionRetire:
 		spec.RecoveryHold = nil
 		spec.Holder = ops.Holder{Type: ops.HolderRetired}
+	case ops.DecisionDisposeDrive:
+		serial, refusal := disposedDrive(ctx, recovery, custody, &Admission{Operation: recovery, Custody: custody, Device: apply.Device, Registry: apply.Registry, Reader: apply.Reader, Now: apply.Now})
+		if refusal != nil {
+			return nil, refusal
+		}
+		drive := recovery.Spec.Drive
+		spec.RecoveryHold = nil
+		spec.Holder.DisposedDrives = append(slices.Clone(spec.Holder.DisposedDrives), ops.DisposedDrive{Name: drive.Name, SerialNumber: serial,
+			Method: drive.Method, Reference: drive.Reference, Recovery: recovery.Name})
 	case ops.DecisionResolve:
 		resolve := recovery.Spec.Resolve
 		spec.State = ops.CustodyVerified
@@ -395,6 +475,9 @@ func DefaultRules() []Rule {
 		{Kind: "DeviceRecovery", Variant: string(ops.DecisionRetry), Creator: CreatorStaff, Authority: AuthorityService, Hold: HoldRequired},
 		{Kind: "DeviceRecovery", Variant: string(ops.DecisionRetire), Creator: CreatorStaff, Authority: AuthorityService, Holders: []ops.HolderType{ops.HolderService, ops.HolderRelease}, Hold: HoldRequired},
 		{Kind: "DeviceRecovery", Variant: string(ops.DecisionResolve), Creator: CreatorStaff, Authority: AuthorityService, Custody: ops.CustodyUnverified, Hold: HoldIgnored},
+		// #183: DisposeDrive settles a wipe held for a drive it could not
+		// clean, only while the server is in Release.
+		{Kind: "DeviceRecovery", Variant: string(ops.DecisionDisposeDrive), Creator: CreatorStaff, Authority: AuthorityService, Holders: []ops.HolderType{ops.HolderRelease}, Hold: HoldRequired},
 	}
 }
 

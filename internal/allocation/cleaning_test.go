@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -311,5 +312,50 @@ func TestAWipeIsNeverPlannedForARecreatedDevice(t *testing.T) {
 	}
 	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: reference.Name}, &ops.DeviceWipe{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("no wipe may be created for a recreated Device: %v", err)
+	}
+}
+
+// TestAPulledDriveIsDisposedAndReleaseFinishes holds the server once a pinned
+// drive stays missing past the grace, and finishes release after staff record
+// the drive's disposal.
+func TestAPulledDriveIsDisposedAndReleaseFinishes(t *testing.T) {
+	e := startEnv(t)
+	device := e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := time.Duration(0)
+	e.allocator.CleaningGrace = &zero
+	pulled := e.device(device.Name)
+	pulled.Status.Discovery.Inventory.Systems[0].Storage.Drives = nil
+	if err := e.admin.Status().Update(e.ctx, pulled); err != nil {
+		t.Fatal(err)
+	}
+	var hold *ops.RecoveryHold
+	e.until("the release holds the server for the missing drive", func() bool {
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), allocation); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.allocator.Release(e.ctx, allocation, machine(1)); err != nil && !errors.Is(err, ErrCleaningBlocked) {
+			t.Logf("release: %v", err)
+		}
+		hold = e.custody(device.Name).Spec.RecoveryHold
+		return hold != nil && hold.Reason == custody.ReasonDriveMissing
+	})
+	staff := ops.Creator{Username: "staff-example@example.com", UID: uid(803)}
+	recovery := &ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "dispose-", Namespace: namespace}, Spec: ops.DeviceRecoverySpec{
+		OperationEnvelope: ops.OperationEnvelope{Creator: staff, DeviceRef: ops.DeviceReference{Name: device.Name, UID: string(device.UID)},
+			Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "drive pulled during the allocation"}}},
+		Decision: ops.DecisionDisposeDrive,
+		Hold:     &ops.HeldOperationReference{Kind: hold.Kind, Name: hold.Name, Fence: hold.Fence},
+		Evidence: ops.RecoveryEvidence{ObservedAt: metav1.Now(), Summary: "drive destroyed after removal"},
+		Drive:    &ops.DriveDisposal{Name: "disk-0", Method: ops.DisposalDestroyed, Reference: "ticket-example-1"},
+	}}
+	e.create(recovery)
+	e.release(allocation, machine(1))
+	state := e.custody(device.Name)
+	if state.Spec.Holder.Type != ops.HolderNone || len(state.Spec.Holder.DisposedDrives) != 0 {
+		t.Fatalf("after release: holder %+v", state.Spec.Holder)
 	}
 }
