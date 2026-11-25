@@ -26,6 +26,9 @@ import (
 // Path is where the handler is served.
 const Path = "/validate-operation-creator"
 
+// Resources are the operation plurals whose creator the webhook governs.
+var Resources = []string{"deviceinstallations", "devicewipes", "devicerecoveries"}
+
 // Handler admits creates whose creator is the caller and updates that leave
 // the creator unchanged.
 type Handler struct {

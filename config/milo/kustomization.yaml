@@ -6,3 +6,4 @@ resources:
   - ../components/service-catalog
   - ../components/inventory
   - ../components/registration-admission
+  - ../components/device-operations

@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"net/http"
 	"os"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,11 +14,13 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
-	"go.datum.net/fleet/internal/executor"
 	eventmanager "go.datum.net/fleet/internal/manager"
 	"go.datum.net/fleet/internal/projectdiscovery"
 	"go.datum.net/fleet/internal/staging"
@@ -42,6 +42,8 @@ type managerFlags struct {
 	syntheticConsumerProjectName                                string
 	syntheticProviderProjectName, syntheticPublishedClassName   string
 	syntheticPublishedProfileName                               string
+	syntheticCoordinatorTokenFile, syntheticReleaseTokenFile    string
+	syntheticEnrollmentFile, syntheticDeviceNamespace           string
 }
 
 func bindFlags(flags *flag.FlagSet) *managerFlags {
@@ -51,7 +53,11 @@ func bindFlags(flags *flag.FlagSet) *managerFlags {
 	flags.StringVar(&f.leaderElectionNamespace, "leader-election-namespace", "", "management-cluster namespace for the leader lease")
 	flags.BoolVar(&f.syntheticStaging, "synthetic-staging", false, "enable the explicit non-production synthetic allocation integration for one consumer project")
 	flags.StringVar(&f.syntheticProviderURL, "synthetic-provider-url", "http://127.0.0.1:8080", "synthetic provider runtime URL")
-	flags.StringVar(&f.syntheticTokenFile, "synthetic-provider-token-file", "", "file containing the synthetic provider bearer token")
+	flags.StringVar(&f.syntheticTokenFile, "synthetic-provider-token-file", "", "file containing the synthetic provider site's bearer token")
+	flags.StringVar(&f.syntheticCoordinatorTokenFile, "synthetic-coordinator-token-file", "", "file containing the custody coordinator's Milo token")
+	flags.StringVar(&f.syntheticReleaseTokenFile, "synthetic-release-token-file", "", "file containing the release controller's Milo token")
+	flags.StringVar(&f.syntheticEnrollmentFile, "synthetic-site-enrollment-file", "", "JSON enrollment of the Devices the synthetic provider site serves")
+	flags.StringVar(&f.syntheticDeviceNamespace, "synthetic-device-namespace", "default", "namespace of the Devices, capacities and allocations in the provider project")
 	flags.StringVar(&f.syntheticLocation, "synthetic-location", "us-central-1", "only location accepted by synthetic staging")
 	flags.StringVar(&f.syntheticConsumerProjectName, "synthetic-consumer-project-name", "", "the one engaged consumer project synthetic staging allocates for and publishes into")
 	flags.StringVar(&f.syntheticProviderProjectName, "synthetic-provider-project-name", "", "provider project used by synthetic cross-project staging")
@@ -68,13 +74,13 @@ func (f *managerFlags) validate() error {
 		return errors.Join(errFlags, errors.New("--config, --private-namespace, and --leader-election-namespace are required"))
 	}
 	if !f.syntheticStaging {
-		if f.syntheticConsumerProjectName != "" || f.syntheticProviderProjectName != "" || f.syntheticPublishedClassName != "" || f.syntheticPublishedProfileName != "" || f.syntheticTokenFile != "" {
+		if f.syntheticConsumerProjectName != "" || f.syntheticProviderProjectName != "" || f.syntheticPublishedClassName != "" || f.syntheticPublishedProfileName != "" || f.syntheticTokenFile != "" || f.syntheticCoordinatorTokenFile != "" || f.syntheticReleaseTokenFile != "" || f.syntheticEnrollmentFile != "" {
 			return errors.Join(errFlags, errors.New("synthetic flags require --synthetic-staging"))
 		}
 		return nil
 	}
-	if f.syntheticTokenFile == "" || f.syntheticConsumerProjectName == "" {
-		return errors.Join(errFlags, errors.New("--synthetic-staging requires --synthetic-provider-token-file and --synthetic-consumer-project-name"))
+	if f.syntheticTokenFile == "" || f.syntheticConsumerProjectName == "" || f.syntheticCoordinatorTokenFile == "" || f.syntheticReleaseTokenFile == "" || f.syntheticEnrollmentFile == "" {
+		return errors.Join(errFlags, errors.New("--synthetic-staging requires the provider site token, the coordinator and release controller tokens, the site enrollment, and --synthetic-consumer-project-name"))
 	}
 	if f.syntheticProviderProjectName != "" && (f.syntheticPublishedClassName == "" || f.syntheticPublishedProfileName == "") {
 		return errors.Join(errFlags, errors.New("--synthetic-provider-project-name requires the published class and profile names"))
@@ -98,6 +104,8 @@ func main() {
 	scheme := runtime.NewScheme()
 	must(clientgoscheme.AddToScheme(scheme))
 	must(fleetv1.AddToScheme(scheme))
+	must(inventory.AddToScheme(scheme))
+	must(ops.AddToScheme(scheme))
 	must(networkingv1.AddToScheme(scheme))
 	must(locationsv1alpha1.AddToScheme(scheme))
 	must(quotav1alpha1.AddToScheme(scheme))
@@ -142,26 +150,27 @@ func main() {
 	// handlers: no allocation, installation, provider call, or custody write.
 	// Only the requested-hardware projector writes.
 	if flags.syntheticStaging {
-		// Private lifecycle records are retained authority, not eventually
-		// consistent projections. Coordinator reads observe API-server state
-		// directly; the private cluster cache only delivers events.
-		privateRecordClient, err := ctrlclient.New(hostConfig, ctrlclient.Options{Scheme: scheme})
-		must(err)
-		provider, err := executor.NewHTTPClientFromTokenFile(flags.syntheticProviderURL, flags.syntheticTokenFile, &http.Client{Timeout: 30 * time.Second})
-		must(err)
-		coordinator, err := controller.NewCoordinator(privateRecordClient, flags.privateNamespace, provider, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
-		must(err)
 		consumerProject, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, cfg.AuthorityID, flags.syntheticConsumerProjectName)
 		must(err)
-		template := staging.Handler{Coordinator: coordinator, Location: flags.syntheticLocation}
+		// Devices, capacities, allocations and custody live in the provider
+		// project, which is the consumer project when nothing is published.
+		providerProject := consumerProject
 		if flags.syntheticProviderProjectName != "" {
-			providerProject, err := eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, cfg.AuthorityID, flags.syntheticProviderProjectName)
+			providerProject, err = eventmanager.ResolveProjectIdentity(ctx, rootMiloClient, cfg.AuthorityID, flags.syntheticProviderProjectName)
 			must(err)
 			if providerProject.SameLifetime(consumerProject) {
 				must(eventmanager.ErrEventWiringUnavailable)
 			}
-			providerConfig, err := projectdiscovery.ProjectRESTConfig(selection.ProjectConfig, providerProject.RouteName)
-			must(err)
+		}
+		providerConfig, err := projectdiscovery.ProjectRESTConfig(selection.ProjectConfig, providerProject.RouteName)
+		must(err)
+		allocator, loop, discover, err := syntheticCustody(ctx, scheme, providerConfig, flags)
+		must(err)
+		// Both need the leader lease: one coordinator writes custody.
+		must(mgr.GetLocalManager().Add(manager.RunnableFunc(loop.Run)))
+		must(mgr.GetLocalManager().Add(manager.RunnableFunc(discover)))
+		template := staging.Handler{Allocator: allocator, Location: flags.syntheticLocation}
+		if flags.syntheticProviderProjectName != "" {
 			providerCluster, err := ctrlcluster.New(providerConfig, func(options *ctrlcluster.Options) {
 				options.Scheme = scheme
 				options.Cache = eventmanager.ProjectCacheOptions()

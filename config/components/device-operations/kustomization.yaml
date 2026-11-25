@@ -1,6 +1,7 @@
-# Device custody and operations (#174 at d4d17f9). Implemented and inert: no
-# deployment root includes this component yet, so nothing serves these kinds
-# or calls the webhook.
+# Device custody and operations (#174 at d4d17f9): the kinds, their
+# ProtectedResources and roles, and the creator webhook, which the
+# fleet-registration server serves. config/milo includes all of it;
+# config/milo-synthetic includes everything but the webhook.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

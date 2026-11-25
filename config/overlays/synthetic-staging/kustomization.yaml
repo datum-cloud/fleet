@@ -34,6 +34,15 @@ patches:
         path: /spec/template/spec/containers/0/args/-
         value: --synthetic-published-profile-name=$(FLEET_PUBLISHED_PROFILE_NAME)
       - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-coordinator-token-file=/var/run/fleet/coordinator/token
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-release-token-file=/var/run/fleet/release/token
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --synthetic-site-enrollment-file=/etc/fleet/enrollment/enrollment.json
+      - op: add
         path: /spec/template/spec/containers/0/env
         value:
         - name: FLEET_CONSUMER_PROJECT_NAME
@@ -71,6 +80,51 @@ patches:
           name: synthetic-provider-token
           mountPath: /var/run/fleet/provider
           readOnly: true
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: custody-coordinator-token
+          mountPath: /var/run/fleet/coordinator
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: release-controller-token
+          mountPath: /var/run/fleet/release
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: synthetic-site-enrollment
+          mountPath: /etc/fleet/enrollment
+          readOnly: true
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: custody-coordinator-token
+          secret:
+            secretName: fleet-custody-coordinator-auth
+            defaultMode: 0440
+            items:
+              - key: token
+                path: token
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: release-controller-token
+          secret:
+            secretName: fleet-release-controller-auth
+            defaultMode: 0440
+            items:
+              - key: token
+                path: token
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: synthetic-site-enrollment
+          configMap:
+            name: fleet-synthetic-site-enrollment
+            defaultMode: 0440
       - op: add
         path: /spec/template/spec/volumes/-
         value:

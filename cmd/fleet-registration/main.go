@@ -23,6 +23,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"go.datum.net/fleet/internal/custody/creatorwebhook"
 )
 
 func main() {
@@ -74,7 +76,7 @@ func run(ctx context.Context, configFile, providers, cert, key, clientCA string)
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Addr: ":9443", Handler: http.MaxBytesHandler(handler.Transport(), 2<<20), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, TLSConfig: tlsConfig}
+	server := &http.Server{Addr: ":9443", Handler: http.MaxBytesHandler(handler.Transport(&creatorwebhook.Handler{Projects: projects, Resources: creatorwebhook.Resources}), 2<<20), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, TLSConfig: tlsConfig}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)

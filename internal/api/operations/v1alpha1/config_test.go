@@ -243,9 +243,17 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 	}
 }
 
-// TestComponentIsInert proves Increment A wires nothing: no root includes the
-// component, and the test-only kinds ship nowhere.
-func TestComponentIsInert(t *testing.T) {
+// TestComponentRoots pins where the component ships. The production Milo
+// root includes all of it, the creator webhook included; the synthetic Milo
+// root, which installs no webhook, includes the kinds, ProtectedResources and
+// roles; the standalone cluster includes only the CRDs. No other root
+// includes any of it, and the test-only kinds ship nowhere.
+func TestComponentRoots(t *testing.T) {
+	want := map[string][]string{
+		filepath.Join(configRoot, "milo", "kustomization.yaml"):           {"../components/device-operations"},
+		filepath.Join(configRoot, "milo-synthetic", "kustomization.yaml"): {"../components/device-operations/crds", "../components/device-operations/protected-resources", "../components/device-operations/roles"},
+		filepath.Join(configRoot, "standalone", "kustomization.yaml"):     {"../components/device-operations/crds"},
+	}
 	err := filepath.WalkDir(configRoot, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -257,8 +265,16 @@ func TestComponentIsInert(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if filepath.Base(path) == "kustomization.yaml" && strings.Contains(string(data), "device-operations") {
-			t.Errorf("%s includes the device-operations component", path)
+		if filepath.Base(path) == "kustomization.yaml" {
+			var included []string
+			for _, line := range strings.Split(string(data), "\n") {
+				if entry := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- ")); strings.Contains(entry, "device-operations") && !strings.HasPrefix(entry, "#") {
+					included = append(included, entry)
+				}
+			}
+			if !slices.Equal(included, want[path]) {
+				t.Errorf("%s includes %v of the device-operations component, want %v", path, included, want[path])
+			}
 		}
 		if strings.Contains(string(data), "DeviceTest") || strings.Contains(string(data), "devicetest") {
 			t.Errorf("%s ships a test-only kind", path)

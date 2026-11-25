@@ -113,3 +113,15 @@ func power(ctx context.Context, provider client.Reader, namespace string, machin
 	}
 	return unknown, nil
 }
+
+// Chain runs projectors in order and stops at the first that must retry.
+func Chain(handlers ...Handler) Handler {
+	return HandlerFunc(func(ctx context.Context, request ProjectRequest) Outcome {
+		for _, handler := range handlers {
+			if outcome := handler.ReconcileEvent(ctx, request); outcome.RetryError != nil || outcome.Deadline.Mode != DeadlineUnchanged {
+				return outcome
+			}
+		}
+		return Outcome{}
+	})
+}

@@ -52,9 +52,26 @@ func TestSyntheticFlagsRequireAndScopeStaging(t *testing.T) {
 	if err := parse(t, append(required, "--synthetic-staging", "--synthetic-provider-token-file=/t")...); !errors.Is(err, errFlags) {
 		t.Fatalf("staging without a consumer project: %v", err)
 	}
-	staging := append(required, "--synthetic-staging", "--synthetic-provider-token-file=/t", "--synthetic-consumer-project-name=consumer")
+	components := []string{"--synthetic-coordinator-token-file=/c", "--synthetic-release-token-file=/r", "--synthetic-site-enrollment-file=/e"}
+	staging := append(append(required, "--synthetic-staging", "--synthetic-provider-token-file=/t", "--synthetic-consumer-project-name=consumer"), components...)
 	if err := parse(t, staging...); err != nil {
 		t.Fatal(err)
+	}
+	// Each component authenticates as itself, and the site's Devices are
+	// configuration: staging refuses to start without any of them.
+	for _, missing := range components {
+		var args []string
+		for _, arg := range staging {
+			if arg != missing {
+				args = append(args, arg)
+			}
+		}
+		if err := parse(t, args...); !errors.Is(err, errFlags) {
+			t.Fatalf("staging without %s: %v", missing, err)
+		}
+		if err := parse(t, append(required, missing)...); !errors.Is(err, errFlags) {
+			t.Fatalf("%s without --synthetic-staging: %v", missing, err)
+		}
 	}
 	if err := parse(t, append(staging, "--synthetic-provider-project-name=provider-project")...); !errors.Is(err, errFlags) {
 		t.Fatalf("provider project without publication names: %v", err)
