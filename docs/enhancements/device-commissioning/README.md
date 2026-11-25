@@ -156,10 +156,17 @@ The creator must be the authenticated caller, as for operations.
 
 #### Qualification
 
-A plan is **qualified** when a `DeviceCommissioningPlanApproval` with the
-plan's name exists and all of these hold:
+No spec in this design holds an object UID; the one exception is each
+creator, the authenticated caller who created the record. A plan's
+incarnation is pinned by its approval's name, and its content by its
+generation and the digest of its spec.
 
-- The approval names the plan's UID and the digest of its spec.
+A plan is **qualified** when a `DeviceCommissioningPlanApproval` with the
+plan's approval name exists and all of these hold:
+
+- The approval's name is the plan's name and a suffix derived from the
+  plan's UID.
+- The approval names the plan's generation and the digest of its spec.
 - The approval's creator is not the plan's creator.
 - The approval's creator held the commissioning plan approver role when the
   approval was created. IAM checks this on create.
@@ -168,18 +175,22 @@ plan's name exists and all of these hold:
 apiVersion: fleet.datumapis.com/v1alpha1
 kind: DeviceCommissioningPlanApproval
 metadata:
-  name: example-2u-v3          # the plan's name, so a plan has at most one approval
+  # The plan's name and a suffix derived from the plan's UID, so a plan
+  # incarnation has at most one approval.
+  name: example-2u-v3-3f9c2a7d1e0b4c58
   namespace: default
 spec:
   creator: {username: approver@example.com, uid: 00000000-0000-4000-8000-000000000002}
   planRef:
     name: example-2u-v3
-    uid: 00000000-0000-4000-8000-000000000003
+    generation: 1
     digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 ```
 
 An approval is immutable. Deleting it revokes qualification. A plan deleted
-and created again has a new UID, so an old approval cannot qualify it.
+and created again under the same name has a new UID, and so another approval
+name. It inherits no approval, and nothing that names the old approval counts
+for it.
 
 #### The current plan
 
@@ -203,7 +214,7 @@ customer holds is not affected until it is released.
 
 | Creator | Authority | Required holder | Inputs |
 | --- | --- | --- | --- |
-| Staff commissioning operator | `serviceRequest` | `None`, or `Service` under a commissioning hold | The plan's name, UID and digest, and a copy of its content |
+| Staff commissioning operator | `serviceRequest` | `None`, or `Service` under a commissioning hold | The plan's name, generation and digest, its approval's name, and a copy of its content |
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -213,18 +224,22 @@ metadata:
   namespace: default
 spec:
   creator: {username: operator@example.com, uid: 00000000-0000-4000-8000-000000000004}
-  deviceRef: {name: server-example-001, uid: 00000000-0000-4000-8000-000000000005}
+  deviceRef: {name: server-example-001}
   authority:
     serviceRequest: {reason: New server intake}
   plan:
     name: example-2u-v3
-    uid: 00000000-0000-4000-8000-000000000003
+    generation: 1
     digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    approval: example-2u-v3-3f9c2a7d1e0b4c58
     content: {}              # an exact copy of the plan's content
 ```
 
 The operation carries a copy of the plan, so the site runs exactly the plan
 that admission checked, and the record keeps it after the plan is deleted.
+The approval's name pins the plan incarnation. The Device incarnation is
+pinned as the [device operations design](../device-operations/README.md)
+pins it for every operation.
 
 #### Admission
 
@@ -232,9 +247,9 @@ The shared admission rules apply. The kind adds these checks:
 
 | Reason | Refused when |
 | --- | --- |
-| `PlanNotQualified` | The named plan does not exist, has another UID, or is not qualified. |
+| `PlanNotQualified` | The named plan does not exist, the named approval is not the plan's, or the plan is not qualified. |
 | `PlanNotCurrent` | The plan is not the Device's current plan. |
-| `PlanMismatch` | The named digest is not the plan's, or the copied content differs from the plan's. |
+| `PlanMismatch` | The named generation or digest is not the plan's, or the copied content differs from the plan's. |
 | `DeviceNotActive` | The Device's inventory lifecycle is not `Active`. |
 
 Like every staff operation, a commissioning never queues.
@@ -277,7 +292,7 @@ A `Succeeded` commissioning records:
   MachineCapacity hardware;
 - each firmware component and its version;
 - the burn-in result and its start and end times, if burn-in ran; and
-- the plan's name, UID and digest.
+- the plan's name, generation and digest, and its approval's name.
 
 Evidence carries no credential and no raw BMC response.
 
@@ -298,7 +313,7 @@ every Device in the provider scope.
 
 | Condition | True when |
 | --- | --- |
-| `Prepared` | The Device's latest succeeded commissioning used its current plan, and its result is `Passed`. |
+| `Prepared` | The Device's latest succeeded commissioning named its current plan's generation, digest and approval, and its result is `Passed`. |
 | `Healthy` | `Prepared`, that commissioning ended within the plan's evidence lifetime, discovery is current, and discovery reports the serial number, system UUID and BMC key digest the commissioning recorded. |
 | `Available` | `Healthy`, custody is `Verified` with holder `None`, no active operation and no recovery hold, the allocation policy is `Enabled`, the Device is `Active`, the cleaning policy resolves, and the Device has no [duplicate](#duplicate-identity). |
 
