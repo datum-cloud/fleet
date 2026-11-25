@@ -13,7 +13,7 @@ import (
 // status.requestedHardware and the RequestResolved condition. The manager
 // builds one per engaged project, bound to that project's identity and
 // client. It reads the Machine and its MachineProfile and performs no
-// allocation, provider, quota, or private-record effect, so it runs in every
+// allocation, provider, quota, or custody effect, so it runs in every
 // configuration, including the default one whose lifecycle handlers are
 // blocked.
 type RequestedHardwareProjector struct {

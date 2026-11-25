@@ -129,9 +129,6 @@ func redfishConfig() (redfishwork.Config, redfish.Enrollment, redfishwork.BootSe
 	if err != nil {
 		return redfishwork.Config{}, redfish.Enrollment{}, none, err
 	}
-	if enrollment.DHCP != redfish.DHCPStatic {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, errors.New("this site supports only a static-DHCP enrollment")
-	}
 	console := os.Getenv("FLEET_REDFISH_CONSOLE")
 	if !filepath.IsAbs(console) {
 		return redfishwork.Config{}, redfish.Enrollment{}, none, errors.New("FLEET_REDFISH_CONSOLE must be an absolute path")
@@ -148,7 +145,8 @@ func redfishConfig() (redfishwork.Config, redfish.Enrollment, redfishwork.BootSe
 	if err != nil {
 		return redfishwork.Config{}, redfish.Enrollment{}, none, err
 	}
-	return redfishwork.Config{ConsoleRoot: console, BootRoot: boot}, enrollment, redfishwork.BootServer{Origin: origin, Artifacts: artifacts, Image: image, BootRoot: boot}, nil
+	synced := enrollment.DHCP == redfish.DHCPSynced
+	return redfishwork.Config{ConsoleRoot: console, BootRoot: boot, Synced: synced}, enrollment, redfishwork.BootServer{Origin: origin, Artifacts: artifacts, Image: image, BootRoot: boot, Enrollment: enrollment}, nil
 }
 
 // siteRunner is the site runner for this cell's mode. A Redfish worker reads
@@ -189,9 +187,9 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 	return runner, nil
 }
 
-// boot serves network boots, or probes that every closed admission is
-// denied.
-func boot(command, origin, extraMAC string) error {
+// boot serves network boots, the DHCP reservation feed, or probes that
+// every closed admission is denied.
+func boot(command, origin, extraMAC, syncToken string) error {
 	store, err := openStore()
 	if err != nil {
 		return err
@@ -202,6 +200,13 @@ func boot(command, origin, extraMAC string) error {
 			return err
 		}
 		server.Store = store
+		if command == "dhcp-feed" {
+			token, err := os.ReadFile(syncToken)
+			if err != nil {
+				return fmt.Errorf("DHCP synchronizer token: %w", err)
+			}
+			return server.ServeDHCP(strings.TrimSpace(string(token)))
+		}
 		if command == "boot-service" {
 			return server.Serve(vmwork.DefaultBootWindow * 2)
 		}
@@ -218,6 +223,9 @@ func boot(command, origin, extraMAC string) error {
 		}
 		fmt.Println(summary)
 		return nil
+	}
+	if command == "dhcp-feed" {
+		return errors.New("the DHCP reservation feed serves only a Redfish site")
 	}
 	vm, err := vmBootConfig()
 	if err != nil {

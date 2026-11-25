@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,8 +17,8 @@ import (
 
 // A project that is both the synthetic provider and a metal consumer engages
 // like any other consumer: requested hardware only, no lifecycle effect, no
-// MachineCapacity status write, and no cross-routing of the synthetic
-// consumer's private records into it. Readiness passes with it engaged.
+// MachineCapacity status write, and capacity events on its runtime resolve
+// only to its own Machines. Readiness passes with it engaged.
 func TestProviderProjectEngagesAsAnOrdinaryConsumer(t *testing.T) {
 	var capacityStatusWrites atomic.Int64
 	countCapacity := func(object client.Object) {
@@ -47,15 +46,11 @@ func TestProviderProjectEngagesAsAnOrdinaryConsumer(t *testing.T) {
 	})
 	consumer := newConsumer(t, "consumer", mcNamespace("consumer-ns"), mcMachine("m", "shared-uid", "general"), mcProfile("general", 1, 16, "64Gi"))
 	root := newMilo(t, map[string]types.UID{"provider": "provider-project", "consumer": "consumer-project"})
-	providerIdentity, consumerIdentity := root.identity(t, "provider"), root.identity(t, "consumer")
-	private := newPrivate(t)
-	// The synthetic consumer's retained custody names the provider project
-	// and the provider's MachineCapacity.
-	retainCustody(t, coordinatorFor(t, private), consumerIdentity, providerIdentity, getMachine(t, consumer, "m"), "consumer-ns")
+	providerIdentity := root.identity(t, "provider")
 
 	discovery := multiclustertest.NewProvider()
 	providerCluster := provider.NewCluster()
-	f := startFleet(t, discovery, root, private, SetupOptions{
+	f := startFleet(t, discovery, root, SetupOptions{
 		ProviderProject:  providerIdentity,
 		ProviderCluster:  providerCluster,
 		ProviderVerifier: root.verifierFor(providerIdentity),
@@ -72,25 +67,13 @@ func TestProviderProjectEngagesAsAnOrdinaryConsumer(t *testing.T) {
 		t.Fatalf("readiness with the provider among the consumers: %v", err)
 	}
 
-	// Deterministic routing: the consumer's custody reaches only the consumer,
-	// and a MachineCapacity event on the provider's engaged runtime resolves
-	// only to the provider's own Machines.
-	var secrets corev1.SecretList
-	if err := private.Client.List(context.Background(), &secrets, client.InNamespace(testPrivateNamespace)); err != nil || len(secrets.Items) != 1 {
-		t.Fatalf("custody records = %d, %v", len(secrets.Items), err)
-	}
-	routed := privateHandler(f.projects, testPrivateNamespace, func(m Mappers) func(context.Context, client.Object) []ProjectRequest { return m.RequestForPrivate })(context.Background(), &secrets.Items[0])
-	if len(routed) != 1 || routed[0].ClusterName != "consumer" {
-		t.Fatalf("custody routed to %#v, want only the consumer", routed)
-	}
+	// Deterministic routing: a MachineCapacity event on the provider's engaged
+	// runtime resolves only to the provider's own Machines.
 	providerRuntime := f.projects.Get("provider")
 	if providerRuntime == nil || !providerRuntime.Binding.Project.SameLifetime(providerIdentity) {
 		t.Fatal("the provider project is not engaged under its own identity")
 	}
-	if got := providerRuntime.Mappers.RequestForPrivate(context.Background(), &secrets.Items[0]); len(got) != 0 {
-		t.Fatalf("the provider runtime mapped the consumer's custody: %#v", got)
-	}
-	route := providerRuntime.Mappers.Route(RouteMachineCapacity, "")(context.Background(), getCapacity(t, provider))
+	route := providerRuntime.Mappers.Route(RouteMachineCapacity)(context.Background(), getCapacity(t, provider))
 	if len(route) != 1 {
 		t.Fatalf("capacity route = %#v", route)
 	}
@@ -112,10 +95,9 @@ func TestProviderProjectEngagesAsAnOrdinaryConsumer(t *testing.T) {
 	}
 	current := getCapacity(t, provider)
 	informer.EmitUpdate(current, current)
-	privateWrites := private.Writes()
 	consistently(t, "no lifecycle effect in the provider project", func() bool {
 		m := getMachine(t, provider, "m")
-		return capacityStatusWrites.Load() == 0 && private.Writes() == privateWrites && len(m.Finalizers) == 0 && len(m.Status.Conditions) == 1 && m.Status.Phase == "" && len(getCapacity(t, provider).Status.Conditions) == 0
+		return capacityStatusWrites.Load() == 0 && len(m.Finalizers) == 0 && len(m.Status.Conditions) == 1 && m.Status.Phase == "" && len(getCapacity(t, provider).Status.Conditions) == 0
 	})
 }
 

@@ -96,16 +96,8 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 	// Synthetic staging has no BMC discovery. The manager writes fixture
 	// discovery for the synthetic site's Devices instead.
 	discover := func(ctx context.Context) error {
-		for {
-			if err := fixture.Discover(ctx, provider, enrollment, time.Now()); err != nil && ctx.Err() == nil {
-				log.Info("fixture discovery incomplete", "error", err.Error())
-			}
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(time.Minute):
-			}
-		}
+		fixture.Run(ctx, provider, enrollment, time.Minute, func(err error) { log.Info("fixture discovery incomplete", "error", err.Error()) })
+		return nil
 	}
 	return allocator, loop, discover, nil
 }

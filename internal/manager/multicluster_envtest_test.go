@@ -14,14 +14,12 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	ctrlcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -90,7 +88,7 @@ func moduleDir(t *testing.T, module string) string {
 
 // newSyntheticMilo starts a root API server (Milo root and, here, also the
 // management cluster: Services, Projects, the provider project's
-// ServiceConsumers, the private namespace, and the lease) and one API server
+// ServiceConsumers, and the lease) and one API server
 // per consumer project serving every kind the manager watches.
 func newSyntheticMilo(t *testing.T, scheme *runtime.Scheme, consumerProjects ...string) *syntheticMilo {
 	t.Helper()
@@ -111,11 +109,8 @@ func newSyntheticMilo(t *testing.T, scheme *runtime.Scheme, consumerProjects ...
 		cfg := startAPIServer(t,
 			filepath.Join("..", "..", "config", "base", "crd", "metal.datumapis.com.yaml"),
 			filepath.Join(nso, "networking.datumapis.com_networks.yaml"),
-			filepath.Join(nso, "networking.datumapis.com_networkinterfaceclaims.yaml"),
-			filepath.Join(nso, "networking.datumapis.com_networkinterfaces.yaml"),
 			filepath.Join(miloCRDs, "quota", "quota.miloapis.com_resourceclaims.yaml"),
 			locations,
-			filepath.Join(catalog, "services.miloapis.com_serviceentitlements.yaml"),
 			filepath.Join(catalog, "services.miloapis.com_serviceavailabilities.yaml"),
 		)
 		routes[name] = reverseProxy(t, cfg)
@@ -163,8 +158,8 @@ func setConsumerPhase(t *testing.T, c client.Client, name string, phase services
 
 // TestManagerEndToEndAgainstSyntheticMilo runs the fleet-manager's production
 // milo-mode wiring with no provider: the service catalog consumer provider,
-// per-project identities resolved from Milo, per-project caches, the host
-// private-record cache, a real host lease, readiness, and the Machine CRD's
+// per-project identities resolved from Milo, per-project caches, a real host
+// lease, readiness, and the Machine CRD's
 // pinning rule. It needs envtest binaries (KUBEBUILDER_ASSETS) and is skipped
 // without them.
 func TestManagerEndToEndAgainstSyntheticMilo(t *testing.T) {
@@ -195,7 +190,6 @@ func TestManagerEndToEndAgainstSyntheticMilo(t *testing.T) {
 		}
 	}
 	must(rootClient.Create(ctx, &service))
-	must(rootClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testPrivateNamespace}}))
 	for _, name := range []string{"east", "west"} {
 		must(rootClient.Create(ctx, &resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: resourcemanagerv1alpha1.ProjectSpec{OwnerRef: resourcemanagerv1alpha1.OwnerReference{Kind: "Organization", Name: "synthetic-org"}}}))
 		sc := &servicesv1alpha1.ServiceConsumer{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "sc-" + name}}
@@ -234,14 +228,7 @@ func TestManagerEndToEndAgainstSyntheticMilo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateCluster, err := ctrlcluster.New(milo.root, func(o *ctrlcluster.Options) {
-		o.Scheme = scheme
-		o.Cache = PrivateCacheOptions(testPrivateNamespace)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	must(Setup(ctx, mgr, projects, SetupOptions{PrivateNamespace: testPrivateNamespace, PrivateCluster: privateCluster, HandlersFor: DefaultHandlers}))
+	must(Setup(ctx, mgr, projects, SetupOptions{HandlersFor: DefaultHandlers}))
 	go func() { _ = discovery.ProviderManager.Start(ctx) }()
 	go func() { _ = mgr.Start(ctx) }()
 
@@ -272,9 +259,6 @@ func TestManagerEndToEndAgainstSyntheticMilo(t *testing.T) {
 			func() error { return probeCheck(projectdiscovery.DiscoverySyncedCheck(discovery)) },
 			func() error { return probeCheck(projectdiscovery.ProjectsEngagedCheck(discovery, tracker)) },
 			func() error { return probeCheck(projectdiscovery.EngagedCachesSyncedCheck(tracker)) },
-			func() error {
-				return probeCheck(projectdiscovery.CacheSyncedCheck(projectdiscovery.NamedCache{Name: "private-records", Cache: privateCluster.GetCache()}))
-			},
 		} {
 			if err := check(); err != nil {
 				return err
@@ -287,11 +271,6 @@ func TestManagerEndToEndAgainstSyntheticMilo(t *testing.T) {
 		m := get(project, name)
 		if len(m.Finalizers) != 0 || m.Status.Phase != "" || len(m.Status.Conditions) > 1 {
 			t.Fatalf("%s/%s lifecycle effect without a provider: finalizers=%v status=%#v", project, name, m.Finalizers, m.Status)
-		}
-		var secrets corev1.SecretList
-		must(rootClient.List(ctx, &secrets, client.InNamespace(testPrivateNamespace)))
-		if len(secrets.Items) != 0 {
-			t.Fatalf("custody written without a provider: %d records", len(secrets.Items))
 		}
 	}
 

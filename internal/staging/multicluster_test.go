@@ -115,9 +115,6 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	// resolves, but nothing publishes the class there and staging is not
 	// installed for it.
 	other := stagingProject(t, "other", &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "other-ns"}}, claim(), sourceProfile.DeepCopyObject().(*fleetv1.MachineProfile))
-	private := multiclustertest.NewProject(t, "host", multiclustertest.ProjectOptions{Scheme: scheme, Indexes: indexes(t, func(ctx context.Context, indexer client.FieldIndexer) error {
-		return manager.RegisterPrivateIndexes(ctx, indexer, "fleet-system-private")
-	})})
 	root := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "datum-cloud", UID: "00000000-0000-4000-8000-000000000021"}},
 		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "consumer", UID: "00000000-0000-4000-8000-000000000022"}},
@@ -157,8 +154,6 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := manager.Setup(ctx, mgr, projects, manager.SetupOptions{
-		PrivateNamespace: "fleet-system-private",
-		PrivateCluster:   private.NewCluster(),
 		HandlersFor:      ConsumerHandlers(manager.DefaultHandlers, consumerProject, template),
 		ProviderProject:  providerProject,
 		ProviderCluster:  providerCluster,

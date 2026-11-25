@@ -52,7 +52,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 
 // startManager runs NewManager and the health checks over provider, with no
 // controllers. The host config is never contacted.
-func startManager(t *testing.T, provider multicluster.Provider, discovery Discovery, caches ...NamedCache) (mcmanager.Manager, *EngageTracker) {
+func startManager(t *testing.T, provider multicluster.Provider, discovery Discovery) (mcmanager.Manager, *EngageTracker) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	mgr, tracker, err := NewManager(&rest.Config{Host: "https://host.example.test"}, provider, manager.Options{
@@ -64,7 +64,7 @@ func startManager(t *testing.T, provider multicluster.Provider, discovery Discov
 		cancel()
 		t.Fatal(err)
 	}
-	if err := AddHealthChecks(mgr, discovery, tracker, caches...); err != nil {
+	if err := AddHealthChecks(mgr, discovery, tracker); err != nil {
 		cancel()
 		t.Fatal(err)
 	}
@@ -77,16 +77,11 @@ func startManager(t *testing.T, provider multicluster.Provider, discovery Discov
 	return mgr, tracker
 }
 
-type syncedCache struct{ synced bool }
-
-func (c *syncedCache) WaitForCacheSync(context.Context) bool { return c.synced }
-
 func TestReadinessRequiresDiscoveryEngagementAndSyncedCaches(t *testing.T) {
 	p := multiclustertest.NewProject(t, "ready", multiclustertest.ProjectOptions{Scheme: testScheme(t)})
 	provider := multiclustertest.NewProvider()
 	discovery := discoveryFunc{expected: []multicluster.ClusterName{"ready"}}
-	private := &syncedCache{}
-	mgr, tracker := startManager(t, provider, discovery, NamedCache{Name: "private-records", Cache: private})
+	mgr, tracker := startManager(t, provider, discovery)
 
 	if err := probe(DiscoverySyncedCheck(discoveryFunc{synced: errors.New("not synced")})); err == nil {
 		t.Fatal("unsynced discovery reported ready")
@@ -98,13 +93,6 @@ func TestReadinessRequiresDiscoveryEngagementAndSyncedCaches(t *testing.T) {
 	multiclustertest.Eventually(t, "engaged", func() bool { return probe(ProjectsEngagedCheck(discovery, tracker)) == nil })
 	if err := probe(EngagedCachesSyncedCheck(tracker)); err != nil {
 		t.Fatalf("synced caches reported unready: %v", err)
-	}
-	if err := probe(CacheSyncedCheck(NamedCache{Name: "private-records", Cache: private})); err == nil {
-		t.Fatal("an unsynced private cache reported ready")
-	}
-	private.synced = true
-	if err := probe(CacheSyncedCheck(NamedCache{Name: "private-records", Cache: private})); err != nil {
-		t.Fatal(err)
 	}
 
 	cl.FakeCache.Synced = ptr.To(false)

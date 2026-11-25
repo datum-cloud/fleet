@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.datum.net/fleet/internal/bootnet"
+	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
 )
 
@@ -34,9 +35,13 @@ type BootServer struct {
 	Artifacts string
 	// Image is the artifact manifest's identity.
 	Image string
-	// BootRoot holds the per-operation delivery evidence the workers read.
+	// BootRoot holds the per-operation delivery evidence and the retained
+	// DHCP reports the workers read.
 	BootRoot string
-	Now      func() time.Time
+	// Enrollment names each Device's provisioning attachment when the
+	// site's DHCP is synchronized.
+	Enrollment redfish.Enrollment
+	Now        func() time.Time
 }
 
 func (b BootServer) now() time.Time {
@@ -141,7 +146,7 @@ func (b BootServer) Handler() http.Handler {
 			}
 		}
 		dir := BootDirectory(b.BootRoot, boot.Operation)
-		if err := appendEvidence(dir, fmt.Sprintf("%s admitted %s bytes=%d\n", b.now().UTC().Format(time.RFC3339), name, size)); err != nil {
+		if err := appendEvidence(dir, "boot-delivery.log", fmt.Sprintf("%s admitted %s bytes=%d\n", b.now().UTC().Format(time.RFC3339), name, size)); err != nil {
 			deny()
 			return
 		}
@@ -158,16 +163,16 @@ func (b BootServer) Handler() http.Handler {
 		}
 		// A completed write is not proof that the client received it.
 		if err == nil && written == size {
-			_ = appendEvidence(dir, fmt.Sprintf("%s write-complete %s bytes=%d\n", b.now().UTC().Format(time.RFC3339), name, written))
+			_ = appendEvidence(dir, "boot-delivery.log", fmt.Sprintf("%s write-complete %s bytes=%d\n", b.now().UTC().Format(time.RFC3339), name, written))
 		}
 	})
 }
 
-func appendEvidence(dir, line string) error {
+func appendEvidence(dir, name, line string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(filepath.Join(dir, "boot-delivery.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}

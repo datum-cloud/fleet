@@ -74,8 +74,8 @@ type ConsumerDiscovery struct {
 // When a project leaves the consumer set the manager stops reconciling it and
 // nothing else happens: no Fleet record is deleted, no custody is released,
 // no status is rewritten, and no ServiceConsumer finalizer gates deletion.
-// Retained custody for a departed project stays in the private namespace and
-// resumes if the project is engaged again.
+// Retained custody for a departed project is left as it is and resumes if
+// the project is engaged again.
 //
 // tune, if given, adjusts the provider-project manager's options (tests use
 // it to relax controller-name validation).

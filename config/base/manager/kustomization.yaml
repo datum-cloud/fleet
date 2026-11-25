@@ -5,6 +5,4 @@ resources:
   - service-account.yaml
   - leader-election-role.yaml
   - leader-election-role-binding.yaml
-  - private-record-role.yaml
-  - private-record-role-binding.yaml
   - deployment.yaml

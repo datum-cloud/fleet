@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,24 +17,12 @@ import (
 // Project identity is configuration supplied by the authenticated cache owner,
 // never read from a consumer object.
 type Mappers struct {
-	// Reader is the routed Milo project cache. It is retained as the field name
-	// used by the initial same-cache tests and callers.
-	Reader client.Reader
-	// PrivateReader is the management-cluster cache for service-owned Secrets.
-	// When nil, private lookups fall back to Reader for standalone tests only.
-	PrivateReader    client.Reader
-	Project          controller.ProjectIdentity
-	PrivateNamespace string
+	// Reader is the routed Milo project cache.
+	Reader  client.Reader
+	Project controller.ProjectIdentity
 	// ClusterName is the engaged project cluster stamped on every request
 	// these mappers produce.
 	ClusterName multicluster.ClusterName
-}
-
-func (m Mappers) privateReader() client.Reader {
-	if m.PrivateReader != nil {
-		return m.PrivateReader
-	}
-	return m.Reader
 }
 
 func (m Mappers) RequestFor(_ context.Context, object client.Object) []ProjectRequest {
@@ -84,56 +71,6 @@ func (m Mappers) claimsForMachineE(ctx context.Context, object client.Object) ([
 			return nil, listErr
 		}
 		result = append(result, claims...)
-	}
-	// Already-bound claims are routed by the exact retained Machine UID even if
-	// the class selector or labels changed.
-	retained, listErr := m.claimsForPrivateFieldE(ctx, IndexPrivateMachineUID, string(machine.UID))
-	if listErr != nil {
-		return nil, listErr
-	}
-	result = append(result, retained...)
-	return uniqueRequests(result), nil
-}
-
-func (m Mappers) RequestForPrivate(_ context.Context, object client.Object) []ProjectRequest {
-	secret, ok := object.(*corev1.Secret)
-	if !ok {
-		return nil
-	}
-	route, ok := routePrivate(secret, m.PrivateNamespace)
-	if !ok || !m.Project.SameLifetime(controller.ProjectIdentity{AuthorityID: route.ConsumerProject.AuthorityID, UID: route.ConsumerProject.UID}) || route.ClaimNamespace == "" || route.ClaimName == "" {
-		return nil
-	}
-	return []ProjectRequest{{ClusterName: m.ClusterName, AuthorityID: route.ConsumerProject.AuthorityID, ProjectUID: route.ConsumerProject.UID, Namespace: route.ClaimNamespace, Name: route.ClaimName, UID: route.ClaimUID}}
-}
-
-// RequestForPrivateInstallation routes retained installation work without
-// consulting the public Installation. The operation record is the recovery
-// authority after that public lifetime has ended.
-func (m Mappers) RequestForPrivateInstallation(_ context.Context, object client.Object) []ProjectRequest {
-	secret, ok := object.(*corev1.Secret)
-	if !ok || secret.Labels["fleet.datumapis.com/private-record"] != "installation" {
-		return nil
-	}
-	route, ok := routePrivate(secret, m.PrivateNamespace)
-	if !ok || !m.Project.SameLifetime(controller.ProjectIdentity{AuthorityID: route.ConsumerProject.AuthorityID, UID: route.ConsumerProject.UID}) || route.InstallationNamespace == "" || route.InstallationName == "" || route.InstallationUID == "" {
-		return nil
-	}
-	return []ProjectRequest{{ClusterName: m.ClusterName, AuthorityID: route.ConsumerProject.AuthorityID, ProjectUID: route.ConsumerProject.UID, Namespace: route.InstallationNamespace, Name: route.InstallationName, UID: route.InstallationUID}}
-}
-
-func (m Mappers) claimsForPrivateFieldE(ctx context.Context, field, value string) ([]ProjectRequest, error) {
-	reader := m.privateReader()
-	if reader == nil || m.PrivateNamespace == "" || value == "" {
-		return nil, ErrEventWiringUnavailable
-	}
-	var secrets corev1.SecretList
-	if err := reader.List(ctx, &secrets, client.InNamespace(m.PrivateNamespace), client.MatchingFields{field: value}); err != nil {
-		return nil, err
-	}
-	var result []ProjectRequest
-	for i := range secrets.Items {
-		result = append(result, m.RequestForPrivate(ctx, &secrets.Items[i])...)
 	}
 	return uniqueRequests(result), nil
 }

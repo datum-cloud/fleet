@@ -1,11 +1,9 @@
 package manager
 
 import (
-	"bytes"
 	"encoding/json"
 	"reflect"
 
-	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -26,19 +24,6 @@ func PrimaryPredicate() predicate.Predicate {
 				return true
 			}
 			return e.ObjectOld.GetUID() != e.ObjectNew.GetUID() || e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() || !reflect.DeepEqual(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()) || !reflect.DeepEqual(e.ObjectOld.GetAnnotations(), e.ObjectNew.GetAnnotations()) || !reflect.DeepEqual(e.ObjectOld.GetFinalizers(), e.ObjectNew.GetFinalizers()) || !reflect.DeepEqual(e.ObjectOld.GetDeletionTimestamp(), e.ObjectNew.GetDeletionTimestamp())
-		},
-	}
-}
-
-func PrivateRecordPredicate() predicate.Predicate {
-	return predicate.Funcs{
-		CreateFunc:  func(event.CreateEvent) bool { return true },
-		DeleteFunc:  func(event.DeleteEvent) bool { return true },
-		GenericFunc: func(event.GenericEvent) bool { return true },
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldSecret, oldOK := e.ObjectOld.(*corev1.Secret)
-			newSecret, newOK := e.ObjectNew.(*corev1.Secret)
-			return !oldOK || !newOK || oldSecret.UID != newSecret.UID || oldSecret.Type != newSecret.Type || !reflect.DeepEqual(oldSecret.Labels, newSecret.Labels) || !reflect.DeepEqual(oldSecret.DeletionTimestamp, newSecret.DeletionTimestamp) || !bytes.Equal(oldSecret.Data["record.json"], newSecret.Data["record.json"])
 		},
 	}
 }

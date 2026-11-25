@@ -7,12 +7,10 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	ctrlcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -80,7 +78,6 @@ func TestConsumerDiscoveryIgnoresOtherServicesAndBacksOff(t *testing.T) {
 		service.Spec.Owner.ProducerProjectRef.Name = "datum-cloud"
 		must(rootClient.Create(ctx, service))
 	}
-	must(rootClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testPrivateNamespace}}))
 	consumer := func(name, service, project string) {
 		sc := &servicesv1alpha1.ServiceConsumer{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: name}}
 		sc.Spec.ServiceRef.Name, sc.Spec.ConsumerProjectRef.Name = service, project
@@ -104,12 +101,7 @@ func TestConsumerDiscoveryIgnoresOtherServicesAndBacksOff(t *testing.T) {
 		Controller: config.Controller{SkipNameValidation: ptr.To(true)},
 	}, projects.Aware)
 	must(err)
-	privateCluster, err := ctrlcluster.New(milo.root, func(o *ctrlcluster.Options) {
-		o.Scheme = scheme
-		o.Cache = PrivateCacheOptions(testPrivateNamespace)
-	})
-	must(err)
-	must(Setup(ctx, mgr, projects, SetupOptions{PrivateNamespace: testPrivateNamespace, PrivateCluster: privateCluster, HandlersFor: DefaultHandlers}))
+	must(Setup(ctx, mgr, projects, SetupOptions{HandlersFor: DefaultHandlers}))
 	baseTotal, baseErrors := consumerReconciles(t)
 	go func() { _ = discovery.ProviderManager.Start(ctx) }()
 	go func() { _ = mgr.Start(ctx) }()

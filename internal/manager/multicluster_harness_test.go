@@ -32,10 +32,7 @@ import (
 	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
 )
 
-const (
-	testAuthority        = "milo-synthetic"
-	testPrivateNamespace = "fleet-system-private"
-)
+const testAuthority = "milo-synthetic"
 
 func fleetScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -67,18 +64,6 @@ func newConsumer(t *testing.T, name string, objects ...client.Object) *multiclus
 		StatusSubresources: []client.Object{&fleetv1.Machine{}, &fleetv1.Installation{}, &fleetv1.MachineClass{}, &fleetv1.MachineProfile{}, &fleetv1.MachineCapacity{}},
 		Indexes:            collect(t, RegisterProjectIndexes),
 		CountReadsOf:       &fleetv1.Machine{},
-	})
-}
-
-// newPrivate is the management cluster's private record namespace.
-func newPrivate(t *testing.T, objects ...client.Object) *multiclustertest.Project {
-	t.Helper()
-	return multiclustertest.NewProject(t, "host", multiclustertest.ProjectOptions{
-		Scheme:  fleetScheme(t),
-		Objects: objects,
-		Indexes: collect(t, func(ctx context.Context, indexer client.FieldIndexer) error {
-			return RegisterPrivateIndexes(ctx, indexer, testPrivateNamespace)
-		}),
 	})
 }
 
@@ -126,7 +111,6 @@ func (m *rootMilo) verifierFor(expected controller.ProjectIdentity) ProjectVerif
 }
 
 type fleet struct {
-	private  *multiclustertest.Cluster
 	manager  mcmanager.Manager
 	projects *Projects
 	tracker  *projectdiscovery.EngageTracker
@@ -136,7 +120,7 @@ type fleet struct {
 
 // startFleet runs the production wiring (projectdiscovery.NewManager,
 // NewProjects, Setup) over provider. The host config is never contacted.
-func startFleet(t *testing.T, provider multicluster.Provider, root *rootMilo, private *multiclustertest.Project, options SetupOptions) *fleet {
+func startFleet(t *testing.T, provider multicluster.Provider, root *rootMilo, options SetupOptions) *fleet {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	projects := NewProjects(root.resolver(), root.verifierFor)
@@ -151,9 +135,6 @@ func startFleet(t *testing.T, provider multicluster.Provider, root *rootMilo, pr
 		cancel()
 		t.Fatal(err)
 	}
-	options.PrivateNamespace = testPrivateNamespace
-	privateCluster := private.NewCluster()
-	options.PrivateCluster = privateCluster
 	if options.HandlersFor == nil {
 		options.HandlersFor = DefaultHandlers
 	}
@@ -161,15 +142,10 @@ func startFleet(t *testing.T, provider multicluster.Provider, root *rootMilo, pr
 		cancel()
 		t.Fatal(err)
 	}
-	f := &fleet{private: privateCluster, manager: mgr, projects: projects, tracker: tracker, cancel: cancel, done: make(chan error, 1)}
+	f := &fleet{manager: mgr, projects: projects, tracker: tracker, cancel: cancel, done: make(chan error, 1)}
 	go func() { f.done <- mgr.Start(ctx) }()
 	t.Cleanup(f.stop)
 	return f
-}
-
-func (f *fleet) privateInformer(t *testing.T) (*multiclustertest.Informer, error) {
-	t.Helper()
-	return f.private.FakeCache.InformerFor(corev1.SchemeGroupVersion.WithKind("Secret"))
 }
 
 func (f *fleet) stop() {

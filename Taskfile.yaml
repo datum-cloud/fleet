@@ -40,14 +40,6 @@ tasks:
     cmds:
       - ./hack/multiplane/test-harness.sh
 
-  local-vm:acceptance:
-    desc: Single-plane local VM PXE acceptance with explicit TCG in the task-owned Colima profile.
-    env:
-      DOCKER_CONTEXT: colima-fleet-acceptance-tcg
-      FLEET_LOCAL_VM_ACCEL: tcg
-    cmds:
-      - bash hack/local-vm/run.sh
-
   manifests:validate:
     desc: Render and validate the production Fleet and Milo manifest roots.
     cmds:

@@ -32,7 +32,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-denials|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one attempt, for fault injection")
@@ -48,6 +48,7 @@ func run() error {
 	system := fs.String("system", "", "enrolled Redfish System Id (redfish-probe)")
 	uuid := fs.String("uuid", "", "enrolled Redfish System UUID (redfish-probe)")
 	pin := fs.String("pin", "", "the BMC's approved key digest; the probe connects only to that key (redfish-probe)")
+	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -74,8 +75,8 @@ func run() error {
 		}
 		fmt.Println(image)
 		return nil
-	case "boot-service", "boot-denials":
-		return boot(os.Args[1], *origin, *extraMAC)
+	case "boot-service", "boot-denials", "dhcp-feed":
+		return boot(os.Args[1], *origin, *extraMAC, *syncToken)
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")

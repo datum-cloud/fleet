@@ -4,36 +4,20 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
-	"go.datum.net/fleet/internal/controller"
-	"go.datum.net/fleet/internal/milo"
 )
 
 const (
-	IndexClaimUID                         = "fleet.manager/claim-uid"
-	IndexClaimClassName                   = "fleet.manager/claim-class-name"
-	IndexClaimProfileName                 = "fleet.manager/claim-profile-name"
-	IndexClaimLocationName                = "fleet.manager/claim-location-name"
-	IndexClaimInstallation                = "fleet.manager/claim-installation-name"
-	IndexClaimNetwork                     = "fleet.manager/claim-network"
-	IndexInstallationClaim                = "fleet.manager/installation-claim-name"
-	IndexClassMachineNS                   = "fleet.manager/class-machine-namespace"
-	IndexPrivateClaimUID                  = "fleet.manager/private-claim-uid"
-	IndexPrivateNamespaceUID              = "fleet.manager/private-namespace-uid"
-	IndexPrivateMachineUID                = "fleet.manager/private-machine-uid"
-	IndexPrivateInstallUID                = "fleet.manager/private-installation-uid"
-	IndexPrivateNetworkUID                = "fleet.manager/private-network-uid"
-	IndexPrivateNICClaimUID               = "fleet.manager/private-nic-claim-uid"
-	IndexPrivateInterfaceUID              = "fleet.manager/private-interface-uid"
-	IndexPrivateAuthorityID               = "fleet.manager/private-authority-record-id"
-	IndexPrivateQuotaUID                  = "fleet.manager/private-quota-uid"
-	IndexPrivateEntitlementUID            = "fleet.manager/private-entitlement-uid"
-	IndexPrivatePendingEntitlementProject = "fleet.manager/private-pending-entitlement-project"
-	IndexPrivateConsumerProject           = "fleet.manager/private-consumer-project"
+	IndexClaimUID          = "fleet.manager/claim-uid"
+	IndexClaimClassName    = "fleet.manager/claim-class-name"
+	IndexClaimProfileName  = "fleet.manager/claim-profile-name"
+	IndexClaimLocationName = "fleet.manager/claim-location-name"
+	IndexClaimInstallation = "fleet.manager/claim-installation-name"
+	IndexClaimNetwork      = "fleet.manager/claim-network"
+	IndexInstallationClaim = "fleet.manager/installation-claim-name"
+	IndexClassMachineNS    = "fleet.manager/class-machine-namespace"
 )
 
 type indexRegistration struct {
@@ -88,35 +72,6 @@ func RegisterProjectIndexes(ctx context.Context, indexer client.FieldIndexer) er
 	})
 }
 
-// RegisterPrivateIndexes installs reverse edges on the management-cluster
-// cache. Only service-owned Secrets in privateNamespace enter this cache.
-func RegisterPrivateIndexes(ctx context.Context, indexer client.FieldIndexer, privateNamespace string) error {
-	return registerIndexes(ctx, indexer, []indexRegistration{
-		{&corev1.Secret{}, IndexPrivateClaimUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return one(string(route.ClaimUID)) })},
-		{&corev1.Secret{}, IndexPrivateNamespaceUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.NamespaceUIDs) })},
-		{&corev1.Secret{}, IndexPrivateMachineUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.MachineUIDs) })},
-		{&corev1.Secret{}, IndexPrivateInstallUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return one(string(route.InstallationUID)) })},
-		{&corev1.Secret{}, IndexPrivateNetworkUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.NetworkUIDs) })},
-		{&corev1.Secret{}, IndexPrivateNICClaimUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.NICClaimUIDs) })},
-		{&corev1.Secret{}, IndexPrivateInterfaceUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.InterfaceUIDs) })},
-		{&corev1.Secret{}, IndexPrivateAuthorityID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uniqueStrings(route.AuthorityRecordIDs) })},
-		{&corev1.Secret{}, IndexPrivateQuotaUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.QuotaUIDs) })},
-		{&corev1.Secret{}, IndexPrivateEntitlementUID, privateMetadataIndexer(privateNamespace, func(route controller.PrivateRecordRoute) []string { return uidStrings(route.EntitlementUIDs) })},
-		{&corev1.Secret{}, IndexPrivatePendingEntitlementProject, pendingEntitlementProjects(privateNamespace)},
-		{&corev1.Secret{}, IndexPrivateConsumerProject, func(object client.Object) []string {
-			secret, ok := object.(*corev1.Secret)
-			if !ok || !trustedPrivateSecret(secret, privateNamespace) {
-				return nil
-			}
-			route, ok := routePrivate(secret, privateNamespace)
-			if !ok {
-				return nil
-			}
-			return one(projectIndexKey(route.ConsumerProject.AuthorityID, route.ConsumerProject.UID))
-		}},
-	})
-}
-
 func registerIndexes(ctx context.Context, indexer client.FieldIndexer, registrations []indexRegistration) error {
 	for _, registration := range registrations {
 		if err := indexer.IndexField(ctx, registration.object, registration.field, registration.fn); err != nil {
@@ -126,94 +81,9 @@ func registerIndexes(ctx context.Context, indexer client.FieldIndexer, registrat
 	return nil
 }
 
-func privateMetadataIndexer(namespace string, selectValues func(controller.PrivateRecordRoute) []string) client.IndexerFunc {
-	return func(object client.Object) []string {
-		secret, ok := object.(*corev1.Secret)
-		if !ok {
-			return nil
-		}
-		route, ok := routePrivate(secret, namespace)
-		if !ok {
-			return nil
-		}
-		return uniqueStrings(selectValues(route))
-	}
-}
-
-func trustedPrivateSecret(secret *corev1.Secret, namespace string) bool {
-	_, ok := routePrivate(secret, namespace)
-	return ok
-}
-
-func trustedMiloAuthoritySecret(secret *corev1.Secret, namespace string) bool {
-	return trustedPrivateSecret(secret, namespace) && secret.Type == corev1.SecretType("fleet.datumapis.com/private-milo-authority")
-}
-
-func pendingEntitlementProjects(privateNamespace string) client.IndexerFunc {
-	return func(object client.Object) []string {
-		secret, ok := object.(*corev1.Secret)
-		if !ok || !trustedMiloAuthoritySecret(secret, privateNamespace) {
-			return nil
-		}
-		route, ok := routePrivate(secret, privateNamespace)
-		if !ok || !route.PendingEntitlement {
-			return nil
-		}
-		return one(projectIndexKey(route.ConsumerProject.AuthorityID, route.ConsumerProject.UID))
-	}
-}
-
 func one(value string) []string {
 	if value == "" {
 		return nil
 	}
 	return []string{value}
-}
-
-func uidStrings(values []types.UID) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value != "" {
-			result = append(result, string(value))
-		}
-	}
-	return uniqueStrings(result)
-}
-
-func uniqueStrings(values []string) []string {
-	seen := map[string]struct{}{}
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-// routePrivate routes only records whose owner validated the complete record.
-// An undecodable record routes nowhere, even by its claim-uid label: the label
-// carries no project or claim name, and routing never trusts an unvalidated
-// field. Removing such a record therefore wakes no claim; the operator
-// procedure deletes the Machine before removing its records.
-func routePrivate(secret *corev1.Secret, privateNamespace string) (controller.PrivateRecordRoute, bool) {
-	if secret == nil || privateNamespace == "" || secret.Namespace != privateNamespace {
-		return controller.PrivateRecordRoute{}, false
-	}
-	if route, err := controller.DecodePrivateLifecycleRoute(secret); err == nil {
-		return route, route.ConsumerProject.Valid()
-	}
-	if route, err := milo.DecodePrivateAuthorityRoute(secret); err == nil {
-		return route, route.ConsumerProject.Valid()
-	}
-	return controller.PrivateRecordRoute{}, false
-}
-
-func projectIndexKey(authorityID string, projectUID types.UID) string {
-	return authorityID + "/" + string(projectUID)
 }

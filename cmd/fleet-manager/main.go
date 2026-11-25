@@ -35,7 +35,7 @@ import (
 const leaseName = "fleet-manager.fleet.datumapis.com"
 
 type managerFlags struct {
-	configPath, privateNamespace, leaderElectionNamespace string
+	configPath, leaderElectionNamespace string
 
 	syntheticStaging                                            bool
 	syntheticProviderURL, syntheticTokenFile, syntheticLocation string
@@ -49,7 +49,6 @@ type managerFlags struct {
 func bindFlags(flags *flag.FlagSet) *managerFlags {
 	f := &managerFlags{}
 	flags.StringVar(&f.configPath, "config", "", "path to the FleetManager configuration file (authority and project discovery)")
-	flags.StringVar(&f.privateNamespace, "private-namespace", "", "service-controlled private record namespace")
 	flags.StringVar(&f.leaderElectionNamespace, "leader-election-namespace", "", "management-cluster namespace for the leader lease")
 	flags.BoolVar(&f.syntheticStaging, "synthetic-staging", false, "enable the explicit non-production synthetic allocation integration for one consumer project")
 	flags.StringVar(&f.syntheticProviderURL, "synthetic-provider-url", "http://127.0.0.1:8080", "synthetic provider runtime URL")
@@ -70,8 +69,8 @@ var errFlags = errors.New("invalid fleet-manager flags")
 
 // validate checks flag combinations before any cluster is contacted.
 func (f *managerFlags) validate() error {
-	if f.configPath == "" || f.privateNamespace == "" || f.leaderElectionNamespace == "" {
-		return errors.Join(errFlags, errors.New("--config, --private-namespace, and --leader-election-namespace are required"))
+	if f.configPath == "" || f.leaderElectionNamespace == "" {
+		return errors.Join(errFlags, errors.New("--config and --leader-election-namespace are required"))
 	}
 	if !f.syntheticStaging {
 		if f.syntheticConsumerProjectName != "" || f.syntheticProviderProjectName != "" || f.syntheticPublishedClassName != "" || f.syntheticPublishedProfileName != "" || f.syntheticTokenFile != "" || f.syntheticCoordinatorTokenFile != "" || f.syntheticReleaseTokenFile != "" || f.syntheticEnrollmentFile != "" {
@@ -139,12 +138,7 @@ func main() {
 	for _, runnable := range selection.LocalRunnables {
 		must(mgr.GetLocalManager().Add(runnable))
 	}
-	privateCluster, err := ctrlcluster.New(hostConfig, func(options *ctrlcluster.Options) {
-		options.Scheme = scheme
-		options.Cache = eventmanager.PrivateCacheOptions(flags.privateNamespace)
-	})
-	must(err)
-	setupOptions := eventmanager.SetupOptions{PrivateNamespace: flags.privateNamespace, PrivateCluster: privateCluster, HandlersFor: eventmanager.DefaultHandlers}
+	setupOptions := eventmanager.SetupOptions{HandlersFor: eventmanager.DefaultHandlers}
 
 	// Without --synthetic-staging every project gets blocked lifecycle
 	// handlers: no allocation, installation, provider call, or custody write.
@@ -186,7 +180,7 @@ func main() {
 	must(eventmanager.Setup(ctx, mgr, projects, setupOptions))
 	// Readiness reflects discovery and cache health only. It never depends on
 	// a provider integration, and passing it enables no lifecycle effect.
-	must(projectdiscovery.AddHealthChecks(mgr, selection.Discovery, tracker, projectdiscovery.NamedCache{Name: "private-records", Cache: privateCluster.GetCache()}))
+	must(projectdiscovery.AddHealthChecks(mgr, selection.Discovery, tracker))
 
 	group, ctx := errgroup.WithContext(ctx)
 	for _, runnable := range selection.SideRunnables {

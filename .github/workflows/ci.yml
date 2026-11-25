@@ -38,7 +38,7 @@ jobs:
     - run: ./hack/test-run-standalone-smoke.sh
     - run: ./hack/validate-doc-links.sh
     - run: ./hack/multiplane/test-harness.sh
-    - run: shellcheck -S warning hack/multiplane/*.sh hack/local-vm/run.sh hack/local-vm/start-libvirt hack/local-vm/site-runtime
+    - run: shellcheck -S warning hack/multiplane/*.sh hack/local-vm/start-libvirt hack/local-vm/site-runtime
   standalone-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 35

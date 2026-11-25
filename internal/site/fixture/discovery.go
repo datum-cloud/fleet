@@ -53,3 +53,18 @@ func Discover(ctx context.Context, api client.Client, enrollment Enrollment, now
 	}
 	return failed
 }
+
+// Run writes fixture discovery now and then every interval, as BMC
+// discovery refreshes a real Device, until the context ends.
+func Run(ctx context.Context, api client.Client, enrollment Enrollment, interval time.Duration, onError func(error)) {
+	for {
+		if err := Discover(ctx, api, enrollment, time.Now()); err != nil && ctx.Err() == nil && onError != nil {
+			onError(err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
+	}
+}

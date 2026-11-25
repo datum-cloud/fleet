@@ -8,64 +8,85 @@ import (
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"go.datum.net/fleet/internal/controller"
+	"go.datum.net/fleet/internal/allocation"
 )
 
-func quotaScheme(t *testing.T) *runtime.Scheme {
+func quotaClient(t *testing.T) client.Client {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := quotav1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	return scheme
+	// Like the API server, the fake assigns a UID on create.
+	return fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
+		object.SetUID(types.UID("uid-" + object.GetName()))
+		return api.Create(ctx, object, options...)
+	}}).Build()
 }
 
-func TestResourceClaimExactnessAndLostCreateRecovery(t *testing.T) {
+var machine = allocation.Machine{Project: "consumer-example", ProjectUID: "00000000-0000-4000-8000-000000000501", Namespace: "default", Name: "allocation", UID: "00000000-0000-4000-8000-000000000601"}
+
+// TestTheQuotaClaimIsNamedFromTheMachineAndGrantedOnce creates the claim
+// once, retries find it by name, and only a granted claim reserves quota.
+func TestTheQuotaClaimIsNamedFromTheMachineAndGrantedOnce(t *testing.T) {
 	ctx := context.Background()
-	project := controller.ProjectIdentity{AuthorityID: "milo", RouteName: "consumer", UID: "project-uid"}
-	intent := QuotaIntentFor(project, "default", "allocation", "claim-uid")
-	kube := fake.NewClientBuilder().WithScheme(quotaScheme(t)).Build()
-	manager := ResourceClaimManager{}
-	if _, granted, err := manager.Acquire(ctx, kube, intent); !errors.Is(err, ErrQuotaPending) || granted {
-		t.Fatalf("initial acquire = %v, %v", granted, err)
+	api := quotaClient(t)
+	quota := Quota{Clients: func(allocation.Machine) (client.Client, error) { return api, nil }}
+	if _, err := quota.Acquire(ctx, machine); !errors.Is(err, ErrQuotaPending) {
+		t.Fatalf("first acquire = %v", err)
 	}
-	var created quotav1alpha1.ResourceClaim
-	if err := kube.Get(ctx, client.ObjectKey{Namespace: intent.Namespace, Name: intent.Name}, &created); err != nil {
+	// A retry after a lost create response finds the same claim.
+	if _, err := quota.Acquire(ctx, machine); !errors.Is(err, ErrQuotaPending) {
+		t.Fatalf("retried acquire = %v", err)
+	}
+	var claims quotav1alpha1.ResourceClaimList
+	if err := api.List(ctx, &claims); err != nil || len(claims.Items) != 1 || claims.Items[0].Name != ClaimName(machine) {
+		t.Fatalf("claims = %+v, %v", claims.Items, err)
+	}
+	claim := &claims.Items[0]
+	claim.Generation = 2
+	claim.Status.ObservedGeneration = 2
+	claim.Status.Conditions = []metav1.Condition{{Type: quotav1alpha1.ResourceClaimGranted, Status: metav1.ConditionTrue}}
+	if err := api.Update(ctx, claim); err != nil {
 		t.Fatal(err)
 	}
-	if len(created.OwnerReferences) != 0 {
-		t.Fatalf("quota claim has owner references: %#v", created.OwnerReferences)
+	if name, err := quota.Acquire(ctx, machine); err != nil || name != ClaimName(machine) {
+		t.Fatalf("granted acquire = %q, %v", name, err)
 	}
-	created.UID, created.Generation = "quota-uid", 2
-	created.Status.ObservedGeneration = 2
-	created.Status.Conditions = []metav1.Condition{{Type: quotav1alpha1.ResourceClaimGranted, Status: metav1.ConditionTrue}}
-	if err := kube.Update(ctx, &created); err != nil {
+	// Another Machine with the same UID in another project gets its own name.
+	other := machine
+	other.ProjectUID = "00000000-0000-4000-8000-000000000502"
+	if ClaimName(other) == ClaimName(machine) {
+		t.Fatal("two projects share a quota claim name")
+	}
+	claim.Spec.Requests[0].Amount = 2
+	if err := api.Update(ctx, claim); err != nil {
 		t.Fatal(err)
 	}
-	hold, granted, err := manager.Acquire(ctx, kube, intent)
-	if err != nil || !granted || hold.UID != "quota-uid" {
-		t.Fatalf("recovered hold = %#v, %v, %v", hold, granted, err)
-	}
-	created.Spec.Requests[0].Amount = 2
-	if err := kube.Update(ctx, &created); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := manager.Acquire(ctx, kube, intent); !errors.Is(err, ErrAuthorityInvalid) {
-		t.Fatalf("forged claim error = %v", err)
+	if _, err := quota.Acquire(ctx, machine); !errors.Is(err, ErrQuotaInvalid) {
+		t.Fatalf("altered claim = %v", err)
 	}
 }
 
-func TestResourceClaimMissingIsPendingNotSettlement(t *testing.T) {
-	project := controller.ProjectIdentity{AuthorityID: "milo", RouteName: "consumer", UID: "project-uid"}
-	intent := QuotaIntentFor(project, "default", "allocation", "claim-uid")
-	kube := fake.NewClientBuilder().WithScheme(quotaScheme(t)).Build()
-	_, _, err := (ResourceClaimManager{}).Acquire(context.Background(), kube, intent)
-	if !errors.Is(err, ErrQuotaPending) {
-		t.Fatalf("missing ResourceClaim = %v, want pending", err)
+// TestReleaseIsObservedNotAssumed deletes the claim and reports it released
+// only once it is gone.
+func TestReleaseIsObservedNotAssumed(t *testing.T) {
+	ctx := context.Background()
+	api := quotaClient(t)
+	quota := Quota{Clients: func(allocation.Machine) (client.Client, error) { return api, nil }}
+	_, _ = quota.Acquire(ctx, machine)
+	if err := quota.Release(ctx, machine, "fleet-machine-other"); !errors.Is(err, ErrQuotaInvalid) {
+		t.Fatalf("release of another claim = %v", err)
 	}
-	// ResourceClaimManager deliberately has no Settle method. Only an injected
-	// QuotaCustodian can produce the acknowledgment consumed by release.
+	if err := quota.Release(ctx, machine, ClaimName(machine)); !errors.Is(err, ErrQuotaPending) {
+		t.Fatalf("release while deleting = %v", err)
+	}
+	if err := quota.Release(ctx, machine, ClaimName(machine)); err != nil {
+		t.Fatalf("release after deletion = %v", err)
+	}
 }

@@ -18,7 +18,7 @@ func parse(t *testing.T, args ...string) error {
 	return f.validate()
 }
 
-var required = []string{"--config=/etc/fleet/manager/config.yaml", "--private-namespace=fleet-system-private", "--leader-election-namespace=fleet-system"}
+var required = []string{"--config=/etc/fleet/manager/config.yaml", "--leader-election-namespace=fleet-system"}
 
 func TestDefaultConfigurationHasNoSyntheticIntegration(t *testing.T) {
 	if err := parse(t, required...); err != nil {
@@ -38,7 +38,7 @@ func TestDefaultConfigurationHasNoSyntheticIntegration(t *testing.T) {
 }
 
 func TestRemovedSingleProjectFlagsAreRejected(t *testing.T) {
-	for _, removed := range []string{"--project-name=consumer", "--authority-id=milo", "--project-kubeconfig=/k", "--enable-requested-hardware-projector=false"} {
+	for _, removed := range []string{"--project-name=consumer", "--authority-id=milo", "--project-kubeconfig=/k", "--enable-requested-hardware-projector=false", "--private-namespace=fleet-system-private"} {
 		if err := parse(t, append(required, removed)...); err == nil {
 			t.Fatalf("%s was accepted", removed)
 		}

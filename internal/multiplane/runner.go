@@ -175,18 +175,7 @@ func Coordinate(ctx context.Context, c Config, onError func(error)) error {
 	}
 	loop := &delivery.Loop{Client: api, Coordinator: coord, Namespace: DeviceNamespace, OnError: onError,
 		Courier: &delivery.Courier{Client: api, Registry: registry, Coordinator: coord, Sites: sites, Namespace: DeviceNamespace}}
-	go func() {
-		for {
-			if err := fixture.Discover(ctx, discovery, c.Enrollment, time.Now()); err != nil && ctx.Err() == nil {
-				onError(fmt.Errorf("fixture discovery: %w", err))
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(30 * time.Second):
-			}
-		}
-	}()
+	go fixture.Run(ctx, discovery, c.Enrollment, 30*time.Second, func(err error) { onError(fmt.Errorf("fixture discovery: %w", err)) })
 	return loop.Run(ctx)
 }
 

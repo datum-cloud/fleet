@@ -37,7 +37,6 @@ spec:
           # blocked and only requested hardware is resolved.
           args:
             - --config=/etc/fleet/manager/config.yaml
-            - --private-namespace=fleet-system-private
             - --leader-election-namespace=fleet-system
           ports:
             - name: health

@@ -2,70 +2,112 @@ package milo
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"go.datum.net/fleet/internal/allocation"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
-	"go.datum.net/fleet/internal/controller"
 )
 
-type ResourceClaimManager struct{}
+var _ allocation.Quota = Quota{}
 
-func QuotaIntentFor(project controller.ProjectIdentity, namespace, claimName string, claimUID types.UID) QuotaIntent {
-	return QuotaIntent{ConsumerProject: project, Namespace: namespace, ClaimName: claimName, ClaimUID: claimUID, ResourceType: MachineQuotaResource, Amount: 1, Name: "fleet-machine-" + shortDigest(string(project.UID)+"/"+string(claimUID))}
+// Quota reserves one Machine's quota as a Milo ResourceClaim in the Machine's
+// namespace. The claim is named from the Machine UID within its consumer
+// project, as its allocation is, so a retried create collides.
+type Quota struct {
+	// Clients returns the client of the Machine's consumer project.
+	Clients func(machine allocation.Machine) (client.Client, error)
 }
 
-func (ResourceClaimManager) Acquire(ctx context.Context, kube client.Client, intent QuotaIntent) (QuotaHold, bool, error) {
-	if kube == nil || !intent.ConsumerProject.Valid() || intent.Namespace == "" || intent.ClaimName == "" || intent.ClaimUID == "" || intent.ResourceType != MachineQuotaResource || intent.Amount != 1 || intent.Name != QuotaIntentFor(intent.ConsumerProject, intent.Namespace, intent.ClaimName, intent.ClaimUID).Name {
-		return QuotaHold{}, false, ErrAuthorityInvalid
+// ClaimName is the only name a Machine's quota claim may have.
+func ClaimName(machine allocation.Machine) string {
+	sum := sha256.Sum256([]byte(string(machine.ProjectUID) + "/" + string(machine.UID)))
+	return "fleet-machine-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func desired(machine allocation.Machine) *quotav1alpha1.ResourceClaim {
+	return &quotav1alpha1.ResourceClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: ClaimName(machine), Namespace: machine.Namespace, Labels: map[string]string{
+			"fleet.datumapis.com/quota-claim": "machine", "fleet.datumapis.com/machine-uid": string(machine.UID), "fleet.datumapis.com/consumer-project-uid": string(machine.ProjectUID),
+		}},
+		Spec: quotav1alpha1.ResourceClaimSpec{
+			ConsumerRef: quotav1alpha1.ConsumerRef{APIGroup: "resourcemanager.miloapis.com", Kind: "Project", Name: machine.Project},
+			Requests:    []quotav1alpha1.ResourceRequest{{ResourceType: MachineQuotaResource, Amount: 1}},
+			ResourceRef: &quotav1alpha1.UnversionedObjectReference{APIGroup: fleetv1.GroupVersion.Group, Kind: "Machine", Namespace: machine.Namespace, Name: machine.Name},
+		},
 	}
-	key := client.ObjectKey{Namespace: intent.Namespace, Name: intent.Name}
+}
+
+func matches(machine allocation.Machine, claim *quotav1alpha1.ResourceClaim) bool {
+	want := desired(machine)
+	return claim.UID != "" && claim.Labels["fleet.datumapis.com/machine-uid"] == want.Labels["fleet.datumapis.com/machine-uid"] &&
+		claim.Labels["fleet.datumapis.com/consumer-project-uid"] == want.Labels["fleet.datumapis.com/consumer-project-uid"] &&
+		claim.Spec.ConsumerRef == want.Spec.ConsumerRef && claim.Spec.ResourceRef != nil && *claim.Spec.ResourceRef == *want.Spec.ResourceRef &&
+		len(claim.Spec.Requests) == 1 && claim.Spec.Requests[0] == want.Spec.Requests[0]
+}
+
+// Acquire creates the claim once and returns its name when Milo granted it.
+func (q Quota) Acquire(ctx context.Context, machine allocation.Machine) (string, error) {
+	api, err := q.Clients(machine)
+	if err != nil {
+		return "", err
+	}
 	claim := &quotav1alpha1.ResourceClaim{}
-	if err := kube.Get(ctx, key, claim); apierrors.IsNotFound(err) {
-		claim = desiredResourceClaim(intent)
-		if err := kube.Create(ctx, claim); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				return ResourceClaimManager{}.Acquire(ctx, kube, intent)
-			}
-			return QuotaHold{}, false, fmt.Errorf("%w: create ResourceClaim: %v", ErrQuotaUnknown, err)
+	if err := api.Get(ctx, client.ObjectKey{Namespace: machine.Namespace, Name: ClaimName(machine)}, claim); apierrors.IsNotFound(err) {
+		if err := api.Create(ctx, desired(machine)); err != nil && !apierrors.IsAlreadyExists(err) {
+			return "", fmt.Errorf("%w: create ResourceClaim: %v", ErrQuotaUnknown, err)
 		}
-		return QuotaHold{}, false, ErrQuotaPending
+		return "", ErrQuotaPending
 	} else if err != nil {
-		return QuotaHold{}, false, fmt.Errorf("%w: read ResourceClaim: %v", ErrQuotaUnknown, err)
+		return "", fmt.Errorf("%w: read ResourceClaim: %v", ErrQuotaUnknown, err)
 	}
-	if err := validateResourceClaim(intent, claim); err != nil {
-		return QuotaHold{}, false, err
+	if !matches(machine, claim) {
+		return "", ErrQuotaInvalid
 	}
-	hold := QuotaHold{Intent: intent, UID: claim.UID, Generation: claim.Generation, ObservedGeneration: claim.Status.ObservedGeneration}
-	granted := apiMeta.FindStatusCondition(claim.Status.Conditions, quotav1alpha1.ResourceClaimGranted)
 	if claim.DeletionTimestamp != nil {
-		return hold, false, ErrQuotaUnknown
+		return "", ErrQuotaUnknown
 	}
-	if granted == nil || claim.Status.ObservedGeneration != claim.Generation {
-		return hold, false, ErrQuotaPending
+	granted := apiMeta.FindStatusCondition(claim.Status.Conditions, quotav1alpha1.ResourceClaimGranted)
+	switch {
+	case granted == nil || claim.Status.ObservedGeneration != claim.Generation:
+		return "", ErrQuotaPending
+	case granted.Status == metav1.ConditionUnknown:
+		return "", ErrQuotaUnknown
+	case granted.Status != metav1.ConditionTrue:
+		return "", ErrQuotaPending
 	}
-	if granted.Status == metav1.ConditionUnknown {
-		return hold, false, ErrQuotaUnknown
-	}
-	if granted.Status != metav1.ConditionTrue {
-		return hold, false, ErrQuotaPending
-	}
-	return hold, true, nil
+	return claim.Name, nil
 }
 
-func desiredResourceClaim(intent QuotaIntent) *quotav1alpha1.ResourceClaim {
-	return &quotav1alpha1.ResourceClaim{ObjectMeta: metav1.ObjectMeta{Name: intent.Name, Namespace: intent.Namespace, Labels: map[string]string{"fleet.datumapis.com/quota-claim": "machine", "fleet.datumapis.com/machine-uid": string(intent.ClaimUID), "fleet.datumapis.com/consumer-project-uid": string(intent.ConsumerProject.UID)}}, Spec: quotav1alpha1.ResourceClaimSpec{ConsumerRef: quotav1alpha1.ConsumerRef{APIGroup: "resourcemanager.miloapis.com", Kind: "Project", Name: intent.ConsumerProject.RouteName}, Requests: []quotav1alpha1.ResourceRequest{{ResourceType: intent.ResourceType, Amount: intent.Amount}}, ResourceRef: &quotav1alpha1.UnversionedObjectReference{APIGroup: fleetv1.GroupVersion.Group, Kind: "Machine", Namespace: intent.Namespace, Name: intent.ClaimName}}}
-}
-
-func validateResourceClaim(intent QuotaIntent, claim *quotav1alpha1.ResourceClaim) error {
-	if claim == nil || claim.UID == "" || claim.Name != intent.Name || claim.Namespace != intent.Namespace || claim.Labels["fleet.datumapis.com/machine-uid"] != string(intent.ClaimUID) || claim.Labels["fleet.datumapis.com/consumer-project-uid"] != string(intent.ConsumerProject.UID) || claim.Spec.ConsumerRef.APIGroup != "resourcemanager.miloapis.com" || claim.Spec.ConsumerRef.Kind != "Project" || claim.Spec.ConsumerRef.Name != intent.ConsumerProject.RouteName || claim.Spec.ResourceRef == nil || claim.Spec.ResourceRef.APIGroup != fleetv1.GroupVersion.Group || claim.Spec.ResourceRef.Kind != "Machine" || claim.Spec.ResourceRef.Namespace != intent.Namespace || claim.Spec.ResourceRef.Name != intent.ClaimName || len(claim.Spec.Requests) != 1 || claim.Spec.Requests[0].ResourceType != intent.ResourceType || claim.Spec.Requests[0].Amount != intent.Amount {
-		return ErrAuthorityInvalid
+// Release deletes the claim. It returns nil once the claim is gone.
+func (q Quota) Release(ctx context.Context, machine allocation.Machine, name string) error {
+	if name != ClaimName(machine) {
+		return ErrQuotaInvalid
 	}
-	return nil
+	api, err := q.Clients(machine)
+	if err != nil {
+		return err
+	}
+	claim := &quotav1alpha1.ResourceClaim{}
+	if err := api.Get(ctx, client.ObjectKey{Namespace: machine.Namespace, Name: name}, claim); apierrors.IsNotFound(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("%w: read ResourceClaim: %v", ErrQuotaUnknown, err)
+	}
+	if !matches(machine, claim) {
+		return ErrQuotaInvalid
+	}
+	uid := claim.UID
+	if err := api.Delete(ctx, claim, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("%w: delete ResourceClaim: %v", ErrQuotaUnknown, err)
+	}
+	// Deletion is observed, not assumed: the next call sees the claim gone.
+	return fmt.Errorf("%w: the claim is being deleted", ErrQuotaPending)
 }
