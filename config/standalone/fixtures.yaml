@@ -15,8 +15,8 @@ apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineProfile
 metadata: {name: general-purpose-24c-128g}
 spec:
-  cpu: {architecture: amd64, cores: {min: 24}}
-  memory: {capacity: {min: 128Gi}}
+  cpu: {architecture: amd64, cores: 24}
+  memory: {capacity: 128Gi}
 ---
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity

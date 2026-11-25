@@ -65,6 +65,10 @@ spec:
     served: true
     storage: true
     subresources: {status: {}}
+    additionalPrinterColumns:
+    - {name: Architecture, type: string, jsonPath: .spec.cpu.architecture}
+    - {name: CPU, type: integer, jsonPath: .spec.cpu.cores}
+    - {name: Memory, type: string, jsonPath: .spec.memory.capacity}
     schema:
       openAPIV3Schema:
         type: object
@@ -78,20 +82,23 @@ spec:
             - {rule: 'self == oldSelf', message: MachineProfile requirements are immutable}
             required: [cpu, memory]
             properties:
+              # CPU and memory are exact requests; min, max, and ranges are not
+              # part of the contract. Cores counts physical cores across sockets.
               cpu:
                 type: object
-                required: [architecture]
+                required: [architecture, cores]
                 properties:
-                  architecture: {type: string, minLength: 1}
-                  cores: {type: object, x-kubernetes-preserve-unknown-fields: true}
+                  architecture: {type: string, minLength: 1, maxLength: 63}
+                  cores: {type: integer, format: int64, minimum: 1}
+              # Installed RAM as a positive integer byte quantity, such as 32Gi.
               memory:
                 type: object
                 required: [capacity]
                 properties:
                   capacity:
-                    type: object
-                    minProperties: 1
-                    properties: {min: {type: string}, max: {type: string}, exact: {type: string}}
+                    type: string
+                    maxLength: 63
+                    pattern: '^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$'
               gpus:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
@@ -176,10 +183,13 @@ spec:
     additionalPrinterColumns:
     - {name: Phase, type: string, jsonPath: .status.phase}
     - {name: Location, type: string, jsonPath: .spec.locationRef.name}
-    - {name: CPU, type: integer, jsonPath: .status.allocatedHardware.hardware.cpu.cores}
-    - {name: Memory, type: string, jsonPath: .status.allocatedHardware.hardware.memory.capacity}
+    - {name: Requested CPU, type: integer, jsonPath: .status.requestedHardware.cpu.cores, description: Exact physical cores pinned from the MachineProfile}
+    - {name: Requested Memory, type: string, jsonPath: .status.requestedHardware.memory.capacity, description: Exact installed memory pinned from the MachineProfile}
     - {name: Network, type: string, jsonPath: '.status.network.interfaces[0].network.name'}
     - {name: Address, type: string, jsonPath: '.status.network.interfaces[0].addresses[?(@.primary==true)].address'}
+    - {name: Profile, type: string, priority: 1, jsonPath: .spec.machineProfileRef.name}
+    - {name: Allocated CPU, type: integer, priority: 1, jsonPath: .status.allocatedHardware.hardware.cpu.cores, description: Physical cores of the assigned hardware}
+    - {name: Allocated Memory, type: string, priority: 1, jsonPath: .status.allocatedHardware.hardware.memory.capacity, description: Installed memory of the assigned hardware}
     schema:
       openAPIV3Schema:
         type: object
@@ -241,6 +251,9 @@ spec:
               powerState: {type: string, enum: ["On", "Off"], default: "Off"}
           status:
             type: object
+            x-kubernetes-validations:
+            - rule: '!has(oldSelf.requestedHardware) || (has(self.requestedHardware) && self.requestedHardware == oldSelf.requestedHardware)'
+              message: requestedHardware is pinned once accepted and cannot be changed or removed
             properties:
               phase: {type: string}
               placement:
@@ -255,6 +268,37 @@ spec:
                 type: object
                 required: [name]
                 properties: {name: {type: string}}
+              # Controller-maintained exact request resolved from the profile.
+              # Absent until resolved; immutable after acceptance.
+              requestedHardware:
+                type: object
+                required: [cpu, memory, source]
+                properties:
+                  cpu:
+                    type: object
+                    required: [architecture, cores]
+                    properties:
+                      architecture: {type: string, minLength: 1, maxLength: 63}
+                      cores: {type: integer, format: int64, minimum: 1}
+                  memory:
+                    type: object
+                    required: [capacity]
+                    properties:
+                      capacity:
+                        type: string
+                        maxLength: 63
+                        pattern: '^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$'
+                  source:
+                    type: object
+                    required: [machineGeneration, profileRef, profileGeneration, profileDigest]
+                    properties:
+                      machineGeneration: {type: integer, format: int64, minimum: 1}
+                      profileRef:
+                        type: object
+                        required: [name]
+                        properties: {name: {type: string, minLength: 1, maxLength: 253}}
+                      profileGeneration: {type: integer, format: int64, minimum: 1}
+                      profileDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$', maxLength: 71}
               allocatedHardware:
                 type: object
                 required: [hardware]

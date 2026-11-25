@@ -11,7 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
-func TestAllocationCRDContract(t *testing.T) {
+func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "base", "crd", "metal.datumapis.com.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -30,6 +31,11 @@ func TestAllocationCRDContract(t *testing.T) {
 			crds[crd.Name] = &copy
 		}
 	}
+	return crds
+}
+
+func TestAllocationCRDContract(t *testing.T) {
+	crds := loadCRDs(t)
 
 	if GroupVersion.Group != "metal.datumapis.com" || GroupVersion.Version != "v1alpha1" {
 		t.Fatalf("unexpected public API identity: %s", GroupVersion)

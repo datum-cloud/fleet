@@ -22,7 +22,7 @@ func TestProviderMachineEventWakesEveryConsumerClaimWithoutPolling(t *testing.T)
 	first := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "first", UID: "first-uid"}}
 	second := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "other", Name: "second", UID: "second-uid"}}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(first, second).Build()
-	consumer := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-zdhcz", UID: "consumer-uid"}
+	consumer := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-consumer", UID: "consumer-uid"}
 	provider := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: "provider-uid"}
 	seen := map[types.UID]bool{}
 	verifier := ProjectVerifierFunc(func(_ context.Context, _ controller.ProjectIdentity) error { return nil })

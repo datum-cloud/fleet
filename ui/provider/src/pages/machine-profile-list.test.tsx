@@ -118,8 +118,8 @@ describe('MachineProfileList', () => {
     renderPage();
     const table = screen.getByTestId('fleet-plugin-profile-table');
     const tr = within(table).getByText('general-purpose-24c-128g').closest('tr') as HTMLElement;
-    expect(within(tr).getByText('≥ 24 cores · amd64')).toBeInTheDocument();
-    expect(within(tr).getByText('≥ 128Gi')).toBeInTheDocument();
+    expect(within(tr).getByText('24 cores · amd64')).toBeInTheDocument();
+    expect(within(tr).getByText('128Gi')).toBeInTheDocument();
     expect(within(tr).getByText('None')).toBeInTheDocument();
   });
 
@@ -131,16 +131,16 @@ describe('MachineProfileList', () => {
     const input = (name: string) =>
       form.querySelector(`input[name="${name}"]`) as HTMLInputElement;
     fireEvent.change(input('name'), { target: { value: 'compute-32c-256g' } });
-    fireEvent.change(input('minCores'), { target: { value: '32' } });
-    fireEvent.change(input('minMemory'), { target: { value: '256Gi' } });
+    fireEvent.change(input('cores'), { target: { value: '32' } });
+    fireEvent.change(input('memory'), { target: { value: '256Gi' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(mutate).toHaveBeenCalled());
     expect(mutate.mock.calls[0][0]).toEqual({
       metadata: { name: 'compute-32c-256g' },
       spec: {
-        cpu: { architecture: 'amd64', cores: { min: 32 } },
-        memory: { capacity: { min: '256Gi' } },
+        cpu: { architecture: 'amd64', cores: 32 },
+        memory: { capacity: '256Gi' },
       },
     });
   });
@@ -166,7 +166,7 @@ describe('MachineProfileList', () => {
 
 describe('toRawMachineProfile', () => {
   it('adds GPUs only when a count is given', () => {
-    const base = { name: 'p', architecture: 'arm64', minCores: 8, minMemory: '32Gi' } as const;
+    const base = { name: 'p', architecture: 'arm64', cores: 8, memory: '32Gi' } as const;
     expect(toRawMachineProfile(base).spec.gpus).toBeUndefined();
     expect(toRawMachineProfile({ ...base, minGpus: 2, gpuVendor: 'nvidia' }).spec.gpus).toEqual({
       count: { min: 2 },

@@ -115,7 +115,8 @@ describe('MachineList', () => {
       expect(row).not.toBeNull();
       expect(within(row as HTMLElement).getByText(phase)).toBeInTheDocument();
     }
-    expect(within(table).getAllByText('24 cores · amd64 · 128Gi')).toHaveLength(2);
+    // Requested hardware shows for the waiting machine too, before allocation.
+    expect(within(table).getAllByText('24 cores · amd64 · 128Gi')).toHaveLength(3);
   });
 
   it('says why a class can not be deployed from yet', () => {

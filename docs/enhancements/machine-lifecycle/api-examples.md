@@ -13,6 +13,10 @@ production timing requirements. The enhancement owns field semantics and lifecyc
 - [Installation](#installation)
 - [Reinstallation predecessor](#reinstallation-predecessor)
 
+The exact MachineProfile CPU and memory shape, `Machine.status.requestedHardware`,
+and the `RequestResolved` condition are implemented; the rest of these responses
+remain proposed.
+
 ## Provider MachineClass
 
 ```yaml
@@ -118,15 +122,14 @@ metadata:
 # Immutable requirements can serve several offerings without coupling hardware
 # choices to capacity ownership, price, location, or provisioning credentials.
 spec:
+  # CPU and memory are exact requests (implemented); ranges are rejected.
   # Cores count physical cores across sockets. Memory describes installed RAM,
   # not memory left available after the OS starts.
   cpu:
     architecture: amd64
-    cores:
-      min: 16
+    cores: 16
   memory:
-    capacity:
-      min: "64Gi"
+    capacity: "64Gi"
 
   # GPU memory applies to each matching device, not their combined memory.
   gpus:
@@ -302,6 +305,20 @@ status:
   # Admission retains the selected local profile through source deletion.
   acceptedProfileRef:
     name: accelerated-16c-64g
+  # Implemented: the exact request pinned from the profile when first resolved.
+  # It is present before allocation and never rewritten afterwards.
+  requestedHardware:
+    cpu:
+      architecture: amd64
+      cores: 16
+    memory:
+      capacity: "64Gi"
+    source:
+      machineGeneration: 1
+      profileRef:
+        name: accelerated-16c-64g
+      profileGeneration: 1
+      profileDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   # Allocation captures this hardware snapshot and its observation time.
   # Later observations can change readiness without rewriting the snapshot.
   allocatedHardware:
@@ -396,6 +413,12 @@ status:
   power:
     state: "On"
   conditions:
+    - type: RequestResolved
+      status: "True"
+      observedGeneration: 1
+      lastTransitionTime: "2026-10-27T12:00:00Z"
+      reason: Resolved
+      message: "Requested hardware is pinned from MachineProfile \"accelerated-16c-64g\" generation 1 at Machine generation 1."
     - type: Accepted
       status: "True"
       observedGeneration: 1

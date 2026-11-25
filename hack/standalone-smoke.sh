@@ -96,6 +96,11 @@ test "$(kubectl --context "$context" -n fleet-project-a get machine -o name)" = 
 test "$(kubectl --context "$context" -n fleet-project-b get machine -o name)" = "machine.metal.datumapis.com/allocation"
 test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.phase}')" = "Ready"
 test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -o jsonpath='{.status.phase}')" = "Pending"
+# Requested hardware is pinned from the exact profile for both claims,
+# including the one still waiting for capacity.
+for project in fleet-project-a fleet-project-b; do
+  test "$(kubectl --context "$context" -n "$project" get machine allocation -o jsonpath='{.status.requestedHardware.cpu.cores}/{.status.requestedHardware.memory.capacity}')" = "24/128Gi"
+done
 
 run_phase install fleet-smoke-install-run
 kubectl --context "$context" -n fleet-system rollout restart statefulset/fleet-simulator

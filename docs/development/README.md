@@ -56,6 +56,287 @@ to fence its legacy single-file backend. Those values are absent from the public
 and proposed resource contracts and must be replaced by immutable allocation
 name plus executor fencing token before a production backend is connected.
 
+## Requested hardware
+
+MachineProfile `cpu.cores` and `memory.capacity` are exact values: a positive
+integer and a positive integer byte quantity. The former min/max shapes were
+removed as a breaking `v1alpha1` change with no conversion or migration. Stored
+profiles with the old shape must be recreated before upgrading. The allocator
+matches capacity only when the observed cores and memory equal the request.
+
+Private asset records, custody proposals, and Milo authority records retain
+`acceptedRequirements` as the exact `MachineProfileSpec`. A private record whose
+requirements use any other shape fails to decode, like a version 1
+installation record or any other malformed record. Fleet keeps no decoder or
+release path for older record shapes. How the coordinator contains such a
+record, and how an operator removes it, is described in
+[Undecodable private records](#undecodable-private-records). See the
+[MachineProfile notes](../enhancements/machine-lifecycle/README.md#machineprofile).
+
+`requestedhardware.Project` is the one projection that writes
+`status.requestedHardware` and `RequestResolved`, and
+`manager.RequestedHardwareProjector` is its only caller. `cmd/fleet-manager`
+builds one projector per engaged project, bound to that project's identity and
+client, in every configuration, including the default one whose lifecycle
+handlers are blocked. There is no second writer and no switch to disable it.
+
+The projector reads the Machine and its profile from the project cache. The first exact resolution writes
+`status.requestedHardware` with Machine generation, profile generation, and
+spec-digest provenance, and sets `RequestResolved=True`. After that the snapshot
+is never re-resolved, and a CRD transition rule rejects status writes that
+change or remove it. A missing, deleting, or inexact profile leaves the snapshot
+absent and sets `RequestResolved=False` (`ProfileNotFound`, `ProfileDeleting`,
+or `ProfileInvalid`). Unknown read results are retried.
+
+The synthetic staging handler and the standalone runner carry the snapshot
+forward. Staging rejects a conflicting recreated profile with
+`RequestedHardwareConflict`. The behaviour needs only an engaged project; allocation,
+providers, and quota are not required. Tests cover CRD
+validation and CEL pinning with the API server's validators, resolver
+provenance, missing and invalid profiles, post-acceptance profile changes,
+inert-mode wiring, and staging and standalone carry-forward. See
+[requested hardware](../enhancements/machine-lifecycle/README.md#requested-hardware).
+
+## Undecodable private records
+
+A private lifecycle record that does not decode into the current shape returns
+`controller.ErrRecordUnreadable`, which wraps `ErrRecordInvalid`. This covers
+asset, claim custody, installation, and Milo authority records. The record
+blocks only the claim it belongs to (implemented):
+
+- **Attribution.** The coordinator does not trust the body of a record it cannot
+  decode. It attributes the record by the `fleet.datumapis.com/claim-uid`
+  label, which `encodeRecord` and the Milo record store write on every record.
+- **Scans across claims.** The asset scan behind allocation, installation,
+  network refresh, and release, and the installation scan by binding, skip a
+  record labeled for another claim. A record labeled for the scanning claim
+  fails that claim closed. A record with no claim label might belong to any
+  claim, so it fails every claim-scoped scan closed. Fleet never writes an
+  unlabeled record, so this case means the Secret was edited by hand. One such
+  Secret halts allocation, installation, and release for every claim on the
+  coordinator until an operator removes it.
+- **Release from a selection.** A claim released while its custody only
+  proposes an asset reads that asset's record by name. If the record is
+  labeled for another claim, that claim holds the asset and the releasing
+  claim never did, so its custody is released without touching the record.
+  The record keeps fencing the asset's epoch. A record labeled for the
+  releasing claim, or with no label, fails release closed.
+- **Capacity and epoch fencing.** Allocation reads each candidate asset's
+  record by name. If that record, or the custody record of the claim that last
+  held the asset, cannot be decoded, the asset is never proposed and allocation
+  tries the next candidate. Nothing proves that asset was released or what
+  epoch it reached, so treating it as free could double-bind it or restart its
+  epoch below a stale operation. A retained `Released` record that cannot be
+  decoded therefore keeps its asset out of allocation. It does not admit any
+  operation for its former claim either, because that claim's own scans fail
+  closed on it.
+- **The claim's own work.** Allocation, installation, and release for the
+  attributed claim return `ErrRecordUnreadable`. They do not treat the claim as
+  having no record, and they never rewrite the record. Synthetic staging
+  reports the Machine as `Phase=Pending` with `Bound=False` and `Ready=False`,
+  reason `UnreadablePrivateRecord`, and does not requeue it. The managed
+  Machine handler also stops requeueing, and sets no condition: it writes no
+  Machine status at all, so synthetic staging is the only writer of Machine
+  lifecycle conditions. Release never removes the finalizer through such a
+  record.
+- **Signals.** Every lifecycle decode goes through one reporting decoder, so
+  each record is logged once per lifecycle call at error level, whichever read
+  found it.
+  The log names the Secret and the attributed claim UID, never record
+  contents. The counter `fleet_private_lifecycle_record_undecodable_total`
+  counts the same events, labeled only by `record_type` (`asset`, `custody`,
+  `installation`, or `milo-authority`).
+
+Fleet has no automated release for an undecodable record. To clear an affected
+Machine, an operator does the following:
+
+1. Find the Machine's UID. List the Secrets in `fleet-system-private` that
+   carry `fleet.datumapis.com/claim-uid=<UID>`. The error log names the
+   undecodable one.
+2. If the Machine held an asset, set that MachineCapacity's
+   `allocationPolicy` to `Disabled`. Removing the records discards the binding,
+   its epoch, and any pending cleanup, so the physical machine's state is
+   unknown. Re-enable allocation only after the machine has been verified clean.
+   The next binding starts again at epoch 1, and an executor that retained a
+   higher epoch refuses it until its own fence is reset.
+3. Delete the Machine. Release stops at the undecodable record and leaves the
+   finalizer in place.
+4. Remove the `fleet.datumapis.com/machine-protection` finalizer from the
+   Machine by hand. Fleet cannot release through the record, so it never
+   removes the finalizer itself.
+5. Delete every listed private record Secret for that claim UID, not only the
+   undecodable one. The claim no longer exists, and a record left behind keeps
+   describing authority that nothing will ever release.
+
+A retained `Released` asset record whose Machine is already gone affects only
+that asset. Delete that Secret after step 2 to return the asset to allocation.
+
+Event routing reads only records that decode, so editing or deleting an
+undecodable Secret wakes no claim. This is why the procedure deletes the
+Machine and removes its finalizer before deleting the records. A claim blocked
+by an unlabeled record is reconciled again on its next own event, or when the
+manager restarts.
+
+## Multi-project discovery
+
+`cmd/fleet-manager` runs one set of controllers over every project that
+consumes the metal service, through `sigs.k8s.io/multicluster-runtime` and the
+service catalog's consumer provider (`internal/projectdiscovery`). There is no
+`--project-name`; `--config` names a `FleetManager` file.
+
+- **Discovery.** `discovery.mode: milo` requires `consumerScopedProjection`
+  with exactly `serviceNames: [metal.datumapis.com]`; watching every project is
+  rejected. A project is engaged while it has an Active, not-deleting
+  ServiceConsumer. `discovery.mode: single` with `discovery.project` serves one
+  named project through the same wiring, for standalone use and tests. Unknown
+  configuration fields are rejected.
+- **Per-project runtime.** `manager.Projects` is the Aware that discovery
+  engages through. On engagement it resolves the project's identity from Milo
+  (`ResolveProjectIdentity`), refuses a second cluster name for the same
+  project lifetime, builds the project's runtime (client, cache reader,
+  verifier, mappers, lifecycle owners, handlers), registers it, and only then
+  engages the controllers. When the engagement context ends it unregisters the
+  runtime.
+- **Requests.** `ProjectRequest`, `RouteRequest`, and `ProviderEventRequest`
+  carry the cluster name. `ClusterProjectReconciler` and
+  `ClusterRouteReconciler` look up the runtime for that name, require
+  `SameProject` against its identity, run its verifier, and delegate to the
+  existing `ProjectReconciler` and `RouteReconciler`. A request for a project
+  that is not engaged is dropped with no effect.
+- **Private records.** All projects share the host namespace
+  `fleet-system-private`. Custody, operation, and authority record names hash
+  `(authorityID, projectUID, claimUID)`; asset records are keyed by provider
+  asset and are deliberately global, which is what makes allocation exclusive
+  across consumers. The private-record watch routes a record by its recorded
+  consumer project to the runtime engaged for exactly that lifetime. The
+  unscoped `Coordinator.Release(claimUID)` requires exactly one match, so equal
+  claim UIDs in two projects fail closed instead of colliding.
+- **Handlers.** `manager.DefaultHandlers` gives each project blocked lifecycle
+  handlers and the requested-hardware projector. `--synthetic-staging` uses
+  `staging.ConsumerHandlers`, which installs the staging handler only for
+  `--synthetic-consumer-project-name`, and only when that name is engaged as
+  the exact consumer lifetime resolved at startup. The publisher writes only
+  into that project. Provider MachineCapacity events wake only that project.
+- **Provider as consumer.** The synthetic provider project may also be an
+  Active metal consumer. It engages with `DefaultHandlers`; its runtime maps
+  only its own Machines and private records whose consumer is that project, so
+  provider MachineCapacity events cannot reach the synthetic consumer's claims
+  through it, and its blocked handlers never write MachineCapacity status. The
+  synthetic consumer itself must still differ from the provider.
+- **ServiceConsumer filtering.** The consumer provider enqueues every
+  ServiceConsumer in the producer project under its own key, filters by
+  service only inside its reconcile, and returns an error on the first failed
+  engagement. One failing project was therefore retried by every key.
+  ServiceConsumers carry no service label and declare no selectable fields, so
+  the provider-project cache wraps ServiceConsumer informers and drops events
+  for other Services (failing open while the Service is unresolved). An
+  engagement failure is retried by the metal consumers' keys with
+  controller-runtime's per-key exponential backoff.
+- **Departure.** The manager stops reconciling a project that leaves the
+  consumer set. It does not release custody, call a provider, delete records,
+  or rewrite status, including for a project with active custody. Its
+  deadlines and queued events are dropped, and re-engagement resumes from the
+  retained private records. Unbinding drains direct, dependency-route,
+  provider-event, and synthetic-publisher reconciliations that already acquired
+  the runtime before removing it from the registry; a retained runtime pointer
+  cannot start work after that barrier.
+  A blocked in-flight handler therefore delays completed departure rather than
+  falsely reporting it. This fixes an inherited race where informer removal and
+  registry removal could finish while a handler could still write. It does not
+  roll back effects already admitted before departure. Regression tests block a
+  handler explicitly and assert the barrier, in addition to the active-custody
+  no-write/no-release test.
+  Re-engagement also drains the previous runtime before publishing either
+  registry entry, so a new lifecycle owner's independent request locks cannot
+  overlap old work. The wait never holds the registry mutex. After waiting,
+  engagement rechecks both the cluster pointer and project-lifetime ownership;
+  a concurrent successor must itself drain, and a conflicting route is refused.
+  Cancellation aborts the waiting engagement without publishing its runtime or
+  engaging its controllers. An already initiated drain continues to completion;
+  it is not rolled back into an active runtime. Cancellation retires the prior
+  entry after its drain completes, without removing a concurrent successor.
+  A handler that never returns still prevents safe replacement; cancellation is
+  not evidence that its effects have stopped. Deterministic direct/routed replacement,
+  cancellation, stale-pointer, registry-revalidation and concurrent engagement
+  tests cover these process-local barriers, not distributed executor fencing.
+  A per-cluster-route engagement gate also serializes publication through the
+  entire downstream controller setup call and failure cleanup. Draining alone
+  was insufficient: a paused predecessor's setup could otherwise resume after
+  its successor and replace the successor's controller watches. The gate is
+  acquired after effect-free runtime construction; waiting is context-cancellable
+  and never holds the registry mutex. Cancelling a waiter does not stop the
+  current runtime. Gates are reference-counted and removed after their last
+  holder or waiter leaves; unrelated routes remain independent. Project-lifetime
+  conflicts across routes are still checked under the registry mutex.
+  Each published runtime owns a child engagement context, cancelled when its
+  drain begins. This cancels partial downstream engagements on failure and invalidates
+  the old context even when replacement uses the same cluster implementation.
+  Cancellation starts draining immediately, but cleanup cannot remove lifetime
+  ownership or admit a successor until downstream setup returns and admitted
+  handlers finish. A downstream call that ignores cancellation therefore blocks
+  that route rather than allowing an unfenced successor. A setup that returns
+  nil after cancellation is reported as cancelled, not successful engagement.
+  Cleanup under an already-held gate uses a separate internal path, avoiding
+  recursive locking; stale cleanup can only cancel and remove its own runtime.
+  Downstream setup may read the registries and engage another route. Synchronous
+  recursion back into a held route with the supplied context is rejected with
+  `ErrProjectEngagementReentrant`, including cycles through another route.
+  Nested setup also refuses to wait on any other occupied route in this registry,
+  preventing two concurrent callbacks from deadlocking by requesting each
+  other's routes. Ordinary independent callers still wait cancellably.
+  Callbacks must propagate that context rather than create a detached context
+  and synchronously wait on their own engagement. Deterministic regressions
+  cover blocked setup, direct/dependency handlers, failed/cancelled setup,
+  cancelled waiters, cross-route lifetime transfer, stale cleanup, unrelated
+  progress, reentrant setup and same-implementation context replacement.
+- **Observational discovery.** The provider declares no managed resources,
+  teardowns, or suspend hooks, so it adds no ServiceConsumer finalizer. Its
+  discovery clients refuse every write. The library would otherwise patch
+  `Paused=True` on a suspended ServiceConsumer even with no hooks; the manager
+  drops that patch, because Fleet implements no suspension.
+- **Leader election and engagement.** One host-cluster lease
+  (`fleet-manager.fleet.datumapis.com`); only the holder reconciles. Project
+  engagement runs on every replica. As in Compute, the provider's `Start` is
+  hidden from `mcmanager` (which would leader-gate it) and re-added once to the
+  always-running group. Unlike Compute, this is done for every
+  `ProviderRunnable`, so the consumer provider is not started twice.
+- **Readiness.** `/readyz` requires discovery to have synced, every consuming
+  project to be engaged, every engaged project cache to have synced, and the
+  private-record cache to have synced. It fails with `ErrDiscoveryMisconfigured`
+  while the metal Service is missing or its producer project differs from
+  `consumerScopedProjection.providerProject`. The former integration gate, which
+  failed unless synthetic staging was on, is removed. Removing it enables no
+  effect: without a provider every lifecycle handler stays blocked.
+- **Module versions.** Fleet uses the versions Compute uses:
+  `sigs.k8s.io/multicluster-runtime` v0.25.2, `go.miloapis.com/milo` v0.36.9,
+  `go.miloapis.com/service-catalog` v0.14.6-0.20261023171130-8c647a6f552b,
+  `sigs.k8s.io/controller-runtime` v0.25.2, and Kubernetes libraries v0.37.1.
+  This raised Fleet's controller-runtime (v0.24.1), Kubernetes (v0.36.1), Milo
+  (v0.32.5), and service-catalog (v0.13.1) versions. Milo v0.36.9 itself
+  requires controller-runtime v0.25.2 and Kubernetes v0.37.1.
+
+Tests run the production wiring (`projectdiscovery.NewManager`,
+`manager.NewProjects`, `manager.Setup`) over a fake provider and fake project
+API servers (`internal/multiclustertest`) whose writes produce watch events.
+They cover:
+
+- no provider: two projects with identical Machine names and UIDs each pin from
+  their own profile, with no private record, finalizer, lifecycle condition,
+  or Installation change;
+- custody isolation: a custody record wakes only its own project, and scoped
+  reads and an unscoped release cannot cross projects;
+- departure with active custody, re-engagement, restart with a replaced
+  profile, and identity failures (unknown project, two clusters for one
+  lifetime, project recreated while engaged);
+- synthetic staging end to end: allocation only in the publication consumer,
+  with another engaged project untouched.
+
+Coordinator tests already cover custody, allocation, and installation scoping
+across project APIs with equal claim UIDs. An envtest test runs the real
+consumer provider against separate API servers that serve every watched kind,
+behind a Milo-shaped project router, with a real host lease and private cache.
+It needs envtest binaries and is skipped without them.
+
 ## Location authority
 
 `internal/location` uses the existing Milo location contract shared by Compute,
@@ -77,9 +358,9 @@ The event-only manager indexes Machines by requested location and watches
 both Location and ServiceAvailability objects. Semantic updates and deletes
 therefore route every affected claim through its existing durable work key;
 there is no periodic location resync. This implements resolution and event
-routing, not the production claim handler that invokes it. The manager binary
-continues to fail readiness until the required production handlers and
-authorities are wired.
+routing, not the production claim handler that invokes it. Without those
+production handlers and authorities, the manager's lifecycle handlers stay
+blocked; readiness reports only discovery and cache health.
 
 The Milo bundle declares a Draft Fleet `ServiceConfiguration` supporting the
 platform `datum-managed` location class. Draft is intentional: an environment
@@ -196,7 +477,7 @@ This handler is an orchestration seam, not a live integration. Watched objects
 do not contain the create-time caller identity, protected publication
 provenance, or trusted Machine observation time and location required by the
 lifecycle contract. The manager binary therefore does not instantiate the
-handler and continues to fail readiness. An environment must provide those
+handler; lifecycle handlers stay blocked. An environment must provide those
 inputs plus the Milo admission fence and quota custodian before enabling effects;
 controller credentials, annotations, public status, and synthetic timestamps
 are not accepted substitutes.
@@ -241,10 +522,11 @@ acknowledges its receipt. This increment implements and tests those runner and
 drain contracts; the production durable inbox, consumer, and live stream adapters
 remain integration-owner responsibilities.
 
-`cmd/fleet-manager` validates an exact project lifetime, derives the routed Milo
-REST host from an environment-owned root kubeconfig, keeps host-private records
-and leader election on the management cluster, starts the event graph, and
-reports the integration readiness check as failed in its default mode. Its
+`cmd/fleet-manager` discovers every consuming project, resolves each project's
+exact lifetime from Milo, derives each routed Milo REST host from an
+environment-owned project kubeconfig template, keeps host-private records and
+leader election on the management cluster, and starts the event graph. Its
+readiness reports discovery and cache health only. Its
 production handlers deliberately perform no lifecycle or provider effects until trusted create-time
 caller/finalizer admission and live, replayable Milo adapters are supplied. A
 watch controller cannot recover the original `user.Info` or atomically capture
@@ -329,11 +611,10 @@ provider effect, including the initiating principal and installation decision pl
 the image catalog authority, revision, and image decision. The operation also
 retains the installation and claim namespace, name, and UID, so an informer
 initial Add can route unfinished work after restart even when the public
-Installation has been deleted. This is installation-record schema v2. A v1
-operation is upgraded atomically only when the exact public Installation and
-claim request is still available to supply and verify the names omitted by v1;
-otherwise it is quarantined from event routing and effects rather than guessed
-or treated as ready. Image references must
+Installation has been deleted. This is installation-record schema v2. A record
+in any other schema version is invalid: it is quarantined from event routing
+and effects and is never rewritten, guessed, or treated as ready. Image
+references must
 resolve to canonical lowercase SHA-256 digests. Stable operation and result
 identities include the authority/project claim scope, so equal claim UIDs from
 independent project APIs cannot share an operation record. Installation custody
@@ -520,6 +801,34 @@ The persisted schema and HTTP endpoints are internal alpha interfaces. No
 compatibility promise exists yet. The process fails closed if retained state is
 corrupt or uses an unsupported schema version.
 
+## Physical inventory subset
+
+`internal/api/inventory/v1alpha1` defines Facility, Rack, DeviceClaim, Device,
+Cable and PowerFeed records, a Manufacturer and DeviceType
+[hardware catalog](hardware-catalog.md), and an observational Site. Each
+DeviceClaim is an observational installation claim with typed, immutable
+placement, and Cable records are the only topology authority; no move or
+replacement handover is automated. Records live in the provider project in
+Milo. `config/components/inventory` holds their CRDs, ProtectedResources, and
+the inventory viewer, editor, manager and importer roles. Only `config/milo`
+includes it.
+
+Records carry no attribution fields: resource audit logs record who changed a
+record and `metadata.creationTimestamp` records when it was created. CEL requires
+a Device serial or system UUID, or the explicit `identity.unidentified` marker
+with a reason and neither, and keeps a Device's `claimRef` and identity immutable,
+rejects duplicate or ambiguous MACs, and accepts only credential-free `https`
+BMC endpoints. Status is a reserved subresource with no fields and no writer.
+No metal role grants inventory access.
+
+No controller reads these records. The primary workflow is
+[manual entry and review](../operations/physical-inventory.md#manually-record-a-small-installation).
+Fleet reads no external inventory source; a separate writer that copies records
+in uses the same API and validation. Unit tests run API-server validation
+offline and check IAM; envtest tests run the CEL rules against a real API
+server. No physical verification, reservation, deletion safety, adoption or
+hardware-effect path is established.
+
 ## Build, test, and run
 
 Run the implemented checks from the repository root:
@@ -529,6 +838,16 @@ go test ./...
 go test -race ./...
 go vet ./...
 ```
+
+The manager's multi-project envtest test needs envtest binaries. CI installs
+them; locally, run:
+
+```sh
+export KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.25.2 use 1.37.0 -p path)"
+go test -race ./...
+```
+
+`task test:envtest` runs the same command.
 
 For an isolated local run, create a synthetic credential file and keep the
 default loopback listener:

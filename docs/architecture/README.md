@@ -36,6 +36,7 @@ Key principles to carry into the detailed design:
 | How is Bare Metal registered and renamed safely? | [Service registration and rollout](#service-registration-and-rollout) |
 | What are the machine resources and project boundaries? | [Machine lifecycle API design](../enhancements/machine-lifecycle/README.md#api-design) |
 | How are reservations and concurrent operations coordinated? | [Durable coordination](../enhancements/machine-lifecycle/README.md#durable-coordination) |
+| How are physical actions on one server serialized? | [Device custody and operations](../enhancements/device-operations/README.md) |
 | How are provider effects recovered safely? | [Provider execution and recovery](../enhancements/machine-lifecycle/README.md#provider-execution-and-recovery) |
 | What happens on release or project deletion? | [Release and project lifecycle](../enhancements/machine-lifecycle/README.md#release-and-project-lifecycle) |
 | Which internal interfaces and guarantees exist? | [Implementation status](../development/README.md) |
@@ -58,7 +59,7 @@ processes or service-catalog entries.
 | Group | Resources and responsibility | Status |
 | --- | --- | --- |
 | `metal.datumapis.com` | `MachineClass`: offerings and consumer references. `MachineProfile`: hardware requirements. `MachineCapacity`: provider supply. `Machine`: customer allocation and runtime intent. `MachineAllocation`: protected allocation identity. `Installation`: immutable OS installation or reinstall request. | Six alpha CRDs at `v1alpha1`. Production admission and real providers remain incomplete. |
-| `fleet.datumapis.com` | Physical inventory: `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`. Physical preparation and provider execution remain operator responsibilities. | Proposed inventory APIs; no physical inventory CRDs or real provider executor are implemented here. |
+| `fleet.datumapis.com` | Physical inventory: `Facility`, `Rack`, `DeviceClaim`, `Device`, `Cable`, and `PowerFeed`. Physical preparation and provider execution remain operator responsibilities. | Proposed inventory APIs. An operator-written subset is implemented: these six kinds plus a Manufacturer/DeviceType catalog and an observational `Site`. Their alpha CRDs, ProtectedResources and roles are [registered in Milo](../operations/physical-inventory.md) by `config/milo`, and the records live in the provider project. No controller reads them, and no real provider executor is implemented here. |
 | `coordination.fleet.datumapis.com` | Intended management-to-location execution handoff, retaining exact allocation identity, location, admitted inputs, release intent, and execution evidence. `MachineAllocationHandoff` is a candidate resource. | Architecture decision only on the current main implementation: no coordination CRD or cell controller is packaged. Replaces the earlier prototype name `internal.fleet.datumapis.com`. |
 
 MachineCapacity and MachineAllocation belong to the Metal allocation contract

@@ -31,8 +31,8 @@ import (
 const (
 	MachineFinalizer    = "fleet.datumapis.com/machine-protection"
 	recordSchemaVersion = 1
-	// Installation records gained retained public routing identities in v2.
-	// v1 is accepted only by the explicit request-bound upgrader below.
+	// Installation records carry retained public routing identities. Any
+	// other schema version is invalid.
 	installationRecordSchemaVersion = 2
 	assetRecordPrefix               = "fleet-asset-"
 	custodyRecordPrefix             = "fleet-claim-"
@@ -274,6 +274,7 @@ func (c *Coordinator) EnsureClaimCustody(ctx context.Context, claim *fleetv1.Mac
 	if claim == nil || claim.Namespace == "" || claim.Name == "" || claim.UID == "" || namespaceUID == "" || !admission.valid() {
 		return errors.New("claim lifetime identity is required")
 	}
+	ctx = withUndecodableReporting(ctx)
 	scope := LocalClaimScope(namespaceUID)
 	if len(project) > 1 || len(project) == 1 && !project[0].Valid() {
 		return ErrRecordInvalid
@@ -285,7 +286,7 @@ func (c *Coordinator) EnsureClaimCustody(ctx context.Context, claim *fleetv1.Mac
 	var secret corev1.Secret
 	err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret)
 	if err == nil {
-		record, err := decodeCustodySecret(&secret)
+		record, err := decodeCustodySecret(ctx, &secret)
 		if err != nil {
 			return err
 		}
@@ -419,6 +420,7 @@ func (c *Coordinator) ClearSettledExternalHold(ctx context.Context, claimUID typ
 }
 
 func (c *Coordinator) Allocate(ctx context.Context, request AllocationRequest) (*AssetRecord, error) {
+	ctx = withUndecodableReporting(ctx)
 	if err := validateAllocationRequest(request); err != nil {
 		return nil, err
 	}
@@ -703,9 +705,9 @@ func (c *Coordinator) prepareAsset(ctx context.Context, request AllocationReques
 	var secret corev1.Secret
 	err = c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret)
 	if err == nil {
-		existing, decodeErr := decodeAssetSecret(&secret)
+		existing, decodeErr := decodeAssetSecret(ctx, &secret)
 		if decodeErr != nil {
-			return nil, false, decodeErr
+			return nil, false, unreadableCandidate(&secret, request.Claim.UID, decodeErr)
 		}
 		if existing.State != AssetReleased {
 			if existing.ClaimUID != request.Claim.UID {
@@ -719,7 +721,10 @@ func (c *Coordinator) prepareAsset(ctx context.Context, request AllocationReques
 			}
 			return existing, sameRecord(existing, proposal), nil
 		}
-		previousCustody, _, custodyErr := c.getCustodyForAsset(ctx, existing)
+		previousCustody, custodySecret, custodyErr := c.getCustodyForAsset(ctx, existing)
+		if errors.Is(custodyErr, ErrRecordUnreadable) {
+			return nil, false, unreadableCandidate(custodySecret, request.Claim.UID, custodyErr)
+		}
 		if custodyErr != nil {
 			return nil, false, custodyErr
 		}
@@ -768,12 +773,18 @@ func sameRecord(a, b *AssetRecord) bool {
 func (c *Coordinator) proposeAsset(ctx context.Context, request AllocationRequest, machine *fleetv1.MachineCapacity) (*AssetRecord, bool, error) {
 	assetID := machineAssetID(machine, request.ProviderProject)
 	epoch := int64(1)
-	existing, _, err := c.getAsset(ctx, assetID)
+	existing, secret, err := c.getAsset(ctx, assetID)
+	if errors.Is(err, ErrRecordUnreadable) {
+		return nil, false, unreadableCandidate(secret, request.Claim.UID, err)
+	}
 	if err == nil {
 		if existing.State != AssetReleased {
 			return nil, false, nil
 		}
-		previous, _, err := c.getCustodyForAsset(ctx, existing)
+		previous, custodySecret, err := c.getCustodyForAsset(ctx, existing)
+		if errors.Is(err, ErrRecordUnreadable) {
+			return nil, false, unreadableCandidate(custodySecret, request.Claim.UID, err)
+		}
 		if err != nil {
 			return nil, false, err
 		}
@@ -789,6 +800,20 @@ func (c *Coordinator) proposeAsset(ctx context.Context, request AllocationReques
 		return nil, false, err
 	}
 	return newAssetRecord(request, machine, assetID, epoch, binding, fence), true, nil
+}
+
+// unreadableCandidate handles a candidate asset whose asset record, or the
+// custody record of its previous claim, cannot be decoded. The asset is never
+// proposed: without the record there is no proof that it was released or of
+// its epoch, so treating it as free could double-bind it or restart its epoch
+// fence below a stale operation. Allocation moves on to the next candidate,
+// unless the record is attributed to the allocating claim itself, which then
+// fails closed.
+func unreadableCandidate(secret *corev1.Secret, claimUID types.UID, err error) error {
+	if secret.Labels[claimUIDLabel] == string(claimUID) {
+		return err
+	}
+	return nil
 }
 
 func newAssetRecord(request AllocationRequest, machine *fleetv1.MachineCapacity, assetID string, epoch int64, bindingID, fenceToken string) *AssetRecord {
@@ -849,6 +874,7 @@ func (c *Coordinator) ReconcileNetworkScoped(ctx context.Context, consumer Proje
 }
 
 func (c *Coordinator) reconcileNetwork(ctx context.Context, consumer ProjectIdentity, claimUID types.UID) (fleetnetwork.Observation, error) {
+	ctx = withUndecodableReporting(ctx)
 	if c.networks == nil || claimUID == "" {
 		return fleetnetwork.Observation{}, fleetnetwork.ErrAuthorizationUnavailable
 	}
@@ -930,6 +956,7 @@ func (c *Coordinator) ReleaseScoped(ctx context.Context, consumer ProjectIdentit
 }
 
 func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID types.UID) (ReleaseResult, error) {
+	ctx = withUndecodableReporting(ctx)
 	if claimUID == "" {
 		return ReleaseResult{}, errors.New("claim UID is required")
 	}
@@ -941,7 +968,7 @@ func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID ty
 		custody, _, err = c.getCustody(ctx, claimUID)
 	}
 	if err != nil {
-		return ReleaseResult{}, fmt.Errorf("%w: claim custody is missing or invalid: %v", ErrRecordInvalid, err)
+		return ReleaseResult{}, fmt.Errorf("%w: claim custody is missing or invalid: %w", ErrRecordInvalid, err)
 	}
 	// Released custody is the terminal authority for this claim lifetime. The
 	// asset record may already belong to a later epoch and another claim by the
@@ -1017,7 +1044,7 @@ func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID ty
 		return ReleaseResult{State: AssetCleanupVerified, ExternalSettlementRequired: true}, nil
 	}
 	if record.State == AssetPreparing {
-		if operations, err := c.operationsForBinding(ctx, record.BindingID); err != nil {
+		if operations, err := c.operationsForBinding(ctx, record.ClaimUID, record.BindingID); err != nil {
 			return ReleaseResult{}, err
 		} else if len(operations) != 0 {
 			return ReleaseResult{}, fmt.Errorf("%w: preparing binding has retained operations", ErrRecordInvalid)
@@ -1091,6 +1118,7 @@ func (c *Coordinator) release(ctx context.Context, scope ClaimScope, claimUID ty
 // Object absence is not an acknowledgment and this method never queries the
 // external owner; callers must supply the retained authority and hold identities.
 func (c *Coordinator) CompleteExternalRelease(ctx context.Context, claimUID types.UID, authority AuthorityRef, hold ExternalHoldRef, project ...ProjectIdentity) (ReleaseResult, error) {
+	ctx = withUndecodableReporting(ctx)
 	if claimUID == "" || !authority.Valid() || !hold.Valid() {
 		return ReleaseResult{}, ErrRecordInvalid
 	}
@@ -1160,7 +1188,7 @@ func (c *Coordinator) retainNetworkRelease(ctx context.Context, assetID string, 
 }
 
 func (c *Coordinator) settleActiveOperation(ctx context.Context, asset *AssetRecord) error {
-	operations, err := c.operationsForBinding(ctx, asset.BindingID)
+	operations, err := c.operationsForBinding(ctx, asset.ClaimUID, asset.BindingID)
 	if err != nil {
 		return err
 	}
@@ -1215,6 +1243,7 @@ type InstallationResult struct {
 }
 
 func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) (InstallationResult, error) {
+	ctx = withUndecodableReporting(ctx)
 	if request.Claim == nil || request.Installation == nil || request.Claim.UID == "" || request.Installation.UID == "" || request.NamespaceUID == "" || !request.Admission.valid() {
 		return InstallationResult{}, errors.New("claim, installation, and namespace lifetime identities are required")
 	}
@@ -1252,9 +1281,6 @@ func (c *Coordinator) Install(ctx context.Context, request InstallationRequest) 
 	}
 	operationName := operationRecordName(scope, request.Claim.UID, predecessor)
 	operation, _, err := c.getOperation(ctx, operationName)
-	if errors.Is(err, ErrRecordInvalid) {
-		operation, err = c.upgradeLegacyOperation(ctx, operationName, request, asset, scope, predecessor)
-	}
 	if apierrors.IsNotFound(err) {
 		if asset.Network != nil && (!asset.Network.Observation.Prepared(asset.Network.Plan) || asset.Network.Observation.ObservedAt.After(c.now()) || c.now().Sub(asset.Network.Observation.ObservedAt) > c.maxEvidenceAge) {
 			return InstallationResult{}, fleetnetwork.ErrEvidenceStale
@@ -1354,7 +1380,7 @@ func (c *Coordinator) getOrCreateOperation(ctx context.Context, name string, req
 	var secret corev1.Secret
 	err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret)
 	if err == nil {
-		record, decodeErr := decodeOperationSecret(&secret)
+		record, decodeErr := decodeOperationSecret(ctx, &secret)
 		return record, &secret, decodeErr
 	}
 	if !apierrors.IsNotFound(err) {
@@ -1394,47 +1420,8 @@ func (c *Coordinator) getOperation(ctx context.Context, name string) (*Installat
 	if err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret); err != nil {
 		return nil, nil, err
 	}
-	record, err := decodeOperationSecret(&secret)
+	record, err := decodeOperationSecret(ctx, &secret)
 	return record, &secret, err
-}
-
-// upgradeLegacyOperation upgrades a v1 operation only while an exact public
-// request is available to supply the names that v1 failed to retain. A v1
-// record without that request remains quarantined: guessing a name from a UID
-// would retarget admitted provider authority.
-func (c *Coordinator) upgradeLegacyOperation(ctx context.Context, name string, request InstallationRequest, asset *AssetRecord, scope ClaimScope, predecessor string) (*InstallationRecord, error) {
-	var result *InstallationRecord
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var secret corev1.Secret
-		if err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret); err != nil {
-			return err
-		}
-		if current, err := decodeOperationSecret(&secret); err == nil {
-			result = current
-			return nil
-		}
-		legacy, err := decodeLegacyOperationSecret(&secret)
-		if err != nil {
-			return err
-		}
-		if legacy.InstallationUID != request.Installation.UID || legacy.NamespaceUID != request.NamespaceUID || legacy.ClaimUID != request.Claim.UID || legacy.ClaimScope != scope || legacy.ConsumerProject != request.ConsumerProject || legacy.AssetID != asset.AssetID || legacy.BindingID != asset.BindingID || legacy.Epoch != asset.Epoch || legacy.Predecessor != predecessor || legacy.ImageName != request.Installation.Spec.ImageRef.Name || legacy.Admission != request.Admission {
-			return ErrPredecessorConflict
-		}
-		legacy.SchemaVersion = installationRecordSchemaVersion
-		legacy.InstallationNamespace = request.Installation.Namespace
-		legacy.InstallationName = request.Installation.Name
-		legacy.ClaimNamespace = request.Claim.Namespace
-		legacy.ClaimName = request.Claim.Name
-		if err := encodeRecord(&secret, legacy, "installation"); err != nil {
-			return err
-		}
-		if err := c.client.Update(ctx, &secret); err != nil {
-			return err
-		}
-		result = legacy
-		return nil
-	})
-	return result, err
 }
 
 func (c *Coordinator) activateOperation(ctx context.Context, assetID string, claimUID types.UID, predecessor, operationID string) error {
@@ -1482,7 +1469,7 @@ func (c *Coordinator) markOperationSucceeded(ctx context.Context, name string, e
 	if err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: name}, &secret); err != nil {
 		return nil, err
 	}
-	record, err := decodeOperationSecret(&secret)
+	record, err := decodeOperationSecret(ctx, &secret)
 	if err != nil {
 		return nil, err
 	}
@@ -1557,7 +1544,7 @@ func (c *Coordinator) getAsset(ctx context.Context, assetID string) (*AssetRecor
 	if err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: assetRecordName(assetID)}, &secret); err != nil {
 		return nil, nil, err
 	}
-	record, err := decodeAssetSecret(&secret)
+	record, err := decodeAssetSecret(ctx, &secret)
 	return record, &secret, err
 }
 
@@ -1569,7 +1556,7 @@ func (c *Coordinator) getCustody(ctx context.Context, claimUID types.UID) (*Clai
 	if len(list.Items) != 1 {
 		return nil, nil, ErrRecordInvalid
 	}
-	record, err := decodeCustodySecret(&list.Items[0])
+	record, err := decodeCustodySecret(ctx, &list.Items[0])
 	return record, &list.Items[0], err
 }
 
@@ -1581,7 +1568,7 @@ func (c *Coordinator) getCustodyScoped(ctx context.Context, scope ClaimScope, cl
 	if err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: custodyRecordName(scope, claimUID)}, &secret); err != nil {
 		return nil, nil, err
 	}
-	record, err := decodeCustodySecret(&secret)
+	record, err := decodeCustodySecret(ctx, &secret)
 	return record, &secret, err
 }
 
@@ -1657,6 +1644,15 @@ func (c *Coordinator) selectCustody(ctx context.Context, request AllocationReque
 	return c.client.Update(ctx, secret)
 }
 
+// materializeSelectionForRelease settles a claim that is releasing while its
+// custody still only proposes an asset. If the proposed asset's record already
+// belongs to another claim, this claim never held the asset, so custody is
+// released without touching that record. A record that cannot be decoded is
+// attributed by its claim-uid label, as in unreadableCandidate: one labeled
+// for another claim is that claim's binding, so release proceeds the same way
+// and leaves the record, and the epoch it fences, unchanged. One labeled for
+// this claim, or with no label, may be this claim's binding at an unknown
+// state, so release fails closed and keeps the finalizer.
 func (c *Coordinator) materializeSelectionForRelease(ctx context.Context, custody *ClaimCustodyRecord) error {
 	if custody.ProposedAsset == nil || custody.ProposedAsset.AssetID != custody.AssetID || custody.ProposedAsset.ClaimUID != custody.ClaimUID {
 		return ErrRecordInvalid
@@ -1665,9 +1661,12 @@ func (c *Coordinator) materializeSelectionForRelease(ctx context.Context, custod
 	var secret corev1.Secret
 	err := c.client.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: assetRecordName(proposal.AssetID)}, &secret)
 	if err == nil {
-		existing, err := decodeAssetSecret(&secret)
+		existing, err := decodeAssetSecret(ctx, &secret)
 		if err != nil {
-			return err
+			if recordMayBelongTo(&secret, custody.ClaimUID) {
+				return err
+			}
+			return c.releaseCustody(ctx, custody.ClaimUID, custody.AssetID, custody.Scope)
 		}
 		if existing.ClaimUID != custody.ClaimUID {
 			return c.releaseCustody(ctx, custody.ClaimUID, custody.AssetID, custody.Scope)
@@ -1757,6 +1756,11 @@ func (c *Coordinator) recordsForClaim(ctx context.Context, claimUID types.UID) (
 	return c.recordsForClaimScoped(ctx, claimUID, ProjectIdentity{})
 }
 
+// recordsForClaimScoped returns the asset records of one claim. A record that
+// cannot be decoded blocks only the claim it is attributed to (see
+// recordMayBelongTo); for every other claim it is reported and skipped. A
+// skipped record still fences its asset, because allocation reads an asset's
+// record by name and never proposes an asset whose record cannot be decoded.
 func (c *Coordinator) recordsForClaimScoped(ctx context.Context, claimUID types.UID, consumer ProjectIdentity) ([]*AssetRecord, error) {
 	var list corev1.SecretList
 	if err := c.client.List(ctx, &list, client.InNamespace(c.namespace)); err != nil {
@@ -1768,9 +1772,12 @@ func (c *Coordinator) recordsForClaimScoped(ctx context.Context, claimUID types.
 		if !strings.HasPrefix(secret.Name, assetRecordPrefix) {
 			continue
 		}
-		record, err := decodeAssetSecret(secret)
+		record, err := decodeAssetSecret(ctx, secret)
 		if err != nil {
-			return nil, err
+			if recordMayBelongTo(secret, claimUID) {
+				return nil, err
+			}
+			continue
 		}
 		if record.ClaimUID == claimUID && (consumer.Valid() && record.ConsumerProject == consumer || !consumer.Valid() && !record.ConsumerProject.Valid()) {
 			records = append(records, record)
@@ -1779,7 +1786,11 @@ func (c *Coordinator) recordsForClaimScoped(ctx context.Context, claimUID types.
 	return records, nil
 }
 
-func (c *Coordinator) operationsForBinding(ctx context.Context, bindingID string) ([]*InstallationRecord, error) {
+// operationsForBinding returns the installation records of one binding. A
+// binding belongs to exactly one claim, so an undecodable record attributed to
+// another claim cannot be one of its operations and is reported and skipped.
+// One attributed to claimUID, or to no claim, fails the scan closed.
+func (c *Coordinator) operationsForBinding(ctx context.Context, claimUID types.UID, bindingID string) ([]*InstallationRecord, error) {
 	var list corev1.SecretList
 	if err := c.client.List(ctx, &list, client.InNamespace(c.namespace)); err != nil {
 		return nil, err
@@ -1790,9 +1801,12 @@ func (c *Coordinator) operationsForBinding(ctx context.Context, bindingID string
 		if !strings.HasPrefix(secret.Name, operationPrefix) {
 			continue
 		}
-		record, err := decodeOperationSecret(secret)
+		record, err := decodeOperationSecret(ctx, secret)
 		if err != nil {
-			return nil, err
+			if recordMayBelongTo(secret, claimUID) {
+				return nil, err
+			}
+			continue
 		}
 		if record.BindingID == bindingID {
 			records = append(records, record)
@@ -1823,10 +1837,10 @@ func encodeRecord(secret *corev1.Secret, value any, recordType string) error {
 	return nil
 }
 
-func decodeCustodySecret(secret *corev1.Secret) (*ClaimCustodyRecord, error) {
+func parseCustodySecret(secret *corev1.Secret) (*ClaimCustodyRecord, error) {
 	var record ClaimCustodyRecord
 	if secret.Type != corev1.SecretType("fleet.datumapis.com/private-lifecycle") || secret.Labels[recordTypeLabel] != "custody" || json.Unmarshal(secret.Data[recordDataKey], &record) != nil || validateCustodyRecord(&record) != nil || secret.Name != custodyRecordName(record.Scope, record.ClaimUID) || secret.Labels[claimUIDLabel] != string(record.ClaimUID) {
-		return nil, fmt.Errorf("%w: custody secret %s/%s", ErrRecordInvalid, secret.Namespace, secret.Name)
+		return nil, fmt.Errorf("%w: custody secret %s/%s", ErrRecordUnreadable, secret.Namespace, secret.Name)
 	}
 	return &record, nil
 }
@@ -1861,18 +1875,18 @@ func validateCustodyRecord(r *ClaimCustodyRecord) error {
 	return nil
 }
 
-func decodeAssetSecret(secret *corev1.Secret) (*AssetRecord, error) {
+func parseAssetSecret(secret *corev1.Secret) (*AssetRecord, error) {
 	var record AssetRecord
 	if secret.Type != corev1.SecretType("fleet.datumapis.com/private-lifecycle") || secret.Labels[recordTypeLabel] != "asset" || json.Unmarshal(secret.Data[recordDataKey], &record) != nil || validateAssetRecord(&record) != nil || secret.Name != assetRecordName(record.AssetID) || secret.Labels[claimUIDLabel] != string(record.ClaimUID) {
-		return nil, fmt.Errorf("%w: asset secret %s/%s", ErrRecordInvalid, secret.Namespace, secret.Name)
+		return nil, fmt.Errorf("%w: asset secret %s/%s", ErrRecordUnreadable, secret.Namespace, secret.Name)
 	}
 	return &record, nil
 }
 
-func decodeOperationSecret(secret *corev1.Secret) (*InstallationRecord, error) {
+func parseOperationSecret(secret *corev1.Secret) (*InstallationRecord, error) {
 	var record InstallationRecord
 	if secret.Type != corev1.SecretType("fleet.datumapis.com/private-lifecycle") || secret.Labels[recordTypeLabel] != "installation" || json.Unmarshal(secret.Data[recordDataKey], &record) != nil || validateInstallationRecord(&record) != nil || secret.Name != operationRecordName(record.ClaimScope, record.ClaimUID, record.Predecessor) || secret.Labels[claimUIDLabel] != string(record.ClaimUID) {
-		return nil, fmt.Errorf("%w: installation secret %s/%s", ErrRecordInvalid, secret.Namespace, secret.Name)
+		return nil, fmt.Errorf("%w: installation secret %s/%s", ErrRecordUnreadable, secret.Namespace, secret.Name)
 	}
 	return &record, nil
 }
@@ -1906,7 +1920,7 @@ func DecodePrivateLifecycleRoute(secret *corev1.Secret) (PrivateRecordRoute, err
 	}
 	switch secret.Labels[recordTypeLabel] {
 	case "custody":
-		record, err := decodeCustodySecret(secret)
+		record, err := parseCustodySecret(secret)
 		if err != nil {
 			return PrivateRecordRoute{}, err
 		}
@@ -1917,7 +1931,7 @@ func DecodePrivateLifecycleRoute(secret *corev1.Secret) (PrivateRecordRoute, err
 		}
 		return route, nil
 	case "asset":
-		record, err := decodeAssetSecret(secret)
+		record, err := parseAssetSecret(secret)
 		if err != nil {
 			return PrivateRecordRoute{}, err
 		}
@@ -1925,7 +1939,7 @@ func DecodePrivateLifecycleRoute(secret *corev1.Secret) (PrivateRecordRoute, err
 		appendAssetIndexes(&route, record)
 		return route, nil
 	case "installation":
-		record, err := decodeOperationSecret(secret)
+		record, err := parseOperationSecret(secret)
 		if err != nil {
 			return PrivateRecordRoute{}, err
 		}
@@ -1979,14 +1993,6 @@ func appendObservationIndexes(route *PrivateRecordRoute, observation fleetnetwor
 	}
 }
 
-func decodeLegacyOperationSecret(secret *corev1.Secret) (*InstallationRecord, error) {
-	var record InstallationRecord
-	if secret.Type != corev1.SecretType("fleet.datumapis.com/private-lifecycle") || secret.Labels[recordTypeLabel] != "installation" || json.Unmarshal(secret.Data[recordDataKey], &record) != nil || validateLegacyInstallationRecord(&record) != nil || secret.Name != operationRecordName(record.ClaimScope, record.ClaimUID, record.Predecessor) || secret.Labels[claimUIDLabel] != string(record.ClaimUID) {
-		return nil, fmt.Errorf("%w: legacy installation secret %s/%s", ErrRecordInvalid, secret.Namespace, secret.Name)
-	}
-	return &record, nil
-}
-
 func validateAssetRecord(r *AssetRecord) error {
 	if r.SchemaVersion != recordSchemaVersion || r.AssetID == "" || r.MachineNamespace == "" || r.MachineName == "" || r.MachineUID == "" || r.ClaimNamespace == "" || r.ClaimName == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.ClassUID == "" || r.ProfileUID == "" || r.LocalClassUID == "" || r.LocalProfileUID == "" || r.BindingID == "" || r.Epoch < 1 || r.FenceToken == "" || r.CurrentInstallationName == "" {
 		return ErrRecordInvalid
@@ -2034,22 +2040,6 @@ func validateInstallationRecord(r *InstallationRecord) error {
 	return nil
 }
 
-func validateLegacyInstallationRecord(r *InstallationRecord) error {
-	if r.SchemaVersion != 1 || r.InstallationNamespace != "" || r.InstallationName != "" || r.ClaimNamespace != "" || r.ClaimName != "" || !strings.HasPrefix(r.OperationID, "install-") || r.InstallationUID == "" || r.NamespaceUID == "" || r.ClaimUID == "" || !r.ClaimScope.Valid() || r.AssetID == "" || r.BindingID == "" || r.Epoch < 1 || r.Predecessor == "" || !strings.HasPrefix(r.ResultRevision, "ir-") || r.ImageName == "" || !r.Admission.valid() || r.Image.Validate() != nil || r.Image.CatalogAuthority != r.Admission.CatalogAuthority || r.Image.CatalogRevision != r.Admission.CatalogRevision || r.Image.ImageDecisionID != r.Admission.ImageDecisionID {
-		return ErrRecordInvalid
-	}
-	if r.ConsumerProject.Valid() && r.ClaimScope != ProjectClaimScope(r.ConsumerProject) || !r.ConsumerProject.Valid() && r.ClaimScope != LocalClaimScope(r.NamespaceUID) {
-		return ErrRecordInvalid
-	}
-	if r.State != OperationAdmitted && r.State != OperationSucceeded {
-		return ErrRecordInvalid
-	}
-	if r.NetworkInputs != nil && (r.NetworkInputs.Revision == "" || r.NetworkInputs.ObservedAt.IsZero()) {
-		return ErrRecordInvalid
-	}
-	return nil
-}
-
 func assetRecordName(assetID string) string { return assetRecordPrefix + shortHash(assetID) }
 func custodyRecordName(scope ClaimScope, claimUID types.UID) string {
 	return custodyRecordPrefix + shortHash(scope.AuthorityID+"/"+string(scope.ProjectUID)+"/"+string(claimUID))
@@ -2078,7 +2068,10 @@ func validSHA256(value string) bool {
 }
 
 func matches(profile fleetv1.MachineProfileSpec, hardware fleetv1.Hardware) bool {
-	if profile.CPU.Architecture != hardware.CPU.Architecture || !matchesCount(profile.CPU.Cores, hardware.CPU.Cores) || !matchesQuantity(profile.Memory.Capacity, hardware.Memory.Capacity) {
+	// CPU and memory are exact requests. An inexact profile fails closed, and
+	// capacity matches only when its observed cores and installed memory equal
+	// the request; larger machines are not silently substituted.
+	if ValidateExactHardware(profile) != nil || profile.CPU.Architecture != hardware.CPU.Architecture || profile.CPU.Cores != hardware.CPU.Cores || !sameMemory(profile.Memory.Capacity, hardware.Memory.Capacity) {
 		return false
 	}
 	var gpuCount int64

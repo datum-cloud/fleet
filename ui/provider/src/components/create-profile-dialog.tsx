@@ -15,19 +15,21 @@ const QUANTITY_MESSAGE = 'A size such as 128Gi or 2Ti.';
 
 export const ARCHITECTURES = ['amd64', 'arm64'] as const;
 
-// The minimum a profile needs: CPU and memory floors, optionally GPUs. Disks
-// and interface slots can follow once a page needs them.
+// The minimum a profile needs: the exact CPU cores and memory it requests,
+// optionally a GPU floor. CPU and memory have no ranges in the API; Machines
+// list exactly these values as their requested hardware. Disks and interface
+// slots can follow once a page needs them.
 export const profileFormSchema = z.object({
   name: z
     .string({ error: 'Name is required.' })
     .max(63, 'At most 63 characters.')
     .regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, NAME_MESSAGE),
   architecture: z.enum(ARCHITECTURES, { error: 'Choose an architecture.' }),
-  minCores: z
+  cores: z
     .number({ error: 'Enter a whole number.' })
     .int('Enter a whole number.')
     .min(1, 'At least 1.'),
-  minMemory: z
+  memory: z
     .string({ error: 'Memory is required.' })
     .regex(/^[1-9][0-9]*(Mi|Gi|Ti)$/, QUANTITY_MESSAGE),
   minGpus: z
@@ -44,8 +46,8 @@ export function toRawMachineProfile(values: ProfileFormValues): RawMachineProfil
   return {
     metadata: { name: values.name },
     spec: {
-      cpu: { architecture: values.architecture, cores: { min: values.minCores } },
-      memory: { capacity: { min: values.minMemory } },
+      cpu: { architecture: values.architecture, cores: values.cores },
+      memory: { capacity: values.memory },
       ...(values.minGpus !== undefined && {
         gpus: {
           count: { min: values.minGpus },
@@ -114,13 +116,17 @@ export function CreateProfileDialog() {
                 ))}
               </Form.Select>
             </Form.Field>
-            <Form.Field name="minCores" label="Minimum CPU cores" required>
+            <Form.Field
+              name="cores"
+              label="CPU cores"
+              description="The exact number of physical cores, across all sockets."
+              required>
               <Form.Input type="number" inputMode="numeric" placeholder="24" />
             </Form.Field>
             <Form.Field
-              name="minMemory"
-              label="Minimum memory"
-              description="A Kubernetes quantity, such as 128Gi."
+              name="memory"
+              label="Memory"
+              description="The exact installed memory, such as 128Gi."
               required>
               <Form.Input placeholder="128Gi" />
             </Form.Field>

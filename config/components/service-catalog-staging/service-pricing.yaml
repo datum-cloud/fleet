@@ -1,0 +1,42 @@
+# The service catalog's Bare Metal products on staging's price list, for
+# contracts to charge. They're priced at 0 for now: the staff portal treats
+# a list price of 0 as priced per contract, so staff enter each customer's
+# amount from the order form. Tax codes come later. Setup fees for racks,
+# cabling and power are Colocation products, priced in infra.
+#
+# Each server type gets a Committed pricing here, and a Usage one once Bare
+# Metal meters server-hours.
+#
+# Pricings can't be changed once created: to change a price, add a new
+# version (-v2) and leave the old one, which published Offers and contracts
+# may still use.
+---
+apiVersion: billing.miloapis.com/v1alpha1
+kind: ServicePricing
+metadata:
+  name: bare-metal-b300-committed-v1
+  namespace: milo-system
+spec:
+  displayName: "Bare Metal B300 (Committed)"
+  sku: BM-B300-COMMIT
+  chargeType: Recurring
+  interval: monthly
+  currency: USD
+  amount: "0"
+  pricingUnit: server
+  serviceRef: metal.datumapis.com
+---
+apiVersion: billing.miloapis.com/v1alpha1
+kind: ServicePricing
+metadata:
+  name: bare-metal-server-setup-v1
+  namespace: milo-system
+spec:
+  displayName: "Server Setup"
+  sku: BM-SETUP
+  chargeType: OneTime
+  trigger: BillingAccountActivation
+  currency: USD
+  amount: "0"
+  pricingUnit: server
+  serviceRef: metal.datumapis.com

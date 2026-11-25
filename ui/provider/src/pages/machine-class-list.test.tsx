@@ -71,7 +71,7 @@ const PROFILES = [
   ...fixtureProfiles.list(),
   {
     metadata: { name: 'general-purpose-24c' },
-    spec: { cpu: { architecture: 'amd64', cores: { min: 24 } }, memory: { capacity: { min: '128Gi' } } },
+    spec: { cpu: { architecture: 'amd64', cores: 24 }, memory: { capacity: '128Gi' } },
   },
 ].map(toMachineProfile);
 

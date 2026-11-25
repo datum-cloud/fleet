@@ -195,6 +195,7 @@ const (
 	StateQuarantined         AuthorityState = "Quarantined"
 )
 
+// AuthorityRecord is the private Milo authority state for one claim lifetime.
 type AuthorityRecord struct {
 	SchemaVersion        int                        `json:"schemaVersion"`
 	RecordID             string                     `json:"recordID"`

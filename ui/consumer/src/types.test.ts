@@ -54,25 +54,36 @@ describe('toMachine', () => {
     ]);
   });
 
-  it('defaults power intent to Off and leaves unreported hardware absent', () => {
+  it('defaults power intent to Off and leaves an unresolved request absent', () => {
     const { powerState: _, ...spec } = FIXTURE_MACHINES[1].spec;
-    const machine = toMachine({ ...FIXTURE_MACHINES[1], spec });
+    const { requestedHardware: __, ...status } = FIXTURE_MACHINES[1].status ?? {};
+    const machine = toMachine({ ...FIXTURE_MACHINES[1], spec, status });
     expect(machine.powerIntent).toBe('Off');
     expect(machine.powerObserved).toBeUndefined();
     expect(machine.cpu).toBeUndefined();
+    expect(machine.memory).toBeUndefined();
   });
 
-  it('summarizes allocated CPU and memory', () => {
-    const machine = toMachine(FIXTURE_MACHINES[0]);
-    expect(machine.cpu).toBe('24 cores · amd64');
-    expect(machine.memory).toBe('128Gi');
+  it('summarizes requested CPU and memory, including before allocation', () => {
+    for (const raw of FIXTURE_MACHINES.slice(0, 2)) {
+      const machine = toMachine(raw);
+      expect(machine.cpu).toBe('24 cores · amd64');
+      expect(machine.memory).toBe('128Gi');
+    }
+  });
+
+  it('does not take requested values from allocated hardware', () => {
+    const { requestedHardware: _, ...status } = FIXTURE_MACHINES[0].status ?? {};
+    const machine = toMachine({ ...FIXTURE_MACHINES[0], status });
+    expect(machine.cpu).toBeUndefined();
+    expect(machine.memory).toBeUndefined();
   });
 });
 
 describe('toCatalogOffering', () => {
   const profile: RawMachineProfile = {
     metadata: { name: 'general-purpose-24c-128g' },
-    spec: { cpu: { architecture: 'amd64', cores: { min: 24 } }, memory: { capacity: { min: '128Gi' } } },
+    spec: { cpu: { architecture: 'amd64', cores: 24 }, memory: { capacity: '128Gi' } },
   };
 
   it('reads a published class from its resolved status', () => {
@@ -106,7 +117,7 @@ describe('toCatalogOffering', () => {
     );
     expect(offering.source).toBeUndefined();
     expect(offering.available).toBe(true);
-    expect(offering.profiles[0]).toMatchObject({ published: true, cpu: '≥ 24 cores · amd64' });
+    expect(offering.profiles[0]).toMatchObject({ published: true, cpu: '24 cores · amd64' });
   });
 
   it('marks an allowed profile that is missing from the project', () => {
@@ -150,6 +161,8 @@ describe('toMachineDetail', () => {
       ['Bound', 'True'],
       ['NetworkReady', 'True'],
       ['Ready', 'True'],
+      // Extra conditions, such as the request resolver's, follow the four.
+      ['RequestResolved', 'True'],
     ]);
   });
 

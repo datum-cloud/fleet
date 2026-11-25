@@ -14,7 +14,9 @@ integrations. Real provider support and live Milo acceptance tests are incomplet
 | Build and test locally or run the simulator | [Implementation commands](../development/README.md#build-test-and-run) | Behavior of the implemented code and synthetic provider |
 | Exercise allocation, install recovery, cleanup, and reuse | [Standalone smoke environment](standalone-smoke.md) | Same-cluster lifecycle behavior with namespaces as project stand-ins |
 | Render deployment bundles and supply environment inputs | [Deployment manifests](../../config/README.md) | Packaging and security boundaries, not runtime readiness |
+| Run the manager across consuming projects | [Project discovery](../../config/README.md#project-discovery) | Discovery, per-project isolation, departure, role bindings, and readiness |
 | Exercise Milo-routed synthetic staging | [Synthetic staging configuration](../../config/README.md#environment-owned-inputs) | Restricted synthetic publication and lifecycle behavior, not production authority |
+| Plan an installation and register the server bound to it | [Planning and registering physical devices](physical-inventory.md) | Operator-written inventory records in the provider project in Milo, with immutable identity and binding; no capacity or hardware effect; unit tested |
 | Validate Milo acceptance packaging and evidence | [Milo acceptance harness](../../test/acceptance/milo/README.md) | Fail-closed preflight and sanitized evidence; live acceptance remains blocked |
 | Configure protected acceptance workflow access | [GitHub execution boundary](../../test/acceptance/milo/github-environment.md) | Required environment and runner-group controls |
 
@@ -32,6 +34,30 @@ immutable image selection remain in `infra`. See the
 Keep standalone and synthetic-staging fixtures separate from production. Do not
 promote the synthetic overlay or treat published images, rendered manifests, or
 a successful local smoke run as proof that the production service is ready.
+
+## Running the manager across projects
+
+`fleet-manager` serves every project that consumes the `metal` service; see
+[project discovery](../../config/README.md#project-discovery). In production it
+has no provider and no synthetic integration, so its lifecycle handlers stay
+blocked: no allocation, installation, provider call, or custody write. The only
+effect is pinning `status.requestedHardware` and `RequestResolved` on Machines.
+`/readyz` reports discovery and cache health, not provider readiness, and
+passing it enables nothing. Fleet ships the code, Milo roles, and manifests;
+`infra` supplies the configuration, kubeconfigs, role bindings, and image pin.
+See the [environment inputs](../../config/README.md#environment-owned-inputs).
+
+To diagnose an unready manager, compare the projects with an Active `metal`
+ServiceConsumer against the `consumer_provider_engaged_clusters` metric and the
+`/readyz` message, which names the first project that is not engaged or not
+synced. A project that does not serve every API the manager watches never
+engages. A Machine with `RequestResolved=False` reports its profile problem
+(`ProfileNotFound`, `ProfileDeleting`, or `ProfileInvalid`); a Machine with no
+condition at all is in a project the manager has not engaged.
+
+A project that leaves the consumer set is no longer reconciled, even with
+active custody; nothing is released or rewritten. Re-engaging it resumes.
+Production releases for a departed project require it to be engaged again.
 
 ## Before enabling provider changes
 

@@ -417,4 +417,98 @@ EOF
 expect_failure "intentional Kustomize build failure" "missing.yaml"
 rm -rf "$fixture_root/config/overlays/broken"
 
+# Device deletion protection is a reusable component that deploying
+# repositories opt into. No root in this repository may render it, and the
+# component rendered alone must be the exact fail-closed policy.
+component="$fixture_root/config/components/device-deletion-protection"
+policy="$repo_root/config/components/device-deletion-protection/policy.yaml"
+mkdir -p "$fixture_root/config/components/inventory"
+cat >"$fixture_root/config/components/inventory/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base/safe]
+EOF
+expect_failure "Device inventory without the deletion component" "must exist for deploying repositories to opt into"
+mkdir -p "$component"
+cp "$repo_root/config/components/device-deletion-protection/kustomization.yaml" "$policy" "$component/"
+"$repo_root/hack/validate-overlay-isolation.sh" "$fixture_root/config" "$fixture_root/config/standalone"
+
+mkdir -p "$fixture_root/config/milo-production"
+cat >"$fixture_root/config/milo-production/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../base/safe]
+components: [../components/device-deletion-protection]
+EOF
+expect_failure "fleet root including the deletion component" "milo-production renders Device deletion protection"
+rm -rf "$fixture_root/config/milo-production"
+mkdir -p "$fixture_root/config/overlays/synthetic-with-protection"
+cat >"$fixture_root/config/overlays/synthetic-with-protection/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base/safe]
+components: [../../components/device-deletion-protection]
+EOF
+expect_failure "nested fleet root including the deletion component" "renders Device deletion protection"
+rm -rf "$fixture_root/config/overlays/synthetic-with-protection"
+mkdir -p "$fixture_root/config/overlays/renamed-protection"
+sed 's/name: fleet-device-deletion-protection/name: renamed-device-guard/; s/policyName: fleet-device-deletion-protection/policyName: renamed-device-guard/' "$policy" >"$fixture_root/config/overlays/renamed-protection/policy.yaml"
+cat >"$fixture_root/config/overlays/renamed-protection/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [policy.yaml]
+EOF
+expect_failure "renamed Device deletion policy copied into a fleet root" "renders Device deletion protection"
+rm -rf "$fixture_root/config/overlays/renamed-protection"
+
+# Each weakening below is rendered through the component itself.
+weakened() {
+  description=$1
+  expected=$2
+  shift 2
+  sed "$@" "$policy" >"$component/policy.yaml"
+  if cmp -s "$policy" "$component/policy.yaml"; then
+    echo "$description fixture did not change the policy" >&2
+    exit 1
+  fi
+  expect_failure "$description" "$expected"
+  cp "$policy" "$component/policy.yaml"
+}
+weakened "renamed Device deletion policy" "components/device-deletion-protection: Device deletion policy must fail closed" -e '1,/kind: ValidatingAdmissionPolicyBinding/s/name: fleet-device-deletion-protection/name: renamed-device-guard/'
+weakened "renamed Device deletion policy and binding" "components/device-deletion-protection must render the Device deletion policy and its binding" -e 's/name: fleet-device-deletion-protection/name: renamed-device-guard/' -e 's/policyName: fleet-device-deletion-protection/policyName: renamed-device-guard/'
+weakened "audit-only Device deletion binding" "must Deny in every namespace" -e 's/validationActions: \[Deny\]/validationActions: [Audit]/'
+weakened "warn-only Device deletion binding" "must Deny in every namespace" -e 's/validationActions: \[Deny\]/validationActions: [Warn]/'
+weakened "fail-open Device deletion policy" "must fail closed" -e 's/failurePolicy: Fail/failurePolicy: Ignore/'
+weakened "always-true Device deletion expression" "allow DELETE only for a Retired Device, a deleting namespace or an exactly listed cleanup username" -e "s/oldObject.spec.lifecycle == 'Retired')/oldObject.spec.lifecycle == 'Retired') || true/"
+weakened "Decommissioning Device deletion allowed" "allow DELETE only for a Retired Device, a deleting namespace or an exactly listed cleanup username" -e "s/== 'Retired')/!= 'Active')/"
+weakened "namespace-scoped Device deletion policy" "must fail closed" -e 's/    matchPolicy: Equivalent/    matchPolicy: Equivalent\
+    namespaceSelector: {matchLabels: {protected: "true"}}/'
+weakened "subject exemption in Device deletion policy" "must fail closed" -e 's/^  validations:/  matchConditions:\
+    - name: not-admin\
+      expression: "request.userInfo.username != '\''admin'\''"\
+  validations:/'
+
+# The cleanup identity clause admits only an exactly listed, non-empty
+# username from a ConfigMap parameter, and the component ships it off.
+allowed="allow DELETE only for a Retired Device, a deleting namespace or an exactly listed cleanup username"
+weakened "always-true cleanup identity clause" "$allowed" -e "s/entry.trim() != '' && entry.trim() == request.userInfo.username/true/"
+weakened "wildcard cleanup username" "$allowed" -e "s/entry.trim() == request.userInfo.username/(entry.trim() == '*' || entry.trim() == request.userInfo.username)/"
+weakened "prefix cleanup username" "$allowed" -e "s/entry.trim() == request.userInfo.username/request.userInfo.username.startsWith(entry.trim())/"
+weakened "group-based cleanup exemption" "$allowed" -e "s/entry.trim() == request.userInfo.username))/entry.trim() == request.userInfo.username)) ||\\
+        (params != null \&\& request.userInfo.groups.exists(group, group in params.data.cleanupUsernames.split(',')))/"
+weakened "absent params allowing every Device deletion" "$allowed" -e "s/(params != null && has(params.data)/(params == null || has(params.data)/"
+weakened "empty username matching an empty entry" "$allowed" -e "s/entry.trim() != '' && entry.trim() == request.userInfo.username/entry.trim() == request.userInfo.username/" -e "/request.userInfo.username != '' &&\$/d"
+weakened "Secret paramKind" "paramKind must be exactly core/v1 ConfigMap" -e 's/^    kind: ConfigMap$/    kind: Secret/'
+weakened "missing paramKind" "paramKind must be exactly core/v1 ConfigMap" -e '/^  paramKind:$/d' -e '/^    apiVersion: v1$/d' -e '/^    kind: ConfigMap$/d'
+weakened "Allow parameterNotFoundAction in the component" "must not set paramRef" -e 's/^  validationActions: \[Deny\]/  validationActions: [Deny]\
+  paramRef:\
+    name: synthetic-device-cleanup\
+    namespace: synthetic-device-cleanup\
+    parameterNotFoundAction: Allow/'
+weakened "cleanup identity enabled in the component" "must not set paramRef" -e 's/^  validationActions: \[Deny\]/  validationActions: [Deny]\
+  paramRef:\
+    name: synthetic-device-cleanup\
+    namespace: synthetic-device-cleanup\
+    parameterNotFoundAction: Deny/'
+
 "$repo_root/hack/validate-overlay-isolation.sh" "$fixture_root/config" "$fixture_root/config/standalone"

@@ -106,6 +106,12 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	} else if class.Spec.Source != nil {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "Synthetic same-project staging requires a local capacity definition.")
 	}
+	// The pinned request is authoritative for what this Machine asked for. A
+	// recreated profile with different CPU or memory must not be allocated
+	// silently under the old snapshot.
+	if pinned := claim.Status.RequestedHardware; pinned != nil && !controller.SameRequestedHardware(pinned, sourceProfile.Spec) {
+		return h.rejected(ctx, &claim, "RequestedHardwareConflict", "The current MachineProfile no longer requests the pinned CPU and memory.")
+	}
 	if sourceClass.Spec.Capacity == nil || sourceClass.Spec.Capacity.MachineCapacities.Namespace == "" {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "The resolved MachineClass has no explicit provider namespace.")
 	}
@@ -131,17 +137,17 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	admission := controller.AdmissionAuthority{PrincipalUID: "synthetic-staging:" + string(h.Project.UID), DecisionID: "synthetic-staging:" + string(claim.UID)}
 	if crossProject {
 		if err := h.Coordinator.EnsureClaimCustody(ctx, &claim, namespace.UID, admission, h.Project); err != nil {
-			return manager.Outcome{RetryError: err}
+			return h.lifecycleError(ctx, &claim, err)
 		}
 		authority, hold := syntheticCrossProjectAuthority(claim.UID, claim.Namespace, h.Project, h.ProviderProject)
 		if err := h.Coordinator.RetainClaimAuthority(ctx, claim.UID, h.Project, h.ProviderProject, authority); err != nil {
-			return manager.Outcome{RetryError: err}
+			return h.lifecycleError(ctx, &claim, err)
 		}
 		if err := h.Coordinator.RetainAllocationAuthority(ctx, claim.UID, h.Project, h.ProviderProject, authority, hold); err != nil {
-			return manager.Outcome{RetryError: err}
+			return h.lifecycleError(ctx, &claim, err)
 		}
 	} else if err := h.Coordinator.EnsureClaimCustody(ctx, &claim, namespace.UID, admission); err != nil {
-		return manager.Outcome{RetryError: err}
+		return h.lifecycleError(ctx, &claim, err)
 	}
 	if !contains(claim.Finalizers, controller.MachineFinalizer) {
 		updated := claim.DeepCopyObject().(*fleetv1.Machine)
@@ -166,7 +172,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		return h.pending(ctx, &claim, "InsufficientCapacity", "No matching synthetic machine is currently available.", nil)
 	}
 	if err != nil {
-		return manager.Outcome{RetryError: err}
+		return h.lifecycleError(ctx, &claim, err)
 	}
 	for i := range list.Items {
 		if list.Items[i].UID == record.MachineUID {
@@ -191,6 +197,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 			condition("Ready", metav1.ConditionTrue, claim.Generation, "PoweredOffHandoff", "The synthetic powered-off handoff is ready."),
 		},
 	}
+	status = preserveRequest(claim.Status, status)
 	if sameStatus(claim.Status, status) {
 		return manager.Outcome{}
 	}
@@ -200,6 +207,18 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	}
 	return manager.Outcome{}
 }
+
+// lifecycleError reports a private record of this Machine that cannot be
+// decoded as not bound and not ready, without retrying: retrying cannot make
+// the record readable. Every other error is retried.
+func (h Handler) lifecycleError(ctx context.Context, claim *fleetv1.Machine, err error) manager.Outcome {
+	if errors.Is(err, controller.ErrRecordUnreadable) {
+		return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
+	}
+	return manager.Outcome{RetryError: err}
+}
+
+const unreadableRecordMessage = "A private lifecycle record for this Machine cannot be decoded. Fleet will not allocate, install, or release through it; an operator must remove the record."
 
 func (h Handler) dependency(ctx context.Context, claim *fleetv1.Machine, reason string, err error) manager.Outcome {
 	if apierrors.IsNotFound(err) {
@@ -215,6 +234,7 @@ func (h Handler) pending(ctx context.Context, claim *fleetv1.Machine, reason, me
 		condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message),
 		condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message),
 	}}
+	status = preserveRequest(claim.Status, status)
 	if !sameStatus(claim.Status, status) {
 		claim.Status = status
 		if err := h.Public.Status().Update(ctx, claim); err != nil {
@@ -230,6 +250,7 @@ func (h Handler) rejected(ctx context.Context, claim *fleetv1.Machine, reason, m
 		condition("Bound", metav1.ConditionFalse, claim.Generation, reason, message),
 		condition("Ready", metav1.ConditionFalse, claim.Generation, reason, message),
 	}}
+	status = preserveRequest(claim.Status, status)
 	if !sameStatus(claim.Status, status) {
 		claim.Status = status
 		if err := h.Public.Status().Update(ctx, claim); err != nil {
@@ -253,11 +274,19 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 		if errors.Is(err, controller.ErrRecordInvalid) && (claim == nil || !contains(claim.Finalizers, controller.MachineFinalizer)) {
 			return manager.Outcome{}
 		}
+		// The finalizer stays until an operator removes the record; see
+		// docs/development/README.md.
+		if errors.Is(err, controller.ErrRecordUnreadable) {
+			return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
+		}
 		return manager.Outcome{RetryError: err}
 	}
 	if crossProject && result.ExternalSettlementRequired {
 		authority, hold := syntheticCrossProjectAuthority(uid, namespace, h.Project, h.ProviderProject)
 		result, err = h.Coordinator.CompleteExternalRelease(ctx, uid, authority, hold, h.Project)
+		if errors.Is(err, controller.ErrRecordUnreadable) {
+			return h.pending(ctx, claim, controller.ReasonUnreadablePrivateRecord, unreadableRecordMessage, nil)
+		}
 		if err != nil {
 			return manager.Outcome{RetryError: err}
 		}
@@ -385,6 +414,17 @@ func condition(kind string, status metav1.ConditionStatus, generation int64, rea
 	return metav1.Condition{Type: kind, Status: status, ObservedGeneration: generation, LastTransitionTime: metav1.Now(), Reason: reason, Message: message}
 }
 
+// preserveRequest carries forward the fields owned by the requested-hardware
+// projector. This handler replaces Machine status wholesale and must never
+// drop or rewrite the pinned snapshot or its RequestResolved condition.
+func preserveRequest(current, next fleetv1.MachineStatus) fleetv1.MachineStatus {
+	next.RequestedHardware = current.RequestedHardware
+	if resolved := apiMeta.FindStatusCondition(current.Conditions, controller.ConditionRequestResolved); resolved != nil {
+		next.Conditions = append(next.Conditions, *resolved)
+	}
+	return next
+}
+
 // Ignore transition timestamps when deciding whether another status write is
 // necessary; otherwise a dependency event would create a write loop.
 func sameStatus(left, right fleetv1.MachineStatus) bool {
@@ -398,4 +438,26 @@ func sameStatus(left, right fleetv1.MachineStatus) bool {
 		right.Conditions[i].LastTransitionTime = metav1.Time{}
 	}
 	return reflect.DeepEqual(left, right)
+}
+
+// ConsumerHandlers installs the synthetic staging handler for exactly one
+// engaged project, the configured publication consumer, and base handlers for
+// every other project. template supplies the coordinator, location, and
+// optional provider; its Public client and Project are taken from the
+// consumer's binding. An engagement under the consumer's name that is not the
+// exact consumer lifetime is refused.
+func ConsumerHandlers(base manager.HandlerFactory, consumer controller.ProjectIdentity, template Handler) manager.HandlerFactory {
+	return func(binding manager.ProjectBinding) (manager.Handlers, error) {
+		handlers, err := base(binding)
+		if err != nil || string(binding.ClusterName) != consumer.RouteName {
+			return handlers, err
+		}
+		if !binding.Project.SameLifetime(consumer) {
+			return manager.Handlers{}, fmt.Errorf("%w: synthetic consumer %q is engaged as a different project lifetime", manager.ErrProjectIdentityUnavailable, binding.ClusterName)
+		}
+		handler := template
+		handler.Public, handler.Project = binding.Client, binding.Project
+		handlers.Machine = handler
+		return handlers, nil
+	}
 }

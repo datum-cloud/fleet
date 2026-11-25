@@ -26,6 +26,8 @@ status:
     - {type: SourceResolved, status: "True", reason: AuthorizedSource}
 ---
 # PLATFORM-WRITTEN immutable hardware requirements published with the offering.
+# CPU cores and memory capacity are exact requests, not ranges; other
+# requirements keep min/max constraints.
 # This local name carries protected source provenance; copying the fields does not.
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineProfile
@@ -34,9 +36,9 @@ metadata:
 spec:
   cpu:
     architecture: amd64
-    cores: {min: 16}
+    cores: 16
   memory:
-    capacity: {min: "64Gi"}
+    capacity: "64Gi"
   disks:
     - name: boot
       count: {min: 1}

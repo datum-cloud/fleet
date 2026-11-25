@@ -306,13 +306,14 @@ metadata:
 # Immutable requirements can serve several offerings without coupling hardware
 # choices to capacity ownership, price, location, or provisioning credentials.
 spec:
-  # Cores count physical cores across sockets. Memory describes installed RAM,
-  # not memory left available after the OS starts.
+  # CPU and memory are exact requests, not ranges. Cores count physical cores
+  # across sockets. Memory describes installed RAM, not memory left available
+  # after the OS starts.
   cpu:
     architecture: amd64
-    cores: {min: 16}
+    cores: 16
   memory:
-    capacity: {min: "64Gi"}
+    capacity: "64Gi"
 
   # GPU memory applies to each matching device, not their combined memory.
   gpus:
@@ -342,12 +343,62 @@ status:
     - {type: Accepted, status: "True"}
 ```
 
-Admission requires CPU architecture and memory capacity. Numeric constraints use
-inclusive `min` and optional `max`, or `exact` alone. Counts are integers,
-capacities are byte quantities, and speeds are bits per second (`10G` means
-10 billion bits per second). Negative values, empty constraints, inverted bounds,
-duplicate group names, and unknown units or required capabilities are invalid.
-An omitted constraint imposes no requirement; GPU count `exact: 0` excludes GPUs.
+A profile requests **exact** CPU and memory (implemented). `cpu.architecture`,
+`cpu.cores`, and `memory.capacity` are required. Cores is a positive integer.
+Memory is a positive integer byte quantity with an optional binary (`Ki`
+through `Ei`) or decimal (`k`, `M` through `E`) suffix, such as `32Gi`.
+Minimums, maximums, ranges, and fractional, milli, signed, or exponent forms
+are rejected by CRD validation, and Fleet revalidates stored objects before
+use. The allocator matches only capacity whose observed cores and installed
+memory equal the request; quantities compare by value, so `128Gi` equals
+`131072Mi`. A larger machine is never silently substituted.
+
+This is a breaking `v1alpha1` change made without conversion, deprecated
+fields, or migration logic. A stored profile with the former
+`cores: {min: ...}` or `capacity: {min: ...}` shape no longer decodes and must
+be deleted and recreated with exact values before upgrading the manager.
+
+Private asset, claim custody, and Milo authority records embed the accepted
+requirements as the exact `MachineProfileSpec` (implemented). Fleet keeps no
+decoder for an earlier record shape. A private record whose requirements do
+not decode as the exact shape is undecodable. It never produces
+`requestedHardware`, `allocatedHardware`, or readiness, and it is never
+rewritten. It blocks only the claim it belongs to (implemented):
+
+- The coordinator attributes an undecodable record by its
+  `fleet.datumapis.com/claim-uid` label, never by its body. Scans across
+  claims skip a record labeled for another claim. A record with no claim label
+  could belong to any claim, so it fails every claim-scoped scan closed: one
+  hand-edited Secret with no label halts allocation, installation, and release
+  for every claim until it is removed.
+- A claim released while it only proposes an asset whose undecodable record
+  is labeled for another claim never held that asset, so it is released and
+  the record is left in place to keep fencing the asset.
+- Allocation, installation admission, network refresh, Milo authority recovery,
+  and release fail closed for the attributed claim. Synthetic staging reports
+  the Machine as `Bound=False` and `Ready=False`, reason
+  `UnreadablePrivateRecord`, without a retry loop. Release never removes the
+  finalizer through such a record.
+- Allocation never proposes an asset whose record, or whose previous claim's
+  custody record, cannot be decoded. Without the record there is no proof the
+  asset was released or of its epoch. A `Released` record kept for epoch
+  fencing that cannot be decoded therefore keeps its asset out of allocation
+  rather than restarting its epoch below a stale operation.
+- Each such record is logged and counted in
+  `fleet_private_lifecycle_record_undecodable_total`, labeled by record type.
+
+Fleet has no automated recovery. An operator disables allocation on the
+affected capacity, deletes the Machine, removes its finalizer by hand, then
+deletes that claim's private record Secrets. The
+[implementation status](../../development/README.md#undecodable-private-records)
+lists the steps.
+
+GPU, disk, and interface requirements keep numeric constraints with inclusive
+`min` and optional `max`, or `exact` alone. Counts are integers, capacities are
+byte quantities, and speeds are bits per second (`10G` means 10 billion bits per
+second). Negative values, empty constraints, inverted bounds, duplicate group
+names, and unknown units or required capabilities are invalid. An omitted
+constraint imposes no requirement; GPU count `exact: 0` excludes GPUs.
 
 Counts apply to matching devices. Each interface entry requires one port; disk
 groups and interface entries cannot share a device. Missing observations cannot
@@ -491,6 +542,19 @@ status:
   # Admission retains the selected local profile through source deletion.
   acceptedProfileRef:
     name: accelerated-16c-64g
+  # The exact request resolved from the profile, pinned when first resolved.
+  # It needs no allocation and never changes after acceptance.
+  requestedHardware:
+    cpu:
+      architecture: amd64
+      cores: 16
+    memory:
+      capacity: "64Gi"
+    source:
+      machineGeneration: 1
+      profileRef: {name: accelerated-16c-64g}
+      profileGeneration: 1
+      profileDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   # Allocation captures this hardware snapshot and its observation time.
   # Later observations can change readiness without rewriting the snapshot.
   allocatedHardware:
@@ -550,12 +614,17 @@ status:
   power:
     state: "On"
   conditions:
+    - {type: RequestResolved, status: "True", reason: Resolved}
     - {type: Accepted, status: "True"}
     - {type: Bound, status: "True"}
     - {type: Ready, status: "True"}
     - {type: NetworkReady, status: "True"}
     - {type: Releasing, status: "False"}
 ```
+
+The example requests 16 cores and 64Gi but shows a larger allocated snapshot to
+illustrate that the fields are distinct. With exact matching implemented, a
+bound Machine's allocated CPU and memory equal its request.
 
 Machine creation captures caller identity without reserving capacity. Missing
 dependencies leave the Machine pending. Superseded power intent generations cannot
@@ -571,6 +640,61 @@ A MachineAllocation retains its accepted requirements and hardware snapshot thro
 changes or deletion. Later observations can change readiness, but a bound Machine
 never moves to another Machine. Owner references cannot replace Fleet's release
 protocol.
+
+##### Requested hardware
+
+Implemented. `status.requestedHardware` lets listings show what a Machine asked
+for without resolving its MachineProfile client-side. It differs from
+`status.allocatedHardware`, which remains the snapshot of hardware actually
+assigned and stays absent until allocation.
+
+- **Resolution.** A controller copies `cpu` and `memory` exactly from the
+  referenced MachineProfile in the Machine's project. It records provenance in
+  `source`: `machineGeneration` is the Machine generation at resolution,
+  `profileRef` and `profileGeneration` identify the profile, and `profileDigest`
+  is `sha256:` over the complete resolved profile spec. Status exposes names,
+  generations, and a digest, not object UIDs. A same-name recreation with equal
+  contents yields an equal digest and an equal request.
+- **Pinning.** The first successful resolution accepts the request and pins the
+  snapshot. The resolver never resolves a pinned snapshot again, and a CRD
+  transition rule rejects any status write that changes or removes it. Profile
+  specs are already immutable, so the remaining hazards are deletion and
+  same-name recreation; neither changes the snapshot. The Machine's
+  `machineProfileRef` is immutable, so the snapshot cannot describe another
+  profile. Later Machine generations, such as power-intent changes, keep the
+  original `machineGeneration`. Synthetic staging rejects allocation with
+  `Accepted=False`, reason `RequestedHardwareConflict`, when the current
+  profile no longer requests the pinned values.
+- **Unresolved is explicit.** Until resolution succeeds, the snapshot is absent
+  and `RequestResolved=False` carries one of `ProfileNotFound`,
+  `ProfileDeleting`, or `ProfileInvalid` (the stored profile is not an exact
+  request). Fleet never defaults, infers, or chooses a value. An unknown
+  profile read result is retried and written as neither success nor failure.
+  `RequestResolved=True` uses reason `Resolved`. The condition reports request
+  resolution only: it does not imply admission, authorization, capacity, or
+  readiness.
+- **Writer.** `fleet-manager`'s requested-hardware projector is the only
+  controller writer of `requestedHardware` and `RequestResolved`, in every
+  environment. The manager builds one projector per engaged project (every
+  project with an Active `metal` ServiceConsumer, or the one named project in
+  single mode), bound to that project's identity and client. Other Machine
+  status writers carry both fields forward unchanged. The standalone smoke
+  runner applies the same resolve-once function to its fixture Machines.
+- **Enablement.** Resolution needs only read access to Machines and
+  MachineProfiles and `machines.updateStatus` in the project; the controller
+  role already grants these, and it must apply in every consuming project. It
+  runs in every configuration, including production, where no provider is
+  configured and every lifecycle handler stays blocked. It needs no
+  `--synthetic-staging`, provider, allocation, or quota. The code, roles, and
+  manifests are implemented and tested; production configuration,
+  credentials, and role bindings are environment-owned and not yet wired.
+  Until they are, production Machines stay unresolved.
+- **Listings.** The Machine printer columns show `Requested CPU` and
+  `Requested Memory` from `status.requestedHardware`. `Profile`,
+  `Allocated CPU`, and `Allocated Memory` are wide columns (priority 1), shown
+  with `-o wide`. They keep the assigned hardware visible without placing two
+  similarly named CPU and memory pairs in the default listing. MachineProfile
+  listings show `Architecture`, `CPU`, and `Memory`.
 
 An allocation-only Machine can accept a later first Installation without changing
 its initial handoff gate. [Allocation ordering](#allocation-and-quota-integration)
@@ -714,6 +838,8 @@ Each resource defines its conditions:
 - **Machine:** `Prepared` requires preparation evidence; `Healthy` requires health
   evidence. `Available` also requires eligible policy and no live allocation or
   cleanup obligation.
+- **Machine:** `RequestResolved` reports only whether the exact requested CPU
+  and memory were resolved and pinned (see [requested hardware](#requested-hardware)).
 - **Machine:** `Accepted` requires retained identity and validated inputs;
   `Bound` requires a committed allocation. `Ready` requires network and power
   handoff, plus verified installation when required. An allocation-only Machine
@@ -725,8 +851,9 @@ Each resource defines its conditions:
   failure or cancellation yields `Ready=False`; an uncertain outcome yields
   `Unknown`.
 
-Status omits unresolved results: a Machine has no placement or hardware snapshot
-before allocation, no accepted profile before admission, and no current Installation
+Status omits unresolved results: a Machine has no requested-hardware snapshot
+before profile resolution, no placement or allocated-hardware snapshot before
+allocation, no accepted profile before admission, and no current Installation
 before verified success. The Machine omits `currentInstallationRef` before its
 first successful installation or while work or recovery makes the current result
 unknown.
@@ -1326,6 +1453,23 @@ correctness violations.
 - 2026-11-03: Added the standalone persistent provider simulator with retained
   operation inputs, executor fencing, cleanup authority retirement, and
   deterministic lost-response recovery. It has no real hardware authority.
+- 2026-11-17: Made MachineProfile CPU and memory exact requests and added the
+  pinned `Machine.status.requestedHardware` snapshot, the `RequestResolved`
+  condition, its resolver, and requested-hardware printer columns.
+- 2026-11-18: Retained private records written before exact CPU and memory
+  decode again for release only. Live Machines report `LegacyCustodyRecord`
+  instead of looping, and deletion releases them through verified cleanup.
+- 2026-11-23: Removed the decoder and release path for private records written
+  before exact CPU and memory, the `LegacyCustodyRecord` reason, and the
+  installation-record v1 upgrader. Records in older shapes or schema versions
+  are invalid.
+- 2026-11-23: An undecodable private record blocks only the claim its
+  `claim-uid` label names, plus the asset it fences, instead of every claim on
+  the coordinator. It is reported as `UnreadablePrivateRecord` and counted in
+  `fleet_private_lifecycle_record_undecodable_total`.
+- 2026-11-24: Release from a selection skips an undecodable proposed asset
+  record labeled for another claim. Every lifecycle decode reports through one
+  decoder.
 
 ## Drawbacks
 

@@ -88,12 +88,19 @@ type QuantityConstraint struct {
 	Max   string `json:"max,omitempty"`
 	Exact string `json:"exact,omitempty"`
 }
+
+// CPURequirement requests an exact CPU shape. Cores counts physical cores
+// across all sockets; ranges and minimums are intentionally not expressible.
 type CPURequirement struct {
-	Architecture string     `json:"architecture"`
-	Cores        Constraint `json:"cores,omitempty"`
+	Architecture string `json:"architecture"`
+	Cores        int64  `json:"cores"`
 }
+
+// MemoryRequirement requests an exact installed RAM capacity as a positive
+// integer byte quantity such as "32Gi". Ranges are intentionally not
+// expressible.
 type MemoryRequirement struct {
-	Capacity QuantityConstraint `json:"capacity"`
+	Capacity string `json:"capacity"`
 }
 type MachineProfileSpec struct {
 	CPU        CPURequirement         `json:"cpu"`
@@ -260,10 +267,37 @@ type NetworkStatus struct {
 type PowerStatus struct {
 	State string `json:"state"`
 }
+
+// RequestedHardwareStatus is the controller-maintained snapshot of the exact
+// CPU and memory resolved from the Machine's MachineProfile. It is written once,
+// when the request is accepted, and is then pinned: later profile changes,
+// deletion, or recreation never rewrite it. It describes the request, not the
+// assigned hardware; see AllocatedHardwareStatus for the latter.
+type RequestedHardwareStatus struct {
+	CPU    CPURequirement          `json:"cpu"`
+	Memory MemoryRequirement       `json:"memory"`
+	Source RequestedHardwareSource `json:"source"`
+}
+
+// RequestedHardwareSource records the exact inputs the snapshot was resolved
+// from. Names, not object UIDs, are exposed; the digest distinguishes profile
+// contents across same-name recreation.
+type RequestedHardwareSource struct {
+	// MachineGeneration is the Machine metadata.generation at resolution.
+	MachineGeneration int64 `json:"machineGeneration"`
+	// ProfileRef names the MachineProfile that was resolved.
+	ProfileRef LocalReference `json:"profileRef"`
+	// ProfileGeneration is the MachineProfile metadata.generation at resolution.
+	ProfileGeneration int64 `json:"profileGeneration"`
+	// ProfileDigest is "sha256:<hex>" over the complete resolved profile spec.
+	ProfileDigest string `json:"profileDigest"`
+}
+
 type MachineStatus struct {
 	Phase                  string                   `json:"phase,omitempty"`
 	Placement              *Placement               `json:"placement,omitempty"`
 	AcceptedProfileRef     *LocalReference          `json:"acceptedProfileRef,omitempty"`
+	RequestedHardware      *RequestedHardwareStatus `json:"requestedHardware,omitempty"`
 	AllocatedHardware      *AllocatedHardwareStatus `json:"allocatedHardware,omitempty"`
 	CurrentInstallationRef *LocalReference          `json:"currentInstallationRef,omitempty"`
 	Network                *NetworkStatus           `json:"network,omitempty"`
