@@ -39,7 +39,7 @@ for role in roles:
  d=root/role;ns='milo-'+role
  if not d.exists():
   d.mkdir(mode=0o700)
-  who=('bootstrap','management','customer')+(('coordinator','release','discovery','staff','projector','plan-author','plan-approver','operator') if role=='provider' else ())
+  who=('bootstrap','management','customer')+(('coordinator','release','discovery','staff','projector','plan-author','plan-approver','operator','capacity-operator') if role=='provider' else ())
   tokens={r:secrets.token_hex(32) for r in who}
   (d/'tokens.csv').write_text('\n'.join(f'{v},{k},{k},'+('system:masters' if k=='bootstrap' else 'fleet-local') for k,v in tokens.items())+'\n')
   run('openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(d/'tls.key'),'-out',str(d/'tls.crt'),'-days','2','-subj','/CN=fleet-local','-addext',f'subjectAltName=DNS:milo-apiserver.{ns}.svc,IP:127.0.0.1',stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -107,8 +107,9 @@ for role in roles:
    # it, and an operator commissions the Device.
    'plan-author':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissioningplans'],'verbs':['get','create']}],
    'plan-approver':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissioningplans','devicecommissioningplanapprovals'],'verbs':['get','create']}],
-   'operator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecommissioningplans'],'verbs':['get']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissionings'],'verbs':['get','list','create']},
-               {'apiGroups':['metal.datumapis.com'],'resources':['machinecapacities'],'verbs':['get','list','update']}],
+   'operator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecommissioningplans'],'verbs':['get']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecommissionings'],'verbs':['get','list','create']}],
+   # A capacity operator, not the commissioning operator, enables capacity.
+   'capacity-operator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get']},{'apiGroups':['metal.datumapis.com'],'resources':['machinecapacities'],'verbs':['get','list','update']}],
    'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}],
    # Staff create recoveries and read inventory and custody, nothing else.
    # The coordinator treats every unconfigured creator as staff.

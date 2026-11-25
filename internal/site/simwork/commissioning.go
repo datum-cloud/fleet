@@ -57,7 +57,9 @@ func (Commissioning) Run(ctx context.Context, work *site.Work) (any, error) {
 		}
 		return evidence, nil
 	}
-	step := site.Step{Name: "burnin", Send: func(context.Context) error { return nil }, Idempotent: true}
+	// The step name marks the evidence as simulated, so a simulated pass is
+	// never read as a real burn-in.
+	step := site.Step{Name: "simulated-burnin", Send: func(context.Context) error { return nil }, Idempotent: true}
 	if err := work.Step(ctx, step); err != nil {
 		return nil, err
 	}

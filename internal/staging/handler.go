@@ -124,13 +124,6 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	now := h.Now().UTC()
 	for i := range list.Items {
 		machine := &list.Items[i]
-		available := true
-		if current := apiMeta.FindStatusCondition(machine.Status.Conditions, "Available"); current != nil && current.Status == metav1.ConditionFalse {
-			available = false
-		}
-		if err := h.ensureObservation(ctx, machineClient, machine, available); err != nil {
-			return manager.Outcome{RetryError: err}
-		}
 		machines = append(machines, *machine)
 		evidence[machine.UID] = now
 	}
@@ -154,13 +147,6 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	}
 	if err != nil {
 		return manager.Outcome{RetryError: err}
-	}
-	for i := range list.Items {
-		if list.Items[i].Name == record.Spec.MachineCapacityRef.Name {
-			if err := h.ensureObservation(ctx, machineClient, &list.Items[i], false); err != nil {
-				return manager.Outcome{RetryError: err}
-			}
-		}
 	}
 	observed := metav1.NewTime(now)
 	if claim.Status.AllocatedHardware != nil && claim.Status.AllocatedHardware.ObservedAt != nil {
@@ -261,39 +247,9 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 	if current == nil {
 		return manager.Outcome{}
 	}
-	// The released capacity is offered again. Custody stays the authority.
-	capacity := &fleetv1.MachineCapacity{}
-	reference := current.Spec.MachineCapacityRef
-	if err := h.Allocator.Provider.Get(ctx, client.ObjectKey{Namespace: reference.Namespace, Name: reference.Name}, capacity); apierrors.IsNotFound(err) {
-		return manager.Outcome{}
-	} else if err != nil {
-		return manager.Outcome{RetryError: err}
-	}
-	if err := h.ensureObservation(ctx, h.Allocator.Provider, capacity, true); err != nil {
-		return manager.Outcome{RetryError: err}
-	}
+	// The capacity projector offers the released capacity again from
+	// evidence; custody stays the authority.
 	return manager.Outcome{}
-}
-
-func (h Handler) ensureObservation(ctx context.Context, target client.Client, machine *fleetv1.MachineCapacity, available bool) error {
-	want := fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 24, Threads: 48, Sockets: 2}, Memory: fleetv1.HardwareMemory{Capacity: "128Gi"}}
-	conditions := []metav1.Condition{
-		condition("Prepared", metav1.ConditionTrue, machine.Generation, "SyntheticProvider", "Synthetic staging provider reports the machine prepared."),
-		condition("Healthy", metav1.ConditionTrue, machine.Generation, "SyntheticProvider", "Synthetic staging provider reports the machine healthy."),
-	}
-	if available {
-		conditions = append(conditions, condition("Available", metav1.ConditionTrue, machine.Generation, "SyntheticProvider", "Synthetic staging provider reports the machine available; private custody enforces exclusivity."))
-	} else {
-		conditions = append(conditions, condition("Available", metav1.ConditionFalse, machine.Generation, "Allocated", "Private custody records an active allocation."))
-	}
-	if machine.Status.Hardware.CPU.Cores == want.CPU.Cores && machine.Status.Hardware.Memory.Capacity == want.Memory.Capacity {
-		current := apiMeta.FindStatusCondition(machine.Status.Conditions, "Available")
-		if current != nil && current.Status == conditions[2].Status && current.ObservedGeneration == machine.Generation {
-			return nil
-		}
-	}
-	machine.Status = fleetv1.MachineCapacityStatus{Hardware: want, Conditions: conditions}
-	return target.Status().Update(ctx, machine)
 }
 
 func publishedFor(object client.Object, provider controller.ProjectIdentity) bool {

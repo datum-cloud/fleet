@@ -195,7 +195,7 @@ gated in full, and updates, deletes and any routed subresource are denied.
 rule. Stage 1 has no status writer for inventory-backed capacity, but a
 provider may need one later, and the webhook would then have to be changed
 first. Status writes are governed by RBAC alone; in the packaged IAM roles
-only the controller role holds `machinecapacities.updateStatus`. This is
+only the capacity projector role holds `machinecapacities.updateStatus`. This is
 acceptable because a status write cannot widen what capacity offers:
 
 - the CRD's status subresource ignores changes to `metadata` and `spec`, so a

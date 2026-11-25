@@ -7,7 +7,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -22,6 +21,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/manager"
@@ -183,12 +183,9 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	if hw := get(consumer).Status.RequestedHardware; hw == nil || hw.CPU.Cores != 24 {
 		t.Fatalf("consumer requested hardware = %#v", hw)
 	}
-	var allocated fleetv1.MachineCapacity
-	if err := provider.Client.Get(ctx, client.ObjectKeyFromObject(capacity), &allocated); err != nil {
-		t.Fatal(err)
-	}
-	if c := apiMeta.FindStatusCondition(allocated.Status.Conditions, "Available"); c == nil || c.Status != metav1.ConditionFalse {
-		t.Fatalf("provider capacity not allocated: %#v", allocated.Status.Conditions)
+	// Custody, not a status condition, records that the server is taken.
+	if state := s.custody(capacity.Spec.DeviceRef.Name); state == nil || state.Spec.Holder.Type != ops.HolderAllocation {
+		t.Fatalf("provider capacity not allocated: custody %+v", state)
 	}
 	multiclustertest.Eventually(t, "the other project resolves requested hardware", func() bool {
 		hw := get(other).Status.RequestedHardware
@@ -206,16 +203,12 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 		hw := get(provider).Status.RequestedHardware
 		return hw != nil && hw.CPU.Cores == 24
 	})
-	writes := capacityStatusWrites.Load()
-	multiclustertest.Consistently(t, "the provider project gets nothing but requested hardware and its capacity stays allocated once", func() bool {
+	// Only the capacity projector writes capacity status; the handler never
+	// does.
+	multiclustertest.Consistently(t, "the provider project gets nothing but requested hardware and the handler writes no capacity status", func() bool {
 		m := get(provider)
-		var current fleetv1.MachineCapacity
-		if err := provider.Client.Get(ctx, client.ObjectKeyFromObject(capacity), &current); err != nil {
-			return false
-		}
-		c := apiMeta.FindStatusCondition(current.Status.Conditions, "Available")
 		return m.Status.Phase == "" && len(m.Finalizers) == 0 && len(m.Status.Conditions) == 1 &&
-			c != nil && c.Status == metav1.ConditionFalse && capacityStatusWrites.Load() == writes && get(consumer).Status.Phase == "Ready"
+			capacityStatusWrites.Load() == 0 && get(consumer).Status.Phase == "Ready"
 	})
 	// Only the consumer's Machine holds provider capacity, on custody, and
 	// the power projector reports for it alone.
