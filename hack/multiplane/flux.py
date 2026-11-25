@@ -860,6 +860,26 @@ def worker_objects(state):
                   for o in kget(s, 'cell', '-n', ns, 'get', kind)['items'] if o['metadata']['name'].startswith('w-op-'))
 
 
+def handoff_outcome(s, handoff):
+    """The install handoff's outcome on the cell. Once the coordinator
+    accepted the result it labels the handoff answered and the cell deletes
+    its copy, so an answered handoff counts as Succeeded only when the
+    provider project's operation for it succeeded."""
+    obj = kget(s, 'cell', '-n', COORD, 'get', 'machineallocationhandoff', handoff)
+    result = obj.get('status', {}).get('observation', {}).get('result')
+    if result:
+        return result.get('phase')
+    if obj['metadata'].get('labels', {}).get('coordination.fleet.datumapis.com/answered') != 'true':
+        return None
+    operation = json.loads(obj['spec']['assignmentJSON'])['operation']
+    kind = {'DeviceInstallation': 'deviceinstallation', 'DeviceWipe': 'devicewipe'}[operation['kind']]
+    r = subprocess.run(['kubectl', '--kubeconfig', str(s / 'provider' / 'bootstrap-project.json'), '-n', 'fleet-provider', 'get', kind, operation['name'], '-o', 'json'], text=True, capture_output=True)
+    if r.returncode != 0:
+        return None
+    current = json.loads(r.stdout)
+    return current.get('status', {}).get('phase') if current['metadata']['uid'] == operation['uid'] else None
+
+
 def graph_lifecycle(args):
     """Deleting the dispatcher instance removes only kro's per-operation objects.
 
@@ -877,7 +897,7 @@ def graph_lifecycle(args):
     if sorted(k for k, n, _ in worker_objects(s) if n == 'w-' + handoff) != want:
         die('expected one kro-written Job, ServiceAccount, Role and RoleBinding for the install handoff: %s' % worker_objects(s))
     before, uids, workers = site_facts(s), shared_uids(s), worker_objects(s)
-    status = kget(s, 'cell', '-n', COORD, 'get', 'machineallocationhandoff', handoff).get('status', {}).get('observation', {}).get('result', {}).get('phase')
+    status = handoff_outcome(s, handoff)
     if status != 'Succeeded':
         die('install handoff is not terminal before the graph lifecycle: %s' % status)
     old = kget(s, 'cell', '-n', SITE, 'get', DISPATCHER[0], DISPATCHER[1])
@@ -918,7 +938,7 @@ def graph_lifecycle(args):
     owners_after, problems = ownership(s, snaps)
     if problems:
         die('ownership after the graph lifecycle:\n  ' + '\n  '.join(problems))
-    status_after = kget(s, 'cell', '-n', COORD, 'get', 'machineallocationhandoff', handoff).get('status', {}).get('observation', {}).get('result', {}).get('phase')
+    status_after = handoff_outcome(s, handoff)
     if status_after != 'Succeeded':
         die('install handoff lost its terminal observation across the graph lifecycle: %s' % status_after)
     # kro deletes Jobs without a propagation policy, so batch/v1 orphans their
