@@ -17,6 +17,7 @@ import (
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
 	"go.datum.net/fleet/internal/site/fixture"
+	"go.datum.net/fleet/internal/site/powerwork"
 	"go.datum.net/fleet/internal/site/redfishwork"
 	"go.datum.net/fleet/internal/site/vmwork"
 )
@@ -192,7 +193,10 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 		targets[target.Device] = target
 	}
 	runner.Access = site.RedfishAccess{Credentials: site.SecretCredentials{Reader: reader, Namespace: namespace, Project: project}, Targets: targets}
-	runner.Kinds = map[string]site.Kind{"DeviceInstallation": redfishwork.Installation{Config: work}, "DeviceWipe": redfishwork.Wipe{Config: work}}
+	// Power runs only over Redfish: the local VM site has no BMC, so it
+	// refuses a power operation as an unsupported kind with nothing sent.
+	runner.Kinds = map[string]site.Kind{"DeviceInstallation": redfishwork.Installation{Config: work}, "DeviceWipe": redfishwork.Wipe{Config: work},
+		"DevicePowerOperation": powerwork.Power{}}
 	return runner, nil
 }
 

@@ -920,7 +920,7 @@ governed.
 | Success | `On` and `ForceOff`: the requested state appears within three minutes of the command. A restart or power cycle: the BMC's `LastResetTime` moves past the baseline, or the worker sees the server off, and then the server is on again. `resetEvidence` records which. When the BMC reported no reset time before the command, only seeing the server off proves a restart. |
 | Crash or lost response | A resumed worker reads the journaled payload instead of reading the server again, and watches for the effect. It never sends a second reset. |
 | Not proven | A reset whose effect does not appear in time, a BMC that refused the command, and a BMC that starts reporting another system after the command all end `OutcomeUnknown`, which places a recovery hold. |
-| Registration | The worker is `DevicePowerOperation` in a site's worker kinds. No site binary registers it until the cutover. |
+| Registration | A Redfish site registers the worker as `DevicePowerOperation`. The local VM and simulator sites have no BMC and no power worker, so they refuse a power operation as an unsupported kind, with nothing sent. |
 
 The lab BMC records `LastResetTime` and adds faults for a withheld request, a
 hidden reset time and an identity swap, as [the Redfish
@@ -928,7 +928,15 @@ lab](../operations/redfish-lab.md) describes.
 
 ### Gaps that remain
 
-Each needs a change in the foundation, and none is worked around here.
+Each needs a change in the foundation or the harness, and none is worked
+around here.
+
+- **No end-to-end run can admit a power operation yet.** Both multi-plane runs
+  and the synthetic staging write fixture discovery, which reports every
+  server off and offers no reset types, so admission refuses every action as
+  `ResetTypeNotOffered`, and a `Settle` has no real power state to cite. The
+  power phases need real BMC discovery in the Redfish run, with discovery
+  recording reset types, or fixture discovery that reports them.
 
 - **A kind check cannot wait.** Rule 7 now runs before rule 5, and a kind
   check can only refuse. A provider power operation whose discovery is not
