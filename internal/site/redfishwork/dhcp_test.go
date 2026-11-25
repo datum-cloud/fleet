@@ -285,3 +285,11 @@ func TestWithdrawalCoversEveryReservationOfTheDevice(t *testing.T) {
 		t.Fatalf("feed after a newer fence = %+v, %v", feed, err)
 	}
 }
+
+// TestTheFeedServesOnlyOverTLS refuses to start the feed without a
+// certificate and key: the synchronizer fetches it only over HTTPS.
+func TestTheFeedServesOnlyOverTLS(t *testing.T) {
+	if err := (BootServer{}).ServeDHCP(syncToken, "", ""); err == nil {
+		t.Fatal("the feed started without TLS")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -102,14 +103,18 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 	}), nil
 }
 
-// ServeDHCP listens on :8081, apart from the boot listener.
-func (b BootServer) ServeDHCP(token string) error {
+// ServeDHCP listens with TLS on :8081, apart from the boot listener. The
+// synchronizer accepts the feed only over TLS.
+func (b BootServer) ServeDHCP(token, certFile, keyFile string) error {
+	if certFile == "" || keyFile == "" {
+		return errors.New("the DHCP feed needs a TLS certificate and key")
+	}
 	handler, err := b.DHCPHandler(token)
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Addr: ":8081", Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
-	return server.ListenAndServe()
+	server := &http.Server{Addr: ":8081", Handler: handler, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	return server.ListenAndServeTLS(certFile, keyFile)
 }
 
 // retain appends one report and syncs it before acknowledging.

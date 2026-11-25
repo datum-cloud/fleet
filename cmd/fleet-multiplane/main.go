@@ -52,6 +52,8 @@ func run() error {
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	installationDeadline := fs.Duration("installation-deadline", 0, "replace the installation deadline for operations this coordinator admits (coordinator)")
 	instance := fs.String("instance", "", "DHCP instance an operator retires (dhcp-retire)")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate the DHCP feed serves (dhcp-feed)")
+	tlsKey := fs.String("tls-key", "", "TLS key of the DHCP feed (dhcp-feed)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -79,7 +81,7 @@ func run() error {
 		fmt.Println(image)
 		return nil
 	case "boot-service", "boot-denials", "dhcp-feed":
-		return boot(os.Args[1], *origin, *extraMAC, *syncToken)
+		return boot(os.Args[1], *origin, *extraMAC, *syncToken, *tlsCert, *tlsKey)
 	case "boot-withhold":
 		return armWithhold(fs.Arg(0))
 	case "dhcp-retire":

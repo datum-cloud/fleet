@@ -1,0 +1,26 @@
+# A synthetic base configuration. Network operations owns the real one: the
+# site's provisioning subnet and gateway, the relay addresses Kea accepts, and
+# the boot options. It has no pools, so Kea answers only reserved MACs, and
+# Kea 2.6 requires the control socket under /var/run/kea.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-site-dhcp-base
+  namespace: fleet-site
+data:
+  kea-dhcp4.conf: |
+    {"Dhcp4": {
+      "interfaces-config": {"interfaces": ["*"], "dhcp-socket-type": "udp"},
+      "control-socket": {"socket-type": "unix", "socket-name": "/var/run/kea/kea4-ctrl-socket"},
+      "lease-database": {"type": "memfile", "persist": false},
+      "host-reservation-identifiers": ["hw-address"],
+      "valid-lifetime": 600,
+      "subnet4": [{
+        "id": 1,
+        "subnet": "198.51.100.0/24",
+        "relay": {"ip-addresses": ["198.51.100.1"]},
+        "option-data": [{"name": "routers", "data": "198.51.100.1"}],
+        "next-server": "192.0.2.80",
+        "boot-file-name": "http://192.0.2.80:8080/pxe/boot.ipxe"
+      }]
+    }}

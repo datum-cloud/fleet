@@ -198,7 +198,7 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 
 // boot serves network boots, the DHCP reservation feed, or probes that
 // every closed admission is denied.
-func boot(command, origin, extraMAC, syncToken string) error {
+func boot(command, origin, extraMAC, syncToken, tlsCert, tlsKey string) error {
 	store, err := openStore()
 	if err != nil {
 		return err
@@ -237,7 +237,7 @@ func boot(command, origin, extraMAC, syncToken string) error {
 			if err != nil {
 				return fmt.Errorf("DHCP synchronizer token: %w", err)
 			}
-			return server.ServeDHCP(strings.TrimSpace(string(token)))
+			return server.ServeDHCP(strings.TrimSpace(string(token)), tlsCert, tlsKey)
 		}
 		return serveBoot(server.Handler(), vmwork.DefaultBootWindow*2)
 	}

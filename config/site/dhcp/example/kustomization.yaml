@@ -1,0 +1,10 @@
+# Render check only: the Redfish site services with the site DHCP service and
+# a synthetic base configuration. An environment supplies its own base
+# configuration from network operations.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../redfish/services
+  - base.yaml
+components:
+  - ../component
