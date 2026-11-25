@@ -37,7 +37,7 @@ func run() error {
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one attempt, for fault injection")
 	handoff := fs.String("handoff", "", "exact delivered handoff name (site-worker)")
-	origin := fs.String("origin", "", "boot listener origin to probe (boot-denials); default the configured origin")
+	origin := fs.String("origin", "", "boot listener origin to probe, http://IPv4:port (boot-denials; required)")
 	interval := fs.Duration("interval", 10*time.Second, "observation refresh interval (site-observer)")
 	configPath := fs.String("config", "", "private acceptance config JSON")
 	kubeconfig := fs.String("kubeconfig", "", "cell-local kubeconfig; default in-cluster ServiceAccount")

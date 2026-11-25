@@ -115,12 +115,12 @@ func ParseEnrollment(b []byte) (Enrollment, error) {
 func ParseBootOrigin(value string) (string, error) {
 	u, err := url.Parse(value)
 	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("FLEET_BOOT_ORIGIN must be http://IPv4:port")
+		return "", errors.New("a boot origin must be http://IPv4:port")
 	}
 	ip := net.ParseIP(u.Hostname())
 	port, err := strconv.Atoi(u.Port())
 	if ip == nil || ip.To4() == nil || err != nil || port < 1 || port > 65535 {
-		return "", errors.New("FLEET_BOOT_ORIGIN must be http://IPv4:port")
+		return "", errors.New("a boot origin must be http://IPv4:port")
 	}
 	return "http://" + ip.To4().String() + ":" + strconv.Itoa(port), nil
 }

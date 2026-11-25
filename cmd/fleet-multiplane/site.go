@@ -115,38 +115,47 @@ func vmConfig() (vmwork.Config, fixture.Enrollment, error) {
 	return config, enrollment, nil
 }
 
-// redfishConfig is the Redfish site's configuration from its environment.
-// A Redfish site has no hypervisor fallback.
-func redfishConfig() (redfishwork.Config, redfish.Enrollment, redfishwork.BootServer, error) {
-	var none redfishwork.BootServer
-	if os.Getenv("FLEET_LIBVIRT_URI") != "" {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, errors.New("a Redfish site refuses a libvirt URI")
-	}
-	if _, err := os.Stat(libvirtSocketDir); err == nil {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, errors.New("a Redfish site refuses a mounted libvirt socket")
-	}
-	enrollment, err := redfish.ParseEnrollment([]byte(os.Getenv("FLEET_REDFISH_ENROLLMENT")))
-	if err != nil {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, err
-	}
-	console := os.Getenv("FLEET_REDFISH_CONSOLE")
-	if !filepath.IsAbs(console) {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, errors.New("FLEET_REDFISH_CONSOLE must be an absolute path")
-	}
+// redfishBootServer is what the Redfish boot server needs: the artifacts it
+// serves, the image they are, the listener firmware reaches, and where it
+// records deliveries. It reads no enrollment or credential.
+func redfishBootServer(store *site.Store) (redfishwork.BootServer, error) {
 	boot, err := bootRoot()
 	if err != nil {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, err
+		return redfishwork.BootServer{}, err
 	}
 	origin, err := redfish.ParseBootOrigin(os.Getenv("FLEET_BOOT_ORIGIN"))
 	if err != nil {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, err
+		return redfishwork.BootServer{}, err
 	}
 	image, err := siteImage()
 	if err != nil {
-		return redfishwork.Config{}, redfish.Enrollment{}, none, err
+		return redfishwork.BootServer{}, err
 	}
-	synced := enrollment.DHCP == redfish.DHCPSynced
-	return redfishwork.Config{ConsoleRoot: console, BootRoot: boot, Synced: synced}, enrollment, redfishwork.BootServer{Origin: origin, Artifacts: artifacts, Image: image, BootRoot: boot, Enrollment: enrollment}, nil
+	return redfishwork.BootServer{Store: store, Origin: origin, Artifacts: artifacts, Image: image, BootRoot: boot}, nil
+}
+
+// redfishConfig is the Redfish worker's configuration from its environment.
+// A Redfish site has no hypervisor fallback.
+func redfishConfig() (redfishwork.Config, redfish.Enrollment, error) {
+	if os.Getenv("FLEET_LIBVIRT_URI") != "" {
+		return redfishwork.Config{}, redfish.Enrollment{}, errors.New("a Redfish site refuses a libvirt URI")
+	}
+	if _, err := os.Stat(libvirtSocketDir); err == nil {
+		return redfishwork.Config{}, redfish.Enrollment{}, errors.New("a Redfish site refuses a mounted libvirt socket")
+	}
+	enrollment, err := redfish.ParseEnrollment([]byte(os.Getenv("FLEET_REDFISH_ENROLLMENT")))
+	if err != nil {
+		return redfishwork.Config{}, redfish.Enrollment{}, err
+	}
+	console := os.Getenv("FLEET_REDFISH_CONSOLE")
+	if !filepath.IsAbs(console) {
+		return redfishwork.Config{}, redfish.Enrollment{}, errors.New("FLEET_REDFISH_CONSOLE must be an absolute path")
+	}
+	boot, err := bootRoot()
+	if err != nil {
+		return redfishwork.Config{}, redfish.Enrollment{}, err
+	}
+	return redfishwork.Config{ConsoleRoot: console, BootRoot: boot, Synced: enrollment.DHCP == redfish.DHCPSynced}, enrollment, nil
 }
 
 // siteRunner is the site runner for this cell's mode. A Redfish worker reads
@@ -162,7 +171,7 @@ func siteRunner(_ context.Context, config *rest.Config, cell string, store *site
 		runner.Kinds = map[string]site.Kind{"DeviceInstallation": vmwork.Installation{Config: vm}, "DeviceWipe": vmwork.Wipe{Config: vm}}
 		return runner, nil
 	}
-	work, enrollment, _, err := redfishConfig()
+	work, enrollment, err := redfishConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -218,12 +227,18 @@ func boot(command, origin, extraMAC, syncToken string) error {
 		return nil
 	}
 	if redfishMode() {
-		_, _, server, err := redfishConfig()
+		server, err := redfishBootServer(store)
 		if err != nil {
 			return err
 		}
-		server.Store = store
 		if command == "dhcp-feed" {
+			// Reservations name each Device's provisioning attachment, which
+			// only the enrollment records.
+			enrollment, err := redfish.ParseEnrollment([]byte(os.Getenv("FLEET_REDFISH_ENROLLMENT")))
+			if err != nil {
+				return err
+			}
+			server.Enrollment = enrollment
 			token, err := os.ReadFile(syncToken)
 			if err != nil {
 				return fmt.Errorf("DHCP synchronizer token: %w", err)
