@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -46,6 +47,7 @@ type lab struct {
 	target    string
 	ons       int
 	onHook    func()
+	ignoreOff bool
 	server    *httptest.Server
 	console   string
 	bootRoot  string
@@ -94,7 +96,9 @@ func (l *lab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&body)
 		switch body.ResetType {
 		case "ForceOff":
-			l.power = "Off"
+			if !l.ignoreOff {
+				l.power = "Off"
+			}
 		case "On":
 			l.ons++
 			l.power = "On"
@@ -271,12 +275,10 @@ func TestAnInterruptedWorkerResumesWithoutASecondOn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var once sync.Once
 	l.onHook = func() { once.Do(cancel) }
-	first, err := r.Run(ctx, work)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Phase != ops.PhaseOutcomeUnknown {
-		t.Fatalf("interrupted result = %+v", first)
+	// The worker is stopped from outside, as a Pod would be, and stores
+	// no result.
+	if _, err := r.Run(ctx, work); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted: %v", err)
 	}
 	l.onHook = nil
 	second, err := r.Run(context.Background(), work)
@@ -314,3 +316,46 @@ func TestOnlyTheCurrentFenceHasAnOpenBootAdmission(t *testing.T) {
 }
 
 var _ = redfish.ErrPinMismatch
+
+// TestAWorkerInterruptedInTheDiskPhaseResumes kills the worker after the
+// disk phase's power-on. The new worker skips the verified installer phase
+// and observes the disk boot, with no further power-on.
+func TestAWorkerInterruptedInTheDiskPhaseResumes(t *testing.T) {
+	l := newLab(t)
+	r := runner(t, l)
+	work := assignment(l, "DeviceInstallation", "op-disk-resume", 1, installSpec())
+	ctx, cancel := context.WithCancel(context.Background())
+	l.onHook = func() {
+		if l.onCount() == 2 {
+			cancel()
+		}
+	}
+	if _, err := r.Run(ctx, work); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted: %v", err)
+	}
+	l.onHook = nil
+	second, err := r.Run(context.Background(), work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Phase != ops.PhaseSucceeded || l.onCount() != 2 {
+		t.Fatalf("resumed result = %+v, %d power-ons", second, l.onCount())
+	}
+}
+
+func TestAServerThatNeverPowersOffEndsTheStep(t *testing.T) {
+	l := newLab(t)
+	l.power = "On"
+	l.ignoreOff = true
+	r := runner(t, l)
+	installation := r.Kinds["DeviceInstallation"].(Installation)
+	installation.PowerOffBound = 100 * time.Millisecond
+	r.Kinds["DeviceInstallation"] = installation
+	result, err := r.Run(context.Background(), assignment(l, "DeviceInstallation", "op-stuck-on", 1, installSpec()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Phase != ops.PhaseOutcomeUnknown || l.onCount() != 0 {
+		t.Fatalf("result = %+v, %d power-ons", result, l.onCount())
+	}
+}

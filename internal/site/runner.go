@@ -121,6 +121,17 @@ type StartBy interface {
 // Store is the site's store, for a kind's per-operation records.
 func (w *Work) Store() *Store { return w.store }
 
+// Journaled reports whether a step of this operation is journaled done.
+func (w *Work) Journaled(step string) bool {
+	journal, err := w.store.Journal(w.Device)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(journal, func(entry Entry) bool {
+		return entry.Operation == w.Operation.UID && entry.Step == step && entry.State == StepDone
+	})
+}
+
 // Step journals a step, then sends it, then records it done. A step found
 // journaled but not done, after a crash or a lost response, is observed
 // instead of sent again, unless it is Idempotent; if the observation cannot
@@ -166,6 +177,13 @@ func (w *Work) Step(ctx context.Context, step Step) error {
 		return nil
 	default:
 		w.sent = true
+		// The fence is checked again just before the send, so a newer
+		// admission stored after the step was journaled stops it.
+		if fence, _, err := w.store.Current(w.Device); err != nil {
+			return err
+		} else if fence > w.Fence {
+			return errSuperseded
+		}
 		if err := step.Send(ctx); err != nil {
 			return err
 		}
@@ -258,6 +276,10 @@ func (r *Runner) acquire(ctx context.Context, assignment Assignment) (*runLock, 
 
 var errWorkerRunning = errors.New("an older worker did not stop before the deadline")
 
+// ErrAlreadyRunning means another worker already runs this same assignment.
+// No result is stored; that worker reports it.
+var ErrAlreadyRunning = errors.New("site: another worker runs this assignment")
+
 // Run executes one assignment and stores its result. It returns
 // ErrStaleFence, and stores nothing, for an assignment below the Device's
 // stored fence.
@@ -265,24 +287,49 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 	if err := assignment.Validate(); err != nil {
 		return custody.SiteResult{}, err
 	}
+	// A redelivered assignment that already has a result returns it.
+	if stored, found, err := r.Results.Get(assignment.Device, assignment.Operation.UID, assignment.Fence); err != nil || found {
+		return stored, err
+	}
 	result := custody.SiteResult{Site: r.Site, Device: deviceName(assignment.Device), Operation: assignment.Operation, Fence: assignment.Fence}
 	finish := func(phase ops.Phase, reason, message string, evidence []byte) (custody.SiteResult, error) {
 		result.Phase, result.Reason, result.Message, result.Evidence = phase, reason, message, evidence
-		if err := r.Results.Put(assignment.Device, result); err != nil {
-			return result, err
+		return r.Results.Put(assignment.Device, result)
+	}
+	// Whether anything may have been sent comes from the journal, not from
+	// this process: an earlier worker for the same operation may have sent
+	// steps before it was interrupted, or may still be running.
+	sent := func() (bool, error) {
+		journal, err := r.Store.Journal(assignment.Device)
+		if err != nil {
+			return false, err
 		}
-		return result, nil
+		return slices.ContainsFunc(journal, func(entry Entry) bool { return entry.Operation == assignment.Operation.UID }), nil
 	}
 	lock, err := r.acquire(ctx, assignment)
 	switch {
 	case errors.Is(err, ErrStaleFence):
 		return custody.SiteResult{}, err
 	case errors.Is(err, errWorkerRunning):
+		// A worker at this assignment's own fence took the run lock: it is
+		// running this same operation and will report it. An older worker
+		// can never take the lock once this fence is stored.
+		if _, stopped, serr := r.Store.Current(assignment.Device); serr == nil && stopped == assignment.Fence {
+			return custody.SiteResult{}, ErrAlreadyRunning
+		}
+		journaled, jerr := sent()
+		if jerr != nil {
+			return custody.SiteResult{}, jerr
+		}
+		if journaled {
+			return finish(ops.PhaseOutcomeUnknown, ReasonWorkerRunning, err.Error(), nil)
+		}
 		return finish(ops.PhaseFailed, ReasonWorkerRunning, err.Error(), nil)
 	case err != nil:
 		return custody.SiteResult{}, err
 	}
 	defer lock.release()
+	parent := ctx
 	// The worker stops at its deadline exactly, and as soon as a newer fence
 	// is stored for the Device.
 	ctx, cancel := context.WithDeadlineCause(ctx, assignment.Deadline, errDeadline)
@@ -292,14 +339,9 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 	go r.watch(ctx, assignment, stop)
 
 	work := &Work{Assignment: assignment, store: r.Store}
-	// Whether anything may have been sent comes from the journal, not from
-	// this process: an earlier worker for the same operation may have sent
-	// steps before it was interrupted.
-	journal, err := r.Store.Journal(assignment.Device)
-	if err != nil {
+	if work.sent, err = sent(); err != nil {
 		return custody.SiteResult{}, err
 	}
-	work.sent = slices.ContainsFunc(journal, func(entry Entry) bool { return entry.Operation == assignment.Operation.UID })
 	end := func(reason, message string) (custody.SiteResult, error) {
 		if work.sent {
 			return finish(ops.PhaseOutcomeUnknown, reason, message, nil)
@@ -315,9 +357,17 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 		return end(ReasonStale, "the worker started too long after admission")
 	}
 	if refusal := r.prepare(ctx, work); refusal != nil {
+		if parent.Err() != nil {
+			return custody.SiteResult{}, context.Cause(parent)
+		}
 		return end(refusal.Reason, refusal.Message)
 	}
 	evidence, err := r.Kinds[assignment.Operation.Kind].Run(ctx, work)
+	// A worker stopped from outside, such as a Pod being shut down, stores
+	// no result: its replacement resumes from the journal.
+	if err != nil && parent.Err() != nil {
+		return custody.SiteResult{}, context.Cause(parent)
+	}
 	if err != nil {
 		var refusal *custody.Refusal
 		if errors.As(err, &refusal) {

@@ -135,6 +135,9 @@ type fakeKind struct {
 	block   chan struct{}
 	observe func(context.Context, json.RawMessage) (bool, error)
 	check   func(*Work)
+	// stuck makes a blocked step ignore cancellation, as a worker that does
+	// not stop would.
+	stuck bool
 }
 
 func (k *fakeKind) Check(_ context.Context, work *Work) *custody.Refusal {
@@ -149,6 +152,10 @@ func (k *fakeKind) Run(ctx context.Context, work *Work) (any, error) {
 		err := work.Step(ctx, Step{Name: step, Payload: map[string]string{"step": step}, Send: func(ctx context.Context) error {
 			k.sends.Add(1)
 			if k.block != nil {
+				if k.stuck {
+					<-k.block
+					return nil
+				}
 				select {
 				case <-k.block:
 				case <-ctx.Done():
@@ -573,5 +580,91 @@ func TestIdentityIsSeparateFromInstallCapabilities(t *testing.T) {
 	}
 	if result.Phase != ops.PhaseSucceeded || system.UUID != testUUID || len(system.BootTargets) != 0 {
 		t.Fatalf("result = %+v, system = %+v", result, system)
+	}
+}
+
+// TestARedeliveryWhileTheSameOperationRunsStoresNothing reproduces a rolling
+// restart that overlaps two workers for one assignment. The second cannot get
+// the run lock and leaves the result to the first, which has sent a step.
+func TestARedeliveryWhileTheSameOperationRunsStoresNothing(t *testing.T) {
+	f := newFixture(t, testUUID)
+	f.kind.block = make(chan struct{})
+	first := make(chan custody.SiteResult, 1)
+	go func() {
+		result, err := f.runner.Run(context.Background(), f.assignment(1, "op-same"))
+		if err != nil {
+			t.Error(err)
+		}
+		first <- result
+	}()
+	waitFor(t, func() bool { return f.kind.sends.Load() == 1 })
+	again := f.assignment(1, "op-same")
+	again.Deadline = time.Now().Add(200 * time.Millisecond)
+	if _, err := f.runner.Run(context.Background(), again); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("redelivery: %v", err)
+	}
+	if _, found, _ := f.runner.Results.Get(testDevice, "op-same", 1); found {
+		t.Fatal("the redelivery stored a result while the first worker ran")
+	}
+	close(f.kind.block)
+	if result := <-first; result.Phase != ops.PhaseSucceeded {
+		t.Fatalf("first worker = %+v", result)
+	}
+}
+
+// TestANewerAssignmentThatCannotStopTheOlderWorkerSendsNothing covers an
+// older worker that does not stop: the newer assignment sent nothing, so it
+// ends Failed.
+func TestANewerAssignmentThatCannotStopTheOlderWorkerSendsNothing(t *testing.T) {
+	f := newFixture(t, testUUID)
+	f.kind.block, f.kind.stuck = make(chan struct{}), true
+	done := make(chan struct{})
+	defer func() { close(f.kind.block); <-done }()
+	go func() { defer close(done); _, _ = f.runner.Run(context.Background(), f.assignment(1, "op-stuck")) }()
+	waitFor(t, func() bool { return f.kind.sends.Load() == 1 })
+	newer := f.assignment(2, "op-newer")
+	newer.Deadline = time.Now().Add(300 * time.Millisecond)
+	result, err := f.runner.Run(context.Background(), newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Phase != ops.PhaseFailed || result.Reason != ReasonWorkerRunning || f.kind.sends.Load() != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+// TestAStoredResultSurvivesARedelivery proves a success still waiting for
+// delivery is never replaced by a redelivered assignment's refusal.
+func TestAStoredResultSurvivesARedelivery(t *testing.T) {
+	f := newFixture(t, testUUID)
+	first, err := f.runner.Run(context.Background(), f.assignment(1, "op-kept"))
+	if err != nil || first.Phase != ops.PhaseSucceeded {
+		t.Fatalf("first = %+v %v", first, err)
+	}
+	f.access().Credentials = fixedCredentials{}
+	again, err := f.runner.Run(context.Background(), f.assignment(1, "op-kept"))
+	if err != nil || again.Phase != ops.PhaseSucceeded || f.kind.sends.Load() != 2 {
+		t.Fatalf("redelivered = %+v %v, sends %d", again, err, f.kind.sends.Load())
+	}
+	// Put keeps the first result even when called again directly.
+	stored, err := f.runner.Results.Put(testDevice, custody.SiteResult{Operation: first.Operation, Fence: 1, Phase: ops.PhaseOutcomeUnknown})
+	if err != nil || stored.Phase != ops.PhaseSucceeded {
+		t.Fatalf("stored = %+v %v", stored, err)
+	}
+}
+
+func TestAWorkerStoppedFromOutsideStoresNoResult(t *testing.T) {
+	f := newFixture(t, testUUID)
+	f.kind.block = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		waitFor(t, func() bool { return f.kind.sends.Load() == 1 })
+		cancel()
+	}()
+	if _, err := f.runner.Run(ctx, f.assignment(1, "op-shutdown")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if _, found, _ := f.runner.Results.Get(testDevice, "op-shutdown", 1); found {
+		t.Fatal("a worker shut down from outside stored a result")
 	}
 }

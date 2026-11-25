@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
 )
 
@@ -26,13 +27,70 @@ func (r *Results) dir(device string) string {
 	return filepath.Join(r.store.deviceDir(device), "results")
 }
 
-// Put stores a result, named by its operation UID and fence.
-func (r *Results) Put(device string, result custody.SiteResult) error {
+// Put stores a result, named by its operation UID and fence, unless one is
+// already stored for them. A stored result is final: a redelivered
+// assignment never replaces it, so a success still waiting for delivery
+// cannot be lost, and Deliver never deletes a result it did not offer. Put
+// returns the result that is stored.
+func (r *Results) Put(device string, result custody.SiteResult) (custody.SiteResult, error) {
 	dir := r.dir(device)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return result, err
 	}
-	return writeAtomic(dir, resultName(result), storedResult{Device: device, Result: result})
+	data, err := json.Marshal(storedResult{Device: device, Result: result})
+	if err != nil {
+		return result, err
+	}
+	file, err := os.CreateTemp(dir, "result.tmp-*")
+	if err != nil {
+		return result, err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return result, err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return result, err
+	}
+	if err := file.Close(); err != nil {
+		return result, err
+	}
+	// A hard link creates the name only if it is absent, with its whole
+	// content, so a reader never sees a partial result.
+	if err := os.Link(file.Name(), filepath.Join(dir, resultName(result))); err != nil {
+		if os.IsExist(err) {
+			stored, found, readErr := r.Get(device, result.Operation.UID, result.Fence)
+			if readErr != nil || !found {
+				return result, errors.New("site: a stored result is unreadable")
+			}
+			return stored, nil
+		}
+		return result, err
+	}
+	parent, err := os.Open(dir)
+	if err != nil {
+		return result, err
+	}
+	defer parent.Close()
+	return result, parent.Sync()
+}
+
+// Get returns the stored result for an operation and fence.
+func (r *Results) Get(device, operation string, fence int64) (custody.SiteResult, bool, error) {
+	data, err := os.ReadFile(filepath.Join(r.dir(device), resultName(custody.SiteResult{Operation: ops.OperationReference{UID: operation}, Fence: fence})))
+	if os.IsNotExist(err) {
+		return custody.SiteResult{}, false, nil
+	}
+	if err != nil {
+		return custody.SiteResult{}, false, err
+	}
+	var stored storedResult
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return custody.SiteResult{}, false, errors.New("site: a stored result is unreadable")
+	}
+	return stored.Result, true, nil
 }
 
 func resultName(result custody.SiteResult) string {

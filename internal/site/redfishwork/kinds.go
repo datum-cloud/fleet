@@ -62,7 +62,10 @@ type Config struct {
 	OffGrace, Outage time.Duration
 	// BootWindow bounds how long a network boot admission stays open.
 	BootWindow time.Duration
-	Now        func() time.Time
+	// PowerOffBound bounds how long the server may take to power off. It
+	// defaults to five minutes.
+	PowerOffBound time.Duration
+	Now           func() time.Time
 }
 
 func (c Config) now() time.Time {
@@ -78,7 +81,7 @@ func (c Config) durations() (poll, offGrace, outage, window time.Duration) {
 		poll = 2 * time.Second
 	}
 	if offGrace <= 0 {
-		offGrace = time.Minute
+		offGrace = 30 * time.Second
 	}
 	if outage <= 0 {
 		outage = 5 * time.Minute
@@ -241,12 +244,20 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 	}
 	var evidence []ops.StepEvidence
 	for _, ph := range phases {
+		// A phase verified by an earlier worker is done; resume after it.
+		if work.Journaled(ph.name + "-verified") {
+			evidence = append(evidence, ops.StepEvidence{Name: ph.name, CompletedAt: metaNow(c.now())})
+			continue
+		}
+		// The boot admission is checked only before this phase's boot is
+		// requested; a resumed worker whose boot already began observes it.
+		requested := work.Journaled(ph.name + "-power-on")
 		// Power off and arm the one-time override. Both are safe to send
 		// again: no boot of this phase has been requested yet.
 		if err := work.Step(ctx, site.Step{Name: ph.name + "-power-off", Send: func(ctx context.Context) error { return c.powerOff(ctx, work) }, Idempotent: true}); err != nil {
 			return nil, err
 		}
-		if ph.mode != "" {
+		if ph.mode != "" && !requested {
 			if boot.Closed || !c.now().Before(boot.Expires) {
 				return nil, errors.New("boot admission expired or closed before the network boot")
 			}
@@ -280,14 +291,27 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 				return nil, err
 			}
 		}
+		// Journal the verified phase, so a resumed worker skips it.
+		if err := work.Step(ctx, site.Step{Name: ph.name + "-verified", Send: func(context.Context) error { return nil }, Idempotent: true}); err != nil {
+			return nil, err
+		}
 		evidence = append(evidence, ops.StepEvidence{Name: ph.name, CompletedAt: metaNow(c.now())})
 	}
 	return evidence, nil
 }
 
+// defaultPowerOffBound is how long the server may take to power off, as the
+// old executor allowed.
+const defaultPowerOffBound = 5 * time.Minute
+
 func (c Config) powerOff(ctx context.Context, work *site.Work) error {
 	poll, _, _, _ := c.durations()
 	requested := false
+	bound := c.PowerOffBound
+	if bound <= 0 {
+		bound = defaultPowerOffBound
+	}
+	deadline := c.now().Add(bound)
 	for {
 		power, err := conn(work).Observe(ctx)
 		if err != nil {
@@ -302,6 +326,9 @@ func (c Config) powerOff(ctx context.Context, work *site.Work) error {
 				return err
 			}
 			requested = true
+		}
+		if c.now().After(deadline) {
+			return errors.New("the server did not power off")
 		}
 		if err := sleep(ctx, poll); err != nil {
 			return err
