@@ -483,18 +483,12 @@ func (r *Runner) ReleaseIndex(ctx context.Context, index int) error {
 			return err
 		}
 	}
-	current, err := r.Allocator.Get(ctx, q.alloc.Machine)
-	if err != nil {
-		return err
+	released, err := r.Allocator.ReleaseMachine(ctx, q.alloc.Machine)
+	if errors.Is(err, allocation.ErrWipeFailed) {
+		return fmt.Errorf("%w: %v", errTerminal, err)
 	}
-	if current != nil {
-		released, err := r.Allocator.Release(ctx, current, q.alloc.Machine)
-		if errors.Is(err, allocation.ErrWipeFailed) {
-			return fmt.Errorf("%w: %v", errTerminal, err)
-		}
-		if err != nil || !released {
-			return fmt.Errorf("%w: the release is not finished (%v)", errPending, err)
-		}
+	if err != nil || !released {
+		return fmt.Errorf("%w: the release is not finished (%v)", errPending, err)
 	}
 	return publishRelease(ctx, q.project.API, q.machine)
 }

@@ -90,11 +90,26 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 	return false, nil
 }
 
-func (a *Allocator) releaseQuota(ctx context.Context, allocation *fleetv1.MachineAllocation, machine Machine) error {
-	if allocation.Spec.QuotaClaimRef == nil || a.Quota == nil {
+func (a *Allocator) releaseQuota(ctx context.Context, _ *fleetv1.MachineAllocation, machine Machine) error {
+	if a.Quota == nil {
 		return nil
 	}
-	return a.Quota.Release(ctx, machine, allocation.Spec.QuotaClaimRef.Name)
+	return a.Quota.Release(ctx, machine)
+}
+
+// ReleaseMachine releases whatever a deleted Machine holds and reports
+// whether nothing remains. A Machine deleted before its allocation existed,
+// such as one still waiting for capacity, may hold a quota claim; it is
+// released by the Machine's name for it.
+func (a *Allocator) ReleaseMachine(ctx context.Context, machine Machine) (bool, error) {
+	current, err := a.Get(ctx, machine)
+	if err != nil {
+		return false, err
+	}
+	if current == nil {
+		return true, a.releaseQuota(ctx, nil, machine)
+	}
+	return a.Release(ctx, current, machine)
 }
 
 // installing reports whether an installation of this allocation is active

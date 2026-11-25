@@ -80,13 +80,10 @@ func TestReleaseIsObservedNotAssumed(t *testing.T) {
 	api := quotaClient(t)
 	quota := Quota{Clients: func(allocation.Machine) (client.Client, error) { return api, nil }}
 	_, _ = quota.Acquire(ctx, machine)
-	if err := quota.Release(ctx, machine, "fleet-machine-other"); !errors.Is(err, ErrQuotaInvalid) {
-		t.Fatalf("release of another claim = %v", err)
-	}
-	if err := quota.Release(ctx, machine, ClaimName(machine)); !errors.Is(err, ErrQuotaPending) {
+	if err := quota.Release(ctx, machine); !errors.Is(err, ErrQuotaPending) {
 		t.Fatalf("release while deleting = %v", err)
 	}
-	if err := quota.Release(ctx, machine, ClaimName(machine)); err != nil {
+	if err := quota.Release(ctx, machine); err != nil {
 		t.Fatalf("release after deletion = %v", err)
 	}
 }

@@ -246,14 +246,14 @@ func (h Handler) release(ctx context.Context, namespace string, uid types.UID, c
 	if err != nil {
 		return manager.Outcome{RetryError: err}
 	}
-	if current != nil {
-		released, err := h.Allocator.Release(ctx, current, machine)
-		if err != nil {
-			return manager.Outcome{RetryError: err}
-		}
-		if !released {
-			return manager.Outcome{RetryError: errReleasing}
-		}
+	// Release also covers a Machine deleted before its allocation existed,
+	// which may hold a quota claim.
+	released, err := h.Allocator.ReleaseMachine(ctx, machine)
+	if err != nil {
+		return manager.Outcome{RetryError: err}
+	}
+	if !released {
+		return manager.Outcome{RetryError: errReleasing}
 	}
 	if err := h.removeFinalizer(ctx, client.ObjectKeyFromObject(claim), uid); err != nil {
 		return manager.Outcome{RetryError: err}

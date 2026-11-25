@@ -86,11 +86,10 @@ func (q Quota) Acquire(ctx context.Context, machine allocation.Machine) (string,
 	return claim.Name, nil
 }
 
-// Release deletes the claim. It returns nil once the claim is gone.
-func (q Quota) Release(ctx context.Context, machine allocation.Machine, name string) error {
-	if name != ClaimName(machine) {
-		return ErrQuotaInvalid
-	}
+// Release deletes the Machine's claim. It returns nil once the claim is
+// gone.
+func (q Quota) Release(ctx context.Context, machine allocation.Machine) error {
+	name := ClaimName(machine)
 	api, err := q.Clients(machine)
 	if err != nil {
 		return err

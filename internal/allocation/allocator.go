@@ -77,11 +77,12 @@ func Name(machine Machine) string {
 }
 
 // Quota reserves and releases the consumer's quota for one Machine. Both are
-// idempotent and name the claim from the Machine.
+// idempotent and name the claim from the Machine, so a claim reserved before
+// a crash, or before capacity was found, is released by the Machine alone.
 type Quota interface {
 	Acquire(ctx context.Context, machine Machine) (string, error)
-	// Release returns nil once the claim no longer exists.
-	Release(ctx context.Context, machine Machine, claim string) error
+	// Release returns nil once the Machine's claim no longer exists.
+	Release(ctx context.Context, machine Machine) error
 }
 
 // CleaningPolicies resolves a MachineCapacity's cleaning policy reference
