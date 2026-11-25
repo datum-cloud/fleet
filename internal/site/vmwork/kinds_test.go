@@ -33,6 +33,8 @@ type hypervisor struct {
 	creates int
 	// hold keeps created domains running.
 	hold bool
+	// noReceipt makes the guest print no receipt.
+	noReceipt bool
 }
 
 var receiptArg = regexp.MustCompile(`fleet.receipt=([0-9a-f]{64})`)
@@ -61,7 +63,11 @@ func (h *hypervisor) run(_ context.Context, _ string, args ...string) (string, e
 				receipt = match[1]
 			}
 		}
-		if err := os.WriteFile(log, []byte("booting\n"+marker+receipt+"\n"), 0o600); err != nil {
+		console := "booting\n" + marker + receipt + "\n"
+		if h.noReceipt {
+			console = "booting\n"
+		}
+		if err := os.WriteFile(log, []byte(console), 0o600); err != nil {
 			return "", err
 		}
 		h.running[name] = log
@@ -250,5 +256,24 @@ func TestTheBootServerServesOnlyAnOpenAdmissionAtTheStoredFence(t *testing.T) {
 	}
 	if code := get(script); code != http.StatusForbidden {
 		t.Fatalf("superseded admission = %d", code)
+	}
+}
+
+// TestAFailedNetworkBootClosesItsAdmission stops serving the installer as
+// soon as a network-boot installation fails.
+func TestAFailedNetworkBootClosesItsAdmission(t *testing.T) {
+	r := newRig(t)
+	r.config.PXE = true
+	r.runner.Kinds["DeviceInstallation"] = Installation{r.config}
+	// The guest prints no receipt, so the installer phase fails.
+	r.vm.noReceipt = true
+	assignment := r.assignment("DeviceInstallation", "00000000-0000-4000-8000-000000000206", 2, installSpec())
+	result, err := r.runner.Run(context.Background(), assignment)
+	if err != nil || result.Phase == ops.PhaseSucceeded {
+		t.Fatalf("install without a receipt = %+v, %v", result, err)
+	}
+	var boot Boot
+	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Operation.UID), &boot); err != nil || !found || boot.Open || !boot.Closed {
+		t.Fatalf("admission after the failure = %+v, %v, %v", boot, found, err)
 	}
 }

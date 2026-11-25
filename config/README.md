@@ -140,8 +140,19 @@ following before the new manager runs:
    `fleet.datumapis.com-device-coordinator` and
    `fleet.datumapis.com-device-wipe-requester` roles, and supply them as the
    Secrets below.
-4. Replace the site enrollment placeholder with the Devices the site serves.
-5. After rollout, verify both Deployments, Service routing, PVC binding, and a
+4. Give the manager's own identity, the Metal provider, these roles in the
+   provider project: `metal.datumapis.com-controller`, which now deletes an
+   allocation that lost its Device before it held it;
+   `fleet.datumapis.com-device-installation-requester`; and
+   `fleet.datumapis.com-inventory-discoverer`, because in synthetic staging the manager writes the
+   fixture discovery of the site's Devices. One manager process holds all
+   three component credentials. Each write carries its own component's
+   identity, but the process can act as any of them: this is the synthetic
+   seam, not production separation.
+5. Replace the site enrollment placeholder with the Devices the site serves.
+6. Delete the old `fleet-system-private` namespace and its Secrets by hand.
+   Its manifest was never pruned, so Flux leaves it in place.
+7. After rollout, verify both Deployments, Service routing, PVC binding, and a
    fresh allocation and verified release. Do not delete the PVC as a recovery
    shortcut.
 

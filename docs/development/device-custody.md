@@ -313,7 +313,10 @@ private custody namespace on the hub host is gone.
 The manager's `PowerProjector` is the only writer of `Machine.status.power`. It
 reports `Unknown` while a recovery hold exists or custody is unverified, and
 otherwise the power state discovery last observed. A Machine with no active
-allocation has no power. The harness runners call the same projection.
+allocation has no power. The harness runners call the same projection. In the
+manager, custody, allocation and Device events in the provider project wake
+the consumer's Machines, so a new hold shows as `Unknown` without a Machine
+event.
 
 ### Deleted, with no compatibility
 
@@ -634,6 +637,25 @@ person.
   writes it, in both modes.
 - **No migration.** The old records are deleted and nothing reads them. Fleet
   keeps no legacy compatibility, and re-importing records is acceptable.
+- **Quota follows the Machine.** The quota claim is named from the Machine, as
+  its allocation is. A Machine deleted before its allocation existed, such as
+  one still waiting for capacity, releases its claim by that name.
+- **Credentials per Device, read by the site's workers.** Each Device has its
+  own BMC credential Secret, bound to it by the discovery contract and its
+  approved pin; there is no shared credential. Kubernetes RBAC cannot narrow a
+  list by annotation, so each Redfish worker may list the site's credential
+  Secrets and picks its Device's in code. A compromised worker could read
+  another Device's credential at the same site. This is an accepted residual
+  for the lab layout; a site that needs more isolation keeps one namespace, or
+  one named Secret, per Device.
+- **The observer deletes answered results.** The site observer is the only
+  handoff status writer, and it deletes the site's copy of a result once the
+  coordinator answered it. Its mount of the site store is therefore writable.
+- **One staging process, three identities.** Synthetic staging runs the
+  coordinator, the Metal provider and the release controller in the manager
+  process with three credentials. Each write carries its component's identity,
+  but one process can act as all three. This is the synthetic seam, not
+  production separation.
 
 ### Extension points for power and commissioning
 

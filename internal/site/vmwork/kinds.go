@@ -245,6 +245,16 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 		if err := os.WriteFile(filepath.Join(dir, stage+".xml"), []byte(xml), 0o600); err != nil {
 			return nil, err
 		}
+		// A failed network boot closes its admission at once, so the boot
+		// server stops serving the installer. A worker stopped from outside
+		// leaves it open for its replacement to resume.
+		fail := func(err error) error {
+			if stage == "installer" && k.PXE && boot.Open && ctx.Err() == nil {
+				boot.Open, boot.Closed = false, true
+				_ = k.save(work, boot)
+			}
+			return err
+		}
 		// A boot is started once. After a crash it is observed: a running
 		// domain or this phase's console counts as started, and no sign of
 		// either leaves the outcome unknown rather than booting again.
@@ -263,14 +273,14 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 				return err == nil, nil
 			},
 		}); err != nil {
-			return nil, err
+			return nil, fail(err)
 		}
 		if err := k.waitReceipt(ctx, work, boot, stage); err != nil {
-			return nil, err
+			return nil, fail(err)
 		}
 		if stage == "installer" && k.PXE {
 			if err := k.verifyNetworkBoot(ctx, work); err != nil {
-				return nil, err
+				return nil, fail(err)
 			}
 			boot.Open, boot.Closed = false, true
 			if err := k.save(work, boot); err != nil {
