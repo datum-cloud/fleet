@@ -105,7 +105,11 @@ custody](../device-operations/README.md):
 - **[Admission](../device-operations/README.md#admission):** DeviceInstallation
   adds one check of its own inputs.
 
-It replaces the machine lifecycle's operator-installed image fixtures with the
+It changes the machine lifecycle's [predecessor
+rule](../machine-lifecycle/README.md#installation): an Installation that
+settles a held installation names the held Installation as its predecessor,
+although uncertain work otherwise offers no usable predecessor. It also
+replaces the machine lifecycle's operator-installed image fixtures with the
 published catalog.
 
 ## Design details
@@ -139,7 +143,7 @@ The provider can change only `availability`, and a new release is a new
 MachineImage. A withdrawn image admits no new Installations.
 
 The digest identifies the image's artifact manifest, which lists the digest of
-every file the installer writes or boots. The API holds no URL.
+every file the installer writes or boots.
 
 #### MachineImage in a consumer project
 
@@ -362,7 +366,7 @@ rest, and the audit policy must omit request and response bodies for it.
 
 | Change | Order | After a crash between the writes |
 | --- | --- | --- |
-| Admit an Installation | SealedPayload, then DeviceInstallation | The retry re-reads the Secret. If it changed, the retry writes a second payload under another name, and the operation names that one. |
+| Admit an Installation | SealedPayload, then DeviceInstallation | The retry re-reads the Secret and writes a new payload, because the salt is new. The operation names that payload. |
 | End an install | Custody result, then operation status, then delete SealedPayload | The coordinator deletes it on its next pass. |
 
 The coordinator deletes a SealedPayload, with its UID as a precondition, only
@@ -377,8 +381,7 @@ An allocation that is not `Active` cannot admit an install, so the last rule
 never removes a payload that admission still needs. Fleet does not retry an
 install: a [held installation](../device-operations/README.md#unknown-outcomes)
 is settled by a later DeviceInstallation from a new Installation, which reads
-the Secret again. That Installation names the held Installation as its
-predecessor.
+the Secret again.
 
 ### Site delivery
 
@@ -440,8 +443,8 @@ These tests are required and not implemented:
   admission or the worker refuses it before anything is sent.
 - The customer edits the bootstrap Secret after admission, and the install uses
   the admitted data.
-- The provider crashes between the sealed write and the operation, and the
-  Secret changes before the retry. One operation exists, and the unused payload
+- The provider crashes between the sealed write and the operation, then
+  retries. One operation exists, and the unused payload
   is deleted.
 - No staff role can get, list, or watch a SealedPayload, and no site identity
   other than the operation's worker can read its payload Secret.
@@ -484,7 +487,6 @@ one SealedPayload write and one delete.
 
 - Each site stores every available image.
 - A customer can change bootstrap data only by creating a new Installation.
-- The site's boot service can read a payload while its boot is open.
 
 ## Alternatives
 
