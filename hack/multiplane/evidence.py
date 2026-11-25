@@ -166,8 +166,8 @@ def custody_evidence(store, ops, provider, a, b):
     if spec.get('fence') != rebuilt['verifiedFence'] or spec['fence'] <= ops[-1]['fence'] or store.get('fence') != ops[-1]['fence'] or store.get('stopped') != ops[-1]['fence']:
         fail('custody fence %s, site fence %s/%s and the last operation fence %s do not follow the rebuild' % (spec.get('fence'), store.get('fence'), store.get('stopped'), ops[-1]['fence']))
     recoveries = [i for i in provider.values() if i['kind'] == 'DeviceRecovery']
-    if len(recoveries) != 1 or recoveries[0].get('status', {}).get('phase') != 'Failed' or recoveries[0]['status'].get('fence'):
-        fail('expected only the refused mismatched recovery, never admitted')
+    if len(recoveries) != 1 or recoveries[0].get('status', {}).get('phase') != 'Failed' or recoveries[0]['status'].get('reason') != 'HoldMismatch' or recoveries[0]['status'].get('fence'):
+        fail('expected only the mismatched recovery, refused for HoldMismatch and never admitted')
     record = {'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'device': harness.DEVICE,
               'custody': {'state': spec['state'], 'holder': spec['holder'], 'fence': spec['fence'], 'activeOperation': None, 'recoveryHold': None,
                           'rejectedResults': spec.get('rejectedResults')},
