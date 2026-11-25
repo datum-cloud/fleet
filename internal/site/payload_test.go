@@ -105,3 +105,58 @@ func TestPayloadsAreStoredOnlyForTheirAssignmentAndPruned(t *testing.T) {
 		t.Fatal("the current payload was pruned")
 	}
 }
+
+// TestARecoveryFencePrunesAPayloadWhoseWorkerNeverRan: an install's payload
+// is stored but its worker never starts; a recovery raises the fence, and
+// the site deletes the payload at once.
+func TestARecoveryFencePrunesAPayloadWhoseWorkerNeverRan(t *testing.T) {
+	f := newFixture(t, testUUID)
+	payloads := StorePayloads{Store: f.runner.Store}
+	f.runner.Payloads = payloads
+	install, payload := f.sealedAssignment(1, "op-never-ran")
+	if err := payloads.Put(install, payload); err != nil {
+		t.Fatal(err)
+	}
+	recovery := f.assignment(2, "op-recovery")
+	recovery.Operation.Kind = "DeviceRecovery"
+	if err := f.runner.Fence(context.Background(), recovery); err != nil {
+		t.Fatal(err)
+	}
+	if records, err := f.runner.Store.Records(payloadRecords); err != nil || len(records) != 0 {
+		t.Fatalf("payloads after the recovery fence = %d, %v", len(records), err)
+	}
+}
+
+// TestAPayloadIsKeyedByItsOperationAndFence deletes one admission's payload
+// and keeps another's that differs only in fence, operation name or kind,
+// so an answered or superseded admission never drops a live one.
+func TestAPayloadIsKeyedByItsOperationAndFence(t *testing.T) {
+	for name, other := range map[string]func(Assignment) Assignment{
+		"a later fence":       func(a Assignment) Assignment { a.Fence = 2; return a },
+		"another name":        func(a Assignment) Assignment { a.Operation.Name += "-other"; return a },
+		"another kind":        func(a Assignment) Assignment { a.Operation.Kind = "DeviceOtherInstallation"; return a },
+		"a later fence, kind": func(a Assignment) Assignment { a.Fence, a.Operation.Kind = 2, "DeviceOtherInstallation"; return a },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, testUUID)
+			payloads := StorePayloads{Store: f.runner.Store}
+			gone, payload := f.sealedAssignment(1, "op-keyed")
+			kept := other(gone)
+			if err := payloads.Put(gone, payload); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.runner.Store.Raise(kept.Device, kept.Fence); err != nil {
+				t.Fatal(err)
+			}
+			if err := payloads.Put(kept, payload); err != nil {
+				t.Fatal(err)
+			}
+			if err := payloads.Delete(context.Background(), gone); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := payloads.Get(context.Background(), kept); err != nil || got == nil {
+				t.Fatalf("deleting another admission's payload dropped this one: %v, %v", got, err)
+			}
+		})
+	}
+}

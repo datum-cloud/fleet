@@ -186,6 +186,8 @@ func (h *Hub) ensure(ctx context.Context, name, role string, spec Spec) (*unstru
 
 // ErrBootstrapUnsupported means the federation transport does not yet
 // carry bootstrap payloads to a cell. The assignment is not delivered.
+// Admission refuses such an operation first, because Hub does not report
+// that it carries payloads.
 var ErrBootstrapUnsupported = errors.New("coordination: federation does not carry bootstrap payloads yet")
 
 func (h *Hub) Deliver(ctx context.Context, assignment site.Assignment, payload *site.Payload) error {

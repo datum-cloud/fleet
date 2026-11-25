@@ -185,3 +185,21 @@ func TestSweepDeletesOnlyWhatNothingNeeds(t *testing.T) {
 		t.Fatalf("deleted %d", deleted)
 	}
 }
+
+func TestValidateRefusesDataThatWouldNotArriveExactly(t *testing.T) {
+	for name, value := range map[string]string{
+		"invalid UTF-8":             "#cloud-config\n\xff\xfe",
+		"too large once escaped":    strings.Repeat("\x01", MaxBytes),
+		"escaping right at the cap": strings.Repeat("\"", MaxEncodedBytes/2+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			secret := &corev1.Secret{Type: SecretType, Data: map[string][]byte{KeyUserData: []byte(value)}}
+			if _, err := Validate(secret); reason(t, err) != ReasonBootstrapInvalid {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+	if _, err := Seal(Payload{UserData: strings.Repeat("\x01", MaxBytes)}, "op", "alloc", "default"); err == nil {
+		t.Fatal("Seal accepted data too large to deliver")
+	}
+}

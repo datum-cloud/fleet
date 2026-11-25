@@ -37,5 +37,5 @@ spec:
               digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
               # 32 random bytes, base64.
               salt: {type: string, format: byte, minLength: 44, maxLength: 44}
-              # At most 64 KiB of bootstrap data and its encoding, base64.
-              data: {type: string, format: byte, minLength: 1, maxLength: 100000}
+              # At most 96 KiB of encoded bootstrap data, base64.
+              data: {type: string, format: byte, minLength: 1, maxLength: 131072}

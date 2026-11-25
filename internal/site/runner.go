@@ -278,6 +278,13 @@ func (r *Runner) acquire(ctx context.Context, assignment Assignment) (*runLock, 
 	if err := r.Store.Raise(assignment.Device, assignment.Fence); err != nil {
 		return nil, err
 	}
+	// Nothing below the new fence may run, so no payload below it is read
+	// again: a recovery or a newer operation removes them.
+	if r.Payloads != nil {
+		if err := r.Payloads.Prune(ctx, assignment.Device); err != nil {
+			return nil, err
+		}
+	}
 	ctx, cancel := context.WithDeadline(ctx, assignment.Deadline)
 	defer cancel()
 	for {

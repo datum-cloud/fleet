@@ -72,6 +72,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, into any) er
 	return decoder.Decode(into)
 }
 
+// CarriesPayloads is true: the site API receives a payload beside its
+// assignment.
+func (c *Client) CarriesPayloads() bool { return true }
+
 func (c *Client) Deliver(ctx context.Context, assignment site.Assignment, payload *site.Payload) error {
 	return c.do(ctx, http.MethodPut, "/v1/assignments", Delivery{Assignment: assignment, Payload: payload}, nil)
 }

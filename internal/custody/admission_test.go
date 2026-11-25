@@ -296,6 +296,25 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.create(admitted)
 		e.settle(other.Name)
 		e.requirePhase(admitted, ops.PhaseAdmitted, "")
+
+		// A Device served by a site that cannot receive bootstrap data is
+		// refused at admission, before its fence moves, even with a good
+		// payload.
+		federated := fresh()
+		e.sites.mu.Lock()
+		e.sites.noPayloads[federated.Name] = true
+		e.sites.mu.Unlock()
+		if err := e.coord.Claim(e.ctx, federated.Name, federated.UID, "alloc-fed"); err != nil {
+			t.Fatal(err)
+		}
+		fedFence := e.custody(federated.Name).Spec.Fence
+		fedPayload := seal(InstallationName("alloc-fed", "request-1"), "alloc-fed")
+		e.create(fedPayload)
+		refused := installation(federated, "alloc-fed", "request-1", &ops.SealedInput{Ref: fedPayload.Name, Digest: fedPayload.Spec.Digest}, "primary")
+		e.create(refused)
+		e.settle(federated.Name)
+		e.requirePhase(refused, ops.PhaseFailed, ReasonBootstrapUnsupported)
+		e.requireUntouched(federated.Name, fedFence)
 	})
 
 	t.Run("a staff operation not admitted within five minutes expires", func(t *testing.T) {

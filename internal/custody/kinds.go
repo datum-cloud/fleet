@@ -115,8 +115,13 @@ func DeviceInstallationKind() Kind {
 			// The sweep never deletes the payload of an operation that has
 			// not ended, so it stays until the site has it.
 			if reference := installation.Spec.Bootstrap; reference != nil {
+				if carriers, ok := admission.Sites.(PayloadCarriers); ok && !carriers.CarriesPayloads(admission.Device) {
+					return refuse(ReasonBootstrapUnsupported, "a site serving the Device cannot receive bootstrap data")
+				}
 				payload := &ops.SealedPayload{}
 				if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: installation.Namespace, Name: reference.Ref}, payload); err != nil {
+					// Like every kind check, a read that fails refuses: the
+					// operation ends Failed and nothing is sent.
 					return refuse(ReasonBootstrapUnavailable, "the sealed bootstrap payload cannot be read")
 				}
 				if sealed.Verify(payload, installation.Name, *reference) != nil {
@@ -131,7 +136,7 @@ func DeviceInstallationKind() Kind {
 			return refuse(ReasonBootInterfaceUnknown, "the Device records no interface %q with a MAC address", installation.Spec.BootInterface)
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
-		Reasons: append([]Reason{{Name: ReasonBootstrapUnavailable, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByWorker}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonImageIncompatible, RaisedBy: RaisedByWorker}}, workerReasons...),
+		Reasons: append([]Reason{{Name: ReasonBootstrapUnavailable, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonImageIncompatible, RaisedBy: RaisedByWorker}}, workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(operation ops.Operation, evidence *ops.InstallationEvidence) error {
 			// A success must prove the server was handed exactly the admitted
 			// bootstrap data, and nothing when there was none.

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,8 +40,13 @@ const (
 	KeySSHAuthorizedKeys = "sshAuthorizedKeys"
 )
 
-// MaxBytes bounds the bootstrap data.
-const MaxBytes = 64 << 10
+// MaxBytes bounds the bootstrap data, and MaxEncodedBytes its encoded form,
+// which JSON escaping can make larger. A site receives the encoded form in
+// base64 inside a request of at most 256 KiB.
+const (
+	MaxBytes        = 64 << 10
+	MaxEncodedBytes = 96 << 10
+)
 
 // Refusal reasons an Installation reports as Accepted=False.
 const (
@@ -80,6 +86,11 @@ func Validate(secret *corev1.Secret) (Payload, error) {
 		if key != KeyUserData && key != KeySSHAuthorizedKeys {
 			return invalid("the bootstrap Secret may hold only userData and sshAuthorizedKeys")
 		}
+		// Bootstrap data is text. Encoding would rewrite invalid UTF-8,
+		// and the server would not get exactly what was stored.
+		if !utf8.Valid(value) {
+			return invalid("the bootstrap Secret's values must be UTF-8 text")
+		}
 		size += len(value)
 	}
 	payload := Payload{UserData: string(secret.Data[KeyUserData]), SSHAuthorizedKeys: string(secret.Data[KeySSHAuthorizedKeys])}
@@ -88,6 +99,9 @@ func Validate(secret *corev1.Secret) (Payload, error) {
 	}
 	if size > MaxBytes {
 		return invalid("the bootstrap Secret holds more than 64 KiB")
+	}
+	if encoded, err := json.Marshal(payload); err != nil || len(encoded) > MaxEncodedBytes {
+		return invalid("the bootstrap Secret holds too many characters that need escaping")
 	}
 	return payload, nil
 }
@@ -113,6 +127,9 @@ func Seal(payload Payload, operation, allocation, namespace string) (*ops.Sealed
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > MaxEncodedBytes {
+		return nil, errors.New("sealed: the bootstrap data is too large to deliver")
 	}
 	salt := make([]byte, 32)
 	if _, err := rand.Read(salt); err != nil {

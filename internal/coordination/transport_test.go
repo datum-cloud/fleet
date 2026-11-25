@@ -3,11 +3,14 @@ package coordination
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -291,5 +294,23 @@ func TestTheCellRunsOnlyItsOwnAssignments(t *testing.T) {
 				t.Fatalf("journal = %+v", journal)
 			}
 		})
+	}
+}
+
+// TestTheHubRefusesABootstrapPayload: federation does not carry payloads
+// yet, so the hub writes no handoff for an assignment that names one, and
+// it does not report that it carries them, so admission refuses first.
+func TestTheHubRefusesABootstrapPayload(t *testing.T) {
+	f := newFixture(t)
+	assignment := f.wipe(3, "00000000-0000-4000-8000-000000000111")
+	assignment.Inputs = json.RawMessage(`{"bootstrap":{"ref":"sealed-example","digest":"sha256:` + strings.Repeat("a", 64) + `"}}`)
+	if err := f.hub.Deliver(f.ctx, assignment, nil); !errors.Is(err, ErrBootstrapUnsupported) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := f.hub.api().Get(f.ctx, AssignmentName(assignment), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("a handoff was written: %v", err)
+	}
+	if _, ok := any(f.hub).(interface{ CarriesPayloads() bool }); ok {
+		t.Fatal("the hub claims to carry payloads")
 	}
 }

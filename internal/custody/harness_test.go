@@ -70,10 +70,19 @@ type fakeSites struct {
 	// place of its stopped fence, as a site whose older worker has not yet
 	// stopped would report.
 	seen map[string]int64
+	// noPayloads names Devices a site serves that cannot receive bootstrap
+	// payloads, as a federated cell cannot yet.
+	noPayloads map[string]bool
+}
+
+func (s *fakeSites) CarriesPayloads(device *inventory.Device) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.noPayloads[device.Name]
 }
 
 func newFakeSites() *fakeSites {
-	return &fakeSites{serving: map[string][]string{}, fences: map[string]int64{}, seen: map[string]int64{}}
+	return &fakeSites{serving: map[string][]string{}, fences: map[string]int64{}, seen: map[string]int64{}, noPayloads: map[string]bool{}}
 }
 
 func (s *fakeSites) Serving(device *inventory.Device) []string {

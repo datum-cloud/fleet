@@ -153,8 +153,11 @@ type Admission struct {
 	Device    *inventory.Device
 	Row       Rule
 	Registry  *Registry
-	// Reader reads the provider project. A check must not write.
+	// Reader reads the provider project. A check must not write. It reads
+	// through to the API server, so a missing object is missing now.
 	Reader client.Reader
+	// Sites are the sites the coordinator delivers to.
+	Sites Sites
 	// Now is the coordinator's injected clock, read once per decision.
 	Now time.Time
 	// DiscoveryInterval is how often BMC discovery reads each BMC.

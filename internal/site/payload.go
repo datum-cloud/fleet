@@ -29,6 +29,10 @@ type Payloads interface {
 	Get(ctx context.Context, assignment Assignment) (*Payload, error)
 	// Delete removes the assignment's payload. It is idempotent.
 	Delete(ctx context.Context, assignment Assignment) error
+	// Prune removes every payload of the Device delivered below its stored
+	// fence. The site calls it whenever it raises a fence, so a superseded
+	// operation whose worker never ran leaves no payload behind.
+	Prune(ctx context.Context, device string) error
 }
 
 // Sealed returns the sealed reference in an assignment's admitted inputs,
@@ -117,7 +121,7 @@ func (s StorePayloads) Put(assignment Assignment, payload Payload) error {
 	if !payload.Matches(assignment.Sealed()) {
 		return errors.New("site: the payload does not match the assignment")
 	}
-	if err := s.Prune(assignment.Device); err != nil {
+	if err := s.Prune(context.Background(), assignment.Device); err != nil {
 		return err
 	}
 	return s.Store.PutRecord(assignment.Device, assignment.Fence, payloadRecords, payloadKey(assignment), storedPayload{Fence: assignment.Fence, Payload: payload})
@@ -133,7 +137,7 @@ func (s StorePayloads) Get(_ context.Context, assignment Assignment) (*Payload, 
 }
 
 // Prune deletes the Device's payloads below its stored fence.
-func (s StorePayloads) Prune(device string) error {
+func (s StorePayloads) Prune(_ context.Context, device string) error {
 	fence, _, err := s.Store.Peek(device)
 	if err != nil {
 		return err

@@ -158,6 +158,12 @@ func Handler(dispatcher *Dispatcher, store *site.Store, results *site.Results, t
 			http.Error(w, "the result could not be deleted", http.StatusInternalServerError)
 			return
 		}
+		// An answered operation never runs again, so a payload a late
+		// redelivery stored is not needed either.
+		if err := (site.StorePayloads{Store: store}).Delete(r.Context(), site.Assignment{Device: stored.Device, Operation: stored.Result.Operation, Fence: stored.Result.Fence}); err != nil {
+			http.Error(w, "the payload could not be deleted", http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })

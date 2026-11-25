@@ -46,7 +46,10 @@ type Sites struct {
 	Devices map[string][]string
 }
 
-var _ custody.Sites = (*Sites)(nil)
+var (
+	_ custody.Sites           = (*Sites)(nil)
+	_ custody.PayloadCarriers = (*Sites)(nil)
+)
 
 func (s *Sites) Serving(device *inventory.Device) []string {
 	var out []string
@@ -56,6 +59,24 @@ func (s *Sites) Serving(device *inventory.Device) []string {
 		}
 	}
 	return out
+}
+
+// PayloadSite is implemented by a site that reports whether it can receive
+// bootstrap payloads. A site that does not implement it cannot.
+type PayloadSite interface {
+	CarriesPayloads() bool
+}
+
+// CarriesPayloads reports whether every site serving the Device can
+// receive bootstrap payloads. A Device no site serves carries none.
+func (s *Sites) CarriesPayloads(device *inventory.Device) bool {
+	serving := s.Serving(device)
+	for _, name := range serving {
+		if site, ok := s.Sites[name].(PayloadSite); !ok || !site.CarriesPayloads() {
+			return false
+		}
+	}
+	return len(serving) > 0
 }
 
 func (s *Sites) Fence(ctx context.Context, name string, device *inventory.Device) (custody.SiteFence, bool, error) {
