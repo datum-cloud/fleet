@@ -141,6 +141,8 @@ spec:
     phase: Dispatched
     deadline: "2026-11-24T19:10:00Z"
   lastResult: {name: alloc-3b9d61c2-install-1, result: Succeeded}
+  # After an Unknown outcome: the held operation, its Retry count, and
+  # whether a Retry is unused.
   recoveryHold: null
 ```
 
@@ -350,10 +352,11 @@ the site reports the raised fence.
 
 - `Settle` clears the hold. It returns a `Service` holder to `None` and leaves
   an `Allocation` or `Release` holder in place.
-- `Retry` lets the held operation's requester create one settling operation,
-  where the settlement table requires it. The `Retry` is used when that
-  operation is admitted.
-  Fleet never retries an operation automatically.
+- `Retry` lets the held operation's requester create one settling operation.
+  Fleet never retries an operation automatically. Admission accepts a `Retry`
+  only for a hold whose row in the settlement table requires one, and only
+  when no earlier `Retry` for that hold is unused. The `Retry` raises the
+  hold's count and is used when its settling operation is admitted.
 - `Retire` sets a `Service` or `Release` holder to `Retired`. Retiring from
   `Release` records how the disks were disposed of.
 - `Resolve` names the holder of `Unverified` custody. See [Rebuilding
