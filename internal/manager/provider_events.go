@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -106,17 +107,22 @@ func (r ProviderEventReconciler) Reconcile(ctx context.Context, request Provider
 	if err := r.Reader.List(ctx, &machines); err != nil {
 		return reconcile.Result{}, err
 	}
+	var retryErrors []error
 	for i := range machines.Items {
+		if err := ctx.Err(); err != nil {
+			retryErrors = append(retryErrors, err)
+			break
+		}
 		machine := &machines.Items[i]
 		if machine.UID == "" {
 			continue
 		}
 		outcome := r.Handler.ReconcileEvent(ctx, ProjectRequest{ClusterName: r.ConsumerCluster, AuthorityID: r.Consumer.AuthorityID, ProjectUID: r.Consumer.UID, Namespace: machine.Namespace, Name: machine.Name, UID: machine.UID})
 		if outcome.RetryError != nil {
-			return reconcile.Result{}, outcome.RetryError
+			retryErrors = append(retryErrors, outcome.RetryError)
 		}
 	}
-	return reconcile.Result{}, nil
+	return reconcile.Result{}, errors.Join(retryErrors...)
 }
 
 // ClusterProviderEventReconciler wakes the one configured consumer project's
