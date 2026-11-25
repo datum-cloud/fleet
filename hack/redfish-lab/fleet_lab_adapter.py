@@ -12,6 +12,9 @@ authentication. This module, loaded into the same Flask process, adds only:
     persistent libvirt domain per System, and PowerState read from libvirt;
   * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
+  * a Storage collection with one Drive per System: the target's disk, with a
+    fixed lab serial number and its size. The emulator's SimpleStorage
+    reports only a capacity;
   * an append-only request audit log (no bodies, no credentials);
   * bounded, one-shot lab fault injection driven by a state file.
 
@@ -45,6 +48,8 @@ TLS_DIR = os.environ.get('FLEET_BMC_TLS', '/etc/fleet-bmc-tls')
 RESET_TYPES = ('On', 'ForceOff', 'ForceRestart')
 BOOT_TARGETS = ('None', 'Pxe', 'Hdd')
 BOOT_ENABLED = ('Disabled', 'Once')
+# Every lab target has one 2 GiB disk (hack/local-vm/site-runtime creates it).
+LAB_DISK_BYTES = 2 << 30
 NETWORK = 'fleet-lab-pxe'
 LOCK = threading.RLock()
 
@@ -217,6 +222,7 @@ def create_app(targets, state, credentials, boot_ip):
         m['Boot'] = dict(lab.nvram[sid], BootSourceOverrideMode='Legacy', **{
             'BootSourceOverrideTarget@Redfish.AllowableValues': list(BOOT_TARGETS),
             'BootSourceOverrideEnabled@Redfish.AllowableValues': list(BOOT_ENABLED)})
+        m['Storage'] = {'@odata.id': '/redfish/v1/Systems/%s/Storage' % sid}
         if power:
             m['PowerState'] = power
         hidden = set(faults.read().get('hideResetTypes', []))
@@ -272,6 +278,11 @@ def create_app(targets, state, credentials, boot_ip):
             request_context.principal, request_context.detail = 'rejected', {'fault': 'reject-auth'}
             return challenge()
         request_context.principal = 'authenticated'
+        s = re.fullmatch(r'/redfish/v1/Systems/([^/]+)/Storage(/1(/Drives/0)?)?', path)
+        if s and s.group(1) in targets:
+            if request.method != 'GET':
+                return error(405, 'lab Storage is read-only')
+            return storage(s.group(1), s.group(2), s.group(3))
         m = re.fullmatch(r'/redfish/v1/Systems/([^/]+)(/Actions/ComputerSystem\.Reset|/ResetActionInfo)?', path)
         if not m:
             return None
@@ -292,6 +303,20 @@ def create_app(targets, state, credentials, boot_ip):
         if sub == '/Actions/ComputerSystem.Reset' and request.method == 'POST':
             return reset(sid)
         return None
+
+    def storage(sid, one, drive):
+        """The lab target's one disk. Protocol and media type are absent: a
+        virtio disk is neither NVMe nor SATA, so the lab does not claim one."""
+        base = '/redfish/v1/Systems/%s/Storage' % sid
+        if drive:
+            t = targets[sid]
+            return {'@odata.id': base + '/1/Drives/0', '@odata.type': '#Drive.v1_17_0.Drive', 'Id': '0', 'Name': 'Lab disk',
+                    'SerialNumber': t['diskSerial'], 'Model': 'Fleet lab virtio disk', 'Revision': 'lab', 'CapacityBytes': LAB_DISK_BYTES}, 200
+        if one:
+            return {'@odata.id': base + '/1', '@odata.type': '#Storage.v1_15_0.Storage', 'Id': '1', 'Name': 'Lab storage',
+                    'Drives': [{'@odata.id': base + '/1/Drives/0'}]}, 200
+        return {'@odata.id': base, '@odata.type': '#StorageCollection.StorageCollection', 'Name': 'Storage',
+                'Members@odata.count': 1, 'Members': [{'@odata.id': base + '/1'}]}, 200
 
     def patch_boot(sid, body):
         boot = body['Boot']

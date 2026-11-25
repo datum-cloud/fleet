@@ -276,6 +276,12 @@ status:
           powerState: "On"
           networkInterfaces:
             - {id: NIC.1, macAddress: "00:00:5e:00:53:01", linkStatus: LinkUp, speedMbps: 25000}
+          storage:
+            drives:
+              - {id: "0", serialNumber: EXAMPLE-SN-0001, model: EXAMPLE-NVME-3840, firmware: EX1.3,
+                 protocol: NVMe, mediaType: SSD, capacityBytes: 3840755982336, encryptionStatus: Unencrypted}
+              - {id: "1", serialNumber: EXAMPLE-SN-0002, protocol: SATA, mediaType: HDD,
+                 capacityBytes: 8001563222016, inVolume: true}
   conditions: [...]
 ```
 
@@ -285,6 +291,16 @@ failed or refused attempt updates `lastAttemptAt` and the conditions and
 keeps every earlier observation. Inventory is all or nothing: a partially read
 BMC keeps the previous inventory. MACs are lowercase colon form and UUIDs
 lowercase canonical. Power state is an observation; discovery never changes it.
+
+`storage` lists every Drive under each System's Storage collection, up to 32,
+read once even when two Storage resources link it. `inVolume` marks a drive
+that a Volume with a RAID type links, so the host does not address it directly.
+A System that links no Storage collection has no `storage` at all, which means
+unknown, not a verified empty list. The serial number is an identity claim to
+match, not proof, and `encryptionStatus` cannot tell always-on encryption from
+encryption a customer enabled. Nothing allocates on drives yet; the [cleaning
+proposal](https://github.com/datum-cloud/fleet/pull/183) uses them for the
+drive manifest.
 
 ### Conditions
 

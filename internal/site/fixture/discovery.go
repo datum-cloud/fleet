@@ -2,6 +2,8 @@ package fixture
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -39,7 +41,7 @@ func Discover(ctx context.Context, api client.Client, enrollment Enrollment, now
 			LastAttemptEndpoint: endpoint,
 			TLS:                 &inventory.ObservedTLS{ObservedAt: observed, Endpoint: endpoint, PublicKeySHA256: target.BMCPublicKeySHA256},
 			Inventory: &inventory.ObservedInventory{ObservedAt: observed, Endpoint: endpoint, Systems: []inventory.ObservedSystem{{
-				ID: "simulated", UUID: target.SystemUUID, PowerState: "Off",
+				ID: "simulated", UUID: target.SystemUUID, PowerState: "Off", Storage: Drives(key, target),
 			}}},
 		}
 		status, reason := metav1.ConditionTrue, "FixtureEnrollment"
@@ -67,4 +69,24 @@ func Run(ctx context.Context, api client.Client, enrollment Enrollment, interval
 		case <-time.After(interval):
 		}
 	}
+}
+
+// SimulatedModel is the model every fixture drive reports, so a simulated
+// drive can never match a qualified real one.
+const SimulatedModel = "Fleet simulated drive"
+
+// SimulatedDriveBytes is the capacity of a fixture drive.
+const SimulatedDriveBytes = 2 << 30
+
+// Drives is what fixture discovery reports for an enrolled Device: one
+// simulated NVMe drive per enrolled disk, in order, with a serial number
+// derived from the Device and the disk.
+func Drives(device string, target Target) *inventory.ObservedStorage {
+	out := &inventory.ObservedStorage{}
+	for _, disk := range target.Disks {
+		sum := sha256.Sum256([]byte(device + "/" + disk))
+		out.Drives = append(out.Drives, inventory.ObservedDrive{ID: disk, SerialNumber: "SIM-" + strings.ToUpper(hex.EncodeToString(sum[:6])), Model: SimulatedModel,
+			Firmware: "sim", Protocol: "NVMe", MediaType: "SSD", CapacityBytes: SimulatedDriveBytes})
+	}
+	return out
 }

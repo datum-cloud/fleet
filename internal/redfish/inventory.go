@@ -15,6 +15,8 @@ import (
 const (
 	maxInventoryMembers    = 16
 	maxInventoryInterfaces = 32
+	maxInventoryStorage    = 8
+	maxInventoryDrives     = 32
 	maxCollectionPages     = 8
 )
 
@@ -44,6 +46,24 @@ type InventorySystem struct {
 	PowerState   string
 	// NetworkInterfaces are the System's EthernetInterfaces.
 	NetworkInterfaces []NetworkInterface
+	// Drives are the System's Storage drives. StorageReported is false when
+	// the System links no Storage collection.
+	Drives          []Drive
+	StorageReported bool
+}
+
+// Drive is one Redfish Drive under a System's Storage.
+type Drive struct {
+	ID               string
+	SerialNumber     string
+	Model            string
+	Revision         string
+	Protocol         string
+	MediaType        string
+	CapacityBytes    int64
+	EncryptionStatus string
+	// InVolume means a Volume with a RAID type links the drive.
+	InVolume bool
 }
 
 // NetworkInterface is one Redfish EthernetInterface.
@@ -109,6 +129,7 @@ func (c *Client) Inventory(ctx context.Context) (Inventory, error) {
 				SKU                string
 				PowerState         string
 				EthernetInterfaces link
+				Storage            link
 			}
 			if err := getJSON(api, p, &doc); err != nil {
 				return Inventory{}, err
@@ -117,8 +138,13 @@ func (c *Client) Inventory(ctx context.Context) (Inventory, error) {
 			if err != nil {
 				return Inventory{}, err
 			}
+			drives, err := storageDrives(api, p, doc.Storage.ID)
+			if err != nil {
+				return Inventory{}, err
+			}
 			inv.Systems = append(inv.Systems, InventorySystem{ID: doc.ID, UUID: canonicalUUID(doc.UUID), Manufacturer: doc.Manufacturer,
-				Model: doc.Model, SerialNumber: doc.SerialNumber, SKU: doc.SKU, PowerState: doc.PowerState, NetworkInterfaces: nics})
+				Model: doc.Model, SerialNumber: doc.SerialNumber, SKU: doc.SKU, PowerState: doc.PowerState, NetworkInterfaces: nics,
+				Drives: drives, StorageReported: doc.Storage.ID != ""})
 		}
 	}
 	return inv, nil
@@ -219,6 +245,94 @@ func interfaces(api *gofish.APIClient, owner, collection string) ([]NetworkInter
 			}
 		}
 		out = append(out, nic)
+	}
+	return out, nil
+}
+
+// storageDrives reads every Drive of every Storage in a collection that must
+// belong to owner, and marks drives that a RAID Volume links. A drive linked
+// from two Storage resources is read once.
+func storageDrives(api *gofish.APIClient, owner, collection string) ([]Drive, error) {
+	if collection == "" {
+		return nil, nil
+	}
+	if p, err := cleanPath(collection); err != nil || !strings.HasPrefix(p, owner+"/") {
+		return nil, errors.New("redfish: Storage outside its owner")
+	}
+	storages, err := members(api, collection, maxInventoryStorage)
+	if err != nil {
+		return nil, err
+	}
+	var out []Drive
+	index := map[string]int{}
+	for _, storage := range storages {
+		var doc struct {
+			Drives  []link
+			Volumes link
+		}
+		if err := getJSON(api, storage, &doc); err != nil {
+			return nil, err
+		}
+		for _, d := range doc.Drives {
+			p, err := cleanPath(d.ID)
+			if err != nil || !strings.HasPrefix(p, owner+"/") {
+				return nil, errors.New("redfish: Drive outside its System")
+			}
+			if _, seen := index[p]; seen || len(out) >= maxInventoryDrives {
+				continue
+			}
+			var drive struct {
+				ID               string `json:"Id"`
+				SerialNumber     string
+				Model            string
+				Revision         string
+				Protocol         string
+				MediaType        string
+				CapacityBytes    *json.Number
+				EncryptionStatus string
+			}
+			if err := getJSON(api, p, &drive); err != nil {
+				return nil, err
+			}
+			found := Drive{ID: drive.ID, SerialNumber: strings.TrimSpace(drive.SerialNumber), Model: strings.TrimSpace(drive.Model), Revision: strings.TrimSpace(drive.Revision),
+				Protocol: drive.Protocol, MediaType: drive.MediaType, EncryptionStatus: drive.EncryptionStatus}
+			if drive.CapacityBytes != nil {
+				if v, err := drive.CapacityBytes.Int64(); err == nil && v > 0 {
+					found.CapacityBytes = v
+				}
+			}
+			index[p] = len(out)
+			out = append(out, found)
+		}
+		if doc.Volumes.ID == "" {
+			continue
+		}
+		if p, err := cleanPath(doc.Volumes.ID); err != nil || !strings.HasPrefix(p, storage+"/") {
+			return nil, errors.New("redfish: Volumes outside its Storage")
+		}
+		volumes, err := members(api, doc.Volumes.ID, maxInventoryDrives)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range volumes {
+			var volume struct {
+				RAIDType string
+				Links    struct{ Drives []link }
+			}
+			if err := getJSON(api, v, &volume); err != nil {
+				return nil, err
+			}
+			if volume.RAIDType == "" || volume.RAIDType == "None" {
+				continue
+			}
+			for _, d := range volume.Links.Drives {
+				if p, err := cleanPath(d.ID); err == nil {
+					if i, ok := index[p]; ok {
+						out[i].InVolume = true
+					}
+				}
+			}
+		}
 	}
 	return out, nil
 }

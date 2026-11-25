@@ -718,7 +718,11 @@ real API server. The rest of #183 is **proposed**.
   provider project, because the manager writes no policies. No capacity is
   allocated until it exists.
 
-Not implemented yet: drive inventory from Redfish and commissioning, the media
+BMC discovery records each System's drives from Redfish in Device status, and
+fixture discovery reports one simulated drive per enrolled disk. The Redfish
+lab serves a Storage collection for its targets. These are observations only.
+
+Not implemented yet: drive inventory from commissioning, the media
 manifest and pinned drive names, the per-drive plan in `DeviceWipe`, the
 in-band methods and their evidence, the evidence check and its reasons, and
 `DisposeDrive`. Until then, every site still wipes its one enrolled disk.
