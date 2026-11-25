@@ -220,14 +220,16 @@ create and delete namespaces.
 When it creates a MachineAllocation, the allocator computes the policy's
 digest, the SHA-256 of its canonical spec, and copies into the allocation:
 
-- the policy's name, UID, digest, and spec; and
+- the policy's name, generation, digest, and spec; and
 - the media manifest: each drive's name, identity, capacity, and matching rule.
 
 The allocator names drives `disk-0`, `disk-1`, and so on, at pin time. Names
 stay fixed for the allocation, and installations resolve target disks through
 the manifest. Allocation refuses a server that is not
 [covered](#capacity-status), with reason `CleaningUncovered`. Later changes to
-the policy or discovery do not change the pin.
+the policy or discovery do not change the pin, and neither does a policy
+deleted and recreated under the same name: the copy and digest pin the
+content, so no spec holds the policy's UID.
 
 ### Planning a release
 
@@ -275,12 +277,11 @@ metadata:
   namespace: default
 spec:
   creator: system:serviceaccount:fleet-system:release-controller
-  deviceRef: {name: server-example-001, uid: 6f1c0b52-1d7e-4a35-9e0b-2c41f7a0d9e3}
+  deviceRef: {name: server-example-001}
   authority:
     allocationRef: {name: alloc-3b9d61c2}
   step: 1
-  policy: {name: tenant-reuse-v1, uid: 0d6e3b9a-52c1-4f7e-a8d0-3c9b1e5f7a24,
-           digest: "sha256:5b1e0c7d9a3f..."}
+  policy: {name: tenant-reuse-v1, generation: 1, digest: "sha256:5b1e0c7d9a3f..."}
   assurance: Purge
   drives:
     - name: disk-0
