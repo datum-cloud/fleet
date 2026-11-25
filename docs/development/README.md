@@ -37,6 +37,8 @@ Increment C, the cutover. Every mode allocates, installs and releases on
 Secret-backed coordinator, its private records and the old executors are deleted,
 and an allocation's private facts live on its MachineAllocation. The standalone
 smoke verifies it. The end-to-end failure scenarios (Increment D) are proposed.
+The [power kind's control plane](device-custody.md#device-power-operations)
+is implemented on the same custody, and nothing creates power operations yet.
 
 The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
 the [local VM site](../operations/local-vm.md) with native Milo project APIs, the
