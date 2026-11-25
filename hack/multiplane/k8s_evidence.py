@@ -51,8 +51,10 @@ def job(state, name):
 def pods(state, name):
     out = []
     for p in get(state, '-n', SITE, 'get', 'pods', '-l', 'fleet.datumapis.com/handoff=' + name)['items']:
-        exit_code = next((c['state']['terminated']['exitCode'] for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})), None)
+        terminated = next((c['state']['terminated'] for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})), {})
+        exit_code = terminated.get('exitCode')
         out.append({'pod': p['metadata']['name'], 'uid': p['metadata']['uid'], 'phase': p['status'].get('phase'), 'exitCode': exit_code,
+                    'ip': p['status'].get('podIP'), 'startedAt': p['status'].get('startTime'), 'finishedAt': terminated.get('finishedAt'),
                     'deleting': bool(p['metadata'].get('deletionTimestamp')), 'jobUID': p['metadata'].get('labels', {}).get('batch.kubernetes.io/controller-uid'),
                     'node': p['spec'].get('nodeName')})
     return sorted(out, key=lambda p: p['pod'])
@@ -126,6 +128,135 @@ def install_jobs(jobs, done):
 
 def assignment_items(state, config='cell-admin.yaml'):
     return get(state, '-n', NS, 'get', 'machineallocationhandoffs', '-l', ROLE_LABEL + '=assignment', config=config)['items']
+
+
+# Turning dispatch on again at the install makes kro recreate the completed
+# commissioning's Job. Its result was answered and deleted, so the replay
+# either loses the fence to the install worker (exit 65) or finds its deadline
+# passed. Until the site runner answers such a replay as a no-op, evidence
+# accepts either outcome for that one Job, and only while the commissioning's
+# journal, the answered hub handoff, custody and the BMC prove it did nothing.
+REPLAY_BASELINE = 'commission-replay-baseline.json'
+
+
+def commissioning_record(state, operation):
+    """The provider project's record of the commissioning: spec, phase, fence,
+    finish time and a digest of its evidence."""
+    for item in harness.custody(state):
+        if item['kind'] == 'DeviceCommissioning' and item['metadata']['uid'] == operation:
+            status = item.get('status', {})
+            return {'name': item['metadata']['name'], 'spec': hashlib.sha256(json.dumps(item['spec'], sort_keys=True).encode()).hexdigest(),
+                    'phase': status.get('phase'), 'fence': status.get('fence'), 'finishedAt': status.get('finishedAt'),
+                    'evidence': hashlib.sha256(json.dumps(status.get('evidence'), sort_keys=True).encode()).hexdigest()}
+    raise SystemExit('the provider project has no commissioning ' + operation)
+
+
+def commissioning_steps(state, operation):
+    return [o['steps'] for o in harness.journal(state) or [] if o['operation'] == operation]
+
+
+def record_replay_baseline(state):
+    """The commissioning as it ended, before dispatch is turned off."""
+    name = sorted(commissioned(state))[0]
+    item = get(state, '-n', NS, 'get', 'machineallocationhandoff', name)
+    assignment = json.loads(item['spec']['assignmentJSON'])
+    operation = assignment['operation']['uid']
+    record = commissioning_record(state, operation)
+    if record['phase'] != 'Succeeded':
+        raise SystemExit('the commissioning did not succeed: %s' % record['phase'])
+    steps = commissioning_steps(state, operation)
+    if len(steps) != 1:
+        raise SystemExit('the site journal does not hold exactly one commissioning')
+    path = pathlib.Path(state) / REPLAY_BASELINE
+    path.write_text(json.dumps({'handoff': name, 'operation': operation, 'fence': assignment['fence'], 'steps': steps[0], 'record': record}, sort_keys=True))
+    path.chmod(0o600)
+
+
+def replay_outcome(job_record, pods):
+    """The replay's Job outcome: one Pod exiting 0, or the Job failed by the
+    podFailurePolicy on the worker's stale-fence exit code 65."""
+    conditions = {c[0]: c for c in job_record['conditions'] if c[1] == 'True'}
+    exits = [p['exitCode'] for p in pods]
+    if 'Complete' in conditions and exits == [0]:
+        return 'completed'
+    if 'Failed' in conditions and conditions['Failed'][2] == 'PodFailurePolicy' and exits == [65]:
+        return 'stale-fence'
+    return None
+
+
+# Clock skew allowed between the lab BMC and the cell API.
+SKEW = datetime.timedelta(seconds=5)
+
+
+def when(value):
+    return datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+
+def replay_bmc_effects(audit, replay, others):
+    """Every BMC effect while the replay's Pod ran must come from another
+    worker Pod. An effect from the replay Pod, or from an address that is no
+    worker Pod's, fails, so an address the network rewrote fails closed."""
+    problems = []
+    for pod in replay:
+        if not pod['ip'] or not pod['startedAt'] or not pod['finishedAt']:
+            problems.append('the replay Pod %s has no address or no bounds' % pod['pod'])
+            continue
+        start, end = when(pod['startedAt']) - SKEW, when(pod['finishedAt']) + SKEW
+        for entry in audit:
+            if entry['method'] in ('GET', 'HEAD') or not start <= when(entry['at']) <= end:
+                continue
+            if entry.get('client') == pod['ip'] or entry.get('client') not in others:
+                problems.append('a BMC effect %s %s from %s while the replay ran' % (entry['method'], entry['path'], entry.get('client')))
+    return problems
+
+
+def check_replay(baseline, steps, record, before, after):
+    """Every fact the replay could have changed is as the commissioning left it."""
+    problems = []
+    if steps != [baseline['steps']]:
+        problems.append('the commissioning journal changed')
+    if record != baseline['record']:
+        problems.append('the provider project record of the commissioning changed')
+    if before != after:
+        problems.append('custody changed while the replay ran')
+    return problems
+
+
+def commission_replay(state, before):
+    """Wait for the recreated commissioning Job to end and record it."""
+    baseline = json.loads((pathlib.Path(state) / REPLAY_BASELINE).read_text())
+    name, deadline = baseline['handoff'], datetime.datetime.now() + datetime.timedelta(seconds=600)
+    while True:
+        exists = kubectl(state, '-n', SITE, 'get', 'job', 'w-' + name, check=False).returncode == 0
+        record = job(state, name) if exists else None
+        if record and any(c[0] in ('Complete', 'Failed') and c[1] == 'True' for c in record['conditions']):
+            break
+        if datetime.datetime.now() > deadline:
+            raise SystemExit('the recreated commissioning Job did not end: %s' % record)
+        subprocess.run(['sleep', '2'], check=True)
+    ps = [p for p in pods(state, name) if p['jobUID'] == record['uid']]
+    outcome = replay_outcome(record, ps)
+    after = ' '.join(str(x) for x in harness.custody_digest(state))
+    problems = check_replay(baseline, commissioning_steps(state, baseline['operation']), commissioning_record(state, baseline['operation']), before, after)
+    if outcome is None:
+        problems.append('the replay ended neither with one Pod exiting 0 nor failed on exit 65: %s %s' % (record['conditions'], [p['exitCode'] for p in ps]))
+    effects = 'no BMC'
+    provider = pathlib.Path(state) / 'site-provider'
+    if REDFISH or (provider.exists() and provider.read_text().strip() == 'redfish'):
+        import redfish_steps  # noqa: E402  (the lab BMC audit)
+        mine = {q['uid'] for q in ps}
+        others = {p['status'].get('podIP') for p in get(state, '-n', SITE, 'get', 'pods', '-l', 'fleet.datumapis.com/handoff')['items']
+                  if p['status'].get('podIP') and p['metadata']['uid'] not in mine}
+        problems += replay_bmc_effects(redfish_steps.audit(pathlib.Path(state)), ps, others)
+        effects = 'no BMC effect from the replay Pod'
+    if problems:
+        raise SystemExit('the replayed commissioning Job was not effect-free: ' + '; '.join(problems))
+    path = evidence(state) / 'commission-replay.json'
+    replays = json.loads(path.read_text())['replays'] if path.exists() else []
+    replays.append({'observedAt': now(), 'handoff': name, 'job': record, 'pods': ps, 'outcome': outcome, 'effects': effects,
+                    'custodyBefore': before, 'custodyAfter': after, 'journalUnchanged': True, 'recordUnchanged': True})
+    write(path, {'replays': replays})
+    print('commission-replay: the recreated commissioning Job ended %s with %s; its journal, record and custody are unchanged' % (outcome, effects))
 
 
 DEVICE = 'fleet-provider/synthetic-device-central-01'
@@ -385,6 +516,10 @@ def main():
         path.write_text('\n'.join(names) + '\n')
         path.chmod(0o600)
         print('\n'.join(names))
+    elif cmd == 'replay-baseline':
+        record_replay_baseline(state)
+    elif cmd == 'commission-replay':
+        commission_replay(state, rest[0])
     elif cmd == 'install-assignments':
         print('\n'.join(install_assignments(assignment_items(state), commissioned(state))))
     elif cmd == 'install-jobs':

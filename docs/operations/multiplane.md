@@ -261,7 +261,17 @@ The phases are then:
    the hub. `dispatch` then publishes revision 5, which sets `dispatch: true`.
    The cell's own Flux reconciles it from the registry with no hub access. kro
    creates the per-operation ServiceAccount, Role, RoleBinding and Job from its
-   local replica.
+   local replica. It also recreates the completed commissioning's Job. The
+   site already deleted that answered result, so the replay either loses the
+   fence to the install worker (exit 65) or finds its deadline passed. Until
+   the site runner answers a replay of an answered operation as a no-op,
+   evidence accepts either outcome for that one Job, and only while the
+   commissioning's journal and provider record, custody across the replay,
+   and the answered hub handoff are unchanged, and no BMC effect came from its
+   Pod's address while it ran. Every BMC effect in that time must come from
+   another worker Pod, so an address the network rewrites fails the run. The
+   graph lifecycle recreates that Job again and checks it the same way. Every
+   other worker Job must be `Complete`.
 5. **Pod interruption.** `interrupt-pod` waits until the Device's journal shows
    the install's installer boot requested *and* its libvirt domain running. It then
    force-deletes the worker Pod with no grace period. It requires:

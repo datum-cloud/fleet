@@ -36,6 +36,7 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import harness  # noqa: E402  (secret discovery and exit codes)
+import k8s_evidence  # noqa: E402  (the commissioning replay check)
 
 FLUX_VERSION = '2.9.6'
 RELEASE = 'https://github.com/fluxcd/flux2/releases/download/v%s/' % FLUX_VERSION
@@ -897,6 +898,7 @@ def graph_lifecycle(args):
     if sorted(k for k, n, _ in worker_objects(s) if n == 'w-' + handoff) != want:
         die('expected one kro-written Job, ServiceAccount, Role and RoleBinding for the install handoff: %s' % worker_objects(s))
     before, uids, workers = site_facts(s), shared_uids(s), worker_objects(s)
+    custody_before = '%d %s' % harness.custody_digest(s)
     status = handoff_outcome(s, handoff)
     if status != 'Succeeded':
         die('install handoff is not terminal before the graph lifecycle: %s' % status)
@@ -926,6 +928,8 @@ def graph_lifecycle(args):
         done = [x for x in j if x['metadata']['name'] == 'w-' + handoff and any(c['type'] == 'Complete' and c['status'] == 'True' for c in x['status'].get('conditions', []))]
         return done[0] if done else None
     job = wait_for(replayed, 600, 'recreated worker Job completing its verified no-op replay', interval=3)
+    # kro recreated the completed commissioning's Job too; it must do nothing.
+    k8s_evidence.commission_replay(s, custody_before)
     pods = [p for p in kget(s, 'cell', '-n', SITE, 'get', 'pods', '-l', 'batch.kubernetes.io/controller-uid=' + job['metadata']['uid'])['items']]
     exits = [next((c['state']['terminated']['exitCode'] for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})), None) for p in pods]
     if exits != [0]:

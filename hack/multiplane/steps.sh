@@ -132,6 +132,7 @@ case "$step" in
   # the only assignment so far, then turn dispatch off so the install's
   # delivery is again proven before any of its workers can exist.
   py record-commissioning "$state" >/dev/null
+  py replay-baseline "$state"
   flux publish "$state" --revision 4 --site off --purpose 'disable dispatch after commissioning' --cluster cell --timeout 600 >/dev/null
   dispatch_is false || { echo 'dispatch-off revision not applied' >&2; exit 1; }
   for _ in $(seq 1 120); do [[ -z $(site get jobs -o name) ]] && break; sleep 1; done
@@ -233,11 +234,14 @@ JSON
  dispatch)
   # Dispatch is a source revision, reconciled by the cell's own Flux from the
   # registry while the hub is paused; kro then creates per-operation RBAC and the Job.
+  before=$(custody_digest)
   flux publish "$state" --revision 5 --site dispatch --purpose 'enable dispatch' --cluster cell --timeout 600 >/dev/null
   dispatch_is true || { echo 'dispatch revision not applied' >&2; exit 1; }
   name=$(cat "$state/install-handoff")
   for _ in $(seq 1 120); do site get job "w-$name" >/dev/null 2>&1 && break; sleep 1; done
   py job "$state" "$name" > "$state/k8s-dispatch-job.json"
+  # kro also recreated the completed commissioning's Job; it must do nothing.
+  py commission-replay "$state" "$before"
   printf 'dispatch: cell Flux applied the dispatch revision; kro created the worker Job and per-operation RBAC from the delivered handoff with no hub access\n'
   ;;
  worker-rbac)

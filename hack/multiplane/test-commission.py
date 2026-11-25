@@ -157,6 +157,43 @@ for name, hub in (('an extra assignment', [commissioning, install, wipe]), ('no 
     r, _ = run({'hub': hub}, faults)
     check('reflection faults refuse ' + name, r.returncode and 'run reflection faults after install and before the release wipe' in r.stderr, r.stderr)
 
+# The recreated commissioning Job may end either effect-free way, and only
+# while everything it could have changed is as the commissioning left it.
+import k8s_evidence  # noqa: E402
+outcome = k8s_evidence.replay_outcome
+check('a replay with one Pod exiting 0 is accepted', outcome({'conditions': [['Complete', 'True', 'CompletionsReached']]}, [{'exitCode': 0}]) == 'completed')
+check('a replay failed on the stale-fence exit is accepted', outcome({'conditions': [['Failed', 'True', 'PodFailurePolicy']]}, [{'exitCode': 65}]) == 'stale-fence')
+for name, conditions, exits in (('a replay failed another way', [['Failed', 'True', 'BackoffLimitExceeded']], [1]),
+                                ('a replay failed by policy on another exit', [['Failed', 'True', 'PodFailurePolicy']], [1]),
+                                ('a replay that retried', [['Complete', 'True', 'CompletionsReached']], [65, 0]),
+                                ('a replay still running', [], [None])):
+    check(name + ' is refused', outcome({'conditions': conditions}, [{'exitCode': e} for e in exits]) is None)
+baseline = {'steps': [['burnin-verified', 'Done']], 'record': {'phase': 'Succeeded', 'evidence': 'e'}}
+check('an unchanged replay passes', k8s_evidence.check_replay(baseline, [baseline['steps']], baseline['record'], '5 d', '5 d') == [])
+for name, steps, record, after in (('the journal changed', [baseline['steps'] + [['burnin-power-on', 'Pending']]], baseline['record'], '5 d'),
+                                   ('a second commissioning journaled', [baseline['steps'], baseline['steps']], baseline['record'], '5 d'),
+                                   ('the commissioning record changed', [baseline['steps']], dict(baseline['record'], phase='OutcomeUnknown'), '5 d'),
+                                   ('custody changed', [baseline['steps']], baseline['record'], '5 e')):
+    check('a replay where ' + name + ' fails', k8s_evidence.check_replay(baseline, steps, record, '5 d', after) != [])
+# Every BMC effect while the replay's Pod ran must come from another worker Pod.
+replay_pod = [{'pod': 'replay', 'ip': '10.244.0.9', 'startedAt': '2026-01-01T00:00:10Z', 'finishedAt': '2026-01-01T00:00:20Z'}]
+install_ip = {'10.244.0.7'}
+def audit_entry(method, at, client):
+    return {'method': method, 'path': '/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', 'at': at, 'client': client}
+effects = k8s_evidence.replay_bmc_effects
+check('install effects and replay reads during the replay pass', effects([audit_entry('POST', '2026-01-01T00:00:15+00:00', '10.244.0.7'),
+                                                                        audit_entry('GET', '2026-01-01T00:00:15+00:00', '10.244.0.9')], replay_pod, install_ip) == [])
+check('a replay effect outside its Pod lifetime is not its own', effects([audit_entry('POST', '2026-01-01T00:01:00+00:00', '10.244.0.9')], replay_pod, install_ip) == [])
+for name, entry in (('an effect from the replay Pod', audit_entry('PATCH', '2026-01-01T00:00:12+00:00', '10.244.0.9')),
+                    ('an effect from an unknown address', audit_entry('POST', '2026-01-01T00:00:18+00:00', '192.0.2.1')),
+                    ('an effect with no client address', dict(audit_entry('POST', '2026-01-01T00:00:18+00:00', None), client=None))):
+    check(name + ' during the replay fails', effects([entry], replay_pod, install_ip) != [])
+check('a replay Pod with no address fails', effects([], [dict(replay_pod[0], ip=None)], install_ip) != [])
+evidence_py = (root / 'hack/multiplane/evidence.py').read_text()
+other = evidence_py[evidence_py.index("    if handoff == baseline['handoff']:"):evidence_py.index("    operation = handoffs[handoff]['operation']")]
+check('every other worker Job must be Complete', "    else:\n        if ['Complete', 'True', 'CompletionsReached'] not in conditions:" in other and 'exits.count(0) != 1' in other.split('    else:')[1])
+check('the replay is checked against the answered hub handoff', "answered') != 'true'" in other and 'hub-admin.yaml' in other)
+
 # The install checks that cannot run offline use the same filters.
 steps = (root / 'hack/multiplane/steps.sh').read_text()
 for name, call in (('tenant-isolation', 'install_assignments'), ('partition', 'install_jobs')):

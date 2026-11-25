@@ -102,6 +102,10 @@ class AdapterTest(unittest.TestCase):
         entries = self.audit()
         self.assertEqual(entries[-1]['fault'], 'drop-response-after-effect')
         self.assertEqual(entries[-1]['effect'], 'started:hd')
+        # Each request records the client address that attributes it to a worker Pod.
+        self.assertEqual(self.app.post('/redfish/v1/Systems/System-1/Actions/ComputerSystem.Reset', headers=AUTH, json={'ResetType': 'ForceOff'},
+                                       environ_base={'REMOTE_ADDR': '10.244.0.7'}).status_code // 100, 2)
+        self.assertEqual(self.audit()[-1]['client'], '10.244.0.7')
         self.assertEqual(adapter.FaultFile(str(WORK / 'state')).read().get('dropResponse'), [])
         text = (WORK / 'state' / 'audit.log').read_text()
         self.assertNotIn('synthetic-test-password', text)

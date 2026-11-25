@@ -16,6 +16,7 @@ import tarfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import harness  # noqa: E402  (site store layout, provider custody)
+import k8s_evidence  # noqa: E402  (the commissioning replay rules)
 
 s = pathlib.Path(sys.argv[1])
 prefix = (s / 'prefix').read_text().strip()
@@ -88,7 +89,7 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'deadline-admit: the second installation was admitted', 'release-waits: the Machine is deleting', 'deadline-hold: the installation ended OutcomeUnknown at its deadline',
            'recovery-mismatch: refused', 'deadline-settled: the release wipe was admitted', 'rebuild-unverified: custody rebuilt Unverified',
            'probe-unallocatable: no eligible capacity while custody is Unverified', 'rebuild-verified: custody Verified',
-           'wrong-location: denied before allocation', 'Flux restored the binding', 'flux-verify: 3 clusters Ready', 'cell Flux applied the dispatch revision',
+           'wrong-location: denied before allocation', 'Flux restored the binding', 'flux-verify: 3 clusters Ready', 'cell Flux applied the dispatch revision', 'commission-replay: the recreated commissioning Job ended',
            'Flux restored consumer-a', 'Flux on every cluster Ready at the current revision', 'flux-drift: helm-controller restored kro',
            'recreated the shared boot Service at its fixed ClusterIP and restored the observer', 'flux-graph-lifecycle: deleting the dispatcher removed only kro per-operation objects',
            'kro RBAC and admission confine it to per-operation objects',
@@ -356,15 +357,42 @@ if rgd['status'].get('state') != 'Active' or instance['status'].get('state') != 
 jobs = kget('-n', 'fleet-site', 'get', 'jobs', '-l', 'app.kubernetes.io/name=fleet-site-worker')['items']
 handoffs = {h['metadata']['name']: json.loads(h['spec']['assignmentJSON']) for h in kget('-n', 'fleet-coordination', 'get', 'machineallocationhandoffs', '-l', 'coordination.fleet.datumapis.com/role=assignment')['items']}
 worker_jobs = []
+# The completed commissioning's Job, recreated when dispatch was turned on for
+# the install. Until the site runner answers a replay of an answered operation
+# as a no-op, it may end either way, but only while it provably did nothing.
+baseline = json.loads((s / k8s_evidence.REPLAY_BASELINE).read_text())
+# One record per recreation: at the install's dispatch and in the graph
+# lifecycle. The Job present now must be the last one recorded.
+replays = json.loads((ev / 'commission-replay.json').read_text())['replays']
+replay = replays[-1]
 for job in jobs:
     handoff = job['metadata']['labels']['fleet.datumapis.com/handoff']
     conditions = sorted([c['type'], c['status'], c.get('reason', '')] for c in job['status'].get('conditions', []))
-    if ['Complete', 'True', 'CompletionsReached'] not in conditions:
-        fail('worker Job not Complete: ' + job['metadata']['name'])
     job_pods = kget('-n', 'fleet-site', 'get', 'pods', '-l', 'batch.kubernetes.io/controller-uid=' + job['metadata']['uid'])['items']
     exits = [next((c['state']['terminated']['exitCode'] for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})), None) for p in job_pods]
-    if exits.count(0) != 1:
-        fail('worker Job without exactly one successful Pod: ' + job['metadata']['name'])
+    if handoff == baseline['handoff']:
+        if job['metadata']['uid'] != replay['job']['uid'] or k8s_evidence.replay_outcome({'conditions': conditions}, [{'exitCode': e} for e in exits]) is None:
+            fail('the commissioning Job is not the recorded effect-free replay: %s %s' % (conditions, exits))
+        problems = k8s_evidence.check_replay(baseline, [o['steps'] for o in ops if o['operation'] == baseline['operation']],
+                                             k8s_evidence.commissioning_record(s, baseline['operation']), replay['custodyBefore'], replay['custodyAfter'])
+        hub = json.loads(subprocess.run(['kubectl', '--kubeconfig', str(s / 'hub-admin.yaml'), '--request-timeout=20s', '-n', 'fleet-coordination', 'get', 'machineallocationhandoff',
+                                         handoff, '-o', 'json'], text=True, capture_output=True, check=True).stdout)
+        if hub['metadata'].get('labels', {}).get('coordination.fleet.datumapis.com/answered') != 'true' or json.loads(hub['spec']['assignmentJSON'])['operation']['uid'] != baseline['operation']:
+            problems.append('the hub handoff is no longer the answered commissioning')
+        # No BMC or domain effect: in Redfish mode the provider checks above
+        # require exactly one effective On per journaled power-on, the exact
+        # boot order and one exact console receipt per boot, so an effect the
+        # replay sent would fail them. The simulated commissioning has no
+        # domain, so none may exist for it.
+        if not REDFISH and (raw / 'libvirt-qemu' / (harness.domain_name(baseline['operation']) + '.log')).exists():
+            problems.append('a domain started for the commissioning')
+        if problems:
+            fail('the replayed commissioning Job was not effect-free: ' + '; '.join(problems))
+    else:
+        if ['Complete', 'True', 'CompletionsReached'] not in conditions:
+            fail('worker Job not Complete: ' + job['metadata']['name'])
+        if exits.count(0) != 1:
+            fail('worker Job without exactly one successful Pod: ' + job['metadata']['name'])
     operation = handoffs[handoff]['operation']
     worker_jobs.append({'job': job['metadata']['name'], 'uid': job['metadata']['uid'], 'operationID': operation['uid'], 'kind': operation['kind'], 'name': operation['name'],
                         'fence': handoffs[handoff]['fence'], 'conditions': conditions, 'succeeded': job['status'].get('succeeded', 0), 'failed': job['status'].get('failed', 0),

@@ -365,8 +365,10 @@ def create_app(targets, state, credentials, boot_ip):
 
     @g.app.after_request
     def audit(response):
+        # The client address attributes a request to one worker Pod; every
+        # worker uses the Device's one credential.
         entry = {'at': now(), 'method': request.method, 'path': request.path, 'status': response.status_code,
-                 'principal': getattr(request_context, 'principal', 'anonymous')}
+                 'principal': getattr(request_context, 'principal', 'anonymous'), 'client': request.remote_addr}
         entry.update(getattr(request_context, 'detail', {}))
         with LOCK, open(audit_path, 'a') as f:
             f.write(json.dumps(entry, sort_keys=True) + '\n')
