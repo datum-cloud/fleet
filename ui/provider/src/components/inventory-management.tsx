@@ -44,15 +44,13 @@ function InventoryManagementForm({ kind, record, facilities: sourceFacilities, c
   useLayoutEffect(() => {
     const current = new InventoryOperationScope();
     scope.current = current;
-    const invalidate = () => { scope.current.invalidate(); setBaseline(undefined); setBlocked(true); };
-    const visibility = () => { if (document.visibilityState === 'hidden') invalidate(); };
-    window.addEventListener('pagehide', invalidate);
-    document.addEventListener('visibilitychange', visibility);
+    // Hiding the tab is not a session boundary (see inventory-session-boundary):
+    // the form and any save in progress carry on. Unmounting ends them.
     return () => {
-      invalidate();
+      scope.current.invalidate();
+      setBaseline(undefined);
+      setBlocked(true);
       started.current = false;
-      window.removeEventListener('pagehide', invalidate);
-      document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
   const [baseline, setBaseline] = useState<ManagedRecord>();

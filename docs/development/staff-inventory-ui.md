@@ -272,15 +272,17 @@ access-dependent navigation descriptions in the historical phase notes below.
   access results. No private record names or counts appear in the public shell.
 - Pending, allowed, and denied directory states share the heading and the
   toolbar's search, filter, action and status slots. Actions remain mounted
-  and disabled until usable; successful authorization adds no “access checked”
-  clutter. Missing management access and ownership restrictions are the
+  and disabled until usable; neither a pending permission check nor a
+  successful one adds visible text. Missing management access and ownership restrictions are the
   disabled button's tooltip and accessible description, not a sentence.
   Explanations for unavailable references, expired sessions, and uncertain
   saves remain visible. Long failure explanations
   may wrap rather than being clipped. The composition follow-up below replaces
   expanding forms with focused dialogs and child task pages.
 - Existing immutable edit baselines, submit-time authorization, read/write
-  generation guards, principal/logout and hidden/pagehide fences are retained.
+  generation guards and principal/logout fences are retained. Hidden/pagehide
+  fences were removed on 2026-11-24 (see
+  [Session boundary](#session-boundary-a-change-of-signed-in-user-implemented)).
   Visible window blur/focus remains a complete no-op, including draft, DOM,
   request, loader, and operation-authority behavior.
 
@@ -523,47 +525,60 @@ original UID/resourceVersion and use atomic JSON Patch test operations. They do
 not silently adopt a refreshed baseline. No automatic write retries occur.
 
 Existing session protections are retained: principal-isolated QueryClients,
-authority invalidation at session/revalidation/navigation/background/unmount
-boundaries, fresh authority generations even for React-batched revalidation,
-and generation-guarded background-return checks. Already-dispatched uncertain
+operation invalidation at principal/revalidation/navigation/unmount boundaries,
+and a fresh cache even for a React-batched A→B→A principal change. Already-dispatched uncertain
 outcomes stay unknown rather than becoming cancelled-success.
 
-### Browser focus is not a session boundary
+### Session boundary: a change of signed-in user (implemented)
 
-Implemented against PR103's merged staging base
-`f190d28397fc6110e02c9c83e6819a3a584258d0`. Ordinary visible window blur/focus
-is deliberately ignored. Opening the URL bar does not change the session:
-it does not suspend reads or writes, reset edit baselines, close or disable forms,
-change controls, or start host/permission/inventory requests.
-Both the session boundary and individual management/location forms have no
-blur/focus listeners. QueryClient defaults and inventory queries disable window
-focus refetch. Drafts and frozen baselines remain usable without reopening.
+The inventory treats a change of signed-in user, as the host observes it, as
+the only session boundary. This matches the rest of staff-portal, whose pages
+keep what they loaded and do not re-check the session on focus, tab switches or
+loader revalidation.
 
-Actual document hidden/pagehide events still synchronously invalidate operation
-and read scopes, cancel queries and mask private children. Visibility restoration
-or pageshow revalidates the host only after an observed hidden/pagehide boundary.
-Overlapping background events advance a generation so an older verification
-cannot restore authority. Failed verification remains masked. Explicit host
-revalidation/navigation and observed principal changes also fence operations and
-replace the private query cache, including fast batched A→B→A transitions.
-Cached permission is never substituted for a confirmed denial; denied references
-are redacted. Genuine session boundaries do not transfer drafts, immutable edit
-baselines or pending intents into a new authority generation.
+**Decision (2026-11-24).** The earlier design treated hiding the tab
+(`visibilitychange` to hidden, `pagehide`) and every host loader revalidation as
+session boundaries. On each one the page masked the inventory behind "Checking
+inventory access…", re-ran the host loaders, discarded the private query cache
+and read all nine collections again. In use this flashed on every return to the
+tab and on host events such as a theme change, and it cancelled in-flight saves.
+It protected nothing that per-request authorization does not already protect,
+and its own documented limit was that an account change the host has not yet
+observed cannot be detected by the UI. It was removed to match the host.
 
-The original PR104 disable-on-blur/reopen design was superseded by this simpler
-trigger model before review/merge. Stable wrappers and native disabled controls
-remain useful for actual permission refreshes, but browser chrome focus alone
-never activates those states. This is not a new inventory or IAM contract.
+What happens now:
 
-Backend per-request authentication/authorization, submit-time exact permission
-checks, after-await operation checks, and atomic UID/resourceVersion JSON Patch
-tests remain required. A cookie/account change not yet observed by the host
-cannot be detected atomically by this UI. Focus is not authentication, and this
-change does not claim protection against an unobserved cookie transition between
-requests. Observed host boundaries revoke pending work; backend checks protect
-each dispatched request. Unknown dispatched outcomes are not reported as success.
+| Event | Inventory on screen | Private cache | Open forms and in-flight saves |
+| --- | --- | --- | --- |
+| Focus, blur, tab hidden or shown, `pagehide`/`pageshow` | Unchanged | Kept | Unchanged; a save in flight completes |
+| Host loader revalidation, same user (for example a theme change) | Unchanged | Kept | New reads and operations pause while the loaders run; an in-flight save is refused with "No write was dispatched" and can be retried |
+| Filter, record or tab change (presentation navigation) | Stays until the host finishes loading | Kept | Operations pause while the navigation is pending |
+| Change of non-presentation URL parameters | Stays until the host finishes loading | Replaced | Ended |
+| Change of signed-in user, including a fast A→B→A change | Replaced | Replaced, one fresh read | Ended; nothing transfers to the new user |
+| Sign-out | Session expired state | Discarded | Ended |
+
+Retained protections:
+
+- One private QueryClient per signed-in user, never the host's shared client.
+- The API authenticates and authorizes every request as the caller, through the
+  staff portal's caller-preserving proxy.
+- Submit-time permission checks, after-await operation checks, and atomic
+  UID/resourceVersion JSON Patch tests on edits, so a stale page cannot
+  overwrite a changed record.
+- 401 and 403 responses are handled where they occur: expired sessions and
+  denials are shown, and denied references are redacted from the view.
+- Dispatched saves whose outcome is uncertain are reported as unknown, never as
+  success.
+
+A denial or permission change that happens while the page is idle is seen on the
+next read or save, as on other staff-portal pages. Refresh inventory re-reads on
+demand.
 
 ### Regression evidence and acceptance limits
+
+The evidence below predates the 2026-11-24 session-boundary change. Statements
+about hidden/pagehide masking, held pageshow restoration and background-return
+checks describe removed behaviour; the tests for them were removed with it.
 
 PR104's integration with feature-target revision
 `5b60656759033b61674ee202a9ad94f4d49f4a64` retains PR106's removal of provenance,
@@ -622,8 +637,8 @@ Open `/session-fixture.html`. This mounts the actual inventory page and boundary
 under a synthetic host loader, not the preview bypass. API calls are handled in
 memory; writes return a synthetic failure and never reach an API. The console's
 `inventorySessionFixture` exposes `hold(boolean)`, `release()`,
-`principal(string|null)`, `denied(boolean)`, and `stats()`. Blur/focus should do
-nothing; pagehide followed by pageshow exercises held restoration. This harness
+`principal(string|null)`, `denied(boolean)`, and `stats()`. Blur/focus and
+pagehide/pageshow should do nothing; a principal change replaces the data. This harness
 is not a production build entry and is not evidence of real Safari acceptance.
 
 Read-only users browse without enabled writes. No-read and direct-link denials

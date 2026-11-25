@@ -99,7 +99,7 @@ it.each(['__proto__', 'constructor', 'manufacturer', 'inventory'])('rejects unsu
   expect(screen.getByRole('link', { name: 'Back to inventory' })).toHaveAttribute('href', '/plugins/metal/inventory?kind=Device');
 });
 
-it.each(['principal', 'logout', 'hidden', 'pagehide'] as const)('retires private task drafts on %s without transferring late writes', async transition => {
+it.each(['principal', 'logout'] as const)('retires private task drafts on %s without transferring late writes', async transition => {
   const view = host('/create/device');
   await screen.findByLabelText('Display name');
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Private draft' } });

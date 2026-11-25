@@ -102,7 +102,7 @@ it.each(cases.flatMap(test => [false, true].flatMap(strict => [false, true].map(
   view.router.dispose();
 });
 
-it.each(['denied', 'principal', 'hidden', 'pagehide'])('removes retained private drafts on confirmed %s', async transition => {
+it.each(['principal'])('removes retained private drafts on confirmed %s', async transition => {
   const view = host(<InventoryManagement compact kind="Facility" facilities={[]} />);
   fireEvent.click(await findEnabledButton({ name: 'Create facility' }));
   fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Private draft' } });

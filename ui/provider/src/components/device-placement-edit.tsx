@@ -63,15 +63,8 @@ function DevicePlacementForm({ device, locations, issues }: { device: Device; lo
     return { ...previous, rack, facility: facility && visible.some(record => record.kind === 'Facility' && record.metadata.name === facility) ? facility : previous.facility };
   });
   useLayoutEffect(() => {
-    const invalidate = () => { scope.current.invalidate(); setBlocked(true); setBaseline(undefined); };
-    const visibility = () => { if (document.visibilityState === 'hidden') invalidate(); };
-    window.addEventListener('pagehide', invalidate);
-    document.addEventListener('visibilitychange', visibility);
-    return () => {
-      scope.current.invalidate();
-      window.removeEventListener('pagehide', invalidate);
-      document.removeEventListener('visibilitychange', visibility);
-    };
+    // Hiding the tab is not a session boundary; unmounting ends the operation.
+    return () => { scope.current.invalidate(); };
   }, []);
   useLayoutEffect(() => {
     scope.current.invalidate();

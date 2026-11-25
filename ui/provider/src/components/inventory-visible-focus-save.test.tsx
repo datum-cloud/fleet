@@ -15,7 +15,7 @@ const device = { ...fixturePhysicalDevices[0], metadata, spec: { ...fixturePhysi
 const response = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ data }) });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it.each(['create', 'label', 'location'].flatMap(mode => ['review', 'read', 'dispatch'].filter(stage => mode !== 'create' || stage !== 'read').flatMap(stage => ['focus', 'hidden', 'principal'].map(transition => ({ mode, stage, transition })))))('$transition handles pending $mode $stage without transferring authority', async ({ mode, stage, transition }) => {
+it.each(['create', 'label', 'location'].flatMap(mode => ['review', 'read', 'dispatch'].filter(stage => mode !== 'create' || stage !== 'read').flatMap(stage => ['focus', 'principal'].map(transition => ({ mode, stage, transition })))))('$transition handles pending $mode $stage without transferring authority', async ({ mode, stage, transition }) => {
   let release: (() => void) | undefined;
   let reviews = 0;
   let held = false;

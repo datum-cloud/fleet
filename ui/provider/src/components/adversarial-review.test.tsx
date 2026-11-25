@@ -137,17 +137,3 @@ it('must not silently advance an open edit form to a refreshed resourceVersion',
   await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument());
   expect(patches).toEqual([]);
 });
-
-it('must keep inventory concealed if foreground verification finishes after another pagehide', async () => {
-  let release: (() => void) | undefined;
-  let count = 0;
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: async () => { if (++count === 2) await new Promise<void>(resolve => { release = resolve; }); return { user: { metadata: { uid: 'staff-a' } } }; }, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary>Private inventory label</InventorySessionBoundary> }] }]);
-  render(<RouterProvider router={router} />);
-  await screen.findByText('Private inventory label');
-  fireEvent(window, new Event('pagehide'));
-  fireEvent(window, new Event('pageshow'));
-  await waitFor(() => expect(release).toBeDefined());
-  fireEvent(window, new Event('pagehide'));
-  await act(async () => { release!(); });
-  expect(screen.queryByText('Private inventory label')).not.toBeInTheDocument();
-});

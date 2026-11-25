@@ -14,34 +14,6 @@ const device = { ...fixturePhysicalDevices[0], metadata, spec: { ...fixturePhysi
 const response = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => ({ data }) });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it('settled host keeps earlier foreground generations masked until the newest loader finishes', async () => {
-  const releases: (() => void)[] = [];
-  let reads = 0;
-  const loader = vi.fn(async () => {
-    if (++reads > 1) await new Promise<void>(resolve => releases.push(resolve));
-    return { user: { metadata: { uid: 'synthetic-staff' } } };
-  });
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, children: [{ index: true, element: <InventorySessionBoundary>Private generation inventory</InventorySessionBoundary> }] }]);
-  await act(async () => { render(<RouterProvider router={router} />); });
-  await screen.findByText('Private generation inventory');
-  await act(async () => {});
-  for (const expectedReads of [1, 2]) {
-    await act(async () => {
-      fireEvent(window, new Event('pagehide'));
-      fireEvent(window, new Event('pageshow'));
-    });
-    await waitFor(() => expect(releases).toHaveLength(expectedReads));
-    expect(screen.queryByText('Private generation inventory')).not.toBeInTheDocument();
-  }
-  await act(async () => releases[0]());
-  expect(screen.queryByText('Private generation inventory')).not.toBeInTheDocument();
-  await act(async () => releases[1]());
-  await screen.findByText('Private generation inventory');
-  expect(router.state.revalidation).toBe('idle');
-  expect(loader).toHaveBeenCalledTimes(3);
-  router.dispose();
-});
-
 it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].map(status => ({ mode, status }))))('held $mode PATCH keeps visible focus inert then handles terminal $status', async ({ mode, status }) => {
   let rejectWrite: (() => void) | undefined;
   const original = mode === 'location' ? device : facility;
@@ -99,51 +71,5 @@ it.each(['label', 'location'].flatMap(mode => [401, 403, 404, 409, 422, 503, 0].
     expect(patch[2].path).toBe('/spec/reportedPlacement');
     expect(patch.some((entry: { path: string }) => entry.path.includes('provenance'))).toBe(false);
   }
-  router.dispose();
-});
-
-it.each(['logout', 'failure'].flatMap(outcome => ['pagehide', 'hidden'].flatMap(transition => ['immediate', 'held'].map(timing => ({ outcome, transition, timing })))))('settled host $transition restoration handles $timing $outcome', async ({ outcome, transition, timing }) => {
-  let expired = false;
-  let release: (() => void) | undefined;
-  const loader = vi.fn(async () => {
-    if (!expired) return { user: { metadata: { uid: 'synthetic-staff' } } };
-    if (timing === 'held') await new Promise<void>(resolve => { release = resolve; });
-    if (outcome === 'failure') throw new Response('Synthetic failure', { status: 503 });
-    return { user: null };
-  });
-  const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader, element: <Outlet />, errorElement: <p>Host failure</p>, children: [{ index: true, element: <InventorySessionBoundary>Private review inventory</InventorySessionBoundary> }] }]);
-  await act(async () => { render(<RouterProvider router={router} />); });
-  await screen.findByText('Private review inventory');
-  await act(async () => {});
-  expired = true;
-  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  await act(async () => {
-    if (transition === 'hidden') {
-      visibility.mockReturnValue('hidden');
-      fireEvent(document, new Event('visibilitychange'));
-    } else fireEvent(window, new Event('pagehide'));
-  });
-  expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-  await act(async () => {
-    if (transition === 'hidden') {
-      visibility.mockReturnValue('visible');
-      fireEvent(document, new Event('visibilitychange'));
-    } else fireEvent(window, new Event('pageshow'));
-  });
-  if (timing === 'held') {
-    await waitFor(() => expect(release).toBeDefined());
-    expect(router.state.revalidation).toBe('loading');
-    expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-    await act(async () => release!());
-  }
-  await waitFor(() => expect(router.state.revalidation).toBe('idle'));
-  expect(loader).toHaveBeenCalledTimes(2);
-  if (outcome === 'logout') expect(router.state.loaderData['layouts/milo.layout']).toEqual({ user: null });
-  else expect(router.state.errors).not.toBeNull();
-  expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-  fireEvent(window, new Event('focus'));
-  await act(async () => {});
-  expect(screen.queryByText('Private review inventory')).not.toBeInTheDocument();
-  expect(loader).toHaveBeenCalledTimes(2);
   router.dispose();
 });

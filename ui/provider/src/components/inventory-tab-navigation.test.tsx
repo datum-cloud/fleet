@@ -298,42 +298,25 @@ it('restarts management authority after immediate same-principal host navigation
   view.router.dispose();
 });
 
-it.each(['principal', 'logout', 'denial', 'hidden', 'pagehide', 'revalidation', 'unknown-query'])('retains only static chrome across a real %s boundary', async transition => {
+it.each(['principal', 'logout', 'denial', 'unknown-query'])('replaces private data after a real %s boundary', async transition => {
   const view = host();
   await screen.findByRole('searchbox', { name: 'Search devices' });
   const navigation = screen.getByRole('navigation', { name: 'Inventory categories' });
-  view.hold();
-  if (transition === 'principal') view.principal('staff-b');
-  if (transition === 'logout') view.principal(null);
-  if (transition === 'denial') view.deny();
-  if (transition === 'hidden') {
-    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
-    fireEvent(document, new Event('visibilitychange'));
-    expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-    visibility.mockReturnValue('visible');
-    fireEvent(document, new Event('visibilitychange'));
-  } else if (transition === 'pagehide') {
-    fireEvent(window, new Event('pagehide'));
-    expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-    fireEvent(window, new Event('pageshow'));
-  } else if (transition === 'principal' || transition === 'logout') {
-    fireEvent.click(within(navigation).getByRole('tab', { name: 'Locations' }));
-  } else if (transition === 'unknown-query') {
-    act(() => { void view.router.navigate('?kind=Device&scope=other'); });
-  } else act(() => { void view.router.revalidate(); });
-  if (transition === 'principal' || transition === 'logout') {
-    // A tab click is a presentation navigation: the page already on screen stays while the host checks,
-    // nothing new is shown, and the check's answer (another user, or none) clears it when it returns.
-    await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
-    expect(screen.queryByText('Checking inventory access…')).not.toBeInTheDocument();
-    expect(view.router.state.location.search).not.toContain('kind=Site');
+  if (transition === 'denial') {
+    // A denial is observed on the next read, here an explicit refresh.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh inventory' })).toBeEnabled());
+    view.deny();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
   } else {
-    await screen.findByText('Checking inventory access…');
-    expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
-    expect(navigation.textContent).not.toMatch(/\d/);
+    view.hold();
+    if (transition === 'principal') view.principal('staff-b');
+    if (transition === 'logout') view.principal(null);
+    if (transition === 'unknown-query') act(() => { void view.router.navigate('?kind=Device&scope=other'); });
+    else fireEvent.click(within(navigation).getByRole('tab', { name: 'Locations' }));
+    await waitFor(() => expect(view.router.state.navigation.state).toBe('loading'));
+    expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
+    await view.release();
   }
-  expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(navigation);
-  await view.release();
   if (transition === 'logout') {
     await screen.findByText('Your session has expired');
     expect(view.collections).toHaveBeenCalledTimes(9);
@@ -343,7 +326,7 @@ it.each(['principal', 'logout', 'denial', 'hidden', 'pagehide', 'revalidation', 
     expect(view.collections).toHaveBeenCalledTimes(18);
   } else {
     await screen.findByRole('searchbox');
-    expect(view.collections).toHaveBeenCalledTimes(18);
+    await waitFor(() => expect(view.collections).toHaveBeenCalledTimes(18));
   }
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();

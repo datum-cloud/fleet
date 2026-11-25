@@ -70,8 +70,18 @@ it.each([false, true].flatMap(editing => ['navigation', 'revalidation'].map(tran
     if (transition === 'revalidation') await router.revalidate();
     else await router.navigate('/?kind=Facility&name=independent-review');
   });
-  await open(editing);
-  await act(async () => release!(response({ status: { allowed: true } })));
+  if (transition === 'revalidation') {
+    // A host revalidation leaves the open form in place; the save that was in
+    // flight is refused without a write, and the form is reopened to retry.
+    await act(async () => release!(response({ status: { allowed: true } })));
+    expect(writes).toEqual([]);
+    await screen.findByText(/No write was dispatched/);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await open(editing);
+  } else {
+    await open(editing);
+    await act(async () => release!(response({ status: { allowed: true } })));
+  }
   expect(writes).toEqual([]);
   expect(screen.queryByText(/Display name saved\.|Facility created\./)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: editing ? 'Save changes' : 'Create record' }));
