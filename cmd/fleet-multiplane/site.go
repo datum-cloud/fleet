@@ -194,6 +194,29 @@ func boot(command, origin, extraMAC, syncToken string) error {
 	if err != nil {
 		return err
 	}
+	if command == "boot-denials" {
+		// The probe needs only the store's admissions and the listener it
+		// probes, given explicitly; it reads no boot server configuration.
+		origin, err := redfish.ParseBootOrigin(origin)
+		if err != nil {
+			return err
+		}
+		var summary string
+		if redfishMode() {
+			var extra []string
+			if extraMAC != "" {
+				extra = append(extra, extraMAC)
+			}
+			summary, err = redfishwork.BootServer{Store: store}.CheckClosedBoot(origin, extra)
+		} else {
+			summary, err = vmwork.Config{}.CheckClosedBoot(store, origin)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Println(summary)
+		return nil
+	}
 	if redfishMode() {
 		_, _, server, err := redfishConfig()
 		if err != nil {
@@ -207,22 +230,7 @@ func boot(command, origin, extraMAC, syncToken string) error {
 			}
 			return server.ServeDHCP(strings.TrimSpace(string(token)))
 		}
-		if command == "boot-service" {
-			return server.Serve(vmwork.DefaultBootWindow * 2)
-		}
-		if origin == "" {
-			origin = server.Origin
-		}
-		var extra []string
-		if extraMAC != "" {
-			extra = append(extra, extraMAC)
-		}
-		summary, err := server.CheckClosedBoot(origin, extra)
-		if err != nil {
-			return err
-		}
-		fmt.Println(summary)
-		return nil
+		return server.Serve(vmwork.DefaultBootWindow * 2)
 	}
 	if command == "dhcp-feed" {
 		return errors.New("the DHCP reservation feed serves only a Redfish site")
@@ -231,16 +239,5 @@ func boot(command, origin, extraMAC, syncToken string) error {
 	if err != nil {
 		return err
 	}
-	if command == "boot-service" {
-		return vm.ServeBoot(store)
-	}
-	if origin == "" {
-		origin = vm.BootOrigin
-	}
-	summary, err := vm.CheckClosedBoot(store, origin)
-	if err != nil {
-		return err
-	}
-	fmt.Println(summary)
-	return nil
+	return vm.ServeBoot(store)
 }
