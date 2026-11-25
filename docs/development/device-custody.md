@@ -640,14 +640,15 @@ person.
 - **Quota follows the Machine.** The quota claim is named from the Machine, as
   its allocation is. A Machine deleted before its allocation existed, such as
   one still waiting for capacity, releases its claim by that name.
-- **Credentials per Device, read by the site's workers.** Each Device has its
-  own BMC credential Secret, bound to it by the discovery contract and its
-  approved pin; there is no shared credential. Kubernetes RBAC cannot narrow a
-  list by annotation, so each Redfish worker may list the site's credential
-  Secrets and picks its Device's in code. A compromised worker could read
-  another Device's credential at the same site. This is an accepted residual
-  for the lab layout; a site that needs more isolation keeps one namespace, or
-  one named Secret, per Device.
+- **Each worker reads only its Device's credential.** Each Device has its own
+  BMC credential Secret, named from the Device (`bmc-` and 20 hex digits of
+  the Device's SHA-256), bound to it by the discovery contract and its
+  approved pin; there is no shared credential. The coordinator writes that
+  name into the operation's handoff, and kro grants the operation's worker
+  `get` on exactly that Secret, with no list or watch. The worker refuses a
+  handoff whose name is not its Device's, reads the Secret with one get, and
+  still requires the contract's annotations and pin. Admission lets kro create
+  a credential Role only of that shape.
 - **The observer deletes answered results.** The site observer is the only
   handoff status writer, and it deletes the site's copy of a result once the
   coordinator answered it. Its mount of the site store is therefore writable.

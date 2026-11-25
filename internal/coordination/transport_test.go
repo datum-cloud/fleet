@@ -273,11 +273,14 @@ func TestTheCellRunsOnlyItsOwnAssignments(t *testing.T) {
 	assignment := f.wipe(4, "00000000-0000-4000-8000-000000000104")
 	data, _ := json.Marshal(assignment)
 	for name, object := range map[string]*unstructured.Unstructured{
-		"another cell": newObject(namespace, AssignmentName(assignment), RoleAssignment, Spec{Cell: "cell-example-b", Device: device, AssignmentJSON: string(data)}),
-		"another name": newObject(namespace, "op-"+fmt.Sprintf("%040d", 1), RoleAssignment, Spec{Cell: cellName, Device: device, AssignmentJSON: string(data)}),
-		"a report":     newObject(namespace, ReportName(device)+"x", RoleReport, Spec{Cell: cellName, Device: device, AssignmentJSON: string(data)}),
+		"another cell": newObject(namespace, AssignmentName(assignment), RoleAssignment, Spec{Cell: "cell-example-b", Device: device, AssignmentJSON: string(data), Credential: site.CredentialSecretName(device)}),
+		// The worker would be granted get on another Device's credential.
+		"another credential": newObject(namespace, AssignmentName(assignment), RoleAssignment, Spec{Cell: cellName, Device: device, AssignmentJSON: string(data), Credential: site.CredentialSecretName("fleet-provider/server-example-002")}),
+		"another name":       newObject(namespace, "op-"+fmt.Sprintf("%040d", 1), RoleAssignment, Spec{Cell: cellName, Device: device, AssignmentJSON: string(data), Credential: site.CredentialSecretName(device)}),
+		"a report":           newObject(namespace, ReportName(device)+"x", RoleReport, Spec{Cell: cellName, Device: device, AssignmentJSON: string(data)}),
 	} {
 		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
 			if _, err := f.cell.api().Create(f.ctx, object, metav1.CreateOptions{}); err != nil {
 				t.Fatal(err)
 			}

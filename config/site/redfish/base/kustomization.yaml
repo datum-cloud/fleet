@@ -28,7 +28,8 @@ patches:
             !c.env.exists(e, e.name == 'FLEET_LIBVIRT_URI'))
           message: a Redfish worker Job must select the Redfish provider and carry no libvirt URI
   # kro may create, in fleet-site-credentials, only a per-operation Role
-  # that lists Secrets, bound to that operation's own ServiceAccount.
+  # that gets one named credential Secret, bound to that operation's own
+  # ServiceAccount.
   - target: {kind: ValidatingAdmissionPolicy, name: fleet-site-kro-worker-identity}
     patch: |-
       - op: test
@@ -43,8 +44,9 @@ patches:
           expression: >-
             variables.kind != 'roles' || (request.namespace == 'fleet-site-credentials' ?
             (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == [''] &&
-            r.resources == ['secrets'] && r.verbs == ['list'] && !has(r.resourceNames))) :
+            r.resources == ['secrets'] && r.verbs == ['get'] && has(r.resourceNames) && size(r.resourceNames) == 1 &&
+            r.resourceNames.all(n, n.matches('^bmc-[a-f0-9]{20}$')))) :
             (has(object.rules) && size(object.rules) == 1 && object.rules.all(r, r.apiGroups == ['coordination.fleet.datumapis.com'] &&
             r.resources == ['machineallocationhandoffs'] && r.verbs == ['get'] &&
             has(r.resourceNames) && r.resourceNames == [variables.handoff])))
-          message: a worker Role may grant only get on its own handoff, or list on the site's BMC credentials
+          message: a worker Role may grant only get on its own handoff, or get on one named BMC credential

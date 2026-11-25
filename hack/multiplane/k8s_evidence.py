@@ -92,6 +92,15 @@ def observation(state, name):
     return (get(state, '-n', NS, 'get', 'machineallocationhandoff', name).get('status') or {}).get('observation')
 
 
+DEVICE = 'fleet-provider/synthetic-device-central-01'
+OTHER_DEVICE = 'fleet-provider/synthetic-device-central-02'
+
+
+def credential_name(device):
+    """The only name a Device's credential Secret may have at the site."""
+    return 'bmc-' + hashlib.sha256(device.encode()).hexdigest()[:20]
+
+
 def worker_rbac(state, name):
     s = pathlib.Path(state)
     cfg = json.loads(kubectl(state, 'config', 'view', '--raw', '--minify', '-o', 'json').stdout)
@@ -108,7 +117,11 @@ def worker_rbac(state, name):
                  ('-n', NS, 'patch', 'machineallocationhandoff', name, '--subresource=status', '--type=merge', '-p', '{"status":{}}'),
                  ('-n', NS, 'patch', 'machineallocationhandoff', name, '--type=merge', '-p', '{"spec":{"cell":"other"}}'),
                  ('-n', NS, 'get', 'secrets'), ('-n', SITE, 'get', 'secrets'), ('-n', SITE, 'create', 'configmap', 'forbidden', '--from-literal=x=y'), ('-n', SITE, 'get', 'jobs'),
-                 ('-n', CREDENTIALS, 'get', 'secret', 'bmc-synthetic-device-central-01'), *((('-n', CREDENTIALS, 'get', 'secrets'),) if not REDFISH else ())):
+                 # Another Device's credential, and listing or watching them, are
+                 # denied in both modes.
+                 ('-n', CREDENTIALS, 'get', 'secret', credential_name(OTHER_DEVICE)), ('-n', CREDENTIALS, 'get', 'secrets'),
+                 ('-n', CREDENTIALS, 'get', 'secrets', '--watch', '--request-timeout=5s'),
+                 *((('-n', CREDENTIALS, 'get', 'secret', credential_name(DEVICE)),) if not REDFISH else ())):
         r = kubectl(state, *args, check=False, config='worker-kubeconfig.json')
         if r.returncode == 0 or 'forbidden' not in r.stderr.lower():
             raise SystemExit('worker credential allowed: ' + ' '.join(args[:4]) + ' ' + r.stderr[:200])
@@ -117,18 +130,21 @@ def worker_rbac(state, name):
     role = get(state, '-n', NS, 'get', 'role', 'w-' + name)
     record.update(roleRules=role['rules'], roleCreatedBy=role['metadata'].get('labels', {}).get('kro.run/node-id'))
     if REDFISH:
-        # A Redfish worker lists the site's BMC credential Secrets and picks its
-        # Device's by the discovery contract; it cannot get one by name.
-        listed = kubectl(state, '-n', CREDENTIALS, 'get', 'secrets', '-o', 'name', check=False, config='worker-kubeconfig.json')
-        if listed.returncode:
-            raise SystemExit('Redfish worker cannot list the BMC credential Secrets: ' + listed.stderr[:200])
+        # A Redfish worker may get exactly its Device's credential Secret, the
+        # one its handoff names, and nothing else.
+        spec = get(state, '-n', NS, 'get', 'machineallocationhandoff', name)['spec']
+        if spec.get('credential') != credential_name(spec['device']):
+            raise SystemExit('the handoff does not name its Device credential Secret: %s' % spec.get('credential'))
+        mine = kubectl(state, '-n', CREDENTIALS, 'get', 'secret', spec['credential'], '-o', 'name', check=False, config='worker-kubeconfig.json')
+        if mine.returncode:
+            raise SystemExit("Redfish worker cannot get its own Device's credential: " + mine.stderr[:200])
         creds = get(state, '-n', CREDENTIALS, 'get', 'role', 'w-' + name)
-        if creds['rules'] != [{'apiGroups': [''], 'resources': ['secrets'], 'verbs': ['list']}]:
-            raise SystemExit('Redfish worker credential Role is not list-only on Secrets: %s' % creds['rules'])
-        record.update(credentialSecretsListable=len(listed.stdout.split()), credentialRoleRules=creds['rules'])
+        if creds['rules'] != [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [spec['credential']], 'verbs': ['get']}]:
+            raise SystemExit('Redfish worker credential Role is not get on its one Secret: %s' % creds['rules'])
+        record.update(ownCredentialReadable=True, credentialRoleRules=creds['rules'])
     write(s / 'k8s-worker-rbac.json', record)
     print('worker-rbac: per-operation ServiceAccount reads only its own handoff; list, other names, status, spec, Secrets and site writes forbidden'
-          + ('; it lists only the site BMC credential Secrets' if REDFISH else ''))
+          + ("; it gets only its own Device's BMC credential Secret, never another's, and lists none" if REDFISH else ''))
 
 
 def record_pod_interrupt(state, before, after):

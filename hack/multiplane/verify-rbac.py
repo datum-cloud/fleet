@@ -58,14 +58,14 @@ allowed=[('create','jobs','-n',site),('create','serviceaccounts','-n',site),('cr
  ('list','deployments','-A'),('list','services','-A'),('watch',h,'-A'),('get','persistentvolumeclaims','-n',site)]
 redfish=os.environ.get('FLEET_SITE_PROVIDER')=='redfish';creds_ns='fleet-site-credentials'
 if redfish:
- # Redfish mode: kro creates each worker's list-only Role on the site's BMC
- # credential Secrets, so it holds exactly that and nothing more there.
- allowed+=[('create','roles','-n',creds_ns),('create','rolebindings','-n',creds_ns),('list','secrets','-n',creds_ns)]
+ # Redfish mode: kro creates each worker's Role to get its one BMC credential
+ # Secret, so it holds get there and nothing more; it cannot list or watch.
+ allowed+=[('create','roles','-n',creds_ns),('create','rolebindings','-n',creds_ns),('get','secrets','-n',creds_ns)]
 denied=[('create','deployments','-n',site),('patch','deployments','-n',site),('create','services','-n',site),('delete','services','-n',site),
  ('delete','persistentvolumeclaims','-n',site),('patch','configmaps','-n',site),('create','jobs','-n','default'),('create','jobs','-n','kube-system'),
  ('create','roles','-n',site),('create','rolebindings','-n','kube-system'),('create','clusterroles'),('get','secrets','-n',site),
  ('patch',h,'-n',ns),('update',h,'--subresource=status','-n',ns),('delete','validatingadmissionpolicies')]+(
- [('get','secrets','-n',creds_ns),('create','secrets','-n',creds_ns),('watch','secrets','-n',creds_ns)] if redfish else [])
+ [('list','secrets','-n',creds_ns),('create','secrets','-n',creds_ns),('watch','secrets','-n',creds_ns)] if redfish else [])
 bad=[' '.join(a) for a in allowed if not can(*a)]+['denied '+' '.join(a) for a in denied if can(*a)]
 if bad:raise SystemExit('kro RBAC is not the narrowed grant: '+'; '.join(bad))
 # Grants the kro chart keeps because kro needs them: it creates the CRD for each
@@ -94,18 +94,22 @@ cases={'admitted':{'worker Job':job(),'worker Role':role(own),'worker ServiceAcc
   'RoleBinding to another Role, for the observer':binding('w-op-admission-probe','fleet-site-observer','fleet-site-kro-worker-rbac'),'ServiceAccount outside the worker set':sa('fleet-site-probe')}}
 if redfish:
  # Redfish workers have no hypervisor path: the libvirt socket, the lab disks
- # and a libvirt URI are denied by policy. They mount no credential: each reads
- # its Device's credential Secret through a per-operation list-only Role.
+ # and a libvirt URI are denied by policy. They mount no credential: each gets
+ # its Device's credential Secret, by name, through a per-operation Role.
+ named=[{'apiGroups':[''],'resources':['secrets'],'resourceNames':['bmc-'+'0'*20],'verbs':['get']}]
  listing=[{'apiGroups':[''],'resources':['secrets'],'verbs':['list']}]
- cases['admitted'].update({'Redfish worker Job':job(),'worker credential Role':role(listing,creds_ns)})
+ cases['admitted'].update({'Redfish worker Job':job(),'worker credential Role':role(named,creds_ns)})
  cases['denied'].update({'Redfish worker mounting the libvirt socket':job(volumeMounts=[{'name':'state','mountPath':'/run/fleet-libvirt','subPath':'libvirt-socket'}]),
   'Redfish worker mounting the lab disks':job(volumeMounts=[{'name':'state','mountPath':'/var/lib/fleet-lab/disks','subPath':'lab-disks'}]),
   'Redfish worker with a libvirt URI':job(env=[{'name':'FLEET_SITE_PROVIDER','value':'redfish'},{'name':'FLEET_LIBVIRT_URI','value':'qemu:///system?socket=/run/fleet-libvirt/libvirt-sock'}]),
   'worker selecting the libvirt provider':job(env=[{'name':'FLEET_SITE_PROVIDER','value':'libvirt'}]),
   'Redfish worker mounting a credential Secret':job(volumes=[{'name':'state','persistentVolumeClaim':{'claimName':'fleet-site-state'}},{'name':'credentials','secret':{'secretName':'bmc-synthetic-device-central-01'}}]),
   # Shapes within kro's own grant, so the policy, not RBAC escalation, denies them.
-  'credential Role with a second rule':role(listing+own,creds_ns),
-  'credential Role naming a Secret':role([dict(listing[0],resourceNames=['bmc-synthetic-device-central-01'])],creds_ns),
+  'credential Role with a second rule':role(named+own,creds_ns),
+  'credential Role listing Secrets':role(listing,creds_ns),
+  'credential Role getting every Secret':role([dict(named[0],resourceNames=[])],creds_ns),
+  'credential Role getting two Secrets':role([dict(named[0],resourceNames=['bmc-'+'0'*20,'bmc-'+'1'*20])],creds_ns),
+  'credential Role naming a Secret outside the rule':role([dict(named[0],resourceNames=['fleet-site-bmc-credentials'])],creds_ns),
   'credential RoleBinding to another Role':binding('w-op-admission-probe','w-op-admission-probe','fleet-site-kro-worker-credentials',creds_ns)})
 record={'identity':kro,'allowed':[' '.join(a) for a in allowed],'denied':[' '.join(a) for a in denied],'chartGrantsRetained':retained,'admission':{}}
 for outcome,objs in cases.items():

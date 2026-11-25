@@ -1,9 +1,9 @@
 # Redfish-mode dispatcher graph: the shared graph with the worker template
 # switched to the Redfish workers. Workers mount the site store, the boot
 # evidence and the lab console capture (all read-only except the store); they
-# have no libvirt socket. Each worker reads its Device's own BMC credential
-# Secret, by the BMC discovery contract, from fleet-site-credentials; there
-# is no shared credential. The worker also waits for the Flux-owned lab BMC
+# have no libvirt socket. Each worker may get exactly its Device's BMC
+# credential Secret in fleet-site-credentials, named in its handoff, and
+# list or watch none; there is no shared credential. The worker also waits for the Flux-owned lab BMC
 # through an externalRef.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -42,8 +42,8 @@ patches:
       - op: add
         path: /spec/resources/9/template/metadata/annotations/fleet.datumapis.com~1bmc
         value: ${bmc.metadata.name}
-      # Each worker may read the BMC credential Secrets of the site, and
-      # chooses its Device's by the discovery contract's annotations.
+      # Each worker may get exactly its Device's credential Secret, which the
+      # handoff names from the Device. It may not list or watch Secrets.
       - op: add
         path: /spec/resources/-
         value:
@@ -62,7 +62,8 @@ patches:
             rules:
               - apiGroups: [""]
                 resources: [secrets]
-                verbs: [list]
+                resourceNames: ["${handoff.spec.credential}"]
+                verbs: [get]
       - op: add
         path: /spec/resources/-
         value:

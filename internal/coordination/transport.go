@@ -58,6 +58,10 @@ type Spec struct {
 	// AssignmentJSON is the exact assignment, as a string so an API server
 	// cannot reorder it. A report handoff has none.
 	AssignmentJSON string `json:"assignmentJSON,omitempty"`
+	// Credential is the name of the Device's BMC credential Secret at the
+	// site, derived from the Device. The site grants the assignment's worker
+	// get on exactly that Secret. A report handoff has none.
+	Credential string `json:"credential,omitempty"`
 }
 
 // FenceReport is the cell's stored fences for the Device.
@@ -186,7 +190,7 @@ func (h *Hub) Deliver(ctx context.Context, assignment site.Assignment) error {
 	if err != nil {
 		return err
 	}
-	_, err = h.ensure(ctx, AssignmentName(assignment), RoleAssignment, Spec{Cell: h.Cell, Device: assignment.Device, AssignmentJSON: string(data)})
+	_, err = h.ensure(ctx, AssignmentName(assignment), RoleAssignment, Spec{Cell: h.Cell, Device: assignment.Device, AssignmentJSON: string(data), Credential: site.CredentialSecretName(assignment.Device)})
 	return err
 }
 

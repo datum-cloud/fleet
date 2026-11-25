@@ -46,7 +46,7 @@ func (c *Cell) assignment(object *unstructured.Unstructured) (site.Assignment, S
 		return site.Assignment{}, spec, ErrNotDelivered
 	}
 	var assignment site.Assignment
-	if err := json.Unmarshal([]byte(spec.AssignmentJSON), &assignment); err != nil || assignment.Device != spec.Device || object.GetName() != AssignmentName(assignment) {
+	if err := json.Unmarshal([]byte(spec.AssignmentJSON), &assignment); err != nil || assignment.Device != spec.Device || object.GetName() != AssignmentName(assignment) || spec.Credential != site.CredentialSecretName(assignment.Device) {
 		return site.Assignment{}, spec, ErrNotDelivered
 	}
 	return assignment, spec, nil
@@ -97,7 +97,7 @@ func (c *Cell) Publish(ctx context.Context, object *unstructured.Unstructured, s
 		}
 	case RoleReport:
 		spec, err := decode(object, nil)
-		if err != nil || spec.Cell != c.Name || object.GetLabels()[CellLabel] != c.Name || spec.AssignmentJSON != "" || object.GetName() != ReportName(spec.Device) {
+		if err != nil || spec.Cell != c.Name || object.GetLabels()[CellLabel] != c.Name || spec.AssignmentJSON != "" || spec.Credential != "" || object.GetName() != ReportName(spec.Device) {
 			return ErrNotDelivered
 		}
 		device = spec.Device

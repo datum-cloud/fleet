@@ -124,6 +124,11 @@ def running(s):
     return runtime(s, 'virsh', '--connect', LIBVIRT, 'list', '--name').stdout.split()
 
 
+def credential_name(device):
+    """The only name a Device's credential Secret may have at the site."""
+    return 'bmc-' + hashlib.sha256(device.encode()).hexdigest()[:20]
+
+
 def enroll(s):
     d = s / 'redfish'
     d.mkdir(mode=0o700, exist_ok=True)
@@ -150,14 +155,16 @@ def enroll(s):
     fixture = {}
     for target in enrollment['targets']:
         namespace, name = target['device'].split('/')
-        secret = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'bmc-' + name, 'namespace': CREDENTIALS, 'labels': {'fleet.datumapis.com/bmc-credential': 'true'},
+        # The Secret's name derives from the Device (site.CredentialSecretName),
+        # so each worker can be granted get on exactly its Device's.
+        secret = {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': credential_name(target['device']), 'namespace': CREDENTIALS, 'labels': {'fleet.datumapis.com/bmc-credential': 'true'},
                   'annotations': {'fleet.datumapis.com/device-project': 'provider', 'fleet.datumapis.com/device-namespace': namespace, 'fleet.datumapis.com/device-name': name}},
                   'stringData': {'username': (d / 'bmc-username').read_text().strip(), 'password': (d / 'bmc-password.token').read_text().strip(), 'tlsPublicKeySHA256': pin}}
         kubectl(s, 'apply', '-f', '-', input=json.dumps(secret))
         fixture[target['device']] = {'bmcEndpoint': target['endpoint'], 'systemUUID': target['systemUUID'], 'bootMACAddress': target['mac'], 'bmcPublicKeySHA256': pin, 'disks': ['disk-0']}
     write(d / 'fixture-enrollment.json', fixture)
     write(s / 'evidence' / 'redfish-enrollment.json', {
-        'observedAt': now(), 'credentialSecrets': [CREDENTIALS + '/bmc-' + t['device'].split('/')[1] for t in enrollment['targets']], 'username': 'fleet-lab-operator',
+        'observedAt': now(), 'credentialSecrets': [CREDENTIALS + '/' + credential_name(t['device']) for t in enrollment['targets']], 'username': 'fleet-lab-operator',
         'password': 'synthetic random 256-bit value generated per run; never recorded or committed',
         'transport': 'Redfish over TLS to the fixed BMC Service %s:8443, pinned to a key generated per run (lab seam: one key for both lab targets)' % BMC_IP,
         'pin': pin,
