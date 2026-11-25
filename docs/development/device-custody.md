@@ -1025,6 +1025,20 @@ Increment D's site tests run with `go test -race ./internal/site/...`:
 | A worker stopped at its deadline closes its boot admission, in both workers | `TestAWorkerStoppedAtItsDeadlineClosesItsAdmission` |
 | A local VM wipe powers off a running guest, and is not proven while it keeps running | `TestAWipePowersOffARunningDomain`, `TestAWipeWithADomainThatKeepsRunningIsNotProven` |
 
+Increment D also adds coordinator tests, run with `task test:envtest`, that
+fail if the use of site fence reports is weakened. Each was checked against
+the change it guards:
+
+| Guard | Test |
+| --- | --- |
+| A recovery on a Device that no site serves is never confirmed | `TestARecoveryOnADeviceNoSiteServesIsNeverConfirmed` |
+| A recovery records the lowest fence its sites confirmed, and waits for every site | `TestARecoveryConfirmsTheLowestFenceOfItsSites` |
+| A Resolve raises custody's fence above every fence a site has seen | `TestAResolveRaisesTheFenceAboveEverySeenFence` |
+
+`TestFencesFollowTheSiteReport` already fails if admission ignores the seen
+fence, if a recovery is confirmed by the seen fence alone, or if an
+unreported site counts as confirmed.
+
 The multi-plane local VM and Redfish runs (`task multiplane:acceptance` and
 `task multiplane:redfish-acceptance`) run the same workers and the failure
 scenarios. The acceptance state of each #174 test is in the [coverage
