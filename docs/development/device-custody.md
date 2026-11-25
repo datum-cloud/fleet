@@ -940,6 +940,10 @@ inputs, and nothing else writes them.
   other provider projects when capacity is registered and enabled; the
   projector does not read across projects. Aliases moved from registration to
   the inventory API package, so both compute them the same way.
+- **Plan pin.** `Prepared` needs the latest commissioning's evidence to name
+  the current plan's name, generation, digest and approval name. The approval
+  name is derived from the plan's UID, so evidence under a plan recreated with
+  the same name and content proves nothing (`PlanChanged`).
 - **Cleaning policy.** The projector takes a resolver that returns a digest,
   `ErrUnresolved`, or another error, which makes `Available` `Unknown`. Every
   mode supplies a fixture resolver for its one fixture policy. No production

@@ -40,8 +40,9 @@ type LatestCommissioning struct {
 type CurrentPlanInput struct {
 	// Plan is nil when the Device has no current plan.
 	Plan *ops.DeviceCommissioningPlan
-	// Digest is the plan's digest.
-	Digest string
+	// Reference pins the plan incarnation and its content: its name,
+	// generation, digest and approval name.
+	Reference ops.ApprovedPlanReference
 	// Reason is NoCurrentPlan or PlanAmbiguous when Plan is nil.
 	Reason string
 }
@@ -124,7 +125,7 @@ func ProjectCapacity(in CapacityInputs) CapacityProjection {
 		prepared = no(ConditionPrepared, ReasonPlanAmbiguous, "more than one plan applies to the Device")
 	case plan.Plan == nil:
 		prepared = no(ConditionPrepared, ReasonNoCurrentPlan, "no qualified plan applies to the Device")
-	case latest.Evidence.Plan.UID != string(plan.Plan.UID) || latest.Evidence.Plan.Digest != plan.Digest:
+	case latest.Evidence.Plan != plan.Reference:
 		prepared = no(ConditionPrepared, "PlanChanged", "the latest commissioning used another plan than the current one")
 	default:
 		prepared = condition(ConditionPrepared, metav1.ConditionTrue, "Commissioned", "the server passed commissioning under the current plan")

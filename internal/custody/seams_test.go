@@ -171,10 +171,11 @@ func TestEvidenceIsTypedAndBounded(t *testing.T) {
 
 func TestCapacityProjection(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	plan := &ops.DeviceCommissioningPlan{ObjectMeta: metav1.ObjectMeta{Name: "plan", UID: "plan-uid"}, Spec: ops.DeviceCommissioningPlanSpec{EvidenceLifetime: metav1.Duration{Duration: 24 * time.Hour}}}
+	plan := &ops.DeviceCommissioningPlan{ObjectMeta: metav1.ObjectMeta{Name: "plan", UID: "plan-uid", Generation: 1}, Spec: ops.DeviceCommissioningPlanSpec{EvidenceLifetime: metav1.Duration{Duration: 24 * time.Hour}}}
+	pinned := ops.ApprovedPlanReference{PlanReference: ops.PlanReference{Name: "plan", Generation: 1, Digest: "sha256:plan"}, Approval: ApprovalName(plan)}
 	passed := func(mutate func(*LatestCommissioning)) *LatestCommissioning {
 		latest := &LatestCommissioning{DeviceUID: "device-uid", FinishedAt: now.Add(-time.Hour), Evidence: ops.CommissioningEvidence{
-			Plan: ops.PlanReference{Name: "plan", UID: "plan-uid", Digest: "sha256:plan"}, Result: ops.CommissioningPassed,
+			Plan: pinned, Result: ops.CommissioningPassed,
 			SerialNumber: "SERIAL-1", SystemUUID: "uuid-1", BMCPublicKeySHA256: "key", Hardware: &ops.InspectedHardware{Memory: "2Gi"}}}
 		if mutate != nil {
 			mutate(latest)
@@ -184,7 +185,7 @@ func TestCapacityProjection(t *testing.T) {
 	free := &ops.DeviceCustodySpec{State: ops.CustodyVerified, Holder: ops.Holder{Type: ops.HolderNone}}
 	base := func() CapacityInputs {
 		return CapacityInputs{Generation: 3, Now: now, DeviceUID: "device-uid", DeviceSerial: "serial-1", DeviceSystemUUID: "UUID-1", DeviceActive: true,
-			Commissioning: passed(nil), CurrentPlan: CurrentPlanInput{Plan: plan, Digest: "sha256:plan"}, Discovery: DiscoveryInput{Current: true, KeyDigest: "key"},
+			Commissioning: passed(nil), CurrentPlan: CurrentPlanInput{Plan: plan, Reference: pinned}, Discovery: DiscoveryInput{Current: true, KeyDigest: "key"},
 			Custody: free, AllocationPolicyEnabled: true, Cleaning: CleaningResolved}
 	}
 	if projection := ProjectCapacity(base()); !projection.Available() || projection.Hardware == nil {
@@ -201,12 +202,18 @@ func TestCapacityProjection(t *testing.T) {
 		"failed":              {func(in *CapacityInputs) { in.Commissioning.Evidence.Result = ops.CommissioningFailed }, 0, "CommissioningFailed", metav1.ConditionFalse},
 		"no plan":             {func(in *CapacityInputs) { in.CurrentPlan = CurrentPlanInput{Reason: ReasonNoCurrentPlan} }, 0, ReasonNoCurrentPlan, metav1.ConditionFalse},
 		"ambiguous":           {func(in *CapacityInputs) { in.CurrentPlan = CurrentPlanInput{Reason: ReasonPlanAmbiguous} }, 0, ReasonPlanAmbiguous, metav1.ConditionFalse},
-		"plan changed":        {func(in *CapacityInputs) { in.CurrentPlan.Digest = "sha256:new" }, 0, "PlanChanged", metav1.ConditionFalse},
-		"expired":             {func(in *CapacityInputs) { in.Now = now.Add(48 * time.Hour) }, 1, "EvidenceExpired", metav1.ConditionFalse},
-		"discovery old":       {func(in *CapacityInputs) { in.Discovery.Current = false }, 1, "DiscoveryNotCurrent", metav1.ConditionFalse},
-		"key changed":         {func(in *CapacityInputs) { in.Discovery.KeyDigest = "other" }, 1, "IdentityChanged", metav1.ConditionFalse},
-		"serial changed":      {func(in *CapacityInputs) { in.DeviceSerial = "other" }, 1, "IdentityChanged", metav1.ConditionFalse},
-		"custody missing":     {func(in *CapacityInputs) { in.Custody = nil }, 2, "CustodyMissing", metav1.ConditionFalse},
+		"plan changed":        {func(in *CapacityInputs) { in.CurrentPlan.Reference.Digest = "sha256:new" }, 0, "PlanChanged", metav1.ConditionFalse},
+		"plan regenerated":    {func(in *CapacityInputs) { in.CurrentPlan.Reference.Generation = 2 }, 0, "PlanChanged", metav1.ConditionFalse},
+		"plan recreated": {func(in *CapacityInputs) {
+			again := *plan
+			again.UID = "plan-uid-2"
+			in.CurrentPlan = CurrentPlanInput{Plan: &again, Reference: ops.ApprovedPlanReference{PlanReference: pinned.PlanReference, Approval: ApprovalName(&again)}}
+		}, 0, "PlanChanged", metav1.ConditionFalse},
+		"expired":         {func(in *CapacityInputs) { in.Now = now.Add(48 * time.Hour) }, 1, "EvidenceExpired", metav1.ConditionFalse},
+		"discovery old":   {func(in *CapacityInputs) { in.Discovery.Current = false }, 1, "DiscoveryNotCurrent", metav1.ConditionFalse},
+		"key changed":     {func(in *CapacityInputs) { in.Discovery.KeyDigest = "other" }, 1, "IdentityChanged", metav1.ConditionFalse},
+		"serial changed":  {func(in *CapacityInputs) { in.DeviceSerial = "other" }, 1, "IdentityChanged", metav1.ConditionFalse},
+		"custody missing": {func(in *CapacityInputs) { in.Custody = nil }, 2, "CustodyMissing", metav1.ConditionFalse},
 		"unverified": {func(in *CapacityInputs) {
 			in.Custody = &ops.DeviceCustodySpec{State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}
 		}, 2, "CustodyUnverified", metav1.ConditionFalse},
