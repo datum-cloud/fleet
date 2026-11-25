@@ -32,9 +32,12 @@ import (
 type Naming int
 
 const (
+	// KindNaming, on a row, means the kind's own naming rule applies. A kind
+	// must name a rule of its own.
+	KindNaming Naming = iota
 	// DeterministicName kinds are named from their authority and request, so
 	// a retried create collides instead of making a second operation.
-	DeterministicName Naming = iota
+	DeterministicName
 	// GeneratedName kinds are staff requests. Each one is new, so each must
 	// be created with metadata.generateName.
 	GeneratedName
@@ -94,9 +97,14 @@ type Kind struct {
 	// SnapshotExtra adds bounded fields to the Device snapshot at admission.
 	// It sees the same Device the checks saw.
 	SnapshotExtra func(*Admission) map[string]string
-	// Evidence validates the kind's typed, bounded result evidence and
-	// returns it in canonical form. Nil means the kind's results carry none.
-	Evidence func([]byte) ([]byte, error)
+	// Evidence validates the kind's typed, bounded result evidence against
+	// the operation it is for, such as requiring reset proof for a restart,
+	// and returns it in canonical form. Nil means the kind's results carry
+	// none.
+	Evidence func(ops.Operation, []byte) ([]byte, error)
+	// EvidenceRequired means a Succeeded result without evidence proves
+	// nothing and ends OutcomeUnknown.
+	EvidenceRequired bool
 	// RecoverySettle validates DeviceRecovery Settle evidence for a hold of
 	// this kind. A kind without it cannot be settled by a DeviceRecovery.
 	RecoverySettle func(context.Context, *RecoverySettleContext) *Refusal
@@ -241,8 +249,14 @@ func (r *Registry) Register(kind Kind) error {
 	if name == "" || kind.New == nil || kind.NewList == nil || kind.Items == nil || kind.Digest == nil || kind.Deadline <= 0 {
 		return errors.New("a kind needs a GVK, constructors, a digest and a deadline")
 	}
+	if kind.Naming != DeterministicName && kind.Naming != GeneratedName {
+		return fmt.Errorf("%s: a kind names a deterministic or a generated naming rule", name)
+	}
 	if kind.Naming == DeterministicName && kind.Name == nil {
 		return fmt.Errorf("%s: a deterministic name rule is required", name)
+	}
+	if kind.EvidenceRequired && kind.Evidence == nil {
+		return fmt.Errorf("%s: required evidence needs a validator", name)
 	}
 	if !kind.Effectful && kind.Apply == nil {
 		return fmt.Errorf("%s: a non-effectful kind needs Apply", name)
@@ -284,6 +298,9 @@ func (r *Registry) AddRule(rule Rule) error {
 	}
 	if rule.Queue && rule.Creator == CreatorStaff {
 		return errors.New("staff operations never queue")
+	}
+	if rule.Naming == DeterministicName && rule.Name == nil {
+		return errors.New("a row with a deterministic name rule needs its Name function")
 	}
 	r.rules = append(r.rules, rule)
 	return nil
@@ -350,9 +367,10 @@ func SpecDigest(spec any) (string, error) {
 }
 
 // StrictEvidence returns an Evidence function that decodes into T, rejecting
-// unknown fields and anything over maxBytes, then runs validate.
-func StrictEvidence[T any](maxBytes int, validate func(*T) error) func([]byte) ([]byte, error) {
-	return func(raw []byte) ([]byte, error) {
+// unknown fields and anything over maxBytes, then runs validate with the
+// operation the evidence is for.
+func StrictEvidence[T any](maxBytes int, validate func(ops.Operation, *T) error) func(ops.Operation, []byte) ([]byte, error) {
+	return func(operation ops.Operation, raw []byte) ([]byte, error) {
 		if len(raw) > maxBytes {
 			return nil, fmt.Errorf("evidence is %d bytes; the limit is %d", len(raw), maxBytes)
 		}
@@ -366,7 +384,7 @@ func StrictEvidence[T any](maxBytes int, validate func(*T) error) func([]byte) (
 			return nil, errors.New("evidence has trailing data")
 		}
 		if validate != nil {
-			if err := validate(value); err != nil {
+			if err := validate(operation, value); err != nil {
 				return nil, err
 			}
 		}

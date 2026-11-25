@@ -62,8 +62,15 @@ type Rule struct {
 	Custody ops.CustodyState
 	Hold    HoldBehavior
 	// Queue rows wait in Pending while another operation runs. Staff rows
-	// never queue: admission refuses what cannot run now.
+	// never queue: admission refuses what cannot run now. Only an operation
+	// on a queue row may replace an older pending one of its kind.
 	Queue bool
+	// Naming overrides the kind's naming rule for this row, such as
+	// generated names for staff power and deterministic ones for provider
+	// power. KindNaming, the zero value, keeps the kind's rule.
+	Naming Naming
+	// Name is the row's deterministic name rule.
+	Name func(ops.Operation) string
 }
 
 func (r Rule) custodyState() ops.CustodyState {

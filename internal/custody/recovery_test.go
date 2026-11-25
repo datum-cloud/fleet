@@ -109,6 +109,10 @@ func TestRecovery(t *testing.T) {
 
 	t.Run("only Retire and Resolve skip current discovery and the shared-key check", func(t *testing.T) {
 		e := e.sub(t)
+		// The held kind accepts a Retry, so the kind's own checks pass and
+		// the discovery check is what refuses it.
+		staff := e.coord.Registry.Kind(testStaffKind)
+		staff.Settles, staff.Retryable = []SettleRule{{Held: testStaffKind}, {Held: testStaffKind, RequiresRetry: true}}, true
 		device := fresh()
 		hold := e.holdOn(device)
 		key := fmt.Sprintf("%064x", n)

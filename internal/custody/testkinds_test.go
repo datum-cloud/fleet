@@ -2,6 +2,7 @@ package custody
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -72,6 +73,7 @@ const (
 	testStaffKind    = "DeviceTestStaffOperation"
 	testProviderKind = "DeviceTestProviderOperation"
 	reasonTestRefuse = "TestRefused"
+	reasonTestUUID   = "TestSystemUUIDNotRecorded"
 	testDeadline     = 10 * time.Minute
 )
 
@@ -88,6 +90,12 @@ func testKinds() []Kind {
 			return refuse(reasonTestRefuse, "the test kind refuses this input")
 		case "undeclared":
 			return refuse("Unlisted", "the test kind refuses with a reason it never declared")
+		case "needs-uuid":
+			// A kind's own, more specific reason, as power's
+			// SystemUUIDNotRecorded.
+			if admission.Device.Spec.Identity.SystemUUID == "" {
+				return refuse(reasonTestUUID, "the Device records no system UUID")
+			}
 		}
 		if hook := checkHook.Load(); hook != nil {
 			(*hook)(admission)
@@ -109,7 +117,14 @@ func testKinds() []Kind {
 		}
 		return nil
 	}
-	evidence := StrictEvidence(256, func(*testEvidence) error { return nil })
+	// The test kinds' evidence must agree with the operation: an input of
+	// "restart" requires proof of the reset.
+	evidence := StrictEvidence(256, func(operation ops.Operation, evidence *testEvidence) error {
+		if operation.(interface{ input() string }).input() == "restart" && evidence.After == "" {
+			return errors.New("a restart needs the power state after it")
+		}
+		return nil
+	})
 	staff := Kind{
 		GVK:     ops.GroupVersion.WithKind(testStaffKind),
 		New:     func() ops.Operation { return &DeviceTestStaffOperation{} },
@@ -123,7 +138,7 @@ func testKinds() []Kind {
 		Effectful: true,
 		Check:     check,
 		Settles:   []SettleRule{{Held: testStaffKind}},
-		Reasons:   []Reason{{Name: reasonTestRefuse, RaisedBy: RaisedByCoordinator}, {Name: "EvidenceNotCurrent", RaisedBy: RaisedByCoordinator}},
+		Reasons:   []Reason{{Name: reasonTestRefuse, RaisedBy: RaisedByCoordinator}, {Name: "EvidenceNotCurrent", RaisedBy: RaisedByCoordinator}, {Name: reasonTestUUID, RaisedBy: RaisedByCoordinator}},
 		Evidence:  evidence,
 		// Seam 4: a hold of this kind settles with recovery evidence observed
 		// after the operation ended, as power's discovery read will.

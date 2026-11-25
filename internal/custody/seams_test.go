@@ -141,11 +141,11 @@ func TestCandidatesOrderOldestFirstWithADeterministicTieBreak(t *testing.T) {
 
 func TestEvidenceIsTypedAndBounded(t *testing.T) {
 	kind := DeviceWipeKind()
-	if _, err := kind.Evidence([]byte(`{"wipedDisks":["disk-0"]}`)); err != nil {
+	if _, err := kind.Evidence(&ops.DeviceWipe{}, []byte(`{"wipedDisks":["disk-0"]}`)); err != nil {
 		t.Fatal(err)
 	}
 	for _, bad := range []string{`{"bmcResponse":"raw"}`, `{"wipedDisks":["disk-0"]} {}`, `{"steps":[{"name":""}]}`, fmt.Sprintf(`{"policyDigest":"%0*d"}`, evidenceLimit, 0)} {
-		if _, err := kind.Evidence([]byte(bad)); err == nil {
+		if _, err := kind.Evidence(&ops.DeviceWipe{}, []byte(bad)); err == nil {
 			t.Fatalf("accepted %s", bad)
 		}
 	}

@@ -107,7 +107,7 @@ func DeviceInstallationKind() Kind {
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
 		Reasons: []Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}},
-		Evidence: StrictEvidence(evidenceLimit, func(evidence *ops.InstallationEvidence) error {
+		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.InstallationEvidence) error {
 			return validateSteps(evidence.Steps)
 		}),
 	}
@@ -135,7 +135,7 @@ func DeviceWipeKind() Kind {
 		// settled by a later wipe only after a DeviceRecovery with Retry.
 		Settles:   []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
 		Retryable: true,
-		Evidence: StrictEvidence(evidenceLimit, func(evidence *ops.WipeEvidence) error {
+		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.WipeEvidence) error {
 			if len(evidence.WipedDisks) > 16 {
 				return errors.New("evidence records at most 16 disks")
 			}

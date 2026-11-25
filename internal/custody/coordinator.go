@@ -590,7 +590,7 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 	if fresh.ResourceVersion != custody.ResourceVersion {
 		return Outcome{Changed: true}, nil
 	}
-	superseded := c.superseded(candidates, custody.Spec.RecoveryHold)
+	superseded := c.superseded(candidates, custody)
 	queued := false
 	changed := false
 	for _, candidate := range candidates {
@@ -623,13 +623,19 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 
 // superseded returns pending operations replaced by a newer one of the same
 // superseding kind and authority.
-func (c *Coordinator) superseded(candidates []candidate, hold *ops.RecoveryHold) map[types.UID]bool {
+func (c *Coordinator) superseded(candidates []candidate, custody *ops.DeviceCustody) map[types.UID]bool {
 	out := map[types.UID]bool{}
 	newest := map[string]ops.Operation{}
+	hold := custody.Spec.RecoveryHold
 	for _, candidate := range candidates {
 		operation, kind := candidate.operation, candidate.kind
-		// An operation that settles the hold is never replaced.
-		if !kind.Supersedes || (hold != nil && (c.settlesHold(kind, *hold, operation) || isRetry(kind, hold, operation))) {
+		// Only an operation that passes the creator, authority and holder
+		// checks on a queue row takes part: staff rows never queue, so
+		// staff requests never replace one another, and a request naming
+		// another's allocation replaces nothing. An operation that settles
+		// the hold is never replaced.
+		row, ok := c.rowFor(kind, operation, custody)
+		if !kind.Supersedes || !ok || !row.Queue || (hold != nil && (c.settlesHold(kind, *hold, operation) || isRetry(kind, hold, operation))) {
 			continue
 		}
 		key := kind.GVK.Kind + "/" + authorityKey(operation.Envelope().Authority)
@@ -639,6 +645,21 @@ func (c *Coordinator) superseded(candidates []candidate, hold *ops.RecoveryHold)
 		newest[key] = operation
 	}
 	return out
+}
+
+// rowFor returns the row that admits the operation from the current custody
+// state and holder, if its creator, authority and allocation match.
+func (c *Coordinator) rowFor(kind *Kind, operation ops.Operation, custody *ops.DeviceCustody) (Rule, bool) {
+	envelope := operation.Envelope()
+	rows := c.Registry.matchRows(kind, operation, c.config().Principals.Classify(envelope.Creator))
+	holder := custody.Spec.Holder
+	rows = slices.DeleteFunc(rows, func(rule Rule) bool {
+		return rule.custodyState() != custody.Spec.State || !rule.admitsHolder(holder.Type)
+	})
+	if len(rows) == 0 || (envelope.Authority.AllocationRef != nil && (holder.AllocationRef == nil || holder.AllocationRef.Name != envelope.Authority.AllocationRef.Name)) {
+		return Rule{}, false
+	}
+	return rows[0], true
 }
 
 func authorityKey(authority ops.Authority) string {
@@ -673,25 +694,16 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	fail := func(reason, format string, args ...any) decision {
 		return decision{phase: ops.PhaseFailed, reason: reason, message: fmt.Sprintf(format, args...)}
 	}
-	if class == CreatorStaff && !now.Before(operation.GetCreationTimestamp().Add(cfg.StaffExpiry)) {
+	// An operation named for a Retry waits for it: a staff retry created
+	// before its Retry is applied neither fails nor expires, or its name
+	// would be used up and the hold could not be settled.
+	retry := isRetry(kind, custody.Spec.RecoveryHold, operation)
+	if class == CreatorStaff && !retry && !now.Before(operation.GetCreationTimestamp().Add(cfg.StaffExpiry)) {
 		return decision{phase: ops.PhaseCancelled, reason: ReasonExpired, message: "a staff operation must be admitted within " + cfg.StaffExpiry.String()}
 	}
 	rows := c.Registry.matchRows(kind, operation, class)
 	if len(rows) == 0 {
 		return fail(ReasonCreatorNotPermitted, "no row admits %s from a %s creator with this authority", kind.GVK.Kind, class)
-	}
-	// An operation created after a Retry is named for the Retry, whatever
-	// the kind's own rule.
-	switch {
-	case isRetry(kind, custody.Spec.RecoveryHold, operation):
-	case kind.Naming == DeterministicName:
-		if want := kind.Name(operation); operation.GetName() != want {
-			return fail(ReasonNameMismatch, "the operation must be named %s", want)
-		}
-	case kind.Naming == GeneratedName:
-		if operation.GetGenerateName() == "" {
-			return fail(ReasonNameMismatch, "a staff operation must be created with a generated name")
-		}
 	}
 	if envelope.DeviceRef.UID != string(device.UID) {
 		return fail(ReasonDeviceIdentityMismatch, "deviceRef.uid does not match the Device")
@@ -712,6 +724,23 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		return d
 	}
 	row := rows[0]
+	// Names follow the row's rule, or the kind's. An operation created after
+	// a Retry is named for the Retry instead.
+	naming, name := kind.Naming, kind.Name
+	if row.Naming != KindNaming {
+		naming, name = row.Naming, row.Name
+	}
+	switch {
+	case retry:
+	case naming == DeterministicName:
+		if want := name(operation); operation.GetName() != want {
+			return fail(ReasonNameMismatch, "the operation must be named %s", want)
+		}
+	case naming == GeneratedName:
+		if operation.GetGenerateName() == "" {
+			return fail(ReasonNameMismatch, "this operation must be created with a generated name")
+		}
+	}
 	// Recovery holds.
 	var settles *ops.OperationReference
 	switch hold := custody.Spec.RecoveryHold; {
@@ -719,6 +748,8 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	case row.Hold == HoldRequired && hold == nil:
 		return fail(ReasonRecoveryHold, "this operation decides a recovery hold, and there is none")
 	case row.Hold == HoldRequired:
+	case hold != nil && retry && !c.settlesHold(kind, *hold, operation):
+		return decision{phase: ops.PhasePending, reason: ReasonRecoveryHold, message: "waiting for the Retry this operation is named for"}
 	case row.Hold == HoldSettlesRequired && (hold == nil || !c.settlesHold(kind, *hold, operation)):
 		return fail(ReasonHolderMismatch, "from this holder, the operation is admitted only to settle a hold of its kind")
 	case hold != nil:
@@ -739,6 +770,14 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		return fail(ReasonOperationInProgress, "another operation is running, and staff operations never wait")
 	}
 	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval}
+	// Rule 7, the kind's own checks, runs before the shared identity and
+	// key checks, so a kind's more specific reason, such as a system UUID
+	// that is not recorded, is the one reported.
+	if kind.Check != nil {
+		if refusal := c.Registry.declaredRefusal(kind.GVK.Kind, settleHookKind(kind, row, custody), kind.Check(ctx, admission)); refusal != nil {
+			return fail(refusal.Reason, "%s", refusal.Message)
+		}
+	}
 	// Preconditions 5 and 6: current discovery and a unique BMC key.
 	if kind.checksDiscovery(operation) {
 		if refusal := c.identityCurrent(device, now); refusal != nil {
@@ -748,11 +787,6 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 			return fail(refusal.Reason, "%s", refusal.Message)
 		}
 		if refusal := c.sharedKey(ctx, device); refusal != nil {
-			return fail(refusal.Reason, "%s", refusal.Message)
-		}
-	}
-	if kind.Check != nil {
-		if refusal := c.Registry.declaredRefusal(kind.GVK.Kind, settleHookKind(kind, row, custody), kind.Check(ctx, admission)); refusal != nil {
 			return fail(refusal.Reason, "%s", refusal.Message)
 		}
 	}

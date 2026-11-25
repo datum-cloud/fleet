@@ -80,8 +80,13 @@ func ignoreNoChange(err error) error {
 // a rejected fence; ErrStaleFence is returned either way, so the site
 // deletes its copy.
 func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error {
+	// The evidence hook validates against the operation it is for.
+	operation, _, err := c.get(ctx, result.Operation)
+	if err != nil {
+		return err
+	}
 	stale := false
-	err := c.update(ctx, result.Device, func(custody *ops.DeviceCustody) error {
+	err = c.update(ctx, result.Device, func(custody *ops.DeviceCustody) error {
 		stale = false
 		spec := &custody.Spec
 		active := spec.ActiveOperation
@@ -112,12 +117,20 @@ func (c *Coordinator) AcceptResult(ctx context.Context, result SiteResult) error
 			return fmt.Errorf("a site cannot report phase %q", result.Phase)
 		}
 		var evidence []byte
+		if result.Phase == ops.PhaseSucceeded && kind.EvidenceRequired && len(result.Evidence) == 0 {
+			c.holdUnknown(custody, *active, ReasonInvalidEvidence, "the kind requires evidence, and the site sent none", nil)
+			return nil
+		}
 		if len(result.Evidence) != 0 {
 			if kind.Evidence == nil {
 				c.holdUnknown(custody, *active, ReasonInvalidEvidence, "the kind records no evidence, and the site sent some", nil)
 				return nil
 			}
-			canonical, err := kind.Evidence(result.Evidence)
+			if operation == nil {
+				c.holdUnknown(custody, *active, ReasonInvalidEvidence, "the operation is missing, so its evidence cannot be checked", nil)
+				return nil
+			}
+			canonical, err := kind.Evidence(operation, result.Evidence)
 			if err != nil {
 				c.holdUnknown(custody, *active, ReasonInvalidEvidence, err.Error(), nil)
 				return nil
