@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -14,6 +13,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/custody"
 )
 
 // The failure scenarios of #174's acceptance tests. Each phase checks one
@@ -23,9 +23,10 @@ import (
 // ErrAdmittedUnknown once custody admitted it.
 func (r *Runner) AdmitInstallSecond(ctx context.Context) error { return r.admitIndex(ctx, 1) }
 
-// recoveryMismatchName names the staff recovery the mismatch phase creates,
-// so a retried phase finds the same one.
-const recoveryMismatchName = "synthetic-recovery-mismatch"
+// recoveryMismatchLabel marks the staff recovery the mismatch phase
+// creates, so a retried phase finds the same one. Recoveries take generated
+// names; admission refuses any other.
+const recoveryMismatchLabel = "fleet.datumapis.com/acceptance-scenario"
 
 // RecoveryMismatch creates, as staff, a DeviceRecovery that names the held
 // operation at the wrong fence. Admission refuses it before anything is
@@ -47,14 +48,20 @@ func (r *Runner) RecoveryMismatch(ctx context.Context) error {
 	if err := r.Provider.API.Get(ctx, client.ObjectKey{Namespace: DeviceNamespace, Name: Device}, device); err != nil {
 		return err
 	}
-	recovery := &ops.DeviceRecovery{}
-	if err := staff.Get(ctx, client.ObjectKey{Namespace: DeviceNamespace, Name: recoveryMismatchName}, recovery); apierrors.IsNotFound(err) {
+	var existing ops.DeviceRecoveryList
+	if err := staff.List(ctx, &existing, client.InNamespace(DeviceNamespace), client.MatchingLabels{recoveryMismatchLabel: "recovery-mismatch"}); err != nil {
+		return err
+	}
+	var recovery *ops.DeviceRecovery
+	switch len(existing.Items) {
+	case 0:
 		creator, err := identity(ctx, filepath.Join(r.Config.State, "provider", "staff-project.json"))
 		if err != nil {
 			return err
 		}
 		recovery = &ops.DeviceRecovery{
-			ObjectMeta: metav1.ObjectMeta{Name: recoveryMismatchName, Namespace: DeviceNamespace, Labels: map[string]string{ops.LabelDeviceUID: string(device.UID)}},
+			ObjectMeta: metav1.ObjectMeta{GenerateName: Device + "-recovery-", Namespace: DeviceNamespace, Labels: map[string]string{
+				recoveryMismatchLabel: "recovery-mismatch", ops.LabelDeviceUID: string(device.UID)}},
 			Spec: ops.DeviceRecoverySpec{
 				OperationEnvelope: ops.OperationEnvelope{Creator: creator, DeviceRef: ops.DeviceReference{Name: device.Name},
 					Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "synthetic acceptance: a recovery for another hold"}}},
@@ -66,11 +73,15 @@ func (r *Runner) RecoveryMismatch(ctx context.Context) error {
 		if err := staff.Create(ctx, recovery); err != nil {
 			return err
 		}
-	} else if err != nil {
-		return err
+	case 1:
+		recovery = &existing.Items[0]
+	default:
+		return fmt.Errorf("%w: more than one mismatched recovery", errTerminal)
 	}
 	switch phase := recovery.Status.Phase; {
+	case phase == ops.PhaseFailed && recovery.Status.Reason == custody.ReasonHoldMismatch:
 	case phase == ops.PhaseFailed:
+		return fmt.Errorf("%w: the mismatched recovery was refused for %s, not the hold", errTerminal, recovery.Status.Reason)
 	case phase.Ended():
 		return fmt.Errorf("%w: the mismatched recovery ended %s: %s", errTerminal, phase, recovery.Status.Reason)
 	default:
