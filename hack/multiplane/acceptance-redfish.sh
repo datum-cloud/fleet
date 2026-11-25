@@ -3,6 +3,7 @@
 # allocator, installation, Karmada, kro and Flux path as acceptance.sh; the
 # site worker drives lab targets only through the DMTF Redfish emulator.
 # Each phase is bounded and recorded; the first failure stops the run.
+# The GitOps behavior scenarios run in their own suite, flux-qualification.sh.
 set -euo pipefail
 umask 077
 state=${1:?private state directory}
@@ -11,7 +12,6 @@ host="$state/fleet-multiplane-host"
 ph() { python3 hack/multiplane/harness.py phase --state "$state" --name "$1" --timeout "$2" --echo -- "${@:3}"; }
 step() { ph "$1" "$2" bash hack/multiplane/steps.sh "$1" "$state"; }
 rf() { ph "redfish-$1" "$2" python3 hack/multiplane/redfish_steps.py "$1" "$state"; }
-flux() { ph "flux-$1" "$2" python3 hack/multiplane/flux.py "$1" "$state"; }
 
 ph rbac 600 python3 hack/multiplane/verify-rbac.py "$state"
 ph custody-crd-rules 600 python3 hack/multiplane/custody_crd_rules.py "$state"
@@ -38,11 +38,6 @@ step heal 1200
 ph install 900 "$host" install --config "$state/acceptance.json"
 ph install-repeat 900 "$host" install --config "$state/acceptance.json"
 step lifecycle 900
-flux graph-lifecycle 1200
-flux drift 900
-flux restart 1200
-flux fail-closed 1500
-flux retention 1500
 ph reflection-faults 900 python3 hack/multiplane/reflection-faults.py "$state"
 ph release 2400 "$host" release --config "$state/acceptance.json"
 step release-status-a 120

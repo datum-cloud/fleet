@@ -1109,6 +1109,51 @@ def retention(args):
     return 0
 
 
+# The GitOps behavior scenarios the Flux qualification suite runs, each with
+# its evidence file and the line its phase prints on success.
+SCENARIOS = {'graph-lifecycle': 'flux-graph-lifecycle: deleting the dispatcher removed only kro per-operation objects',
+             'drift': 'flux-drift: helm-controller restored kro', 'restart': 'flux-restart: every Flux controller',
+             'fail-closed': 'flux-fail-closed: absent kro chart digest', 'retention': 'flux-retention: removing the volume claim'}
+
+
+def qualification_evidence(args):
+    """Verify the Flux qualification suite's evidence and write its summary.
+    The acceptance suites verify theirs in evidence.py."""
+    s = pathlib.Path(args.state)
+    ev = s / 'evidence'
+    prefix = (s / 'prefix').read_text().strip()
+    phases = (s / 'phases.log').read_text()
+    markers = ('flux-verify: 3 clusters Ready', 'cell Flux applied the dispatch revision', 'complete: the worker Job completed the install', 'install: verified',
+               'release: verified', 'release-status-a: consumer-a Machine Released', 'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(SCENARIOS.values())
+    missing = [m for m in markers if m not in phases]
+    if missing:
+        die('missing qualification phase: ' + ', '.join(missing))
+    files = ('flux-verify.json', 'flux-initial.json', 'flux-final.json', 'flux-ownership-final.json') + tuple('flux-%s.json' % n for n in SCENARIOS)
+    absent = [f for f in files if not (ev / f).exists()]
+    if absent:
+        die('missing Flux evidence: ' + ', '.join(absent))
+    for node in CLUSTERS:
+        events = subprocess.run(['docker', 'exec', '%s-%s-control-plane' % (prefix, node), 'cat', '/sys/fs/cgroup/memory.events'],
+                                capture_output=True, text=True, timeout=60, check=True).stdout
+        if int(dict(line.split() for line in events.splitlines()).get('oom_kill', '0')):
+            die('OOM kill recorded on the %s node' % node)
+    revs = revisions(s)
+    final = json.loads((ev / 'flux-final.json').read_text())
+    for cluster, snap in final.items():
+        if snap['sources']['flux-system/fleet-gitops']['artifactRevision'] != revs[-1]['fluxRevision'] or any(
+                k['lastAppliedRevision'] != revs[-1]['fluxRevision'] or k['suspend'] for k in snap['kustomizations'].values()):
+            die('%s did not end with every Kustomization at the final revision' % cluster)
+    write(ev / 'summary.json', {
+        # The evidence verified; the run is not finished. Only result.json
+        # records whether the run passed.
+        'schemaVersion': 3, 'suite': 'flux-qualification', 'acceptance': 'evidence-verified', 'observedAt': now(), 'prefix': prefix,
+        'siteProvider': PROVIDER, 'scenarios': sorted(SCENARIOS), 'evidence': list(files),
+        'sourceRevisions': [{k: r[k] for k in ('revision', 'digest', 'purpose', 'gitHead', 'contentSumsSHA256', 'files')} for r in revs],
+        'custody': 'released: the one installation released and its projection verified', 'productionAuthority': False})
+    print('qualification evidence: %d GitOps scenarios verified; every cluster at the final revision with nothing suspended' % len(SCENARIOS))
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -1142,10 +1187,11 @@ def main():
     for name in ('verify', 'drift', 'restart', 'fail-closed', 'retention', 'graph-lifecycle'):
         add(name)
     add('ownership', lambda s: s.add_argument('--name', required=True))
+    add('qualification-evidence')
     a = p.parse_args()
     return {'tools': tools, 'stage': stage, 'push': push, 'publish': publish, 'bootstrap': bootstrap, 'wait': wait_cmd, 'record': record,
             'verify': verify, 'drift': drift, 'restart': restart, 'fail-closed': fail_closed, 'retention': retention,
-            'graph-lifecycle': graph_lifecycle, 'ownership': ownership_cmd}[a.cmd](a)
+            'graph-lifecycle': graph_lifecycle, 'ownership': ownership_cmd, 'qualification-evidence': qualification_evidence}[a.cmd](a)
 
 
 if __name__ == '__main__':

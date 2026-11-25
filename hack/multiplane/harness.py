@@ -758,6 +758,7 @@ def result(args):
     if (ev / 'phases.jsonl').exists():
         phases = [json.loads(l) for l in (ev / 'phases.jsonl').read_text().splitlines() if l.strip()]
     prefix = (state / 'prefix').read_text().strip() if (state / 'prefix').exists() else None
+    suite = (state / 'suite').read_text().strip() if (state / 'suite').exists() else None
     retained = []
     if prefix:
         code, out, _ = capture(['docker', 'ps', '-a', '--filter', 'name=^' + prefix + '-', '--format', '{{.Names}}\t{{.State}}'], 30)
@@ -780,7 +781,7 @@ def result(args):
     if failed is None and lock_record and lock_record['status'] != 'acquired':
         failed = {'name': 'runtime-lock'}
     summary = ev / 'summary.json'
-    value = {'schemaVersion': 1, 'observedAt': now(), 'status': status, 'exitCode': code, 'prefix': prefix,
+    value = {'schemaVersion': 1, 'observedAt': now(), 'status': status, 'exitCode': code, 'prefix': prefix, 'suite': suite,
              'failedPhase': failed['name'] if failed else None, 'phases': phases,
              'runtimeLock': {k: lock_record.get(k) for k in ('status', 'positionAtQueue', 'waitedSeconds')} if lock_record else None, 'retainedContainers': retained,
              'stateDirectory': str(state), 'evidenceDirectory': str(ev),
@@ -788,7 +789,7 @@ def result(args):
              'custody': 'released and verified' if status == 'passed' else 'Unknown: inspect private state before any cleanup',
              'productionAuthority': False}
     write_json(ev / 'result.json', value)
-    print('RESULT %s exit=%s evidence=%s' % (status, code, ev / 'result.json'))
+    print('RESULT %s suite=%s exit=%s evidence=%s' % (status, suite, code, ev / 'result.json'))
     # run.sh exits with this code, so only a completed run exits 0.
     return code
 

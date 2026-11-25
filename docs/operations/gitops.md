@@ -207,7 +207,10 @@ has the same effect as the
 ## Acceptance coverage
 
 These phases run in addition to the existing scenarios; see
-[acceptance phases](multiplane.md#acceptance-phases).
+[acceptance phases](multiplane.md#acceptance-phases). `flux-graph-lifecycle`,
+`flux-drift`, `flux-restart`, `flux-fail-closed` and `flux-retention` run only
+in the [Flux qualification suite](multiplane.md#flux-qualification-suite); the
+others run in both acceptance modes.
 
 | Phase | Asserts | Evidence |
 | --- | --- | --- |

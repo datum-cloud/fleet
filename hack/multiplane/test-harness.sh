@@ -198,7 +198,7 @@ with tempfile.TemporaryDirectory() as tmp:
         check('no docker process launch in site execution: ' + name, '-vm' not in text and 'cell.pid' not in text)
     sequence = (root / 'hack/multiplane/acceptance.sh').read_text()
     order = ['custody-crd-rules', 'import-inert', 'staff-access', 'allocate', 'verify-contention', 'tenant-isolation', 'admit-install', 'await-delivery', 'partition', 'dispatch', 'interrupt-pod', 'interrupt-job', 'resume',
-             'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
+             'worker-rbac', 'partition-readiness', 'heal', 'install', 'install-repeat', 'lifecycle',
              'reflection-faults', 'release', 'release-status-a',
              'reuse', 'reuse-status', 'delivery-faults', 'deadline-admit', 'machine-delete', 'deadline-hold', 'release-b', 'deadline-settled', 'release-status-b',
              'rebuild', 'wrong-location', 'boot-denials', 'flux-final', 'evidence']
@@ -209,6 +209,26 @@ with tempfile.TemporaryDirectory() as tmp:
                     'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'):
             continue
         check('step implemented: ' + name, ' %s)' % name in steps or '|%s)' % name in steps or ' %s|' % name in steps)
+
+    # The GitOps behavior scenarios run only in the Flux qualification suite,
+    # after one completed installation; every Fleet phase stays in both modes.
+    qualification = (root / 'hack/multiplane/flux-qualification.sh').read_text()
+    redfish_sequence = (root / 'hack/multiplane/acceptance-redfish.sh').read_text()
+    for name in ('graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention'):
+        check('scenario only in qualification: ' + name, 'flux %s ' % name in qualification and ' %s ' % name not in sequence and ' %s ' % name not in redfish_sequence)
+        check('scenario evidence checked: ' + name, "'%s':" % name in (root / 'hack/multiplane/flux.py').read_text().split('SCENARIOS = ')[1].split('\n\n')[0])
+    q_order = ['allocate', 'admit-install', 'await-delivery', 'dispatch', 'complete', 'install', 'graph-lifecycle', 'drift', 'restart', 'fail-closed', 'retention',
+               'release', 'release-status-a', 'flux-final', 'evidence']
+    q_positions = [qualification.find(' ' + name + ' ') for name in q_order]
+    check('qualification phase order', all(p >= 0 for p in q_positions) and q_positions == sorted(q_positions), str(list(zip(q_order, q_positions))))
+    check('step implemented: complete', ' complete)' in steps)
+    check('flux-final stays in both acceptance modes', 'step flux-final ' in sequence and 'step flux-final ' in redfish_sequence)
+    for arg in (['--suite'], ['--suite', 'bogus'], ['--suite', '--redfish']):
+        r = subprocess.run(['bash', str(root / 'hack/multiplane/run.sh'), *arg], text=True, capture_output=True, env=base)
+        check('run usage: ' + ' '.join(arg), r.returncode == 64, str(r.returncode))
+    s = state(); (s / 'suite').write_text('flux-qualification\n')
+    r = run(['result', '--state', str(s), '--exit-code', '1'])
+    check('result records the suite', json.loads((s / 'evidence/result.json').read_text())['suite'] == 'flux-qualification' and 'suite=flux-qualification' in r.stdout, r.stdout)
 
     # The custody CRD rule phase proves the provider project API enforces the
     # CEL rules in its own namespace, then deletes every object it created, in
