@@ -163,10 +163,18 @@ def newest_install(s):
     return ops[-1] if ops else None
 
 
-def wait_installer(s, step):
-    """Wait until the newest installation journaled its installer step."""
+def wait_job(s):
+    """Record the newest installation and wait for kro to create its worker
+    Job."""
     op = newest_install(s)
     (s / 'deadline-install.json').write_text(json.dumps({'name': op['metadata']['name'], 'uid': op['metadata']['uid']}) + '\n')
+    handoff = wait_for(lambda: handoff_for(s, op['metadata']['uid']), 300, 'the second installation to be delivered', interval=1)
+    wait_for(lambda: kubectl(s, 'cell-admin.yaml', '-n', SITE, 'get', 'job', 'w-' + handoff, check=False).returncode == 0, 300, 'its worker Job', interval=0.5)
+
+
+def wait_installer(s, step):
+    """Wait until the deadline installation journaled its installer step."""
+    op = deadline_op(s)
 
     def journaled():
         for o in harness.journal(s) or []:
@@ -309,4 +317,4 @@ if __name__ == '__main__':
     {'import-inert': import_inert, 'staff-access': staff_access, 'contention': contention, 'release-waits': release_waits,
      'deadline-hold': deadline_hold, 'deadline-settled': deadline_settled, 'rebuild-before': rebuild_before,
      'rebuild-unverified': rebuild_unverified, 'rebuild-verified': rebuild_verified,
-     'wait-installer': lambda s: wait_installer(s, sys.argv[3])}[command](state)
+     'wait-job': wait_job, 'wait-installer': lambda s: wait_installer(s, sys.argv[3])}[command](state)

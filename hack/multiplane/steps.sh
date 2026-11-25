@@ -90,13 +90,15 @@ case "$step" in
   scenario staff-access "$state"
   ;;
  deadline-admit)
-  # Consumer B's installation is admitted under a four-minute deadline while
-  # the site's boot server is stopped, so its installer never boots. Only
-  # this admission uses the short deadline.
-  site_stop fleet-site-boot
+  # Consumer B's installation is admitted under a four-minute deadline. Only
+  # this admission uses the short deadline. kro creates a worker Job only
+  # while the boot server is ready, so the boot server is stopped as soon as
+  # the Job exists, before the firmware can fetch the installer.
   bash hack/multiplane/coordinator.sh restart "$state" --installation-deadline=4m >/dev/null
   "$host" admit-install-b --config "$state/acceptance.json" >/dev/null
   bash hack/multiplane/coordinator.sh restart "$state" >/dev/null
+  scenario wait-job "$state"
+  site_stop fleet-site-boot
   scenario wait-installer "$state" "$installer_step"
   printf 'deadline-admit: the second installation was admitted under a four-minute deadline and journaled its installer boot with the boot server stopped\n'
   ;;
