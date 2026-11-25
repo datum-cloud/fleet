@@ -48,3 +48,9 @@ export function setField(field: HTMLElement, value: string) {
   if (field.getAttribute('role') === 'combobox') chooseValue(field, value);
   else fireEvent.change(field, { target: { value } });
 }
+
+/** Opens the list toolbar's Filter popover, if it is closed, so its selects can be used. */
+export function openFilters() {
+  if (screen.queryByRole('combobox', { name: /^Filter by / })) return;
+  fireEvent.click(screen.getByRole('button', { name: /^Filter\b/ }));
+}

@@ -4,7 +4,8 @@ import { MemoryRouter } from 'react-router';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { PhysicalInventory } from './physical-inventory';
 import { InventoryNavigation, sections } from './inventory-navigation';
-import { inventoryGroup } from './inventory-groups';
+import { isCatalogKind } from './inventory-groups';
+import { chooseCategory } from '../test/inventory-category';
 import { InventoryPendingShell } from './inventory-directory-heading';
 import { toInventory, type Inventory } from '../inventory';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
@@ -29,21 +30,23 @@ function shape(container: HTMLElement) {
 
 it.each(sections)('keeps $kind category, heading, action and filter structure across pending/allowed/denied', section => {
   const client = new QueryClient();
-  const view = (data?: Inventory) => <QueryClientProvider client={client}><MemoryRouter initialEntries={[`/?kind=${section.kind}`]}><InventoryNavigation />{data ? <PhysicalInventory inventory={data} showNavigation={false} /> : <InventoryPendingShell><p>Checking inventory access…</p></InventoryPendingShell>}</MemoryRouter></QueryClientProvider>;
+  const catalogKind = isCatalogKind(section.kind);
+  const view = (data?: Inventory) => <QueryClientProvider client={client}><MemoryRouter initialEntries={[`/?kind=${section.kind}`]}><InventoryNavigation scope={catalogKind ? 'catalog' : 'inventory'} />{data ? <PhysicalInventory inventory={data} showNavigation={false} /> : <InventoryPendingShell><p>Checking inventory access…</p></InventoryPendingShell>}</MemoryRouter></QueryClientProvider>;
   const result = render(view());
-  const nav = screen.getByRole('navigation', { name: 'Inventory categories' });
+  const navName = catalogKind ? 'Catalog categories' : 'Inventory categories';
+  const nav = screen.getByRole('navigation', { name: navName });
   const navMarkup = nav.innerHTML;
   const pendingShape = shape(result.container);
   const toolbarLabels = [...result.container.querySelectorAll('.inventory-toolbar [aria-label]')].map(element => element.getAttribute('aria-label'));
-  const group = inventoryGroup(section.kind);
-  expect(within(nav).getAllByRole('tab')).toHaveLength(4 + (group.kinds.length > 1 ? group.kinds.length : 0));
+  if (catalogKind) expect(within(nav).getByRole('link', { name: section.title })).toHaveAttribute('aria-current', 'page');
+  else expect(within(nav).getByRole('button', { name: `Inventory category: ${section.title}` })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: section.title })).toBeInTheDocument();
   expect(screen.getByRole('searchbox')).toBeDisabled();
   expect(result.container.textContent).not.toMatch(/Private vendor|Private model|Example compute server|\d+ of \d+ records/);
   result.rerender(view(inventory));
   expect(shape(result.container)).toEqual(pendingShape);
   expect(screen.getByRole('searchbox')).toBeEnabled();
-  expect(screen.getByRole('navigation', { name: 'Inventory categories' })).toBe(nav);
+  expect(screen.getByRole('navigation', { name: navName })).toBe(nav);
   expect(nav.innerHTML).toBe(navMarkup);
   result.rerender(view({ ...inventory, issues: { [section.kind]: { status: 403 } } }));
   expect(shape(result.container)).toEqual(pendingShape);
@@ -89,7 +92,8 @@ it.each(sections)('rejects a forced foreign $kind detail even when a same-named 
   expect(screen.getByText(/only supports the default namespace/)).toBeInTheDocument();
   expect(screen.queryByText('Foreign private record')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Edit display name|Correct location/ })).not.toBeInTheDocument();
-  fireEvent.click(within(screen.getByRole('navigation', { name: 'Inventory categories' })).getByRole('tab', { name: section.kind === 'DeviceClaim' ? 'Installation plans' : section.title }));
+  if (isCatalogKind(section.kind)) fireEvent.click(within(screen.getByRole('navigation', { name: 'Catalog categories' })).getByRole('link', { name: section.title }));
+  else chooseCategory(section.title);
   expect(screen.queryByText('Foreign private record')).not.toBeInTheDocument();
   expect(screen.queryByRole('columnheader', { name: 'Namespace' })).not.toBeInTheDocument();
 });

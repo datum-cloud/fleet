@@ -1,77 +1,52 @@
 # Staff physical inventory UI
 
-## Grouped inventory navigation (implemented)
+## Inventory and Catalog navigation (implemented)
 
-This follow-up starts from PR133's exact head
-`15f99a3234019faac8dca53248216d7719b60f97`. PR133 merged into
-`feat/manual-inventory-records` as `ce65b369ccf4a0d113cd23db7ab5052b089a5b87`;
-this navigation change retains that required source head rather than incorporating
-unrelated target-branch changes. It supersedes the flat nine-category navigation
-described in the historical notes below, not inventory contracts or IAM.
+List pages follow staff-portal's list style (its Customers page): one toolbar
+row directly on top of a compact sortable table, then the "rows per page ·
+1–N of M" footer. This replaces the earlier two rows of group and kind tabs.
 
-| Primary route tab | Secondary navigation | Meaning |
+| Page | Navigation | Categories |
 | --- | --- | --- |
-| Equipment | Devices, Cables, Power feeds | Physical assets and recorded connections/supplies |
-| Locations | Operational sites, Facilities, Racks | Site operational membership is distinct from physical Facility premises and rack containment |
-| Installation plans | None | The directory is **Installation plans**, named once in the breadcrumb: installation plans and the devices registered against them. Plans do not allocate capacity |
-| Hardware catalog | Manufacturers, Device types | Reference descriptions/templates, not installed assets or available capacity |
+| Inventory | A category switcher (like staff-portal's `SectionSwitcher`): a datum-ui Popover of links grouped by Equipment, Locations and Installation plans | Devices, Cables, Power feeds · Operational sites, Facilities, Racks · Installation plans |
+| Catalog (its own Bare Metal tab) | A two-option pill toggle (like staff-portal's `ViewTabs`) | Manufacturers, Device types |
 
-- Uses the installed Datum `Tabs`, `TabsList variant="line"`, and
-  `TabsLinkTrigger` with React Router links, matching the pinned Compute and
-  cloud-portal sources. No custom underline imitation, sidebar, or category menu.
-  Primary tabs remain mounted; secondary tabs depend only on the selected group,
-  never access results. A group with one kind (Installation plans) has no
-  second tab row. At phone width the group tabs show short labels (Plans,
-  Catalog, and Sites for Operational sites) so all four fit on one row; the
-  accessible name stays the full title.
-- Kind tabs carry the directory's count ("Devices 18"). A filtered directory
-  shows "shown/total" on its own tab, and a denied collection reads "?". The
-  count is the tab's accessible description; its name stays the title.
-  `PhysicalInventory` reports counts through `InventoryCountsProvider` only
-  after the session boundary resolves, so the public shell, pending and
-  unavailable states render no number.
-- Equipment / Devices is the default. Group links select the first kind unless
-  already in that group. `?kind=...` and record/namespace bookmarks and the
-  child create routes are the only inventory URLs. Directories have no
-  breadcrumb, visible title or description: the tabs say where the reader is,
-  and an `sr-only` `h1` names the page. Detail and task breadcrumbs
-  include group and category, for example Equipment / Devices / record name.
-  Protected names appear only after successful access checks, not from URL text.
-- Search, filters, Refresh and Create are page controls, not navigation. They
-  share one toolbar row above the table: search, the facility and model
-  filters, **Clear filters** (only while a filter is set), an icon-only
-  Refresh named "Refresh inventory", then Create.
-  Same-category links retain `q`, `location`, and `model`; switching categories
-  starts an unfiltered directory, and browser Back/Forward restores prior URLs.
-  Clicking the already-current tab is a no-op, not an implicit refresh.
-- Same-principal presentation navigation reuses authorized default-namespace
-  collection data, including changes to the three known client-side filters
-  and the detail pages' `tab`, `view`, `selectedKind` and `selected` parameters.
-  The narrow presentation allowlist does not include unknown query parameters,
-  route changes, form submissions, or explicit revalidation. Host loaders still
-  verify navigations. During a presentation navigation the page already on
-  screen stays (the location has not changed yet, so nothing new is shown) and
-  writes are withheld until the host check finishes; other navigations show the
-  pending shell. Changed principal, logout, real denial, hidden/pagehide, and
-  unknown-scope boundaries still fence/clear private data. Operation
-  generations restart independently of retained read caches.
-- Route tabs use manual activation: arrows/Home/End move focus, Enter or Space
-  activates the focused link. Lists are named and selected tabs expose their
-  selected/current state, with visible keyboard focus. No dangling panel IDs are
-  emitted for route-linked tabs. Dirty dialog/task navigation, immutable edit
-  baselines, unknown write outcomes, and visible blur/focus no-op behavior remain.
+Manufacturers and Device types are reference descriptions and templates, not
+installed equipment or capacity, so they live on the Catalog page. A record
+link always reaches the page its kind lives on: links are absolute, and a kind
+requested on the other page is redirected there, which keeps old bookmarks and
+relative links working.
 
-Synthetic validation covers direct links for all nine kinds, group defaults,
-detail/task breadcrumbs, dirty task navigation, keyboard focus/activation,
-Back/Forward and filters, stable access-state navigation, and zero additional
-collection reads for same-principal presentation changes. Provider and consumer
-full tests, typechecks, and production builds pass. Local Chromium fixture checks
-at 1280px and 390px verify actual underline components, mobile scroll containment,
-group and secondary routes, rack breadcrumbs, and Arrow/End/Enter/Space navigation
-without page errors. The 390px page stays 390px wide while the primary tab row
-scrolls internally. These are not authenticated staff-portal or staging acceptance.
-No live writes, deployment, schema changes, or new capacity-allocation semantics
-are introduced; Go validation is not rerun because this follow-up changes no Go.
+- The navigation renders outside the session boundary and is laid over the left
+  end of the toolbar row by the page frame (`.inventory-list-frame`); the row
+  reserves its measured width (`--inventory-switcher-w`). On detail pages
+  (`.inventory-detail-frame`) it is hidden but stays mounted. At phone width it
+  sits above the row and the Filter button shows only its icon.
+- Each category carries its count ("Devices 18"): the switcher trigger shows the
+  current one, and the menu and Catalog toggle show every one. A filtered
+  directory shows "shown/total" and a denied collection "?". The count is the
+  link's accessible description, never part of its name. `PhysicalInventory`
+  reports counts through `InventoryCountsProvider` only after the session
+  boundary resolves, so the public shell and pending and unavailable states
+  render no number.
+- The switcher opens on the current category; arrow keys move between
+  categories. Choosing the current category is not a navigation. Devices is the
+  Inventory default and Manufacturers the Catalog default. Directories have no
+  breadcrumb, visible title or description; an `sr-only` `h1` names the page.
+- The toolbar row: a borderless search (applies as the reader types; Enter
+  applies at once), one **Filter** popover for facility and model with
+  **Clear filters**, an icon-only Refresh named "Refresh inventory", then
+  Create. Same-category links retain `q`, `location` and `model`; switching
+  categories starts an unfiltered directory; Back and Forward restore prior URLs.
+- The table is datum-ui's `DataTable.Client` at compact density: sortable
+  uppercase headers, one-line cells, the whole row opens the record. Columns
+  come from `inventory-directory-rows.ts` per record type. A row that needs a
+  second look keeps its coloured edge (red for a conflict, amber for
+  unavailable data) and its reasons as the row tooltip (`data-attention` and
+  `title`, set on each row by `InventoryListTable`).
+- Same-principal presentation navigation reuses loaded collections and keeps the
+  page on screen while the host loads; see
+  [Session boundary](#session-boundary-a-change-of-signed-in-user-implemented).
 
 ## Page design rules
 

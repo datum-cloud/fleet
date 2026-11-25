@@ -609,3 +609,83 @@
 .inventory-discovery-pair { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px 24px; min-width:0; }
 .inventory-discovery-pair > * { min-width:0; }
 .inventory-discovery-identity .inventory-dense-table td:not(:first-child) { white-space:normal; overflow-wrap:anywhere; }
+
+/* ---- Staff-portal list style --------------------------------------------
+   List pages follow staff-portal's Customers list: one toolbar row (category
+   switcher, borderless search, Filter, Refresh, Create) directly on top of a
+   compact sortable table, then the "rows per page · 1–N of M" footer. The
+   navigation renders outside the session boundary, so the page frame lays it
+   over the row's left end and the row reserves its measured width
+   (--inventory-switcher-w). On detail pages it is hidden but stays mounted. */
+.inventory-sections { display:none; }
+.inventory-list-frame { position:relative; min-width:0; }
+.inventory-detail-frame { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.inventory-list-frame > .inventory-sections { position:absolute; top:1px; left:1px; z-index:2; display:flex; flex-direction:row; flex-wrap:nowrap; align-items:center; gap:4px; height:44px; padding:0 6px; border-right:1px solid var(--border); }
+
+.inventory-switcher { display:inline-flex; align-items:center; gap:8px; height:30px; padding:0 8px; border:1px solid transparent; border-radius:var(--radius); background:transparent; color:var(--foreground); font-size:14px; font-weight:500; cursor:pointer; }
+.inventory-switcher:hover { background:var(--muted); }
+.inventory-switcher:focus-visible,.inventory-switcher-menu a:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.inventory-switcher .inventory-tab-count { margin-left:0; }
+.inventory-switcher-chevron { color:var(--muted-foreground); transition:transform .15s; }
+.inventory-switcher[data-state="open"] .inventory-switcher-chevron { transform:rotate(180deg); }
+.inventory-switcher-menu { display:grid; gap:2px; width:min(260px,calc(100vw - 32px)); padding:4px; }
+.inventory-switcher-group-label { margin:0; padding:8px 8px 4px; color:var(--muted-foreground); font-size:11px; letter-spacing:.04em; text-transform:uppercase; }
+.inventory-switcher-menu ul { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
+.inventory-switcher-menu a { display:flex; align-items:center; gap:8px; min-height:32px; padding:0 8px; border-radius:var(--radius); color:var(--foreground); font-size:14px; text-decoration:none; }
+.inventory-switcher-menu a:hover { background:var(--muted); }
+.inventory-switcher-menu a[aria-current="page"] { color:var(--primary); font-weight:500; }
+.inventory-switcher-menu .inventory-tab-count { margin-left:auto; }
+.inventory-switcher-menu a[aria-current="page"] .inventory-tab-count { margin-left:auto; }
+.inventory-switcher-check { margin-left:6px; }
+
+.inventory-catalog-toggle a { display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 10px; border-radius:var(--radius); color:var(--foreground); font-size:14px; font-weight:400; text-decoration:none; white-space:nowrap; }
+.inventory-catalog-toggle a:hover { background:var(--muted); color:var(--primary); }
+.inventory-catalog-toggle a[aria-current="page"] { background:var(--muted); color:var(--primary); font-weight:500; }
+.inventory-catalog-toggle a:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.inventory-catalog-toggle svg { flex:none; }
+
+/* The toolbar row: a card whose bottom edge joins the table. */
+.inventory-list-frame .inventory-toolbar { flex-wrap:nowrap; gap:4px; min-height:44px; padding:0 8px 0 calc(var(--inventory-switcher-w, 0px) + 2px); border:1px solid var(--border); border-radius:var(--radius) var(--radius) 0 0; background:var(--card); }
+.inventory-list-frame .inventory-toolbar:has(+ .inventory-empty),.inventory-list-frame .inventory-toolbar:has(+ [role="alert"]) { border-radius:var(--radius); }
+.inventory-list-frame .inventory-search-form { display:flex; flex:1; min-width:0; }
+.inventory-list-frame .inventory-search { flex:1; gap:8px; min-width:0; max-width:none; padding-left:12px; color:var(--muted-foreground); }
+.inventory-list-frame .inventory-search input { height:42px; padding-left:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.inventory-list-frame .inventory-search input:focus-visible { outline:none; box-shadow:none; }
+.inventory-list-frame .inventory-search:focus-within { box-shadow:inset 0 -2px 0 var(--ring); }
+.inventory-list-frame .inventory-toolbar-actions { flex-wrap:nowrap; gap:4px; }
+.inventory-filter-count { display:inline-block; min-width:18px; height:18px; margin-left:6px; padding:0 5px; border-radius:9px; background:var(--primary); color:var(--primary-foreground); font-size:11px; line-height:18px; text-align:center; }
+.inventory-filter-panel { display:grid; gap:12px; width:min(280px,calc(100vw - 32px)); }
+.inventory-filter-panel .inventory-filter-field { display:grid; gap:6px; font-size:13px; }
+.inventory-filter-panel .field-select { width:100%; }
+.inventory-filter-panel > button { justify-self:start; }
+
+/* The list table, joined to the toolbar row above it. */
+.inventory-list-table-root { display:flex; flex-direction:column; gap:12px; min-width:0; }
+.inventory-list-frame .inventory-toolbar + .inventory-list-table-root { margin-top:-16px; }
+.inventory-list-table { overflow:auto; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); }
+.inventory-list-frame .inventory-toolbar + .inventory-list-table-root .inventory-list-table { border-top:0; border-radius:0 0 var(--radius) var(--radius); }
+.fleet-inventory .inventory-list-table th,.fleet-inventory .inventory-list-table td { vertical-align:middle; }
+.fleet-inventory .inventory-list-table td a { color:var(--primary); text-decoration:none; }
+.fleet-inventory .inventory-list-table td a:hover { text-decoration:underline; }
+.inventory-list-table tr[data-attention="conflict"] > td:first-child { box-shadow:inset 3px 0 var(--destructive); }
+.inventory-list-table tr[data-attention="unavailable"] > td:first-child { box-shadow:inset 3px 0 var(--warning,#d97706); }
+.inventory-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 12px; font-size:12px; }
+.inventory-pagination-size,.inventory-pagination-pages { display:flex; align-items:center; gap:12px; }
+.inventory-pagination .inventory-pagination-select { width:72px; }
+.inventory-pagination .inventory-pagination-select button { height:28px; min-height:0; font-size:12px; }
+.inventory-pagination-range { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.inventory-pagination-buttons { display:flex; }
+.inventory-pagination-buttons > button { width:28px; height:28px; }
+.inventory-pagination-buttons > button:first-child { border-top-right-radius:0; border-bottom-right-radius:0; }
+.inventory-pagination-buttons > button:last-child { margin-left:-1px; border-top-left-radius:0; border-bottom-left-radius:0; }
+.inventory-record-panel > .inventory-list-table-root:first-child { margin-top:8px; }
+
+@media(max-width:640px) {
+  .inventory-list-frame > .inventory-sections { position:static; height:auto; margin-bottom:8px; padding:0; border:0; }
+  .inventory-list-frame > .inventory-sections .inventory-switcher { border-color:var(--border); background:var(--card); }
+  .inventory-list-frame > .inventory-catalog-toggle { display:inline-flex; padding:4px; border:1px solid var(--border); border-radius:calc(var(--radius) + 2px); background:var(--card); }
+  .inventory-list-frame .inventory-toolbar { padding-left:0; }
+  .inventory-list-frame .inventory-filter-label { display:none; }
+}
+/* Dense rows, as in the host's lists: cells stay on one line and the table scrolls sideways when needed. */
+.fleet-inventory .inventory-list-table td { white-space:nowrap; }

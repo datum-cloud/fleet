@@ -1,6 +1,6 @@
 import { chooseValue, selectOptions, setField } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -131,7 +131,7 @@ describe('hardware catalog readers', () => {
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'private old vendor' } });
     fireEvent.submit(screen.getByRole('search'));
     expect(screen.getByRole('link', { name: 'Private vendor label' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: 'Device types' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Catalog categories' })).getByRole('link', { name: 'Device types' }));
     fireEvent.click(screen.getByRole('link', { name: model.spec.displayName }));
     expect(screen.getByText(/Template-only port/)).toBeInTheDocument();
     // The template is listed in the model's component table, as catalog only, not as an installed component.

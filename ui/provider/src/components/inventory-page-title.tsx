@@ -2,11 +2,18 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 import { PageTitle } from '@datum-cloud/datum-ui/page-title';
 import { Link, useLocation } from 'react-router';
 import { useEffect, useRef, type ReactNode } from 'react';
-import { inventoryGroup } from './inventory-groups';
+import { inventoryGroup, isCatalogKind } from './inventory-groups';
 
-export function inventoryDirectoryPath(pathname: string) {
-  const plugin = pathname.match(/^(\/plugins\/[^/]+)\/inventory(?:\/|$)/)?.[1] ?? '';
-  return `${plugin}/inventory`;
+/**
+ * The list page for a record kind: Manufacturers and Device types live on the
+ * Catalog page, everything else on Inventory. Without a kind, the page the
+ * pathname is already on.
+ */
+export function inventoryDirectoryPath(pathname: string, kind?: string) {
+  const match = pathname.match(/^(\/plugins\/[^/]+)\/(inventory|catalog)(?:\/|$)/);
+  const plugin = match?.[1] ?? '';
+  const page = kind !== undefined ? (isCatalogKind(kind) ? 'catalog' : 'inventory') : (match?.[2] ?? (/^\/catalog(?:\/|$)/.test(pathname) ? 'catalog' : 'inventory'));
+  return `${plugin}/${page}`;
 }
 
 export function inventoryReturnSearch(search: string, kind: string) {
@@ -32,7 +39,7 @@ export function InventoryPageTitle({ title, description, actions, directory, cat
       <BreadcrumbItem>{directory || category ? <BreadcrumbLink asChild><Link to={base}>Inventory</Link></BreadcrumbLink> : <BreadcrumbPage>Inventory</BreadcrumbPage>}</BreadcrumbItem>
       {/* A one-kind group (Installation plans) shares its directory's name: one crumb, not two. */}
       {group && group.title !== category?.title && <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbLink asChild><Link to={`${base}?kind=${group.kinds[0]}`}>{group.title}</Link></BreadcrumbLink></BreadcrumbItem></>}
-      {category && <><BreadcrumbSeparator /><BreadcrumbItem>{directory ? <BreadcrumbLink asChild><Link to={`${base}${directory}`}>{category.title}</Link></BreadcrumbLink> : <BreadcrumbPage>{category.title}</BreadcrumbPage>}</BreadcrumbItem></>}
+      {category && <><BreadcrumbSeparator /><BreadcrumbItem>{directory ? <BreadcrumbLink asChild><Link to={directory.startsWith("/") ? directory : `${base}${directory}`}>{category.title}</Link></BreadcrumbLink> : <BreadcrumbPage>{category.title}</BreadcrumbPage>}</BreadcrumbItem></>}
       {directory && <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem></>}
     </BreadcrumbList></Breadcrumb>
     <h1 className="sr-only" aria-label={title} tabIndex={-1} ref={heading} />

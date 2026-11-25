@@ -1,4 +1,5 @@
 import DeviceInventoryList from './device-inventory-list';
+import HardwareCatalog from './hardware-catalog';
 import { toInventory } from '../inventory';
 import * as api from '../lib/api';
 import { ApiError } from '../lib/api';
@@ -28,6 +29,7 @@ function renderAt(path: string) {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/plugins/:slug/inventory" element={<DeviceInventoryList />} />
+          <Route path="/plugins/:slug/catalog" element={<HardwareCatalog />} />
         </Routes>
       </MemoryRouter>
       </InventoryPreviewContext.Provider>
@@ -40,6 +42,7 @@ const inventory = toInventory(fixtureDeviceClaims, fixtureDevices);
 beforeEach(() => useInventoryMock.mockReset());
 
 describe('DeviceInventoryList', () => {
+  // A Manufacturer link on the Inventory page is sent to the Catalog page.
   it('keeps manufacturer deep links in loading state without claiming empty relationships', () => {
     mockInventory({ isLoading: true });
     renderAt('/plugins/metal-datumapis-com/inventory?kind=Manufacturer&namespace=default&record=private-vendor');

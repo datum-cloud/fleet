@@ -3,7 +3,7 @@ import { Label } from '@datum-cloud/datum-ui/label';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { expect, it, vi } from 'vitest';
-import { chooseValue, openSelect, selectedValue, selectOptions } from '../test/field-select';
+import { chooseValue, openSelect, selectedValue, selectOptions, openFilters } from '../test/field-select';
 import { FieldSelect } from './field-select';
 import { InventoryForm } from './inventory-form-surface';
 import { InventoryToolbar } from './inventory-directory-heading';
@@ -15,6 +15,7 @@ it('filters the directory from the keyboard and clears with the All choice', () 
   const onLocation = vi.fn();
   const onModel = vi.fn();
   render(<MemoryRouter><InventoryToolbar section={devices} location="default/site-a" onLocation={onLocation} facilities={[{ value: 'default/site-a', label: 'Site A' }, { value: 'default/site-b', label: 'Site B' }]} onModel={onModel} models={['Example 1U']} /></MemoryRouter>);
+  openFilters();
   const facility = screen.getByRole('combobox', { name: 'Filter by facility' });
   expect(facility).toHaveTextContent('Site A');
   expect(selectOptions(facility).map(option => option.text)).toEqual(['All facilities', 'Site A', 'Site B']);
@@ -31,7 +32,8 @@ it('filters the directory from the keyboard and clears with the All choice', () 
 
 it('disables a filter that has no handler', () => {
   render(<MemoryRouter><InventoryToolbar section={devices} facilities={[{ value: 'default/site-a', label: 'Site A' }]} /></MemoryRouter>);
-  expect(screen.getByRole('combobox', { name: 'Filter by facility' })).toBeDisabled();
+  // With no filter handlers the Filter button itself is disabled.
+  expect(screen.getByRole('button', { name: 'Filter' })).toBeDisabled();
 });
 
 function RequiredPlan({ onSubmit }: { onSubmit: () => void }) {

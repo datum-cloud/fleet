@@ -260,7 +260,7 @@ describe('search-first lists', () => {
     expect(within(table).queryByText('example-srv-a01-01')).not.toBeInTheDocument();
     // Location first, so it stays in view at phone width; optional columns appear because some device records them.
     expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Name', 'Rack', 'U', 'Face', 'Model', 'Serial', 'Asset tag', 'Power']);
-    expect(table).toHaveClass('inventory-dense-table');
+    expect(table.closest('[data-testid="fleet-plugin-inventory-table"]')).not.toBeNull();
     fireEvent.click(within(table).getByText('SYNTH-EX-01'));
     expect(url().get('record')).toBe('example-srv-a01-01');
     expect(screen.getByRole('heading', { name: 'Compute a01-01' })).toBeInTheDocument();

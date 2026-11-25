@@ -208,18 +208,17 @@ to that array instead.
 
 ## Differences from the consumer plugin
 
-Inventory uses four route-linked Datum underline groups: Equipment (Devices,
-Cables, Power feeds), Locations (Operational sites, Facilities, Racks), Installation
-plans, and Hardware catalog (Manufacturers, Device types). Only the selected
-group's secondary navigation is shown. Installation plans opens the existing
-Claims & registrations directory; plans do not allocate capacity. Site membership and
-Facility premises remain distinct. The default is Equipment / Devices.
-Search/filter/refresh/Create stay in the page toolbar. Existing query bookmarks,
-detail and task routes work with group/category breadcrumbs; Back/Forward restores
-filters. Static navigation survives access checks and denial without exposing
-protected names or counts. Rows scroll horizontally on small screens, with
-keyboard-focus navigation and Enter/Space link activation. See the
-[implemented navigation and safety boundaries](../../docs/development/staff-inventory-ui.md#grouped-inventory-navigation-implemented).
+Inventory and Catalog list pages follow staff-portal's list style: one toolbar
+row (a category switcher grouped by Equipment, Locations and Installation plans,
+or on Catalog a Manufacturers / Device types toggle; then search, Filter,
+Refresh and Create) on top of a compact sortable datum-ui data table with a
+rows-per-page footer. Each category shows its count once access resolves.
+Installation plans do not allocate capacity, and Site membership and Facility
+premises remain distinct. Devices is the Inventory default. Existing query
+bookmarks and detail and task routes keep working, including old Manufacturer
+and Device type links, which redirect to Catalog; Back and Forward restore
+filters. See the
+[implemented navigation](../../docs/development/staff-inventory-ui.md#inventory-and-catalog-navigation-implemented).
 
 The Inventory tab loads all six physical inventory collections with API pagination.
 Counts describe loaded records, not capacity or verified equipment. Unknown

@@ -81,6 +81,7 @@ export function FleetPage({
     { label: 'Profiles', href: `${base}/profiles` },
     { label: 'Classes', href: `${base}/classes` },
     { label: 'Inventory', href: `${base}/inventory` },
+    { label: 'Catalog', href: `${base}/catalog` },
   ];
   const active = tabs.slice(1).find((t) => pathname.startsWith(t.href))?.href ?? base;
 

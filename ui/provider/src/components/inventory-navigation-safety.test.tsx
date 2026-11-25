@@ -1,4 +1,5 @@
 import { findEnabledButton } from '../test/enabled-button';
+import { chooseCategory } from '../test/inventory-category';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
@@ -24,8 +25,8 @@ it('real directory category Link followed by fresh create remains usable', async
   }));
   const router = createMemoryRouter([{ id: 'layouts/milo.layout', path: '/', loader: () => ({ user: { metadata: { uid: 'staff-a' } } }), element: <Outlet />, children: [{ path: 'inventory', element: <DeviceInventoryList /> }] }], { initialEntries: ['/inventory'] });
   render(<RouterProvider router={router} />);
-  fireEvent.click(await screen.findByRole('tab', { name: 'Locations' }));
-  fireEvent.click(await screen.findByRole('tab', { name: 'Facilities' }));
+  await screen.findByRole('navigation', { name: 'Inventory categories' });
+  chooseCategory('Facilities');
   await open(false);
   fireEvent.click(screen.getByRole('button', { name: 'Create record' }));
   expect(await screen.findByRole('status')).not.toHaveTextContent('No write was dispatched');
