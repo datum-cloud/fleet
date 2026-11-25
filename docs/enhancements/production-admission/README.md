@@ -181,10 +181,9 @@ fence. The allocator commits a Machine in this order:
    again.
 5. Change the allocation from `Pending` to `Admitted` with a conditional
    update. This is the commit.
-6. Claim Device custody once. If custody refuses the claim, delete the
-   allocation and start again from step 1. No effect ran under it. If the
-   result is uncertain, read custody until it shows whether it names the
-   allocation. Fleet never retries the claim itself.
+6. Claim Device custody once, with a conditional update on the custody
+   version it read. If custody refuses the claim, delete the allocation and
+   start again from step 1. No effect ran under it.
 
 Every delete in these steps carries the allocation's UID and resource version
 as preconditions, so a delayed worker cannot delete a newer allocation with the
@@ -207,10 +206,21 @@ conditional write decides each race:
 - **Allocation wins:** the allocation became `Admitted` first. It committed
   before the acknowledgment, and the active-allocation contract applies.
 
+If the claim's result is uncertain, Fleet reads custody from the API server
+and never sends the claim again:
+
+- Custody names the allocation: the claim succeeded.
+- Custody is at a later version and does not name it: the claim can no longer
+  apply, because its version precondition failed. Fleet deletes the
+  allocation and starts again from step 1.
+- Custody is still at the claimed version: the result stays unknown. The
+  Machine reports `Bound=Unknown`, and Fleet reads again.
+
 An allocation created after the fence moved finds the new generation in step 4.
 An acknowledgment therefore means that no admission checked at an older
-generation can still commit. Step 6 makes one attempt, so an `Admitted`
-allocation cannot wait for a Device and claim it long after an
+generation can still commit. Step 6 claims once, so an `Admitted` allocation
+cannot wait for a Device and claim it long after an acknowledgment. Only a
+claim already sent can still land, and it was committed before the
 acknowledgment.
 
 The machine lifecycle's [admission
@@ -436,7 +446,8 @@ These tests are required and not implemented:
 - A delayed worker deletes an allocation by name after it was recreated, and
   the newer allocation survives.
 - A custody claim's response is lost, and the allocator reads custody instead
-  of deleting the allocation.
+  of deleting the allocation. It deletes the allocation only once custody has
+  moved past the claimed version without naming it.
 - An admitted allocation fails to claim its Device, and the allocator checks
   admission again.
 - A Machine is refused, or deleted before allocation, and its claim is
