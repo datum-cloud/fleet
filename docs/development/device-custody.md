@@ -711,8 +711,9 @@ real API server. The rest of #183 is **proposed**.
   policy to exist.
 - **Fixtures.** The standalone fixtures and the multi-plane seed create a
   `Clear` policy that overwrites and reads back, the only method the sites run.
-  Synthetic staging has no fixture: an operator must create the policy that its
-  capacity names before that capacity can be allocated.
+  Synthetic staging ships a fixture policy that operators apply to the
+  provider project, because the manager writes no policies. No capacity is
+  allocated until it exists.
 
 Not implemented yet: drive inventory from Redfish and commissioning, the media
 manifest and pinned drive names, the per-drive plan in `DeviceWipe`, the
