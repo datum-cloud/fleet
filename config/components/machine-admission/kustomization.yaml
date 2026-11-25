@@ -1,0 +1,9 @@
+# Machine creator admission: the webhooks that record who created each
+# Machine and add its protection finalizer in the same write. The
+# fleet-registration server serves them. No root includes this component
+# yet: the finalizer needs a manager that releases Machines, and the
+# production manager's lifecycle handlers are still blocked.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - webhook.yaml

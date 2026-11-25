@@ -205,6 +205,16 @@ type MachineSpec struct {
 	InitialInstallationRef *LocalReference           `json:"initialInstallationRef,omitempty"`
 	NetworkInterfaces      []NetworkInterfaceRequest `json:"networkInterfaces,omitempty"`
 	PowerState             string                    `json:"powerState,omitempty"`
+	// Creator is the authenticated caller that created the Machine. Fleet's
+	// admission webhooks set it on create and refuse any other value or any
+	// change, so a client cannot choose it.
+	Creator *MachineCreator `json:"creator,omitempty"`
+}
+
+// MachineCreator names the caller that created a Machine.
+type MachineCreator struct {
+	Username string `json:"username"`
+	UID      string `json:"uid"`
 }
 type NamespacedReference struct {
 	Namespace string `json:"namespace,omitempty"`

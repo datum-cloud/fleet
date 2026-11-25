@@ -55,6 +55,16 @@ Redfish Interface Emulator and a lab-only libvirt adapter, and its verification 
 pending too. They are not qualified against a physical BMC or server, and the
 production manager does not use them.
 
+Machine creator admission is **implemented** and not packaged in any root.
+Two webhooks that the registration server serves record the authenticated
+caller in a Machine's `spec.creator`, replacing any value the client sent, and
+add the Machine protection finalizer in the same create. They refuse a caller
+without a Milo project context and any later change to the creator, and a CRD
+rule keeps the creator unchanged if the webhooks are bypassed. Tests against a
+real API server verify it. No handler reads the creator yet, and no Machine
+without one is refused. See the proposed [production
+admission](../enhancements/production-admission/README.md#caller-identity).
+
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
