@@ -143,8 +143,8 @@ func (r *Runner) TenantIsolation(ctx context.Context) error {
 	if err := r.Consumers[1].API.List(ctx, &ops.DeviceInstallationList{}); !meta.IsNoMatchError(err) && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("%w: a consumer project serves Device operations: %v", errTerminal, err)
 	}
-	if _, _, _, _, err := r.installation(ctx, 1); err == nil {
-		return fmt.Errorf("%w: the allocator installed for a consumer that holds nothing", errTerminal)
+	if _, _, _, _, err := r.installation(ctx, 1); !errors.Is(err, errNoActiveAllocation) {
+		return fmt.Errorf("%w: installing for a consumer that holds nothing was not refused for its missing allocation: %v", errTerminal, err)
 	}
 	q, err := r.request(ctx, 1)
 	if err != nil {

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -447,12 +448,18 @@ func (k Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
 		Name: "wipe-power-off",
 		Send: func(ctx context.Context) error {
 			names, err := running(ctx)
+			if err != nil {
+				return err
+			}
 			for _, name := range names {
-				if err == nil {
-					_, err = k.virsh(ctx, "destroy", name)
+				if _, err := k.virsh(ctx, "destroy", name); err != nil {
+					// A guest that exited after the list is already off.
+					if still, lerr := running(ctx); lerr != nil || slices.Contains(still, name) {
+						return err
+					}
 				}
 			}
-			return err
+			return nil
 		},
 		Idempotent: true,
 	}); err != nil {

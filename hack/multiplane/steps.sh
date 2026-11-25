@@ -50,9 +50,22 @@ installer_step=installer-start
 [[ $(cat "$state/site-provider" 2>/dev/null) != redfish ]] || installer_step=installer-power-on
 scenario() { python3 hack/multiplane/scenarios.py "$@"; }
 redfish() { [[ $(cat "$state/site-provider" 2>/dev/null) == redfish ]]; }
-# The lab BMC audit: mark its length, then require no effect after the mark.
-audit_mark() { ! redfish || python3 hack/multiplane/redfish_steps.py audit-mark "$state"; }
-audit_unchanged() { ! redfish || python3 hack/multiplane/redfish_steps.py audit-unchanged "$state"; }
+# Effects on servers, independent of the site journal: the hypervisor's
+# running domains and its append-only QEMU logs, in both modes, and the lab
+# BMC audit in Redfish mode. Mark them, then require none after the mark.
+server_effects() {
+ runtime sh -c 'virsh --connect "qemu:///system?socket=/run/fleet-libvirt/libvirt-sock" list --name && { ls -ln /var/log/libvirt/qemu 2>/dev/null || true; }' | python3 -c '
+import hashlib,sys
+print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+audit_mark() {
+ server_effects > "$state/server-effects-mark"
+ ! redfish || python3 hack/multiplane/redfish_steps.py audit-mark "$state"
+}
+audit_unchanged() {
+ [[ $(server_effects) == "$(cat "$state/server-effects-mark")" ]] || { echo 'a domain started or a QEMU log changed' >&2; return 1; }
+ ! redfish || python3 hack/multiplane/redfish_steps.py audit-unchanged "$state"
+}
 # A cell site Deployment stopped for a fault. Its Flux layer is suspended
 # first, so the harness is never a second writer, and resumed to restore it.
 site_stop() {
@@ -101,17 +114,21 @@ case "$step" in
   scenario staff-access "$state"
   ;;
  deadline-admit)
-  # Consumer B's installation is admitted under a four-minute deadline with
+  # Consumer B's installation is admitted under a six-minute deadline with
   # the lab boot hook armed: the boot service stays Ready, so kro creates
   # the worker, and withholds every boot, so the installer never runs and
   # the worker waits for its receipt until the deadline. Only this admission
-  # uses the short deadline.
+  # uses the short deadline. A failure here restores the default
+  # coordinator and clears the hook, so a rerun starts clean.
+  trap 'bash hack/multiplane/coordinator.sh restart "$state" >/dev/null; site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
   site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold arm
-  bash hack/multiplane/coordinator.sh restart "$state" --installation-deadline=4m >/dev/null
+  bash hack/multiplane/coordinator.sh restart "$state" --installation-deadline=6m >/dev/null
   "$host" admit-install-b --config "$state/acceptance.json" >/dev/null
   bash hack/multiplane/coordinator.sh restart "$state" >/dev/null
+  trap 'site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
   scenario wait-installer "$state" "$installer_step"
-  printf 'deadline-admit: the second installation was admitted under a four-minute deadline and journaled its installer boot with the lab boot hook withholding it\n'
+  trap - ERR
+  printf 'deadline-admit: the second installation was admitted under a six-minute deadline and journaled its installer boot with the lab boot hook withholding it\n'
   ;;
  machine-delete)
   # The customer deletes Machine B mid-install. One release pass begins the
@@ -121,6 +138,7 @@ case "$step" in
   scenario release-waits "$state"
   ;;
  deadline-hold)
+  trap 'site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear' ERR
   scenario deadline-hold "$state"
   # A staff recovery naming the wrong hold is refused before anything is
   # delivered or sent.
@@ -130,6 +148,7 @@ case "$step" in
   [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for a refused recovery' >&2; exit 1; }
   audit_unchanged
   # The release's wipe boots normally.
+  trap - ERR
   site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear
   ;;
  deadline-settled)
@@ -140,6 +159,8 @@ case "$step" in
   # fence: the observer answers fence reports, and the hub accepts none
   # older than a minute.
   scenario rebuild-before "$state"
+  # A failure hands the observer back to Flux, so a rerun starts clean.
+  trap 'site_restore fleet-site-observer' ERR
   site_stop fleet-site-observer
   sleep 75
   bootstrap="$state/provider/bootstrap-project.json"
@@ -154,6 +175,7 @@ case "$step" in
 {"apiVersion":"metal.datumapis.com/v1alpha1","kind":"Machine","metadata":{"name":"allocation","namespace":"default"},"spec":{"machineClassRef":{"name":"local-class"},"machineProfileRef":{"name":"local-profile"},"locationRef":{"name":"local"},"powerState":"Off"}}
 JSON
   "$host" probe-unallocatable --config "$state/acceptance.json" --once
+  trap - ERR
   site_restore fleet-site-observer
   scenario rebuild-verified "$state"
   ;;

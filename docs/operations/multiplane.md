@@ -334,7 +334,7 @@ The phases are then:
     Redfish mode the BMC audit must gain no effect.
 14. **Deadline and Machine deletion.** `deadline-admit` arms a lab-only hook
     in the boot service, which then withholds every boot while staying Ready,
-    and restarts the coordinator with a four-minute installation deadline for
+    and restarts the coordinator with a six-minute installation deadline for
     consumer B's installation only. kro still creates the worker, and the
     installer boot is requested but never served. `machine-delete` has the
     customer delete B's Machine mid-install. One release pass must leave

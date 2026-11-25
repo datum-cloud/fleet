@@ -19,6 +19,9 @@ NS, SITE = 'fleet-coordination', 'fleet-site'
 PROVIDER_NS, DEVICE = 'fleet-provider', 'synthetic-device-central-01'
 ASSIGNMENTS = 'coordination.fleet.datumapis.com/role=assignment'
 REDFISH = harness.PROVIDER == 'redfish'
+# The request UID of the tenant-isolation phase's refused installation
+# (internal/multiplane/scenarios.go).
+TENANT_REQUEST = '00000000-0000-4000-8000-000000000174'
 
 
 def die(message):
@@ -158,18 +161,29 @@ def contention(s):
     print('contention-custody: custody holds the Device for the one MachineAllocation, consumer-a\'s')
 
 
-def newest_install(s):
-    ops = sorted(items(s, 'deviceinstallations'), key=lambda o: o['metadata']['creationTimestamp'])
-    return ops[-1] if ops else None
+def holder_install(s):
+    """The one installation for the allocation custody holds, ignoring the
+    tenant-isolation phase's refused installation."""
+    allocation = (custody(s)['spec']['holder'].get('allocationRef') or {}).get('name')
+    ops = [o for o in items(s, 'deviceinstallations') if (o['spec']['authority'].get('allocationRef') or {}).get('name') == allocation
+           and o['spec']['requestUID'] != TENANT_REQUEST]
+    if not allocation or len(ops) != 1:
+        die('expected one installation for the held allocation %s, found %d' % (allocation, len(ops)))
+    return ops[0]
 
 
 def wait_installer(s, step):
-    """Record the newest installation and wait until it journaled its
-    installer step."""
-    op = newest_install(s)
-    (s / 'deadline-install.json').write_text(json.dumps({'name': op['metadata']['name'], 'uid': op['metadata']['uid']}) + '\n')
+    """Record the held allocation's installation and its handoff, and wait
+    until it journaled its installer step. It fails at once if the
+    installation already ended, so a slow start is reported as itself."""
+    op = holder_install(s)
+    handoff = wait_for(lambda: handoff_for(s, op['metadata']['uid']), 300, 'the installation to be delivered', interval=1)
+    (s / 'deadline-install.json').write_text(json.dumps({'name': op['metadata']['name'], 'uid': op['metadata']['uid'], 'handoff': handoff}) + '\n')
 
     def journaled():
+        phase = deadline_op(s).get('status', {}).get('phase')
+        if phase in ('Succeeded', 'Failed', 'Cancelled', 'OutcomeUnknown'):
+            die('the installation ended %s before it journaled %s; its deadline left too little time' % (phase, step))
         for o in harness.journal(s) or []:
             if o['operation'] == op['metadata']['uid'] and any(n == step for n, _ in o['steps']):
                 return o
@@ -223,17 +237,18 @@ def deadline_hold(s):
     hold = custody(s)['spec'].get('recoveryHold') or {}
     if hold.get('uid') != op['metadata']['uid'] or hold.get('fence') != status.get('fence'):
         die('custody does not hold the installation: %s' % hold.get('kind'))
-    handoff = handoff_for(s, op['metadata']['uid'])
-    finished = []
-    if handoff:
-        def stopped():
-            pods = get(s, 'cell-admin.yaml', '-n', SITE, 'get', 'pods', '-l', 'fleet.datumapis.com/handoff=' + handoff)['items']
-            ends = [c['state']['terminated']['finishedAt'] for p in pods for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})]
-            return ends if pods and len(ends) == len(pods) else None
-        finished = wait_for(stopped, 300, 'the installation worker to stop')
+    # The handoff was recorded at delivery: its worker Pods must show the
+    # worker stopped. A missing Pod is a failure, never a pass.
+    handoff = json.loads((s / 'deadline-install.json').read_text())['handoff']
+
+    def stopped():
+        pods = get(s, 'cell-admin.yaml', '-n', SITE, 'get', 'pods', '-l', 'fleet.datumapis.com/handoff=' + handoff)['items']
+        ends = [c['state']['terminated']['finishedAt'] for p in pods for c in p['status'].get('containerStatuses', []) if 'terminated' in c.get('state', {})]
+        return ends if pods and len(ends) == len(pods) else None
+    finished = wait_for(stopped, 300, 'the installation worker to stop')
     boots = [b for b in harness.journal(s) or [] if b['operation'] == op['metadata']['uid']]
     record = {'phase': 'OutcomeUnknown', 'reason': 'DeadlineExceeded', 'fence': status['fence'], 'deadline': status.get('deadline'),
-              'holdFence': hold['fence'], 'workerFinishedAt': max(finished) if finished else None, 'journaledSteps': [n for o in boots for n, _ in o['steps']]}
+              'holdFence': hold['fence'], 'workerFinishedAt': max(finished), 'journaledSteps': [n for o in boots for n, _ in o['steps']]}
     (s / 'deadline-hold.json').write_text(json.dumps(record) + '\n')
     write(s, 'deadline-hold.json', record)
     print('deadline-hold: the installation ended OutcomeUnknown at its deadline; custody holds it at fence %d; its worker stopped' % status['fence'])
@@ -253,7 +268,7 @@ def deadline_settled(s):
     spec = custody(s)['spec']
     if wipe['fence'] <= held['fence'] or spec.get('recoveryHold') or spec['holder']['type'] != 'None':
         die('the wipe did not settle the installation hold: wipe fence %s, held fence %s, hold %s' % (wipe['fence'], held['fence'], bool(spec.get('recoveryHold'))))
-    if held['workerFinishedAt'] and wipe['admittedAt'] < held['workerFinishedAt']:
+    if wipe['admittedAt'] < held['workerFinishedAt']:
         die('the wipe was admitted before the installation worker stopped')
     r = kubectl(s, 'consumer-b/management-project.json', '-n', 'default', 'get', 'machine', 'allocation', check=False)
     if r.returncode == 0 or 'NotFound' not in r.stderr:
@@ -299,9 +314,12 @@ def rebuild_verified(s):
     site_fence = max(before['siteFence'] or 0, before['siteStopped'] or 0)
     if c['spec']['fence'] <= site_fence or c['spec']['fence'] <= before['oldFence']:
         die('rebuilt custody fence %d is not above the site fence %d and the old fence %d' % (c['spec']['fence'], site_fence, before['oldFence']))
-    if items(s, 'machineallocations') and any(a['status'].get('phase') != 'Released' for a in items(s, 'machineallocations')):
-        die('an allocation became active during the rebuild')
-    write(s, 'rebuild.json', dict(before, verifiedFence=c['spec']['fence'], verifiedHolder=c['spec']['holder']['type'], probeAllocated=False))
+    probe = get(s, 'consumer-a/management-project.json', '-n', 'default', 'get', 'machine', 'allocation')['metadata']['uid']
+    allocations = items(s, 'machineallocations')
+    probe_allocated = any(a['spec']['machineRef']['uid'] == probe for a in allocations)
+    if probe_allocated or any(a.get('status', {}).get('phase') != 'Released' for a in allocations):
+        die('an allocation was recorded during the rebuild')
+    write(s, 'rebuild.json', dict(before, verifiedFence=c['spec']['fence'], verifiedHolder=c['spec']['holder']['type'], probeAllocated=probe_allocated))
     print('rebuild-verified: custody Verified at fence %d, above the site fence %d; nothing was allocated while Unverified' % (c['spec']['fence'], site_fence))
 
 
