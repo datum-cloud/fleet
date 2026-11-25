@@ -43,7 +43,7 @@ def retained(tmp, status='failed', failed='release', name='fleet-multiplane.Reta
 
 with tempfile.TemporaryDirectory() as t:
     tmp = pathlib.Path(t)
-    env = dict(os.environ, FLEET_MULTIPLANE_STATE_ROOT=str(tmp))
+    env = dict(os.environ, FLEET_MULTIPLANE_STATE_ROOT=str(tmp), FLEET_MULTIPLANE_STATE_ROOTS=str(tmp))
 
     # Refusals: nothing retained, a passed run, a run without a result, a
     # failure before the suite started, and a phase the suite does not have.
@@ -208,7 +208,7 @@ with tempfile.TemporaryDirectory() as t:
     runs = tmp / 'runs'
     runs.mkdir()
     s = retained(runs)
-    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(runs), FLEET_MULTIPLANE_LOCK_DIR=str(tmp / 'lock'))
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(runs), FLEET_MULTIPLANE_STATE_ROOTS=str(runs), FLEET_MULTIPLANE_LOCK_DIR=str(tmp / 'lock'))
     r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh'), '--resume', str(s), '--from', 'allocate'], cwd=repo, env=env, text=True, capture_output=True, timeout=120)
     result = json.loads((s / 'evidence/result.json').read_text())
     check('run.sh --resume exits 5', r.returncode == 5, str(r.returncode) + r.stdout[-600:] + r.stderr[-600:])

@@ -473,6 +473,29 @@ prefixes. The original limit of 128 inotify instances was insufficient for this
 API count: the real Karmada webhook exited with `too many open files`. The bounded
 value 1024 resolves that local prerequisite.
 
+### Automatic cleanup
+
+Each run, once it holds the lock, removes what old finished runs left
+behind, so their stopped containers do not fill the profile's disk. It only
+touches a run whose result is older than 12 hours
+(`FLEET_MULTIPLANE_CLEANUP_AGE_HOURS`): it tears down that run's exact-prefix
+containers, clusters and image tags as an abandoned Unknown run, then deletes
+its state directory. It also removes `fleet-mp-*` containers whose state
+directory is already gone, once all of them have been stopped that long. It
+never touches the following:
+
+- a run that holds or waits for the lock;
+- a run that a live process names;
+- a run with no result;
+- a run with a running container;
+- containers outside the `fleet-mp-` prefix.
+
+`evidence/cleanup.json` lists what the run removed and what it kept and why.
+Copy out any evidence you need before that age. `FLEET_MULTIPLANE_CLEANUP=0`
+turns the automatic step off. `task multiplane:cleanup -- --dry-run` lists
+what would be removed; without `--dry-run` it removes it. A CI runner is
+single-use, so CI mode does not clean up.
+
 ### Resuming a failed run
 
 To debug a late failure without rebuilding everything, resume the failed run:
@@ -520,7 +543,7 @@ They use fake runtime tools to cover preflight outcomes, the runtime lock
 (concurrent starts, arrival order, release on exit and TERM, recovery from a
 killed holder, waiter or unreaped owner, the bounded wait, the checks repeated
 under the lock, waiting for a live run without the lock), resuming (refusals,
-skipped phases, the `resumed` result), Flux source staging
+skipped phases, the `resumed` result), cleanup (only old, finished, unlocked runs), Flux source staging
 (credential refusal, revision variants, rendering), push records, reconcile waits
 (stale acknowledgements rejected, stripped requests reissued), fault-guard
 suspension and root-revision receipts, bounded phase timeouts

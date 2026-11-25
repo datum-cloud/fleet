@@ -105,6 +105,13 @@ def write_json(path, value):
 
 # ---------------------------------------------------------------- preflight
 
+def state_roots():
+    """Where runs keep state: this run's root and the default. Tests confine
+    every search with FLEET_MULTIPLANE_STATE_ROOTS (colon-separated)."""
+    roots = os.environ.get('FLEET_MULTIPLANE_STATE_ROOTS') or os.environ.get('FLEET_MULTIPLANE_STATE_ROOT', '/tmp') + ':/tmp'
+    return sorted({pathlib.Path(r) for r in roots.split(':') if r})
+
+
 def running_fleet_containers():
     code, out, _ = capture(['docker', 'ps', '--format', '{{.Names}}'], 30)
     return code, sorted(n for n in out.split() if re.match(r'^fleet-(local|mp)-', n))
@@ -115,8 +122,7 @@ def live_run(prefix):
     None. A run is live while any process names its state directory; a run
     that exited and left containers running has none. A run is between
     processes only briefly, so it is looked for three times."""
-    roots = {pathlib.Path(os.environ.get('FLEET_MULTIPLANE_STATE_ROOT', '/tmp')), pathlib.Path('/tmp')}
-    for state in (d for r in roots for d in r.glob('fleet-multiplane.*')):
+    for state in (d for r in state_roots() for d in r.glob('fleet-multiplane.*')):
         try:
             if (state / 'prefix').read_text().strip() != prefix:
                 continue
@@ -497,8 +503,7 @@ def suite_phases(suite, provider, root=None):
 
 def find_state(target):
     if re.match(r'^fleet-mp-[a-f0-9]{8}$', target):
-        roots = {pathlib.Path(os.environ.get('FLEET_MULTIPLANE_STATE_ROOT', '/tmp')), pathlib.Path('/tmp')}
-        for state in (d for r in roots for d in r.glob('fleet-multiplane.*')):
+        for state in (d for r in state_roots() for d in r.glob('fleet-multiplane.*')):
             try:
                 if (state / 'prefix').read_text().strip() == target:
                     return state
@@ -565,6 +570,131 @@ def resume_plan(args):
               file=sys.stderr)
     print(state)
     print(phase_name)
+    return 0
+
+
+# ---------------------------------------------------------------- cleanup
+
+CLEANUP_AGE_HOURS = float(os.environ.get('FLEET_MULTIPLANE_CLEANUP_AGE_HOURS', '12'))
+STATE_NAME = re.compile(r'^fleet-multiplane\.[A-Za-z0-9]{6}$')
+PREFIX = re.compile(r'^fleet-mp-[a-f0-9]{8}')
+
+
+def protected_states():
+    """State directories cleanup never touches: the lock holder's, every
+    queued run's, and any a live process names."""
+    held = {(read_holder() or {}).get('state')}
+    for t in (LOCK_DIR / 'queue').glob('*.ticket'):
+        try:
+            held.add(json.loads(t.read_text()).get('state'))
+        except (OSError, ValueError):
+            pass
+    return {pathlib.Path(h).resolve() for h in held if h}
+
+
+def container_records():
+    """Every fleet-mp container: name, state and when it stopped."""
+    code, out, _ = capture(['docker', 'ps', '-a', '--filter', 'name=^fleet-mp-', '--format', '{{.Names}}'], 30)
+    names = [n for n in out.split() if PREFIX.match(n)] if code == 0 else []
+    if not names:
+        return []
+    code, out, _ = capture(['docker', 'inspect', '--format', '{{.Name}}\t{{.State.Status}}\t{{.State.FinishedAt}}', *names], 60)
+    records = []
+    for line in out.splitlines() if code == 0 else []:
+        name, status, finished = line.split('\t')
+        records.append({'name': name.lstrip('/'), 'state': status, 'finishedAt': finished})
+    return records
+
+
+def stopped_since(finished):
+    """Seconds since a container stopped, from Docker's RFC 3339 FinishedAt."""
+    m = re.match(r'^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)', finished or '')
+    if not m or m.group(1).startswith('0001'):
+        return None
+    stamp = datetime.datetime.fromisoformat(m.group(1)).replace(tzinfo=datetime.timezone.utc)
+    return (datetime.datetime.now(datetime.timezone.utc) - stamp).total_seconds()
+
+
+def cleanup(args):
+    """Remove what finished runs left behind once it is older than the age:
+    their stopped containers and image tags, then their state directories.
+    Never a run that holds or waits for the lock, one a live process names,
+    one with no result, or one with any running container."""
+    age = args.max_age_hours * 3600
+    protected = protected_states()
+    containers = container_records()
+    by_prefix = {}
+    for c in containers:
+        by_prefix.setdefault(PREFIX.match(c['name']).group(0), []).append(c)
+    removed, kept = [], []
+
+    def keep(what, why):
+        kept.append({'what': what, 'why': why})
+
+    states = {}
+    for root in state_roots():
+        for d in root.glob('fleet-multiplane.*'):
+            if STATE_NAME.match(d.name) and d.is_dir() and not d.is_symlink() and d.stat().st_uid == os.getuid():
+                states[d.resolve()] = d
+    owned_prefixes = set()
+    for real, d in sorted(states.items()):
+        try:
+            prefix = (d / 'prefix').read_text().strip()
+        except OSError:
+            prefix = None
+        if prefix:
+            owned_prefixes.add(prefix)
+        result = d / 'evidence' / 'result.json'
+        if real in protected:
+            keep(d.name, 'holds or waits for the lock')
+            continue
+        if not result.exists():
+            keep(d.name, 'no result: still going, or killed before it stopped')
+            continue
+        if time.time() - result.stat().st_mtime < age:
+            keep(d.name, 'finished less than %gh ago' % args.max_age_hours)
+            continue
+        if prefix and live_run(prefix):
+            keep(d.name, 'a live process names it')
+            continue
+        mine = by_prefix.get(prefix, []) if prefix else []
+        if any(c['state'] not in ('exited', 'created', 'dead') for c in mine):
+            keep(d.name, 'a container is still running')
+            continue
+        if args.dry_run:
+            removed.append({'state': d.name, 'prefix': prefix, 'containers': len(mine), 'dryRun': True})
+            continue
+        if mine:
+            # The exact-prefix teardown, recorded as an abandoned Unknown run.
+            code, _, err = capture(['bash', 'hack/multiplane/teardown.sh', str(d), '--discard-unknown'], 900, cwd=args.root)
+            if code != 0:
+                keep(d.name, 'teardown failed: ' + err.strip()[-200:])
+                continue
+        shutil.rmtree(d)
+        removed.append({'state': d.name, 'prefix': prefix, 'containers': len(mine)})
+    # Stopped containers whose run state is already gone.
+    for prefix, mine in sorted(by_prefix.items()):
+        if prefix in owned_prefixes:
+            continue
+        since = [stopped_since(c['finishedAt']) for c in mine]
+        if any(c['state'] not in ('exited', 'created', 'dead') for c in mine):
+            keep(prefix, 'a container is still running')
+        elif any(x is None or x < age for x in since):
+            keep(prefix, 'stopped less than %gh ago' % args.max_age_hours)
+        elif args.dry_run:
+            removed.append({'prefix': prefix, 'containers': len(mine), 'dryRun': True})
+        else:
+            code, _, err = capture(['docker', 'rm', '-f', '-v', *[c['name'] for c in mine]], 300)
+            for image in (prefix + '-site-image', prefix + '-bmc-image', prefix + '-provider-image'):
+                capture(['docker', 'image', 'rm', image], 60)
+            (removed if code == 0 else kept).append({'prefix': prefix, 'containers': len(mine)} if code == 0 else {'what': prefix, 'why': err.strip()[-200:]})
+    record = {'observedAt': now(), 'maxAgeHours': args.max_age_hours, 'dryRun': args.dry_run, 'removed': removed, 'kept': kept}
+    if args.state:
+        write_json(evidence_dir(args.state) / 'cleanup.json', record)
+    print('cleanup: removed %d finished runs older than %gh%s; kept %d' % (len(removed), args.max_age_hours, ' (dry run)' if args.dry_run else '', len(kept)),
+          file=sys.stderr, flush=True)
+    if args.verbose:
+        print(json.dumps(record, indent=2, sort_keys=True))
     return 0
 
 
@@ -916,6 +1046,12 @@ def main():
     s.add_argument('--checks', choices=('all', 'host', 'contention'), default='all')
     s.add_argument('--wait', type=int, default=0, help='contention: seconds to wait for a live run without the lock')
     s.add_argument('--allow-prefix', help="contention: a resumed run's own retained containers")
+    s = sub.add_parser('cleanup')
+    s.add_argument('--state', help='the run doing the cleanup, to record it in its evidence')
+    s.add_argument('--root', default='.')
+    s.add_argument('--max-age-hours', type=float, default=CLEANUP_AGE_HOURS)
+    s.add_argument('--dry-run', action='store_true')
+    s.add_argument('--verbose', action='store_true')
     s = sub.add_parser('resume-plan')
     s.add_argument('--target', required=True)
     s.add_argument('--from', dest='phase')
@@ -952,7 +1088,7 @@ def main():
             a.command = a.command[1:]
         if not a.command or not re.match(r'^[a-z0-9-]+$', a.name):
             return EXIT_USAGE
-    return {'preflight': preflight, 'lock': lock, 'resume-plan': resume_plan, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd, 'custody-digest': custody_cmd,
+    return {'preflight': preflight, 'lock': lock, 'resume-plan': resume_plan, 'cleanup': cleanup, 'phase': phase, 'wait-stage': wait_stage, 'journal': journal_cmd, 'custody-digest': custody_cmd,
             'scan': scan, 'result': result}[a.cmd](a)
 
 

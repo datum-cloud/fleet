@@ -42,6 +42,11 @@ tasks:
     cmds:
       - ./hack/multiplane/stop.sh "{{.STATE}}"
 
+  multiplane:cleanup:
+    desc: Remove the stopped containers, image tags and state of finished runs older than FLEET_MULTIPLANE_CLEANUP_AGE_HOURS (default 12); never an active, locked or queued run. Pass --dry-run to list only.
+    cmds:
+      - python3 hack/multiplane/harness.py cleanup --verbose {{.CLI_ARGS}}
+
   multiplane:test-harness:
     desc: Offline tests for the multi-plane harness with fake runtime tools.
     cmds:
