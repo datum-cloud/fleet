@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="520" viewBox="0 0 960 520" role="img" aria-labelledby="title description">
-<title id="title">How a power result is decided</title><desc id="description">After admission, the worker checks the server and sends at most one command. Succeeded means the requested power state was observed within three minutes, or for a restart or power cycle, reset evidence and power on. Failed means nothing was sent, or the BMC refused and the power did not change. OutcomeUnknown means no evidence appeared within three minutes, or the power changed after a refusal. It places a recovery hold, which a DeviceRecovery settles by citing a discovery reading of a settled power state taken after the operation ended.</desc>
+<title id="title">How a power result is decided</title><desc id="description">After admission, the worker checks the server and sends at most one command. Succeeded means the requested power state was observed within three minutes, or for a restart or power cycle, reset evidence and power on. Failed means nothing was sent, or the BMC refused and the power did not change. OutcomeUnknown means no evidence appeared within three minutes, or the power changed after a refusal. It places a recovery hold. A DeviceRecovery with Settle clears it by citing a discovery reading of a settled power state taken after the operation ended. A DeviceRecovery with Retry clears it once a later power operation succeeds.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 21px; font-weight: 700; } .label { font-size: 18px; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
 <rect width="960" height="520" fill="white"/>
@@ -27,8 +27,9 @@
 <text x="778" y="273" class="label" text-anchor="middle">or power changed</text>
 <text x="778" y="296" class="label" text-anchor="middle">after a refusal</text>
 <path d="M 778 314 L 778 364" class="line"/>
-<rect x="598" y="364" width="340" height="100" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
-<text x="768" y="396" class="heading" text-anchor="middle">Power recovery hold</text>
-<text x="768" y="422" class="label" text-anchor="middle">Settled by a DeviceRecovery</text>
-<text x="768" y="445" class="label" text-anchor="middle">citing a later, settled power read</text>
+<rect x="578" y="364" width="370" height="124" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="763" y="396" class="heading" text-anchor="middle">Power recovery hold</text>
+<text x="763" y="422" class="label" text-anchor="middle">Settle: cite a later, settled power read</text>
+<text x="763" y="445" class="label" text-anchor="middle">Retry: a later power operation</text>
+<text x="763" y="468" class="label" text-anchor="middle">that succeeds</text>
 </svg>

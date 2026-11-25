@@ -161,12 +161,12 @@ The evidence never carries a credential or BMC response content.
 ### Admission
 
 Disabled capacity on a Device does not block staff power, because it leaves
-the holder `None`. This document names two outcomes of [custody
-admission][admission] for power: the shared BMC key refusal is
-`SharedPublicKey`, and the cancellation of an expired staff operation is
-`Expired`.
+the holder `None`. [Custody admission][admission] defines the reasons every
+kind shares.
 
-Power adds these refusals. None sends a command:
+Power adds these reasons. The coordinator checks run under the admission rule
+for a kind's own inputs, and the worker checks run before the command. None
+sends a command:
 
 | Reason | Refused by | When |
 | --- | --- | --- |
@@ -201,15 +201,18 @@ anyway, which gives `OutcomeUnknown`.
 
 ![How a power result is decided, and how a power recovery hold settles](diagrams/power-outcomes.svg)
 
-An `OutcomeUnknown` power operation becomes a [recovery hold][unknown]. The
-`DeviceRecovery` that settles it must cite discovery evidence that:
+An `OutcomeUnknown` power operation becomes a [recovery hold][unknown], which
+settles in one of two ways.
+
+A `Settle` recovery must cite discovery evidence that:
 
 - was read after the operation ended;
 - came from the Device's current BMC endpoint; and
 - reports a settled power state, `On` or `Off`.
 
-The recovery decisions are defined in the device operations proposal. `Retry`
-does not apply, because only a `DeviceRecovery` settles a power hold.
+After a `Retry` recovery, the next power operation settles the hold only if it
+ends `Succeeded` under the [outcome table](#execution-and-outcomes). For
+`ForceRestart` and `PowerCycle`, a retry is a second reset of the server.
 
 A held Machine's power is unverified, so the [machine
 lifecycle](../machine-lifecycle/README.md#machine) rule reports it as `Unknown`
@@ -231,8 +234,7 @@ until the hold settles.
 These tests are required and not written. Each checks the result and the
 number of commands at the BMC:
 
-- Each refusal reason in [Admission](#admission), including `SharedPublicKey`,
-  and an `Expired` cancellation, with no command.
+- Each refusal reason in [Admission](#admission), with no command.
 - On, off, restart and power cycle against the outcome table, including a lost
   response.
 - `On` or `ForceOff` on a server already in that state, with no command.
@@ -240,8 +242,8 @@ number of commands at the BMC:
 - A refused customer operation is not retried until the Machine generation
   changes.
 - A power hold settles only with discovery evidence that meets the
-  [Recovery](#recovery) rules, and the held Machine reports power as `Unknown`
-  until then.
+  [Recovery](#recovery) rules, or with a retried operation that succeeds, and
+  the held Machine reports power as `Unknown` until then.
 
 ## Production readiness review questionnaire
 
@@ -291,10 +293,6 @@ See [Recovery](#recovery).
   test, or ship earlier on test hardware only?
 - **Customer power off.** `Off` maps to `ForceOff`, which cuts power without
   warning the operating system. Should Metal offer a graceful power off?
-- **Customer power after a hold.** After `Settle`, the server's power can still
-  differ from `powerState`. The provider cannot create a new operation under
-  the same Machine generation, and `Retry` does not cover power. Should power
-  holds allow `Retry`, or should provider names change?
 
 ## Infrastructure needed
 
