@@ -240,6 +240,26 @@ func TestCommissioning(t *testing.T) {
 			e.settle(device.Name)
 			e.requirePhase(operation, ops.PhaseFailed, ReasonPlanNotQualified)
 		}
+		// Once the recreated plan is approved, a commissioning that names the
+		// old incarnation's approval is still refused, and only one naming the
+		// new approval pins the recreated plan.
+		e.approve(again, planApprover)
+		if ok, why, err := Qualified(e.ctx, e.admin, again); err != nil || !ok {
+			t.Fatalf("the re-approved plan is not qualified: %s %v", why, err)
+		}
+		if pinned, err := Pins(old, again); err != nil || pinned {
+			t.Fatalf("the old approval pins the recreated plan: %v %v", pinned, err)
+		}
+		if pinned, err := Pins(ops.ApprovedPlanReference{PlanReference: old.PlanReference, Approval: ApprovalName(again)}, again); err != nil || !pinned {
+			t.Fatalf("the new approval does not pin the recreated plan: %v %v", pinned, err)
+		}
+		before := e.custody(device.Name).Spec.Fence
+		operation := e.commissionUnder(device, old, again.Spec.Content)
+		e.settle(device.Name)
+		e.requirePhase(operation, ops.PhaseFailed, ReasonPlanNotQualified)
+		if fence := e.custody(device.Name).Spec.Fence; fence != before {
+			t.Fatalf("a refused commissioning raised the fence from %d to %d", before, fence)
+		}
 	})
 
 	t.Run("copied content that differs from the plan is refused", func(t *testing.T) {
