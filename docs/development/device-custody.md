@@ -31,7 +31,9 @@ marked **implemented and verified**, **implemented and inert**, or
 - **Operations.** Every kind starts with one envelope: `creator`, `deviceRef`
   (name and UID) and `authority` (exactly one of `allocationRef` and
   `serviceRequest`). The spec is immutable after create. Status phases move
-  forward only, and an ended phase is final.
+  forward only, and an ended phase is final. `Pending` may end
+  `OutcomeUnknown`, because rebuild holds an operation whose status still
+  says `Pending`.
 - **The coordinator** (`internal/custody`) is the only writer of custody and of
   operation status. Every custody change is one update that carries the
   resourceVersion just read. On a conflict it reads again and decides again.
@@ -78,9 +80,11 @@ Each decision lists the open point from the implementation brief it settles.
   queues. A kind's rows are matched only against operations of that kind, so
   adding a row never changes how another row is evaluated.
 - **Queueing.** Provider and release rows queue. They wait in `Pending` while
-  another operation runs, while custody is `Unverified`, or while discovery is
-  not current. All three can clear on their own. Staff rows never queue: those
-  conditions end a staff operation `Failed`.
+  another operation runs, while custody is `Unverified`, while discovery is
+  not current, or while a recovery hold that they cannot settle exists. Each
+  of these can clear, and a queued operation's name is deterministic, so it
+  could not be created again. Staff rows never queue: those conditions end a
+  staff operation `Failed`.
 - **Phases for refusals (O5).** A refusal ends `Failed` with a reason, and
   nothing is sent. Expired, superseded and no-longer-matching operations end
   `Cancelled`. A `Pending` operation whose holder no longer matches is
@@ -113,11 +117,20 @@ Each decision lists the open point from the implementation brief it settles.
   and step. Staff kinds must use a generated name.
 - **Order.** Pending operations are admitted oldest first. Ties break on kind,
   then name, then UID, so every coordinator picks the same one.
+- **Refusals use current custody.** The coordinator reads custody, lists the
+  operations, and reads custody again. It decides only if custody did not
+  change in between. A claim followed by its installation's create is
+  therefore seen before the installation could be refused.
 - **Racing refusals.** Delivery must wait until operation status shows
   `Admitted`. If a racing coordinator ends an operation, or it is deleted,
   after custody admitted it but before the status copy, custody withdraws it
   (`Cancelled`, `Withdrawn`). Nothing was delivered, and the fence stays
   raised.
+- **Fences.** Admission raises the fence above both custody's fence and every
+  fence a serving site reports having seen. Each site reports two fences: the
+  highest it has seen, and the highest for which it confirmed that older
+  workers stopped. A site report at or above an admission's fence therefore
+  proves the site received that admission.
 
 ### Deadlines and clock skew (O4)
 
@@ -142,8 +155,8 @@ Each value is configurable.
 - A settling operation records the hold it settles. If it succeeds, the hold
   is cleared. If it also ends unknown, its hold replaces the old one.
 - A `DeviceRecovery` is admitted like any operation and raises the fence. The
-  coordinator applies it only after every site serving the Device reports a
-  stored fence at least that high, so the held worker has stopped. If no site
+  coordinator applies it only after every site serving the Device confirms
+  that every worker below that fence stopped. If no site
   confirms before its deadline, it ends `Failed` with `SiteNotConfirmed`, and
   the hold stays. It does not end `OutcomeUnknown`, because it cannot change
   the server.
@@ -156,21 +169,32 @@ Each value is configurable.
   `Release` requires a disk disposal record.
 - `Resolve` is the only operation `Unverified` custody admits. It records the
   holder (`None`, `Allocation`, `Release` or `Retired`), marks custody
-  `Verified`, and adopts the current Device UID. A rebuilt hold stays, to be
-  settled separately.
+  `Verified`, and adopts the current Device UID. The holder must agree with
+  the Device's live MachineAllocations, both at admission and when it is
+  applied: `None` or `Retired` when none names the Device, and `Allocation`
+  or `Release` with the one that does. A rebuilt hold stays, to be settled
+  separately.
 - Nothing retries an operation automatically.
 
 ### Rebuilding custody (O13, O15, O16)
 
 - Missing custody is created `Unverified` from the Device's lifecycle and
   succeeded `Retire` recoveries, its MachineAllocations that are not
-  `Released`, and its operations that have not ended. A releasing allocation
-  rebuilds `Release` with every gate open.
+  `Released`, and its operations. A releasing allocation rebuilds `Release`
+  with every gate open.
 - Every operation that has not ended is held, even if its status says
-  `Pending`, because custody is written before status.
-- Two live allocations, two unfinished operations, holder sources that
-  disagree, a Device UID that differs from custody, or a missing Device each
-  keep custody `Unverified` until a `Resolve`.
+  `Pending`, because custody is written before status. Its status is ended
+  `OutcomeUnknown` with reason `Rebuilt`, and it is never admitted again.
+- An operation that ended `OutcomeUnknown` is held again unless something
+  later settled it: a succeeded operation with a higher fence whose kind
+  settles the held kind, or a succeeded recovery that cleared that exact
+  hold.
+- If several operations would be held, the one with the highest fence is
+  held and custody stays `Unverified`, so a `Resolve` must decide and the hold
+  is never dropped.
+- Two live allocations, holder sources that disagree, a Device UID that
+  differs from custody, or a missing Device also keep custody `Unverified`
+  until a `Resolve`.
 - Custody becomes `Verified` only after every site configured to serve the
   Device reports its stored fence. The new fence is above every fence those
   sites and the operations have used. A Device no site serves stays
@@ -219,7 +243,9 @@ remains.
 ### Other decisions
 
 - **Retention.** Finished operations are deleted 30 days after they end,
-  unless custody still names them as active or as the hold.
+  unless custody still names them as active or as the hold. A succeeded
+  retirement is kept until inventory retires the Device, because until then
+  it is the only record rebuild can read.
 - **Rejected results.** A result whose fence or operation does not match the
   active operation is refused, and custody counts it and records the last one
   for monitoring. It never changes the holder. A retry of a result already
@@ -311,7 +337,9 @@ a real API server:
 | Every holder transition, pending order, supersede, cancellation on holder change, stale fences, results, deadlines | `TestLifecycle`, `TestImportedDeviceGetsUnverifiedCustodyAndSendsNothing` |
 | Holds and settlement through the test-only kind, install and wipe holds, `Retry`, `Retire`, retention | `TestRecovery` |
 | Rebuild from each source, each conflict, `Resolve`, custody deleted and restored | `TestRebuild` |
+| Rebuild holds unproven and unfinished installations and wipes without admitting them again, settled outcomes, several unproven outcomes, `Resolve` against live allocations, fences above the site's, retirements kept past retention | `TestRebuildKeepsUnprovenOutcomes` |
 | Two allocators, allocator against staff, two coordinators, admission against a holder change, two Devices, a lost claim response | `TestConcurrency` |
+| A claim and its installation landing between the custody read and the operation list | `TestARefusalNeverUsesCustodyReadBeforeAHolderChange` |
 | A crash between each pair of custody and status writes, with dropped and lost responses | `TestWriteOrderCrashRecovery` |
 | CEL rules | `TestCRDRules` |
 | Seams, rows, principals, ordering, evidence bounds, capacity for every input | `TestRegistryRejectsIncompleteKindsAndRows`, `TestAddingRowsLeavesExistingRowsAlone`, `TestPrincipals`, `TestCandidatesOrderOldestFirstWithADeterministicTieBreak`, `TestEvidenceIsTypedAndBounded`, `TestCapacityProjection` |
