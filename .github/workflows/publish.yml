@@ -11,7 +11,7 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.27.1
     with:
       image-name: fleet
       dockerfile-path: build/manager.Dockerfile
@@ -25,7 +25,7 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.27.1
     with:
       image-name: fleet-consumer-ui-plugin
       dockerfile-path: build/ui-plugin.Dockerfile
@@ -38,7 +38,7 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.21.0
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.27.1
     with:
       image-name: fleet-provider-ui-plugin
       dockerfile-path: build/ui-plugin.Dockerfile
@@ -57,7 +57,7 @@ jobs:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.21.0
+    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.27.1
     with:
       bundle-name: ghcr.io/datum-cloud/fleet-kustomize
       bundle-path: config
