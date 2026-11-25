@@ -2,8 +2,10 @@ package custody
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"time"
@@ -52,16 +54,21 @@ type Config struct {
 	SkewMargin time.Duration
 	// Retention is how long finished operations are kept.
 	Retention time.Duration
+	// DiscoveryInterval is how often BMC discovery reads each BMC. Kind
+	// checks receive it.
+	DiscoveryInterval time.Duration
 	// DiscoveryMaxAge is how old the last complete discovery may be for
-	// identity to count as current.
+	// identity to count as current. It defaults to twice DiscoveryInterval.
 	DiscoveryMaxAge time.Duration
 }
 
 const (
-	DefaultStaffExpiry     = 5 * time.Minute
-	DefaultSkewMargin      = 2 * time.Minute
-	DefaultRetention       = 30 * 24 * time.Hour
-	DefaultDiscoveryMaxAge = 2 * time.Hour
+	DefaultStaffExpiry = 5 * time.Minute
+	DefaultSkewMargin  = 2 * time.Minute
+	DefaultRetention   = 30 * 24 * time.Hour
+	// DefaultDiscoveryInterval matches BMC discovery's default interval.
+	DefaultDiscoveryInterval = time.Hour
+	DefaultDiscoveryMaxAge   = 2 * DefaultDiscoveryInterval
 )
 
 func (c Config) withDefaults() Config {
@@ -77,8 +84,11 @@ func (c Config) withDefaults() Config {
 	if c.Retention == 0 {
 		c.Retention = DefaultRetention
 	}
+	if c.DiscoveryInterval == 0 {
+		c.DiscoveryInterval = DefaultDiscoveryInterval
+	}
 	if c.DiscoveryMaxAge == 0 {
-		c.DiscoveryMaxAge = DefaultDiscoveryMaxAge
+		c.DiscoveryMaxAge = 2 * c.DiscoveryInterval
 	}
 	return c
 }
@@ -400,7 +410,7 @@ func (c *Coordinator) progressActive(ctx context.Context, custody *ops.DeviceCus
 		return c.writeCustody(ctx, custody)
 	}
 	spec, refusal := kind.Apply(ctx, &ApplyContext{Operation: operation, Custody: custody.DeepCopy(), Device: device, Registry: c.Registry, Reader: c.Client, ConfirmedFence: confirmed, HighestFence: highest, Now: now})
-	if refusal != nil {
+	if refusal = c.Registry.declaredRefusal(kind.GVK.Kind, heldKind(custody), refusal); refusal != nil {
 		c.finishActive(custody, active, ops.PhaseFailed, refusal.Reason, refusal.Message, nil)
 		return c.writeCustody(ctx, custody)
 	}
@@ -480,7 +490,8 @@ func (c *Coordinator) holdUnknown(custody *ops.DeviceCustody, active ops.ActiveO
 	spec := &custody.Spec
 	now := metav1.NewTime(c.now())
 	spec.ActiveOperation = nil
-	spec.RecoveryHold = &ops.RecoveryHold{OperationReference: active.OperationReference, Fence: active.Fence, Since: now, Reason: reason}
+	deadline, snapshot := active.Deadline, active.Snapshot
+	spec.RecoveryHold = &ops.RecoveryHold{OperationReference: active.OperationReference, Fence: active.Fence, Since: now, Reason: reason, Deadline: &deadline, Snapshot: &snapshot}
 	spec.LastResult = &ops.OperationResult{OperationReference: active.OperationReference, Fence: active.Fence, Phase: ops.PhaseOutcomeUnknown, Reason: reason, Message: message, FinishedAt: now}
 	if evidence != nil {
 		spec.LastResult.Evidence = rawExtension(evidence)
@@ -548,6 +559,7 @@ type decision struct {
 	message string
 	row     Rule
 	settles *ops.OperationReference
+	extra   map[string]string
 }
 
 // admit evaluates pending candidates and admits at most one with a single
@@ -708,6 +720,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 		return fail(ReasonOperationActive, "another operation is running, and staff operations never wait")
 	}
+	admission := &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now, DiscoveryInterval: cfg.DiscoveryInterval}
 	// Preconditions 5 and 6: current discovery and a unique BMC key.
 	if kind.checksDiscovery(operation) {
 		if refusal := c.identityCurrent(device, now); refusal != nil {
@@ -721,11 +734,20 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 	}
 	if kind.Check != nil {
-		if refusal := kind.Check(ctx, &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now}); refusal != nil {
+		if refusal := c.Registry.declaredRefusal(kind.GVK.Kind, heldKind(custody), kind.Check(ctx, admission)); refusal != nil {
 			return fail(refusal.Reason, "%s", refusal.Message)
 		}
 	}
-	return decision{row: row, settles: settles}
+	// Kind fields for the snapshot come from the same Device and clock the
+	// checks saw.
+	var extra map[string]string
+	if kind.SnapshotExtra != nil {
+		extra = kind.SnapshotExtra(admission)
+		if err := validExtra(extra); err != nil {
+			return fail(ReasonSnapshotInvalid, "%s", err.Error())
+		}
+	}
+	return decision{row: row, settles: settles, extra: extra}
 }
 
 // wait returns Pending for queue rows and Failed otherwise.
@@ -795,6 +817,15 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 	if err != nil {
 		return Outcome{}, err
 	}
+	// The Device must not change between the checks and the custody update.
+	// If it did, discovery may have moved, so decide again.
+	current := &inventory.Device{}
+	if err := c.Client.Get(ctx, client.ObjectKeyFromObject(device), current); err != nil {
+		return Outcome{}, err
+	}
+	if current.ResourceVersion != device.ResourceVersion {
+		return Outcome{Changed: true}, nil
+	}
 	now := c.now()
 	spec := &custody.Spec
 	// The fence rises above every fence a site has seen, so a site report at
@@ -811,7 +842,7 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 		AdmittedAt:         metav1.NewTime(now),
 		Deadline:           metav1.NewTime(now.Add(kind.Deadline)),
 		InputDigest:        digest,
-		Snapshot:           snapshot(kind, operation, device),
+		Snapshot:           snapshot(kind, operation, device, d.extra),
 		Creator:            operation.Envelope().Creator,
 		Settles:            d.settles,
 	}
@@ -832,8 +863,8 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 	return outcome, err
 }
 
-func snapshot(kind *Kind, operation ops.Operation, device *inventory.Device) ops.DeviceSnapshot {
-	out := ops.DeviceSnapshot{SystemUUID: device.Spec.Identity.SystemUUID, DeviceGeneration: device.Generation}
+func snapshot(kind *Kind, operation ops.Operation, device *inventory.Device, extra map[string]string) ops.DeviceSnapshot {
+	out := ops.DeviceSnapshot{SystemUUID: device.Spec.Identity.SystemUUID, DeviceGeneration: device.Generation, Extra: extra}
 	if device.Spec.BMC != nil {
 		out.BMCEndpoint = device.Spec.BMC.Endpoint
 	}
@@ -854,4 +885,19 @@ func snapshot(kind *Kind, operation ops.Operation, device *inventory.Device) ops
 		}
 	}
 	return out
+}
+
+var extraKey = regexp.MustCompile(`^[a-z][A-Za-z0-9]{0,62}$`)
+
+// validExtra bounds the fields a kind adds to the snapshot.
+func validExtra(extra map[string]string) error {
+	if len(extra) > 16 {
+		return errors.New("a kind adds at most 16 snapshot fields")
+	}
+	for key, value := range extra {
+		if !extraKey.MatchString(key) || len(value) > 256 {
+			return fmt.Errorf("snapshot field %q is not a camelCase name with a value of at most 256 bytes", key)
+		}
+	}
+	return nil
 }

@@ -129,6 +129,10 @@ type DeviceSnapshot struct {
 	BMCPublicKeySHA256  string `json:"bmcPublicKeySHA256"`
 	DeviceGeneration    int64  `json:"deviceGeneration"`
 	DiscoveryObservedAt string `json:"discoveryObservedAt"`
+	// Extra holds bounded fields a kind adds at admission, such as the reset
+	// types discovery offered. The worker and recovery see what admission
+	// saw.
+	Extra map[string]string `json:"extra,omitempty"`
 }
 
 // OperationResult is how one operation ended, with its typed evidence.
@@ -146,9 +150,14 @@ type OperationResult struct {
 // operations its kind allows are admitted while it exists.
 type RecoveryHold struct {
 	OperationReference `json:",inline"`
-	Fence              int64       `json:"fence"`
-	Since              metav1.Time `json:"since"`
-	Reason             string      `json:"reason"`
+	Fence              int64 `json:"fence"`
+	// Since is when the held operation ended with an unknown outcome.
+	Since  metav1.Time `json:"since"`
+	Reason string      `json:"reason"`
+	// Deadline is the held operation's deadline, when it was known.
+	Deadline *metav1.Time `json:"deadline,omitempty"`
+	// Snapshot is the Device snapshot the held operation was admitted with.
+	Snapshot *DeviceSnapshot `json:"snapshot,omitempty"`
 	// RetryAuthorizedBy names the DeviceRecovery with Retry that lets the
 	// held operation's requester create one settling operation.
 	RetryAuthorizedBy *OperationReference `json:"retryAuthorizedBy,omitempty"`

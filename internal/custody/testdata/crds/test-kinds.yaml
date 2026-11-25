@@ -167,6 +167,12 @@ spec:
                   discoveryObservedAt:
                     type: string
                     maxLength: 64
+                  extra:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
               evidence:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
@@ -343,6 +349,12 @@ spec:
                   discoveryObservedAt:
                     type: string
                     maxLength: 64
+                  extra:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
               evidence:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true

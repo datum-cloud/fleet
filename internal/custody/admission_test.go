@@ -2,6 +2,7 @@ package custody
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -44,11 +45,11 @@ func TestAdmissionPreconditions(t *testing.T) {
 			t.Fatalf("active = %+v", active)
 		}
 		want := ops.DeviceSnapshot{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: device.Spec.Identity.SystemUUID, BMCPublicKeySHA256: fmt.Sprintf("%064x", n), DeviceGeneration: device.Generation, DiscoveryObservedAt: e.clock.Now().Format(time.RFC3339)}
-		if active.Snapshot != want {
+		if !reflect.DeepEqual(active.Snapshot, want) {
 			t.Fatalf("snapshot = %+v, want %+v", active.Snapshot, want)
 		}
 		status := e.requirePhase(operation, ops.PhaseAdmitted, "")
-		if status.Fence != active.Fence || status.InputDigest != digest || status.Snapshot == nil || *status.Snapshot != want {
+		if status.Fence != active.Fence || status.InputDigest != digest || status.Snapshot == nil || !reflect.DeepEqual(*status.Snapshot, want) {
 			t.Fatalf("status copy = %+v", status)
 		}
 	})

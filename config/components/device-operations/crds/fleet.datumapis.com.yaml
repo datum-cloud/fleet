@@ -161,6 +161,12 @@ spec:
                       discoveryObservedAt:
                         type: string
                         maxLength: 64
+                      extra:
+                        type: object
+                        maxProperties: 16
+                        additionalProperties:
+                          type: string
+                          maxLength: 256
                   creator:
                     type: object
                     properties:
@@ -280,6 +286,36 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 128
+                  deadline:
+                    type: string
+                    format: date-time
+                  snapshot:
+                    type: object
+                    properties:
+                      bmcEndpoint:
+                        type: string
+                        maxLength: 2048
+                      systemUUID:
+                        type: string
+                        maxLength: 64
+                      bootMACAddress:
+                        type: string
+                        maxLength: 32
+                      bmcPublicKeySHA256:
+                        type: string
+                        maxLength: 128
+                      deviceGeneration:
+                        type: integer
+                        format: int64
+                      discoveryObservedAt:
+                        type: string
+                        maxLength: 64
+                      extra:
+                        type: object
+                        maxProperties: 16
+                        additionalProperties:
+                          type: string
+                          maxLength: 256
                   retryAuthorizedBy:
                     type: object
                     properties:
@@ -571,6 +607,12 @@ spec:
                   discoveryObservedAt:
                     type: string
                     maxLength: 64
+                  extra:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
               evidence:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
@@ -761,6 +803,12 @@ spec:
                   discoveryObservedAt:
                     type: string
                     maxLength: 64
+                  extra:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
               evidence:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
@@ -1021,6 +1069,12 @@ spec:
                   discoveryObservedAt:
                     type: string
                     maxLength: 64
+                  extra:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
               evidence:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true

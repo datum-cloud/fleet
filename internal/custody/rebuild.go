@@ -137,7 +137,8 @@ func (c *Coordinator) rebuiltSpec(ctx context.Context, device *inventory.Device)
 			return cmp.Compare(b.operation.OperationStatus().Fence, a.operation.OperationStatus().Fence)
 		})
 		newest := held[0]
-		spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: newest.kind.GVK.Kind, Name: newest.operation.GetName(), UID: string(newest.operation.GetUID())}, Fence: newest.operation.OperationStatus().Fence, Since: metav1.NewTime(c.now()), Reason: ReasonRebuilt}
+		status := newest.operation.OperationStatus()
+		spec.RecoveryHold = &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: newest.kind.GVK.Kind, Name: newest.operation.GetName(), UID: string(newest.operation.GetUID())}, Fence: status.Fence, Since: metav1.NewTime(c.now()), Reason: ReasonRebuilt, Deadline: status.Deadline, Snapshot: status.Snapshot}
 		if len(held) > 1 {
 			spec.Conflicts = appendOnce(spec.Conflicts, ConflictMultipleUnfinished)
 		}

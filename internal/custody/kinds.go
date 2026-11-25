@@ -106,6 +106,7 @@ func DeviceInstallationKind() Kind {
 			return refuse(ReasonBootInterfaceUnknown, "the Device records no interface %q with a MAC address", installation.Spec.BootInterface)
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
+		Reasons: []Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}},
 		Evidence: StrictEvidence(evidenceLimit, func(evidence *ops.InstallationEvidence) error {
 			return validateSteps(evidence.Steps)
 		}),
@@ -132,7 +133,8 @@ func DeviceWipeKind() Kind {
 		Effectful: true,
 		// A wipe after release settles an installation hold. A held wipe is
 		// settled by a later wipe only after a DeviceRecovery with Retry.
-		Settles: []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
+		Settles:   []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
+		Retryable: true,
 		Evidence: StrictEvidence(evidenceLimit, func(evidence *ops.WipeEvidence) error {
 			if len(evidence.WipedDisks) > 16 {
 				return errors.New("evidence records at most 16 disks")
@@ -160,6 +162,8 @@ func DeviceRecoveryKind() Kind {
 		Naming:   GeneratedName,
 		Deadline: RecoveryDeadline,
 		Variant:  func(operation ops.Operation) string { return string(operation.(*ops.DeviceRecovery).Spec.Decision) },
+		Reasons: []Reason{{Name: ReasonHoldMismatch, RaisedBy: RaisedByCoordinator}, {Name: ReasonNotSettleable, RaisedBy: RaisedByCoordinator}, {Name: ReasonNotRetryable, RaisedBy: RaisedByCoordinator},
+			{Name: ReasonRetryAuthorized, RaisedBy: RaisedByCoordinator}, {Name: ReasonDisposalRequired, RaisedBy: RaisedByCoordinator}, {Name: ReasonInvalidResolve, RaisedBy: RaisedByCoordinator}},
 		// Retire and Resolve must work on a server whose BMC is
 		// unreachable. Settle and Retry still need current discovery.
 		SkipsDiscovery: func(operation ops.Operation) bool {
@@ -218,6 +222,9 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 	case ops.DecisionRetry:
 		if hold.RetryAuthorizedBy != nil {
 			return refuse(ReasonRetryAuthorized, "a retry is already authorized for this hold")
+		}
+		if held := registry.Kind(hold.Kind); held == nil || !held.Retryable {
+			return refuse(ReasonNotRetryable, "a DeviceRecovery with Retry does not apply to a %s hold", hold.Kind)
 		}
 		for _, kind := range registry.Kinds() {
 			for _, rule := range kind.Settles {

@@ -2,6 +2,8 @@ package custody
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"time"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
@@ -81,8 +83,29 @@ type testEvidence struct {
 
 func testKinds() []Kind {
 	check := func(_ context.Context, admission *Admission) *Refusal {
-		if admission.Operation.(interface{ input() string }).input() == "refuse" {
+		switch admission.Operation.(interface{ input() string }).input() {
+		case "refuse":
 			return refuse(reasonTestRefuse, "the test kind refuses this input")
+		case "undeclared":
+			return refuse("Unlisted", "the test kind refuses with a reason it never declared")
+		}
+		if hook := checkHook.Load(); hook != nil {
+			(*hook)(admission)
+		}
+		return nil
+	}
+	// The staff kind adds fields to the snapshot, as power adds the reset
+	// types discovery offered.
+	extra := func(admission *Admission) map[string]string {
+		switch admission.Operation.(interface{ input() string }).input() {
+		case "extra":
+			return map[string]string{"resetTypes": "On,ForceOff", "discoveryInterval": admission.DiscoveryInterval.String()}
+		case "too-much":
+			out := map[string]string{}
+			for index := range 17 {
+				out[fmt.Sprintf("field%d", index)] = "x"
+			}
+			return out
 		}
 		return nil
 	}
@@ -100,10 +123,17 @@ func testKinds() []Kind {
 		Effectful: true,
 		Check:     check,
 		Settles:   []SettleRule{{Held: testStaffKind}},
+		Reasons:   []Reason{{Name: reasonTestRefuse, RaisedBy: RaisedByCoordinator}, {Name: "EvidenceNotCurrent", RaisedBy: RaisedByCoordinator}},
 		Evidence:  evidence,
 		// Seam 4: a hold of this kind settles with recovery evidence observed
 		// after the operation ended, as power's discovery read will.
+		SnapshotExtra: extra,
 		RecoverySettle: func(_ context.Context, settle *RecoverySettleContext) *Refusal {
+			// The hook sees when the held operation ended, its deadline and
+			// its admission snapshot, and the Device as read now.
+			if settle.Hold.Deadline == nil || settle.Hold.Snapshot == nil || settle.Device == nil {
+				return refuse("EvidenceNotCurrent", "the hold does not carry its deadline and snapshot")
+			}
 			if !settle.Recovery.Spec.Evidence.ObservedAt.After(settle.Hold.Since.Time) || settle.Recovery.Spec.Evidence.Data["state"] == "" {
 				return refuse("EvidenceNotCurrent", "the evidence must be a state observed after the operation ended")
 			}
@@ -129,10 +159,14 @@ func testKinds() []Kind {
 		Supersedes: true,
 		Check:      check,
 		Settles:    []SettleRule{{Held: testProviderKind}},
+		Reasons:    []Reason{{Name: reasonTestRefuse, RaisedBy: RaisedByCoordinator}},
 		Evidence:   evidence,
 	}
 	return []Kind{staff, provider}
 }
+
+// checkHook, when set, runs inside the test kinds' admission check.
+var checkHook atomic.Pointer[func(*Admission)]
 
 func (in *DeviceTestStaffOperation) input() string    { return in.Spec.Input }
 func (in *DeviceTestProviderOperation) input() string { return in.Spec.Input }

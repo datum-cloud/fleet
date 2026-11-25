@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"sort"
 	"time"
 
@@ -77,8 +79,21 @@ type Kind struct {
 	// preconditions pass and before the custody update. A non-nil refusal
 	// ends the operation Failed with that reason, and nothing is sent.
 	Check func(context.Context, *Admission) *Refusal
-	// Settles lists the held kinds a success of this kind settles.
+	// Settles lists the held kinds a success of this kind settles. It may be
+	// empty: a kind whose holds only a DeviceRecovery settles, such as power,
+	// settles no hold itself.
 	Settles []SettleRule
+	// Retryable means a DeviceRecovery with Retry applies to this kind's
+	// holds: it lets the held operation's requester create one settling
+	// operation.
+	Retryable bool
+	// Reasons are the kind's own refusal reasons. A refusal with a reason
+	// that is neither shared nor declared here ends the operation Failed with
+	// UndeclaredReason.
+	Reasons []Reason
+	// SnapshotExtra adds bounded fields to the Device snapshot at admission.
+	// It sees the same Device the checks saw.
+	SnapshotExtra func(*Admission) map[string]string
 	// Evidence validates the kind's typed, bounded result evidence and
 	// returns it in canonical form. Nil means the kind's results carry none.
 	Evidence func([]byte) ([]byte, error)
@@ -101,6 +116,21 @@ func (k *Kind) checksDiscovery(operation ops.Operation) bool {
 	return k.SkipsDiscovery == nil || !k.SkipsDiscovery(operation)
 }
 
+// ReasonSource is where a refusal reason is raised.
+type ReasonSource string
+
+const (
+	RaisedByCoordinator ReasonSource = "Coordinator"
+	RaisedByWorker      ReasonSource = "Worker"
+	RaisedByBoth        ReasonSource = "Both"
+)
+
+// Reason is one refusal reason a kind declares.
+type Reason struct {
+	Name     string
+	RaisedBy ReasonSource
+}
+
 // SettleRule says a success of the owning kind settles a hold of Held. When
 // RequiresRetry is set, a DeviceRecovery with Retry must first authorize it.
 type SettleRule struct {
@@ -117,10 +147,16 @@ type Admission struct {
 	Registry  *Registry
 	// Reader reads the provider project. A check must not write.
 	Reader client.Reader
-	Now    time.Time
+	// Now is the coordinator's injected clock, read once per decision.
+	Now time.Time
+	// DiscoveryInterval is how often BMC discovery reads each BMC.
+	DiscoveryInterval time.Duration
 }
 
-// RecoverySettleContext is what a held kind's settle hook sees.
+// RecoverySettleContext is what a held kind's settle hook sees. Hold carries
+// when the held operation ended (Since), its deadline and its admission
+// snapshot. Device is read when the hook runs, at admission of the recovery
+// and again when it is applied.
 type RecoverySettleContext struct {
 	Hold     ops.RecoveryHold
 	Recovery *ops.DeviceRecovery
@@ -175,7 +211,16 @@ const (
 	ReasonSiteNotConfirmed   = "SiteNotConfirmed"
 	ReasonSiteUnknown        = "SiteCouldNotProve"
 	ReasonInvalidEvidence    = "InvalidEvidence"
+	ReasonUndeclared         = "UndeclaredReason"
+	ReasonSnapshotInvalid    = "SnapshotInvalid"
 )
+
+// sharedReasons are the reasons every kind may raise.
+var sharedReasons = []string{ReasonUnverified, ReasonNoMatchingRule, ReasonHolderMismatch, ReasonOperationActive, ReasonIdentityMismatch, ReasonIdentityNotCurrent,
+	ReasonSharedPublicKey, ReasonRecoveryHold, ReasonNameMismatch, ReasonExpired, ReasonSuperseded, ReasonWithdrawn, ReasonDeadlineExceeded,
+	ReasonSiteNotConfirmed, ReasonSiteUnknown, ReasonInvalidEvidence, ReasonUndeclared, ReasonSnapshotInvalid}
+
+var reasonPattern = regexp.MustCompile(`^[A-Z][A-Za-z0-9]{0,62}$`)
 
 // Registry holds the operation kinds and the admission rules.
 type Registry struct {
@@ -204,6 +249,20 @@ func (r *Registry) Register(kind Kind) error {
 	if _, ok := r.kinds[name]; ok {
 		return fmt.Errorf("%s is already registered", name)
 	}
+	seen := map[string]bool{}
+	for _, reason := range kind.Reasons {
+		switch {
+		case !reasonPattern.MatchString(reason.Name):
+			return fmt.Errorf("%s: reason %q is not a CamelCase name", name, reason.Name)
+		case slices.Contains(sharedReasons, reason.Name):
+			return fmt.Errorf("%s: reason %s is shared and needs no declaration", name, reason.Name)
+		case seen[reason.Name]:
+			return fmt.Errorf("%s: reason %s is declared twice", name, reason.Name)
+		case reason.RaisedBy != RaisedByCoordinator && reason.RaisedBy != RaisedByWorker && reason.RaisedBy != RaisedByBoth:
+			return fmt.Errorf("%s: reason %s needs a source", name, reason.Name)
+		}
+		seen[reason.Name] = true
+	}
 	r.kinds[name] = &kind
 	r.order = append(r.order, name)
 	sort.Strings(r.order)
@@ -227,6 +286,38 @@ func (r *Registry) AddRule(rule Rule) error {
 }
 
 func (r *Registry) Kind(name string) *Kind { return r.kinds[name] }
+
+// Declared reports whether a reason is shared or declared by the kind for
+// the given source.
+func (r *Registry) Declared(kind, reason string, source ReasonSource) bool {
+	if slices.Contains(sharedReasons, reason) {
+		return true
+	}
+	entry := r.kinds[kind]
+	if entry == nil {
+		return false
+	}
+	return slices.ContainsFunc(entry.Reasons, func(declared Reason) bool {
+		return declared.Name == reason && (declared.RaisedBy == source || declared.RaisedBy == RaisedByBoth)
+	})
+}
+
+// declaredRefusal returns the refusal unchanged when the kind, or the held
+// kind whose settle hook it came through, declared its reason, and
+// UndeclaredReason otherwise. Every recorded reason is one a kind registered.
+func (r *Registry) declaredRefusal(kind, held string, refusal *Refusal) *Refusal {
+	if refusal == nil || r.Declared(kind, refusal.Reason, RaisedByCoordinator) || (held != "" && r.Declared(held, refusal.Reason, RaisedByCoordinator)) {
+		return refusal
+	}
+	return refuse(ReasonUndeclared, "%s refused with %s, which it does not declare", kind, refusal.Reason)
+}
+
+func heldKind(custody *ops.DeviceCustody) string {
+	if hold := custody.Spec.RecoveryHold; hold != nil {
+		return hold.Kind
+	}
+	return ""
+}
 
 // Kinds returns every registered kind, sorted by name.
 func (r *Registry) Kinds() []*Kind {
