@@ -485,5 +485,5 @@ func (a *Allocator) pinCleaning(ctx context.Context, capacity *fleetv1.MachineCa
 	if err != nil {
 		return ops.PinnedCleaningPolicy{}, err
 	}
-	return ops.PinnedCleaningPolicy{CleaningPolicyReference: ops.CleaningPolicyReference{Name: policy.Name, UID: string(policy.UID), Digest: digest}, Spec: policy.Spec}, nil
+	return ops.PinnedCleaningPolicy{CleaningPolicyReference: ops.CleaningPolicyReference{Name: policy.Name, Generation: policy.Generation, Digest: digest}, Spec: policy.Spec}, nil
 }

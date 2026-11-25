@@ -178,10 +178,11 @@ A `MachineAllocation` holds the allocation's private facts (O8). It lives in the
 provider project, and only the Metal provider writes it.
 
 - **Spec (immutable).** The consumer as a typed reference, the Machine by
-  namespace and name, the capacity, the Device by name, the accepted class and profile pinned by
-  generation and spec digest, the CPU and memory, the hardware snapshot, the
-  admission authority, an optional quota claim, a copy of the capacity's
-  `CleaningPolicy` with its name, UID and digest, the boot interface and the target disks.
+  namespace and name, the capacity, the Device by name, the accepted class
+  and profile pinned by generation and spec digest, the CPU and memory, the
+  hardware snapshot, the admission authority, an optional quota claim, a copy
+  of the capacity's `CleaningPolicy` with its name, generation and digest, the
+  boot interface and the target disks.
 - **Labels.** `fleet.datumapis.com/machine-uid`,
   `fleet.datumapis.com/consumer-uid` and
   `fleet.datumapis.com/device-uid` record the incarnations the allocation was
@@ -704,11 +705,13 @@ real API server. The rest of #183 is **proposed**.
   only, because the spec cannot change. The synthetic Milo root and the
   standalone cluster have no such webhook.
 - **Pinning.** The allocator reads the capacity's policy, validates it again,
-  and copies its name, UID, SHA-256 digest and spec into the MachineAllocation.
-  Capacity whose policy is missing or invalid is skipped, and nothing is
-  claimed. If no capacity is left, the error names the skipped policy. Each
-  release `DeviceWipe` names the pinned policy, so release does not need the
-  policy to exist.
+  and copies its name, generation, SHA-256 digest and spec into the
+  MachineAllocation. No spec holds the policy's UID: the copy and its digest
+  pin the content, so a policy deleted and recreated under the same name, even
+  at the same generation, changes no existing pin. Capacity whose policy is
+  missing or invalid is skipped, and nothing is claimed. If no capacity is
+  left, the error names the skipped policy. Each release `DeviceWipe` names
+  the pinned policy, so release does not need the policy to exist.
 - **Fixtures.** The standalone fixtures and the multi-plane seed create a
   `Clear` policy that overwrites and reads back, the only method the sites run.
   Synthetic staging ships a fixture policy that operators apply to the

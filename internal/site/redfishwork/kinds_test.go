@@ -238,7 +238,7 @@ func TestInstallationRunsBothPhasesWithOneOnEach(t *testing.T) {
 func TestWipeChecksTheEnrolledDisk(t *testing.T) {
 	l := newLab(t)
 	r := runner(t, l)
-	spec := ops.DeviceWipeSpec{Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", UID: "policy-uid", Digest: "sha256:" + strings.Repeat("b", 64)}, TargetDisks: []string{"disk-0"}}
+	spec := ops.DeviceWipeSpec{Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + strings.Repeat("b", 64)}, TargetDisks: []string{"disk-0"}}
 	result, err := r.Run(context.Background(), assignment(l, "DeviceWipe", "op-wipe", 1, spec))
 	if err != nil {
 		t.Fatal(err)

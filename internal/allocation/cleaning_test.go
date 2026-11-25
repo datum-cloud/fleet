@@ -37,7 +37,7 @@ func TestAllocationPinsItsCleaningPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned := allocation.Spec.CleaningPolicy
-	if pinned.Name != policy.Name || pinned.UID != string(policy.UID) || pinned.Digest != digest || pinned.Spec.Rules[0].Name != "nvme-ssd" {
+	if pinned.Name != policy.Name || pinned.Generation != policy.Generation || pinned.Generation < 1 || pinned.Digest != digest || pinned.Spec.Rules[0].Name != "nvme-ssd" {
 		t.Fatalf("pinned = %+v", pinned)
 	}
 
@@ -98,5 +98,50 @@ func TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated(t *testing.T) {
 				t.Fatalf("holder = %s, want None", holder)
 			}
 		})
+	}
+}
+
+// TestARecreatedPolicyChangesNoPin recreates a policy under the same name
+// with other content. The allocation keeps the copy and digest it pinned, its
+// release wipes under that pin, and a new allocation pins the new content.
+func TestARecreatedPolicyChangesNoPin(t *testing.T) {
+	e := startEnv(t)
+	e.server(1)
+	e.server(2)
+	first, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := first.Spec.CleaningPolicy
+	if err := e.admin.Delete(e.ctx, e.policy()); err != nil {
+		t.Fatal(err)
+	}
+	recreated := examplePolicy(namespace)
+	recreated.Spec.Rules[0].TimePerTiB.Duration *= 2
+	e.create(recreated)
+	second, err := e.allocator.Allocate(e.ctx, e.request(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDigest, err := cleaning.Digest(recreated.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Spec.CleaningPolicy.Name != original.Name || second.Spec.CleaningPolicy.Digest != newDigest || second.Spec.CleaningPolicy.Digest == original.Digest {
+		t.Fatalf("a new allocation must pin the recreated content: %+v", second.Spec.CleaningPolicy.CleaningPolicyReference)
+	}
+	if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(first), first); err != nil {
+		t.Fatal(err)
+	}
+	if first.Spec.CleaningPolicy.CleaningPolicyReference != original.CleaningPolicyReference || first.Spec.CleaningPolicy.Spec.Rules[0].TimePerTiB != original.Spec.Rules[0].TimePerTiB {
+		t.Fatalf("the first allocation's pin changed: %+v", first.Spec.CleaningPolicy)
+	}
+	e.release(first, machine(1))
+	wipe := &ops.DeviceWipe{}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: custody.WipeName(first.Name, 1)}, wipe); err != nil {
+		t.Fatal(err)
+	}
+	if wipe.Spec.Policy != original.CleaningPolicyReference {
+		t.Fatalf("the release must wipe under the original pin: %+v, want %+v", wipe.Spec.Policy, original.CleaningPolicyReference)
 	}
 }

@@ -83,7 +83,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		named := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: "named-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Input: "a"}}
 		e.create(named)
 		// Staff cannot create the release kind either.
-		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-x", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", UID: "policy-uid", Digest: policyDigest}, TargetDisks: []string{"disk-0"}}}
+		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-x", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, TargetDisks: []string{"disk-0"}}}
 		e.create(wipe)
 		e.settle(device.Name)
 		for _, operation := range []ops.Operation{spoof, service, named, wipe} {

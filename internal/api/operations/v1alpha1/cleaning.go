@@ -112,12 +112,14 @@ type VerifySpec struct {
 	Samples int32 `json:"samples,omitempty"`
 }
 
-// CleaningPolicyReference names one CleaningPolicy incarnation and the digest
-// of its spec.
+// CleaningPolicyReference pins a CleaningPolicy's content: its name, the
+// generation the allocator read, and the digest of that spec. A policy
+// recreated under the same name changes no pin, because every pin keeps its
+// own copy and digest.
 type CleaningPolicyReference struct {
-	Name   string `json:"name"`
-	UID    string `json:"uid"`
-	Digest string `json:"digest"`
+	Name       string `json:"name"`
+	Generation int64  `json:"generation"`
+	Digest     string `json:"digest"`
 }
 
 // PinnedCleaningPolicy is the copy of a CleaningPolicy an allocation keeps,

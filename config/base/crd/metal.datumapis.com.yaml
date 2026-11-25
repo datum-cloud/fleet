@@ -440,10 +440,10 @@ spec:
                   name: {type: string, minLength: 1}
               cleaningPolicy:
                 type: object
-                required: [name, uid, digest, spec]
+                required: [name, generation, digest, spec]
                 properties:
                   name: {type: string, minLength: 1, maxLength: 253}
-                  uid: {type: string, minLength: 1, maxLength: 64}
+                  generation: {type: integer, format: int64, minimum: 1}
                   digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
                   spec:
                     type: object

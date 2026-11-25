@@ -349,7 +349,7 @@ func (e *env) installation(device *inventory.Device, allocation, request string)
 func (e *env) wipe(device *inventory.Device, allocation string, step int32) *ops.DeviceWipe {
 	e.t.Helper()
 	operation := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName(allocation, step), Namespace: "default"}, Spec: ops.DeviceWipeSpec{
-		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", UID: "policy-uid", Digest: policyDigest}, TargetDisks: []string{"disk-0"},
+		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, TargetDisks: []string{"disk-0"},
 	}}
 	e.create(operation)
 	return operation
@@ -359,7 +359,7 @@ func (e *env) wipe(device *inventory.Device, allocation string, step int32) *ops
 func (e *env) namedWipe(device *inventory.Device, allocation, name string, step int32) *ops.DeviceWipe {
 	e.t.Helper()
 	operation := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: ops.DeviceWipeSpec{
-		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", UID: "policy-uid", Digest: policyDigest}, TargetDisks: []string{"disk-0"},
+		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, TargetDisks: []string{"disk-0"},
 	}}
 	e.create(operation)
 	return operation
@@ -430,7 +430,7 @@ func (e *env) allocation(device *inventory.Device, name, phase string) *metal.Ma
 		Accepted: metal.AcceptedContract{MachineClassRef: metal.ContentReference{Name: "class-example", Generation: 1, Digest: policyDigest}, MachineProfileRef: metal.ContentReference{Name: "profile-example", Generation: 1, Digest: policyDigest},
 			CPU: metal.CPURequirement{Architecture: "amd64", Cores: 2}, Memory: metal.MemoryRequirement{Capacity: "2Gi"}},
 		Authority: metal.AllocationAuthority{Principal: "fixture", Decision: "fixture-" + name},
-		CleaningPolicy: ops.PinnedCleaningPolicy{CleaningPolicyReference: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", UID: "policy-uid", Digest: policyDigest}, Spec: ops.CleaningPolicySpec{
+		CleaningPolicy: ops.PinnedCleaningPolicy{CleaningPolicyReference: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, Spec: ops.CleaningPolicySpec{
 			Assurance: ops.AssuranceClear,
 			Rules: []ops.CleaningRule{{Name: "nvme-ssd", Match: ops.DriveMatch{Protocol: ops.ProtocolNVMe, MediaType: ops.MediaSSD},
 				Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: ops.VerifySpec{Mode: ops.VerifyFull}, TimePerTiB: metav1.Duration{Duration: time.Hour}}},

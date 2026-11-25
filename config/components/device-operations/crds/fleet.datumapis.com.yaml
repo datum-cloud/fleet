@@ -712,16 +712,16 @@ spec:
                     type: string
                     minLength: 1
                     maxLength: 253
-                  uid:
-                    type: string
-                    minLength: 1
-                    maxLength: 64
+                  generation:
+                    type: integer
+                    format: int64
+                    minimum: 1
                   digest:
                     type: string
                     pattern: ^sha256:[0-9a-f]{64}$
                 required:
                 - name
-                - uid
+                - generation
                 - digest
               targetDisks:
                 type: array
