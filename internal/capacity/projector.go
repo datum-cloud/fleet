@@ -122,9 +122,11 @@ func (p *Projector) inputs(ctx context.Context, capacity *metal.MachineCapacity)
 	}
 	in.CurrentPlan = custody.CurrentPlanInput{Plan: plan, Reason: reason}
 	if plan != nil {
-		if in.CurrentPlan.Digest, err = custody.PlanDigest(plan); err != nil {
+		reference, err := custody.PlanReferenceOf(plan)
+		if err != nil {
 			return in, err
 		}
+		in.CurrentPlan.Reference = ops.ApprovedPlanReference{PlanReference: reference, Approval: custody.ApprovalName(plan)}
 	}
 	if in.Commissioning, err = latestCommissioning(ctx, p.Reader, device); err != nil {
 		return in, err

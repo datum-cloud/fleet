@@ -47,7 +47,7 @@ func (Commissioning) Run(ctx context.Context, work *site.Work) (any, error) {
 	}
 	target := connection(work).Target
 	inspected := *target.Hardware
-	evidence := ops.CommissioningEvidence{Plan: spec.Plan.PlanReference, SerialNumber: work.Snapshot.Extra[custody.SnapshotSerialNumber], SystemUUID: target.SystemUUID,
+	evidence := ops.CommissioningEvidence{Plan: spec.Plan.ApprovedPlanReference, SerialNumber: work.Snapshot.Extra[custody.SnapshotSerialNumber], SystemUUID: target.SystemUUID,
 		BMCPublicKeySHA256: target.BMCPublicKeySHA256, Hardware: &inspected, Firmware: slices.Clone(target.Firmware)}
 	if mismatches := inspect(spec.Plan.Content, target.Hardware, target.Firmware); len(mismatches) > 0 {
 		evidence.Result, evidence.Mismatches = ops.CommissioningFailed, mismatches
