@@ -6,3 +6,6 @@ resources:
   - recovery-operator.yaml
   - installation-requester.yaml
   - wipe-requester.yaml
+  - device-commissioning-operator.yaml
+  - device-commissioning-plan-author.yaml
+  - device-commissioning-plan-approver.yaml

@@ -918,12 +918,16 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 		return Outcome{}, err
 	}
 	spec.Fence = max(spec.Fence, seen) + 1
+	deadline := kind.Deadline
+	if kind.DeadlineFor != nil {
+		deadline = kind.DeadlineFor(operation)
+	}
 	active := &ops.ActiveOperation{
 		OperationReference: ops.OperationReference{Kind: kind.GVK.Kind, Name: operation.GetName(), UID: string(operation.GetUID())},
 		Fence:              spec.Fence,
 		Phase:              ops.PhaseAdmitted,
 		AdmittedAt:         metav1.NewTime(now),
-		Deadline:           metav1.NewTime(now.Add(kind.Deadline)),
+		Deadline:           metav1.NewTime(now.Add(deadline)),
 		InputDigest:        digest,
 		Snapshot:           snapshot(kind, operation, device, d.extra),
 		Creator:            operation.Envelope().Creator,

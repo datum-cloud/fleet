@@ -59,6 +59,14 @@ type Kind struct {
 	Name func(ops.Operation) string
 	// Deadline is how long the site may work on an admitted operation.
 	Deadline time.Duration
+	// DeadlineFor, when set, replaces Deadline with one derived from the
+	// operation's own inputs, such as a commissioning plan's burn-in
+	// duration.
+	DeadlineFor func(ops.Operation) time.Duration
+	// KeepsLatest means retention keeps each Device's latest succeeded
+	// operation of this kind, because it is evidence another reader needs,
+	// such as the capacity projector reading the latest commissioning.
+	KeepsLatest bool
 	// Effectful kinds can reach the server. A non-effectful kind, such as
 	// DeviceRecovery, that passes its deadline ends Failed: nothing it does
 	// can leave the server in an unknown state.

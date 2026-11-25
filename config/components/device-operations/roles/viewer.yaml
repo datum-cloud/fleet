@@ -20,3 +20,12 @@ spec:
     - fleet.datumapis.com/devicerecoveries.get
     - fleet.datumapis.com/devicerecoveries.list
     - fleet.datumapis.com/devicerecoveries.watch
+    - fleet.datumapis.com/devicecommissionings.get
+    - fleet.datumapis.com/devicecommissionings.list
+    - fleet.datumapis.com/devicecommissionings.watch
+    - fleet.datumapis.com/devicecommissioningplans.get
+    - fleet.datumapis.com/devicecommissioningplans.list
+    - fleet.datumapis.com/devicecommissioningplans.watch
+    - fleet.datumapis.com/devicecommissioningplanapprovals.get
+    - fleet.datumapis.com/devicecommissioningplanapprovals.list
+    - fleet.datumapis.com/devicecommissioningplanapprovals.watch

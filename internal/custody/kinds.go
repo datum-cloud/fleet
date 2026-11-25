@@ -328,12 +328,12 @@ func applyRecovery(ctx context.Context, apply *ApplyContext) (*ops.DeviceCustody
 // for them.
 func DefaultRegistry() (*Registry, error) {
 	registry := NewRegistry()
-	for _, kind := range []Kind{DeviceInstallationKind(), DeviceWipeKind(), DeviceRecoveryKind()} {
+	for _, kind := range []Kind{DeviceInstallationKind(), DeviceWipeKind(), DeviceRecoveryKind(), DeviceCommissioningKind()} {
 		if err := registry.Register(kind); err != nil {
 			return nil, err
 		}
 	}
-	for _, rule := range DefaultRules() {
+	for _, rule := range append(DefaultRules(), CommissioningRules()...) {
 		if err := registry.AddRule(rule); err != nil {
 			return nil, err
 		}

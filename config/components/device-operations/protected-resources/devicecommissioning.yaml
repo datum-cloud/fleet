@@ -1,0 +1,20 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fleet.datumapis.com-devicecommissioning
+spec:
+  serviceRef:
+    name: fleet.datumapis.com
+  kind: DeviceCommissioning
+  plural: devicecommissionings
+  singular: devicecommissioning
+  # Status has one writer, the coordinator. With subresource authorization
+  # enabled, status writes use devicecommissionings/status.update and
+  # devicecommissionings/status.patch instead of updateStatus.
+  permissions: [list, get, watch, create, update, patch, delete, updateStatus]
+  subresources:
+    - name: status
+      permissions: [update, patch]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project

@@ -20,7 +20,10 @@ import (
 var (
 	configRoot     = filepath.Join("..", "..", "..", "..", "config")
 	componentRoot  = filepath.Join(configRoot, "components", "device-operations")
-	operationKinds = []string{"DeviceInstallation", "DeviceWipe", "DeviceRecovery"}
+	operationKinds = []string{"DeviceInstallation", "DeviceWipe", "DeviceRecovery", "DeviceCommissioning"}
+	// planKinds are staff records, not operations: an immutable spec with a
+	// creator, and no status.
+	planKinds = []string{"DeviceCommissioningPlan", "DeviceCommissioningPlanApproval"}
 )
 
 func decodeAll[T any](t *testing.T, path string) []T {
@@ -69,8 +72,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-	if len(crds) != 4 || crds["DeviceCustody"] == nil {
-		t.Fatalf("got %d CRDs, want DeviceCustody and three operation kinds", len(crds))
+	if len(crds) != 1+len(operationKinds)+len(planKinds) || crds["DeviceCustody"] == nil {
+		t.Fatalf("got %d CRDs, want DeviceCustody, the operation kinds and the plan kinds", len(crds))
 	}
 	for kind, crd := range crds {
 		version := crd.Spec.Versions[0]
@@ -85,6 +88,14 @@ func TestCRDContract(t *testing.T) {
 			// Custody keeps its fields in spec, like a Lease.
 			if version.Subresources != nil || len(properties["status"].Properties) != 0 {
 				t.Fatal("DeviceCustody has no status")
+			}
+		} else if slices.Contains(planKinds, kind) {
+			spec := properties["spec"]
+			if version.Subresources != nil || len(properties["status"].Properties) != 0 || !slices.Contains(spec.Required, "creator") {
+				t.Fatalf("%s is a record with a creator and no status", kind)
+			}
+			if len(spec.XValidations) == 0 || spec.XValidations[0].Rule != "self == oldSelf" {
+				t.Fatalf("%s spec must be immutable", kind)
 			}
 		} else {
 			if version.Subresources == nil || version.Subresources.Status == nil {
@@ -188,15 +199,20 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 	group := GroupVersion.Group + "/"
 	read := []string{"get", "list", "watch"}
 	want := map[string][]string{
-		"fleet.datumapis.com-device-operations-viewer":      slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicerecoveries", read...)),
-		"fleet.datumapis.com-device-recovery-operator":      slices.Concat(p(group+"devicerecoveries", "create"), p("metal.datumapis.com/machineallocations", read...)),
-		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
-		"fleet.datumapis.com-device-wipe-requester":         slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
+		"fleet.datumapis.com-device-operations-viewer": slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicerecoveries", read...),
+			p(group+"devicecommissionings", read...), p(group+"devicecommissioningplans", read...), p(group+"devicecommissioningplanapprovals", read...)),
+		"fleet.datumapis.com-device-commissioning-operator":      p(group+"devicecommissionings", "create"),
+		"fleet.datumapis.com-device-commissioning-plan-author":   p(group+"devicecommissioningplans", "create", "delete"),
+		"fleet.datumapis.com-device-commissioning-plan-approver": p(group+"devicecommissioningplanapprovals", "create", "delete"),
+		"fleet.datumapis.com-device-recovery-operator":           slices.Concat(p(group+"devicerecoveries", "create"), p("metal.datumapis.com/machineallocations", read...)),
+		"fleet.datumapis.com-device-installation-requester":      slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
+		"fleet.datumapis.com-device-wipe-requester":              slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
 	}
 	coordinator := slices.Concat(p(group+"devicecustodies", "get", "list", "watch", "create", "update", "delete"), p(group+"devices", read...), p("metal.datumapis.com/machineallocations", read...), p("metal.datumapis.com/machinecapacities", read...))
-	for _, plural := range []string{"deviceinstallations", "devicewipes", "devicerecoveries"} {
+	for _, plural := range []string{"deviceinstallations", "devicewipes", "devicerecoveries", "devicecommissionings"} {
 		coordinator = slices.Concat(coordinator, p(group+plural, "get", "list", "watch", "delete", "updateStatus"), []string{group + plural + "/status.update"})
 	}
+	coordinator = slices.Concat(coordinator, p(group+"devicecommissioningplans", read...), p(group+"devicecommissioningplanapprovals", read...))
 	want["fleet.datumapis.com-device-coordinator"] = coordinator
 	if len(roles) != len(want) {
 		t.Fatalf("roles = %v", roles)
@@ -213,9 +229,9 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 			t.Fatalf("%s = %v, want %v", name, actual, expected)
 		}
 		inherits := len(current.Spec.Inherited) != 0
-		if name == "fleet.datumapis.com-device-recovery-operator" {
+		if name == "fleet.datumapis.com-device-recovery-operator" || strings.HasPrefix(name, "fleet.datumapis.com-device-commissioning-") {
 			if len(current.Spec.Inherited) != 1 || current.Spec.Inherited[0].Name != "fleet.datumapis.com-device-operations-viewer" {
-				t.Fatal("the recovery operator inherits only the viewer")
+				t.Fatalf("%s inherits only the viewer", name)
 			}
 		} else if inherits {
 			t.Fatalf("%s must not inherit", name)
@@ -234,9 +250,10 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 		}
 	}
 	// Staff can never create provider or release kinds.
-	for _, staff := range []string{"fleet.datumapis.com-device-operations-viewer", "fleet.datumapis.com-device-recovery-operator"} {
+	staffCreates := []string{group + "devicerecoveries.create", group + "devicecommissionings.create", group + "devicecommissioningplans.create", group + "devicecommissioningplanapprovals.create"}
+	for _, staff := range []string{"fleet.datumapis.com-device-operations-viewer", "fleet.datumapis.com-device-recovery-operator", "fleet.datumapis.com-device-commissioning-operator", "fleet.datumapis.com-device-commissioning-plan-author", "fleet.datumapis.com-device-commissioning-plan-approver"} {
 		for _, permission := range roles[staff].Spec.Included {
-			if strings.HasSuffix(permission, ".create") && permission != group+"devicerecoveries.create" {
+			if strings.HasSuffix(permission, ".create") && !slices.Contains(staffCreates, permission) {
 				t.Fatalf("%s may create %s", staff, permission)
 			}
 		}
@@ -303,6 +320,18 @@ func TestPhases(t *testing.T) {
 	for _, kind := range operationKinds {
 		if _, ok := loadCRDs(t)[kind]; !ok {
 			t.Fatalf("missing %s", kind)
+		}
+	}
+}
+
+// TestPlanAuthorsCannotApprove keeps the two-person rule in the roles: no
+// role both writes plans and approves them.
+func TestPlanAuthorsCannotApprove(t *testing.T) {
+	for _, r := range decodeDir[role](t, filepath.Join(componentRoot, "roles")) {
+		writes := slices.Contains(r.Spec.Included, GroupVersion.Group+"/devicecommissioningplans.create")
+		approves := slices.Contains(r.Spec.Included, GroupVersion.Group+"/devicecommissioningplanapprovals.create")
+		if writes && approves {
+			t.Fatalf("%s both writes and approves plans", r.Metadata.Name)
 		}
 	}
 }
