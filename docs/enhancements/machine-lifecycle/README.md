@@ -1090,7 +1090,8 @@ This requires a new Milo integration protocol. Owners must specify and test its
 participants and ordering; simulator-only policy tests are insufficient.
 [Production allocation admission](../production-admission/README.md#admission-fence)
 proposes that protocol. It checks quota, class and profile policy, and
-eligibility at commit instead of fencing them.
+eligibility at commit instead of fencing them, so invalidation does not
+always win for those inputs.
 
 ### Provider configuration resolution
 

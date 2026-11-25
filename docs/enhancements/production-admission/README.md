@@ -181,8 +181,10 @@ fence. The allocator commits a Machine in this order:
    again.
 5. Change the allocation from `Pending` to `Admitted` with a conditional
    update. This is the commit.
-6. Claim Device custody once. On any result other than success, delete the
-   allocation and start again from step 1. No effect ran under it.
+6. Claim Device custody once. If custody refuses the claim, delete the
+   allocation and start again from step 1. No effect ran under it. If the
+   result is uncertain, read custody until it shows whether it names the
+   allocation. Fleet never retries the claim itself.
 
 Every delete in these steps carries the allocation's UID and resource version
 as preconditions, so a delayed worker cannot delete a newer allocation with the
@@ -217,9 +219,10 @@ than the fence covers:
 
 - **Quota** needs no fence. Milo never revokes a granted claim, and Fleet holds
   the claim until release.
-- **Class and profile policy and capacity eligibility** are Fleet's own state.
-  Step 2 checks them, and step 4 rereads them. A withdrawal has no
-  acknowledgment, so a commit that races it may still win.
+- **Class and profile policy and capacity eligibility** are Fleet's own state,
+  and step 2 checks them. A withdrawal has no acknowledgment, so the
+  lifecycle's guarantee that invalidation wins does not hold for them: a
+  commit that races a withdrawal may still win.
 
 ### Quota custody
 
@@ -408,7 +411,8 @@ Record these decisions before production allocation is enabled:
 - **Interim fence.** Until Milo provides the fence, Fleet can raise a fence of
   its own when it observes invalidations. Its order is then only as good as
   Fleet's observation. Decide whether production allocation may run on it,
-  and with which limit on the delay.
+  and with which limit on the delay. Commits still need uncached access
+  reviews from Milo 5 on any fence.
 - **Unprotected finalizers.** Decide whether production allocation may run
   while customers can remove Fleet's quota and Machine finalizers.
 - **Fence location.** Decide where the fence lives and which component owns
@@ -425,6 +429,14 @@ These tests are required and not implemented:
 - Access is revoked between the check and the commit, and the Machine does not
   bind.
 - A revocation and a commit race on one allocation, and exactly one wins.
+- A consumer fence moves, and Fleet deletes that consumer's pending
+  allocations in every provider namespace before it acknowledges.
+- A provider fence moves, and Fleet deletes every consumer's pending
+  allocations in that provider before it acknowledges.
+- A delayed worker deletes an allocation by name after it was recreated, and
+  the newer allocation survives.
+- A custody claim's response is lost, and the allocator reads custody instead
+  of deleting the allocation.
 - An admitted allocation fails to claim its Device, and the allocator checks
   admission again.
 - A Machine is refused, or deleted before allocation, and its claim is
