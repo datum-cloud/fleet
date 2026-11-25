@@ -105,7 +105,7 @@ func (c Claimer) Claim(ctx context.Context, allocation, operation string) (*ops.
 	if err != nil {
 		return nil, err
 	}
-	if labels := claim.GetLabels(); labels[OperationLabel] != operation || labels[AllocationLabel] != allocation || labels[KindLabel] != c.Kind || stringAt(claim, "spec", "className") != c.Class {
+	if labels := claim.GetLabels(); labels[OperationLabel] != operation || labels[AllocationLabel] != allocation || labels[KindLabel] != c.Kind {
 		return nil, fmt.Errorf("%w: %s", ErrConflict, claim.GetName())
 	}
 	address, err := bound(claim)
@@ -160,11 +160,16 @@ func (c Claimer) get(ctx context.Context, name string) (*unstructured.Unstructur
 	return claim, c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: name}, claim)
 }
 
-// Verify requires the named claim incarnation to be bound to exactly the
+// Verify requires the input to name the operation's own claim, by its only
+// name and its labels, and that claim incarnation to be bound to exactly the
 // input's address. Admission calls it with the provider project's reader.
-func Verify(ctx context.Context, reader client.Reader, namespace string, input ops.BootNetworkInput) error {
+func Verify(ctx context.Context, reader client.Reader, operation ops.Operation, kind string, input ops.BootNetworkInput) error {
 	if reader == nil {
 		return ErrUnavailable
+	}
+	namespace := operation.GetNamespace()
+	if input.AddressClaim.Name != ClaimName(operation.GetName()) {
+		return fmt.Errorf("%w: the claim is not the operation's own", ErrUnavailable)
 	}
 	claim := &unstructured.Unstructured{}
 	claim.SetGroupVersionKind(GVK)
@@ -173,6 +178,9 @@ func Verify(ctx context.Context, reader client.Reader, namespace string, input o
 	}
 	if string(claim.GetUID()) != input.AddressClaim.UID || claim.GetDeletionTimestamp() != nil {
 		return fmt.Errorf("%w: the claim is another incarnation or is being deleted", ErrUnavailable)
+	}
+	if labels := claim.GetLabels(); labels[OperationLabel] != operation.GetName() || labels[KindLabel] != kind {
+		return fmt.Errorf("%w: the claim belongs to another operation", ErrUnavailable)
 	}
 	address, err := bound(claim)
 	if err != nil {

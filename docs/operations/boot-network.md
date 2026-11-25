@@ -30,14 +30,17 @@ without the other, and needs a dedicated provisioning network on the boot NIC.
 ## Boot address claims
 
 When the allocator is configured with a provisioning IPAM class, each requester
-claims a boot address before it creates its operation:
+claims a boot address before it creates its operation. The multi-plane
+composition takes the class from its `BootAddressClass` setting; the lab leaves
+it empty because its DHCP is static. Each requester is:
 
 - the Metal provider, for a `DeviceInstallation`; and
 - the release controller, for a `DeviceWipe`.
 
 The claim is an IPAM `IPClaim` in the provider project named
 `<operation>-boot`, labeled with the allocation, the operation and the
-operation kind. It asks for one IPv4 host address and `reclaimPolicy: Delete`.
+operation kind, and scoped to the site's location. It asks for one IPv4 host
+address and `reclaimPolicy: Delete`.
 IPAM binds it when it is created. The requester copies the claim's name, UID
 and address into the operation's `spec.bootNetwork`:
 
@@ -50,14 +53,19 @@ spec:
 ```
 
 Admission refuses the operation with `BootAddressUnavailable` unless that claim
-incarnation exists, is `Bound`, and holds that address. It refuses it with
+is the operation's own, by name and labels, and that incarnation exists, is
+`Bound`, and holds that address. It refuses it with
 `BootInterfaceUnknown` unless the Device records the boot interface with a MAC.
 The admission snapshot records that MAC.
 
 Each requester deletes only its own kind's claims, during release:
 
-- a claim whose operation ended and is not the recovery hold; and
+- a claim whose operation ended and that custody's recovery hold does not
+  name, either as the held operation or as the original of a held retry; and
 - every remaining claim once the allocation is released.
+
+The allocator reads custody after it reads the operation, because the
+coordinator writes a hold before it copies `OutcomeUnknown` to the operation.
 
 A claim whose operation does not exist yet stays, so a requester that crashed
 between the claim and the operation still finds it. The roles grant each
@@ -179,7 +187,7 @@ drain the instance being removed until it reports an empty feed.
 
 | Behavior | Status |
 | --- | --- |
-| Boot addresses claimed from IPAM per operation, checked at admission, and released only after the operation ended unheld | Implemented; tested against a real API server with a stand-in for IPAM's claim API |
+| Boot addresses claimed from IPAM per operation, checked at admission, and released only after the operation ended unheld | Implemented; tested against a real API server with a stand-in for IPAM's claim API. No run sets a class, and IPAM itself is not exercised |
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
 | Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device, instance retirement | Implemented; unit tested with a fake BMC and synchronizer, including a silent instance |
 | Kea synchronizer: containing-subnet placement, restart re-apply, report only after Kea accepted | Implemented; unit tested against a fake Kea control socket |

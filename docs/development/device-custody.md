@@ -171,7 +171,7 @@ records where an environment needs them.
 | Synthetic staging mode | **Implemented.** The manager's flag handling is unit tested, and no run exercises the mode |
 | Power projector | **Implemented and verified** by the standalone smoke |
 | Synchronized DHCP feed on the site store | **Implemented and verified** by a unit test. Not exercised at a site |
-| Boot addresses from IPAM as installation and wipe inputs | **Implemented and verified** by tests against a real API server with a stand-in for IPAM's claim API. See [Boot network](../operations/boot-network.md) |
+| Boot addresses from IPAM as installation and wipe inputs | **Implemented and verified** by tests against a real API server with a stand-in for IPAM's claim API. **Inert** end to end: no run sets a provisioning class. See [Boot network](../operations/boot-network.md) |
 
 ### MachineAllocation
 

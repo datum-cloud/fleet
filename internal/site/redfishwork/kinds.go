@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -164,7 +165,7 @@ func (c Config) checkBootNetwork(work *site.Work, network *ops.BootNetworkInput)
 		return &custody.Refusal{Reason: ReasonUnsupportedTarget, Message: "the admission snapshot records no boot NIC MAC"}
 	}
 	if network != nil {
-		if _, err := bootnet.HostAddress(network.Address); err != nil {
+		if address, err := netip.ParseAddr(network.Address); err != nil || !address.Is4() || address.String() != network.Address {
 			return &custody.Refusal{Reason: ReasonInputs, Message: "the boot address is not one IPv4 host address"}
 		}
 	}

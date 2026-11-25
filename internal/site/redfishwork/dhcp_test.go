@@ -143,6 +143,18 @@ func TestABootAddressMustFitTheSiteDHCP(t *testing.T) {
 	if feed, _ := (BootServer{Store: s.Store}).Reservations(); len(feed.Reservations) != 0 {
 		t.Fatalf("a refused operation published %+v", feed)
 	}
+	// Kea DHCPv4 cannot serve an IPv6 boot address, so the site refuses it
+	// before it can stall the other reservations.
+	n := newLab(t)
+	u := runner(t, n)
+	synced(u)
+	v6 := installSpec()
+	v6.BootNetwork = bootNetwork()
+	v6.BootNetwork.Address = "2001:db8::20"
+	result, _ = u.Run(context.Background(), assignment(n, "DeviceInstallation", "op-v6", 1, v6))
+	if result.Phase != ops.PhaseFailed || result.Reason != ReasonInputs || n.onCount() != 0 {
+		t.Fatalf("IPv6 boot address: %+v", result)
+	}
 }
 
 // TestAPublishedReservationNeverEndsFailed lets DHCP never apply the

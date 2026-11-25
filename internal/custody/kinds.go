@@ -70,7 +70,7 @@ var networkBootReasons = []Reason{{Name: ReasonBootInterfaceUnknown, RaisedBy: R
 // checkNetworkBoot requires the boot interface to have a MAC in Device
 // inventory and a boot address, when given, to still be bound to the
 // operation's claim.
-func checkNetworkBoot(ctx context.Context, admission *Admission, bootInterface string, network *ops.BootNetworkInput) *Refusal {
+func checkNetworkBoot(ctx context.Context, admission *Admission, kind, bootInterface string, network *ops.BootNetworkInput) *Refusal {
 	found := false
 	for _, iface := range admission.Device.Spec.Interfaces {
 		if iface.Name == bootInterface && iface.MACAddress != "" {
@@ -83,7 +83,7 @@ func checkNetworkBoot(ctx context.Context, admission *Admission, bootInterface s
 	if network == nil {
 		return nil
 	}
-	if err := bootaddress.Verify(ctx, admission.Reader, admission.Operation.GetNamespace(), *network); err != nil {
+	if err := bootaddress.Verify(ctx, admission.Reader, admission.Operation, kind, *network); err != nil {
 		return refuse(ReasonBootAddress, "the boot address claim %s does not hold %s", network.AddressClaim.Name, network.Address)
 	}
 	return nil
@@ -149,7 +149,7 @@ func DeviceInstallationKind() Kind {
 			if installation.Spec.Bootstrap != nil {
 				return refuse(ReasonBootstrapUnsupported, "bootstrap payloads need the sealed store, which is not implemented")
 			}
-			return checkNetworkBoot(ctx, admission, installation.Spec.BootInterface, installation.Spec.BootNetwork)
+			return checkNetworkBoot(ctx, admission, "DeviceInstallation", installation.Spec.BootInterface, installation.Spec.BootNetwork)
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
 		Reasons: append(append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}}, networkBootReasons...), workerReasons...),
@@ -180,7 +180,7 @@ func DeviceWipeKind() Kind {
 		BootInterface: func(operation ops.Operation) string { return operation.(*ops.DeviceWipe).Spec.BootInterface },
 		Check: func(ctx context.Context, admission *Admission) *Refusal {
 			wipe := admission.Operation.(*ops.DeviceWipe)
-			return checkNetworkBoot(ctx, admission, wipe.Spec.BootInterface, wipe.Spec.BootNetwork)
+			return checkNetworkBoot(ctx, admission, "DeviceWipe", wipe.Spec.BootInterface, wipe.Spec.BootNetwork)
 		},
 		// A wipe after release settles an installation hold. A held wipe is
 		// settled by a later wipe only after a DeviceRecovery with Retry.

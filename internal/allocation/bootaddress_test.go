@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -42,6 +43,20 @@ func (c *ipam) Create(ctx context.Context, object client.Object, options ...clie
 	}
 	claim.Object["status"] = map[string]any{"phase": "Bound", "address": fmt.Sprintf("198.51.100.%d", 10+n)}
 	return c.Client.Status().Update(ctx, claim)
+}
+
+// writer is one requester's client: it may delete only the claims of its
+// own operation kind.
+type writer struct {
+	client.Client
+	kind string
+}
+
+func (w writer) Delete(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
+	if claim, ok := object.(*unstructured.Unstructured); ok && claim.GroupVersionKind() == bootaddress.GVK && claim.GetLabels()[bootaddress.KindLabel] != w.kind {
+		return fmt.Errorf("the %s requester deleted a %s claim", w.kind, claim.GetLabels()[bootaddress.KindLabel])
+	}
+	return w.Client.Delete(ctx, object, options...)
 }
 
 func (c *ipam) created() []string {
@@ -87,7 +102,7 @@ func TestBootAddressesFollowTheirOperations(t *testing.T) {
 	e.runner.Kinds["DeviceInstallation"] = syncedSite{simwork.Installation{}}
 	e.runner.Kinds["DeviceWipe"] = syncedSite{simwork.Wipe{}}
 	recorder := &ipam{Client: e.admin}
-	e.allocator.Provider, e.allocator.Releaser = recorder, recorder
+	e.allocator.Provider, e.allocator.Releaser = writer{recorder, "DeviceInstallation"}, writer{recorder, "DeviceWipe"}
 	e.allocator.BootAddresses = &bootaddress.Claimer{Class: "provisioning"}
 	device := e.server(1)
 
@@ -125,23 +140,45 @@ func TestBootAddressesFollowTheirOperations(t *testing.T) {
 	}
 
 	claims := e.allocator.installClaims()
-	held := &ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: "DeviceInstallation", Name: operation.Name}}
 	// A claim for an operation not yet created stays: its requester may
 	// still create the operation.
 	if _, err := claims.Claim(e.ctx, allocation.Name, allocation.Name+"-install-pending"); err != nil {
 		t.Fatal(err)
 	}
-	if none, err := e.allocator.releaseBootAddresses(e.ctx, allocation, held, false); err != nil || none {
-		t.Fatalf("release under a hold: none=%v %v", none, err)
+	hold := func(held *ops.RecoveryHold) {
+		t.Helper()
+		state := e.custody(device.Name)
+		state.Spec.RecoveryHold = held
+		if err := e.admin.Update(e.ctx, state); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if remaining, _ := claims.Operations(e.ctx, allocation.Name); len(remaining) != 2 {
-		t.Fatalf("a held or uncreated operation lost its claim: %v", remaining)
+	remaining := func() []string {
+		t.Helper()
+		names, err := claims.Operations(e.ctx, allocation.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return names
 	}
-	if none, err := e.allocator.releaseBootAddresses(e.ctx, allocation, nil, false); err != nil || none {
+	held := ops.RecoveryHold{OperationReference: ops.OperationReference{Kind: "DeviceInstallation", Name: operation.Name, UID: string(operation.UID)}, Fence: operation.Status.Fence, Since: metav1.Now(), Reason: "Synthetic"}
+	hold(&held)
+	if none, err := e.allocator.releaseBootAddresses(e.ctx, allocation, false); err != nil || none || len(remaining()) != 2 {
+		t.Fatalf("release under a hold: none=%v %v, remaining %v", none, err, remaining())
+	}
+	// A retry that also ended unknown holds the original as its retry name.
+	retry := held
+	retry.Name, retry.RetryName = operation.Name+"-retry-1", operation.Name
+	hold(&retry)
+	if none, err := e.allocator.releaseBootAddresses(e.ctx, allocation, false); err != nil || none || len(remaining()) != 2 {
+		t.Fatalf("release under a retry's hold: none=%v %v, remaining %v", none, err, remaining())
+	}
+	hold(nil)
+	if none, err := e.allocator.releaseBootAddresses(e.ctx, allocation, false); err != nil || none {
 		t.Fatalf("release without a hold: none=%v %v", none, err)
 	}
-	if remaining, _ := claims.Operations(e.ctx, allocation.Name); len(remaining) != 1 || remaining[0] != allocation.Name+"-install-pending" {
-		t.Fatalf("remaining = %v, want only the uncreated operation's claim", remaining)
+	if names := remaining(); len(names) != 1 || names[0] != allocation.Name+"-install-pending" {
+		t.Fatalf("remaining = %v, want only the uncreated operation's claim", names)
 	}
 
 	e.release(allocation, machine(1))

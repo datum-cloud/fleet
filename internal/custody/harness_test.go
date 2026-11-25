@@ -324,13 +324,15 @@ func (e *env) wipe(device *inventory.Device, allocation string, step int32) *ops
 	return operation
 }
 
-// ipClaim creates a stand-in IPAM claim with the given phase and address.
-func (e *env) ipClaim(name, phase, address string) *unstructured.Unstructured {
+// ipClaim creates a stand-in IPAM claim for an operation, with the given
+// phase and address.
+func (e *env) ipClaim(name, operation, kind, phase, address string) *unstructured.Unstructured {
 	e.t.Helper()
 	claim := &unstructured.Unstructured{}
 	claim.SetGroupVersionKind(bootaddress.GVK)
 	claim.SetNamespace("default")
 	claim.SetName(name)
+	claim.SetLabels(map[string]string{bootaddress.OperationLabel: operation, bootaddress.KindLabel: kind})
 	claim.Object["spec"] = map[string]any{"className": "provisioning"}
 	if err := e.admin.Create(e.ctx, claim); err != nil {
 		e.t.Fatal(err)

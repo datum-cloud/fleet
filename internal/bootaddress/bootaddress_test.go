@@ -80,24 +80,35 @@ func TestVerifyRequiresTheExactBoundIncarnation(t *testing.T) {
 	}
 	claim := bind(t, api, "alloc-a-install-1-boot", "Bound", "198.51.100.10")
 	good := ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: claim.GetName(), UID: string(claim.GetUID())}, Address: "198.51.100.10"}
-	if err := Verify(ctx, api, namespace, good); err != nil {
+	operation := &ops.DeviceInstallation{}
+	operation.Name, operation.Namespace = "alloc-a-install-1", namespace
+	if err := Verify(ctx, api, operation, "DeviceInstallation", good); err != nil {
 		t.Fatal(err)
 	}
+	// The claim must be the operation's own: by name and by its labels.
+	other := &ops.DeviceInstallation{}
+	other.Name, other.Namespace = "alloc-a-install-2", namespace
+	if err := Verify(ctx, api, other, "DeviceInstallation", good); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("another operation's claim verified: %v", err)
+	}
+	if err := Verify(ctx, api, operation, "DeviceWipe", good); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("another kind's claim verified: %v", err)
+	}
 	for name, input := range map[string]ops.BootNetworkInput{
-		"missing":        {AddressClaim: ops.ClaimReference{Name: "other-boot", UID: good.AddressClaim.UID}, Address: good.Address},
+		"other name":     {AddressClaim: ops.ClaimReference{Name: "other-boot", UID: good.AddressClaim.UID}, Address: good.Address},
 		"other UID":      {AddressClaim: ops.ClaimReference{Name: good.AddressClaim.Name, UID: string(types.UID("other"))}, Address: good.Address},
 		"other address":  {AddressClaim: good.AddressClaim, Address: "198.51.100.11"},
 		"not an address": {AddressClaim: good.AddressClaim, Address: "198.51.100.10/24"},
 	} {
-		if err := Verify(ctx, api, namespace, input); !errors.Is(err, ErrUnavailable) {
+		if err := Verify(ctx, api, operation, "DeviceInstallation", input); !errors.Is(err, ErrUnavailable) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	bind(t, api, claim.GetName(), "Releasing", "198.51.100.10")
-	if err := Verify(ctx, api, namespace, good); !errors.Is(err, ErrUnavailable) {
+	if err := Verify(ctx, api, operation, "DeviceInstallation", good); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("unbound claim verified: %v", err)
 	}
-	if err := Verify(ctx, nil, namespace, good); !errors.Is(err, ErrUnavailable) {
+	if err := Verify(ctx, nil, operation, "DeviceInstallation", good); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("no reader verified")
 	}
 	if gone, err := c.Release(ctx, "alloc-a-install-1"); err != nil || gone {

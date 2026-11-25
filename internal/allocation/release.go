@@ -53,12 +53,12 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 		if err := a.releaseQuota(ctx, allocation, machine); err != nil {
 			return false, err
 		}
-		if gone, err := a.releaseBootAddresses(ctx, allocation, nil, true); err != nil || !gone {
+		if gone, err := a.releaseBootAddresses(ctx, allocation, true); err != nil || !gone {
 			return false, err
 		}
 		return true, a.setPhase(ctx, allocation, fleetv1.AllocationReleased)
 	}
-	if _, err := a.releaseBootAddresses(ctx, allocation, state.Spec.RecoveryHold, false); err != nil {
+	if _, err := a.releaseBootAddresses(ctx, allocation, false); err != nil {
 		return false, err
 	}
 	if err := a.setPhase(ctx, allocation, fleetv1.AllocationReleasing); err != nil {
@@ -101,9 +101,13 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 // ended operations, each with its requester's client, and reports whether
 // none remain. A held operation keeps its claim, because a silent DHCP
 // instance may still serve its address, and so does an operation not yet
-// created. With all, it deletes every claim: the Device left the allocation,
-// so no operation of it is held or can still be created.
-func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, hold *ops.RecoveryHold, all bool) (bool, error) {
+// created. The hold names the held operation, and, after a retry that also
+// ended unknown, the original operation as its retry name; both keep their
+// claims. Custody is read after the operation, because the coordinator writes
+// a hold before it copies OutcomeUnknown to the operation. With all, it
+// deletes every claim: the Device left the allocation, so no operation of it
+// is held or can still be created.
+func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, all bool) (bool, error) {
 	none := true
 	for _, pair := range []struct {
 		claimer *bootaddress.Claimer
@@ -122,10 +126,6 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 		}
 		for _, name := range operations {
 			if !all {
-				if hold != nil && hold.Name == name {
-					none = false
-					continue
-				}
 				operation := pair.new()
 				if err := pair.api.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, operation); apierrors.IsNotFound(err) {
 					none = false
@@ -134,6 +134,14 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 					return false, err
 				}
 				if !operation.OperationStatus().Phase.Ended() {
+					none = false
+					continue
+				}
+				held, err := a.held(ctx, allocation, name)
+				if err != nil {
+					return false, err
+				}
+				if held {
 					none = false
 					continue
 				}
@@ -146,6 +154,17 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 		}
 	}
 	return none, nil
+}
+
+// held reports whether custody's recovery hold names the operation, as the
+// held operation or as the original of a held retry.
+func (a *Allocator) held(ctx context.Context, allocation *fleetv1.MachineAllocation, operation string) (bool, error) {
+	state := &ops.DeviceCustody{}
+	if err := a.Releaser.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: allocation.Spec.DeviceRef.Name}, state); err != nil {
+		return false, err
+	}
+	hold := state.Spec.RecoveryHold
+	return hold != nil && (hold.Name == operation || hold.RetryName == operation), nil
 }
 
 func (a *Allocator) releaseQuota(ctx context.Context, _ *fleetv1.MachineAllocation, machine Machine) error {
