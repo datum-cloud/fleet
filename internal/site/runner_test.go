@@ -130,11 +130,16 @@ func (f fixedCredentials) Lookup(context.Context, string) (bmcdiscovery.Credenti
 
 // fakeKind journals one step per entry of steps and records each send.
 type fakeKind struct {
-	steps   []string
-	sends   atomic.Int32
-	block   chan struct{}
-	observe func(context.Context, json.RawMessage) (bool, error)
-	check   func(*Work)
+	steps []string
+	runs  atomic.Int32
+	sends atomic.Int32
+	// fail is what a blocked send returns once unblocked.
+	fail error
+	// idempotent marks every step safe to send again.
+	idempotent bool
+	block      chan struct{}
+	observe    func(context.Context, json.RawMessage) (bool, error)
+	check      func(*Work)
 	// stuck makes a blocked step ignore cancellation, as a worker that does
 	// not stop would.
 	stuck bool
@@ -148,6 +153,7 @@ func (k *fakeKind) Check(_ context.Context, work *Work) *custody.Refusal {
 }
 
 func (k *fakeKind) Run(ctx context.Context, work *Work) (any, error) {
+	k.runs.Add(1)
 	for _, step := range k.steps {
 		err := work.Step(ctx, Step{Name: step, Payload: map[string]string{"step": step}, Send: func(ctx context.Context) error {
 			k.sends.Add(1)
@@ -158,12 +164,13 @@ func (k *fakeKind) Run(ctx context.Context, work *Work) (any, error) {
 				}
 				select {
 				case <-k.block:
+					return k.fail
 				case <-ctx.Done():
 					return context.Cause(ctx)
 				}
 			}
 			return nil
-		}, Observe: k.observe})
+		}, Observe: k.observe, Idempotent: k.idempotent})
 		if err != nil {
 			return nil, err
 		}
@@ -609,6 +616,53 @@ func TestARedeliveryWhileTheSameOperationRunsStoresNothing(t *testing.T) {
 	close(f.kind.block)
 	if result := <-first; result.Phase != ops.PhaseSucceeded {
 		t.Fatalf("first worker = %+v", result)
+	}
+}
+
+// TestACopyWaitingForTheLockReturnsTheStoredResult covers a same-fence
+// redelivery that waits for the run lock while the first worker runs. The
+// first worker's send fails and it stores OutcomeUnknown. The copy then takes
+// the lock and must return that result, not resume from the journal: its
+// step is safe to send again, so running would send to the server a second
+// time after the outcome was recorded.
+func TestACopyWaitingForTheLockReturnsTheStoredResult(t *testing.T) {
+	f := newFixture(t, testUUID)
+	f.kind.block, f.kind.fail, f.kind.idempotent = make(chan struct{}), errors.New("the BMC dropped the request"), true
+	first := make(chan custody.SiteResult, 1)
+	go func() {
+		result, err := f.runner.Run(context.Background(), f.assignment(1, "op-same"))
+		if err != nil {
+			t.Error(err)
+		}
+		first <- result
+	}()
+	waitFor(t, func() bool { return f.kind.sends.Load() == 1 })
+	waiting := make(chan struct{}, 1)
+	f.runner.waiting = func() {
+		select {
+		case waiting <- struct{}{}:
+		default:
+		}
+	}
+	copied := make(chan custody.SiteResult, 1)
+	go func() {
+		result, err := f.runner.Run(context.Background(), f.assignment(1, "op-same"))
+		if err != nil {
+			t.Error(err)
+		}
+		copied <- result
+	}()
+	<-waiting
+	close(f.kind.block)
+	stored := <-first
+	if stored.Phase != ops.PhaseOutcomeUnknown {
+		t.Fatalf("first worker = %+v", stored)
+	}
+	if result := <-copied; result.Phase != stored.Phase || result.Reason != stored.Reason || result.Message != stored.Message {
+		t.Fatalf("copy = %+v, want the stored %+v", result, stored)
+	}
+	if runs, sends := f.kind.runs.Load(), f.kind.sends.Load(); runs != 1 || sends != 1 {
+		t.Fatalf("runs = %d, sends = %d, want one run and one send", runs, sends)
 	}
 }
 

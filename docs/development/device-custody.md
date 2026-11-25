@@ -90,7 +90,10 @@ so work on one Device never waits for another.
   journal.
 - **One worker per assignment.** A redelivered assignment that already has a
   result returns it. One that finds a worker for the same assignment holding
-  the run lock stores nothing and leaves the result to that worker. A newer
+  the run lock stores nothing and leaves the result to that worker. A copy
+  that waits for the lock checks for a stored result again once it holds the
+  lock, and returns that result without running, so it never sends after the
+  first worker recorded the outcome. A newer
   assignment that cannot stop an older worker before its deadline ends
   `Failed`, or `OutcomeUnknown` if the journal holds steps for it.
 - **Checks before any effect.** The inputs must match the admitted digest. The
@@ -562,7 +565,7 @@ Increment B's site tests run with `go test -race ./internal/site/...`:
 | Two workers on one Device, two Devices in parallel | `TestTwoWorkersOnOneDevice`, `TestTwoDevicesInParallel`, `TestANewerFenceStopsTheOlderWorker` |
 | A TLS pin mismatch and an identity mismatch send nothing, against TLS servers | `TestPinMismatchSendsNothing`, `TestIdentityMismatchSendsNothing` |
 | Every pre-effect refusal, stale assignments, deadlines, result deletion, payload validation | `TestPreEffectRefusalsSendNothing`, `TestAStaleAssignmentIsRefusedAndStoresNothing`, `TestAWorkerStopsAtItsDeadline`, `TestResultsAreDeletedOnceTheCoordinatorAnswers`, `TestAssignmentValidation` |
-| One worker per assignment, final results, shutdown at each stage, an older worker that does not stop, a fence raised between journal and send | `TestARedeliveryWhileTheSameOperationRunsStoresNothing`, `TestAStoredResultSurvivesARedelivery`, `TestAWorkerStoppedFromOutsideStoresNoResult`, `TestAShutdownWhileWaitingForTheRunLockStoresNothing`, `TestAShutdownDuringTheChecksStoresNothing`, `TestANewerAssignmentThatCannotStopTheOlderWorkerSendsNothing`, `TestALostLockWithJournaledStepsIsUnknown`, `TestAFenceRaisedBetweenJournalAndSendStopsTheStep` |
+| One worker per assignment, final results, shutdown at each stage, an older worker that does not stop, a fence raised between journal and send | `TestARedeliveryWhileTheSameOperationRunsStoresNothing`, `TestACopyWaitingForTheLockReturnsTheStoredResult`, `TestAStoredResultSurvivesARedelivery`, `TestAWorkerStoppedFromOutsideStoresNoResult`, `TestAShutdownWhileWaitingForTheRunLockStoresNothing`, `TestAShutdownDuringTheChecksStoresNothing`, `TestANewerAssignmentThatCannotStopTheOlderWorkerSendsNothing`, `TestALostLockWithJournaledStepsIsUnknown`, `TestAFenceRaisedBetweenJournalAndSendStopsTheStep` |
 | Per-Device credentials, the fence report | `TestSecretCredentialsUseThePerDeviceContract`, `TestReportGivesTheCoordinatorSeenAndStoppedFences` |
 | Step payloads, the start-by window, identity separate from capabilities, a resumed worker reporting unknown | `TestAStepPayloadIsJournaledAndReadBack`, `TestALateStartIsStaleAndSendsNothing`, `TestIdentityIsSeparateFromInstallCapabilities`, `TestAResumedWorkerThatCannotReachTheBMCReportsUnknown` |
 | Install and wipe against a simulated BMC, one power-on per phase after an interruption in either phase, the power-off bound, fenced boot admission, bootstrap refused | `TestAWorkerInterruptedInTheDiskPhaseResumes`, `TestAServerThatNeverPowersOffEndsTheStep`, `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |

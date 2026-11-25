@@ -231,6 +231,9 @@ type Runner struct {
 	// lock. It defaults to one second.
 	Poll time.Duration
 	Now  func() time.Time
+	// waiting, when set, is called each time a worker waits for the run
+	// lock. Tests use it to know a copy is waiting.
+	waiting func()
 }
 
 func (r *Runner) now() time.Time {
@@ -281,6 +284,9 @@ func (r *Runner) acquire(ctx context.Context, assignment Assignment) (*runLock, 
 				return nil, err
 			}
 			return lock, nil
+		}
+		if r.waiting != nil {
+			r.waiting()
 		}
 		select {
 		case <-ctx.Done():
@@ -348,6 +354,12 @@ func (r *Runner) Run(ctx context.Context, assignment Assignment) (custody.SiteRe
 		return custody.SiteResult{}, err
 	}
 	defer lock.release()
+	// A worker for this same assignment may have stored its result while
+	// this one waited for the lock. Return that result; running the kind
+	// again could send to the server after the outcome was recorded.
+	if stored, found, err := r.Results.Get(assignment.Device, assignment.Operation.UID, assignment.Fence); err != nil || found {
+		return stored, err
+	}
 	parent := ctx
 	// The worker stops at its deadline exactly, and as soon as a newer fence
 	// is stored for the Device.
