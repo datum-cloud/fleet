@@ -936,25 +936,33 @@ inputs, and nothing else writes them.
   the Device's current plan, its latest succeeded commissioning for the same
   Device UID, discovery currency by the admission rule, the cleaning policy
   resolver, and whether another Device in the namespace shares an identity
-  alias. Aliases moved from registration to the inventory API package, so
-  registration and the projector compute them the same way.
+  alias anywhere in the provider project. Registration admission checks the
+  other provider projects when capacity is registered and enabled; the
+  projector does not read across projects. Aliases moved from registration to
+  the inventory API package, so both compute them the same way.
 - **Cleaning policy.** The projector takes a resolver that returns a digest,
   `ErrUnresolved`, or another error, which makes `Available` `Unknown`. Every
   mode supplies a fixture resolver for its one fixture policy. No production
   resolver exists yet; it belongs to the cleaning policy owner.
 - **Simulated commissioning.** The simulator site runs a `DeviceCommissioning`
   worker that inspects the hardware and firmware its enrollment records for
-  the Device and journals one burn-in step. The enrollment gains `hardware`
-  and `firmware` fields for it.
+  the Device. Its burn-in sends nothing and takes no time: it journals one
+  step named `simulated-burnin` and records the plan's duration, so its
+  evidence is synthetic and says so. The enrollment gains `hardware` and
+  `firmware` fields for it.
 - **Standalone.** A `commission` phase runs before `allocate`, as three
   ServiceAccounts: a plan author, an approver and an operator. The fixture
   Device carries a `fleet.datumapis.com/hardware-model` label that the plan
   selects. The smoke checks that the provider cannot write capacity status
   and that the author cannot approve.
-- **Multi-plane.** The provider project gets the projector and the three staff
-  identities, and the Metal provider reads commissioning evidence. The seed
-  no longer writes capacity conditions, so the run commissions its server
-  before it allocates (see the end-to-end increment).
+- **Multi-plane.** The provider project gets the projector, the three staff
+  identities and a capacity operator, and the Metal provider reads
+  commissioning evidence. The seed no longer writes capacity conditions, and
+  nothing in this increment commissions the run's server, so neither
+  multi-plane run can allocate at this increment. The end-to-end increment
+  adds the commissioning phase; no multi-plane result exists before it.
+- **Synthetic staging.** The staging handler no longer writes capacity
+  status; the projector does.
 
 ## Points for a person
 

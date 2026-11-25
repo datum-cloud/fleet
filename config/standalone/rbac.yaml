@@ -251,6 +251,22 @@ roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: fleet-capacity-
 subjects:
   - {kind: ServiceAccount, name: fleet-capacity-projector, namespace: fleet-system}
 ---
+# A duplicate identity anywhere in the project withdraws an offer, so the
+# projector reads Devices in every namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: fleet-capacity-projector-devices}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: fleet-custody-coordinator-devices}
+subjects:
+  - {kind: ServiceAccount, name: fleet-capacity-projector, namespace: fleet-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: fleet-standalone-smoke-devices}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: fleet-custody-coordinator-devices}
+subjects:
+  - {kind: ServiceAccount, name: fleet-standalone-smoke, namespace: fleet-system}
+---
 # Writes commissioning plans. It cannot approve them.
 apiVersion: v1
 kind: ServiceAccount

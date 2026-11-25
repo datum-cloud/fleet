@@ -163,12 +163,13 @@ func latestCommissioning(ctx context.Context, reader client.Reader, device *inve
 	return &custody.LatestCommissioning{DeviceUID: latest.GetLabels()[ops.LabelDeviceUID], FinishedAt: status.FinishedAt.Time, Evidence: evidence}, nil
 }
 
-// Duplicate reports whether another Device in the namespace shares one of
-// the Device's identity aliases. Retired Devices count until they are
-// deleted.
+// Duplicate reports whether another Device in the provider project, in any
+// namespace, shares one of the Device's identity aliases. Retired Devices
+// count until they are deleted. Registration admission checks the other
+// provider projects when capacity is registered and enabled.
 func Duplicate(ctx context.Context, reader client.Reader, device *inventory.Device) (bool, error) {
 	var devices inventory.DeviceList
-	if err := reader.List(ctx, &devices, client.InNamespace(device.Namespace)); err != nil {
+	if err := reader.List(ctx, &devices); err != nil {
 		return false, err
 	}
 	aliases := inventory.Aliases(device)

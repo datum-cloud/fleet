@@ -5,10 +5,10 @@
 package fixture
 
 import (
-	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"context"
 	"strings"
 
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site"
 )
