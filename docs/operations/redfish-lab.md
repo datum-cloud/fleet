@@ -127,7 +127,7 @@ ownership audit covers the BMC Deployment, Service and ServiceAccount.
 | Target | Redfish System | UUID | NIC MAC / lease | Device | Role |
 | --- | --- | --- | --- | --- | --- |
 | A | `System-1` | `7f3d0c2e-…-0a1b2c3d4e0a` | `52:54:00:77:01:0a` / `.10` | `fleet-provider/synthetic-device-central-01` | The only published capacity |
-| B | `System-2` | `7f3d0c2e-…-0a1b2c3d4e0b` | `52:54:00:77:01:0b` / `.11` | `fleet-provider/synthetic-device-central-02` | Enrolled, never allocated; proves target isolation |
+| B | `System-2` | `7f3d0c2e-…-0a1b2c3d4e0b` | `52:54:00:77:01:0b` / `.11` | `fleet-provider/synthetic-device-central-02` | Enrolled at the site only, never a Device: it shares the lab BMC's key; proves target isolation |
 
 The disks, domain UUIDs and MACs exist before any allocation. Each installation
 or cleanup reuses target A's single persistent disk. The site enrollment is an

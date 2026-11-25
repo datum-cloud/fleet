@@ -161,7 +161,12 @@ def enroll(s):
                   'annotations': {'fleet.datumapis.com/device-project': 'provider', 'fleet.datumapis.com/device-namespace': namespace, 'fleet.datumapis.com/device-name': name}},
                   'stringData': {'username': (d / 'bmc-username').read_text().strip(), 'password': (d / 'bmc-password.token').read_text().strip(), 'tlsPublicKeySHA256': pin}}
         kubectl(s, 'apply', '-f', '-', input=json.dumps(secret))
-        fixture[target['device']] = {'bmcEndpoint': target['endpoint'], 'systemUUID': target['systemUUID'], 'bootMACAddress': target['mac'], 'bmcPublicKeySHA256': pin, 'disks': ['disk-0']}
+        # Only target A is a Fleet Device. Target B is enrolled at the site to
+        # prove isolation and is never inventory: the lab serves both targets
+        # from one BMC with one TLS key, and custody refuses a key that
+        # another active Device also records.
+        if target['device'] == 'fleet-provider/synthetic-device-central-01':
+            fixture[target['device']] = {'bmcEndpoint': target['endpoint'], 'systemUUID': target['systemUUID'], 'bootMACAddress': target['mac'], 'bmcPublicKeySHA256': pin, 'disks': ['disk-0']}
     write(d / 'fixture-enrollment.json', fixture)
     write(s / 'evidence' / 'redfish-enrollment.json', {
         'observedAt': now(), 'credentialSecrets': [CREDENTIALS + '/' + credential_name(t['device']) for t in enrollment['targets']], 'username': 'fleet-lab-operator',

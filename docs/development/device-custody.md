@@ -306,7 +306,10 @@ private custody namespace on the hub host is gone.
 - **Multi-plane.** The provider project gets the inventory and custody CRDs and one
   token per component. The lab BMC serves TLS with a key generated per run, and
   each Device's credential carries that key's digest as its pin. Real BMC
-  discovery is not part of the run. This is a lab gap.
+  discovery is not part of the run. This is a lab gap. One lab BMC serves both
+  targets with one key, and custody refuses a key that two active Devices
+  record, so only target A is a Device. Target B stays enrolled at the site,
+  with its own credential, to prove isolation.
 
 ### Machine power
 
