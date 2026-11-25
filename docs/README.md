@@ -73,6 +73,7 @@ Each topic folder has a `README.md` entry point:
 | [Development](development/README.md) | Implementation status, local commands, and roadmap |
 | [Enhancements](enhancements/machine-lifecycle/README.md) | Focused machine lifecycle contracts and acceptance requirements |
 | [Device operations](enhancements/device-operations/README.md) | Proposed custody and operations for every physical action on a server |
+| [OS images and bootstrap data](enhancements/machine-images/README.md) | Proposed image catalog and sealed bootstrap data for installs |
 | [Proposals](proposals/fleet-management/README.md) | Broader service proposals, examples, diagrams, and provenance |
 
 ## Read implementation and design separately
