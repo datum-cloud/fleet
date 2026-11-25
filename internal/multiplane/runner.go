@@ -395,7 +395,7 @@ func (r *Runner) installation(ctx context.Context, index int) (*request, *fleet.
 		return nil, nil, nil, nil, err
 	}
 	if current == nil || current.Status.Phase != fleet.AllocationActive {
-		return nil, nil, nil, nil, errors.New("the consumer has no active allocation")
+		return nil, nil, nil, nil, errNoActiveAllocation
 	}
 	var install fleet.Installation
 	if err := q.project.API.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "debian-pxe"}, &install); err != nil {
@@ -468,6 +468,10 @@ func (r *Runner) InstallIndex(ctx context.Context, index int) error {
 	}
 	return r.projectPower(ctx, q)
 }
+
+// errNoActiveAllocation means the consumer holds no active allocation, so
+// the Metal provider installs nothing for it.
+var errNoActiveAllocation = errors.New("the consumer has no active allocation")
 
 // errTerminal marks an error that retrying cannot fix.
 var errTerminal = errors.New("terminal")
