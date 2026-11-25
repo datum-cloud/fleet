@@ -238,7 +238,7 @@ func TestInstallationRunsBothPhasesWithOneOnEach(t *testing.T) {
 func TestWipeChecksTheEnrolledDisk(t *testing.T) {
 	l := newLab(t)
 	r := runner(t, l)
-	spec := ops.DeviceWipeSpec{Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + strings.Repeat("b", 64)}, TargetDisks: []string{"disk-0"}}
+	spec := ops.DeviceWipeSpec{Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + strings.Repeat("b", 64)}, Assurance: ops.AssuranceClear, Drives: []ops.PlannedDrive{overwriteDrive("disk-0")}}
 	result, err := r.Run(context.Background(), assignment(l, "DeviceWipe", "op-wipe", 1, spec))
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func TestWipeChecksTheEnrolledDisk(t *testing.T) {
 	// A disk the site does not enroll is refused before anything is sent.
 	m := newLab(t)
 	s := runner(t, m)
-	spec.TargetDisks = []string{"disk-1"}
+	spec.Drives = []ops.PlannedDrive{overwriteDrive("disk-1")}
 	result, _ = s.Run(context.Background(), assignment(m, "DeviceWipe", "op-wipe-other", 1, spec))
 	if result.Phase != ops.PhaseFailed || result.Reason != ReasonTargetDisks || m.onCount() != 0 {
 		t.Fatalf("result = %+v", result)
@@ -362,4 +362,11 @@ func TestAServerThatNeverPowersOffEndsTheStep(t *testing.T) {
 	if result.Phase != ops.PhaseOutcomeUnknown || result.Reason != site.ReasonStep || l.onCount() != 0 || time.Since(started) > 10*time.Second {
 		t.Fatalf("result = %+v, %d power-ons after %s", result, l.onCount(), time.Since(started))
 	}
+}
+
+// overwriteDrive is one planned drive the site cleans by overwriting it and
+// reading it back.
+func overwriteDrive(name string) ops.PlannedDrive {
+	return ops.PlannedDrive{ManifestDrive: ops.ManifestDrive{Name: name, SerialNumber: "EXAMPLE-SN-0001", Model: "EXAMPLE-NVME", Firmware: "EX1", Protocol: ops.ProtocolNVMe, MediaType: ops.MediaSSD, CapacityBytes: 2 << 30, Rule: "nvme-ssd"},
+		Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: &ops.VerifySpec{Mode: ops.VerifyFull}}
 }

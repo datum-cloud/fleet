@@ -10,8 +10,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/cleaning"
 	"go.datum.net/fleet/internal/custody"
 )
 
@@ -167,8 +169,25 @@ func (a *Allocator) clean(ctx context.Context, state *ops.DeviceCustody, allocat
 }
 
 // wipe records the wipe in status, then creates it, so a crash between the
-// two creates the same wipe again.
+// two creates the same wipe again. Its plan comes from the shared planner:
+// the allocation's pinned policy and manifest, and the drives discovery
+// reports now. Until discovery reports the server's drives, no wipe is
+// created.
 func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocation, reference fleetv1.WipeReference) error {
+	device := &inventory.Device{}
+	if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: allocation.Spec.DeviceRef.Name}, device); err != nil {
+		return err
+	}
+	// The allocation's device-uid label records the incarnation it holds;
+	// a Device recreated under the same name is not that server.
+	if string(device.UID) != allocation.Labels[fleetv1.LabelDeviceUID] {
+		return fmt.Errorf("%w: the Device is another incarnation", ErrCustodyLost)
+	}
+	pin := allocation.Spec.CleaningPolicy
+	plan, err := cleaning.Plan(pin.Spec, allocation.Spec.Drives, cleaning.StorageOf(device), nil)
+	if err != nil {
+		return fmt.Errorf("plan the wipe: %w", err)
+	}
 	if current := allocation.Status.Wipe; current == nil || *current != reference {
 		allocation.Status.Wipe = &reference
 		if err := a.Provider.Status().Update(ctx, allocation); err != nil {
@@ -180,8 +199,9 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 		Spec: ops.DeviceWipeSpec{
 			OperationEnvelope: a.envelope(allocation, a.ReleaseCreator),
 			Step:              reference.Step,
-			Policy:            allocation.Spec.CleaningPolicy.CleaningPolicyReference,
-			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
+			Policy:            pin.CleaningPolicyReference,
+			Assurance:         pin.Spec.Assurance,
+			Drives:            plan,
 		},
 	}
 	return a.createOnce(ctx, a.Releaser, wipe, &ops.DeviceWipe{})

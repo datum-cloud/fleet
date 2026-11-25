@@ -366,6 +366,10 @@ type MachineAllocationSpec struct {
 	// CleaningPolicy is the copy of the capacity's cleaning policy the
 	// release wipes under. It is pinned at allocation.
 	CleaningPolicy ops.PinnedCleaningPolicy `json:"cleaningPolicy"`
+	// Drives is the media manifest: every drive the server had when Fleet
+	// allocated it, named for this allocation and matched to a rule of the
+	// pinned policy. Release cleans every one of them.
+	Drives []ops.ManifestDrive `json:"drives"`
 	// BootInterface and TargetDisks are what installations and wipes for
 	// this allocation use.
 	BootInterface string   `json:"bootInterface"`

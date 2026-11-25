@@ -239,3 +239,25 @@ func examplePolicy(namespace string) *ops.CleaningPolicy {
 			Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: ops.VerifySpec{Mode: ops.VerifyFull}, TimePerTiB: metav1.Duration{Duration: time.Hour}}},
 	}}
 }
+
+// device reads the Device as the allocator would.
+func (e *env) device(name string) *inventory.Device {
+	e.t.Helper()
+	device := &inventory.Device{}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: name}, device); err != nil {
+		e.t.Fatal(err)
+	}
+	return device
+}
+
+// addDrive makes discovery report one more simulated drive for the Device.
+func (e *env) addDrive(name, disk string) {
+	e.t.Helper()
+	device := e.device(name)
+	storage := device.Status.Discovery.Inventory.Systems[0].Storage
+	extra := fixture.Drives(namespace+"/"+name, fixture.Target{Disks: []string{disk}})
+	storage.Drives = append(storage.Drives, extra.Drives...)
+	if err := e.admin.Status().Update(e.ctx, device); err != nil {
+		e.t.Fatal(err)
+	}
+}

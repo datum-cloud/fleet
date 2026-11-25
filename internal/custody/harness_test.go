@@ -14,6 +14,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	metal "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/cleaning"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -218,8 +219,10 @@ func (e *env) discover(device *inventory.Device, key string, at time.Time) {
 	}
 	observed := metav1.NewTime(at)
 	device.Status.Discovery = &inventory.DeviceDiscovery{
-		TLS:       &inventory.ObservedTLS{ObservedAt: observed, Endpoint: device.Spec.BMC.Endpoint, PublicKeySHA256: key},
-		Inventory: &inventory.ObservedInventory{ObservedAt: observed, Endpoint: device.Spec.BMC.Endpoint},
+		TLS: &inventory.ObservedTLS{ObservedAt: observed, Endpoint: device.Spec.BMC.Endpoint, PublicKeySHA256: key},
+		Inventory: &inventory.ObservedInventory{ObservedAt: observed, Endpoint: device.Spec.BMC.Endpoint, Systems: []inventory.ObservedSystem{{
+			ID: "System-1", UUID: device.Spec.Identity.SystemUUID, Storage: harnessStorage(device),
+		}}},
 	}
 	device.Status.Conditions = []metav1.Condition{{Type: inventory.ConditionIdentityMatched, Status: metav1.ConditionTrue, Reason: "Matched", ObservedGeneration: device.Generation, LastTransitionTime: observed}}
 	if err := e.admin.Status().Update(e.ctx, device); err != nil {
@@ -348,8 +351,10 @@ func (e *env) installation(device *inventory.Device, allocation, request string)
 
 func (e *env) wipe(device *inventory.Device, allocation string, step int32) *ops.DeviceWipe {
 	e.t.Helper()
+	e.ensureAllocation(device, allocation)
 	operation := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName(allocation, step), Namespace: "default"}, Spec: ops.DeviceWipeSpec{
-		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, TargetDisks: []string{"disk-0"},
+		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest},
+		Assurance: ops.AssuranceClear, Drives: e.plan(device, allocation),
 	}}
 	e.create(operation)
 	return operation
@@ -358,8 +363,10 @@ func (e *env) wipe(device *inventory.Device, allocation string, step int32) *ops
 // namedWipe creates a wipe with an explicit name, such as a retry's.
 func (e *env) namedWipe(device *inventory.Device, allocation, name string, step int32) *ops.DeviceWipe {
 	e.t.Helper()
+	e.ensureAllocation(device, allocation)
 	operation := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: ops.DeviceWipeSpec{
-		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, TargetDisks: []string{"disk-0"},
+		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest},
+		Assurance: ops.AssuranceClear, Drives: e.plan(device, allocation),
 	}}
 	e.create(operation)
 	return operation
@@ -438,6 +445,11 @@ func (e *env) allocation(device *inventory.Device, name, phase string) *metal.Ma
 		BootInterface: "primary",
 		TargetDisks:   []string{"disk-0"},
 	}}
+	drives, err := cleaning.Manifest(allocation.Spec.CleaningPolicy.Spec, harnessStorage(device))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	allocation.Spec.Drives = drives
 	e.create(allocation)
 	if phase != "" {
 		allocation.Status.Phase = phase
@@ -459,4 +471,42 @@ func (e *env) deviceUID(name string) types.UID {
 		e.t.Fatal(err)
 	}
 	return device.UID
+}
+
+// harnessStorage is the one drive fixture discovery reports for a Device.
+func harnessStorage(device *inventory.Device) *inventory.ObservedStorage {
+	return &inventory.ObservedStorage{Drives: []inventory.ObservedDrive{{ID: "Storage/1/Drives/0", SerialNumber: "EXAMPLE-SN-" + device.Name, Model: "EXAMPLE-NVME",
+		Firmware: "EX1", Protocol: "NVMe", MediaType: "SSD", CapacityBytes: 2 << 30}}}
+}
+
+// plan is what the shared planner makes for a wipe of the allocation now.
+func (e *env) plan(device *inventory.Device, allocation string) []ops.PlannedDrive {
+	e.t.Helper()
+	pinned := &metal.MachineAllocation{}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: "default", Name: allocation}, pinned); err != nil {
+		// A wipe for an allocation the test never created: plan the one
+		// harness drive under the harness policy.
+		pinned.Spec.CleaningPolicy.Spec = ops.CleaningPolicySpec{Assurance: ops.AssuranceClear, Rules: []ops.CleaningRule{{Name: "nvme-ssd", Match: ops.DriveMatch{Protocol: ops.ProtocolNVMe, MediaType: ops.MediaSSD},
+			Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: ops.VerifySpec{Mode: ops.VerifyFull}, TimePerTiB: metav1.Duration{Duration: time.Hour}}}}
+		pinned.Spec.Drives, _ = cleaning.Manifest(pinned.Spec.CleaningPolicy.Spec, harnessStorage(device))
+	}
+	plan, err := cleaning.Plan(pinned.Spec.CleaningPolicy.Spec, pinned.Spec.Drives, harnessStorage(device), nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return plan
+}
+
+// ensureAllocation creates the releasing allocation a wipe names, when the
+// test has not, because wipe admission plans from it.
+func (e *env) ensureAllocation(device *inventory.Device, name string) {
+	e.t.Helper()
+	err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: "default", Name: name}, &metal.MachineAllocation{})
+	if apierrors.IsNotFound(err) {
+		e.allocation(device, name, "Releasing")
+		return
+	}
+	if err != nil {
+		e.t.Fatal(err)
+	}
 }

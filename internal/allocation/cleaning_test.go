@@ -58,13 +58,23 @@ func TestAllocationPinsItsCleaningPolicy(t *testing.T) {
 	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: custody.WipeName(allocation.Name, 1)}, wipe); err != nil {
 		t.Fatal(err)
 	}
-	if wipe.Spec.Policy != pinned.CleaningPolicyReference {
+	if wipe.Spec.Policy != pinned.CleaningPolicyReference || wipe.Spec.Assurance != ops.AssuranceClear {
 		t.Fatalf("wipe policy = %+v, want %+v", wipe.Spec.Policy, pinned.CleaningPolicyReference)
+	}
+	// The manifest pinned the server's one drive, and the wipe plans it with
+	// the pinned rule's method and check.
+	if len(allocation.Spec.Drives) != 1 || allocation.Spec.Drives[0].Name != "disk-0" || allocation.Spec.Drives[0].SerialNumber == "" {
+		t.Fatalf("manifest = %+v", allocation.Spec.Drives)
+	}
+	if len(wipe.Spec.Drives) != 1 || wipe.Spec.Drives[0].ManifestDrive != allocation.Spec.Drives[0] || wipe.Spec.Drives[0].State != "" ||
+		wipe.Spec.Drives[0].Verify == nil || wipe.Spec.Drives[0].Verify.Mode != ops.VerifyFull {
+		t.Fatalf("plan = %+v", wipe.Spec.Drives)
 	}
 }
 
 // TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated skips capacity
-// whose policy is missing or invalid, and claims nothing.
+// whose policy is missing or invalid, or whose drives the policy does not
+// cover, and claims nothing.
 func TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated(t *testing.T) {
 	cases := map[string]func(e *env){
 		"missing policy": func(e *env) {
@@ -82,6 +92,20 @@ func TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated(t *testing.T) {
 			invalid.Spec.Rules[0].Verify = ops.VerifySpec{Mode: ops.VerifyCanary, Samples: 64}
 			e.create(invalid)
 		},
+	}
+	cases["drives not reported"] = func(e *env) {
+		device := e.device("server-example-001")
+		device.Status.Discovery.Inventory.Systems[0].Storage = nil
+		if err := e.admin.Status().Update(e.ctx, device); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	cases["a drive no rule covers"] = func(e *env) {
+		device := e.device("server-example-001")
+		device.Status.Discovery.Inventory.Systems[0].Storage.Drives[0].Protocol = "SAS"
+		if err := e.admin.Status().Update(e.ctx, device); err != nil {
+			e.t.Fatal(err)
+		}
 	}
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {

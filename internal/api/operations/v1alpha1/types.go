@@ -342,9 +342,12 @@ type DeviceWipeSpec struct {
 	// Step numbers the wipes of one release, from 1. The name is derived
 	// from it.
 	Step int32 `json:"step"`
-	// Policy is the cleaning policy pinned at allocation.
-	Policy      CleaningPolicyReference `json:"policy"`
-	TargetDisks []string                `json:"targetDisks"`
+	// Policy is the cleaning policy pinned at allocation, and Assurance what
+	// it requires of every drive.
+	Policy    CleaningPolicyReference `json:"policy"`
+	Assurance Assurance               `json:"assurance"`
+	// Drives is the plan: one step per drive, from the shared planner.
+	Drives []PlannedDrive `json:"drives"`
 }
 
 // WipeEvidence is the result evidence of a DeviceWipe.

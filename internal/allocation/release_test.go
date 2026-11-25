@@ -72,7 +72,7 @@ func TestAnAllocationThatNeverHeldItsDeviceIsReleased(t *testing.T) {
 	if _, err := q.Acquire(e.ctx, machine(1)); err != nil {
 		t.Fatal(err)
 	}
-	orphan, err := e.allocator.newAllocation(context.Background(), e.request(1), e.capacity(device.Name), device, "fleet-machine-601")
+	orphan, err := e.allocator.newAllocation(context.Background(), e.request(1), e.capacity(device.Name), e.device(device.Name), "fleet-machine-601")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,13 +96,13 @@ func TestAnAllocationThatNeverHeldItsDeviceIsReleased(t *testing.T) {
 func TestAFailingWipeGetsNewStepsThenStops(t *testing.T) {
 	e := startEnv(t)
 	device := e.server(1)
-	// The site enrolls disk-0; a wipe of disk-1 is refused before anything
-	// is sent.
-	e.allocator.TargetDisks = []string{"disk-1"}
 	held, err := e.allocator.Allocate(e.ctx, e.request(1))
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Discovery now reports a second drive the site does not enroll. Every
+	// wipe plans it, and the site refuses each one before anything is sent.
+	e.addDrive(device.Name, "disk-1")
 	deadline := time.Now().Add(45 * time.Second)
 	for {
 		if err := e.loop.Pass(e.ctx); err != nil {

@@ -307,6 +307,18 @@ func (a *Allocator) newAllocation(ctx context.Context, request Request, capacity
 	if err != nil {
 		return nil, err
 	}
+	// The manifest pins every drive the server has now. A server with a drive
+	// the policy cannot clean, or storage discovery has not reported, is not
+	// covered.
+	drives, err := cleaning.Manifest(policy.Spec, cleaning.StorageOf(device))
+	if err != nil {
+		return nil, fmt.Errorf("%w: capacity %s: %v", ErrCleaningUncovered, capacity.Name, err)
+	}
+	for _, disk := range a.TargetDisks {
+		if !slices.ContainsFunc(drives, func(d ops.ManifestDrive) bool { return d.Name == disk }) {
+			return nil, fmt.Errorf("%w: capacity %s has no drive %s to install on", ErrCleaningUncovered, capacity.Name, disk)
+		}
+	}
 	classDigest, err := custody.SpecDigest(request.Class.Spec)
 	if err != nil {
 		return nil, err
@@ -333,6 +345,7 @@ func (a *Allocator) newAllocation(ctx context.Context, request Request, capacity
 			Hardware:       capacity.Status.Hardware,
 			Authority:      request.Authority,
 			CleaningPolicy: policy,
+			Drives:         drives,
 			BootInterface:  a.BootInterface,
 			TargetDisks:    slices.Clone(a.TargetDisks),
 		},

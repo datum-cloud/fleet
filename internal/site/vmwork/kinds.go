@@ -418,7 +418,11 @@ func (k Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	if refusal != nil {
 		return refusal
 	}
-	return enrolled(work, spec.TargetDisks)
+	names, ok := spec.OverwriteDrives()
+	if !ok {
+		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "this site cleans only by overwriting every planned drive and reading it back"}
+	}
+	return enrolled(work, names)
 }
 
 // Run deletes every installation disk of the Device. A disk whose domain
@@ -473,5 +477,10 @@ func (k Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
 		return nil, &custody.Refusal{Reason: site.ReasonStep, Message: "a disk remained after the wipe"}
 	}
 	at, _ := work.JournaledAt(step.Name)
-	return ops.WipeEvidence{Steps: []ops.StepEvidence{{Name: step.Name, CompletedAt: metav1.NewTime(at.UTC())}}, WipedDisks: spec.TargetDisks, PolicyDigest: spec.Policy.Digest}, nil
+	return ops.WipeEvidence{Steps: []ops.StepEvidence{{Name: step.Name, CompletedAt: metav1.NewTime(at.UTC())}}, WipedDisks: wipedDrives(spec), PolicyDigest: spec.Policy.Digest}, nil
+}
+
+func wipedDrives(spec ops.DeviceWipeSpec) []string {
+	names, _ := spec.OverwriteDrives()
+	return names
 }

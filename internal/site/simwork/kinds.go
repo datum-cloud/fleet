@@ -162,7 +162,11 @@ func (Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	if refusal != nil {
 		return refusal
 	}
-	return checkDisks(work, spec.TargetDisks)
+	names, ok := spec.OverwriteDrives()
+	if !ok {
+		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "this site cleans only by overwriting every planned drive and reading it back"}
+	}
+	return checkDisks(work, names)
 }
 
 func (Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
@@ -186,7 +190,12 @@ func (Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
 	at, _ := work.JournaledAt(step.Name)
 	return ops.WipeEvidence{
 		Steps:        []ops.StepEvidence{{Name: step.Name, CompletedAt: metav1.NewTime(at.UTC())}},
-		WipedDisks:   slices.Clone(spec.TargetDisks),
+		WipedDisks:   driveNames(spec),
 		PolicyDigest: spec.Policy.Digest,
 	}, nil
+}
+
+func driveNames(spec ops.DeviceWipeSpec) []string {
+	names, _ := spec.OverwriteDrives()
+	return names
 }

@@ -10,6 +10,9 @@ import (
 	"time"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	metal "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/cleaning"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -36,6 +39,13 @@ const (
 	ReasonRetryAuthorized      = "RetryAlreadyAuthorized"
 	ReasonDisposalRequired     = "DisposalRequired"
 	ReasonInvalidResolve       = "InvalidResolve"
+	// A wipe's plan is not what the shared planner makes from its
+	// allocation's pin and current discovery.
+	ReasonPlanMismatch = "PlanMismatch"
+	// A wipe plans a drive it cannot clean. These refuse the wipe until the
+	// recovery hold that #183 specifies replaces the refusal.
+	ReasonDriveMissing   = "DriveMissing"
+	ReasonDriveUncovered = "DriveUncovered"
 	// Reasons every site's install and wipe workers raise.
 	ReasonTargetUnsupported = "TargetUnsupported"
 	ReasonTargetDisks       = "TargetDisksUnknown"
@@ -143,7 +153,9 @@ func DeviceWipeKind() Kind {
 		// settled by a later wipe only after a DeviceRecovery with Retry.
 		Settles:   []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
 		Retryable: true,
-		Reasons:   workerReasons,
+		Check:     checkWipePlan,
+		Reasons: append([]Reason{{Name: ReasonPlanMismatch, RaisedBy: RaisedByCoordinator}, {Name: ReasonDriveMissing, RaisedBy: RaisedByCoordinator},
+			{Name: ReasonDriveUncovered, RaisedBy: RaisedByCoordinator}}, workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.WipeEvidence) error {
 			if len(evidence.WipedDisks) > 16 {
 				return errors.New("evidence records at most 16 disks")
@@ -151,6 +163,39 @@ func DeviceWipeKind() Kind {
 			return validateSteps(evidence.Steps)
 		}),
 	}
+}
+
+// checkWipePlan admits a wipe only if its plan is exactly what the shared
+// planner makes from its allocation's pinned policy and manifest and the
+// drives discovery reports now, and only if every planned drive can be
+// cleaned.
+func checkWipePlan(ctx context.Context, admission *Admission) *Refusal {
+	wipe := admission.Operation.(*ops.DeviceWipe)
+	reference := wipe.Spec.Authority.AllocationRef
+	if reference == nil {
+		return refuse(ReasonPlanMismatch, "a wipe names no allocation")
+	}
+	allocation := &metal.MachineAllocation{}
+	if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: wipe.Namespace, Name: reference.Name}, allocation); err != nil {
+		return refuse(ReasonPlanMismatch, "the wipe's allocation cannot be read: %v", err)
+	}
+	pin := allocation.Spec.CleaningPolicy
+	plan, err := cleaning.Plan(pin.Spec, allocation.Spec.Drives, cleaning.StorageOf(admission.Device), nil)
+	if err != nil {
+		return refuse(ReasonPlanMismatch, "the wipe cannot be planned: %v", err)
+	}
+	if wipe.Spec.Policy != pin.CleaningPolicyReference || wipe.Spec.Assurance != pin.Spec.Assurance || !equality.Semantic.DeepEqual(wipe.Spec.Drives, plan) {
+		return refuse(ReasonPlanMismatch, "the wipe's plan differs from the plan its allocation and current discovery give")
+	}
+	for _, d := range plan {
+		switch d.State {
+		case ops.DriveMissing:
+			return refuse(ReasonDriveMissing, "drive %s (%s) is pinned but discovery no longer reports it", d.Name, d.SerialNumber)
+		case ops.DriveUncovered:
+			return refuse(ReasonDriveUncovered, "no qualified method of the pinned policy cleans drive %s (%s)", d.Name, d.SerialNumber)
+		}
+	}
+	return nil
 }
 
 // DeviceRecoveryKind is the registry entry for DeviceRecovery. It sends

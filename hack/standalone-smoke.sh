@@ -52,7 +52,7 @@ for crd in installations machineallocations machinecapacities machineclasses mac
     exit 1
   fi
 done
-for crd in devices devicecustodies deviceinstallations devicewipes devicerecoveries; do
+for crd in devices devicecustodies deviceinstallations devicewipes devicerecoveries cleaningpolicies; do
   if kubectl --context "$context" get crd "$crd.fleet.datumapis.com" >/dev/null 2>&1; then
     echo "fixed Fleet CRD $crd already exists; use a fresh dedicated kind cluster" >&2
     exit 1

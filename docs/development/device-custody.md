@@ -720,12 +720,28 @@ real API server. The rest of #183 is **proposed**.
 
 BMC discovery records each System's drives from Redfish in Device status, and
 fixture discovery reports one simulated drive per enrolled disk. The Redfish
-lab serves a Storage collection for its targets. These are observations only.
+lab's targets each have one emulated NVMe drive.
 
-Not implemented yet: drive inventory from commissioning, the media
-manifest and pinned drive names, the per-drive plan in `DeviceWipe`, the
-in-band methods and their evidence, the evidence check and its reasons, and
-`DisposeDrive`. Until then, every site still wipes its one enrolled disk.
+- **Manifest.** The allocator pins every drive the server reports, named
+  `disk-0`, `disk-1` and so on by protocol and serial number, with the rule
+  that covers it. A server whose drives are unknown, back a RAID volume, lack
+  a serial number, or have no planned method is skipped as uncovered.
+  Installation target disks must be names in the manifest.
+- **Plan.** One shared planner turns the pin and current discovery into one
+  step per drive. The release controller writes the plan into each
+  `DeviceWipe`, and admission plans again and refuses a wipe whose plan
+  differs, with reason `PlanMismatch`.
+- **Missing and uncovered drives (interim).** Admission refuses a wipe with a
+  `Missing` or `Uncovered` step, with reason `DriveMissing` or
+  `DriveUncovered`, so nothing is sent and the `Cleaning` gate stays open.
+  #183 instead ends such a wipe `OutcomeUnknown` under a recovery hold that
+  `DisposeDrive` settles; that comes with `DisposeDrive`.
+- **Sites.** Every site cleans only by overwriting each planned drive and
+  reading it back, and refuses any other plan before sending anything.
+
+Not implemented yet: drive inventory from commissioning, the in-band methods
+other than overwrite and their evidence, the evidence check and its reasons,
+the plan-derived deadline, and `DisposeDrive`.
 
 ### Cutover decisions
 
