@@ -2,36 +2,52 @@
 
 [Operations guide](README.md) · [Troubleshooting](../troubleshooting/README.md)
 
-This environment exercises Fleet's implemented local-scope lifecycle library
-against the persistent provider simulator. It is a development smoke test, not
-the Milo acceptance suite and not hardware qualification.
+This environment exercises Fleet's implemented allocation lifecycle on [Device
+custody](../development/device-custody.md#cutover-increment-c) in one kind
+cluster. A Deployment runs the custody coordinator, and the simulator is the
+only site. It is a development smoke test, not the Milo acceptance suite and not
+hardware qualification. Status: **implemented and verified** by
+`task standalone:test`.
 
 `fleet-project-a` and `fleet-project-b` are Kubernetes namespaces used only as
 project stand-ins. They do not model Milo routing, IAM, entitlement, quota,
 project deletion, or equal `default` namespaces in separate project API servers.
-The fixture supplies synthetic admission and retains one exact Machine evidence
-record with its Machine UID, location, hardware, and observation time. Later
-phases fail closed if that record is missing, stale, or substituted. The
-production `fleet-manager` remains fail-closed and performs no effects.
+The fixture supplies synthetic admission. The capacity projector is not wired,
+so the install and allocate phases write `Prepared`, `Healthy` and `Available`
+on the capacity themselves. Custody, not those conditions, decides exclusivity.
+The production `fleet-manager` remains fail-closed and performs no effects.
+
+Each component has its own identity, and the phases run as the Metal provider:
+
+| Identity | ServiceAccount | Writes |
+| --- | --- | --- |
+| Custody coordinator | `fleet-custody-coordinator` | Custody and operation status |
+| Metal provider | `fleet-standalone-smoke` | MachineAllocations and DeviceInstallations |
+| Release controller | `fleet-release-controller` | DeviceWipes |
+
+A ValidatingAdmissionPolicy (`config/standalone/site.yaml`) requires each
+operation's `spec.creator` to be the caller that creates it.
 
 The scenario has one `us-central-1` Machine with 24 physical CPU cores and
-128Gi of memory. Both consumers request it. Project A binds first while project
-B remains pending. Project A installs a digest-pinned synthetic Debian image.
-The script restarts the simulator and reruns the install phase to recover the
-same retained operation. A separate `debian-12-reinstall` Installation then names
-`debian-12` as its expected predecessor and replaces it on the same allocation.
-Another simulator restart and retry recover that exact successor operation.
-Every install/reinstall run performs an authenticated simulator lookup and checks
-the operation identity, terminal result, and digest of the exact retained request
-(including allocation, epoch, fencing authority, and image inputs). Kubernetes
-completion records alone cannot pass the restart persistence check.
-Project B remains pending throughout. The scenario then releases project A,
-verifies cleanup, and lets project B bind at a later executor epoch.
+128Gi of memory, on one synthetic Device, `synthetic-device-central-01`. Both
+consumers request it. Custody must be `Verified` first. Project A allocates
+first, so one `MachineAllocation` exists and custody names it. Project B waits
+with `InsufficientCapacity`. Power comes only from the manager's power
+projector, which reads custody and fixture discovery. Project A installs a
+digest-pinned synthetic Debian image through a `DeviceInstallation`. The script
+restarts the simulator and reruns the install phase to recover the same retained
+operation. A separate `debian-12-reinstall` Installation then names `debian-12`
+as its expected predecessor and replaces it on the same allocation. Another
+simulator restart and retry recover that exact successor operation. Kubernetes
+completion records alone cannot pass the restart check.
 
-Reinstall retries preserve the allocation binding and executor epoch. An unknown
-executor result leaves the Machine's readiness unknown and retains custody;
-neither retry nor release can expose that capacity before recovery and cleanup.
-Tests exercise lost responses, concurrent retry, and stale predecessor rejection.
+Project B remains pending throughout. The scenario then releases project A. The
+release wipes the Device once through a `DeviceWipe`, under a fence above both
+installations. Custody then names project B's new allocation, and project B
+becomes `Ready`. Project A's allocation is `Released`.
+
+An unknown site result keeps the Machine's readiness unknown and holds custody.
+Neither a retry nor a release can expose that capacity before recovery.
 
 No network interface is requested. The `NETWORK` and `ADDRESS` columns are
 therefore intentionally blank; this environment does not deploy or impersonate
@@ -72,7 +88,7 @@ KUBECTL_CONTEXT=kind-fleet-core KIND_CLUSTER=fleet-core ./hack/standalone-smoke.
 The script refuses a cluster that already has Fleet APIs (including a prior
 standalone run), fixture namespaces, or a `fleet-manager`/`fleet-milo-manager`
 deployment. Use a fresh dedicated cluster for every run. This prevents another
-controller, retained epoch, or old claim from making the evidence ambiguous.
+controller, retained custody, or old claim from making the evidence ambiguous.
 It also refuses a context whose API server does not match `kind get kubeconfig`
 for the requested cluster. A differently named context is accepted only with
 `ALLOW_KIND_CONTEXT_ALIAS=true`, and must still target that exact kind cluster.
@@ -89,9 +105,9 @@ commits therefore cannot silently reuse one local workload tag.
 It applies the CRDs first and waits for establishment before applying fixtures,
 then uses `kubectl wait`/rollout watches for
 phase completion. It never patches status, removes finalizers, or writes
-lifecycle records itself. The
-phase Job is the designated synthetic fixture and status writer; the lifecycle
-library remains the only writer of custody, asset, and operation records.
+custody or operation records itself. The phase Job is the designated synthetic
+fixture and status writer. The coordinator Deployment is the only writer of
+custody and operation status.
 
 After the allocation phase, expected output has one ready and one pending claim:
 
@@ -106,19 +122,26 @@ pins from the exact fixture profile for both claims, including the one still
 waiting. `kubectl get machines -A -o wide` adds the profile and the allocated
 CPU and memory, which stay blank for the pending claim.
 
-After release, only project B remains and reports the same hardware. The private
-records remain in `fleet-system-private`; release does not erase recovery or
-epoch history.
+After release, only project B remains and reports the same hardware. The
+released allocation, the installations and the wipe remain in the provider
+namespace (`fleet-provider`), so the fence history is kept:
+
+```sh
+kubectl -n fleet-provider get machineallocations,deviceinstallations,devicewipes,devicecustodies
+```
 
 ## Security and lifecycle limits
 
-The simulator has a dedicated runtime token, a persistent volume, no admin
-listener, an explicit non-root UID/GID, a read-only root filesystem, and no
-Kubernetes API credentials. Its pod `fsGroup` makes only the state volume and
-group-readable token usable by that identity. Both Dockerfile bases are pinned
-by digest. Only the smoke service account can write private records; its public
-access is restricted to the named fixture objects. The script checks every
-sensitive Secret verb, named Secret reads, and out-of-scope fixture access.
+The simulator site has a dedicated runtime token, a persistent volume for its
+site store, no admin listener, an explicit non-root UID/GID, a read-only root
+filesystem, and no Kubernetes API credentials beyond its fixture discovery. Its
+pod `fsGroup` makes only the state volume and group-readable token usable by that
+identity. Both Dockerfile bases are pinned by digest. The script checks that the
+project stand-ins cannot read or write custody, operations or allocations and
+cannot read the three token Secrets. It also checks that the Metal provider cannot
+update custody or create wipes, that the release controller cannot create
+installations, and that the smoke account's access to fixtures is limited to the
+named objects.
 
 The synthetic phase worker deliberately does not reconstruct or claim an end
 user identity. Production still requires create-time caller capture, protected

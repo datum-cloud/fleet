@@ -12,9 +12,9 @@ marked **implemented and verified**, **implemented and inert**, or
 
 | Increment | What it covers | Status |
 | --- | --- | --- |
-| A: control-plane foundation | API types and CRDs for `DeviceCustody`, `DeviceInstallation`, `DeviceWipe` and `DeviceRecovery`; CEL rules; IAM resources and roles; the creator webhook; the kind registry and admission rule table; the coordinator's custody reconciler, admission, results, recovery, rebuild and retention; the capacity projector | **Implemented and inert.** Verified with unit tests and with tests against a real API server. No deployment root, manager, or staging overlay includes it. The existing Secret-backed lifecycle is unchanged. |
-| B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and inert.** Unit tested, including against TLS BMC stubs. Nothing delivers to it until C; the old executors keep their own journals until C deletes them. |
-| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the projector as the only condition writer, the site access layer for the local VM and simulator executors, removal of the private Secret records and the old executor journals | **Proposed.** Starts after B. |
+| A: control-plane foundation | API types and CRDs for `DeviceCustody`, `DeviceInstallation`, `DeviceWipe` and `DeviceRecovery`; CEL rules; IAM resources and roles; the creator webhook; the kind registry and admission rule table; the coordinator's custody reconciler, admission, results, recovery, rebuild and retention; the capacity projector | **Implemented and verified**, except the capacity projector, which is **implemented and inert**. Verified with unit tests and with tests against a real API server. Increment C wires the rest into every mode. |
+| B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
+| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, and the standalone smoke (`task standalone:test`). Verification of the two multi-plane runs, local VM and Redfish, is pending. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
 
 ## What Increment A adds
@@ -22,7 +22,9 @@ marked **implemented and verified**, **implemented and inert**, or
 - **Kinds.** `DeviceCustody` and three operation kinds in
   `fleet.datumapis.com`, served only in provider project control planes. The
   component that registers them, with their ProtectedResources, roles and
-  webhook, is not included by any root. A test fails if one includes it.
+  webhook, is in the production Milo root. The synthetic Milo root has it
+  without the webhook, and the standalone cluster has only the CRDs.
+  `TestComponentRoots` pins this, and no root ships the test-only kinds.
 - **Custody.** One `DeviceCustody` per Device, with the same name. Its fields
   are in `spec`, like a Lease, and it has no status. The finalizer
   `fleet.datumapis.com/custody` stays until the holder is `Retired`. CEL keeps
@@ -41,7 +43,8 @@ marked **implemented and verified**, **implemented and inert**, or
   only when `spec.creator` is the authenticated caller's username and UID, and
   an update only when the creator is unchanged.
 - **The capacity projector** is a pure function that derives `Prepared`,
-  `Healthy` and `Available`. Nothing calls it outside tests.
+  `Healthy` and `Available`. Nothing calls it outside tests (**implemented and
+  inert**; see [Capacity](#other-decisions)).
 
 Creating or importing a Device creates `Unverified` custody. That sends
 nothing to a BMC and makes no capacity `Available`.
@@ -49,11 +52,10 @@ nothing to a BMC and makes no capacity `Available`.
 ## Site execution (Increment B)
 
 Increment B adds the site framework (`internal/site`) and the Redfish
-install and wipe workers (`internal/site/redfishwork`). It is implemented and
-inert. Until Increment C, the old coordinator still drives the old executors
-with their own site-wide journals, and nothing delivers an assignment to the
-new framework. There is no bridge between the two paths, and C deletes the old
-one.
+install and wipe workers (`internal/site/redfishwork`). It is **implemented and
+verified**. Increment C delivers assignments to it and deletes the old
+executors and their site-wide journals. Every site, simulator, local VM and
+Redfish, now runs on it.
 
 ### Where a site stores fences and its journal
 
@@ -114,7 +116,7 @@ so work on one Device never waits for another.
 - **Boot admissions.** A network boot is served only while the operation's
   admission is open, unexpired, and at the Device's stored fence, so a
   superseded operation can never boot the server. The boot server reads
-  admissions this way from Increment C.
+  admissions from the site store.
 
 ### The Redfish workers
 
@@ -132,8 +134,9 @@ The port differs from the old executor in three ways:
 - After a crash or a lost response, a power-on is observed and never sent
   again. The old executor sent `On` again, up to a small budget, when the
   server was still off and armed after a settle window.
-- Synchronized DHCP reservations are not yet supported by the new workers.
-  They arrive with the cutover.
+- Synchronized DHCP reservations are supported from Increment C. The feed
+  reads the site store, and the worker waits for the DHCP owner's reports. See
+  [Boot network](../operations/boot-network.md).
 - Its timing values match the old executor's, including the five-minute
   power-off bound and the 30-second wait for a receipt after power-off, and
   each is configurable.
@@ -141,9 +144,196 @@ The port differs from the old executor in three ways:
 ### Access to the server
 
 How the framework reaches a server is behind an `Access` interface.
-`RedfishAccess` performs the credential, pin and identity checks above. In C,
-the local VM and simulator executors get their own access types and workers.
-That adds no change to the worker contract.
+`RedfishAccess` performs the credential, pin and identity checks above. The
+simulator and local VM sites use `fixture.Access`, which checks the site's
+enrollment against the snapshot and has no BMC. Each has its own workers. That
+added no change to the worker contract.
+
+## Cutover (Increment C)
+
+Increment C moves every mode onto custody and deletes the old path. All of it
+is **implemented**. The standalone smoke (`task standalone:test`) verifies it
+end to end. Verification of the multi-plane local VM and Redfish runs is
+pending. Increment C adds no migration and no compatibility code. The
+Secret-backed coordinator and its records are gone, and a person re-imports
+records where an environment needs them.
+
+| Piece | Status |
+| --- | --- |
+| MachineAllocation, allocation, installation and release | **Implemented and verified** by tests against a real API server and the standalone smoke |
+| Quota claim | **Implemented and verified** by unit tests. **Inert** end to end: no run exercises it |
+| Delivery and the coordinator loop | **Implemented and verified** by the standalone smoke. The multi-plane runs use it too, and their verification is pending |
+| Federation handoffs | **Implemented and verified** by unit tests. The multi-plane run is pending |
+| Creator webhook in the production Milo root | **Implemented and verified** by unit tests and a test against a real API server. The root registers it, and nothing runs the coordinator there |
+| Simulator site | **Implemented and verified** by the standalone smoke |
+| Local VM site | **Implemented and verified** by unit tests. The multi-plane run is pending |
+| Redfish site workers | **Implemented and verified** by unit tests. The multi-plane run is pending |
+| Synthetic staging mode | **Implemented.** The manager's flag handling is unit tested, and no run exercises the mode |
+| Power projector | **Implemented and verified** by the standalone smoke |
+| Synchronized DHCP feed on the site store | **Implemented and verified** by a unit test. Not exercised at a site |
+
+### MachineAllocation
+
+A `MachineAllocation` holds the allocation's private facts (O8). It lives in the
+provider project, and only the Metal provider writes it.
+
+- **Spec (immutable).** The exact Machine and consumer project incarnation, the
+  capacity, the Device incarnation, the accepted class, profile, CPU and
+  memory, the hardware snapshot, the admission authority, an optional quota
+  claim, the pinned cleaning policy digest, the boot interface and the target
+  disks.
+- **Status.** A phase, `Active`, `Releasing` or `Released`, and the latest wipe.
+- **Name.** `alloc-` and the first 16 hex characters of the SHA-256 of
+  `<consumer project UID>/<Machine UID>`. See [the decision](#cutover-decisions).
+- **Secrets.** None. Staff recovery operators may read it.
+
+### Allocation, installation and release
+
+`internal/allocation` writes in this order: the quota claim, then the
+MachineAllocation (create only), then the custody claim (a conditional
+update). A retry finds the same allocation by its name.
+
+- **A lost race.** An allocation whose Device another holder took, and which
+  never held it, is deleted, and the allocator selects again.
+- **Lost custody.** An `Active` allocation that no longer holds its Device is
+  not repaired. The allocator returns `ErrCustodyLost`, the Machine reports
+  `Pending` with reason `CustodyLost`, and an operator resolves it.
+- **Installation.** The `DeviceInstallation` is named from the allocation and the
+  Installation UID. Its predecessor must be the Machine's current installation.
+  A bootstrap reference is refused.
+- **Release.** The allocation's holder moves to `Release` with all six gates
+  open. Then:
+  - Access, Network and Address close at once.
+  - Operations closes when no installation of the allocation is active or
+    unended.
+  - Cleaning creates a `DeviceWipe`, step 1. A wipe that ended `Failed` sent
+    nothing, so it gets a new step, up to step 3. Then the release stops with
+    `ErrWipeFailed`. A wipe that ended `OutcomeUnknown` gets a new wipe only
+    after a `DeviceRecovery` `Retry`, under the name custody gives it.
+  - Quota deletes the claim and observes it gone.
+- **Done.** Custody returns the Device to `None` only when no gate, hold or
+  operation remains. Then the allocation becomes `Released`.
+
+### Quota claim
+
+`internal/milo` creates a Milo `ResourceClaim` named `fleet-machine-` and the same
+16 hex characters, in the Machine's namespace. Release deletes it and waits until
+it is gone. No mode in this repository has Milo quota. The claim is **implemented
+and verified** by unit tests, but **implemented and inert** end to end: no run
+exercises it.
+
+### Delivery and the coordinator loop
+
+`internal/delivery` builds each assignment from custody's active operation and
+the operation spec exactly as admitted. It delivers the assignment to the sites
+serving the Device once the admission is copied to operation status. It collects
+results and accepts them by fence. The coordinator loop runs reconcile, deliver,
+collect and the retention sweep. The coordinator configuration names the sites
+that serve each Device.
+
+### Identities
+
+Every mode uses three identities, one per component:
+
+| Identity | Writes |
+| --- | --- |
+| The custody coordinator | Custody, operation status. It is the only custody writer. |
+| The Metal provider | MachineAllocations and DeviceInstallations |
+| The release controller | DeviceWipes |
+
+An operation's creator is the identity a `SelfSubjectReview` reports.
+
+- **Standalone** enforces the creator rule with a ValidatingAdmissionPolicy
+  (`config/standalone/site.yaml`).
+- **The production Milo root** (`config/milo`) includes the device-operations
+  component, with the creator webhook served by `fleet-registration`.
+- **The synthetic Milo root** (`config/milo-synthetic`) includes the kinds,
+  ProtectedResources and roles, but not the webhook, because it installs no
+  registration webhook.
+- **The multi-plane local Milo** enforces the CRD rules but registers no creator
+  webhook. This is a gap. See [Points for a person](#points-for-a-person).
+
+### Sites
+
+- **The simulator is a site.** `cmd/fleet-simulator` serves a site HTTP API
+  (`internal/site/siteapi`). Its workers (`internal/site/simwork`) keep the
+  simulated server in fenced records in the site store.
+- **The local VM site** (`internal/site/vmwork`) ports the old executor. It
+  gives each installation an exclusive disk. It proves the installer boot with one
+  console receipt, and in PXE mode also with boot deliveries and a DHCP lease. It
+  then does a disk boot. A boot is started once and is observed after a crash.
+  The boot server serves only an open admission at the Device's stored fence. A
+  wipe deletes every installation disk of the Device.
+- **The Redfish workers** (`internal/site/redfishwork`) are live. Each reads the
+  Device's own credential Secret by the [BMC discovery](../operations/bmc-discovery.md)
+  contract. There is no shared credential. The boot server and the synchronized
+  DHCP feed read the site store.
+- **Fixture access and discovery** (`internal/site/fixture`) serve synthetic
+  Devices that have no BMC. Access checks the enrollment against the snapshot.
+  Fixture discovery writes Device status the way BMC discovery would. Who writes
+  it depends on the mode; see [Modes](#modes).
+
+### Federation
+
+`internal/coordination` carries one site assignment per `MachineAllocationHandoff`
+(`spec.device` and `assignmentJSON`), or a request for a Device's fence report.
+The cell observer writes the fence report and the stored result to the handoff's
+status. The coordinator accepts only this cell's observation of exactly the
+assignment the handoff carries. It then labels the handoff answered, and the cell
+deletes its copy of the result.
+
+Worker Jobs are created by kro as before. A worker exits 65 for a handoff that
+is not for this cell, or for an assignment below the Device's stored fence. The
+private custody namespace on the hub host is gone.
+
+### Modes
+
+| Mode | Where the coordinator runs | Site | Fixture discovery writer | Status |
+| --- | --- | --- | --- | --- |
+| Standalone smoke | A Deployment | The simulator | The simulator site | **Implemented and verified** by `task standalone:test`. The phases run as the Metal provider, with the coordinator's and release controller's tokens. |
+| Synthetic staging | `fleet-manager`, under its leader lease | The simulator | The manager | **Implemented.** The manager's flag handling is unit tested. No run in this repository exercises it. |
+| Multi-plane, local VM and Redfish | A workstation process for the run (`hack/multiplane/coordinator.sh`) | The cell, over Karmada | A separate discovery identity on the workstation | **Implemented.** Verification of both runs is pending. |
+
+- **Synthetic staging.** The manager runs the coordinator loop and fixture
+  discovery. Its flags are `--synthetic-coordinator-token-file`,
+  `--synthetic-release-token-file`, `--synthetic-site-enrollment-file` and
+  `--synthetic-device-namespace`. The overlay mounts two environment-supplied
+  Secrets, `fleet-custody-coordinator-auth` and `fleet-release-controller-auth`,
+  and a `fleet-synthetic-site-enrollment` ConfigMap. The ConfigMap in the overlay
+  holds a synthetic placeholder, and an environment replaces it. An environment
+  must also re-import its records and create the two credentials; see [Points for
+  a person](#points-for-a-person).
+- **Multi-plane.** The provider project gets the inventory and custody CRDs and one
+  token per component. The lab BMC serves TLS with a key generated per run, and
+  each Device's credential carries that key's digest as its pin. Real BMC
+  discovery is not part of the run. This is a lab gap.
+
+### Machine power
+
+The manager's `PowerProjector` is the only writer of `Machine.status.power`. It
+reports `Unknown` while a recovery hold exists or custody is unverified, and
+otherwise the power state discovery last observed. A Machine with no active
+allocation has no power. The harness runners call the same projection.
+
+### Deleted, with no compatibility
+
+- The Secret-backed coordinator and its records, the private-record RBAC, the
+  private namespace and its admission policy, and the manager's private-namespace
+  plumbing (`--private-namespace` is removed).
+- The executor client, the simulator store, the local VM and Redfish executors and
+  their journals, and the shared Redfish credential.
+- The old handoff `requestJSON` shape.
+- The single-plane local VM harness (`hack/local-vm/run.sh`,
+  `task local-vm:acceptance`, `cmd/fleet-local-vm`). The multi-plane local VM
+  mode runs the same workers. This is a decision for a person; see [Points for a
+  person](#points-for-a-person).
+
+### Unchanged and still open
+
+- The capacity projector stays unwired (O1), so the synthetic fixtures still write
+  `Prepared`, `Healthy` and `Available`.
+- Bootstrap stays refused (O10).
+- `DeviceRecovery` needs no second person.
 
 ## Implementation decisions
 
@@ -160,11 +350,10 @@ Each decision lists the open point from the implementation brief it settles.
   original caller from the admission request, with the project in Milo's
   extras, and refuses a caller outside the configured provider projects. It
   reads nothing else and keeps no state.
-- The webhook will be served by the existing `fleet-registration` server on
-  its own path, `/validate-operation-creator`, when Increment C wires it. That
-  server already has the API-server client CA and the Milo root route, and the
-  new handler needs no project reads. In Increment A the handler exists and is
-  tested, and the server does not serve it yet.
+- The existing `fleet-registration` server serves the webhook on its own
+  path, `/validate-operation-creator`. It shares that server because the caller,
+  the transport and the provider-project scope are the same, and the handler
+  keeps no state. The production Milo root registers it (Increment C).
 - The coordinator classifies a creator by configuration. Each service class,
   such as the Fleet provider for Metal or the release controller, maps to
   configured principals by username and, optionally, UID. Any other creator is
@@ -360,8 +549,9 @@ of the machine lifecycle: identity, the accepted contract, the hardware
 snapshot, authority and quota evidence, and lifecycle and release obligations.
 Immutable accepted inputs go in spec. Lifecycle goes in status. Each
 allocation is named from its Machine UID, per #174. Nothing secret goes on it,
-and staff roles may read it. Increment C implements this. It replaces the
-private `AssetRecord` and the other Secret records.
+and staff roles may read it. Increment C implements this (**implemented**; see
+[MachineAllocation](#machineallocation)). It replaces the private `AssetRecord`
+and the other Secret records, which are deleted.
 
 ### Release gates (O17)
 
@@ -402,14 +592,48 @@ remains.
   Device's interfaces, and the snapshot records its MAC. Target disks stay a
   site-local enrollment fact that the worker checks (Increment B).
 - **Cleaning policy (O11).** `DeviceWipe` requires the digest of the cleaning
-  policy record pinned at allocation. The private fixture resolver that pins it
-  arrives in Increment C.
+  policy record pinned at allocation. A resolver maps the capacity's cleaning
+  policy reference to that digest when the allocator creates the allocation. The
+  standalone, staging and multi-plane modes supply a fixture resolver.
 - **Capacity (O1).** The projector stays a pure function. `Prepared` needs a
   succeeded commissioning under the current plan, `Healthy` needs current
   commissioning and discovery evidence, and `Available` also needs `Verified`
   custody, holder `None`, no hold and an enabled allocation policy. Wiring it
   as written would make every server unallocatable, because commissioning is
   not built.
+
+### Cutover decisions
+
+Each decision was made while building Increment C. Each is open for review by a
+person.
+
+- **Allocation names.** An allocation is named from the Machine UID within its
+  consumer project. A retried create then collides with the first, and equal
+  Machine UIDs in two consumer projects never share an allocation.
+- **Lost custody is not repaired.** An allocation that never held its Device is
+  deleted and the allocator selects again, because it exposed nothing. An `Active`
+  allocation that lost custody means the records disagree about who holds a
+  server a customer may be using. Fleet leaves it to an operator.
+- **Release gates.** Access, Network and Address close at once, because no mode
+  provisions them. There is nothing to wait for.
+- **Wipe retries.** A wipe that ended `Failed` sent nothing, so a new step is safe.
+  A wipe that ended `OutcomeUnknown` may have written to disks, so only a
+  `DeviceRecovery` `Retry` allows another.
+- **Sites are configuration.** The sites that serve a Device are explicit
+  coordinator configuration, because inventory has no sites field yet. They are
+  never inferred from placement.
+- **Three identities in every mode.** The coordinator is the only custody writer.
+  The provider and the release controller each create only their own operation
+  kinds. One identity per component keeps one writer per surface and lets the
+  creator rule tell the callers apart.
+- **The creator webhook shares `fleet-registration`.** The caller, transport and
+  provider scope are the same, and the handler keeps no state.
+- **Fixture discovery writer by mode.** In standalone the simulator site writes it.
+  In synthetic staging the manager writes it, because the staging site has no API
+  credential. In multi-plane a separate discovery identity on the workstation
+  writes it, in both modes.
+- **No migration.** The old records are deleted and nothing reads them. Fleet
+  keeps no legacy compatibility, and re-importing records is acceptable.
 
 ### Extension points for power and commissioning
 
@@ -429,25 +653,46 @@ these seams. Each is decided here.
 | 9 | Delivery carries the admission time, and kinds declare a start-by window | A kind that implements `StartBy` refuses as `Stale` when its worker starts later than the window after admission, with nothing sent. A worker resuming steps an earlier worker sent is not stale. | Implemented and inert |
 | 10 | The TLS and identity check is separate from install capabilities | The framework verifies the pin and the System only, through the Redfish client's identity walk. Each kind checks the capabilities it uses, such as the Pxe and Hdd boot targets, and drives the System through a connection bound to it. | Implemented and inert |
 | 11 | A worker refusal with nothing sent ends `Failed` | It ends `Failed` under the operation's fence and returns a `Service` holder to `None`. It never ends `OutcomeUnknown`. Whether anything was sent comes from the journal. | Implemented and inert |
-| 12 | The single writer of `Machine.status.power` | The manager's Machine status projector stays the only writer. It reads the custody of the Machine's allocation: while a recovery hold exists it reports power `Unknown`, and otherwise it reports the power state of the last succeeded power operation's evidence or of discovery, whichever is newer. | Proposed for C |
+| 12 | The single writer of `Machine.status.power` | The manager's `PowerProjector` is the only writer. It reads the custody of the Machine's allocation: while a recovery hold exists, or custody is unverified, it reports power `Unknown`. Otherwise it reports the power state discovery last observed. A Machine with no active allocation has no power. The harness runners call the same projection. A power operation's evidence becomes a second source when the power kind exists. | Implemented and verified by the standalone smoke, which reads the projected state |
 
-None of these conflicts with #174.
+Rows 1 to 11 keep the status recorded when Increment A added them. The
+install and wipe kinds use some of them, such as step payloads and the refusal
+rule. No power or commissioning kind exists yet, so no shipped kind uses the
+settle hook or `Supersedes`. None of these conflicts with #174.
 
 ## Points for a person
 
 These need a decision before the increment that depends on them.
 
-- **O1, before C: the interim source of `Prepared` and `Healthy`.** Until it
-  is decided, the projector stays unwired.
+- **O1: the interim source of `Prepared` and `Healthy`.** Still open after C.
+  The projector stays unwired, so the synthetic fixtures write `Prepared`,
+  `Healthy` and `Available` themselves.
 - **O10: the sealed store for bootstrap payloads.** Bootstrap stays refused in
   every increment until a store is chosen.
 - **A second person for `DeviceRecovery`.** Not required yet. A person
   accepted this for now, and it stays open for a later decision.
+- **Synthetic staging needs its records imported again, and two new
+  credentials.** The cutover deletes the old records and reads none of them.
+  Before the new manager runs in an environment, a person must re-import the
+  Devices with their BMC endpoints and identities and the capacities, create two
+  credentials with the `fleet.datumapis.com-device-coordinator` and
+  `fleet.datumapis.com-device-wipe-requester` roles, and supply
+  the site's enrollment. See [Modes](#modes).
+- **Retiring the single-plane local VM harness.** C removed
+  `hack/local-vm/run.sh`, `task local-vm:acceptance` and `cmd/fleet-local-vm`,
+  because the multi-plane local VM mode runs the same workers. A person should
+  confirm that the single-plane run is not needed.
+- **The multi-plane creator webhook gap.** The local Milo in the multi-plane run
+  enforces the CRD rules but registers no creator webhook. A forged
+  `spec.creator` is therefore not refused in that run, and the run does not
+  prove the webhook. A person decides whether the run must install it.
 
 Already decided by a person: [where an allocation's private facts
 live](#where-an-allocations-private-facts-live-o8), that [only `Retire` and
 `Resolve` skip checks 5 and 6](#admission), and that a `DeviceRecovery` that
-no site confirms ends `Failed`, not `OutcomeUnknown`.
+no site confirms ends `Failed`, not `OutcomeUnknown`. The [cutover
+decisions](#cutover-decisions) are recorded for review and are not yet
+confirmed by a person.
 
 ## Adding an operation kind
 
@@ -569,3 +814,25 @@ Increment B's site tests run with `go test -race ./internal/site/...`:
 | Per-Device credentials, the fence report | `TestSecretCredentialsUseThePerDeviceContract`, `TestReportGivesTheCoordinatorSeenAndStoppedFences` |
 | Step payloads, the start-by window, identity separate from capabilities, a resumed worker reporting unknown | `TestAStepPayloadIsJournaledAndReadBack`, `TestALateStartIsStaleAndSendsNothing`, `TestIdentityIsSeparateFromInstallCapabilities`, `TestAResumedWorkerThatCannotReachTheBMCReportsUnknown` |
 | Install and wipe against a simulated BMC, one power-on per phase after an interruption in either phase, the power-off bound, fenced boot admission, bootstrap refused | `TestAWorkerInterruptedInTheDiskPhaseResumes`, `TestAServerThatNeverPowersOffEndsTheStep`, `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |
+
+Increment C's tests run with `task test:envtest`, and the smoke runs with
+`task standalone:test`:
+
+| Area | Tests |
+| --- | --- |
+| Allocation, a losing contender, a retried allocation, installation, reinstallation, release with a wipe, and reuse under a higher fence, against a real API server and a simulator site | `TestAllocateInstallReleaseReuse` |
+| Six allocators race for one Device; one allocation remains and custody names it | `TestConcurrentAllocatorsOneWinner` |
+| An allocation that never held its Device is deleted and the allocator selects again | `TestAnAllocationThatLostItsDeviceIsReplaced` |
+| The quota claim is named from the Machine and granted once; release is observed, not assumed | `TestTheQuotaClaimIsNamedFromTheMachineAndGrantedOnce`, `TestReleaseIsObservedNotAssumed` |
+| Federation: an assignment's round trip, only this cell's observation accepted, a stale fence report ignored, a cell runs only its own assignments | `TestAssignmentRoundTrip`, `TestReflectionIsRejectedUnlessItIsThisCellsObservation`, `TestAStaleFenceReportIsNoReport`, `TestTheCellRunsOnlyItsOwnAssignments` |
+| The local VM site: install then wipe, a wipe with a running domain not proven, a resumed boot observed and not repeated, the boot server serving only an open admission at the stored fence | `TestInstallThenWipe`, `TestAWipeWithARunningDomainIsNotProven`, `TestAResumedBootIsObservedNotRepeated`, `TestTheBootServerServesOnlyAnOpenAdmissionAtTheStoredFence` |
+| Synchronized DHCP follows the open admission; a worker waits for the reservation and for its withdrawal | `TestSyncedDHCPFollowsTheOpenAdmission` |
+| The simulator site's token, enrollment and server bounds | `TestReadToken`, `TestReadEnrollmentRequiresCompleteTargets`, `TestNewServerHasFiniteResourceBounds` |
+| The manager's synthetic flags, and the creator webhook's trusted caller | `TestSyntheticFlagsRequireAndScopeStaging`, `TestRemovedSingleProjectFlagsAreRejected`, `TestWebhookRequiresTrustedAPIServerClient` |
+| Where the component ships | `TestComponentRoots` |
+| The standalone smoke: contention, install, a simulator restart and recovery, reinstall, release with a wipe, reuse, and the role checks that keep one writer per kind | `task standalone:test` |
+
+The multi-plane local VM and Redfish runs (`task multiplane:acceptance` and
+`task multiplane:redfish-acceptance`) run the same workers. Their verification
+is pending. The acceptance state of each #174 test is in the [coverage
+inventory](../../test/acceptance/coverage.md#device-custody-and-operations).

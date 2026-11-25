@@ -1,36 +1,40 @@
 # Local Milo, Karmada and PXE acceptance
 
 This opt-in harness runs native Milo project routing, actual Karmada delivery and
-status reflection, and the local VM executor through the existing allocator and
-installation lifecycle. On the selected cell, execution runs as Flux-owned
-Kubernetes Deployments and kro-created per-operation Jobs; see [Kubernetes-native site execution](site-execution.md).
+status reflection, and the [local VM site](local-vm.md) through the allocator and
+[Device custody](../development/device-custody.md#cutover-increment-c). On the
+selected cell, execution runs as Flux-owned Kubernetes Deployments and
+kro-created per-assignment Jobs; see [Kubernetes-native site execution](site-execution.md).
 Every long-running service is installed by each cluster's own Flux from a source
 artifact built from the checkout; see [Flux-reconciled local environment](gitops.md). It is not enabled by the production manager or any
 production overlay. Production authority and deployment equivalence remain
 **unqualified**.
 
+Status: the run on Device custody is **implemented**. Verification of the local VM
+run and of the [Redfish run](redfish-lab.md) on custody is pending. The run
+records under [Verification and remaining gaps](#verification-and-remaining-gaps)
+were observed on the path before the cutover, with the Secret-backed coordinator,
+and are not evidence for the custody path.
+
 Read the [writer placement contract](../architecture/README.md#control-plane-placement-and-writers),
 [pinned design sources](../architecture/design.md#source-proposals), and
-[local VM contract](local-vm.md) first. New multi-plane files implement this
-composition. The shared lifecycle adds only the read-only
-`Coordinator.ClaimReleased` custody query, and the executor interface documents
-exact-request replay and its narrow not-found-plus-Unknown lookup contract.
+[local VM site](local-vm.md) first.
 
 The [Redfish mode](redfish-lab.md) (`task multiplane:redfish-acceptance`) runs the
-same composition with a Redfish executor. Its workers have no libvirt socket and
-reach two persistent lab VMs only through the DMTF Redfish Interface Emulator.
+same composition with the Redfish site workers. Its workers have no libvirt socket
+and reach two persistent lab VMs only through the DMTF Redfish Interface Emulator.
 
 ## Topology and versions
 
 | Surface | Local implementation | Writer |
 | --- | --- | --- |
-| Provider project | Milo v0.32.5 native `/projects/provider/control-plane` route; dedicated API Deployment and etcd StatefulSet with its own PVC on the platform kind cluster, reconciled by Flux | Bootstrap fixture supplies definitions and observations; allocator retains exclusive custody |
+| Provider project | Milo v0.32.5 native `/projects/provider/control-plane` route; dedicated API Deployment and etcd StatefulSet with its own PVC on the platform kind cluster, reconciled by Flux. It holds the inventory and custody CRDs, the Devices, `DeviceCustody`, the operations and the MachineAllocations. It enforces the custody CRD rules. It registers no creator webhook. | Bootstrap fixture supplies definitions and observations. Each component has its own token: the custody coordinator (the only custody writer), the Metal provider (allocations and installations), the release controller (wipes), and a discovery identity (fixture discovery). |
 | Consumer A / B | Two independently restartable Milo v0.32.5 Deployments and etcds, one Flux Kustomization each; native project routes; both use namespace `default` and Machine name `allocation` | Separate customer credentials create/watch requests; management writes public status |
-| Private allocation custody | `fleet-system-private` Secrets on the management host Kubernetes API | Shared lifecycle coordinator, with its own scoped credential |
-| Coordination intent | Karmada v1.16.0 API (hub Flux `HelmRelease`), separate from the host Kubernetes API | Management credential creates immutable handoffs; cannot write status |
+| Custody coordinator | A workstation process for the run, started by `hack/multiplane/coordinator.sh` | The coordinator's own token. It admits operations, delivers each assignment through Karmada, and accepts the cell's results by fence. |
+| Coordination intent | Karmada v1.16.0 API (hub Flux `HelmRelease`), separate from the host Kubernetes API | The coordinator's credential creates immutable handoffs and labels them answered; it cannot write status |
 | Selected cell | Separate kind Kubernetes API running its own Flux, the Flux-owned shared site services, kro v0.9.4 and the `HandoffDispatcher` graph | Karmada delivers intent; the site observer ServiceAccount is the only local status writer |
 | Reflected results | Karmada interpreter aggregates each member's identity and observation | Karmada; management validates before projection |
-| Physical effects | Privileged, Flux-owned VM runtime Deployment (libvirt/QEMU) on the cell; amd64 guest under native arm64 TCG | One bounded kro-created worker Job per handoff invokes `executor.Client`; provider persists exact requests and boot evidence on a retained, Flux-owned PVC |
+| Physical effects | Privileged, Flux-owned VM runtime Deployment (libvirt/QEMU) on the cell; amd64 guest under native arm64 TCG | One bounded kro-created worker Job per assignment runs the site worker; the site store holds each Device's fence, journal and results, and the boot evidence, on a retained, Flux-owned PVC |
 
 The platform integration choices were discovered in these connected sources:
 
@@ -67,9 +71,9 @@ bare Docker container. **This is still a local placement seam:** it is not the
 platform's complete root/ProjectControlPlane provisioning machinery, Kyverno
 orchestration, shared root IAM, or project retirement path. Milo's
 native project routing and project storage are real. Separate roots and etcds
-prevent namespace-based isolation shortcuts. The management process runs on the
-host, and its private storage shares host infrastructure with Karmada, while
-using a distinct API endpoint, namespace and credential.
+prevent namespace-based isolation shortcuts. The coordinator and the
+management phases run on the host, each with its own credential, against the
+provider project's API and the Karmada API.
 
 ## Run
 
@@ -108,9 +112,10 @@ Preflight records `evidence/preflight.json`. Prerequisite checks cover tools,
 the exact Docker context socket, reachability, architecture, memory, CPUs, free
 disk, amd64 emulation, inotify, and concurrent Fleet runtimes. Readiness checks
 require the CLI subcommands and location-denial error the harness drives, then
-run `go test -race -count=1 ./internal/coordination ./internal/multiplane
-./internal/localvm ./cmd/fleet-multiplane`. Failing either blocks before any
-resource is created.
+run `go test -race -count=1 ./internal/coordination ./internal/custody
+./internal/site/... ./internal/multiplane ./cmd/fleet-multiplane`, plus
+`./internal/redfish` in Redfish mode. Failing either blocks before any resource is
+created.
 
 Exit codes and `evidence/result.json` status:
 
@@ -179,7 +184,11 @@ acceptance starts, the run does the following:
   [bootstrap boundary](gitops.md#bootstrap-boundary)). Flux then installs
   Milo, Karmada, host RBAC, the Karmada API configuration, kro, the site base
   and the graph in dependency order;
-- enrolls credentials and seeds fixtures;
+- enrolls credentials, including one token per provider-project component, and
+  seeds fixtures;
+- starts the custody coordinator on the workstation (the `coordinator` phase,
+  `hack/multiplane/coordinator.sh`), which also writes fixture discovery through
+  its own discovery identity. Real BMC discovery is not part of this run;
 - publishes revision 2, which adds the shared site services and the
   `HandoffDispatcher` with dispatch disabled. `site.sh check` requires the
   following:
@@ -210,13 +219,14 @@ The phases are then:
    another Device. It then removes the objects and the CRDs. Milo ignores
    admission policies stored in a project, so this proves the rules hold
    there. It sends nothing to any server.
-2. **Contention.** Two consumers request one provider capacity. One binding
-   succeeds; `verify-contention` independently reads Bound for A and
+2. **Contention.** Two consumers request one provider capacity. Custody grants one
+   allocation; `verify-contention` independently reads Bound for A and
    Pending/InsufficientCapacity for B.
-3. **Retained admission before effects.** Installation admission retains core
-   authority and inputs, then immutable hub intent, before any effect.
-   `await-delivery` requires the following:
-   - exactly one Karmada-delivered handoff;
+3. **Admission before effects.** The coordinator admits the `DeviceInstallation`
+   and raises the Device's fence, then writes one immutable hub handoff carrying
+   that exact assignment, before any effect. `await-delivery` requires the
+   following:
+   - exactly one Karmada-delivered assignment handoff;
    - kro reporting that handoff in `HandoffDispatcher.status.deliveredHandoffs`;
    - no cell status and no worker Job.
 4. **Partition.** Suspend consumer A's Flux Kustomization, stop its API and pause
@@ -224,8 +234,8 @@ The phases are then:
    The cell's own Flux reconciles it from the registry with no hub access. kro
    creates the per-operation ServiceAccount, Role, RoleBinding and Job from its
    local replica.
-5. **Pod interruption.** `interrupt-pod` waits until the provider journal shows
-   the install `installer-started` *and* its libvirt domain running. It then
+5. **Pod interruption.** `interrupt-pod` waits until the Device's journal shows
+   the install's installer boot requested *and* its libvirt domain running. It then
    force-deletes the worker Pod with no grace period. It requires:
    - no local result;
    - the Job controller to record the lost Pod and start a replacement in the
@@ -235,8 +245,8 @@ The phases are then:
    the replacement exists, still mid-install. kro must recreate the Job under
    a new UID for the same operation.
 7. **Exact resume.** `resume` requires the recreated Job to be `Complete` with
-   one succeeded Pod, and the observer to publish `Succeeded` from the journal.
-   The journal must hold exactly one install. Evidence later proves exactly one
+   one succeeded Pod, and the observer to publish the stored `Succeeded` result.
+   The Device's journal must show the installer boot requested exactly once. Evidence later proves exactly one
    firmware-network installer start followed by exactly one disk-only start.
    It uses libvirt's append-only QEMU log, plus one `sfdisk`, one installer
    receipt and one disk-boot receipt in the guest serial logs. `worker-rbac`
@@ -251,16 +261,19 @@ The phases are then:
 9. **Heal and project.** Restart the hub and the cell node; the cell restart
    recreates every site Pod from the retained volume. Flux on every cluster
    must return to Ready at the current revision. Karmada reflects the
-   result, and management validates the following before public projection:
-   - the exact selected cell, request and operation;
-   - allocation, asset, epoch and fence;
-   - input digest and observation freshness.
+   result, and the coordinator accepts it only if it is this cell's observation
+   of exactly the assignment carried, with:
+   - the assignment's digest, Device, operation and fence;
+   - a result at the active operation's fence;
+   - observation freshness.
+
+   Public status then follows custody.
 
    Installation is repeated to confirm idempotent recovery.
 10. **Pod and Job lifecycle.** `lifecycle` recreates the runtime, boot and
     observer Pods and deletes the completed install Job; kro recreates the Job,
     which replays a verified no-op. The following must be unchanged:
-    - journal bytes;
+    - the site store's state;
     - QEMU start count;
     - PVC/PV identity and `Retain` policy;
     - domains;
@@ -276,43 +289,49 @@ The phases are then:
     - `flux-restart`: controllers restart without duplicate effects;
     - `flux-fail-closed`: a broken kro release blocks only the dispatcher
       layers;
-    - `flux-retention`: the journal volume is retained when its claim is
+    - `flux-retention`: the site volume is retained when its claim is
       removed from the source.
 
     See [acceptance coverage](gitops.md#acceptance-coverage).
-11. **Invalid and stale results.** With the Karmada `HelmRelease` suspended and its controller stopped, bootstrap
-    credentials substitute one attribute of the real reflected result at a time:
-    wrong cell, stale, future, duplicate replicas, wrong intent digest, wrong input
-    digest, wrong operation ID, incomplete phase, and missing reflection. Management
-    must reject each. This is fault injection, not a replacement status relay.
-12. **Cleanup and reuse.** Cleanup goes through the same federation path and
-    kro-created Jobs, with synthetic quota settlement. `release-status-a`
-    requires consumer A's Machine to be Released with Ready False, no
-    `currentInstallationRef`, and no Fleet finalizer. Consumer B then reuses the
-    capacity in epoch 2 and must show Bound.
-13. **Delivery faults.** `delivery-faults` creates three cell-local handoffs
-    with cell bootstrap credentials:
-    - the epoch-1 install under a second name;
-    - a wrong-cell intent;
-    - a stale epoch-1 replay.
+11. **Invalid and stale results.** With the Karmada `HelmRelease` suspended and its
+    controller stopped, the harness reopens the answered install handoff and
+    substitutes one attribute of the real reflected result at a time: wrong
+    cluster name, foreign observer, duplicate replicas, a future time, wrong
+    assignment digest, wrong Device, wrong operation, a stale fence, and missing
+    reflection. The coordinator must ignore each: custody stays unchanged and the
+    handoff stays unanswered. This is fault injection, not a replacement status
+    relay.
+12. **Release and reuse.** Release creates a `DeviceWipe` through the release
+    controller. The wipe goes through the same federation path and kro-created
+    Jobs. `release-status-a` requires consumer A's Machine to be Released with
+    Ready False, no `currentInstallationRef`, and no Fleet finalizer, and its
+    Installation Released. Custody then names consumer B's allocation, and B
+    must show Bound under a higher fence. No mode here has Milo quota, so the quota
+    claim is not exercised.
+13. **Delivery faults.** `delivery-faults` injects three faults with cell
+    bootstrap credentials:
+    - the install assignment under a second name, which the API refuses;
+    - an assignment naming another cell;
+    - an assignment replayed below the Device's stored fence.
 
-    Each kro-created Job must fail once with exit 65 by `podFailurePolicy`.
-    The journal must be unchanged, no status may appear, consumer B must stay
-    Bound, and kro must prune them once deleted. After B's release,
-    `release-status-b` repeats the released checks for B.
+    Each of the last two creates a kro Job that must fail once with exit 65 by
+    `podFailurePolicy`. The site store must be unchanged, no status may appear,
+    consumer B must stay Bound, and kro must prune them once deleted. After B
+    installs and is released, `release-status-b` repeats the released checks for
+    B.
 14. **Wrong location.** With capacity free, the consumer A customer recreates its
     request with `locationRef: remote-elsewhere`. Allocation must fail with the
-    location-not-served error. Private custody Secret names/UIDs/resourceVersions,
-    the provider journal bytes, and the Machine's finalizers and status must be
-    unchanged. Free capacity rules out contention as the reason for denial.
+    location-not-served error. The custody records, the site store's state, and the
+    Machine's finalizers and status must be unchanged. Free capacity rules out contention as the reason for denial.
 15. **Closed boot and evidence.** Live HTTP probes from the runtime Pod to the
     boot Service are denied after closure. Evidence requires all of:
-    - PXE mode, one install and two cleanups, epochs 1 and 2;
+    - PXE mode, one install and two wipes, each `Succeeded` at its own fence, with
+      the fences strictly increasing;
     - completed broker writes and a DHCP lease for the installer NIC;
     - network-only installer XML, and disk XML with no NIC or direct kernel;
     - closed boot admission, no remaining domain or disk;
     - kro-created, `Complete` worker Jobs for exactly the one install and two
-      cleanups, each with one successful Pod;
+      wipes, each with one successful Pod;
     - zero OOM kills.
 16. **Final convergence and teardown.** `flux-final` requires all three
     clusters at the last revision with nothing suspended, and repeats the
@@ -321,8 +340,8 @@ The phases are then:
 
 ### Failed or interrupted runs
 
-Failures stop this run's exact containers (never delete them) and retain the full
-private state; execution and custody are **Unknown**. `result.json` names the
+Failures stop this run's coordinator process and its exact containers (never
+delete them) and retain the full private state; execution and custody are **Unknown**. `result.json` names the
 failed phase and the retained containers. Stopping is not release evidence:
 
 ```sh
@@ -348,62 +367,71 @@ result mapping, and effect-free teardown refusal.
 
 ## Implementation and trust boundaries
 
-`internal/coordination.Hub` implements `executor.Client`. It creates an immutable
-`MachineAllocationHandoff` under `coordination.fleet.datumapis.com/v1alpha1` and
-returns Unknown until a valid reflected observation exists. The request is stored
-as a JSON string so API-server normalization cannot reorder opaque input fields
-and change the retained executor digest. `spec` is immutable through CRD CEL.
-Names derive from the operation ID; a changed request under the same ID conflicts.
+**The coordinator.** The custody coordinator (`fleet-multiplane coordinator`) is a
+workstation process with its own token. Its loop (`internal/delivery`) reconciles
+each Device's custody, builds the assignment for the active operation from custody
+and the operation spec as admitted, creates its handoff, collects the cell's
+results, and runs the retention sweep. The coordinator configuration names the
+cell as the site serving each Device. It is the only custody writer. The Metal
+provider creates allocations and installations, and the release controller
+creates wipes, each with its own token. An operation's creator is the identity a
+`SelfSubjectReview` reports. The local Milo enforces the custody CRD rules and
+registers no creator webhook, so this run does not prove that rule.
+
+**Handoffs.** `internal/coordination.Hub` creates an immutable
+`MachineAllocationHandoff` under `coordination.fleet.datumapis.com/v1alpha1`,
+labelled with the cell and a role. An assignment handoff carries one assignment
+(`spec.device` and `spec.assignmentJSON`). A report handoff has no assignment and
+asks for a Device's fence report. The assignment is stored as a JSON string so
+API-server normalization cannot reorder it and change its digest. `spec` is
+immutable through CRD CEL. The name derives from the Device, the operation UID and
+the fence, so a changed assignment under the same name conflicts. kro creates a
+worker Job only for an assignment handoff.
 
 `internal/coordination.Cell` is split into two least-privilege roles. Both
 validate that the delivered handoff names this cell, that its name is derived
-from the operation ID, and that the intent is valid before anything else.
+from its assignment, and that the assignment is valid before anything else.
 
-- **`Cell.Execute`** runs in the per-operation worker Job (`fleet-multiplane
-  site-worker`). It looks up the provider journal first, and a terminal
-  result is not re-executed. When lookup reports the operation not found and
-  Unknown, the worker re-sends the identical retained request under the same
-  operation ID. The local provider reports exactly this for a retained but
-  unfinished operation. The provider replays it against its digest-checked
-  journal and resumes observing an already-started installer instead of
-  starting another. Conflict, fencing, transport errors and a found-but-errored
-  lookup stop before any effect. `Execute` never writes status.
+- **`Cell.Work`** runs in the per-assignment worker Job (`fleet-multiplane
+  site-worker`). It runs the assignment through the site runner, which fences,
+  checks and journals every step. A `DeviceRecovery` only raises the fence and
+  confirms the older worker stopped. An assignment below the Device's stored fence
+  is refused with exit 65. `Work` never writes status.
 - **`Cell.Publish`/`Cell.Observe`** run in the observer Deployment
-  (`fleet-multiplane site-observer`), which uses a read-only provider. Every 10
-  seconds it lists this cell's handoffs and publishes an observation only for
-  a terminal journal result that passes `ValidateResult`. Unknown is never
-  published, and periodic refresh keeps observation timestamps fresh.
+  (`fleet-multiplane site-observer`), which reads the site store read-only. Every
+  10 seconds it lists this cell's handoffs and publishes, for each, the Device's
+  seen and stopped fences and, for an assignment, its stored result. It deletes
+  the site's copy of a result once the coordinator has labelled the handoff
+  answered.
 
 Retries, Pod replacement and dependency ordering belong to the Job controller
-and kro. Neither role holds a hub, consumer, provider-project or
-private-custody credential. This proves recoverable operation completion, not
-ongoing guest health or live production hardware attestation.
+and kro. Neither role holds a hub, consumer or provider-project credential. The
+coordinator accepts only this cell's observation of exactly the assignment the
+handoff carries. This proves recoverable operation completion, not ongoing guest
+health or live production hardware attestation.
 
 Allocation serves exactly one location, `local`, bound to the configured cell.
-`Runner.request` rejects any other Machine `locationRef`, an empty `Config.Cell`,
-or a hub client with a different cell. It returns `ErrLocationNotServed` before
-claim custody, authority records, finalizers or allocation. The CLI treats this
-rejection, conflicts, fencing and invalid requests as terminal instead of
-retrying until timeout.
+`Runner.request` rejects any other Machine `locationRef` or an empty
+`Config.Cell`. It returns `ErrLocationNotServed` before the quota claim, the
+allocation or any finalizer. The CLI treats this rejection, conflicts, fencing
+and invalid requests as terminal instead of retrying until timeout.
 
-Release projection runs only after verified cleanup made finalizer removal safe.
-Each step is retry-safe. The referenced Installation is retired first (`Released`,
-Ready False), then `currentInstallationRef` is cleared and the Machine is
-published `Released` with Bound and Ready False. The Fleet finalizer is removed
-last, from the server's fresh copy, so the removal is not reverted. Later requests
-read terminal custody through `Coordinator.ClaimReleased` and never restore the
-finalizer on a released claim. Reuse writes consumer B's Bound status only from
-the coordinator's committed binding. The CRD types Installation `status.phase` as
-a free-form string with no enum or CEL rule, so `Released` is schema-valid.
-`release-status-a` reads it back from the real Milo API.
+Release projection runs only after the allocation is `Released`, which needs every
+release gate closed and custody back at `None`, so finalizer removal is safe. Each step is
+retry-safe. The referenced Installation is retired first (`Released`, Ready
+False), then `currentInstallationRef` is cleared and the Machine is published
+`Released` with Bound and Ready False. The Fleet finalizer is removed last, from
+the server's fresh copy, so the removal is not reverted. Reuse writes consumer B's
+Bound status only from the allocation custody committed. The CRD types
+Installation `status.phase` as a free-form string with no enum or CEL rule, so
+`Released` is schema-valid. `release-status-a` reads it back from the real Milo
+API.
 
-`LocalAssetMapping` maps exactly one configured provider-scoped Device identity
-to `localvm.AssetID`. It obtains the original retained request from the cell API,
-validates the translated provider digest, and returns the original digest.
-It never aliases by suffix or moves custody into the cell. This explicit
-synthetic hardware enrollment is necessary because the local VM provider accepts
-one fixed physical asset ID. No Device/capacity/allocation/Installation identity
-is substituted for another.
+The site enrolls each Device it serves. The local VM site's enrollment is
+`config/site/base/enrollment.json`, and the Redfish site's is built by
+`redfish-enroll`. Fixture access checks it against the admitted snapshot before
+any effect. No Device, capacity, allocation or Installation identity is
+substituted for another.
 
 Cell site identities are as follows:
 
@@ -418,30 +446,39 @@ Cell site identities are as follows:
   per-operation shape. It has no Deployment, Service, volume, Secret or
   handoff spec/status write.
 
-Management's hub Role grants intent create/get/list/watch but no status writes.
-Karmada uses a separate member ServiceAccount with namespace-scoped intent
-writes. It also has cluster-wide read/watch for handoffs, because its member
-informer lists that resource across namespaces, and it can read
-nodes/pods/namespaces and discovery/health endpoints. It has no Secret-reading
-permission or local status-writing grant. Management and Karmada tokens are
-24-hour local ServiceAccount tokens; the harness does not refresh them for
-long-running deployments. Bootstrap administrator credentials remain on the
-host. No cell credential leaves the cell: the cell kubeconfig export from the
-previous design was removed.
+The coordinator's hub Role grants handoff create, get, list, watch and patch (to
+label a result answered, while the spec stays immutable), but no status writes. Karmada uses a separate member
+ServiceAccount with namespace-scoped intent writes. It also has cluster-wide
+read/watch for handoffs, because its member informer lists that resource across
+namespaces, and it can read nodes/pods/namespaces and discovery/health endpoints.
+It has no Secret-reading permission or local status-writing grant. Coordinator and
+Karmada tokens are 24-hour local ServiceAccount tokens; the harness does not
+refresh them for long-running deployments. Bootstrap administrator credentials
+remain on the host. No cell credential leaves the cell.
 
 Milo static-token RBAC grants live in the native root RBAC store, where its RBAC
-authorizer reads them. Customer tokens cannot write status or read Secrets.
-Management uses separate project read/status roles. Tests also delete the cell
-RoleBinding, verify denial, and restore that exact binding. These tests establish
-Kubernetes RBAC behavior, not caller-preserving production Milo IAM.
+authorizer reads them. Customer tokens cannot write status or read Secrets. The
+coordinator, the Metal provider, the release controller and the discovery identity
+each have a separate provider-project role (`hack/multiplane/milo.py`). The
+management phases use separate project read/status roles. Tests also delete the
+cell RoleBinding, verify denial, and restore that exact binding. These tests
+establish Kubernetes RBAC behavior, not caller-preserving production Milo IAM.
 
 The local runner's catalog, publication, hardware observations, source-use
-admission, quota holds and settlement are explicit synthetic fixtures. Concrete
-synthetic contract records and the existing lifecycle custody are durable before
-effects. Networking is deliberately empty; no NSO/IPAM/routing implementation is
-substituted. Adoption and production service readiness are never enabled.
+admission and fixture cleaning policy are explicit synthetic fixtures, and no
+quota system serves the run. The MachineAllocation, custody and operation records
+are durable before effects. Networking is deliberately empty; no NSO/IPAM/routing
+implementation is substituted. Adoption and production service readiness are never
+enabled.
 
 ## Verification and remaining gaps
+
+The records below, up to [Offline checks](#offline-checks), were observed on the
+path before the cutover to Device custody. They used the Secret-backed
+coordinator, a site-wide provider journal and a single-writer `executor.Client`.
+They show what the earlier composition proved, and the Flux, kro and Karmada
+findings there still describe the same infrastructure. They are not evidence for
+the custody path. Verification of the local VM run on custody is pending.
 
 ### Flux-owned shared site acceptance (2026-11-16)
 
@@ -867,79 +904,68 @@ were never treated as release evidence.
 go test -race -count=1 ./...
 go vet ./...
 task multiplane:test-harness        # includes hack/multiplane/test-k8s-evidence.py
-shellcheck -S warning hack/multiplane/*.sh hack/local-vm/run.sh hack/local-vm/start-libvirt hack/local-vm/site-runtime
+shellcheck -S warning hack/multiplane/*.sh hack/local-vm/start-libvirt hack/local-vm/site-runtime
 git diff --check
 ```
 
-Deterministic Go tests cover these result faults: wrong-cell, stale/future,
-duplicate, missing, wrong operation/digest/allocation/epoch/fence, and Unknown.
-They also cover:
+Deterministic Go tests cover, among others:
 
-- the worker/observer split: the worker never writes status, and the
-  observer never executes and never publishes Unknown, absent or mismatched
-  journal results;
-- delivery faults fencing before effects, and cell-label selection;
-- restart recovery and exact local asset mapping;
-- boot-origin and libvirt-URI validation, and read-only providers;
-- boot evidence kept outside the journal directory;
-- NAT forwarding only for a remote boot Service;
-- project identity collisions, concurrent allocation, and unknown cleanup
-  preventing capacity reuse.
+- allocation, installation, release and reuse on custody against a real API server
+  (`TestAllocateInstallReleaseReuse`, `TestConcurrentAllocatorsOneWinner`,
+  `TestAnAllocationThatLostItsDeviceIsReplaced`);
+- the federation layer: an assignment's round trip, only this cell's observation
+  accepted, a stale fence report ignored, and a cell running only its own
+  assignments (`internal/coordination`);
+- the local VM site: install then wipe, a resumed boot observed and not repeated,
+  and the boot server serving only an open admission at the stored fence
+  (`internal/site/vmwork`);
+- the site framework's fences, journal, deadlines and results (`internal/site`);
+- location rejection before allocation (`internal/multiplane`).
 
 They do not pretend to implement Karmada, kro or the Job controller in memory.
 Only the live command establishes federation, kro, Job and PXE acceptance.
 
-A known shared-lifecycle diagnostic edge remains: contenders with identical
-Machine UIDs in different projects can receive `ErrRecordInvalid` rather than
-`InsufficientCapacity`. Tests accept either fail-closed outcome and require one
-exclusive winner and no reuse after Unknown cleanup. This harness does not edit
-shared core lifecycle code to change that behavior.
-
 ### Known limitations of the local MVP
 
-Independent review on 2026-11-15 found no blocking safety issue for this
-disposable local MVP. It recorded these limits, which the harness does not hide:
+Independent review on 2026-11-15 found no blocking safety issue for the
+disposable local MVP of the earlier composition. These limits still apply, and
+the harness does not hide them:
 
-- **The provider journal is the sole fence.** The local provider's
-  `/var/lib/fleet-local/journal.json` alone binds operation IDs, allocation epoch,
-  fence and receipts to the physical asset. If provider state is deleted or
-  replaced and old handoffs are replayed, the provider admits them as new and can
-  re-image the disk. That is acceptable only because every site volume here is
-  disposable and created fresh per run. The volume uses `Retain` and is not
-  managed by kro, but nothing prevents an operator from deleting the PV. Never
-  reset, delete or replace a journal for a provider whose device or disk is
-  retained.
+- **The site store is the fence.** Each Device's highest fence, the older-worker
+  stop confirmation and its journal live in the site store on the retained
+  volume. If the store is deleted or replaced, the site reports a lower fence than
+  the coordinator last admitted, and it no longer refuses older assignments. That
+  is acceptable only because every site volume here is disposable and created
+  fresh per run. The volume uses `Retain` and is not managed by kro, but nothing
+  prevents an operator from deleting the PV. Never reset, delete or replace the
+  store of a site whose Device or disk is retained.
 - **Location validation is local to this runner.** `ErrLocationNotServed` is
   enforced by `internal/multiplane.Runner.request` for its single `local`
-  location and configured cell. The shared allocator, the standalone runner and
-  the production manager do not implement location binding.
-- **Some crash windows remain Unknown indefinitely.** These include an ambiguous
-  `virsh create` after `installer-started` or `disk-started` was retained, a crash
-  after disk creation but before `prepared` (exclusive creation then refuses to
-  overwrite), and a lost PXE network, lease or broker delivery. The provider will
-  not restart a possibly executed installer. Custody, capacity and diagnostics stay
-  retained. Do not reset the journal or retry under new authority to "unstick" it.
-  No automated operator resolution exists. Resolving such a run means discarding
-  the whole disposable topology after inspection (`teardown.sh --discard-unknown`).
-- **Test coverage seams.** Deterministic tests use identical scoped and physical
-  asset IDs in places and exercise recovery through the non-PXE provider path.
-  The live run is therefore the evidence for real firmware PXE with in-flight
-  worker Pod and Job interruption, exact resume and a single installer start.
+  location and configured cell. The shared allocator and the production manager
+  do not implement location binding.
+- **Some crash windows leave an operation unknown.** These include an ambiguous
+  `virsh create` after a boot step was journaled, a crash after disk creation but
+  before the step was recorded (exclusive creation then refuses to overwrite), and
+  a lost PXE network, lease or broker delivery. A worker does not start a possibly
+  executed boot again, and custody holds the Device. A person settles the hold
+  with a `DeviceRecovery`, which this run does not exercise. In the run, the only
+  resolution is to discard the whole disposable topology after inspection
+  (`teardown.sh --discard-unknown`).
 - **Single-node site.** The runtime, boot service, observer and workers share
-  one kind node and one `ReadWriteOnce` local-path volume; the journal lock
+  one kind node and one `ReadWriteOnce` local-path volume; the per-Device lock
   depends on that. Losing the runtime Pod stops any running guest; the
-  operation then stays Unknown. Multi-node or HA execution is not designed.
+  operation then stays unknown. Multi-node or HA execution is not designed.
 - **kro is a broad reader, and graph authors are trusted.** kro must read
-  delivered handoffs, including the fence token in `requestJSON`, to enumerate
-  them. Its informers need cluster-wide get/list/watch on every referenced
-  kind. Its writes are namespaced and admission-checked, but an admitted worker
-  still reaches root libvirtd and the journal; see the
+  delivered handoffs, including each assignment, to enumerate them. Its informers
+  need cluster-wide get/list/watch on every referenced kind. Its writes are
+  namespaced and admission-checked, but an admitted worker still reaches root
+  libvirtd and the site store; see the
   [trust model](site-execution.md#ownership-and-trust-model). Disabling
   `dispatch` or deleting a handoff prunes worker Jobs without cancelling
   effects. See [site execution](site-execution.md#lifecycle-and-retention).
 - **Shared-service revisions roll the runtime.** A services-layer change, such
   as a new site image, recreates the runtime Pod and stops any running guest.
-  The operation then stays Unknown. No migration from the earlier kro-owned
+  The operation then stays unknown. No migration from the earlier kro-owned
   composition is implemented. Retained historical Jobs also have immutable pod
   templates: changing the runtime-derived worker image may block kro dispatch.
   This upgrade risk has not been exercised; image upgrades require a fresh
@@ -954,8 +980,12 @@ disposable local MVP. It recorded these limits, which the harness does not hide:
   External Secrets. The Karmada API is reconciled with its admin kubeconfig,
   and the three clusters share one VM. Revisions are staged from the checkout;
   nothing is published. See [what is not production](gitops.md#what-is-not-production).
-  The journal volume's Flux policy (`prune: disabled`, `ssa: IfNotPresent`)
+  The site volume's Flux policy (`prune: disabled`, `ssa: IfNotPresent`)
   protects it from reconciliation, but not from an operator deleting the PV.
+- **No creator webhook, and no real BMC discovery.** The local Milo enforces the
+  custody CRD rules but registers no creator webhook. Fixture discovery writes
+  Device status through a separate discovery identity on the workstation; real
+  BMC discovery is not part of the run.
 - **Qualification scope.** A non-disposable provider, KVM, UEFI, real hardware/BMC,
   production Milo IAM, quota and networking remain out of scope.
 

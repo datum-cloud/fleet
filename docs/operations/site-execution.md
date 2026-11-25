@@ -1,7 +1,7 @@
 # Kubernetes-native site execution
 
 The [multi-plane acceptance](multiplane.md) runs selected-cell execution as
-ordinary Kubernetes workloads. The cell's Flux owns the long-lived site services
+ordinary Kubernetes workloads, as a site of [Device custody](../development/device-custody.md#cutover-increment-c). The cell's Flux owns the long-lived site services
 directly, and an installed [kro](https://kro.run) controller creates only the
 per-operation worker Jobs and their RBAC. Before Kubernetes execution, a hand-written cell
 process was started with `docker exec` inside a privileged libvirt container.
@@ -10,9 +10,10 @@ wrote status. Now Kubernetes controllers own scheduling, retries, Pod
 replacement and dependency ordering. Fleet code is left with only the parts
 that carry authority:
 
-- exact-request replay against the provider journal;
-- fencing;
-- journal-derived observation.
+- per-Device fences and a journal of each step, from the
+  [site framework](../development/device-custody.md#site-execution-increment-b);
+- fenced, typed results;
+- observation of what the site store holds.
 
 This is an **implemented local acceptance composition**, not a production
 deployment. The [PXE installation proposal](../enhancements/pxe-installation/README.md#location-execution)
@@ -41,7 +42,7 @@ digest, and `flux-verify` checks the release history records that digest. See
    ▼                  ▼                       ▼                          ▼
 fleet-site-base    fleet-site-services      fleet-site-graph          fleet-site-dispatch
 ns, Retain PVC,    runtime, boot and        ResourceGraphDefinition   HandoffDispatcher/dispatcher
-identities, RBAC,  observer Deployments;    fleet-handoff-dispatcher  (cell, scoped asset, dispatch)
+identities, RBAC,  observer Deployments;    fleet-handoff-dispatcher  (cell, dispatch)
 kro grants,        boot Service (fixed                                      │
 admission policy   ClusterIP); policy param                                 │ kro
                           ▲  externalRef (read only, readiness-gated)       ▼
@@ -50,23 +51,23 @@ Karmada ──delivers──▶ MachineAllocationHandoff ─ external collection
                       (fleet-coordination, label-selected by cell)      (resourceNames: that handoff,
                                                                         get), RoleBinding, bounded Job
 
-VM runtime (libvirtd, privileged) ◀─ libvirt socket ─ worker Job ── replays one operation
-   └─ firmware DHCP/iPXE ─NAT─▶ boot Service ─▶ boot Deployment (journal read-only)
-observer Deployment (journal read-only; only handoff status writer)
+VM runtime (libvirtd, privileged) ◀─ libvirt socket ─ worker Job ── runs one assignment
+   └─ firmware DHCP/iPXE ─NAT─▶ boot Service ─▶ boot Deployment (site store read-only)
+observer Deployment (site store read-only; only handoff status writer)
             ╲_____________ fleet-site-state PVC (Retain), Flux-owned __________╱
 ```
 
 | Resource | Owner (single writer) | Privileges | Volume subpaths | Role |
 | --- | --- | --- | --- | --- |
-| `fleet-site` namespace, `fleet-site-retain` StorageClass, `fleet-site-state` PVC | Flux `fleet-site-base` (`config/site/base`; never pruned; class and claim created once) | — | — | Durable journal, disks, boot evidence, libvirt socket and QEMU logs. Never in any graph. |
+| `fleet-site` namespace, `fleet-site-retain` StorageClass, `fleet-site-state` PVC | Flux `fleet-site-base` (`config/site/base`; never pruned; class and claim created once) | none | none | The site store (each Device's fence and journal, under the `journal` subpath), disks, boot evidence, libvirt socket and QEMU logs. Never in any graph. |
 | `fleet-site-runtime`, `fleet-site-boot`, `fleet-site-observer` ServiceAccounts; observer Role and RoleBinding | Flux `fleet-site-base` | Observer: get/list/watch handoffs; update handoff status | — | The observer is the only cell identity that writes handoff status |
 | `fleet-site-kro` ClusterRole, `fleet-site-kro-workers` and `fleet-site-kro-worker-rbac` Roles and bindings, two `ValidatingAdmissionPolicies` | Flux `fleet-site-base` | — | — | kro's narrowed grant and the shape of its writes ([trust model](#ownership-and-trust-model)) |
 | `fleet-site-runtime` Deployment | Flux `fleet-site-services` | **privileged** (bridge, dnsmasq, tap, iptables) | `journal` rw, `libvirt-socket` rw, `libvirt-log` rw, `boot-evidence` ro | libvirtd and QEMU only. No API token, no TCP listener. |
 | `fleet-site-boot` Service and Deployment | Flux `fleet-site-services` | uid 0 with all capabilities dropped, read-only root filesystem, no API token | `journal` **ro**, `boot-evidence` rw | Boot decision point and artifact delivery. The Service has a fixed ClusterIP (`10.96.0.80`). |
-| `fleet-site-observer` Deployment | Flux `fleet-site-services` | uid 0 with all capabilities dropped, read-only root filesystem | `journal` **ro** | Publishes validated terminal journal results every 10 seconds |
+| `fleet-site-observer` Deployment | Flux `fleet-site-services` | uid 0 with all capabilities dropped, read-only root filesystem | `journal` **ro** | Publishes each Device's stored fences, and the stored result of each assignment, every 10 seconds |
 | `fleet-site-worker-policy` ConfigMap | Flux `fleet-site-services` | — | — | Admission parameter: the image worker Jobs must run |
 | `fleet-handoff-dispatcher` ResourceGraphDefinition, `HandoffDispatcher/dispatcher` | Flux `fleet-site-graph`, `fleet-site-dispatch` (each a scoped identity; never pruned) | — | — | Orders per-operation work and projects non-authoritative status |
-| `w-<handoff>` ServiceAccount, Role, RoleBinding, Job | kro `forEach` over delivered handoffs | get on exactly one handoff; uid 0 with all capabilities dropped; read-only root filesystem | `journal` rw, `libvirt-socket` rw, `boot-evidence` ro | Executes or resumes that one retained operation |
+| `w-<handoff>` ServiceAccount, Role, RoleBinding, Job | kro `forEach` over delivered handoffs | get on exactly one handoff; uid 0 with all capabilities dropped; read-only root filesystem | `journal` rw, `libvirt-socket` rw, `boot-evidence` ro | Runs or resumes that one assignment |
 
 ## Ownership and trust model
 
@@ -138,7 +139,7 @@ kro's own requests and pin those writes to the worker shape:
   by the services layer);
 - no privilege or added capability;
 - no host namespaces;
-- only the journal claim and `emptyDir` volumes.
+- only the site state claim and `emptyDir` volumes.
 
 A Role may grant only `get` on its own handoff, and a RoleBinding may bind only
 its own Role to its own ServiceAccount. The `rbac` phase proves this with real
@@ -155,11 +156,11 @@ denials are not covered by the current probes.
 **What graph authors are still trusted with.** This is not a sandbox for
 untrusted graph revisions:
 
-- A worker mounts the journal read-write and reaches root libvirtd through
+- A worker mounts the site store read-write and reaches root libvirtd through
   its socket. A graph author who changes the worker command, within the
-  admitted image, can therefore drive the hypervisor and rewrite the journal.
-- kro must read every delivered handoff, including the fence token in
-  `requestJSON`, to enumerate them.
+  admitted image, can therefore drive the hypervisor and rewrite the site store.
+- kro must read every delivered handoff, including its assignment, to
+  enumerate them.
 - kro keeps cluster-wide CRD create/update/delete from its chart, so a
   compromised kro controller could alter or remove CRDs it does not own.
 - The services layer chooses the privileged runtime image and its
@@ -192,7 +193,7 @@ objects. This sequence is proposed only.
   any guest. The operation then stays Unknown and capacity stays occupied.
 - **Workers reach libvirt through a Unix socket on the site volume**
   (`qemu:///system?socket=/run/fleet-libvirt/libvirt-sock`). They hold no
-  network credential, and nothing listens on TCP. The provider accepts only
+  network credential, and nothing listens on TCP. The local VM site accepts only
   that URI shape. This socket still grants broad control over root libvirtd,
   including domain definitions backed by paths in the runtime filesystem.
   Dropped Linux capabilities do not isolate workers from the runtime's power.
@@ -209,12 +210,12 @@ objects. This sequence is proposed only.
   proves this. The runtime
   entrypoint adds a `mangle` chain: traffic from the bridge may reach only
   local addresses (DHCP), broadcast, and the boot Service port. Everything
-  else is dropped. The boot service reads the journal read-only and writes
+  else is dropped. The boot service reads the site store read-only and writes
   only its own delivery evidence in a separate subpath. Workers read that
   evidence when they verify network boot.
 - **One shared volume, separate subpaths and mount modes.** All site Pods run
   on the single kind node, so one `ReadWriteOnce` local-path volume serves
-  them. The journal `flock` is effective because every writer shares one
+  them. Each Device's run lock is effective because every writer shares one
   kernel and inode.
 - **The observer is a Deployment, not part of the Job.** Management requires
   reflected observations to be fresher than one minute. Refreshing them is a
@@ -223,45 +224,46 @@ objects. This sequence is proposed only.
 
 ## Authority and failure contract
 
-- **Exact operation before effect.** A worker reads only its handoff. It
-  checks the cell, checks that the name is derived from the operation ID, and
-  validates the intent. `LocalAssetMapping` re-reads the same handoff and
-  compares digests. The provider then replays the journal under the exact
-  operation ID. A digest conflict, fence mismatch, stale epoch, or an
-  unfinished prior operation stops before any effect.
+- **Exact assignment before effect.** A worker reads only its handoff. It checks
+  that the handoff is an assignment for this cell, that its name is derived from
+  the assignment, and that the assignment is valid. The site framework then
+  checks the inputs against the admitted digest, the enrollment against the
+  snapshot, the fence against the Device's stored fence, and, for Redfish, the
+  Device's credential and TLS pin. Any failed check sends nothing. See [device
+  custody](../development/device-custody.md#site-execution-increment-b).
 - **Worker exit codes are the Job contract.**
-  - `0`: a terminal result was validated against the journal.
-  - `65`: fenced, conflicting or invalid authority. `podFailurePolicy` fails
-    the Job with no retry.
-  - `75`: Unknown or transport error. The Job controller retries, up to
+  - `0`: the assignment's result is stored, or another worker for the same
+    assignment holds the Device's run lock and owns the result.
+  - `65`: the handoff is not an assignment for this cell, or the assignment is
+    below the Device's stored fence. `podFailurePolicy` fails the Job with no
+    retry.
+  - `75`: any other error. The Job controller retries, up to
     `backoffLimit: 6` and `activeDeadlineSeconds: 3600`.
 
   Disruption-target Pod conditions are ignored, not counted.
-- **The journal lock serializes effects.** `podReplacementPolicy: Failed`
+- **Each Device's run lock serializes effects.** `podReplacementPolicy: Failed`
   delays ordinary replacement until the old Pod is terminal. Force deletion
   can remove its API object while the old process still runs, and Job recreation
-  can also overlap workers. The provider's non-blocking journal lock is the
-  actual execution guard in these cases; a contender exits 75. A recreated
-  worker replays the same retained operation.
+  can also overlap workers. A newer assignment raises the fence and waits for the
+  lock, and the older worker stops within a second. A redelivered assignment
+  that finds the same assignment running stores nothing. A recreated worker
+  resumes from the journal.
 - **Job Complete and kro Ready grant nothing.** The worker never writes
-  status. The observer publishes only a terminal journal result that passes
-  `ValidateResult`. Management accepts only the Karmada-reflected observation
-  that passes `ValidateReflection`, which checks:
-  - exact cell, operation and intent/input digests;
-  - freshness;
-  - a single replica.
+  status. The observer publishes only what the site store holds: the Device's
+  fences, and the stored result of the assignment. The coordinator accepts only
+  this cell's observation of exactly the assignment the handoff carries, by its
+  digest and fence, and then labels the handoff answered so the cell deletes its
+  copy. A result below the active operation's fence is rejected.
 
   The acceptance shows this directly: during the hub partition the install Job
   is `Complete` while public Machine `Ready` stays `False`. A failed Job leaves
-  the operation Unknown; it never releases capacity.
-- **Delivery faults fail closed.** kro selects handoffs by cell label only for
-  convenience. A duplicate under another name, a wrong-cell intent and a
-  stale-epoch replay each get a Job. The acceptance injects these faults with
-  no pending operation: each fails once by policy without touching the journal.
-  While another operation is unfinished, the provider may reject a stale
-  request as Unknown before checking its fence. That worker exits 75 and may
-  exhaust its retry budget instead of failing once with exit 65; no effect is
-  authorized in either case.
+  the operation unknown; it never releases capacity.
+- **Delivery faults fail closed.** kro selects assignment handoffs by cell label
+  only for convenience. The acceptance injects three faults: a duplicate handoff
+  under a second name, which the API refuses; an assignment naming another cell;
+  and an assignment replayed below the Device's stored fence. The last two each
+  get a Job that fails once at exit 65 by policy, with the site store unchanged
+  and no status written.
 
 ## Lifecycle and retention
 
@@ -275,16 +277,17 @@ objects. This sequence is proposed only.
   `HandoffDispatcher` instance. kro removes only that handoff's Job,
   ServiceAccount, Role and RoleBinding. Every shared object keeps its UID,
   including the Deployments, Service, ServiceAccounts, RBAC, admission policies,
-  PVC and StorageClass. The journal, PV, guests and custody are unchanged, and
+  PVC and StorageClass. The site store, PV, guests and custody are unchanged, and
   the handoff keeps its terminal observation. Resuming lets Flux recreate the
   instance; kro recreates the workers and the Job replays a verified no-op.
   kro deletes Jobs without a propagation policy, so batch/v1 orphans their
   terminal Pods; the evidence lists them.
-- **Never delete or replace the journal** of a provider whose disk or device
-  is retained. A fresh journal would admit replayed handoffs as new
-  operations; see [known limitations](multiplane.md#known-limitations-of-the-local-mvp).
+- **Never delete or replace the site store** of a site whose disk or Device is
+  retained. It holds the fences that refuse older assignments, and a fresh store
+  would report a lower fence than the one the coordinator last admitted; see
+  [known limitations](multiplane.md#known-limitations-of-the-local-mvp).
 - After the installation is terminal, recreating the Flux-owned runtime, boot or
-  observer Pods does not change journal bytes, guest starts, volume identity or
+  observer Pods does not change the site store, guest starts, volume identity or
   public allocation. Neither does
   recreating a completed Job, which only replays a verified no-op. The
   `lifecycle` phase asserts all of this.
@@ -293,7 +296,7 @@ objects. This sequence is proposed only.
   specify cascading deletion for pruned Jobs, so dependent worker Pods may be
   orphaned and continue to completion, as may their guests. The observer can
   still publish a completed result if its handoff exists. Re-enabling dispatch
-  can create a competing worker that exits 75 on the journal lock. The harness
+  can create a competing worker that waits on the Device's run lock. The harness
   does not exercise pruning an active Job; its explicit Job deletion uses
   background propagation. Neither dispatch nor object deletion is an authorized
   cancellation or fencing protocol.
@@ -314,12 +317,15 @@ objects. This sequence is proposed only.
 - kro's controller is not in the authority path. If kro is down, no new
   worker is created, existing Jobs continue, and the Flux-owned shared services
   keep running and reconciling. Recovery is kro reconciliation followed by
-  journal replay.
+  replay from the journal.
 
 ## Secrets
 
-The fence token remains inside the handoff's `requestJSON`; this is the existing
-federation contract. Cell readers of handoffs are:
+A handoff carries one assignment: the Device, the operation, the fence, the
+admitted snapshot and the exact inputs. It holds no credential. A bootstrap
+payload is refused, so none is carried. A Redfish worker reads each Device's own
+BMC credential Secret in the site's cluster, never from a handoff. Cell readers
+of handoffs are:
 
 - each worker, for its one handoff only;
 - the observer;
@@ -327,26 +333,32 @@ federation contract. Cell readers of handoffs are:
 - kro, which must read handoffs to enumerate them.
 
 Job specs, Pod arguments, kro instance status and labels carry only handoff
-names, the cell name and the scoped asset ID. Worker and observer logs print an
-outcome class, never request bodies. The harness creates short-lived tokens for
-RBAC probes with names ending in `.token`. It scans every evidence file against
-all retained tokens, fences and boot capabilities.
+names and the cell name. Worker and observer logs print an outcome class, never
+request bodies. The harness creates short-lived tokens for RBAC probes with names
+ending in `.token`. It scans every evidence file against all retained tokens and
+boot capabilities.
 
 ## What replaced what
 
 | Removed | Replaced by |
 | --- | --- |
 | `fleet-multiplane cell` process launched with `docker exec`, its PID file and `kill` signalling | kro-created Jobs and the Job controller |
-| `coordination.Cell.Run` list/watch loop and `Reconcile` (execute plus publish) | `Cell.Execute` (worker; no status writes) and `Cell.Publish`/`Cell.Observe` (observer; lookup only) |
+| `coordination.Cell.Run` list/watch loop and `Reconcile` (execute plus publish) | `Cell.Work` (worker; no status writes) and `Cell.Publish`/`Cell.Observe` (observer; reads the site store only) |
 | `config/multiplane/cell-rbac.yaml` and an exported cell kubeconfig | Static observer RBAC and kro per-operation RBAC; no cell credential leaves the cell |
 | Dedicated privileged provider container and `docker exec` probes | Runtime, boot and observer Deployments; probes through the cell API |
 | kro-created runtime, boot and observer Deployments, boot Service and their ServiceAccounts (`FleetSite` graph), with a cluster-wide kro write grant | Flux layer `fleet-site-services` (scoped identity) and identities in `fleet-site-base`; the `HandoffDispatcher` graph references them; kro writes are namespaced and admission-checked |
 | `helm install` of kro, `kubectl apply` of the site base and RGD, a `kubectl patch` of `dispatch`, and `kind load` of the image | Cell Flux `HelmRelease`/Kustomizations from a pushed source revision; the image pulled by digest from the run registry ([details](gitops.md)) |
 
-The single-plane [local VM harness](local-vm.md) still uses its own disposable
-container and is unchanged.
+The Increment C cutover also removed the site-wide provider journal, the
+`requestJSON` handoff and the single-plane [local VM harness](local-vm.md). A
+handoff now carries one assignment, and each Device has its own fence and
+journal in the site store.
 
 ## Implemented versus proposed
+
+Rows marked "exercised" were observed in runs on the path before the cutover to
+Device custody. The same phases now run on custody. Verification of that run is
+pending.
 
 | Behavior | Status |
 | --- | --- |
@@ -355,18 +367,19 @@ container and is unchanged.
 | Narrowed kro RBAC and admission policies on kro's writes | Implemented and exercised (`rbac`, `kro-rbac.json`); every dispatched Job and its RBAC passed them |
 | In-place migration of an existing site from kro-owned shared services | Proposed only ([trust model](#ownership-and-trust-model)) |
 | Pod loss and Job deletion mid-install resuming the same operation with one installer start | Implemented and exercised |
-| Duplicate, wrong-cell and stale-epoch delivery failing by `podFailurePolicy` before effects | Implemented and exercised |
-| Pod/Job lifecycle not changing journal, guest or allocation | Implemented and exercised |
+| A duplicate handoff refused, and wrong-cell and below-fence assignments failing by `podFailurePolicy` before effects | Implemented; the earlier phase was exercised, and the current one awaits verification |
+| Pod/Job lifecycle not changing the site store, guest or allocation | Implemented and exercised |
 | Facility-edge DaemonSet, multi-node volumes, HA runtime, live hardware fencing | Proposed only |
-| Removing the fence token from cell-readable handoff fields (credential broker) | Proposed only ([open questions](../enhancements/pxe-installation/README.md#open-design-questions)) |
-| Redfish execution Jobs with no libvirt path, against the DMTF Redfish Interface Emulator and lab VMs | Implemented as a separate mode; see [Redfish-mode acceptance](redfish-lab.md) for its run record |
-| Synchronized DHCP boot reservations with served and withdrawn evidence | Implemented and unit tested; not exercised at a site ([Boot network](boot-network.md)) |
+| A credential broker so no worker holds a long-lived BMC credential | Proposed only ([open questions](../enhancements/pxe-installation/README.md#open-design-questions)) |
+| Redfish workers with no libvirt path, against the DMTF Redfish Interface Emulator and lab VMs | Implemented as a separate mode; see [Redfish-mode acceptance](redfish-lab.md). Verification of the run on custody is pending. |
+| Synchronized DHCP boot reservations with served and withdrawn evidence, read from the site store | Implemented and unit tested; not exercised at a site ([Boot network](boot-network.md)) |
 | Physical Redfish/BMC execution Jobs | Not qualified (lab emulator only; see the [hardware readiness checklist](redfish-lab.md#limitations-and-physical-hardware-readiness)) |
-| Per-Device fence store and journal, older-worker stop with a confirmation, worker deadlines, fenced typed results, per-Device credentials with the approved TLS pin, and the operation handoff payload ([device custody](../development/device-custody.md#site-execution-increment-b)) | Implemented and inert: unit tested, and nothing at the site runs it until the cutover. The site-wide journal above still drives this acceptance. |
+| Per-Device fence store and journal, older-worker stop with a confirmation, worker deadlines, fenced typed results, per-Device credentials with the approved TLS pin, and the operation handoff payload ([device custody](../development/device-custody.md#site-execution-increment-b)) | Implemented: unit tested, and every site runs it since the cutover. The multi-plane run on it awaits verification. |
 
 ## Independent review of the recorded run
 
-This review covered the run before Flux installation. The
+This review covered a run before Flux installation and before the cutover to
+Device custody, so it describes the retired provider journal and its lock. The
 [Flux-reconciled run](multiplane.md#flux-reconciled-acceptance-2026-11-15)
 re-established the same execution findings and has not yet been independently
 reviewed.

@@ -394,7 +394,7 @@ rewritten. It blocks only the claim it belongs to (implemented):
 Fleet has no automated recovery. An operator disables allocation on the
 affected capacity, deletes the Machine, removes its finalizer by hand, then
 deletes that claim's private record Secrets. The
-[implementation status](../../development/README.md#undecodable-private-records)
+[implementation status](../../development/device-custody.md)
 lists the steps.
 
 GPU, disk, and interface requirements keep numeric constraints with inclusive

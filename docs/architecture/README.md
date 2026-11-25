@@ -152,8 +152,7 @@ under new identities or delete old authority records to bypass cleanup.
 Environment-owned overlays must update service references and publication rules
 before enabling the renamed service. No live environment is changed by this PR.
 
-Repository, Go module, binaries, private record labels and Secret types, and
-release finalizers retain Fleet names. They are implementation identities.
+Repository, Go module, binaries, and release finalizers retain Fleet names. They are implementation identities.
 The [design context](design.md) and [source proposals](../proposals/fleet-management/README.md)
 provide the lifecycle rationale; this document supersedes their provisional
 API naming where broader resource placement remains unresolved.
