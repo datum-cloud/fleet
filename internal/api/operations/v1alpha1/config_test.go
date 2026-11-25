@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ import (
 var (
 	configRoot     = filepath.Join("..", "..", "..", "..", "config")
 	componentRoot  = filepath.Join(configRoot, "components", "device-operations")
-	operationKinds = []string{"DeviceInstallation", "DeviceWipe", "DeviceRecovery"}
+	operationKinds = []string{"DeviceInstallation", "DeviceWipe", "DevicePowerOperation", "DeviceRecovery"}
 )
 
 func decodeAll[T any](t *testing.T, path string) []T {
@@ -69,8 +70,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-	if len(crds) != 4 || crds["DeviceCustody"] == nil {
-		t.Fatalf("got %d CRDs, want DeviceCustody and three operation kinds", len(crds))
+	if len(crds) != 1+len(operationKinds) || crds["DeviceCustody"] == nil {
+		t.Fatalf("got %d CRDs, want DeviceCustody and %d operation kinds", len(crds), len(operationKinds))
 	}
 	for kind, crd := range crds {
 		version := crd.Spec.Versions[0]
@@ -113,6 +114,36 @@ func TestCRDContract(t *testing.T) {
 	bootstrap := crds["DeviceInstallation"].Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["bootstrap"]
 	if len(bootstrap.Properties) != 2 || bootstrap.Properties["ref"].Type != "string" || bootstrap.Properties["digest"].Pattern == "" {
 		t.Fatalf("bootstrap = %+v", bootstrap.Properties)
+	}
+	// Every operation kind repeats the same envelope and shared status, so a
+	// field the coordinator writes, such as status.admission, is never pruned
+	// from one kind.
+	reference := crds["DeviceWipe"].Spec.Versions[0].Schema.OpenAPIV3Schema
+	for _, kind := range operationKinds {
+		schema := crds[kind].Spec.Versions[0].Schema.OpenAPIV3Schema
+		for _, field := range []string{"creator", "deviceRef", "authority"} {
+			if !reflect.DeepEqual(schema.Properties["spec"].Properties[field], reference.Properties["spec"].Properties[field]) {
+				t.Fatalf("%s spec.%s differs from the shared envelope", kind, field)
+			}
+		}
+		for field, want := range reference.Properties["status"].Properties {
+			if got, ok := schema.Properties["status"].Properties[field]; field != "evidence" && (!ok || !reflect.DeepEqual(got, want)) {
+				t.Fatalf("%s status.%s differs from the shared status", kind, field)
+			}
+		}
+	}
+	// Power evidence is typed, so the API server prunes anything else.
+	power := crds["DevicePowerOperation"].Spec.Versions[0].Schema.OpenAPIV3Schema
+	evidence := power.Properties["status"].Properties["evidence"]
+	if evidence.XPreserveUnknownFields != nil || len(evidence.Properties) != 3 || len(evidence.Properties["power"].Properties) != 2 || len(evidence.Properties["resetEvidence"].Enum) != 2 {
+		t.Fatalf("power evidence = %+v", evidence)
+	}
+	rules := map[string]bool{}
+	for _, rule := range power.Properties["spec"].XValidations {
+		rules[rule.Rule] = true
+	}
+	if !rules["has(self.authority.serviceRequest) == has(self.expectedSystemUUID)"] || !rules["has(self.authority.allocationRef) == has(self.machineGeneration)"] {
+		t.Fatalf("power spec rules = %v", power.Properties["spec"].XValidations)
 	}
 }
 
@@ -188,13 +219,15 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 	group := GroupVersion.Group + "/"
 	read := []string{"get", "list", "watch"}
 	want := map[string][]string{
-		"fleet.datumapis.com-device-operations-viewer":      slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicerecoveries", read...)),
+		"fleet.datumapis.com-device-operations-viewer":      slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicepoweroperations", read...), p(group+"devicerecoveries", read...)),
+		"fleet.datumapis.com-device-power-operator":         p(group+"devicepoweroperations", "create"),
+		"fleet.datumapis.com-device-power-requester":        slices.Concat(p(group+"devicepoweroperations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
 		"fleet.datumapis.com-device-recovery-operator":      slices.Concat(p(group+"devicerecoveries", "create"), p("metal.datumapis.com/machineallocations", read...)),
 		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
 		"fleet.datumapis.com-device-wipe-requester":         slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
 	}
 	coordinator := slices.Concat(p(group+"devicecustodies", "get", "list", "watch", "create", "update", "delete"), p(group+"devices", read...), p("metal.datumapis.com/machineallocations", read...), p("metal.datumapis.com/machinecapacities", read...))
-	for _, plural := range []string{"deviceinstallations", "devicewipes", "devicerecoveries"} {
+	for _, plural := range []string{"deviceinstallations", "devicewipes", "devicepoweroperations", "devicerecoveries"} {
 		coordinator = slices.Concat(coordinator, p(group+plural, "get", "list", "watch", "delete", "updateStatus"), []string{group + plural + "/status.update"})
 	}
 	want["fleet.datumapis.com-device-coordinator"] = coordinator
@@ -213,9 +246,9 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 			t.Fatalf("%s = %v, want %v", name, actual, expected)
 		}
 		inherits := len(current.Spec.Inherited) != 0
-		if name == "fleet.datumapis.com-device-recovery-operator" {
+		if name == "fleet.datumapis.com-device-recovery-operator" || name == "fleet.datumapis.com-device-power-operator" {
 			if len(current.Spec.Inherited) != 1 || current.Spec.Inherited[0].Name != "fleet.datumapis.com-device-operations-viewer" {
-				t.Fatal("the recovery operator inherits only the viewer")
+				t.Fatalf("%s inherits only the viewer", name)
 			}
 		} else if inherits {
 			t.Fatalf("%s must not inherit", name)
@@ -233,11 +266,23 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 			}
 		}
 	}
-	// Staff can never create provider or release kinds.
-	for _, staff := range []string{"fleet.datumapis.com-device-operations-viewer", "fleet.datumapis.com-device-recovery-operator"} {
-		for _, permission := range roles[staff].Spec.Included {
-			if strings.HasSuffix(permission, ".create") && permission != group+"devicerecoveries.create" {
+	// Each staff role creates at most its own kind, and never a provider or
+	// release kind. Staff power does not read MachineAllocations.
+	for staff, own := range map[string]string{
+		"fleet.datumapis.com-device-operations-viewer": "",
+		"fleet.datumapis.com-device-recovery-operator": group + "devicerecoveries.create",
+		"fleet.datumapis.com-device-power-operator":    group + "devicepoweroperations.create",
+	} {
+		permissions := slices.Clone(roles[staff].Spec.Included)
+		for _, inherited := range roles[staff].Spec.Inherited {
+			permissions = append(permissions, roles[inherited.Name].Spec.Included...)
+		}
+		for _, permission := range permissions {
+			if strings.HasSuffix(permission, ".create") && permission != own {
 				t.Fatalf("%s may create %s", staff, permission)
+			}
+			if staff == "fleet.datumapis.com-device-power-operator" && strings.Contains(permission, "machineallocations") {
+				t.Fatalf("%s reads %s", staff, permission)
 			}
 		}
 	}

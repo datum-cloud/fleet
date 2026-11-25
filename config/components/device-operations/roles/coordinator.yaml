@@ -26,6 +26,12 @@ spec:
     - fleet.datumapis.com/devicewipes.delete
     - fleet.datumapis.com/devicewipes.updateStatus
     - fleet.datumapis.com/devicewipes/status.update
+    - fleet.datumapis.com/devicepoweroperations.get
+    - fleet.datumapis.com/devicepoweroperations.list
+    - fleet.datumapis.com/devicepoweroperations.watch
+    - fleet.datumapis.com/devicepoweroperations.delete
+    - fleet.datumapis.com/devicepoweroperations.updateStatus
+    - fleet.datumapis.com/devicepoweroperations/status.update
     - fleet.datumapis.com/devicerecoveries.get
     - fleet.datumapis.com/devicerecoveries.list
     - fleet.datumapis.com/devicerecoveries.watch

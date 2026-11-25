@@ -6,3 +6,5 @@ resources:
   - recovery-operator.yaml
   - installation-requester.yaml
   - wipe-requester.yaml
+  - power-operator.yaml
+  - power-requester.yaml

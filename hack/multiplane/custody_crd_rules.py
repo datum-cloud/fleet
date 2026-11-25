@@ -18,7 +18,7 @@ config = state / 'provider' / 'bootstrap-project.json'
 # controller to finish deleting one.
 namespace = 'fleet-rules'
 objects = (('devicerecovery', 'rules-recovery'), ('devicecustody', 'server-example-001'))
-names = ('devicecustodies', 'deviceinstallations', 'devicewipes', 'devicerecoveries')
+names = ('devicecustodies', 'deviceinstallations', 'devicewipes', 'devicepoweroperations', 'devicerecoveries')
 
 
 def kubectl(*args, stdin=None, check=True):

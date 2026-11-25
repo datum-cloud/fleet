@@ -63,15 +63,15 @@ legacy management-cluster install and will be removed. See
 [Planning and registering physical devices](../docs/operations/physical-inventory.md).
 
 `config/components/device-operations` registers `DeviceCustody`, the Device
-operation kinds, their ProtectedResources, the coordinator, requester, viewer
-and recovery operator roles, and the creator webhook. `config/milo` includes all
-of it, and the `fleet-registration` server serves the webhook at
-`/validate-operation-creator`. `config/milo-synthetic` includes the kinds,
-ProtectedResources and roles without the webhook, because it installs no
-registration webhook. `config/standalone` includes only the CRDs and enforces the
-creator rule with a ValidatingAdmissionPolicy. Including the kinds installs no
-coordinator: the production manager has no provider, so nothing creates
-custody operations there. See [device custody](../docs/development/device-custody.md#cutover-increment-c).
+operation kinds, their ProtectedResources, the coordinator, requester, viewer,
+recovery operator and power operator roles, and the creator webhook.
+`config/milo` includes all of it, and the `fleet-registration` server serves
+the webhook at `/validate-operation-creator`. `config/milo-synthetic` includes
+the kinds, ProtectedResources and roles without the webhook, because it
+installs no registration webhook. `config/standalone` includes only the CRDs
+and enforces the creator rule with a ValidatingAdmissionPolicy. Including the
+kinds installs no coordinator: the production manager has no provider, so
+nothing creates custody operations there. See [device custody](../docs/development/device-custody.md#cutover-increment-c).
 
 `config/base/bmc-discovery` runs read-only BMC discovery for one Milo project
 in a cluster that can reach the BMC network: one replica, no leader election,

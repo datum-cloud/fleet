@@ -811,6 +811,256 @@ spec:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  name: devicepoweroperations.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DevicePowerOperation
+    listKind: DevicePowerOperationList
+    plural: devicepoweroperations
+    singular: devicepoweroperation
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Device
+      type: string
+      jsonPath: .spec.deviceRef.name
+    - name: Action
+      type: string
+      jsonPath: .spec.action
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Reason
+      type: string
+      jsonPath: .status.reason
+    - name: Fence
+      type: integer
+      jsonPath: .status.fence
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              creator:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                required:
+                - username
+                - uid
+              deviceRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                required:
+                - name
+              authority:
+                type: object
+                properties:
+                  allocationRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - name
+                  serviceRequest:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                    required:
+                    - reason
+                x-kubernetes-validations:
+                - rule: has(self.allocationRef) != has(self.serviceRequest)
+                  message: set exactly one of allocationRef and serviceRequest
+              action:
+                type: string
+                enum:
+                - "On"
+                - ForceOff
+                - ForceRestart
+                - PowerCycle
+              expectedSystemUUID:
+                type: string
+                pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+              machineGeneration:
+                type: integer
+                format: int64
+                minimum: 1
+            required:
+            - creator
+            - deviceRef
+            - authority
+            - action
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: an operation spec is immutable after create
+            - rule: has(self.authority.serviceRequest) == has(self.expectedSystemUUID)
+              message: a staff operation sets expectedSystemUUID, and a provider operation omits it
+            - rule: has(self.authority.allocationRef) == has(self.machineGeneration)
+              message: a provider operation sets machineGeneration, and a staff operation omits it
+            - rule: '!has(self.authority.allocationRef) || size(self.authority.allocationRef.name) <= 200'
+              message: a provider operation's allocation name is at most 200 characters, so its name and retry names fit
+          status:
+            type: object
+            properties:
+              admission:
+                type: object
+                properties:
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                required:
+                - fence
+              phase:
+                type: string
+                enum:
+                - Pending
+                - Admitted
+                - Dispatched
+                - Verifying
+                - Succeeded
+                - Failed
+                - Cancelled
+                - OutcomeUnknown
+              reason:
+                type: string
+                maxLength: 128
+              message:
+                type: string
+                maxLength: 1024
+              fence:
+                type: integer
+                format: int64
+                minimum: 0
+              admittedAt:
+                type: string
+                format: date-time
+              deadline:
+                type: string
+                format: date-time
+              finishedAt:
+                type: string
+                format: date-time
+              inputDigest:
+                type: string
+                maxLength: 128
+              snapshot:
+                type: object
+                properties:
+                  bmcEndpoint:
+                    type: string
+                    maxLength: 2048
+                  systemUUID:
+                    type: string
+                    maxLength: 64
+                  bootMACAddress:
+                    type: string
+                    maxLength: 32
+                  bmcPublicKeySHA256:
+                    type: string
+                    maxLength: 128
+                  deviceGeneration:
+                    type: integer
+                    format: int64
+                  discoveryObservedAt:
+                    type: string
+                    maxLength: 64
+                  extra:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
+              evidence:
+                type: object
+                properties:
+                  requestSentAt:
+                    type: string
+                    format: date-time
+                  power:
+                    type: object
+                    properties:
+                      before:
+                        type: object
+                        properties:
+                          state:
+                            type: string
+                            enum:
+                            - "On"
+                            - "Off"
+                            - PoweringOn
+                            - PoweringOff
+                            - Paused
+                          observedAt:
+                            type: string
+                            format: date-time
+                        required:
+                        - state
+                        - observedAt
+                      after:
+                        type: object
+                        properties:
+                          state:
+                            type: string
+                            enum:
+                            - "On"
+                            - "Off"
+                            - PoweringOn
+                            - PoweringOff
+                            - Paused
+                          observedAt:
+                            type: string
+                            format: date-time
+                        required:
+                        - state
+                        - observedAt
+                  resetEvidence:
+                    type: string
+                    enum:
+                    - LastResetTime
+                    - ObservedOff
+            x-kubernetes-validations:
+            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
+              message: operation phases move forward only, and an ended phase is final
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
   name: devicerecoveries.fleet.datumapis.com
   annotations:
     discovery.miloapis.com/parent-contexts: Project
