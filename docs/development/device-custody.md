@@ -102,7 +102,11 @@ Each decision lists the open point from the implementation brief it settles.
   | `SharedPublicKey` | Rule 6 |
   | `RecoveryHold` | A recovery hold |
 
-  Rule 7 is a kind's own checks of its inputs, with its own reasons. A staff
+  Rule 7 is a kind's own checks of its inputs, with its own reasons. They run
+  before the shared identity and key checks of rules 5 and 6, so a kind's more
+  specific reason, such as power's `SystemUUIDNotRecorded`, is the one
+  reported. All rules must hold either way; the order decides only the
+  reason. A staff
   operation not admitted within five minutes ends `Cancelled` with reason
   `Expired`. This implementation adds `NameMismatch`, for an operation not
   named by its rule, and outcome reasons: `Superseded`, `Withdrawn`,
@@ -113,10 +117,16 @@ Each decision lists the open point from the implementation brief it settles.
   which custody records with the hold. This applies to every kind whose
   settlement needs a `Retry`, such as a wipe, and the kind's own naming rule
   does not apply to it. Until the `Retry` is applied, the retried operation
-  waits in `Pending`. The `Retry` is used when that operation is admitted. If
+  waits in `Pending`, a staff one included, and does not expire while it
+  waits. The `Retry` is used when that operation is admitted. If
   the retried operation also ends unknown, its hold keeps the original name
   and count, so the next retry is named `-retry-2`, not `-retry-1-retry-1`.
   Rebuild reads that lineage back from the names.
+- **Replacement.** Only an operation that passes the creator, authority,
+  holder and allocation checks on a row that queues can replace an older
+  pending one, of the same kind under the same allocation. A request refused
+  its permission check therefore replaces nothing, and staff requests, whose
+  rows never queue, never replace one another.
 - **Settling operations come first.** Pending replacement never cancels an
   operation that settles the hold. Other operations wait in `Pending` until the
   hold is settled, and they do not hold back the operation that settles it.
@@ -142,8 +152,10 @@ Each decision lists the open point from the implementation brief it settles.
   goes through normal admission as well. Only a
   kind that cannot reach the server may skip these checks, and the registry
   refuses any other.
-- **Names.** Deterministic kinds must use their rule, or they end `Failed`
-  with `NameMismatch`. A `DeviceInstallation` is named from its allocation and
+- **Names.** A row may set its own naming rule, such as generated names for
+  staff power and generation-based names for provider power; otherwise the
+  kind's rule applies. An operation that does not follow its rule ends
+  `Failed` with `NameMismatch`. A `DeviceInstallation` is named from its allocation and
   a digest of the Installation UID. A `DeviceWipe` is named from its allocation
   and step. Staff kinds must use a generated name.
 - **Order.** Pending operations are admitted oldest first. Ties break on kind,
@@ -349,8 +361,9 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    - a digest of its exact inputs (`custody.SpecDigest` covers the whole
      spec);
    - its naming rule: `DeterministicName` with a `Name` function for provider
-     and release kinds, or `GeneratedName` for staff kinds. An operation
-     created after a `Retry` is named by the coordinator's retry rule instead;
+     and release kinds, or `GeneratedName` for staff kinds. A row can override
+     it with its own `Naming` and `Name`. An operation created after a `Retry`
+     is named by the coordinator's retry rule instead;
    - its `Deadline`, and `Effectful` if it can reach the server;
    - `Supersedes`, if a newer pending operation of the same kind and the
      same authority should cancel an older one, as power needs. It never
@@ -388,7 +401,10 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    it recovers by observation after a lost response, and its typed result
    evidence. The worker contract is proposed and lands in Increment B.
 4. **Define its evidence.** Set `Evidence` to `custody.StrictEvidence` over a
-   typed, bounded Go struct. Unknown fields, oversized evidence and trailing
+   typed, bounded Go struct. Its validator receives the operation, so it can
+   require what that operation must prove, such as reset proof for a
+   restart. Set `EvidenceRequired` if a success without evidence proves
+   nothing. Unknown fields, oversized evidence and trailing
    data are rejected, and the result then proves nothing. Evidence never
    carries a credential or a raw BMC response. If a `DeviceRecovery` `Settle`
    can settle a hold of the kind, set `RecoverySettle` to validate the staff
@@ -417,6 +433,7 @@ a real API server:
 | Two allocators, allocator against staff, two coordinators, admission against a holder change, two Devices, a lost claim response | `TestConcurrency` |
 | A claim and its installation landing between the custody read and the operation list | `TestARefusalNeverUsesCustodyReadBeforeAHolderChange` |
 | Admission above the fence a site has seen; a recovery confirmed only by the stopped fence; a held operation never a candidate | `TestFencesFollowTheSiteReport`, `TestAHeldOperationIsNeverACandidate` |
+| Replacement only after the permission checks, staff never replacing, naming per row, a kind's reason before the shared identity check, a staff retry waiting for its Retry, evidence checked against its operation and required | `TestRowsAndReplacement` |
 | The extension points: the Device the checks see, scoped replacement, snapshot fields, the settle hook's hold fields, declared reasons, `Retryable`, a worker refusal returning a staff holder to `None` | `TestExtensionSeams`, `TestRegistryValidatesDeclaredReasons` |
 | A crash between each pair of custody and status writes, with dropped and lost responses | `TestWriteOrderCrashRecovery` |
 | CEL rules | `TestCRDRules` |
