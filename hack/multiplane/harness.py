@@ -27,7 +27,7 @@ DEBIAN = 'debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2
 # Subcommands and errors the live harness depends on. A missing one blocks before any resource exists.
 REQUIRED_SOURCE_MARKERS = tuple('"%s"' % c for c in ('seed', 'allocate', 'admit-install', 'install', 'release', 'release-b', 'reuse',
                                                      'coordinator', 'image', 'boot-service', 'boot-denials', 'site-worker', 'site-observer',
-                                                     'admit-install-b', 'recovery-mismatch', 'probe-unallocatable')) + ('multiplane.ErrLocationNotServed',)
+                                                     'admit-install-b', 'recovery-mismatch', 'probe-unallocatable', 'tenant-isolation')) + ('multiplane.ErrLocationNotServed',)
 READINESS_PACKAGES = ('./internal/coordination', './internal/custody', './internal/site/...', './internal/multiplane', './cmd/fleet-multiplane')
 # Redfish mode (run.sh --redfish) adds its executor and probe to the readiness gate.
 PROVIDER = os.environ.get('FLEET_SITE_PROVIDER', 'libvirt')

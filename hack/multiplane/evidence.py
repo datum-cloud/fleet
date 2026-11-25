@@ -83,7 +83,7 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'interrupt-job: running worker Job deleted mid-install', 'resume: replacement worker completed the exact interrupted operation',
            'worker Job is Complete while hub/consumer disconnected; public Ready stayed False', 'install: verified', 'lifecycle: runtime, boot and observer Pods',
            'delivery-faults: duplicate refused by the API', 'boot-denials: PASS', 'release: verified', 'release-status-a: consumer-a Machine Released', 'Installation Released, Ready False', 'reuse: verified', 'reuse-status: consumer-b Bound', 'release-b: verified', 'release-status-b: consumer-b Machine deleted',
-           'import-inert: ', 'staff-access: staff read custody', 'contention-custody: custody holds the Device for the one MachineAllocation',
+           'import-inert: ', 'tenant-isolation: consumer B\'s project has no Device API', 'staff-access: staff read custody', 'contention-custody: custody holds the Device for the one MachineAllocation',
            'deadline-admit: the second installation was admitted', 'release-waits: the Machine is deleting', 'deadline-hold: the installation ended OutcomeUnknown at its deadline',
            'recovery-mismatch: refused', 'deadline-settled: the release wipe was admitted', 'rebuild-unverified: custody rebuilt Unverified',
            'probe-unallocatable: no eligible capacity while custody is Unverified', 'rebuild-verified: custody Verified',
