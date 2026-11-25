@@ -95,11 +95,11 @@ assurance levels. It changes these parts of that design:
 - **[Operations](../device-operations/README.md#operations):**
   `DeviceInstallation` target disks resolve through the [pinned
   manifest](#pinning-at-allocation).
-- **[Operations](../device-operations/README.md#operations) and
-  [admission](../device-operations/README.md#admission):** `DeviceRecovery`
-  gains a `DisposeDrive` decision, admitted for a `Release` holder without a
-  recovery hold. A `Release` holder in custody records disposed drives. See
-  [Planning a release](#planning-a-release).
+- **[Unknown outcomes](../device-operations/README.md#unknown-outcomes):**
+  the coordinator ends a wipe that cannot clean a drive `OutcomeUnknown`
+  without delivering it. `DeviceRecovery` gains a `DisposeDrive` decision that
+  settles that hold, and a `Release` holder in custody records disposed drives.
+  See [Planning a release](#planning-a-release).
 - **[Capacity status](../device-operations/README.md#capacity-status):**
   `Available` adds the [cleaning check](#capacity-status).
 
@@ -223,8 +223,8 @@ digest, the SHA-256 of its canonical spec, and copies into the allocation:
 The allocator names drives `disk-0`, `disk-1`, and so on, at pin time. Names
 stay fixed for the allocation, and installations resolve target disks through
 the manifest. Allocation refuses a server that is not
-[covered](#capacity-status), with reason `CleaningUncovered`. Later changes to the policy or discovery do not
-change the pin.
+[covered](#capacity-status), with reason `CleaningUncovered`. Later changes to
+the policy or discovery do not change the pin.
 
 ### Planning a release
 
@@ -236,22 +236,24 @@ controller uses it to create a wipe, and admission uses it to check one.
 - A drive that discovery reports now and the manifest lacks also gets a step,
   planned with the pinned policy and named with the next free `disk-N`. The
   customer could have written to it.
-- A manifest drive that discovery no longer reports blocks the plan, with
-  reason `DriveMissing`.
-- A drive with no planned method blocks the plan, with reason
-  `DriveUncovered`.
+- A manifest drive that discovery no longer reports gets a step marked
+  `Missing`.
+- A drive with no planned method gets a step marked `Uncovered`.
 
-A blocked plan creates no wipe, and the `Cleaning` gate stays open. The
-release controller, which already writes the allocation's release status,
-records the reason there.
+Fleet cannot account for the data on a `Missing` or `Uncovered` drive. The
+coordinator admits a wipe with such a step, sends nothing, and ends it
+`OutcomeUnknown` with reason `DriveMissing` or `DriveUncovered`. The server
+gets a recovery hold, and the `Cleaning` gate stays open.
 
-Staff settle a missing drive with a `DeviceRecovery` decision `DisposeDrive`.
-It names the drive and how it was destroyed or removed, with a reference.
-Admission accepts it only when the holder is `Release`, no operation is active,
-and the drive is in the manifest but absent from current discovery. No recovery
-hold is needed. The coordinator records the disposal in custody with the
-holder, and the planner omits that drive. The record ends when the holder
-leaves `Release`. Replacing a drive does not settle the missing one.
+Staff settle that hold with a `DeviceRecovery` decision `DisposeDrive`. It names
+the drive and how it was destroyed or removed, with a reference. Admission
+accepts it only under that hold, and only for a drive the held wipe could not
+clean and current discovery no longer reports, so an uncovered drive must be
+pulled first. `DisposeDrive` clears the hold. The coordinator records the
+disposal in custody with the `Release` holder, the planner omits the drive, and
+the release controller plans the next step. The record ends when the holder
+leaves `Release`. Replacing a drive does not settle the missing one. Staff can
+also retire the server under the same hold.
 
 The `DeviceWipe` carries the plan:
 
@@ -280,6 +282,8 @@ spec:
       rule: nvme-ssd
       methods: [CryptographicErase, BlockErase]
       verify: {mode: Canary, samples: 64}
+      # Set only for a drive the plan cannot clean: Missing or Uncovered.
+      # state: Missing
 ```
 
 Admission checks that the plan equals the planner's output, as a check of the
@@ -395,7 +399,7 @@ With this work, the lab adapter reports drives with serial numbers, models, and
 firmware, and the lab machines get emulated NVMe drives. The lab can then also
 prove:
 
-- drive inventory, the manifest, planning, and blocked plans;
+- drive inventory, the manifest, planning, and missing or uncovered drives;
 - matching drives by serial number, and refusing a missing or extra drive;
 - the evidence check and every shortfall reason;
 - falling back when a drive refuses a method; and
@@ -414,8 +418,7 @@ policy lists for it.
 Record these decisions before implementation:
 
 - Who approves a hardware qualification, and where its results live.
-- Who can record `DisposeDrive`, whether a second person must confirm it, and
-  whether admitting it without a recovery hold is acceptable.
+- Who can record `DisposeDrive`, and whether a second person must confirm it.
 - Which roles can create a CleaningPolicy.
 
 ### Acceptance tests
@@ -427,8 +430,8 @@ These tests are required and not implemented:
   the policy is deleted.
 - Allocation refuses a server with a drive no rule covers, or a drive only one
   inventory source reports.
-- A drive is removed during an allocation. Release blocks with `DriveMissing`
-  until staff record `DisposeDrive`.
+- A drive is removed during an allocation. Release holds the server with
+  `DriveMissing` until staff record `DisposeDrive` under that hold.
 - The wipe environment finds an unplanned device and stops before erasing.
 - A drive refuses its first method, and the next method's evidence closes the
   gate.
@@ -448,7 +451,7 @@ Capacity without a policy is not `Available`. Releases always use their pins.
 
 ### What must operators monitor?
 
-Blocked plans, recovery holds from wipes, wipe duration per drive model, and
+Recovery holds from wipes, wipe duration per drive model, and
 uncovered capacity.
 
 ### Does the feature add API types or calls?
