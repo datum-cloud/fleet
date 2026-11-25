@@ -40,7 +40,9 @@ func fixture(t *testing.T) (*Handler, *inventory.Device) {
 	api := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(device).Build()
 	return &Handler{Projects: []string{"provider"}, Resolve: func(context.Context, string) (Project, error) {
 		return Project{Identity: controller.ProjectIdentity{AuthorityID: "milo", RouteName: "provider", UID: "project-1"}, Client: api}, nil
-	}, Authorize: func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error { return nil }}, device
+	}, Authorize: func(context.Context, Project, authenticationv1.UserInfo, string, string, string, string) error {
+		return nil
+	}}, device
 }
 
 func registrationRequest(t *testing.T, device *inventory.Device) admission.Request {
@@ -138,7 +140,7 @@ func TestRegistrationNegatives(t *testing.T) {
 			handler.Resolve = func(context.Context, string) (Project, error) { return Project{}, errors.New("deleting") }
 		},
 		"capacity permission revoked": func(handler *Handler, _ *inventory.Device, _ *admission.Request) {
-			handler.Authorize = func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, resource, _ string) error {
+			handler.Authorize = func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, _, resource, _ string) error {
 				if resource == "machinecapacities" {
 					return errors.New("denied")
 				}
@@ -146,7 +148,7 @@ func TestRegistrationNegatives(t *testing.T) {
 			}
 		},
 		"device permission revoked": func(handler *Handler, _ *inventory.Device, _ *admission.Request) {
-			handler.Authorize = func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, resource, _ string) error {
+			handler.Authorize = func(_ context.Context, _ Project, _ authenticationv1.UserInfo, _, _, resource, _ string) error {
 				if resource == "devices" {
 					return errors.New("denied")
 				}
@@ -199,7 +201,7 @@ func TestUnauthorizedCallerCannotProbeDeviceExistence(t *testing.T) {
 	if err := providerClient(t, handler).Delete(context.Background(), device); err != nil {
 		t.Fatal(err)
 	}
-	handler.Authorize = func(context.Context, Project, authenticationv1.UserInfo, string, string, string) error {
+	handler.Authorize = func(context.Context, Project, authenticationv1.UserInfo, string, string, string, string) error {
 		return errors.New("current get permission on devices is required")
 	}
 	response := handler.Handle(context.Background(), registrationRequest(t, device))

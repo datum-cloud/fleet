@@ -4,13 +4,15 @@ metadata:
   name: fleet-capacity-registration
 webhooks:
   # Only inventory-backed capacity is routed here, and it is fail-closed.
-  # Creates are checked against live Devices; updates and deletes are always
-  # denied. Capacity is inventory-backed when it carries a registration
-  # annotation (fleet.datumapis.com/registration-*) on the new or old object,
-  # or when a create uses the derived device- name. Adding, changing or
-  # removing a registration annotation is therefore always routed. Capacity
-  # without the marker, such as synthetic or hand-made capacity, and every
-  # status write are not routed and are governed by RBAC alone.
+  # Creates are checked against live Devices. Updates may change only the
+  # allocation policy, cleaning policy and pool label, under the stage-2
+  # rules; deletes only remove Disabled capacity whose Device is gone or
+  # Retired; status writes come only from the capacity projector. Capacity is
+  # inventory-backed when it carries a registration annotation
+  # (fleet.datumapis.com/registration-*) on the new or old object, or when a
+  # create uses the derived device- name. Capacity without the marker, such
+  # as synthetic or hand-made capacity, is not routed and is governed by RBAC
+  # alone.
   - name: registration.fleet.datumapis.com
     admissionReviewVersions: [v1]
     failurePolicy: Fail
@@ -23,7 +25,7 @@ webhooks:
       - apiGroups: [metal.datumapis.com]
         apiVersions: [v1alpha1]
         operations: [CREATE, UPDATE, DELETE]
-        resources: [machinecapacities]
+        resources: [machinecapacities, machinecapacities/status]
         scope: Namespaced
     matchConditions:
       - name: inventory-backed-capacity
