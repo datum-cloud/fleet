@@ -69,8 +69,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-	if len(crds) != 4 || crds["DeviceCustody"] == nil {
-		t.Fatalf("got %d CRDs, want DeviceCustody and three operation kinds", len(crds))
+	if len(crds) != 5 || crds["DeviceCustody"] == nil || crds["CleaningPolicy"] == nil {
+		t.Fatalf("got %d CRDs, want DeviceCustody, CleaningPolicy and three operation kinds", len(crds))
 	}
 	for kind, crd := range crds {
 		version := crd.Spec.Versions[0]
@@ -81,12 +81,23 @@ func TestCRDContract(t *testing.T) {
 			t.Fatalf("%s must be served only in Milo project control planes", kind)
 		}
 		properties := version.Schema.OpenAPIV3Schema.Properties
-		if kind == "DeviceCustody" {
+		switch kind {
+		case "DeviceCustody":
 			// Custody keeps its fields in spec, like a Lease.
 			if version.Subresources != nil || len(properties["status"].Properties) != 0 {
 				t.Fatal("DeviceCustody has no status")
 			}
-		} else {
+		case "CleaningPolicy":
+			// A policy is provider-written configuration with no status, and
+			// its spec never changes after create.
+			spec := properties["spec"]
+			if version.Subresources != nil || len(properties["status"].Properties) != 0 {
+				t.Fatal("CleaningPolicy has no status")
+			}
+			if len(spec.XValidations) != 1 || spec.XValidations[0].Rule != "self == oldSelf" {
+				t.Fatal("CleaningPolicy spec must be immutable")
+			}
+		default:
 			if version.Subresources == nil || version.Subresources.Status == nil {
 				t.Fatalf("%s status must be a subresource, written only by the coordinator", kind)
 			}
@@ -188,9 +199,10 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 	group := GroupVersion.Group + "/"
 	read := []string{"get", "list", "watch"}
 	want := map[string][]string{
-		"fleet.datumapis.com-device-operations-viewer":      slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicerecoveries", read...)),
+		"fleet.datumapis.com-device-operations-viewer":      slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicerecoveries", read...), p(group+"cleaningpolicies", read...)),
 		"fleet.datumapis.com-device-recovery-operator":      slices.Concat(p(group+"devicerecoveries", "create"), p("metal.datumapis.com/machineallocations", read...)),
-		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
+		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...), p(group+"cleaningpolicies", "get")),
+		"fleet.datumapis.com-cleaning-policy-admin":         p(group+"cleaningpolicies", "create", "get", "list", "watch", "delete"),
 		"fleet.datumapis.com-device-wipe-requester":         slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
 	}
 	coordinator := slices.Concat(p(group+"devicecustodies", "get", "list", "watch", "create", "update", "delete"), p(group+"devices", read...), p("metal.datumapis.com/machineallocations", read...), p("metal.datumapis.com/machinecapacities", read...))

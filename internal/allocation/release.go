@@ -178,10 +178,10 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 	wipe := &ops.DeviceWipe{
 		ObjectMeta: metav1.ObjectMeta{Name: reference.Name, Namespace: a.Namespace, Labels: operationLabels(allocation)},
 		Spec: ops.DeviceWipeSpec{
-			OperationEnvelope:    a.envelope(allocation, a.ReleaseCreator),
-			Step:                 reference.Step,
-			CleaningPolicyDigest: allocation.Spec.CleaningPolicyDigest,
-			TargetDisks:          slices.Clone(allocation.Spec.TargetDisks),
+			OperationEnvelope: a.envelope(allocation, a.ReleaseCreator),
+			Step:              reference.Step,
+			Policy:            allocation.Spec.CleaningPolicy.CleaningPolicyReference,
+			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
 		},
 	}
 	return a.createOnce(ctx, a.Releaser, wipe, &ops.DeviceWipe{})

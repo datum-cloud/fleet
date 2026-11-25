@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -60,8 +61,13 @@ func TestCreatorAgainstAPIServer(t *testing.T) {
 	if err := yaml.UnmarshalStrict(data, webhooks); err != nil {
 		t.Fatal(err)
 	}
-	if len(webhooks.Webhooks) != 1 || !strings.HasSuffix(*webhooks.Webhooks[0].ClientConfig.URL, Path) {
-		t.Fatalf("the packaged webhook must call %s", Path)
+	// The configuration also carries the cleaning policy webhook; this test
+	// installs only the creator webhook.
+	webhooks.Webhooks = slices.DeleteFunc(webhooks.Webhooks, func(webhook admissionregistrationv1.ValidatingWebhook) bool {
+		return !strings.HasSuffix(*webhook.ClientConfig.URL, Path)
+	})
+	if len(webhooks.Webhooks) != 1 {
+		t.Fatalf("the packaged configuration must have one webhook that calls %s", Path)
 	}
 	url := server.URL + Path
 	for index := range webhooks.Webhooks {

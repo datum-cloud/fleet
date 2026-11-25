@@ -34,9 +34,6 @@ import (
 const (
 	providerPrincipal = "system:serviceaccount:fleet-system:fleet-standalone-smoke"
 	releasePrincipal  = "system:serviceaccount:fleet-system:fleet-release-controller"
-	// cleaningPolicy is the fixture's cleaning policy record. Its digest is
-	// what each allocation pins.
-	cleaningPolicy = `{"name":"synthetic-tenant-reuse-v1","method":"overwrite","disks":"all"}`
 )
 
 func main() {
@@ -81,7 +78,6 @@ func main() {
 		Releaser: releaseClient, ReleaseCreator: releaseCreator,
 		Custody:   &custody.Coordinator{Client: coordinatorClient, Registry: registry, Config: custody.Config{Namespace: options.ProviderNamespace, Principals: principals()}},
 		Namespace: options.ProviderNamespace,
-		Cleaning:  fixtureCleaning,
 		// The fixture Device's boot NIC and the simulator's one enrolled disk.
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
@@ -119,13 +115,6 @@ func coordinate(ctx context.Context, config *rest.Config, registry *custody.Regi
 
 func principals() custody.Principals {
 	return custody.Principals{custody.CreatorMetalProvider: {{Username: providerPrincipal}}, custody.CreatorReleaseController: {{Username: releasePrincipal}}}
-}
-
-func fixtureCleaning(name string) (string, error) {
-	if name != "synthetic-tenant-reuse-v1" {
-		return "", fmt.Errorf("no fixture cleaning policy %q", name)
-	}
-	return custody.SpecDigest(cleaningPolicy)
 }
 
 func newClient(config *rest.Config) (client.Client, error) {

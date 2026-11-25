@@ -223,12 +223,6 @@ func New(ctx context.Context, c Config) (*Runner, error) {
 		Provider: r.Provider.API, ProviderCreator: providerCreator,
 		Releaser: releaser, ReleaseCreator: releaseCreator,
 		Custody: coord, Namespace: DeviceNamespace,
-		Cleaning: func(name string) (string, error) {
-			if name != "local-cleaning" {
-				return "", fmt.Errorf("no fixture cleaning policy %q", name)
-			}
-			return custody.SpecDigest(`{"method":"overwrite","disks":"all"}`)
-		},
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
 	return r, nil

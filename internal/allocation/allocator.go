@@ -30,6 +30,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/cleaning"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/tenancy"
 )
@@ -49,6 +50,9 @@ var (
 	// ErrUnsupported means a request Fleet does not implement, such as a
 	// bootstrap payload.
 	ErrUnsupported = errors.New("unsupported request")
+	// ErrCleaningUncovered means the capacity names no CleaningPolicy, or
+	// one that does not exist or is not valid.
+	ErrCleaningUncovered = errors.New("no usable cleaning policy covers the capacity")
 )
 
 // Machine names one Machine incarnation in one consumer incarnation.
@@ -100,10 +104,6 @@ type Quota interface {
 	Release(ctx context.Context, machine Machine) error
 }
 
-// CleaningPolicies resolves a MachineCapacity's cleaning policy reference
-// to the digest of the policy record pinned at allocation.
-type CleaningPolicies func(name string) (string, error)
-
 // Request is one Machine's allocation request, already admitted.
 type Request struct {
 	Machine Machine
@@ -128,7 +128,6 @@ type Allocator struct {
 	// in it too.
 	Namespace string
 	Quota     Quota
-	Cleaning  CleaningPolicies
 	// BootInterface and TargetDisks are pinned on each allocation.
 	BootInterface string
 	TargetDisks   []string
@@ -195,7 +194,12 @@ func (a *Allocator) Allocate(ctx context.Context, request Request) (*fleetv1.Mac
 			return nil, err
 		}
 		tried[candidate.Name] = true
-		allocation, err = a.newAllocation(request, candidate, device, claim)
+		allocation, err = a.newAllocation(ctx, request, candidate, device, claim)
+		if errors.Is(err, ErrCleaningUncovered) {
+			// Capacity without a usable cleaning policy is not eligible.
+			// Nothing was claimed; try the next candidate.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -292,13 +296,10 @@ func Free(state *ops.DeviceCustody, device *inventory.Device) bool {
 		spec.RecoveryHold == nil && spec.ActiveOperation == nil && inventory.LifecycleOf(device) == inventory.DeviceActive
 }
 
-func (a *Allocator) newAllocation(request Request, capacity *fleetv1.MachineCapacity, device *inventory.Device, claim string) (*fleetv1.MachineAllocation, error) {
-	if a.Cleaning == nil {
-		return nil, errors.New("allocation: no cleaning policy resolver")
-	}
-	digest, err := a.Cleaning(capacity.Spec.CleaningPolicyRef.Name)
+func (a *Allocator) newAllocation(ctx context.Context, request Request, capacity *fleetv1.MachineCapacity, device *inventory.Device, claim string) (*fleetv1.MachineAllocation, error) {
+	policy, err := a.pinCleaning(ctx, capacity)
 	if err != nil {
-		return nil, fmt.Errorf("resolve cleaning policy: %w", err)
+		return nil, err
 	}
 	classDigest, err := custody.SpecDigest(request.Class.Spec)
 	if err != nil {
@@ -323,11 +324,11 @@ func (a *Allocator) newAllocation(request Request, capacity *fleetv1.MachineCapa
 				CPU:               request.Profile.Spec.CPU,
 				Memory:            request.Profile.Spec.Memory,
 			},
-			Hardware:             capacity.Status.Hardware,
-			Authority:            request.Authority,
-			CleaningPolicyDigest: digest,
-			BootInterface:        a.BootInterface,
-			TargetDisks:          slices.Clone(a.TargetDisks),
+			Hardware:       capacity.Status.Hardware,
+			Authority:      request.Authority,
+			CleaningPolicy: policy,
+			BootInterface:  a.BootInterface,
+			TargetDisks:    slices.Clone(a.TargetDisks),
 		},
 	}
 	if claim != "" {
@@ -455,4 +456,28 @@ func specDigest(operation ops.Operation) (string, error) {
 	}
 	sum := sha256.Sum256(object.Spec)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// pinCleaning copies the capacity's CleaningPolicy for the allocation to
+// keep. A policy that is missing or invalid refuses the allocation.
+func (a *Allocator) pinCleaning(ctx context.Context, capacity *fleetv1.MachineCapacity) (ops.PinnedCleaningPolicy, error) {
+	name := capacity.Spec.CleaningPolicyRef.Name
+	if name == "" {
+		return ops.PinnedCleaningPolicy{}, fmt.Errorf("%w: capacity %s names no cleaning policy", ErrCleaningUncovered, capacity.Name)
+	}
+	policy := &ops.CleaningPolicy{}
+	if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: capacity.Namespace, Name: name}, policy); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ops.PinnedCleaningPolicy{}, fmt.Errorf("%w: cleaning policy %s does not exist", ErrCleaningUncovered, name)
+		}
+		return ops.PinnedCleaningPolicy{}, err
+	}
+	if err := cleaning.Validate(policy.Spec); err != nil {
+		return ops.PinnedCleaningPolicy{}, fmt.Errorf("%w: cleaning policy %s: %v", ErrCleaningUncovered, name, err)
+	}
+	digest, err := cleaning.Digest(policy.Spec)
+	if err != nil {
+		return ops.PinnedCleaningPolicy{}, err
+	}
+	return ops.PinnedCleaningPolicy{CleaningPolicyReference: ops.CleaningPolicyReference{Name: policy.Name, UID: string(policy.UID), Digest: digest}, Spec: policy.Spec}, nil
 }

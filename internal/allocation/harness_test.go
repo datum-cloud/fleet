@@ -38,7 +38,6 @@ const (
 	siteToken    = "synthetic-site-token"
 	keyDigest    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	imageRef     = "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"
-	policyDigest = "sha256:0c2b77e1d9a4000000000000000000000000000000000000000000000000cafe"
 )
 
 func uid(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
@@ -124,11 +123,11 @@ func startEnv(t *testing.T) *env {
 		Provider: admin, ProviderCreator: ops.Creator{Username: providerUser, UID: uid(801)},
 		Releaser: admin, ReleaseCreator: ops.Creator{Username: releaseUser, UID: uid(802)},
 		Custody: coordinator, Namespace: namespace,
-		Cleaning:      func(string) (string, error) { return policyDigest, nil },
 		BootInterface: "primary", TargetDisks: []string{"disk-0"},
 	}
 	e.class = &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "class-example"}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: "profile-example"}}}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: namespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "example"}}}}}}
 	e.create(e.class)
+	e.create(examplePolicy(namespace))
 	e.profile = &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: "profile-example"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 2}, Memory: fleetv1.MemoryRequirement{Capacity: "2Gi"}}}
 	e.create(e.profile)
 	return e
@@ -230,4 +229,13 @@ func (e *env) release(allocation *fleetv1.MachineAllocation, owner Machine) {
 		}
 		return released
 	})
+}
+
+// examplePolicy is the CleaningPolicy every fixture capacity names.
+func examplePolicy(namespace string) *ops.CleaningPolicy {
+	return &ops.CleaningPolicy{ObjectMeta: metav1.ObjectMeta{Name: "example-cleaning", Namespace: namespace}, Spec: ops.CleaningPolicySpec{
+		Assurance: ops.AssuranceClear,
+		Rules: []ops.CleaningRule{{Name: "nvme-ssd", Match: ops.DriveMatch{Protocol: ops.ProtocolNVMe, MediaType: ops.MediaSSD},
+			Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: ops.VerifySpec{Mode: ops.VerifyFull}, TimePerTiB: metav1.Duration{Duration: time.Hour}}},
+	}}
 }

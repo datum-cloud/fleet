@@ -2,6 +2,8 @@ package v1alpha1
 
 import (
 	"encoding/json"
+
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -361,9 +363,9 @@ type MachineAllocationSpec struct {
 	// allocation, in the Machine's namespace. It is absent where no quota
 	// system serves the consumer.
 	QuotaClaimRef *LocalReference `json:"quotaClaimRef,omitempty"`
-	// CleaningPolicyDigest pins the cleaning policy record the release
-	// wipes under.
-	CleaningPolicyDigest string `json:"cleaningPolicyDigest"`
+	// CleaningPolicy is the copy of the capacity's cleaning policy the
+	// release wipes under. It is pinned at allocation.
+	CleaningPolicy ops.PinnedCleaningPolicy `json:"cleaningPolicy"`
 	// BootInterface and TargetDisks are what installations and wipes for
 	// this allocation use.
 	BootInterface string   `json:"bootInterface"`

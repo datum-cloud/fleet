@@ -151,7 +151,7 @@ func (Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 
 func wipeSpec(work *site.Work) (ops.DeviceWipeSpec, *custody.Refusal) {
 	var spec ops.DeviceWipeSpec
-	if err := json.Unmarshal(work.Inputs, &spec); err != nil || spec.CleaningPolicyDigest == "" {
+	if err := json.Unmarshal(work.Inputs, &spec); err != nil || spec.Policy.Digest == "" {
 		return spec, &custody.Refusal{Reason: custody.ReasonInputsUnreadable, Message: "the admitted inputs are not a DeviceWipe spec"}
 	}
 	return spec, nil
@@ -187,6 +187,6 @@ func (Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
 	return ops.WipeEvidence{
 		Steps:        []ops.StepEvidence{{Name: step.Name, CompletedAt: metav1.NewTime(at.UTC())}},
 		WipedDisks:   slices.Clone(spec.TargetDisks),
-		PolicyDigest: spec.CleaningPolicyDigest,
+		PolicyDigest: spec.Policy.Digest,
 	}, nil
 }

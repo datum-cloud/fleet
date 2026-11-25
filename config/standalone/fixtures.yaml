@@ -29,6 +29,22 @@ spec:
   bmc: {endpoint: "https://[2001:db8::21]"}
   interfaces: [{name: primary, macAddress: "02:00:00:00:00:21"}]
 ---
+# The synthetic site overwrites its one disk and reads it back, so the
+# fixture policy claims only Clear.
+apiVersion: fleet.datumapis.com/v1alpha1
+kind: CleaningPolicy
+metadata:
+  name: synthetic-tenant-reuse-v1
+  namespace: fleet-provider
+spec:
+  assurance: Clear
+  rules:
+    - name: nvme-ssd
+      match: {protocol: NVMe, mediaType: SSD}
+      methods: [Overwrite]
+      verify: {mode: Full}
+      timePerTiB: 1h
+---
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:

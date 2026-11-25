@@ -1,6 +1,7 @@
 package allocation
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -161,7 +162,7 @@ func TestAnAllocationThatLostItsDeviceIsReplaced(t *testing.T) {
 	}
 	// A crash left the second Machine's allocation naming the taken Device,
 	// before it claimed custody.
-	stale, err := e.allocator.newAllocation(e.request(2), e.capacity(taken.Name), taken, "")
+	stale, err := e.allocator.newAllocation(context.Background(), e.request(2), e.capacity(taken.Name), taken, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
+	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/manager"
 	"go.datum.net/fleet/internal/tenancy"
@@ -30,6 +32,7 @@ func Seed(ctx context.Context, c Config) error {
 	var profile fleet.MachineProfile
 	var class fleet.MachineClass
 	var capacity fleet.MachineCapacity
+	policy := LabCleaningPolicy()
 	if err := json.Unmarshal([]byte(`{"metadata":{"name":"local-profile"},"spec":{"cpu":{"architecture":"amd64","cores":2},"memory":{"capacity":"2Gi"}}}`), &profile); err != nil {
 		return err
 	}
@@ -47,7 +50,7 @@ func Seed(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
-	for _, obj := range append([]client.Object{&profile, &class, &capacity}, devices...) {
+	for _, obj := range append([]client.Object{&profile, &class, policy, &capacity}, devices...) {
 		if err := ensure(ctx, provider, obj); err != nil {
 			return err
 		}
@@ -167,4 +170,18 @@ func enrolledDevices(c Config) ([]client.Object, error) {
 		return nil, errors.New("the cell enrolls no Device")
 	}
 	return out, nil
+}
+
+// LabCleaningPolicy is the lab's CleaningPolicy: Clear, by overwriting every
+// block and reading it back, the only method the lab proves.
+func LabCleaningPolicy() *ops.CleaningPolicy {
+	hour := metav1.Duration{Duration: time.Hour}
+	rule := func(protocol ops.DriveProtocol, media ops.MediaType) ops.CleaningRule {
+		return ops.CleaningRule{Name: strings.ToLower(string(protocol) + "-" + string(media)), Match: ops.DriveMatch{Protocol: protocol, MediaType: media},
+			Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: ops.VerifySpec{Mode: ops.VerifyFull}, TimePerTiB: hour}
+	}
+	return &ops.CleaningPolicy{ObjectMeta: metav1.ObjectMeta{Name: "local-cleaning", Namespace: DeviceNamespace}, Spec: ops.CleaningPolicySpec{
+		Assurance: ops.AssuranceClear,
+		Rules:     []ops.CleaningRule{rule(ops.ProtocolNVMe, ops.MediaSSD), rule(ops.ProtocolSATA, ops.MediaSSD), rule(ops.ProtocolSATA, ops.MediaHDD)},
+	}}
 }

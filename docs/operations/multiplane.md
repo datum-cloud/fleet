@@ -465,7 +465,7 @@ cell RoleBinding, verify denial, and restore that exact binding. These tests
 establish Kubernetes RBAC behavior, not caller-preserving production Milo IAM.
 
 The local runner's catalog, publication, hardware observations, source-use
-admission and fixture cleaning policy are explicit synthetic fixtures, and no
+admission and `Clear` cleaning policy are explicit synthetic fixtures, and no
 quota system serves the run. The MachineAllocation, custody and operation records
 are durable before effects. Networking is deliberately empty; no NSO/IPAM/routing
 implementation is substituted. Adoption and production service readiness are never

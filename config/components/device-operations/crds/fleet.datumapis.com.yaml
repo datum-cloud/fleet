@@ -705,9 +705,24 @@ spec:
                 type: integer
                 format: int32
                 minimum: 1
-              cleaningPolicyDigest:
-                type: string
-                pattern: ^sha256:[0-9a-f]{64}$
+              policy:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                  digest:
+                    type: string
+                    pattern: ^sha256:[0-9a-f]{64}$
+                required:
+                - name
+                - uid
+                - digest
               targetDisks:
                 type: array
                 minItems: 1
@@ -722,7 +737,7 @@ spec:
             - deviceRef
             - authority
             - step
-            - cleaningPolicyDigest
+            - policy
             - targetDisks
             x-kubernetes-validations:
             - rule: self == oldSelf
@@ -1075,5 +1090,99 @@ spec:
             x-kubernetes-validations:
             - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
               message: operation phases move forward only, and an ended phase is final
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: cleaningpolicies.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: CleaningPolicy
+    listKind: CleaningPolicyList
+    plural: cleaningpolicies
+    singular: cleaningpolicy
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: Assurance
+      type: string
+      jsonPath: .spec.assurance
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            required: [assurance, rules]
+            properties:
+              assurance: {type: string, enum: [Clear, Purge]}
+              rules:
+                type: array
+                minItems: 1
+                maxItems: 16
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name, match, methods, verify, timePerTiB]
+                  properties:
+                    name: {type: string, minLength: 1, maxLength: 63}
+                    match:
+                      type: object
+                      required: [protocol, mediaType]
+                      properties:
+                        protocol: {type: string, enum: [NVMe, SATA, SAS]}
+                        mediaType: {type: string, enum: [SSD, HDD]}
+                    methods:
+                      type: array
+                      minItems: 1
+                      maxItems: 6
+                      x-kubernetes-list-type: set
+                      items: {type: string, enum: [CryptographicErase, BlockErase, SanitizeOverwrite, Format, SecureErase, Overwrite]}
+                    verify:
+                      type: object
+                      required: [mode]
+                      properties:
+                        mode: {type: string, enum: [Full, Canary]}
+                        samples: {type: integer, format: int32, minimum: 0, maximum: 1024}
+                    timePerTiB: {type: string, minLength: 1, maxLength: 32}
+              qualified:
+                type: array
+                maxItems: 32
+                items:
+                  type: object
+                  required: [model, firmware, methods]
+                  properties:
+                    model: {type: string, minLength: 1, maxLength: 128}
+                    firmware:
+                      type: array
+                      minItems: 1
+                      maxItems: 16
+                      x-kubernetes-list-type: set
+                      items: {type: string, minLength: 1, maxLength: 64}
+                    methods:
+                      type: array
+                      minItems: 1
+                      maxItems: 6
+                      x-kubernetes-list-type: set
+                      items: {type: string, enum: [CryptographicErase, BlockErase, SanitizeOverwrite, Format, SecureErase, Overwrite]}
+                    alwaysEncrypts: {type: boolean}
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: a CleaningPolicy spec is immutable; create a new policy instead
         required:
         - spec

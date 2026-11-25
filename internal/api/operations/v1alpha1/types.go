@@ -342,10 +342,9 @@ type DeviceWipeSpec struct {
 	// Step numbers the wipes of one release, from 1. The name is derived
 	// from it.
 	Step int32 `json:"step"`
-	// CleaningPolicyDigest is the digest of the cleaning policy record
-	// pinned at allocation.
-	CleaningPolicyDigest string   `json:"cleaningPolicyDigest"`
-	TargetDisks          []string `json:"targetDisks"`
+	// Policy is the cleaning policy pinned at allocation.
+	Policy      CleaningPolicyReference `json:"policy"`
+	TargetDisks []string                `json:"targetDisks"`
 }
 
 // WipeEvidence is the result evidence of a DeviceWipe.
@@ -459,7 +458,7 @@ type DeviceRecoveryList struct {
 }
 
 func addKnown(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &DeviceCustody{}, &DeviceCustodyList{}, &DeviceInstallation{}, &DeviceInstallationList{}, &DeviceWipe{}, &DeviceWipeList{}, &DeviceRecovery{}, &DeviceRecoveryList{})
+	s.AddKnownTypes(GroupVersion, &DeviceCustody{}, &DeviceCustodyList{}, &DeviceInstallation{}, &DeviceInstallationList{}, &DeviceWipe{}, &DeviceWipeList{}, &DeviceRecovery{}, &DeviceRecoveryList{}, &CleaningPolicy{}, &CleaningPolicyList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }
