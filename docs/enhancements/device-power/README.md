@@ -210,8 +210,11 @@ A `Settle` recovery must cite discovery evidence that:
 - came from the Device's current BMC endpoint; and
 - reports a settled power state, `On` or `Off`.
 
-After a `Retry` recovery, the next power operation settles the hold only if it
-ends `Succeeded` under the [outcome table](#execution-and-outcomes). For
+After a `Retry` recovery, the held operation's requester creates one power
+operation. For a staff hold, that is a staff power operation. For a customer
+hold, the Fleet provider for Metal creates it. The operation repeats the held
+operation's action, passes power's checks again, and settles the hold only if
+it ends `Succeeded` under the [outcome table](#execution-and-outcomes). For
 `ForceRestart` and `PowerCycle`, a retry is a second reset of the server.
 
 A held Machine's power is unverified, so the [machine
@@ -258,9 +261,9 @@ proposal][ops].
 
 ### What must operators monitor?
 
-Power recovery holds, most urgently on allocated servers, `Expired`
-cancellations, `Stale` refusals, and restarts that end `OutcomeUnknown` on each
-BMC model.
+Power recovery holds, most urgently on allocated servers, staff operations
+cancelled as `Expired`, `Stale` refusals, and restarts that end
+`OutcomeUnknown` on each BMC model.
 
 ### How are failures recovered?
 
