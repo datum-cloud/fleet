@@ -64,7 +64,7 @@ class AdapterTest(unittest.TestCase):
         storage = self.app.get(collection['Members'][0]['@odata.id'], headers=AUTH).json
         drive = self.app.get(storage['Drives'][0]['@odata.id'], headers=AUTH).json
         self.assertEqual((drive['SerialNumber'], drive['CapacityBytes']), ('FLEETLAB-DISK-B', 2 << 30))
-        self.assertNotIn('Protocol', drive)
+        self.assertEqual((drive['Protocol'], drive['MediaType']), ('NVMe', 'SSD'))
         self.assertEqual(self.app.get(storage['Drives'][0]['@odata.id']).status_code, 401)
         self.assertEqual(self.app.patch(storage['Drives'][0]['@odata.id'], json={}, headers=AUTH).status_code, 405)
 

@@ -83,7 +83,7 @@ does not fork or patch upstream files.
 | `PowerState` read from libvirt on every System read | Adapter |
 | `Boot` source override (`Pxe` or `Hdd`, `Once`), persisted in NVRAM state on the site volume and consumed at power-on | Adapter |
 | `ResetType` and boot `AllowableValues` narrowed to what the adapter implements; System `UUID` set from the lab target | Adapter |
-| A `Storage` collection with one Drive per System: the target's 2 GiB disk with a fixed lab serial number. It reports no protocol or media type, because a virtio disk is neither NVMe nor SATA. Upstream's `SimpleStorage` reports only a capacity. | Adapter |
+| A `Storage` collection with one Drive per System: the target's 2 GiB emulated NVMe drive with its fixed lab serial number. Upstream's `SimpleStorage` reports only a capacity. | Adapter |
 | Definition of the lab domains and the provisioning network, re-created with the same identity if the runtime loses them | Adapter |
 | Append-only request audit: method, path, status, principal class, ResetType, boot override, effect and fault. It never records bodies or credentials. | Adapter |
 | `DELETE /redfish/v1/reset` and non-Redfish paths | Refused by the adapter |
@@ -197,6 +197,13 @@ boot admission then closes. Each verified phase is journaled, so a resumed
 worker continues from the next phase. Worker exit codes and the
 Job/observer/coordinator split are unchanged:
 [exit 0 never implies readiness](site-execution.md#authority-and-failure-contract).
+
+**Lab drives are emulated NVMe.** Each Redfish lab target has one QEMU NVMe
+drive with a fixed serial number, attached with QEMU arguments because the lab's
+libvirt has no NVMe disk bus. The drive's boot index follows the network
+interface, so a network boot still goes first. The installer and wipe
+environment use the NVMe drive when one exists and the virtio disk otherwise,
+which is what local VM targets have.
 
 **Cleanup uses a booted environment.** The wipe environment is the same pinned
 kernel and initrd with `fleet.mode=wipe`. It zeroes the whole disk with `dd`,
