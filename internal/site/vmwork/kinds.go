@@ -147,7 +147,7 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 		return refusal
 	}
 	if spec.Bootstrap != nil {
-		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
+		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "this site cannot yet hand bootstrap data to the server"}
 	}
 	if spec.Image.Name+"@"+spec.Image.Digest != k.Image {
 		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "the site installs only its verified local image"}

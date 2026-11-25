@@ -60,7 +60,7 @@ func decodeDir[T any](t *testing.T, dir string) []T {
 func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 	t.Helper()
 	out := map[string]*extensionsv1.CustomResourceDefinition{}
-	for _, crd := range decodeAll[extensionsv1.CustomResourceDefinition](t, filepath.Join(componentRoot, "crds", "fleet.datumapis.com.yaml")) {
+	for _, crd := range decodeDir[extensionsv1.CustomResourceDefinition](t, filepath.Join(componentRoot, "crds")) {
 		copied := crd
 		out[crd.Spec.Names.Kind] = &copied
 	}
@@ -69,8 +69,8 @@ func loadCRDs(t *testing.T) map[string]*extensionsv1.CustomResourceDefinition {
 
 func TestCRDContract(t *testing.T) {
 	crds := loadCRDs(t)
-	if len(crds) != 4 || crds["DeviceCustody"] == nil {
-		t.Fatalf("got %d CRDs, want DeviceCustody and three operation kinds", len(crds))
+	if len(crds) != 5 || crds["DeviceCustody"] == nil || crds["SealedPayload"] == nil {
+		t.Fatalf("got %d CRDs, want DeviceCustody, three operation kinds and SealedPayload", len(crds))
 	}
 	for kind, crd := range crds {
 		version := crd.Spec.Versions[0]
@@ -81,7 +81,13 @@ func TestCRDContract(t *testing.T) {
 			t.Fatalf("%s must be served only in Milo project control planes", kind)
 		}
 		properties := version.Schema.OpenAPIV3Schema.Properties
-		if kind == "DeviceCustody" {
+		if kind == "SealedPayload" {
+			// The sealed store has no status, and its spec never changes.
+			spec := properties["spec"]
+			if version.Subresources != nil || len(spec.XValidations) == 0 || spec.XValidations[0].Rule != "self == oldSelf" {
+				t.Fatal("SealedPayload must be immutable and have no status")
+			}
+		} else if kind == "DeviceCustody" {
 			// Custody keeps its fields in spec, like a Lease.
 			if version.Subresources != nil || len(properties["status"].Properties) != 0 {
 				t.Fatal("DeviceCustody has no status")
@@ -190,10 +196,10 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 	want := map[string][]string{
 		"fleet.datumapis.com-device-operations-viewer":      slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicerecoveries", read...)),
 		"fleet.datumapis.com-device-recovery-operator":      slices.Concat(p(group+"devicerecoveries", "create"), p("metal.datumapis.com/machineallocations", read...)),
-		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
+		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...), p(group+"sealedpayloads", "create")),
 		"fleet.datumapis.com-device-wipe-requester":         slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...)),
 	}
-	coordinator := slices.Concat(p(group+"devicecustodies", "get", "list", "watch", "create", "update", "delete"), p(group+"devices", read...), p("metal.datumapis.com/machineallocations", read...), p("metal.datumapis.com/machinecapacities", read...))
+	coordinator := slices.Concat(p(group+"devicecustodies", "get", "list", "watch", "create", "update", "delete"), p(group+"devices", read...), p("metal.datumapis.com/machineallocations", read...), p("metal.datumapis.com/machinecapacities", read...), p(group+"sealedpayloads", "get", "list", "watch", "delete"))
 	for _, plural := range []string{"deviceinstallations", "devicewipes", "devicerecoveries"} {
 		coordinator = slices.Concat(coordinator, p(group+plural, "get", "list", "watch", "delete", "updateStatus"), []string{group + plural + "/status.update"})
 	}
@@ -227,8 +233,13 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 			if name != "fleet.datumapis.com-device-coordinator" && (strings.Contains(permission, "/status.") || strings.HasSuffix(permission, ".updateStatus") || (resource == "devicecustodies" && !slices.Contains(read, verb))) {
 				t.Fatalf("%s writes custody or status: %s", name, permission)
 			}
-			// No role reads a sealed store, a Secret or a bootstrap payload.
-			if strings.Contains(permission, "secret") || strings.Contains(permission, "sealed") || strings.Contains(permission, "bootstrap") {
+			// No role but the coordinator reads the sealed store, and no role
+			// reads a Secret or a bootstrap payload. The Metal provider may
+			// only create a sealed payload.
+			if strings.Contains(permission, "secret") || strings.Contains(permission, "bootstrap") {
+				t.Fatalf("%s grants %s", name, permission)
+			}
+			if resource == "sealedpayloads" && name != "fleet.datumapis.com-device-coordinator" && !(name == "fleet.datumapis.com-device-installation-requester" && verb == "create") {
 				t.Fatalf("%s grants %s", name, permission)
 			}
 		}
@@ -304,5 +315,66 @@ func TestPhases(t *testing.T) {
 		if _, ok := loadCRDs(t)[kind]; !ok {
 			t.Fatalf("missing %s", kind)
 		}
+	}
+}
+
+// TestNoStaffRoleReadsTheSealedStore walks every Milo role the repository
+// ships, in every component, and resolves inherited roles. Only the
+// coordinator may get, list or watch a SealedPayload, and no role holds a
+// wildcard that would reach it.
+func TestNoStaffRoleReadsTheSealedStore(t *testing.T) {
+	roles := map[string]role{}
+	err := filepath.WalkDir(configRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(path) != ".yaml" || filepath.Base(path) == "kustomization.yaml" {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(data), "kind: Role") || !strings.Contains(string(data), "iam.miloapis.com") {
+			return err
+		}
+		for _, r := range decodeAll[role](t, path) {
+			if r.Metadata.Name != "" && len(r.Spec.Included)+len(r.Spec.Inherited) > 0 {
+				roles[r.Metadata.Name] = r
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) < 10 {
+		t.Fatalf("found only %d Milo roles; the walk is not reading the config", len(roles))
+	}
+	var resolve func(name string, seen map[string]bool) []string
+	resolve = func(name string, seen map[string]bool) []string {
+		if seen[name] {
+			return nil
+		}
+		seen[name] = true
+		out := slices.Clone(roles[name].Spec.Included)
+		for _, parent := range roles[name].Spec.Inherited {
+			out = append(out, resolve(parent.Name, seen)...)
+		}
+		return out
+	}
+	readers := 0
+	for name := range roles {
+		for _, permission := range resolve(name, map[string]bool{}) {
+			if strings.Contains(permission, "*") {
+				t.Errorf("%s holds the wildcard %s", name, permission)
+			}
+			verb, ok := strings.CutPrefix(permission, GroupVersion.Group+"/sealedpayloads.")
+			if !ok || verb == "create" && name == "fleet.datumapis.com-device-installation-requester" {
+				continue
+			}
+			if name != "fleet.datumapis.com-device-coordinator" {
+				t.Errorf("%s holds %s", name, permission)
+			} else if slices.Contains([]string{"get", "list", "watch"}, verb) {
+				readers++
+			}
+		}
+	}
+	if readers != 3 {
+		t.Fatalf("the coordinator holds %d of get, list and watch on the sealed store", readers)
 	}
 }

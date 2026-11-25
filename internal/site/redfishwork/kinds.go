@@ -122,7 +122,7 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 		return &custody.Refusal{Reason: ReasonInputs, Message: "the admitted inputs are not a DeviceInstallation spec"}
 	}
 	if spec.Bootstrap != nil {
-		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
+		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "this site cannot yet hand bootstrap data to the server"}
 	}
 	// Firmware settings can change after allocation: read the mode the
 	// server boots in now.

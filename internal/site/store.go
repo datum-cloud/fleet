@@ -364,6 +364,30 @@ func (s *Store) GetRecord(device, collection, name string, into any) (bool, erro
 	return true, json.Unmarshal(data, into)
 }
 
+// DeleteRecord removes a kind's record. It is idempotent.
+func (s *Store) DeleteRecord(device, collection, name string) error {
+	if !validRecordName(collection) || !validRecordName(name) {
+		return errors.New("site: invalid record name")
+	}
+	err := os.Remove(filepath.Join(s.deviceDir(device), collection, name+".json"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return syncPath(filepath.Join(s.deviceDir(device), collection))
+}
+
+func syncPath(dir string) error {
+	file, err := os.Open(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return file.Sync()
+}
+
 func validRecordName(name string) bool {
 	if name == "" || len(name) > 128 {
 		return false

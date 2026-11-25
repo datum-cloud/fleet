@@ -25,6 +25,7 @@ import (
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/manager"
 	"go.datum.net/fleet/internal/tenancy"
+	"go.datum.net/fleet/internal/sealed"
 )
 
 const (
@@ -179,8 +180,17 @@ func (r Runner) install(ctx context.Context, installationName string) error {
 			return err
 		}
 		image, err := r.catalog().Resolve(ctx, r.consumerOf(first), &installation)
+		var bootstrap *sealed.Payload
+		if ref := installation.Spec.BootstrapConfigRef; err == nil && ref != nil {
+			// The fixture reads the Secret with its own identity, standing in
+			// for the Installation creator's authority.
+			var payload sealed.Payload
+			if payload, err = sealed.Read(ctx, r.Client, installation.Namespace, ref.Name); err == nil {
+				bootstrap = &payload
+			}
+		}
 		if err == nil {
-			operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &installation, Current: previous, Image: image})
+			operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &installation, Current: previous, Image: image, Bootstrap: bootstrap})
 		}
 		if refusal := (*catalog.Refusal)(nil); errors.As(err, &refusal) {
 			apiMeta.SetStatusCondition(&installation.Status.Conditions, condition("Accepted", metav1.ConditionFalse, installation.Generation, refusal.Reason, refusal.Message))

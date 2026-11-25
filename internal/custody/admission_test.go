@@ -8,6 +8,7 @@ import (
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	"go.datum.net/fleet/internal/sealed"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -245,27 +246,56 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.requireUntouched(device.Name, fence)
 	})
 
-	t.Run("bootstrap stays refused", func(t *testing.T) {
+	t.Run("bootstrap needs its sealed payload", func(t *testing.T) {
 		e := e.sub(t)
+		installation := func(device *inventory.Device, allocation, request string, bootstrap *ops.SealedInput, bootInterface string) *ops.DeviceInstallation {
+			return &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName(allocation, request), Namespace: "default", Labels: map[string]string{ops.LabelInstallationUID: request}}, Spec: ops.DeviceInstallationSpec{
+				OperationEnvelope: envelope(device, providerUser, allocated(allocation)),
+				Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, Bootstrap: bootstrap, BootInterface: bootInterface, TargetDisks: []string{"disk-0"},
+			}}
+		}
+		seal := func(operation, allocation string) *ops.SealedPayload {
+			payload, err := sealed.Seal(sealed.Payload{SSHAuthorizedKeys: "ssh-ed25519 AAAAExampleOnly"}, operation, allocation, "default")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return payload
+		}
 		device := fresh()
 		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-boot"); err != nil {
 			t.Fatal(err)
 		}
 		fence := e.custody(device.Name).Spec.Fence
-		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-1"), Namespace: "default", Labels: map[string]string{ops.LabelInstallationUID: "request-1"}}, Spec: ops.DeviceInstallationSpec{
-			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")),
-			Image:             ops.ImageInput{Name: "debian-12", Digest: imageDigest}, Bootstrap: &ops.SealedInput{Ref: "sealed-example", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
-		}}
-		e.create(operation)
-		missing := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-boot", "request-2"), Namespace: "default", Labels: map[string]string{ops.LabelInstallationUID: "request-2"}}, Spec: ops.DeviceInstallationSpec{
-			OperationEnvelope: envelope(device, providerUser, allocated("alloc-boot")),
-			Image:             ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "absent", TargetDisks: []string{"disk-0"},
-		}}
+		// A reference to a payload that was never written.
+		absent := installation(device, "alloc-boot", "request-1", &ops.SealedInput{Ref: sealed.Name(InstallationName("alloc-boot", "request-1"), imageDigest), Digest: imageDigest}, "primary")
+		e.create(absent)
+		// A payload whose contents changed after its digest was taken.
+		tamperedName := InstallationName("alloc-boot", "request-2")
+		tampered := seal(tamperedName, "alloc-boot")
+		reference := &ops.SealedInput{Ref: tampered.Name, Digest: tampered.Spec.Digest}
+		tampered.Spec.Data = []byte(`{"sshAuthorizedKeys":"ssh-ed25519 AAAAOther"}`)
+		e.create(tampered)
+		e.create(installation(device, "alloc-boot", "request-2", reference, "primary"))
+		missing := installation(device, "alloc-boot", "request-3", nil, "absent")
 		e.create(missing)
 		e.settle(device.Name)
-		e.requirePhase(operation, ops.PhaseFailed, ReasonBootstrapUnsupported)
+		e.requirePhase(absent, ops.PhaseFailed, ReasonBootstrapUnavailable)
+		e.requirePhase(installation(device, "alloc-boot", "request-2", nil, ""), ops.PhaseFailed, ReasonBootstrapUnavailable)
 		e.requirePhase(missing, ops.PhaseFailed, ReasonBootInterfaceUnknown)
 		e.requireUntouched(device.Name, fence)
+
+		// The payload it names, unchanged, is admitted.
+		other := fresh()
+		if err := e.coord.Claim(e.ctx, other.Name, other.UID, "alloc-good"); err != nil {
+			t.Fatal(err)
+		}
+		goodName := InstallationName("alloc-good", "request-1")
+		good := seal(goodName, "alloc-good")
+		e.create(good)
+		admitted := installation(other, "alloc-good", "request-1", &ops.SealedInput{Ref: good.Name, Digest: good.Spec.Digest}, "primary")
+		e.create(admitted)
+		e.settle(other.Name)
+		e.requirePhase(admitted, ops.PhaseAdmitted, "")
 	})
 
 	t.Run("a staff operation not admitted within five minutes expires", func(t *testing.T) {

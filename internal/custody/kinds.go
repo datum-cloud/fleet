@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	"go.datum.net/fleet/internal/sealed"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -28,6 +29,11 @@ const (
 
 // Kind-specific refusal reasons.
 const (
+	// ReasonBootstrapUnavailable: the sealed payload an installation names
+	// is missing or does not match it.
+	ReasonBootstrapUnavailable = "BootstrapUnavailable"
+	// ReasonBootstrapUnsupported: the site cannot yet hand bootstrap data
+	// to the server.
 	ReasonBootstrapUnsupported = "BootstrapUnsupported"
 	ReasonBootInterfaceUnknown = "BootInterfaceUnknown"
 	ReasonHoldMismatch         = "HoldMismatch"
@@ -103,11 +109,19 @@ func DeviceInstallationKind() Kind {
 		Deadline:      InstallationDeadline,
 		Effectful:     true,
 		BootInterface: func(operation ops.Operation) string { return operation.(*ops.DeviceInstallation).Spec.BootInterface },
-		Check: func(_ context.Context, admission *Admission) *Refusal {
+		Check: func(ctx context.Context, admission *Admission) *Refusal {
 			installation := admission.Operation.(*ops.DeviceInstallation)
-			// Bootstrap stays refused until the sealed store exists.
-			if installation.Spec.Bootstrap != nil {
-				return refuse(ReasonBootstrapUnsupported, "bootstrap payloads need the sealed store, which is not implemented")
+			// The sealed payload must exist and match at this custody update.
+			// The sweep never deletes the payload of an operation that has
+			// not ended, so it stays until the site has it.
+			if reference := installation.Spec.Bootstrap; reference != nil {
+				payload := &ops.SealedPayload{}
+				if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: installation.Namespace, Name: reference.Ref}, payload); err != nil {
+					return refuse(ReasonBootstrapUnavailable, "the sealed bootstrap payload cannot be read")
+				}
+				if sealed.Verify(payload, installation.Name, *reference) != nil {
+					return refuse(ReasonBootstrapUnavailable, "the sealed bootstrap payload does not match the operation")
+				}
 			}
 			for _, iface := range admission.Device.Spec.Interfaces {
 				if iface.Name == installation.Spec.BootInterface && iface.MACAddress != "" {
@@ -117,8 +131,17 @@ func DeviceInstallationKind() Kind {
 			return refuse(ReasonBootInterfaceUnknown, "the Device records no interface %q with a MAC address", installation.Spec.BootInterface)
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
-		Reasons: append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonImageIncompatible, RaisedBy: RaisedByWorker}}, workerReasons...),
-		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.InstallationEvidence) error {
+		Reasons: append([]Reason{{Name: ReasonBootstrapUnavailable, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByWorker}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonImageIncompatible, RaisedBy: RaisedByWorker}}, workerReasons...),
+		Evidence: StrictEvidence(evidenceLimit, func(operation ops.Operation, evidence *ops.InstallationEvidence) error {
+			// A success must prove the server was handed exactly the admitted
+			// bootstrap data, and nothing when there was none.
+			want := ""
+			if reference := operation.(*ops.DeviceInstallation).Spec.Bootstrap; reference != nil {
+				want = reference.Digest
+			}
+			if evidence.Bootstrap != want {
+				return errors.New("the evidence does not prove the admitted bootstrap data was handed to the server")
+			}
 			return validateSteps(evidence.Steps)
 		}),
 	}

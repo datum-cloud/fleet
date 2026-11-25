@@ -88,7 +88,7 @@ func TestTheSiteAPI(t *testing.T) {
 	}
 	a := assignment(t)
 	for range 3 {
-		if err := remote.Deliver(ctx, a); err != nil {
+		if err := remote.Deliver(ctx, a, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -111,7 +111,7 @@ func TestTheSiteAPI(t *testing.T) {
 		t.Fatalf("fence = %+v, %v, %v", report, reported, err)
 	}
 	// A redelivery after the result is stored returns it and runs nothing.
-	if err := remote.Deliver(ctx, a); err != nil {
+	if err := remote.Deliver(ctx, a, nil); err != nil {
 		t.Fatal(err)
 	}
 	dispatcher.Wait()
@@ -127,7 +127,7 @@ func TestTheSiteAPI(t *testing.T) {
 	// An invalid assignment is refused before anything runs.
 	bad := a
 	bad.Fence = 0
-	if err := remote.Deliver(ctx, bad); err == nil {
+	if err := remote.Deliver(ctx, bad, nil); err == nil {
 		t.Fatal("an invalid assignment was accepted")
 	}
 }

@@ -150,16 +150,16 @@ func TestAssignmentRoundTrip(t *testing.T) {
 		t.Fatalf("report = %+v %v %v", report, reported, err)
 	}
 	assignment := f.wipe(3, "00000000-0000-4000-8000-000000000101")
-	if err := f.hub.Deliver(f.ctx, assignment); err != nil {
+	if err := f.hub.Deliver(f.ctx, assignment, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Delivery is idempotent; other contents under the same name conflict.
-	if err := f.hub.Deliver(f.ctx, assignment); err != nil {
+	if err := f.hub.Deliver(f.ctx, assignment, nil); err != nil {
 		t.Fatal(err)
 	}
 	changed := assignment
 	changed.Deadline = changed.Deadline.Add(time.Second)
-	if err := f.hub.Deliver(f.ctx, changed); err != ErrConflict {
+	if err := f.hub.Deliver(f.ctx, changed, nil); err != ErrConflict {
 		t.Fatalf("changed delivery err = %v", err)
 	}
 	f.fed.sync()

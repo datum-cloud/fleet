@@ -184,7 +184,14 @@ func (h *Hub) ensure(ctx context.Context, name, role string, spec Spec) (*unstru
 	return object, nil
 }
 
-func (h *Hub) Deliver(ctx context.Context, assignment site.Assignment) error {
+// ErrBootstrapUnsupported means the federation transport does not yet
+// carry bootstrap payloads to a cell. The assignment is not delivered.
+var ErrBootstrapUnsupported = errors.New("coordination: federation does not carry bootstrap payloads yet")
+
+func (h *Hub) Deliver(ctx context.Context, assignment site.Assignment, payload *site.Payload) error {
+	if payload != nil || assignment.Sealed() != nil {
+		return ErrBootstrapUnsupported
+	}
 	data, err := json.Marshal(assignment)
 	if err != nil {
 		return err

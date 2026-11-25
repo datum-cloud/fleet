@@ -314,15 +314,49 @@ type ImageInput struct {
 }
 
 // SealedInput is an opaque reference into the sealed store and the digest of
-// what it holds. Operations never carry the payload.
+// what it holds. Operations never carry the payload. Ref names a
+// SealedPayload in the operation's namespace.
 type SealedInput struct {
 	Ref    string `json:"ref"`
 	Digest string `json:"digest"`
 }
 
+// SealedPayload is the sealed store: one copy of a customer's bootstrap
+// data for one operation, in the provider project. Only the coordinator,
+// which includes the federation courier, can read it; the Fleet provider
+// for Metal can only create it. Its spec never changes.
+type SealedPayload struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              SealedPayloadSpec `json:"spec"`
+}
+
+type SealedPayloadList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []SealedPayload `json:"items"`
+}
+
+type SealedPayloadSpec struct {
+	// OperationName and AllocationName are the operation the payload is
+	// for, and its allocation. The sweep reads them.
+	OperationName  string `json:"operationName"`
+	AllocationName string `json:"allocationName"`
+	// Digest covers Salt and Data, so a reader of the operation cannot
+	// confirm a guessed value against it.
+	Digest string `json:"digest"`
+	Salt   []byte `json:"salt"`
+	// Data is the bootstrap data, exactly as the customer stored it.
+	Data []byte `json:"data"`
+}
+
 // InstallationEvidence is the result evidence of a DeviceInstallation.
 type InstallationEvidence struct {
 	Steps []StepEvidence `json:"steps,omitempty"`
+	// Bootstrap is the digest of the bootstrap data the worker handed to
+	// the server, recomputed from what it handed. It is the operation's
+	// salted digest, never a hash of the data alone.
+	Bootstrap string `json:"bootstrap,omitempty"`
 }
 
 // StepEvidence records one journaled step. It never carries a BMC response.
@@ -462,7 +496,7 @@ type DeviceRecoveryList struct {
 }
 
 func addKnown(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &DeviceCustody{}, &DeviceCustodyList{}, &DeviceInstallation{}, &DeviceInstallationList{}, &DeviceWipe{}, &DeviceWipeList{}, &DeviceRecovery{}, &DeviceRecoveryList{})
+	s.AddKnownTypes(GroupVersion, &DeviceCustody{}, &DeviceCustodyList{}, &DeviceInstallation{}, &DeviceInstallationList{}, &DeviceWipe{}, &DeviceWipeList{}, &DeviceRecovery{}, &DeviceRecoveryList{}, &SealedPayload{}, &SealedPayloadList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }
@@ -477,6 +511,8 @@ func (in *DeviceWipe) DeepCopyObject() runtime.Object             { return deepC
 func (in *DeviceWipeList) DeepCopyObject() runtime.Object         { return deepCopy(in) }
 func (in *DeviceRecovery) DeepCopyObject() runtime.Object         { return deepCopy(in) }
 func (in *DeviceRecoveryList) DeepCopyObject() runtime.Object     { return deepCopy(in) }
+func (in *SealedPayload) DeepCopyObject() runtime.Object          { return deepCopy(in) }
+func (in *SealedPayloadList) DeepCopyObject() runtime.Object      { return deepCopy(in) }
 
 // DeepCopy returns a copy of custody.
 func (in *DeviceCustody) DeepCopy() *DeviceCustody { return deepCopy(in) }

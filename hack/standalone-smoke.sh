@@ -52,7 +52,7 @@ for crd in installations machineallocations machinecapacities machineclasses mac
     exit 1
   fi
 done
-for crd in devices devicecustodies deviceinstallations devicewipes devicerecoveries; do
+for crd in devices devicecustodies deviceinstallations devicewipes devicerecoveries sealedpayloads; do
   if kubectl --context "$context" get crd "$crd.fleet.datumapis.com" >/dev/null 2>&1; then
     echo "fixed Fleet CRD $crd already exists; use a fresh dedicated kind cluster" >&2
     exit 1
@@ -132,6 +132,23 @@ run_phase install fleet-smoke-install-recovery-run
 kubectl --context "$context" -n fleet-project-a get installations,machines
 test "$(kubectl --context "$context" -n fleet-project-a get installation debian-12 -o jsonpath='{.status.phase}')" = "Ready"
 test "$(kubectl --context "$context" -n fleet-project-a get machine allocation -o jsonpath='{.status.currentInstallationRef.name}')" = "debian-12"
+# The install resolved the published image to its pinned digest, and the
+# simulated server was handed exactly the admitted bootstrap data: its
+# evidence names the operation's salted digest.
+test "$(kubectl --context "$context" -n fleet-project-a get installation debian-12 -o jsonpath='{.status.resolvedImage.digest}')" = "$(kubectl --context "$context" -n fleet-provider get machineimage debian-12 -o jsonpath='{.spec.definition.digest}')"
+bootstrap_op=$(kubectl --context "$context" -n fleet-provider get deviceinstallations -o jsonpath='{range .items[?(@.spec.bootstrap)]}{.metadata.name}{"\n"}{end}')
+test "$(printf '%s\n' "$bootstrap_op" | grep -c .)" = "1"
+bootstrap_digest=$(kubectl --context "$context" -n fleet-provider get deviceinstallation "$bootstrap_op" -o jsonpath='{.spec.bootstrap.digest}')
+test -n "$bootstrap_digest"
+test "$(kubectl --context "$context" -n fleet-provider get deviceinstallation "$bootstrap_op" -o jsonpath='{.status.evidence.bootstrap}')" = "$bootstrap_digest"
+# The coordinator deletes the sealed copy once the operation ended.
+payloads=1
+for _ in $(seq 1 60); do
+  payloads=$(kubectl --context "$context" -n fleet-provider get sealedpayloads -o name | grep -c . || true)
+  [ "$payloads" = "0" ] && break
+  sleep 1
+done
+test "$payloads" = "0"
 
 run_phase reinstall fleet-smoke-reinstall-run
 kubectl --context "$context" -n fleet-system rollout restart statefulset/fleet-simulator
@@ -143,7 +160,7 @@ test "$(kubectl --context "$context" -n fleet-project-b get machine allocation -
 
 for project in fleet-project-a fleet-project-b; do
   subject="system:serviceaccount:$project:default"
-  for resource in devicecustodies deviceinstallations devicewipes devicerecoveries machineallocations; do
+  for resource in devicecustodies deviceinstallations devicewipes devicerecoveries machineallocations sealedpayloads; do
     for verb in get list watch create update patch delete; do
       if [ "$(kubectl --context "$context" auth can-i "$verb" "$resource" --as="$subject" -n fleet-provider)" != "no" ]; then
         echo "$subject unexpectedly has $verb access to $resource" >&2
@@ -163,6 +180,14 @@ provider_subject=system:serviceaccount:fleet-system:fleet-standalone-smoke
 test "$(kubectl --context "$context" auth can-i update devicecustodies --as="$provider_subject" -n fleet-provider)" = "no"
 test "$(kubectl --context "$context" auth can-i create devicewipes --as="$provider_subject" -n fleet-provider)" = "no"
 test "$(kubectl --context "$context" auth can-i create deviceinstallations --as=system:serviceaccount:fleet-system:fleet-release-controller -n fleet-provider)" = "no"
+# Only the coordinator reads the sealed store. The Metal provider may only
+# create a payload, and the release controller may do nothing with one.
+for verb in get list watch; do
+  test "$(kubectl --context "$context" auth can-i "$verb" sealedpayloads --as="$provider_subject" -n fleet-provider)" = "no"
+  test "$(kubectl --context "$context" auth can-i "$verb" sealedpayloads --as=system:serviceaccount:fleet-system:fleet-release-controller -n fleet-provider)" = "no"
+  test "$(kubectl --context "$context" auth can-i "$verb" sealedpayloads --as=system:serviceaccount:fleet-system:fleet-custody-coordinator -n fleet-provider)" = "yes"
+done
+test "$(kubectl --context "$context" auth can-i create sealedpayloads --as="$provider_subject" -n fleet-provider)" = "yes"
 smoke_subject=system:serviceaccount:fleet-system:fleet-standalone-smoke
 test "$(kubectl --context "$context" auth can-i get machine/other-machine --as="$smoke_subject" -n fleet-provider)" = "no"
 test "$(kubectl --context "$context" auth can-i update machineclass/standard-metal --as="$smoke_subject")" = "no"

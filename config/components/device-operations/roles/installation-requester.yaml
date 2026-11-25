@@ -9,6 +9,8 @@ spec:
   launchStage: Alpha
   includedPermissions:
     - fleet.datumapis.com/deviceinstallations.create
+    # It copies bootstrap data into the sealed store and never reads it back.
+    - fleet.datumapis.com/sealedpayloads.create
     - fleet.datumapis.com/deviceinstallations.get
     - fleet.datumapis.com/deviceinstallations.list
     - fleet.datumapis.com/deviceinstallations.watch

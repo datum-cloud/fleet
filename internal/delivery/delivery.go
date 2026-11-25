@@ -19,13 +19,15 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
+	"go.datum.net/fleet/internal/sealed"
 	"go.datum.net/fleet/internal/site"
 )
 
 // Site is the coordinator's view of one remote site.
 type Site interface {
-	// Deliver hands the site one assignment. It is idempotent.
-	Deliver(ctx context.Context, assignment site.Assignment) error
+	// Deliver hands the site one assignment and, beside it, the bootstrap
+	// payload its inputs name, if any. It is idempotent.
+	Deliver(ctx context.Context, assignment site.Assignment, payload *site.Payload) error
 	// Fence returns the site's fence report for a "<namespace>/<name>"
 	// Device, and false if the site has not reported one.
 	Fence(ctx context.Context, device string) (custody.SiteFence, bool, error)
@@ -138,17 +140,40 @@ func (c *Courier) Deliver(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	payload, err := c.payload(ctx, assignment)
+	if err != nil {
+		return err
+	}
 	device := &inventory.Device{}
 	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: name}, device); err != nil {
 		return err
 	}
 	var failed error
 	for _, serving := range c.Sites.Serving(device) {
-		if err := c.Sites.Sites[serving].Deliver(ctx, assignment); err != nil {
+		if err := c.Sites.Sites[serving].Deliver(ctx, assignment, payload); err != nil {
 			failed = errors.Join(failed, fmt.Errorf("deliver to %s: %w", serving, err))
 		}
 	}
 	return failed
+}
+
+// payload reads the sealed payload the assignment's inputs name, and
+// checks it again. The courier is part of the coordinator, the only reader
+// of the sealed store.
+func (c *Courier) payload(ctx context.Context, assignment site.Assignment) (*site.Payload, error) {
+	reference := assignment.Sealed()
+	if reference == nil {
+		return nil, nil
+	}
+	sealed := &ops.SealedPayload{}
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: reference.Ref}, sealed); err != nil {
+		return nil, fmt.Errorf("delivery: the sealed payload: %w", err)
+	}
+	payload := &site.Payload{Ref: sealed.Name, Digest: sealed.Spec.Digest, Salt: sealed.Spec.Salt, Data: sealed.Spec.Data}
+	if sealed.Spec.OperationName != assignment.Operation.Name || !payload.Matches(reference) {
+		return nil, errors.New("delivery: the sealed payload does not match the operation")
+	}
+	return payload, nil
 }
 
 // Collect reports every site's held results to the coordinator, and tells
@@ -234,6 +259,11 @@ func (l *Loop) Pass(ctx context.Context) error {
 		}
 	}
 	if err := l.Courier.Collect(ctx); err != nil {
+		failed = errors.Join(failed, err)
+	}
+	// Results were copied to operation status above, so a payload whose
+	// operation ended is deleted in the same pass.
+	if _, err := sealed.Sweep(ctx, l.Coordinator.Client, l.Namespace); err != nil {
 		failed = errors.Join(failed, err)
 	}
 	if time.Since(l.lastSweep) > time.Hour {

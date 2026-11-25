@@ -40,6 +40,7 @@ spec:
     version: "12"
     architecture: amd64
     firmwareModes: [UEFI]
+    bootstrapFormats: [NoCloud]
     digest: "sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"
   availability: Available
 ---
@@ -80,6 +81,19 @@ spec:
   machineRef: {name: allocation}
   expectedPredecessor: {type: None}
   imageRef: {name: debian-12}
+  bootstrapConfigRef: {name: debian-12-bootstrap}
+---
+# The consumer's bootstrap data, in its own namespace. Synthetic values only.
+apiVersion: v1
+kind: Secret
+metadata: {name: debian-12-bootstrap, namespace: fleet-project-a}
+type: metal.datumapis.com/bootstrap
+stringData:
+  userData: |
+    #cloud-config
+    hostname: synthetic-example
+  sshAuthorizedKeys: |
+    ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISyntheticExampleOnly synthetic@example.com
 ---
 apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation

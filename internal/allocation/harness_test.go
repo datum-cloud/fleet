@@ -104,7 +104,7 @@ func startEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	runner := &site.Runner{Site: siteName, Store: e.store, Results: site.NewResults(e.store), Access: fixture.Access{Enrollment: e.enrollment},
-		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}, Poll: 20 * time.Millisecond}
+		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}, Payloads: site.StorePayloads{Store: e.store}, Poll: 20 * time.Millisecond}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx}
 	server := httptest.NewServer(siteapi.Handler(dispatcher, e.store, runner.Results, func() (string, error) { return siteToken, nil }))
 	t.Cleanup(func() { cancel(); server.Close(); dispatcher.Wait() })

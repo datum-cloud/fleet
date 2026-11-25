@@ -8,6 +8,8 @@ package simwork
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 
@@ -25,6 +27,10 @@ type Server struct {
 	Image string `json:"image,omitempty"`
 	// Booted is the digest the server last booted from disk.
 	Booted string `json:"booted,omitempty"`
+	// Bootstrap is the salted digest of the bootstrap data written with the
+	// image, recomputed from what was written, as the guest would read it
+	// on first boot. The data itself is not kept.
+	Bootstrap string `json:"bootstrap,omitempty"`
 }
 
 const serverRecords = "simulator"
@@ -88,9 +94,6 @@ func (Installation) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	if refusal != nil {
 		return refusal
 	}
-	if spec.Bootstrap != nil {
-		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
-	}
 	return checkDisks(work, spec.TargetDisks)
 }
 
@@ -98,6 +101,14 @@ func (Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 	spec, refusal := installSpec(work)
 	if refusal != nil {
 		return nil, refusal
+	}
+	// The framework verified the payload against the admitted digest.
+	bootstrap := ""
+	if payload := work.Bootstrap(); payload != nil {
+		hash := sha256.New()
+		hash.Write(payload.Salt)
+		hash.Write(payload.Data)
+		bootstrap = "sha256:" + hex.EncodeToString(hash.Sum(nil))
 	}
 	var evidence ops.InstallationEvidence
 	steps := []site.Step{
@@ -108,12 +119,12 @@ func (Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 				if err != nil {
 					return err
 				}
-				server.Image, server.Booted = spec.Image.Digest, ""
+				server.Image, server.Booted, server.Bootstrap = spec.Image.Digest, "", bootstrap
 				return write(work, server)
 			},
 			Observe: func(context.Context, json.RawMessage) (bool, error) {
 				server, err := read(work)
-				return server.Image == spec.Image.Digest, err
+				return server.Image == spec.Image.Digest && server.Bootstrap == bootstrap, err
 			},
 		},
 		{
@@ -146,6 +157,7 @@ func (Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 	if server.Booted != spec.Image.Digest {
 		return nil, &custody.Refusal{Reason: site.ReasonStep, Message: "the simulated server did not boot the installed image"}
 	}
+	evidence.Bootstrap = server.Bootstrap
 	return evidence, nil
 }
 
