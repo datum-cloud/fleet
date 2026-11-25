@@ -30,6 +30,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 	"go.datum.net/fleet/internal/custody"
 )
 
@@ -117,6 +118,11 @@ type Allocator struct {
 	// BootInterface and TargetDisks are pinned on each allocation.
 	BootInterface string
 	TargetDisks   []string
+	// BootAddresses claims each installation's and wipe's provisioning
+	// address from IPAM when the site's DHCP is synchronized. Its client is
+	// replaced by the requester's own. Nil means the site's DHCP is
+	// configured independently of Fleet.
+	BootAddresses *bootaddress.Claimer
 }
 
 // Get returns the Machine's allocation, or nil.
@@ -344,17 +350,60 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	if err != nil {
 		return nil, err
 	}
+	name := custody.InstallationName(allocation.Name, string(installation.UID))
+	// An existing installation keeps the inputs it was created with; its
+	// boot address may already be released.
+	existing := &ops.DeviceInstallation{}
+	if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, existing); err == nil {
+		return existing, nil
+	} else if !apierrors.IsNotFound(err) {
+		return nil, err
+	}
+	network, err := a.bootNetwork(ctx, a.installClaims(), allocation, name)
+	if err != nil {
+		return nil, err
+	}
 	operation := &ops.DeviceInstallation{
-		ObjectMeta: metav1.ObjectMeta{Name: custody.InstallationName(allocation.Name, string(installation.UID)), Namespace: a.Namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: a.Namespace},
 		Spec: ops.DeviceInstallationSpec{
 			OperationEnvelope: a.envelope(allocation, a.ProviderCreator),
 			RequestUID:        string(installation.UID),
 			Image:             image,
 			BootInterface:     allocation.Spec.BootInterface,
 			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
+			BootNetwork:       network,
 		},
 	}
 	return operation, a.createOnce(ctx, a.Provider, operation, &ops.DeviceInstallation{})
+}
+
+// installClaims and wipeClaims are each requester's boot address claimer,
+// with the requester's own client. They are nil when the site's DHCP is not
+// synchronized.
+func (a *Allocator) installClaims() *bootaddress.Claimer {
+	return a.claims(a.Provider, "DeviceInstallation")
+}
+
+func (a *Allocator) wipeClaims() *bootaddress.Claimer {
+	return a.claims(a.Releaser, "DeviceWipe")
+}
+
+func (a *Allocator) claims(api client.Client, kind string) *bootaddress.Claimer {
+	if a.BootAddresses == nil {
+		return nil
+	}
+	claimer := *a.BootAddresses
+	claimer.Client, claimer.Namespace, claimer.Kind = api, a.Namespace, kind
+	return &claimer
+}
+
+// bootNetwork claims the operation's boot address before the operation
+// exists. It returns nil when the site's DHCP is not synchronized.
+func (a *Allocator) bootNetwork(ctx context.Context, claimer *bootaddress.Claimer, allocation *fleetv1.MachineAllocation, operation string) (*ops.BootNetworkInput, error) {
+	if claimer == nil {
+		return nil, nil
+	}
+	return claimer.Claim(ctx, allocation.Name, operation)
 }
 
 func (a *Allocator) envelope(allocation *fleetv1.MachineAllocation, creator ops.Creator) ops.OperationEnvelope {

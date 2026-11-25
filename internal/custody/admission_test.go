@@ -83,7 +83,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		named := &DeviceTestStaffOperation{ObjectMeta: metav1.ObjectMeta{GenerateName: "named-", Namespace: "default"}, Spec: testSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Input: "a"}}
 		e.create(named)
 		// Staff cannot create the release kind either.
-		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-x", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Step: 1, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}}}
+		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-x", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{OperationEnvelope: envelope(device, staffUser, allocated("alloc-x")), Step: 1, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}, BootInterface: "primary"}}
 		e.create(wipe)
 		e.settle(device.Name)
 		for _, operation := range []ops.Operation{spoof, service, named, wipe} {
@@ -266,6 +266,57 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.requirePhase(operation, ops.PhaseFailed, ReasonBootstrapUnsupported)
 		e.requirePhase(missing, ops.PhaseFailed, ReasonBootInterfaceUnknown)
 		e.requireUntouched(device.Name, fence)
+	})
+
+	t.Run("a boot address must still be bound to its claim", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		if err := e.coord.Claim(e.ctx, device.Name, "alloc-net"); err != nil {
+			t.Fatal(err)
+		}
+		fence := e.custody(device.Name).Spec.Fence
+		bound := e.ipClaim("alloc-net-boot-a", "Bound", "198.51.100.10")
+		pending := e.ipClaim("alloc-net-boot-b", "Pending", "")
+		withAddress := func(request string, input *ops.BootNetworkInput) *ops.DeviceInstallation {
+			operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: InstallationName("alloc-net", request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
+				OperationEnvelope: envelope(device, providerUser, allocated("alloc-net")), RequestUID: request,
+				Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}, BootNetwork: input,
+			}}
+			e.create(operation)
+			return operation
+		}
+		refused := []*ops.DeviceInstallation{
+			withAddress("other-uid", &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: bound.GetName(), UID: "00000000-0000-4000-8000-0000000009ff"}, Address: "198.51.100.10"}),
+			withAddress("other-address", &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: bound.GetName(), UID: string(bound.GetUID())}, Address: "198.51.100.11"}),
+			withAddress("unbound", &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: pending.GetName(), UID: string(pending.GetUID())}, Address: "198.51.100.12"}),
+			withAddress("missing", &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: "alloc-net-boot-missing", UID: string(bound.GetUID())}, Address: "198.51.100.10"}),
+		}
+		e.settle(device.Name)
+		for _, operation := range refused {
+			e.requirePhase(operation, ops.PhaseFailed, ReasonBootAddress)
+		}
+		e.requireUntouched(device.Name, fence)
+		// A wipe network-boots too, so its boot interface must have a MAC.
+		releasing := fresh()
+		if err := e.coord.Claim(e.ctx, releasing.Name, "alloc-net-wipe"); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.coord.BeginRelease(e.ctx, releasing.Name, "alloc-net-wipe"); err != nil {
+			t.Fatal(err)
+		}
+		wipeFence := e.custody(releasing.Name).Spec.Fence
+		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName("alloc-net-wipe", 1), Namespace: "default"}, Spec: ops.DeviceWipeSpec{
+			OperationEnvelope: envelope(releasing, releaseUser, allocated("alloc-net-wipe")), Step: 1, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}, BootInterface: "absent",
+		}}
+		e.create(wipe)
+		e.settle(releasing.Name)
+		e.requirePhase(wipe, ops.PhaseFailed, ReasonBootInterfaceUnknown)
+		e.requireUntouched(releasing.Name, wipeFence)
+		admitted := withAddress("bound", &ops.BootNetworkInput{AddressClaim: ops.ClaimReference{Name: bound.GetName(), UID: string(bound.GetUID())}, Address: "198.51.100.10"})
+		e.settle(device.Name)
+		if active := e.custody(device.Name).Spec.ActiveOperation; active == nil || active.Name != admitted.Name || active.Snapshot.BootMACAddress == "" {
+			t.Fatalf("active = %+v, want the bound installation with the boot MAC from inventory", active)
+		}
 	})
 
 	t.Run("a staff operation not admitted within five minutes expires", func(t *testing.T) {

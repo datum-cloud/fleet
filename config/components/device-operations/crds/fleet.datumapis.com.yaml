@@ -546,6 +546,33 @@ spec:
                   minLength: 1
                   maxLength: 63
                 x-kubernetes-list-type: set
+              bootNetwork:
+                type: object
+                properties:
+                  addressClaim:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      uid:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                    required:
+                    - name
+                    - uid
+                  address:
+                    type: string
+                    minLength: 2
+                    maxLength: 45
+                    x-kubernetes-validations:
+                    - rule: isIP(self)
+                      message: address must be one IP address without a prefix length
+                required:
+                - addressClaim
+                - address
             required:
             - creator
             - deviceRef
@@ -743,6 +770,37 @@ spec:
                   minLength: 1
                   maxLength: 63
                 x-kubernetes-list-type: set
+              bootInterface:
+                type: string
+                minLength: 1
+                maxLength: 63
+              bootNetwork:
+                type: object
+                properties:
+                  addressClaim:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      uid:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                    required:
+                    - name
+                    - uid
+                  address:
+                    type: string
+                    minLength: 2
+                    maxLength: 45
+                    x-kubernetes-validations:
+                    - rule: isIP(self)
+                      message: address must be one IP address without a prefix length
+                required:
+                - addressClaim
+                - address
             required:
             - creator
             - deviceRef
@@ -750,6 +808,7 @@ spec:
             - step
             - cleaningPolicyDigest
             - targetDisks
+            - bootInterface
             x-kubernetes-validations:
             - rule: self == oldSelf
               message: an operation spec is immutable after create

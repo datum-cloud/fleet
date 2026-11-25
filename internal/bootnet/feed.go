@@ -1,8 +1,9 @@
 // Package bootnet is the boot-reservation contract between a site's boot
-// service and the DHCP owner's synchronizer. A reservation maps one enrolled
-// boot NIC to the provisioning address the network owner assigned to that
-// physical asset, and exists only while an operation's network boot is
-// admitted. The synchronizer reports what each DHCP instance applied; those
+// service and the DHCP synchronizer. A reservation maps one boot NIC, as
+// Device inventory records it, to the provisioning address IPAM assigned to
+// one operation, and exists only while that operation's network boot is
+// admitted. The DHCP base configuration supplies each subnet's prefix and
+// gateway. The synchronizer reports what each DHCP instance applied; those
 // reports are the evidence that a reservation was served and later withdrawn.
 package bootnet
 
@@ -18,12 +19,11 @@ import (
 	"time"
 )
 
-// Reservation is one boot NIC's provisioning address. Address is in prefix
-// form (address/prefix length) so the DHCP side never infers the subnet.
+// Reservation is one boot NIC's provisioning address: one host address,
+// without a prefix length.
 type Reservation struct {
 	MAC     string    `json:"mac"`
 	Address string    `json:"address"`
-	Gateway string    `json:"gateway"`
 	Expires time.Time `json:"expires"`
 }
 
@@ -51,18 +51,14 @@ func NormalizeMAC(v string) (string, bool) {
 	return hw.String(), true
 }
 
-// ValidAttachment checks a provisioning address and its gateway: the address
-// is a host in its prefix and the gateway is a different host in the same one.
-func ValidAttachment(address, gateway string) error {
-	p, err := netip.ParsePrefix(address)
-	if err != nil || p.Addr().Zone() != "" || p.Addr() == p.Masked().Addr() || p.Bits() == p.Addr().BitLen() {
-		return errors.New("provisioning address must be a host address in prefix form")
+// HostAddress returns the canonical form of one IP host address, refusing a
+// prefix, a zone, and the unspecified address.
+func HostAddress(v string) (string, error) {
+	address, err := netip.ParseAddr(v)
+	if err != nil || address.Zone() != "" || address.IsUnspecified() || address.Is4In6() {
+		return "", errors.New("a provisioning address must be one IP host address")
 	}
-	g, err := netip.ParseAddr(gateway)
-	if err != nil || g.Zone() != "" || g == p.Addr() || g == p.Masked().Addr() || !p.Masked().Contains(g) {
-		return errors.New("provisioning gateway must be another host in the address prefix")
-	}
-	return nil
+	return address.String(), nil
 }
 
 func canonical(r Reservation) (Reservation, error) {
@@ -70,12 +66,11 @@ func canonical(r Reservation) (Reservation, error) {
 	if !ok || r.Expires.IsZero() {
 		return Reservation{}, errors.New("invalid reservation")
 	}
-	if err := ValidAttachment(r.Address, r.Gateway); err != nil {
+	address, err := HostAddress(r.Address)
+	if err != nil {
 		return Reservation{}, err
 	}
-	p, _ := netip.ParsePrefix(r.Address)
-	g, _ := netip.ParseAddr(r.Gateway)
-	return Reservation{MAC: mac, Address: p.String(), Gateway: g.String(), Expires: r.Expires.UTC().Truncate(time.Second)}, nil
+	return Reservation{MAC: mac, Address: address, Expires: r.Expires.UTC().Truncate(time.Second)}, nil
 }
 
 func revision(rs []Reservation) string {
@@ -98,11 +93,10 @@ func NewFeed(rs []Reservation) (Feed, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].MAC < out[j].MAC })
 	addresses := map[string]bool{}
 	for i, r := range out {
-		a, _ := netip.ParsePrefix(r.Address)
-		if (i > 0 && out[i-1].MAC == r.MAC) || addresses[a.Addr().String()] {
+		if (i > 0 && out[i-1].MAC == r.MAC) || addresses[r.Address] {
 			return Feed{}, errors.New("duplicate reservation")
 		}
-		addresses[a.Addr().String()] = true
+		addresses[r.Address] = true
 	}
 	return Feed{Revision: revision(out), Reservations: out}, nil
 }
@@ -139,10 +133,11 @@ func (f Feed) Has(mac, address string) bool {
 	return false
 }
 
-// Serves reports whether the feed serves mac at any address.
-func (f Feed) Serves(mac string) bool {
+// Serves reports whether the feed serves mac at any address, or address to
+// any MAC.
+func (f Feed) Serves(mac, address string) bool {
 	for _, r := range f.Reservations {
-		if r.MAC == mac {
+		if r.MAC == mac || r.Address == address {
 			return true
 		}
 	}

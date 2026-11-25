@@ -12,6 +12,7 @@ import (
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 	"go.datum.net/fleet/internal/custody"
 )
 
@@ -52,7 +53,13 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 		if err := a.releaseQuota(ctx, allocation, machine); err != nil {
 			return false, err
 		}
+		if gone, err := a.releaseBootAddresses(ctx, allocation, nil, true); err != nil || !gone {
+			return false, err
+		}
 		return true, a.setPhase(ctx, allocation, fleetv1.AllocationReleased)
+	}
+	if _, err := a.releaseBootAddresses(ctx, allocation, state.Spec.RecoveryHold, false); err != nil {
+		return false, err
 	}
 	if err := a.setPhase(ctx, allocation, fleetv1.AllocationReleasing); err != nil {
 		return false, err
@@ -88,6 +95,57 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 		return false, a.Custody.CloseGate(ctx, state.Name, allocation.Name, ops.GateQuota)
 	}
 	return false, nil
+}
+
+// releaseBootAddresses deletes the boot address claims of the allocation's
+// ended operations, each with its requester's client, and reports whether
+// none remain. A held operation keeps its claim, because a silent DHCP
+// instance may still serve its address, and so does an operation not yet
+// created. With all, it deletes every claim: the Device left the allocation,
+// so no operation of it is held or can still be created.
+func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, hold *ops.RecoveryHold, all bool) (bool, error) {
+	none := true
+	for _, pair := range []struct {
+		claimer *bootaddress.Claimer
+		api     client.Client
+		new     func() ops.Operation
+	}{
+		{a.installClaims(), a.Provider, func() ops.Operation { return &ops.DeviceInstallation{} }},
+		{a.wipeClaims(), a.Releaser, func() ops.Operation { return &ops.DeviceWipe{} }},
+	} {
+		if pair.claimer == nil {
+			continue
+		}
+		operations, err := pair.claimer.Operations(ctx, allocation.Name)
+		if err != nil {
+			return false, err
+		}
+		for _, name := range operations {
+			if !all {
+				if hold != nil && hold.Name == name {
+					none = false
+					continue
+				}
+				operation := pair.new()
+				if err := pair.api.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, operation); apierrors.IsNotFound(err) {
+					none = false
+					continue
+				} else if err != nil {
+					return false, err
+				}
+				if !operation.OperationStatus().Phase.Ended() {
+					none = false
+					continue
+				}
+			}
+			gone, err := pair.claimer.Release(ctx, name)
+			if err != nil {
+				return false, err
+			}
+			none = none && gone
+		}
+	}
+	return none, nil
 }
 
 func (a *Allocator) releaseQuota(ctx context.Context, _ *fleetv1.MachineAllocation, machine Machine) error {
@@ -175,6 +233,15 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 			return err
 		}
 	}
+	if err := a.Releaser.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: reference.Name}, &ops.DeviceWipe{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	network, err := a.bootNetwork(ctx, a.wipeClaims(), allocation, reference.Name)
+	if err != nil {
+		return err
+	}
 	wipe := &ops.DeviceWipe{
 		ObjectMeta: metav1.ObjectMeta{Name: reference.Name, Namespace: a.Namespace},
 		Spec: ops.DeviceWipeSpec{
@@ -182,6 +249,8 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 			Step:                 reference.Step,
 			CleaningPolicyDigest: allocation.Spec.CleaningPolicyDigest,
 			TargetDisks:          slices.Clone(allocation.Spec.TargetDisks),
+			BootInterface:        allocation.Spec.BootInterface,
+			BootNetwork:          network,
 		},
 	}
 	return a.createOnce(ctx, a.Releaser, wipe, &ops.DeviceWipe{})

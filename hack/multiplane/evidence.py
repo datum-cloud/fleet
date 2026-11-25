@@ -134,6 +134,11 @@ def site_operations(raw):
     return store, ops, provider, held
 
 
+def lab_mac(system):
+    """The boot NIC of a lab target, as the lab's VM definitions record it."""
+    return next(t['mac'] for t in json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text()) if t['system'] == system).lower()
+
+
 def check_sequence(ops, held, interrupt):
     """Consumer A's allocation holds the interrupted install; the other is B's,
     whose installation was held at its deadline."""
@@ -272,7 +277,7 @@ def redfish_provider():
     expected, receipts = [], []
     for o in ops:
         boot = boot_record(raw, 'boot', o['operation'])
-        if not boot.get('closed') or boot.get('phase') or boot.get('fence') != o['fence'] or boot.get('mac') != a['mac'].lower():
+        if not boot.get('closed') or boot.get('phase') or boot.get('fence') != o['fence'] or boot.get('mac') != lab_mac(a['systemID']):
             fail('an operation did not keep a closed boot admission for target A at its fence')
         want = ['FLEET-INSTALLED:' + boot['receipt'], 'FLEET-DISK-BOOT:' + boot['receipt']] if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
         for line in want:

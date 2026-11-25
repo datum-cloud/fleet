@@ -193,7 +193,7 @@ func newFixture(t *testing.T, uuid string) *fixture {
 		Site: "site-example-a", Store: store, Results: NewResults(store),
 		Access: &RedfishAccess{
 			Credentials: fixedCredentials{credential: bmcdiscovery.Credential{Username: "operator", Password: "synthetic-secret", Pin: b.pin()}, found: true},
-			Targets:     StaticTargets{testDevice: {Device: "server-example-001", Endpoint: b.server.URL, SystemID: "A", SystemUUID: testUUID, MAC: testMAC}},
+			Targets:     StaticTargets{testDevice: {Device: "server-example-001", Endpoint: b.server.URL, SystemID: "A", SystemUUID: testUUID}},
 		},
 		Kinds: map[string]Kind{"DeviceInstallation": kind},
 		Poll:  10 * time.Millisecond,
@@ -248,7 +248,7 @@ func TestPinMismatchSendsNothing(t *testing.T) {
 	impostor := newBMC(t, testUUID)
 	// Enrollment and the snapshot name the impostor's endpoint, while the
 	// approved pin and the snapshot's key are the real BMC's.
-	f.access().Targets = StaticTargets{testDevice: {Endpoint: impostor.server.URL, SystemID: "A", SystemUUID: testUUID, MAC: testMAC}}
+	f.access().Targets = StaticTargets{testDevice: {Endpoint: impostor.server.URL, SystemID: "A", SystemUUID: testUUID}}
 	assignment := f.assignment(1, "op-pin")
 	assignment.Snapshot.BMCEndpoint = impostor.server.URL
 	result, err := f.runner.Run(context.Background(), assignment)
@@ -293,7 +293,7 @@ func TestIdentityMismatchSendsNothing(t *testing.T) {
 	// is contacted.
 	g := newFixture(t, testUUID)
 	moved := g.assignment(1, "op-moved")
-	moved.Snapshot.BootMACAddress = "02:00:00:00:00:99"
+	moved.Snapshot.BMCEndpoint = "https://192.0.2.99:443"
 	result, _ = g.runner.Run(context.Background(), moved)
 	if result.Phase != ops.PhaseFailed || result.Reason != custody.ReasonDeviceIdentityMismatch || g.bmc.count(any_) != 0 {
 		t.Fatalf("result = %+v, requests %d", result, g.bmc.count(any_))

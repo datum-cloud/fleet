@@ -149,6 +149,9 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 	if spec.Bootstrap != nil {
 		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
 	}
+	if refusal := custody.NoBootNetwork(spec.BootNetwork); refusal != nil {
+		return refusal
+	}
 	if spec.Image.Name+"@"+spec.Image.Digest != k.Image {
 		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "the site installs only its verified local image"}
 	}
@@ -418,6 +421,9 @@ func (k Installation) wipeSpec(work *site.Work) (ops.DeviceWipeSpec, *custody.Re
 func (k Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	spec, refusal := Installation(k).wipeSpec(work)
 	if refusal != nil {
+		return refusal
+	}
+	if refusal := custody.NoBootNetwork(spec.BootNetwork); refusal != nil {
 		return refusal
 	}
 	return enrolled(work, spec.TargetDisks)

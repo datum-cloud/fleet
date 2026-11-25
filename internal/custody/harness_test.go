@@ -14,10 +14,12 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	metal "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/bootaddress"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -152,6 +154,7 @@ func startEnv(t *testing.T) *env {
 		filepath.Join(root, "config", "components", "inventory", "crds"),
 		filepath.Join(root, "config", "components", "device-operations", "crds"),
 		filepath.Join("testdata", "crds"),
+		filepath.Join(root, "internal", "bootaddress", "testdata"),
 	}, ErrorIfCRDPathMissing: true}
 	config, err := environment.Start()
 	if err != nil {
@@ -315,17 +318,35 @@ func (e *env) installation(device *inventory.Device, allocation, request string)
 func (e *env) wipe(device *inventory.Device, allocation string, step int32) *ops.DeviceWipe {
 	e.t.Helper()
 	operation := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: WipeName(allocation, step), Namespace: "default"}, Spec: ops.DeviceWipeSpec{
-		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"},
+		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}, BootInterface: "primary",
 	}}
 	e.create(operation)
 	return operation
+}
+
+// ipClaim creates a stand-in IPAM claim with the given phase and address.
+func (e *env) ipClaim(name, phase, address string) *unstructured.Unstructured {
+	e.t.Helper()
+	claim := &unstructured.Unstructured{}
+	claim.SetGroupVersionKind(bootaddress.GVK)
+	claim.SetNamespace("default")
+	claim.SetName(name)
+	claim.Object["spec"] = map[string]any{"className": "provisioning"}
+	if err := e.admin.Create(e.ctx, claim); err != nil {
+		e.t.Fatal(err)
+	}
+	claim.Object["status"] = map[string]any{"phase": phase, "address": address}
+	if err := e.admin.Status().Update(e.ctx, claim); err != nil {
+		e.t.Fatal(err)
+	}
+	return claim
 }
 
 // namedWipe creates a wipe with an explicit name, such as a retry's.
 func (e *env) namedWipe(device *inventory.Device, allocation, name string, step int32) *ops.DeviceWipe {
 	e.t.Helper()
 	operation := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: ops.DeviceWipeSpec{
-		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"},
+		OperationEnvelope: envelope(device, releaseUser, allocated(allocation)), Step: step, CleaningPolicyDigest: policyDigest, TargetDisks: []string{"disk-0"}, BootInterface: "primary",
 	}}
 	e.create(operation)
 	return operation

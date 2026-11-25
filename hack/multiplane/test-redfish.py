@@ -76,9 +76,9 @@ enrollment = json.loads(env.get('FLEET_REDFISH_ENROLLMENT', '{}'))
 targets = json.loads((root / 'hack/redfish-lab/targets.json').read_text())
 by_system = {t['system']: t for t in targets}
 check('every enrolled BMC endpoint is the fixed BMC Service', enrollment.get('targets') and all(t.get('endpoint') == 'https://%s:8443' % flux.BMC_SERVICE_IP for t in enrollment['targets']))
-check('lab DHCP is static: no provisioning attachment published', enrollment.get('dhcp') == 'static' and not any('provisioning' in t for t in enrollment.get('targets', [])))
+check('lab DHCP is static and the enrollment names no boot NIC or address', enrollment.get('dhcp') == 'static' and not any('provisioning' in t or 'mac' in t for t in enrollment.get('targets', [])))
 check('enrollment matches the lab targets exactly', len(enrollment.get('targets', [])) == 2 and all(
-    t['systemID'] in by_system and by_system[t['systemID']]['uuid'] == t['systemUUID'] and by_system[t['systemID']]['mac'] == t['mac']
+    t['systemID'] in by_system and by_system[t['systemID']]['uuid'] == t['systemUUID']
     and by_system[t['systemID']]['console'].endswith('/' + t['console']) for t in enrollment.get('targets', [])), json.dumps(enrollment)[:300])
 check('only target A is the published capacity Device', [t.get('device') for t in enrollment.get('targets', [])][:1] == ['fleet-provider/synthetic-device-central-01']
       and enrollment['targets'][0].get('systemID') == 'System-1')

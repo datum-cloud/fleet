@@ -41,3 +41,4 @@ spec:
     - metal.datumapis.com/machinecapacities.get
     - metal.datumapis.com/machinecapacities.list
     - metal.datumapis.com/machinecapacities.watch
+    - ipam.miloapis.com/ipclaims.get

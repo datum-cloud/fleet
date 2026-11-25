@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"go.datum.net/fleet/internal/bootnet"
-	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
 )
 
@@ -38,10 +37,7 @@ type BootServer struct {
 	// BootRoot holds the per-operation delivery evidence and the retained
 	// DHCP reports the workers read.
 	BootRoot string
-	// Enrollment names each Device's provisioning attachment when the
-	// site's DHCP is synchronized.
-	Enrollment redfish.Enrollment
-	Now        func() time.Time
+	Now      func() time.Time
 }
 
 func (b BootServer) now() time.Time {

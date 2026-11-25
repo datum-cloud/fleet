@@ -279,6 +279,26 @@ type DeviceInstallationSpec struct {
 	Bootstrap     *SealedInput `json:"bootstrap,omitempty"`
 	BootInterface string       `json:"bootInterface"`
 	TargetDisks   []string     `json:"targetDisks"`
+	// BootNetwork is the provisioning address for the network boot. It is
+	// required at a site whose DHCP is synchronized and refused elsewhere.
+	BootNetwork *BootNetworkInput `json:"bootNetwork,omitempty"`
+}
+
+// BootNetworkInput is the provisioning address IPAM assigned to one
+// operation. The site answers DHCP for the boot NIC with Address only while
+// the operation runs. The requester claims the address before it creates the
+// operation and releases the claim when the operation can no longer reach
+// DHCP.
+type BootNetworkInput struct {
+	AddressClaim ClaimReference `json:"addressClaim"`
+	// Address is the bound host address, without a prefix length.
+	Address string `json:"address"`
+}
+
+// ClaimReference names one IPAM claim incarnation in the provider project.
+type ClaimReference struct {
+	Name string `json:"name"`
+	UID  string `json:"uid"`
 }
 
 type ImageInput struct {
@@ -322,6 +342,9 @@ type DeviceWipeSpec struct {
 	// pinned at allocation.
 	CleaningPolicyDigest string   `json:"cleaningPolicyDigest"`
 	TargetDisks          []string `json:"targetDisks"`
+	// BootInterface names the Device interface the wipe network-boots.
+	BootInterface string            `json:"bootInterface"`
+	BootNetwork   *BootNetworkInput `json:"bootNetwork,omitempty"`
 }
 
 // WipeEvidence is the result evidence of a DeviceWipe.

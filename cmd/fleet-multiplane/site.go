@@ -232,13 +232,7 @@ func boot(command, origin, extraMAC, syncToken string) error {
 			return err
 		}
 		if command == "dhcp-feed" {
-			// Reservations name each Device's provisioning attachment, which
-			// only the enrollment records.
-			enrollment, err := redfish.ParseEnrollment([]byte(os.Getenv("FLEET_REDFISH_ENROLLMENT")))
-			if err != nil {
-				return err
-			}
-			server.Enrollment = enrollment
+			// Reservations come from the admitted operations in the store.
 			token, err := os.ReadFile(syncToken)
 			if err != nil {
 				return fmt.Errorf("DHCP synchronizer token: %w", err)
