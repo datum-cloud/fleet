@@ -120,8 +120,13 @@ for outcome,objs in cases.items():
   if (outcome=='admitted')!=ok or (not ok and not by_policy and 'forbidden' not in r.stderr.lower()):
    raise SystemExit('kro admission %s for %s: %s'%('denied' if not ok else 'admitted',name,r.stderr[:300]))
   record['admission'][name]={'expected':outcome,'admitted':ok,'deniedBy':None if ok else ('ValidatingAdmissionPolicy' if by_policy else 'RBAC')}
-if any(v['deniedBy']!='ValidatingAdmissionPolicy' for v in record['admission'].values() if not v['admitted']):
- raise SystemExit('expected the admission policies, not RBAC, to deny in-namespace shape violations: %s'%record['admission'])
+# A credential Role that lists Secrets is outside kro's own grant: kro holds
+# only get there, so RBAC escalation refuses it before admission. Every other
+# shape is within kro's grant and must be refused by the policies.
+outside_grant={'credential Role listing Secrets'}
+wrong=[n for n,v in record['admission'].items() if not v['admitted'] and v['deniedBy']!=('RBAC' if n in outside_grant else 'ValidatingAdmissionPolicy')]
+if wrong:
+ raise SystemExit('a shape was refused by the wrong layer (%s): %s'%(', '.join(wrong),record['admission']))
 (s/'evidence'/'kro-rbac.json').write_text(json.dumps(record,indent=2,sort_keys=True)+'\n')
 print('Verified kro RBAC and admission confine it to per-operation objects: %d allowed, %d denied verbs; %d shapes admitted, %d denied by policy'%(
  len(allowed),len(denied),len(cases['admitted']),len(cases['denied'])))
