@@ -485,3 +485,27 @@ func TestAFailedRedfishInstallDropsItsSeed(t *testing.T) {
 		t.Fatalf("the site kept %d bytes of seed: %v, %v", len(boot.Seed), found, err)
 	}
 }
+
+// TestANewerFenceDropsASupersededSeed: a recovery only raises the fence,
+// and the site drops the seed a superseded install left in its boot
+// admission.
+func TestANewerFenceDropsASupersededSeed(t *testing.T) {
+	l := newLab(t)
+	r := runner(t, l)
+	uid := "op-superseded"
+	if err := r.Store.Raise(device, 1); err != nil {
+		t.Fatal(err)
+	}
+	boot := Boot{Operation: uid, Fence: 1, Mode: "install", MAC: mac, Receipt: strings.Repeat("d", 64), Token: strings.Repeat("c", 64), Expires: time.Now().Add(time.Minute), Seed: []byte("seed-bytes")}
+	if err := r.Store.PutRecord(device, 1, bootRecords, uid, boot); err != nil {
+		t.Fatal(err)
+	}
+	recovery := assignment(l, "DeviceRecovery", "op-recovery", 2, installSpec())
+	if err := r.Fence(context.Background(), recovery); err != nil {
+		t.Fatal(err)
+	}
+	var after Boot
+	if found, err := r.Store.GetRecord(device, bootRecords, uid, &after); err != nil || !found || len(after.Seed) != 0 {
+		t.Fatalf("a superseded admission kept %d bytes of seed: %v, %v", len(after.Seed), found, err)
+	}
+}
