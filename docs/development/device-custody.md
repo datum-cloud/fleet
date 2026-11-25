@@ -872,7 +872,10 @@ inputs, and nothing else writes them.
   pool. The Redfish site commissions with the Redfish worker; the local VM
   site uses the simulated worker. The local Milo installs no registration
   webhook, so the enabling update is not checked by it there; the webhook is
-  verified against a real API server instead. Whether both runs pass is
+  verified against a real API server instead. The harness and its evidence know the
+  commissioning as its own operation: it is the first journaled operation,
+  its burn-in adds one network boot, one `On` and one `FLEET-BURNIN` receipt
+  to target A's record, and it is never counted as an install. Whether both runs pass is
   recorded below as each run completes.
 - **Synthetic staging.** The staging handler no longer writes capacity
   status; the projector does.

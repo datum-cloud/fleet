@@ -320,7 +320,9 @@ def lost_response(s):
     ops = installs(s)
     ons = [e for e in mutating(audit(s), TARGET_A['system']) if e.get('resetType') == 'On' and e.get('effect', '').startswith('started')]
     journaled = power_ons(ops[0]) if len(ops) == 1 else {}
-    if len(ops) != 1 or not done(ops[0], 'disk-power-on') or len(ons) != 2 or journaled != {'installer': 'Done', 'disk': 'Done'}:
+    # The commission phase's burn-in powered target A on once before the install.
+    burnins = sum(1 for o in journal(s) if o['kind'] == 'DeviceCommissioning' and done(o, 'burnin-power-on'))
+    if len(ops) != 1 or not done(ops[0], 'disk-power-on') or len(ons) != 2 + burnins or burnins != 1 or journaled != {'installer': 'Done', 'disk': 'Done'}:
         die('recovery after the lost response repeated or did not observe the boot: %d effective On requests, journaled power-on %s' % (len(ons), journaled))
     record.update(observedAt=now(), operationID=ops[0]['operation'], fence=ops[0]['fence'], stageAfterRecovery=ops[0]['stage'], phase='disk boot', journaledPowerOn=journaled,
                   onRequestsToTargetA=len(ons), runningDomains=running(s),

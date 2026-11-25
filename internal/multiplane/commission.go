@@ -100,8 +100,10 @@ func (r *Runner) Commission(ctx context.Context) error {
 	if err := operator.Get(ctx, client.ObjectKey{Namespace: DeviceNamespace, Name: Device}, device); err != nil {
 		return err
 	}
+	// Only the capacity operator reads and enables capacity.
+	capacityOperator := people["capacity-operator"]
 	capacity := registered(device)
-	if err := operator.Get(ctx, client.ObjectKeyFromObject(capacity), capacity); err != nil {
+	if err := capacityOperator.Get(ctx, client.ObjectKeyFromObject(capacity), capacity); err != nil {
 		return fmt.Errorf("the registered capacity: %w", err)
 	}
 	if err := r.commissioned(ctx, operator, device, plan, creators["operator"]); err != nil {
@@ -117,7 +119,7 @@ func (r *Runner) Commission(ctx context.Context) error {
 			capacity.Labels = map[string]string{}
 		}
 		capacity.Labels[PoolLabel] = Pool
-		if err := people["capacity-operator"].Update(ctx, capacity); err != nil {
+		if err := capacityOperator.Update(ctx, capacity); err != nil {
 			return fmt.Errorf("enable the capacity: %w", err)
 		}
 		return fmt.Errorf("%w: enabled the capacity; waiting for the projector", errPending)
@@ -135,13 +137,22 @@ func (r *Runner) commissioned(ctx context.Context, operator client.Client, devic
 	if err := operator.List(ctx, &list, client.InNamespace(DeviceNamespace)); err != nil {
 		return err
 	}
+	digest, err := custody.PlanDigest(plan)
+	if err != nil {
+		return err
+	}
 	for _, operation := range list.Items {
 		if operation.Spec.DeviceRef.UID != string(device.UID) {
 			continue
 		}
+		// The run proves this plan, so a commissioning under another plan
+		// proves nothing here.
+		if reference := operation.Spec.Plan.PlanReference; reference.UID != string(plan.UID) || reference.Digest != digest {
+			return fmt.Errorf("%w: commissioning %s ran under plan %s, not %s", errTerminal, operation.Name, reference.Name, plan.Name)
+		}
 		switch status := operation.Status; {
 		case status.Phase == ops.PhaseSucceeded:
-			if result := evidenceResult(status); result != string(ops.CommissioningPassed) {
+			if result := evidenceResult(status, operation.Spec.Plan.PlanReference); result != string(ops.CommissioningPassed) {
 				return fmt.Errorf("%w: commissioning %s proved the server failed: %s", errTerminal, operation.Name, result)
 			}
 			return nil
@@ -161,13 +172,16 @@ func (r *Runner) commissioned(ctx context.Context, operator client.Client, devic
 	return fmt.Errorf("%w: created commissioning %s", errPending, operation.Name)
 }
 
-func evidenceResult(status ops.OperationStatus) string {
+func evidenceResult(status ops.OperationStatus, plan ops.PlanReference) string {
 	if status.Evidence == nil {
 		return "no evidence"
 	}
 	var evidence ops.CommissioningEvidence
 	if err := json.Unmarshal(status.Evidence.Raw, &evidence); err != nil {
 		return "unreadable evidence"
+	}
+	if evidence.Plan != plan {
+		return "evidence for another plan"
 	}
 	if evidence.Result != ops.CommissioningPassed {
 		return fmt.Sprintf("%s in %s: %v", evidence.Result, evidence.FailedPhase, evidence.Mismatches)

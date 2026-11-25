@@ -60,10 +60,11 @@ STATE_PATH = device_dir() + '/state.json'
 RESULTS_DIR = device_dir() + '/results'
 # The journaled step that ends each kind, in either mode (internal/site/vmwork
 # and internal/site/redfishwork).
-FINAL_STEPS = {'DeviceInstallation': ('disk-verified',), 'DeviceWipe': ('wipe', 'wipe-verified')}
+FINAL_STEPS = {'DeviceInstallation': ('disk-verified',), 'DeviceWipe': ('wipe', 'wipe-verified'),
+               'DeviceCommissioning': ('burnin-verified', 'simulated-burnin')}
 # Provider-project custody records, read with the provider's bootstrap credential.
 CUSTODY_KINDS = ('devicecustodies.fleet.datumapis.com', 'deviceinstallations.fleet.datumapis.com', 'devicewipes.fleet.datumapis.com',
-                 'devicerecoveries.fleet.datumapis.com', 'machineallocations.metal.datumapis.com')
+                 'devicerecoveries.fleet.datumapis.com', 'devicecommissionings.fleet.datumapis.com', 'machineallocations.metal.datumapis.com')
 
 
 def now():
@@ -343,6 +344,10 @@ def domain_name(operation_uid):
 
 
 def operation_kind(steps):
+    # A commissioning journals only its burn-in: burnin-* over Redfish, and
+    # one simulated-burnin step at a site without a BMC.
+    if any(s == 'simulated-burnin' or s.startswith('burnin-') for s in steps):
+        return 'DeviceCommissioning'
     return 'DeviceWipe' if any(s == 'wipe' or s.startswith('wipe-') for s in steps) else 'DeviceInstallation'
 
 

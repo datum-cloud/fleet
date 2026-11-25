@@ -128,7 +128,8 @@ def site_operations(raw):
         st = p.get('status', {})
         if st.get('phase') != 'Succeeded' or st.get('fence') != o['fence']:
             fail('%s %s is %s at fence %s, journaled at fence %s' % (p['kind'], p['metadata']['name'], st.get('phase'), st.get('fence'), o['fence']))
-        ops.append(dict(o, name=p['metadata']['name'], allocation=p['spec']['authority']['allocationRef']['name'], phase=st['phase']))
+        # A commissioning is a staff operation: it has no allocation.
+        ops.append(dict(o, name=p['metadata']['name'], allocation=(p['spec']['authority'].get('allocationRef') or {}).get('name', ''), phase=st['phase']))
     if held is None:
         fail('the site journal holds no deadline installation')
     return store, ops, provider, held
@@ -137,6 +138,12 @@ def site_operations(raw):
 def check_sequence(ops, held, interrupt):
     """Consumer A's allocation holds the interrupted install; the other is B's,
     whose installation was held at its deadline."""
+    # The commission phase commissioned the Device once, before any
+    # allocation; everything after it is the allocation sequence.
+    commissionings = [o for o in ops if o['kind'] == 'DeviceCommissioning']
+    if len(commissionings) != 1 or ops[0] is not commissionings[0]:
+        fail('expected exactly one commissioning, before every allocation, got %s' % [o['kind'] for o in ops])
+    ops = ops[1:]
     a = next((o['allocation'] for o in ops if o['operation'] == interrupt['operationID']), None)
     b = next((o['allocation'] for o in ops if o['allocation'] != a), None)
     want = [('DeviceInstallation', a), ('DeviceWipe', a), ('DeviceWipe', b)]
@@ -274,7 +281,8 @@ def redfish_provider():
         boot = boot_record(raw, 'boot', o['operation'])
         if not boot.get('closed') or boot.get('phase') or boot.get('fence') != o['fence'] or boot.get('mac') != a['mac'].lower():
             fail('an operation did not keep a closed boot admission for target A at its fence')
-        want = ['FLEET-INSTALLED:' + boot['receipt'], 'FLEET-DISK-BOOT:' + boot['receipt']] if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
+        want = {'DeviceInstallation': ['FLEET-INSTALLED:' + boot['receipt'], 'FLEET-DISK-BOOT:' + boot['receipt']],
+                'DeviceCommissioning': ['FLEET-BURNIN:%s:passed' % boot['receipt']]}.get(o['kind'], ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])])
         for line in want:
             if console.count(line) != 1:
                 fail('expected exactly one exact console receipt %s for %s' % (line.split(':')[0], o['kind']))
@@ -297,15 +305,16 @@ def redfish_provider():
     order = ['network' if network(b) else 'disk' for b in blocks]
     starts = {'targetA': order, 'targetB': (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').read_text(errors='replace').count(': starting up ')
               if (raw / 'libvirt-qemu' / 'fleet-lab-target-b.log').exists() else 0}
-    # A install (network, disk), A wipe, B's held install (its network boot
-    # was withheld by the lab boot hook), B wipe.
-    if order != ['network', 'disk', 'network', 'network', 'network'] or starts['targetB']:
-        fail('expected target A boots network, disk, network, network, network and no target B start; got %s' % starts)
+    # The commissioning's burn-in (network), A install (network, disk), A
+    # wipe, B's held install (its network boot was withheld by the lab boot
+    # hook), B wipe.
+    if order != ['network', 'network', 'disk', 'network', 'network', 'network'] or starts['targetB']:
+        fail('expected target A boots network (burn-in), network, disk, network, network, network and no target B start; got %s' % starts)
     audit = [json.loads(l) for l in (ev / 'redfish-audit.jsonl').read_text().splitlines()]
     effects = [e for e in audit if e['method'] not in ('GET', 'HEAD')]
     ons = [e for e in effects if e.get('resetType') == 'On']
-    if len(ons) != 5 or any(not e.get('effect', '').startswith('started') for e in ons) or any('/System-1' not in e['path'] for e in effects):
-        fail('expected exactly five effective On requests, all to System-1, and no other target effect')
+    if len(ons) != 6 or any(not e.get('effect', '').startswith('started') for e in ons) or any('/System-1' not in e['path'] for e in effects):
+        fail('expected exactly six effective On requests, one for burn-in, all to System-1, and no other target effect')
     if sum(1 for e in ons if e.get('fault') == 'drop-response-after-effect') != 1:
         fail('the lost-response fault did not fire exactly once')
     # Each boot was requested once: one journaled power-on step per phase.
