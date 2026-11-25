@@ -153,6 +153,38 @@ with tempfile.TemporaryDirectory() as t:
     a.wait()
     stop(a, b, c, wa, wb, wc)
 
+# with-lock.sh queues a command that does not take the lock (an older
+# run.sh, or a script queueing them) in the same arrival order, holds the lock
+# while it runs, and lets a run.sh inside it use that lock.
+with tempfile.TemporaryDirectory() as t:
+    tmp = pathlib.Path(t)
+    env = dict(os.environ, FLEET_MULTIPLANE_LOCK_DIR=str(tmp / 'lock'), TMPDIR=str(tmp))
+    wrapper = [str(root / 'hack/multiplane/with-lock.sh')]
+    a, b = owner(), owner()
+    wa = waiter(tmp, a, 'a')
+    finished(wa, 10)
+    done = tmp / 'done'
+    nested = ('%s %s lock --state %s --owner $$ --timeout 2 && touch %s && sleep 600'
+              % (sys.executable, harness, tmp / 'nested', done))
+    w = subprocess.Popen(wrapper + ['bash', '-c', nested], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1.5)
+    wb = waiter(tmp, b, 'b')
+    time.sleep(1)
+    check('with-lock: queued while the lock is held', w.poll() is None and not done.exists())
+    a.terminate()
+    a.wait()
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and not done.exists():
+        time.sleep(0.2)
+    check('with-lock: served in arrival order, ahead of a later run', done.exists() and wb.poll() is None)
+    check('with-lock: a run inside it uses the held lock', done.exists() and lock_record(tmp, 'nested').get('heldBy') == 'with-lock.sh')
+    w.terminate()
+    w.wait()
+    check('with-lock: the lock is released when the command ends', finished(wb, 10) and wb.returncode == 0, str(wb.returncode))
+    r = subprocess.run(wrapper, env=env, capture_output=True, text=True)
+    check('with-lock: usage', r.returncode == 64)
+    stop(a, b, wa, wb, w)
+
 # The holder ignores signals while its owner lives, so a run stopping its own
 # process tree keeps the lock through its cleanup.
 with tempfile.TemporaryDirectory() as t:

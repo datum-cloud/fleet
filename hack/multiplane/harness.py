@@ -381,6 +381,14 @@ def lock(args):
         print('lock: owner pid %s is not running' % args.owner, file=sys.stderr)
         return EXIT_USAGE
     lock_dir()
+    # Under with-lock.sh the wrapper already holds the lock for this run.
+    wrapper = os.environ.get('FLEET_MULTIPLANE_LOCK_OWNER')
+    holder = read_holder() or {}
+    if wrapper and str(holder.get('owner')) == wrapper and owner_alive(int(wrapper), holder.get('ownerStarted')):
+        write_json(evidence_dir(args.state) / 'lock.json', {'schemaVersion': 1, 'profile': PROFILE, 'status': 'acquired', 'heldBy': 'with-lock.sh',
+                                                            'positionAtQueue': 1, 'waitedSeconds': 0, 'finishedAt': now()})
+        print('lock %s: held by with-lock.sh (pid %s)' % (PROFILE, wrapper), file=sys.stderr, flush=True)
+        return 0
     ev = evidence_dir(args.state)
     queued = time.time()
     received = []

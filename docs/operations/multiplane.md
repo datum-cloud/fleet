@@ -145,6 +145,13 @@ outright cannot leave the profile locked. A waiter whose run was killed gives
 up its place, and the next waiter removes a killed waiter's ticket. The lock
 directory must be private to the user; the harness refuses one that is not.
 
+A script that starts runs without the lock, such as one queueing runs of an
+older checkout, gets its fair turn by running each through
+`hack/multiplane/with-lock.sh COMMAND...`. The wrapper takes a place in the same
+queue, holds the lock while the command runs, and a `run.sh` inside it uses the
+lock the wrapper holds. A script that only polls for an idle profile can keep
+losing the race to runs that queue.
+
 All waiting shares one bound, by default 4 hours
 (`FLEET_MULTIPLANE_LOCK_TIMEOUT`, in seconds), for the lock and then for a run
 without the lock. A run whose wait expires exits 4 having created nothing; if
