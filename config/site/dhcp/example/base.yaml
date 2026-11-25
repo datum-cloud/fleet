@@ -1,7 +1,8 @@
 # A synthetic base configuration. Network operations owns the real one: the
 # site's provisioning subnet and gateway, the relay addresses Kea accepts, and
-# the boot options. It has no pools, so Kea answers only reserved MACs, and
-# Kea 2.6 requires the control socket under /var/run/kea.
+# the boot options. Kea listens on every node address, so the relay filter
+# limits it to the site's relays. It has no pools, so Kea answers only
+# reserved MACs, and Kea 2.6 requires the control socket under /var/run/kea.
 apiVersion: v1
 kind: ConfigMap
 metadata:

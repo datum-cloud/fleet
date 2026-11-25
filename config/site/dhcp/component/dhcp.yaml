@@ -17,8 +17,8 @@ automountServiceAccountToken: false
 ---
 # Kea DHCPv4 instances. Each Pod's name is its stable instance name in the
 # applied reports. Pods use host networking on nodes that network operations
-# labels as DHCP hosts, one per node, and Kea answers only relayed requests on
-# that node's address. Scale down only after the instance being removed
+# labels as DHCP hosts, one per node. The base configuration's relay filter
+# limits Kea to relayed requests from the site's relays. Scale down only after the instance being removed
 # reports an empty feed: an instance removed while serving keeps its
 # operations' outcomes unknown until an operator retires it.
 apiVersion: apps/v1
@@ -50,7 +50,9 @@ spec:
         - name: kea
           # ISC's image, pinned by digest. It is built for linux/amd64 only.
           image: docker.cloudsmith.io/isc/docker/kea-dhcp4:2.6.3@sha256:c40abb1522b15edb9a6d1119ad22b3765bf818a51d6776f498e874ad13416065
-          command: [kea-dhcp4, -c, /etc/kea-base/kea-dhcp4.conf]
+          # Kea 2.6 refuses a control socket directory that is not 0750,
+          # and an emptyDir is created 0777.
+          command: [sh, -c, 'chmod 0750 /var/run/kea && exec kea-dhcp4 -c /etc/kea-base/kea-dhcp4.conf']
           securityContext:
             runAsUser: 0
             allowPrivilegeEscalation: false

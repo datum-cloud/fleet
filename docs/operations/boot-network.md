@@ -198,7 +198,7 @@ synchronized site:
 | --- | --- |
 | `dhcp-feed` container in `fleet-site-boot` | The feed, beside the boot service, so it reads the site store read-only and appends reports to the boot evidence on the same volume |
 | `fleet-site-dhcp-feed` Service | The feed on `:8081`, inside the site cluster only |
-| `fleet-site-dhcp` StatefulSet | At least two Pods, one per node labeled `fleet.datumapis.com/dhcp-host=true`, with host networking. Each runs ISC's Kea DHCPv4 image, pinned by digest, and the synchronizer, sharing Kea's control socket. The Pod name is the instance name |
+| `fleet-site-dhcp` StatefulSet | At least two Pods, one per node labeled `fleet.datumapis.com/dhcp-host=true`, with host networking. Each runs ISC's Kea DHCPv4 image, pinned by digest, and the synchronizer, sharing Kea's control socket on an `emptyDir` that Kea's command makes `0750`, as Kea 2.6 requires. The Pod name is the instance name |
 | `fleet-site-dhcp` PodDisruptionBudget | One instance down at a time |
 
 The environment supplies, never in Git:
@@ -211,8 +211,15 @@ The environment supplies, never in Git:
 - the `FLEET_SITE_IMAGE` and `FLEET_DHCP_SYNC_IMAGE` substitutions.
 
 The base configuration names the site's provisioning subnet and gateway, the
-relay addresses Kea accepts, and the boot options. It has no pools, so Kea
-answers only reserved MACs, and its control socket is the synchronizer's.
+relay addresses Kea accepts, and the boot options. Kea listens on every
+address of its node, so the subnet's relay filter is what limits it to the
+site's relays. The configuration has no pools, so Kea answers only reserved
+MACs, and its control socket is the synchronizer's.
+
+Both Secrets are required: without them the boot Pod, and so the boot service,
+does not start. The feed loads its certificate and the synchronizer its CA
+once, so rotating either Secret takes a restart of the boot Pod or the Kea
+Pods.
 `config/site/dhcp/example` renders the component with a synthetic base
 configuration, and `hack/validate-site-dhcp-render.sh` checks that render in
 CI. ISC builds the Kea image for `linux/amd64` only.
@@ -242,7 +249,8 @@ Fleet configures no switch, router or relay. A synchronized site needs:
 
 `task boot-network:kea-lab` (`hack/boot-network/kea-lab.sh`) runs ISC's Kea
 image, the real synchronizer, and the site's feed listener over TLS on one
-container bridge, in the `colima` Docker context by default. A lab program
+container bridge, in the `colima` Docker context by default. Kea runs with the
+component's capabilities and socket directory. A lab program
 opens and closes boot admissions in a real site store, and a `udhcpc` client
 with a chosen MAC asks for an address. It passes only if:
 
@@ -252,9 +260,11 @@ with a chosen MAC asks for an address. It passes only if:
 3. after the admission closes and Kea reports the withdrawal, the boot NIC gets
    no answer.
 
-The lab proves the feed, the synchronizer, Kea's configuration and a real DHCP
-exchange. It has no relay, no VLAN, no switch and no firmware, so it proves
-none of the network operations requirements.
+The lab proves the feed, the synchronizer and reservation-gated answers in a
+real DHCP exchange. With no relay, its Kea answers the client directly on a raw
+socket, where a site's Kea answers relays on a UDP socket. It has no VLAN, no
+switch and no firmware, so it proves none of the network operations
+requirements.
 
 ## Implemented versus proposed
 
@@ -264,7 +274,7 @@ none of the network operations requirements.
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
 | Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device, instance retirement | Implemented; unit tested with a fake BMC and synchronizer, including a silent instance |
 | Kea synchronizer: containing-subnet placement, restart re-apply, report only after Kea accepted | Implemented; unit tested against a fake Kea control socket |
-| Feed over TLS, Kea and the synchronizer as a site component | Implemented; render checked in CI, and the DHCP path proved by the boot network lab with real Kea. Not deployed at a site |
+| Feed over TLS, Kea and the synchronizer as a site component | Implemented; render checked in CI, and reservation-gated answers proved by the boot network lab with real Kea. Not deployed at a site, and relayed requests are not exercised |
 | Relay, provisioning VLAN, isolation and LACP fallback at a site | Network operations; see the [server networking enhancement][server-networking] |
 | Telling firmware what to boot in synced mode (Redfish `HttpBootUri` for UEFI HTTP Boot, or a DHCP boot-file option) | Proposed; the Redfish worker still arms `Pxe`, which relies on site DHCP for the boot file |
 | DHCPv6 reservations | Proposed; the feed accepts IPv6, the Kea DHCPv4 synchronizer and the claim reject it |

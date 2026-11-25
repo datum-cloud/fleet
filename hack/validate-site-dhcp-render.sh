@@ -29,5 +29,15 @@ base = json.loads(one("ConfigMap", "fleet-site-dhcp-base")["data"]["kea-dhcp4.co
 assert base["control-socket"]["socket-name"] == socket and socket.startswith("/var/run/kea/"), "Kea and the synchronizer share one socket under /var/run/kea"
 assert all("pools" not in s for s in base["subnet4"]), "the base configuration has no pools"
 assert any(e["name"] == "POD_NAME" for e in containers["sync"]["env"]), "the instance name is the Pod name"
+assert "chmod 0750 /var/run/kea" in " ".join(containers["kea"]["command"]), "Kea 2.6 needs its socket directory 0750"
+for pod in (boot, kea["template"]["spec"]):
+    volumes = {v["name"] for v in pod["volumes"]}
+    for container in pod["containers"]:
+        missing = {m["name"] for m in container.get("volumeMounts", [])} - volumes
+        assert not missing, (container["name"], missing)
+labels = one("Deployment", "fleet-site-boot")["spec"]["template"]["metadata"]["labels"]
+assert all(labels.get(k) == v for k, v in service["spec"]["selector"].items()), "the feed Service selects the boot Pod"
+budget = one("PodDisruptionBudget", "fleet-site-dhcp")["spec"]["selector"]["matchLabels"]
+assert budget == kea["selector"]["matchLabels"], "the budget covers the Kea Pods"
 print("PASS site DHCP render: %d objects, feed over TLS, Kea pinned, no Secret, no pool" % len(docs))
 '
