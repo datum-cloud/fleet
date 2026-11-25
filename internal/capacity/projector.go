@@ -24,6 +24,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// RegisteredDeviceUID is the annotation in which registration records the
+// Device incarnation a registered capacity was created for. Registration
+// admission keeps it unchanged.
+const RegisteredDeviceUID = "fleet.datumapis.com/registration-device-uid"
+
 // ErrUnresolved is what a CleaningResolver returns for a name that does not
 // resolve. Any other error means the owner could not be reached.
 var ErrUnresolved = errors.New("the cleaning policy does not resolve")
@@ -96,6 +101,12 @@ func (p *Projector) inputs(ctx context.Context, capacity *metal.MachineCapacity)
 		return in, nil
 	} else if err != nil {
 		return in, err
+	}
+	if registered, ok := capacity.Annotations[RegisteredDeviceUID]; ok && registered != string(device.UID) {
+		// A Device recreated under the name inherits nothing from capacity
+		// registered for the old incarnation.
+		in.DeviceReplaced = true
+		return in, nil
 	}
 	in.DeviceUID = string(device.UID)
 	in.DeviceSerial, in.DeviceSystemUUID = device.Spec.Identity.Serial, device.Spec.Identity.SystemUUID

@@ -940,6 +940,10 @@ inputs, and nothing else writes them.
   other provider projects when capacity is registered and enabled; the
   projector does not read across projects. Aliases moved from registration to
   the inventory API package, so both compute them the same way.
+- **Device pin.** Registered capacity counts its Device only while the
+  Device's UID is the one registration recorded when it created the
+  capacity. Capacity behind a Device recreated under the same name is not
+  `Prepared` (`DeviceReplaced`), so the allocator never offers it.
 - **Plan pin.** `Prepared` needs the latest commissioning's evidence to name
   the current plan's name, generation, digest and approval name. The approval
   name is derived from the plan's UID, so evidence under a plan recreated with
