@@ -129,6 +129,12 @@ later.
 
 ## Redfish executor contract
 
+The [site framework for Device custody](../development/device-custody.md#site-execution-increment-b)
+ports the install and wipe phases below to per-Device fencing, a per-Device
+journal and per-Device credentials with the approved TLS pin. It is
+implemented and inert. This lab still runs the executor described here until
+the cutover.
+
 `internal/redfish` implements `executor.Client` behind the unchanged
 `LocalAssetMapping`, coordination and lifecycle code. It has no process
 execution, libvirt client or lab dependency. A Go test parses its imports to

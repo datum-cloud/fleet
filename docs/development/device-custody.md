@@ -13,8 +13,8 @@ marked **implemented and verified**, **implemented and inert**, or
 | Increment | What it covers | Status |
 | --- | --- | --- |
 | A: control-plane foundation | API types and CRDs for `DeviceCustody`, `DeviceInstallation`, `DeviceWipe` and `DeviceRecovery`; CEL rules; IAM resources and roles; the creator webhook; the kind registry and admission rule table; the coordinator's custody reconciler, admission, results, recovery, rebuild and retention; the capacity projector | **Implemented and inert.** Verified with unit tests and with tests against a real API server. No deployment root, manager, or staging overlay includes it. The existing Secret-backed lifecycle is unchanged. |
-| B: site execution | Per-Device fence store and journal, older-worker stop, deadlines, fenced results, per-Device credentials, pinned TLS, the new handoff payload | **Proposed** |
-| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the projector as the only condition writer, removal of the private Secret records | **Proposed.** Starts after B. |
+| B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and inert.** Unit tested, including against TLS BMC stubs. Nothing delivers to it until C; the old executors keep their own journals until C deletes them. |
+| C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the projector as the only condition writer, the site access layer for the local VM and simulator executors, removal of the private Secret records and the old executor journals | **Proposed.** Starts after B. |
 | D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests | **Proposed** |
 
 ## What Increment A adds
@@ -45,6 +45,79 @@ marked **implemented and verified**, **implemented and inert**, or
 
 Creating or importing a Device creates `Unverified` custody. That sends
 nothing to a BMC and makes no capacity `Available`.
+
+## Site execution (Increment B)
+
+Increment B adds the site framework (`internal/site`) and the Redfish
+install and wipe workers (`internal/site/redfishwork`). It is implemented and
+inert. Until Increment C, the old coordinator still drives the old executors
+with their own site-wide journals, and nothing delivers an assignment to the
+new framework. There is no bridge between the two paths, and C deletes the old
+one.
+
+### Where a site stores fences and its journal
+
+Each site keeps one directory per Device on its retained volume, under an
+owner-only root. A Device's directory holds one state file and its lock. The
+state file records the highest fence the site has seen, the highest fence for
+which older workers are confirmed stopped, and the journal. The directory
+also holds per-operation records, such as boot admissions, and the site's
+copy of results. Every write replaces the file atomically and syncs it, so the
+site still refuses older fences after a restart. Each Device has its own lock,
+so work on one Device never waits for another.
+
+### What the framework owns
+
+- **Fences.** An assignment below the stored fence is refused and stores no
+  result. An equal fence is accepted again, because delivery is replayed from
+  custody after a crash.
+- **Older-worker stop.** One worker runs per Device. A newer assignment raises
+  the fence, then waits for the run lock. The older worker sees the higher
+  fence within a second, stops, and releases the lock, and a worker that dies
+  releases it with its process. The newer worker then records the stop
+  confirmation, and the coordinator reads it as the site's `Stopped` fence. A
+  `DeviceRecovery` is delivered the same way and runs nothing else.
+- **The journal.** Each step is journaled before it is sent and marked done
+  after. The journal refuses any step below the stored fence. A step found
+  journaled but not done is observed instead of sent again. If the observation
+  cannot show it took effect, the outcome is unknown. Only a step that is safe
+  to repeat, such as powering off before a boot was requested, is sent again.
+- **Deadlines.** A worker stops at its deadline exactly. If nothing was sent,
+  it reports `Failed`. Otherwise it reports `OutcomeUnknown`.
+- **Checks before any effect.** The inputs must match the admitted digest. The
+  site's enrollment must match the snapshot's BMC endpoint, system UUID and boot
+  MAC. The per-Device credential Secret must exist, its operator-approved pin
+  must equal the key discovery recorded at admission (O9), and the BMC is read
+  only over a connection pinned to that key. A different key aborts the TLS
+  handshake before any request, so no credential is sent. Each failure is a
+  named refusal that ends the operation `Failed` with nothing sent.
+- **Results.** Each result carries the operation's fence and typed evidence,
+  and messages never carry a BMC response or an endpoint. The site keeps its
+  copy until the coordinator accepts it or rejects it for a stale fence.
+- **The fence report.** Each site reports, for each Device it is configured to
+  serve, the fence it has seen and the fence for which it confirmed the stop.
+- **Boot admissions.** A network boot is served only while the operation's
+  admission is open, unexpired, and at the Device's stored fence, so a
+  superseded operation can never boot the server. The boot server reads
+  admissions this way from Increment C.
+
+### The Redfish workers
+
+The install and wipe workers port the executor's phases: power off, arm a
+one-time boot, power on once, then wait for exactly one console receipt and,
+for a network boot, the boot server's delivery evidence. Power-on is the only
+step that is not repeated after a crash; it is observed instead. Each site
+enrolls one disk per server, named `disk-0`, with its size (O12). An
+installation or wipe that names other disks is refused before anything is
+sent. Synchronized DHCP reservations are not yet supported by the new workers.
+They arrive with the cutover.
+
+### Access to the server
+
+How the framework reaches a server is behind an `Access` interface.
+`RedfishAccess` performs the credential, pin and identity checks above. In C,
+the local VM and simulator executors get their own access types and workers.
+That adds no change to the worker contract.
 
 ## Implementation decisions
 
@@ -323,13 +396,13 @@ these seams. Each is decided here.
 | 2 | Pending replacement is scoped to the kind and the authority | A newer pending operation replaces only an older one of the same kind under the same authority. A power request never cancels a pending installation. | Implemented and inert |
 | 3 | Kinds add bounded snapshot fields | `SnapshotExtra` adds up to 16 camelCase fields of at most 256 bytes each. The snapshot goes to the operation, the active operation, the hold, and the site. | Implemented and inert |
 | 4 | The settle hook sees the hold's end time, its deadline and current Device status | The hold records when it ended (`Since`), the operation's deadline and its snapshot. The hook gets the Device as read when the recovery is admitted and again when it is applied. A hold that rebuild created has `Since` set to the rebuild time, and copies the deadline and snapshot from the operation's status, so both are absent for an operation whose status never recorded them. A hook checks for that. | Implemented and inert |
-| 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal with an undeclared reason ends `UndeclaredReason`. A recovery's refusal may carry the held kind's declared reason only when it comes from that kind's settle hook. | Implemented and inert. Worker reasons are checked when results arrive, in B. |
+| 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal, or a site result, with an undeclared reason is recorded as `UndeclaredReason`. A recovery's refusal may carry the held kind's declared reason only when it comes from that kind's settle hook. The site framework's own reasons are shared, and the Redfish workers' reasons are declared on their kinds. | Implemented and inert |
 | 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock: a wipe, and power, whose hold settles with `Settle` and fresh discovery evidence or with `Retry` and a later power operation. A hold counts the `Retry` decisions applied to it, and the operation created after a `Retry` is named from the held operation and that count, as [Retries](#admission) describes. | Implemented and inert |
 | 7 | End-to-end proof that Milo enforces the CRD rules | The `custody-crd-rules` phase of both local end-to-end runs installs only these CRDs into the provider project, requires the project API to refuse eight forbidden writes, and removes them. | Implemented and verified in the local end-to-end runs |
-| 8 | Journal steps carry a kind's payload | A step records a bounded payload, such as the send time or the power state before. Observation after a crash reads it. | Proposed for B |
-| 9 | Delivery carries the admission time, and kinds declare a start-by window | A worker that starts after the window refuses as `Stale`, with nothing sent. | Proposed for B |
-| 10 | The TLS and identity check is separate from install capabilities | The framework verifies the pin and the System only. Each kind checks the capabilities it uses, such as the Pxe and Hdd boot targets, against a pinned client bound to the verified System. | Proposed for B |
-| 11 | A worker refusal with nothing sent ends `Failed` | It ends `Failed` under the operation's fence and returns a `Service` holder to `None`. It never ends `OutcomeUnknown`. | Implemented in the coordinator; the worker side arrives in B |
+| 8 | Journal steps carry a kind's payload | A step records a payload of at most 1 KiB, such as the send time or the power state before, journaled before it is sent. Observation after a crash reads it back. | Implemented and inert |
+| 9 | Delivery carries the admission time, and kinds declare a start-by window | A kind that implements `StartBy` refuses as `Stale` when its worker starts later than the window after admission, with nothing sent. A worker resuming steps an earlier worker sent is not stale. | Implemented and inert |
+| 10 | The TLS and identity check is separate from install capabilities | The framework verifies the pin and the System only, through the Redfish client's identity walk. Each kind checks the capabilities it uses, such as the Pxe and Hdd boot targets, and drives the System through a connection bound to it. | Implemented and inert |
+| 11 | A worker refusal with nothing sent ends `Failed` | It ends `Failed` under the operation's fence and returns a `Service` holder to `None`. It never ends `OutcomeUnknown`. Whether anything was sent comes from the journal. | Implemented and inert |
 | 12 | The single writer of `Machine.status.power` | The manager's Machine status projector stays the only writer. It reads the custody of the Machine's allocation: while a recovery hold exists it reports power `Unknown`, and otherwise it reports the power state of the last succeeded power operation's evidence or of discovery, whichever is newer. | Proposed for C |
 
 None of these conflicts with #174.
@@ -394,12 +467,21 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    with `HoldSettlesRequired`. Staff rows never queue. To admit
    a new service principal, add its class to the coordinator's principal
    configuration. Never hard-code an identity.
-3. **Implement its site worker** (Increment B). The site framework owns the
-   fence, the journal, credential lookup, the TLS pin and identity checks, the
-   deadline and result delivery. A kind supplies only its pre-effect checks,
-   which refuse with a named reason and send nothing, its journaled steps, how
-   it recovers by observation after a lost response, and its typed result
-   evidence. The worker contract is proposed and lands in Increment B.
+3. **Implement its site worker.** Implement `site.Kind`: `Check` runs after the
+   framework's checks and must not change the server, and checks the
+   capabilities the kind uses. `Run` performs every effect through
+   `Work.Step` with a `site.Step`. Give each step a bounded `Payload` for what
+   its observation needs, and an `Observe` that reads the server and that
+   payload to show whether the step took effect, for replay after a crash or
+   a lost response. Mark a step `Idempotent` only if sending it twice is
+   harmless. Implement `site.StartBy` if the work must begin soon after
+   admission. Return the
+   typed evidence. The framework owns the fence, the journal, the credential
+   lookup, the TLS pin and identity checks, the deadline, and result delivery,
+   and a kind never implements them. A Redfish kind reads its connection from
+   `Work.Connection` as a `*site.RedfishConnection`. Register the worker in
+   the site's `Runner.Kinds` under the kind's name. See
+   `internal/site/redfishwork` and its tests.
 4. **Define its evidence.** Set `Evidence` to `custody.StrictEvidence` over a
    typed, bounded Go struct. Its validator receives the operation, so it can
    require what that operation must prove, such as reset proof for a
@@ -448,3 +530,15 @@ Both local end-to-end runs include the `custody-crd-rules` phase. It proves
 that a Milo project API refuses every write the CRD rules forbid, which
 envtest alone cannot show, because Milo ignores admission policies stored in a
 project.
+
+Increment B's site tests run with `go test -race ./internal/site/...`:
+
+| Area | Tests |
+| --- | --- |
+| Stale fences and steps refused, also after a restart; replay observed | `TestStoreRefusesOlderFencesAndSurvivesARestart`, `TestStoreReplaysAJournaledStepAsAnObservation` |
+| Two workers on one Device, two Devices in parallel | `TestTwoWorkersOnOneDevice`, `TestTwoDevicesInParallel`, `TestANewerFenceStopsTheOlderWorker` |
+| A TLS pin mismatch and an identity mismatch send nothing, against TLS servers | `TestPinMismatchSendsNothing`, `TestIdentityMismatchSendsNothing` |
+| Every pre-effect refusal, stale assignments, deadlines, result deletion, payload validation | `TestPreEffectRefusalsSendNothing`, `TestAStaleAssignmentIsRefusedAndStoresNothing`, `TestAWorkerStopsAtItsDeadline`, `TestResultsAreDeletedOnceTheCoordinatorAnswers`, `TestAssignmentValidation` |
+| Per-Device credentials, the fence report | `TestSecretCredentialsUseThePerDeviceContract`, `TestReportGivesTheCoordinatorSeenAndStoppedFences` |
+| Step payloads, the start-by window, identity separate from capabilities, a resumed worker reporting unknown | `TestAStepPayloadIsJournaledAndReadBack`, `TestALateStartIsStaleAndSendsNothing`, `TestIdentityIsSeparateFromInstallCapabilities`, `TestAResumedWorkerThatCannotReachTheBMCReportsUnknown` |
+| Install and wipe against a simulated BMC, one power-on per phase after an interruption, fenced boot admission, bootstrap refused | `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |
