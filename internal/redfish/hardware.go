@@ -17,8 +17,9 @@ const maxComponents = 64
 type Hardware struct {
 	SerialNumber string
 	UUID         string
-	// Healthy is false when the System or any component reports a health
-	// other than OK, or no health at all.
+	// Healthy is false when the System or any present component reports
+	// Warning or Critical health. Redfish allows a component to omit its
+	// health, and an omitted health is not a fault.
 	Healthy    bool
 	Unhealthy  []string
 	Processors []Processor
@@ -51,10 +52,10 @@ type status struct {
 	Health string
 }
 
-// healthy reports whether a component counts as healthy. An absent or
-// disabled component is skipped; anything else must report OK.
+// skip reports whether a component is not present to judge. ok reports
+// whether a present component reports no fault.
 func (s status) skip() bool { return s.State == "Absent" || s.State == "Disabled" }
-func (s status) ok() bool   { return s.Health == "OK" }
+func (s status) ok() bool   { return s.Health != "Warning" && s.Health != "Critical" }
 
 // Hardware reads the verified System and its processors, memory, storage and
 // network interfaces. Every member must sit under the System.
@@ -151,31 +152,6 @@ func (c *Client) Hardware(ctx context.Context, sys System) (Hardware, error) {
 	}); err != nil {
 		return Hardware{}, err
 	}
-	if err := each(doc.SimpleStorage.ID, func(p string) error {
-		var controller struct {
-			ID      string `json:"Id"`
-			Devices []struct {
-				Name          string
-				CapacityBytes int64
-				Status        status
-			}
-		}
-		if err := getJSON(api, p, &controller); err != nil {
-			return err
-		}
-		for _, device := range controller.Devices {
-			if device.Status.State == "Absent" || device.CapacityBytes <= 0 {
-				continue
-			}
-			check("Disk "+device.Name, device.Status)
-			if len(hw.Disks) < maxComponents {
-				hw.Disks = append(hw.Disks, Disk{Name: device.Name, CapacityBytes: device.CapacityBytes})
-			}
-		}
-		return nil
-	}); err != nil {
-		return Hardware{}, err
-	}
 	if err := each(doc.Storage.ID, func(p string) error {
 		var storage struct {
 			Drives []link
@@ -184,9 +160,10 @@ func (c *Client) Hardware(ctx context.Context, sys System) (Hardware, error) {
 			return err
 		}
 		for _, d := range storage.Drives {
-			dp, err := under(d.ID)
-			if err != nil || dp == "" {
-				return errors.New("redfish: drive outside the System")
+			// Drives sit under the System or, on some BMCs, under a Chassis.
+			dp, err := cleanPath(d.ID)
+			if err != nil || !(strings.HasPrefix(dp, sys.Path+"/") || strings.HasPrefix(dp, "/redfish/v1/Chassis/")) {
+				return errors.New("redfish: drive outside the System and its Chassis")
 			}
 			var drive struct {
 				Name          string
@@ -208,6 +185,35 @@ func (c *Client) Hardware(ctx context.Context, sys System) (Hardware, error) {
 	}); err != nil {
 		return Hardware{}, err
 	}
+	// A BMC may list the same drives under both Storage and SimpleStorage.
+	// Storage is the current schema, so SimpleStorage is read only without it.
+	if doc.Storage.ID == "" {
+		if err := each(doc.SimpleStorage.ID, func(p string) error {
+			var controller struct {
+				ID      string `json:"Id"`
+				Devices []struct {
+					Name          string
+					CapacityBytes int64
+					Status        status
+				}
+			}
+			if err := getJSON(api, p, &controller); err != nil {
+				return err
+			}
+			for _, device := range controller.Devices {
+				if device.Status.State == "Absent" || device.CapacityBytes <= 0 {
+					continue
+				}
+				check("Disk "+device.Name, device.Status)
+				if len(hw.Disks) < maxComponents {
+					hw.Disks = append(hw.Disks, Disk{Name: device.Name, CapacityBytes: device.CapacityBytes})
+				}
+			}
+			return nil
+		}); err != nil {
+			return Hardware{}, err
+		}
+	}
 	p, err := under(doc.EthernetInterfaces.ID)
 	if err != nil {
 		return Hardware{}, err
@@ -225,10 +231,12 @@ func architecture(processor, instructionSet string) string {
 	switch {
 	case instructionSet == "x86-64" || (processor == "x86" && instructionSet == ""):
 		return "amd64"
-	case instructionSet == "ARM-A64" || processor == "ARM":
+	case instructionSet == "ARM-A64":
 		return "arm64"
+	case instructionSet != "":
+		return instructionSet
 	}
-	return strings.ToLower(instructionSet)
+	return processor
 }
 
 // Firmware reads the UpdateService's FirmwareInventory. A service without

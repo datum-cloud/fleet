@@ -34,18 +34,24 @@ if [ "$mode" = wipe ]; then
  exit 0
 fi
 if [ "$mode" = burnin ]; then
- # Lab burn-in: read the whole disk and keep the CPUs busy for the plan's
+ # Lab burn-in: read the whole disk, then keep every CPU busy for the plan's
  # duration, then report the result. It writes nothing to the disk. A real
  # burn-in image is operator policy; this one only proves the boot and
- # receipt path.
+ # receipt path. Tracing stops for the loop, so the console stays small.
  trap '/bin/busybox poweroff -f' EXIT
  case "$duration" in ''|*[!0-9]*) exit 1;; esac
  result=passed
  /bin/busybox dd if=/dev/vda of=/dev/null bs=4M || result=failed
+ set +x
+ cpus=$(grep -c ^processor /proc/cpuinfo)
  end=$(($(cut -d. -f1 /proc/uptime) + duration))
- while [ "$(cut -d. -f1 /proc/uptime)" -lt "$end" ]; do
-  /bin/busybox sha256sum /proc/meminfo >/dev/null
+ i=0
+ while [ "$i" -lt "$cpus" ]; do
+  ( while [ "$(cut -d. -f1 /proc/uptime)" -lt "$end" ]; do /bin/busybox sha256sum /proc/meminfo >/dev/null; done ) &
+  i=$((i + 1))
  done
+ wait || result=failed
+ set -x
  printf 'FLEET-BURNIN:%s:%s\n' "$receipt" "$result"
  sync
  exit 0
