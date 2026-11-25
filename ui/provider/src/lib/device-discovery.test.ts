@@ -65,7 +65,6 @@ describe('identity rows', () => {
       ['Model', 'X1', 'Vendor X1', undefined],
       ['System UUID', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', undefined],
       ['SKU', undefined, 'SKU-9', undefined],
-      ['Power', undefined, 'On', undefined],
     ]);
   });
 

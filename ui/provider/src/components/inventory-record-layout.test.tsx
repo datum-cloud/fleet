@@ -127,16 +127,17 @@ describe('Device page states each fact once', () => {
     expect(screen.queryByText(/\d+ network ports? · /)).toBeNull();
     // No caveat sentence runs inline.
     expect(screen.queryByText(/Unknown is not free/)).toBeNull();
-    // The tabs hold only what is not about ports, with no count badges.
-    expect(tabs().getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Location', 'Hardware & management']);
-    expect(container.querySelector('.inventory-record-tabs .inventory-count')).toBeNull();
+    // The tabs hold only what is not about ports; only Operations carries a count.
+    expect(tabs().getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Location', 'Hardware & management', expect.stringMatching(/^Operations/)]);
+    expect(container.querySelectorAll('.inventory-record-tabs .inventory-count').length).toBeLessThanOrEqual(1);
+    expect(tabs().getByRole('tab', { name: 'Location' }).querySelector('.inventory-count')).toBeNull();
   });
 
   it('puts identity in one header strip and the display-name reason in the button, not on the page', () => {
     const { container } = show(record('Device', 'example-srv-a01-01'));
     const header = container.querySelector<HTMLElement>('.inventory-record-header')!;
     expect(header.querySelector('dl.inventory-fact-strip')).toHaveAttribute('aria-label', 'Identity');
-    expect(facts(header)).toEqual(['ModelExample 1U compute', 'SerialSYNTH-EX-01', 'Asset tagEX-ASSET-01', expect.stringMatching(/^BMCBMC ✓/)]);
+    expect(facts(header)).toEqual(['ModelExample 1U compute', 'SerialSYNTH-EX-01', 'Asset tagEX-ASSET-01', expect.stringMatching(/^PowerOn/), expect.stringMatching(/^BMCBMC ✓/)]);
     // The old Identity row and its separate draw line are gone from the body.
     expect(container.querySelector('.inventory-primary .inventory-fields')).toBeNull();
     expect(container.querySelector('.inventory-primary .inventory-device-draw')).toBeNull();

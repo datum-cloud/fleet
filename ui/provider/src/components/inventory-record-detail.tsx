@@ -25,6 +25,7 @@ import { DeviceDrawFact, PowerFeedPath, UPSTREAM_INLINE_LIMIT, upstreamWords } f
 import { CapacityBar, useTelemetry } from './power-telemetry';
 import { BmcChip, BmcComparison, DiscoveryHealth, IdentityComparison, NicComparison } from './device-discovery';
 import { discovered, identityRows } from '../lib/device-discovery';
+import { DevicePowerFact, DevicePowerHistory } from './device-power';
 
 export type DetailKind = 'Site' | 'Device' | 'Facility' | 'Rack' | 'DeviceClaim' | 'Cable' | 'PowerFeed' | 'Manufacturer' | 'DeviceType';
 export type DetailEntry = { kind: DetailKind; record: RawDevice | RawDeviceClaim | PhysicalRecord };
@@ -76,7 +77,10 @@ function RecordLinks({ kind, records, helpers, empty }: { kind: DetailKind; reco
 
 // ---- Device ----
 
-export function deviceDetail(device: RawDevice, helpers: DetailHelpers, locationEditor?: ReactNode): DetailView {
+/** The Operations tab's count, from the power operations the page has read. */
+export interface PowerTabCount { count?: number | string; countNote?: string }
+
+export function deviceDetail(device: RawDevice, helpers: DetailHelpers, locationEditor?: ReactNode, power?: PowerTabCount): DetailView {
   const { inventory, reference, href } = helpers;
   const namespace = device.metadata.namespace;
   const catalog = deviceCatalog(device, inventory);
@@ -115,6 +119,7 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
       {device.spec.identity.serial && <div><dt>Serial</dt><dd className="inventory-numeric">{device.spec.identity.serial}</dd></div>}
       {device.spec.assetTag && <div><dt>Asset tag</dt><dd className="inventory-numeric">{device.spec.assetTag}</dd></div>}
       {components.some(component => component.type === 'PowerInlet') && <DeviceDrawFact device={device} />}
+      <DevicePowerFact device={device} />
       <BmcChip device={device} />
     </dl>
   </>;
@@ -184,6 +189,7 @@ export function deviceDetail(device: RawDevice, helpers: DetailHelpers, location
         </FactSection>}
       </>,
     },
+    { id: 'operations', label: 'Operations', ...power, content: <DevicePowerHistory device={device} /> },
   ];
   return { summary, issues, primary, tabs };
 }

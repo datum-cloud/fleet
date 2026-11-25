@@ -109,6 +109,10 @@ fixture build replaces every API read with synthetic data:
 - Inventory writes are disabled: permission checks answer "not allowed", so
   management and capacity-registration controls stay hidden or read-only.
   Nothing is sent to the API.
+- Device power reads synthetic custody and power operations
+  (`src/lib/power-fixtures.ts`). The power permission is granted so the
+  control shows; an operation created on the page stays in memory as
+  Pending. Nothing is sent to the API.
 
 Add `?fixture=<scenario>` to a preview URL to deny whole collections, as a
 403 would: `power-feeds-denied`, `devices-denied` or `cables-denied`

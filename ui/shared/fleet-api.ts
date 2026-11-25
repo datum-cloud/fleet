@@ -338,6 +338,8 @@ export interface ObservedSystem {
   sku?: string;
   powerState?: string;
   networkInterfaces?: ObservedNetworkInterface[];
+  /** The ComputerSystem.Reset types the BMC advertises, read but never invoked. */
+  resetTypes?: string[];
 }
 
 export interface ObservedNetworkInterface {
@@ -430,5 +432,69 @@ export interface PhysicalRecord {
     supply?: { type: string; voltageV?: number; currentA?: number; phase?: string };
     terminations?: PhysicalComponent[];
     upstreamSources?: ExternalReference[];
+  };
+}
+
+// Device custody and power operations: fleet.datumapis.com/v1alpha1
+// DeviceCustody and DevicePowerOperation, transcribed from
+// internal/api/operations/v1alpha1. The coordinator is the only writer of
+// custody and of operation status; a requester writes an operation's spec
+// once, at create.
+
+export type CustodyHolderType = 'None' | 'Allocation' | 'Release' | 'Service' | 'Retired';
+export type OperationPhase = 'Pending' | 'Admitted' | 'Dispatched' | 'Verifying' | 'Succeeded' | 'Failed' | 'Cancelled' | 'OutcomeUnknown';
+
+export interface OperationReference { kind: string; name: string; uid: string }
+export interface OperationCreator { username: string; uid: string }
+
+export interface DeviceCustody {
+  metadata: ObjectMeta;
+  spec: {
+    deviceRef: { name: string; uid: string };
+    state: 'Verified' | 'Unverified';
+    holder: { type: CustodyHolderType; allocationRef?: LocalReference; openGates?: string[] };
+    fence: number;
+    activeOperation?: OperationReference & { fence: number; phase: OperationPhase; admittedAt: string; deadline: string; creator: OperationCreator };
+    lastResult?: OperationReference & { fence: number; phase: OperationPhase; reason?: string; message?: string; finishedAt: string };
+    recoveryHold?: OperationReference & { fence: number; since: string; reason: string; deadline?: string; retries?: number };
+    conflicts?: string[];
+  };
+}
+
+/** One command; each value is the Redfish ComputerSystem.Reset type of the same name. */
+export type PowerAction = 'On' | 'ForceOff' | 'ForceRestart' | 'PowerCycle';
+export type ObservedPowerState = 'On' | 'Off' | 'PoweringOn' | 'PoweringOff' | 'Paused';
+
+/** Power result evidence. It never carries a credential or BMC response content. */
+export interface PowerEvidence {
+  requestSentAt?: string;
+  power?: { before?: { state: ObservedPowerState; observedAt: string }; after?: { state: ObservedPowerState; observedAt: string } };
+  resetEvidence?: 'LastResetTime' | 'ObservedOff';
+}
+
+export interface DevicePowerOperation {
+  apiVersion?: string;
+  kind?: string;
+  metadata: ObjectMeta & { generateName?: string };
+  spec: {
+    creator: OperationCreator;
+    deviceRef: { name: string; uid: string };
+    /** Exactly one: a staff serviceRequest, or the Metal provider's allocationRef. */
+    authority: { serviceRequest?: { reason: string }; allocationRef?: LocalReference };
+    action: PowerAction;
+    /** Staff only: the server staff expect behind the BMC. */
+    expectedSystemUUID?: string;
+    /** Provider only. */
+    machineGeneration?: number;
+  };
+  status?: {
+    phase?: OperationPhase;
+    reason?: string;
+    message?: string;
+    fence?: number;
+    admittedAt?: string;
+    deadline?: string;
+    finishedAt?: string;
+    evidence?: PowerEvidence;
   };
 }

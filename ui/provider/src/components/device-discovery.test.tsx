@@ -31,7 +31,9 @@ describe('Device page: expected next to observed identity', () => {
     expect(cells('Identity', 'Model').map(cell => cell.textContent)).toEqual(['Model', 'EX-C1', 'Example EX-C1']);
     // Spec records no SKU or power state: the expected cell is blank.
     expect(cells('Identity', 'SKU').map(cell => cell.textContent)).toEqual(['SKU', '', 'SYNTH-SKU-1']);
-    expect(cells('Identity', 'Power')[2]).toHaveTextContent(/^On$/);
+    // Power is stated once, in the header strip.
+    expect(within(table('Identity')).queryByRole('cell', { name: 'Power' })).toBeNull();
+    expect(within(screen.getByLabelText('Identity', { selector: 'dl' })).getByText('Power', { selector: 'dt' }).nextElementSibling).toHaveTextContent(/^On/);
     expect(table('Identity').querySelector('[data-tone]')).toBeNull();
     expect(hardware()).not.toHaveTextContent(/verified/i);
     // The table states the system UUID; the plain fact is not repeated.

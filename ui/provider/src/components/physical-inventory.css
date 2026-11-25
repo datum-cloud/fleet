@@ -609,3 +609,12 @@
 .inventory-discovery-pair { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px 24px; min-width:0; }
 .inventory-discovery-pair > * { min-width:0; }
 .inventory-discovery-identity .inventory-dense-table td:not(:first-child) { white-space:normal; overflow-wrap:anywhere; }
+
+/* Device power: the header control, its outcome badge and the Operations tab. */
+.inventory-title-actions .inventory-power-control { display:contents; }
+.inventory-title-actions .inventory-power-control .inventory-management-controls { flex-shrink:0; }
+@media(min-width:801px) { .inventory-title-actions:has(.inventory-power-control) { flex-wrap:nowrap; } }
+.fleet-inventory .inventory-power-control .inventory-management-controls,.fleet-inventory .inventory-power-control .inventory-management-controls > button { min-width:0; }
+.inventory-power-outcome[data-tone="progress"] { border-style:dashed; }
+.inventory-power-confirm { margin:8px 0; color:var(--destructive); }
+.inventory-power-reason { display:inline-block; max-width:32ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; }

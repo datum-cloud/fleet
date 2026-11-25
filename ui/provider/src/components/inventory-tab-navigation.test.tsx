@@ -1,5 +1,6 @@
 import { selectedValue } from '../test/field-select';
 import { findEnabledButton } from '../test/enabled-button';
+import { isPowerRead } from '../test/power-reads';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
@@ -23,6 +24,8 @@ function host(query = '', management = false) {
   const collections = vi.fn();
   const writes = vi.fn();
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+    // The Device page's power reads are its own, not inventory collections or management checks.
+    if (isPowerRead(url, init)) return Response.json({ error: 'Not found' }, { status: 404 });
     if (url.includes('selfsubjectaccessreviews')) {
       reviews();
       if (holdReview) {

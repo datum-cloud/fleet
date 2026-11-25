@@ -1,5 +1,6 @@
 import { selectOptions } from '../test/field-select';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { isPowerRead } from '../test/power-reads';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useNavigate } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -209,7 +210,8 @@ describe('manufacturer detail', () => {
     fireEvent.focus(window);
     fireEvent.click(screen.getByRole('button', { name: 'History forward' }));
     expect(screen.getByRole('heading', { name: 'Physical server' })).toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    // The Device page reads only its own power state; no inventory is reread.
+    expect(fetch.mock.calls.filter(([url, init]) => !isPowerRead(url, init))).toEqual([]);
   });
 
   it('disambiguates picker choices only when display labels collide', () => {
