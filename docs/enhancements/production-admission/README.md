@@ -17,7 +17,7 @@ stage: alpha
   - [Admission fence](#admission-fence)
   - [Quota custody](#quota-custody)
   - [Project lifecycle](#project-lifecycle)
-  - [Requests to Milo](#requests-to-milo)
+  - [Requests to other teams](#requests-to-other-teams)
   - [Implementation decisions](#implementation-decisions)
   - [Acceptance tests](#acceptance-tests)
 - [Production readiness review questionnaire](#production-readiness-review-questionnaire)
@@ -36,14 +36,16 @@ things from Milo before production allocation can run:
 
 - the identity of the caller who created a Machine, recorded so that a
   controller can trust it;
-- an admission fence that orders allocation against revoked access, suspended
-  entitlements and projects, and lost quota; and
+- an admission fence that orders allocation against revoked access and
+  suspended or deleted projects and entitlements; and
 - a quota hold that Fleet keeps until it releases the hardware.
 
-This enhancement records what Milo already supports and designs the rest. Fleet
-can capture the caller, authorize the request, and hold quota now. The fence,
-purge guard, and protected finalizers need changes in Milo. They are listed as
-[requests to Milo](#requests-to-milo).
+This enhancement records what Milo supports today and designs the rest. Milo
+already lets Fleet record the caller, check the caller's access when the
+Machine is created, and hold quota with a finalizer. The fence, fresh access
+reviews, protected finalizers, an immutable quota claim, and a purge guard
+need changes owned by other teams. They are listed as [requests to other
+teams](#requests-to-other-teams).
 
 This enhancement is a proposal. Nothing in it is implemented.
 
@@ -59,8 +61,8 @@ revoked while a request is in progress.
 
 - Fleet acts only for the caller who created the Machine, never with its own
   authority.
-- A Machine binds only if every admission check still holds when the
-  allocation commits.
+- A Machine binds only if access, entitlement, and project state still hold
+  when the allocation commits.
 - Quota stays held until the hardware is released, even if the Machine, its
   namespace, or its project is deleted first.
 - Each requirement uses one-object conditional updates and deterministic names,
@@ -76,12 +78,12 @@ revoked while a request is in progress.
 
 ## Proposal
 
-A Machine create passes through Fleet's admission webhook in Milo's root API
-server. The webhook records the caller in the Machine and checks the caller's
-permissions. The allocator later commits the allocation only if the fence of
-each project involved has not moved since it checked admission. Fleet holds
-the Machine's quota claim with its own finalizer until release closes the quota
-gate.
+A Machine create passes through Fleet's admission webhooks in Milo's root API
+server. They record the caller in the Machine and check the caller's
+permissions. The allocator later commits the allocation only if the fences of
+the consumer and provider projects have not moved since it checked admission.
+Fleet holds the Machine's quota claim with its own finalizer until release
+closes the quota gate.
 
 ![Machine admission from create through a fenced commit](diagrams/admission-flow.svg)
 
@@ -97,15 +99,15 @@ Fleet can use the capability, but a gap remains that only Milo can close.
 | Webhooks see the real caller | Exists. Project requests run the root server's authentication, authorization, and admission chain, and webhooks registered at the root see them. | None. |
 | Trusted project context | Exists. Milo overwrites the caller's project context on every project request. | Root requests outside a project keep whatever context the caller supplied. |
 | Creator recording | Partial. Some Milo kinds stamp a creator in their own webhooks. Nothing generic exists. | Fleet must record the creator itself. |
-| Authorization check for a retained caller | Partial. Access reviews accept a named user. | Allowed decisions are cached for minutes, and no revision ties a decision to a point in time. |
-| Project suspension | Partial. Suspension blocks creates and updates in the project's API. | It takes effect asynchronously, with no point at which it is known to be in force. |
-| Invalidation acknowledgment | Missing. | No fence, epoch, or acknowledgment exists for access, entitlement, or suspension changes. |
-| Quota claim lifecycle | Partial. Grants are exact and recovered after a crash. A deleting claim stays counted while a finalizer holds it. | Deleting a claim frees quota at once. Claim specs can change after the grant, which also frees quota. |
-| Purge ordering | Partial. Purge honors finalizers on objects and namespaces. | Purge deletes every object at once, including credentials and quota claims, and a finalizer on the Project does not delay it. |
+| Access review for a retained caller | Partial. Access reviews accept a named user and go through the normal authorizer. | Milo sets no limit on how long the authorizer may cache an allowed decision. No revision ties a decision to a point in time. |
+| Project suspension | Partial. Suspension refuses creates and updates in the project's API. | It takes effect asynchronously, with no point at which it is known to be in force. |
+| Project deletion | Partial. Purge honors finalizers on objects and namespaces. | A deleting project still serves its API and admits new objects. Purge deletes every object at once, including credentials and quota claims, and a finalizer on the Project does not delay it. |
+| Invalidation acknowledgment | Missing. | No fence, epoch, or acknowledgment exists for access, entitlement, or project changes. |
+| Quota claim lifecycle | Partial. A granted claim is never revoked. A deleting claim stays counted while a finalizer holds it. | Deleting a claim frees quota at once. Removing a request or changing the consumer after the grant also frees it. |
 | Protected finalizers | Missing. | Anyone who can update an object can remove a service's finalizer. |
 
-ServiceEntitlement is owned by the service catalog, not Milo. It has no
-fence or acknowledgment either.
+ServiceEntitlement is owned by the service catalog, not Milo. It has no fence
+or acknowledgment either.
 
 ### Caller identity
 
@@ -116,18 +118,21 @@ Machine protection finalizer, so the caller and the finalizer are recorded in
 the same write that creates the Machine.
 
 Fleet's validating webhook then refuses a create whose creator differs from
-the caller, and any change to the creator. A schema rule also keeps the field
-unchanged after create. Both webhooks fail closed and refuse a request without
-a Milo project context.
+the caller or that lacks the finalizer, and any change to the creator. A
+schema rule also refuses adding, changing, or removing the creator after
+create. Both webhooks fail closed and refuse a request without a Milo project
+context.
 
-The controller trusts the creator because only the webhook could have set it.
+Device operations use a validating webhook only, because Fleet's own services
+create them and know their identity. Customers create Machines, and a client
+cannot be expected to send its own UID, so the Machine webhook sets it.
+
+The controller trusts the creator because only the webhooks could have set it.
 A Machine without a creator was created before the webhooks were registered,
 or while they were bypassed. Fleet does not allocate it and reports
 `CreatorUnknown`.
 
-Fleet retains the username and UID, never a token or group list. Group
-membership is resolved when the permission is checked, so a removed group
-member loses access.
+Fleet retains the username and UID, never a token or group list.
 
 ### Request authorization
 
@@ -139,45 +144,57 @@ while the caller is still on the request:
 - `use` on the MachineProfile, and on its provider source when the profile is
   published.
 
-A cross-project check keeps the caller and changes only the project named in
-the review. A denied create fails immediately, so the customer sees the error.
-A review Fleet cannot complete also refuses the create.
+The review carries the caller's full identity, groups included. A
+cross-project check keeps the caller and changes only the project named in the
+review. A denied create fails immediately, so the customer sees the error. A
+review Fleet cannot complete also refuses the create.
 
-The webhook's decision only gates the create. The allocator repeats the same
-reviews, for the retained creator, when it [commits the
-allocation](#admission-fence). A caller who loses access before the commit
-gets no machine. A caller who loses access after the commit keeps the machine,
-as the [active-allocation
+The webhook's decision only gates the create, so a cached answer there is
+acceptable. The allocator repeats the same reviews for the retained creator
+when it [commits the allocation](#admission-fence). Those reviews must not be
+cached, and must resolve the creator's current groups from the username and
+UID. Milo does not offer that yet ([Milo 5](#milo-5-fresh-access-reviews-for-a-retained-caller)),
+so production commits wait for it.
+
+A caller who loses access before the commit gets no machine. A caller who
+loses access after the commit keeps the machine, as the [active-allocation
 contract](../machine-lifecycle/README.md#request-authority) requires.
 
 ### Admission fence
 
-Each project has one fence with a generation. An authority that removes access
-raises the generation first, then waits for every participating service to
-acknowledge the new generation. Revoked access, a suspended entitlement, a
-suspended or deleting project, and a retiring provider all raise it. Changes
-that only grant access do not.
+Each project has one fence with a generation. An authority that can remove
+access raises the generation first, then waits for every participating
+service to acknowledge it. Revoked access, a suspended entitlement, and a
+suspended or deleted project raise it. Changes that only grant access do not.
+The fence of the provider project also covers provider retirement.
 
-The allocator commits a Machine in this order:
+Each MachineAllocation is named from its Machine, as Device custody already
+requires. It records the generation of the consumer fence and of the provider
+fence. The allocator commits a Machine in this order:
 
-1. Read the consumer and provider fences from the API server, not a cache.
-2. Check admission for the retained creator: access reviews, an Active
-   entitlement that is not suspended, a consumer project that is neither
-   suspended nor deleting, a provider that is not retiring, and a granted quota
-   claim held by Fleet.
-3. Create the MachineAllocation as `Pending`, recording both fence generations
-   and a digest of the decision.
+1. Read both fences from the API server, not a cache.
+2. Check admission for the retained creator with fresh access reviews, an
+   Active entitlement that is not suspended, and consumer and provider
+   projects that are neither suspended nor deleting.
+3. Create the MachineAllocation as `Pending` with both generations.
 4. Read both fences again. If either moved, delete the allocation and start
    again.
 5. Change the allocation from `Pending` to `Admitted` with a conditional
-   update.
-6. Claim Device custody. If another holder took the Device, delete the
+   update. This is the commit.
+6. Claim Device custody once. On any result other than success, delete the
    allocation and start again from step 1. No effect ran under it.
 
-When a fence moves, Fleet's fence controller lists the project's `Pending`
-allocations from the API server. It deletes each one recorded at an older
-generation, with a precondition on its resource version. It then acknowledges
-the new generation.
+Every delete in these steps carries the allocation's UID and resource version
+as preconditions, so a delayed worker cannot delete a newer allocation with the
+same name. A recreated allocation reuses the name, because the deleted one
+never held a Device.
+
+When a fence moves, Fleet's fence controller lists, from the API server, every
+`Pending` allocation that records that fence: by consumer project for a
+consumer fence, across every provider namespace that holds allocations, and by
+provider project for a provider fence. It deletes each one recorded at an
+older generation, with the same preconditions. It acknowledges the new
+generation only after a complete list contains no such allocation.
 
 The allocation record is the single object that both sides change, so one
 conditional write decides each race:
@@ -185,30 +202,39 @@ conditional write decides each race:
 - **Invalidation wins:** the fence controller deleted the `Pending`
   allocation. The Machine does not bind. The allocator checks admission again
   at the new generation, and refuses the Machine if access is gone.
-- **Allocation wins:** the allocation became `Admitted` first. It was admitted
+- **Allocation wins:** the allocation became `Admitted` first. It committed
   before the acknowledgment, and the active-allocation contract applies.
 
 An allocation created after the fence moved finds the new generation in step 4.
 An acknowledgment therefore means that no admission checked at an older
-generation can still commit. An `Admitted` allocation that loses its Device
-returns to step 1, so an older admission is never reused.
+generation can still commit. Step 6 makes one attempt, so an `Admitted`
+allocation cannot wait for a Device and claim it long after an
+acknowledgment.
 
-Quota is not a fence participant. A granted claim stays granted, and Fleet
-holds it until release, so quota cannot be withdrawn under a pending
-allocation.
+The machine lifecycle's [admission
+ordering](../machine-lifecycle/README.md#admission-ordering) lists more inputs
+than the fence covers:
+
+- **Quota** needs no fence. Milo never revokes a granted claim, and Fleet holds
+  the claim until release.
+- **Class and profile policy and capacity eligibility** are Fleet's own state.
+  Step 2 checks them, and step 4 rereads them. A withdrawal has no
+  acknowledgment, so a commit that races it may still win.
 
 ### Quota custody
 
 Fleet creates one ResourceClaim per Machine, named from the Machine UID within
-its project. The claim carries Fleet's quota custody finalizer from the moment
-it is created. Milo keeps counting a claim while a finalizer holds it, so
-deleting the claim, or purging its namespace, does not free quota early.
+its project, after the access and project checks pass. The claim carries
+Fleet's quota custody finalizer from the moment it is created. Milo keeps
+counting a claim while a finalizer holds it, so deleting the claim, or purging
+its namespace, does not free quota early.
 
-Release closes the quota gate after cleaning:
+Fleet releases the claim when release closes the quota gate after cleaning, or
+when a Machine is refused or deleted before it holds an allocation:
 
 1. Delete the claim, if it is not already deleting.
 2. Remove Fleet's finalizer with a conditional update.
-3. Close the gate once the claim is gone.
+3. Close the gate, or remove the Machine's finalizer, once the claim is gone.
 
 The finalizer is the custody anchor, and its removal is the release
 acknowledgment: quota is free only after Fleet removes it. A claim that is
@@ -216,30 +242,32 @@ missing while its allocation is active means someone removed Fleet's
 finalizer. Fleet reports `QuotaCustodyLost` and keeps the allocation. It never
 reclaims a customer's machine because quota accounting failed.
 
-Two Milo gaps weaken this hold until they are closed. Anyone who can update
-the claim can remove Fleet's finalizer, and a change to the claim's requests
-frees quota without a delete. Fleet compares every claim it reads with the
-claim it would create, and reports a mismatch.
+Until Milo closes two gaps, the hold is weaker. Anyone who can update the
+claim can remove Fleet's finalizer, and removing a request or changing the
+consumer frees quota without a delete. Fleet compares every claim it reads
+with the claim it would create, and reports a mismatch.
 
 ### Project lifecycle
 
 **Consumer project deletion.** Purge deletes every Machine and quota claim at
-once. Their finalizers hold them, and purge waits for namespaces to empty. Fleet
-releases each allocation through the provider project, so consumer deletion
-works today, except that the finalizers are not protected.
+once. Their finalizers hold them, and purge waits for the namespaces to empty.
+Today Fleet stops watching a project once its service consumer record is
+deleting or inactive, so nothing would remove those finalizers and purge would
+wait forever. Fleet must stay engaged with every consumer project in which it
+holds a Machine or claim finalizer, whatever the state of that record, and
+release each allocation through the provider project.
 
 **Provider retirement.** Purge deletes custody, operations, credentials, and
 access grants at the same time. Cleanup can lose the access it needs before
 obligations settle. Fleet adds a finalizer to the provider Project and removes
 it only after the [retirement
 guard](../machine-lifecycle/README.md#provider-project-retirement) settles.
-Purge must not start while that finalizer remains. This needs a change in
-Milo.
+Purge must not start while that finalizer remains.
 
-**Suspension.** A suspension raises the fence. Fleet's fence controller stops
-pending allocations before it acknowledges.
+**Suspension and deletion.** Both raise the fence. Fleet's fence controller
+stops pending allocations before it acknowledges.
 
-### Requests to Milo
+### Requests to other teams
 
 Each request is written so that its owner can file it as an issue. Changing
 another team's repository is a decision for that team.
@@ -264,8 +292,9 @@ caller is that service's principal. Deleting the object stays allowed.
 
 #### Milo 2: ResourceClaim spec immutability
 
-**Problem.** Changing a claim's requests after the grant frees quota without a
-delete. Fleet cannot tell whether its hold still exists.
+**Problem.** Removing a request from a claim, or changing its consumer, after
+the grant frees quota without a delete. Fleet cannot tell whether its hold
+still exists.
 
 **Request.** Make a ResourceClaim's spec immutable after create. Keep counting
 a claim while it is deleting and a finalizer holds it, as Milo does today.
@@ -293,7 +322,7 @@ finalizer. Report each finalizer that blocks purge in the Project's status.
   credential, and access grant until the finalizer is removed.
 - Removing the last service finalizer starts purge as it runs today.
 - The Project's status names each blocking service.
-- Admission into the project stays closed while purge waits.
+- The deleting project refuses new objects while purge waits.
 
 #### Milo 4: Per-project admission fence
 
@@ -301,50 +330,76 @@ finalizer. Report each finalizer that blocks purge in the Project's status.
 checks access and then commits can commit after the access was removed, and
 cannot report when old decisions stop committing.
 
-**Request.** Each project has one fence object with a generation that only Milo
+**Request.** Each project has one fence with a generation that only Milo
 raises. Milo raises it whenever access to the project can be removed:
 
 - a PolicyBinding in the project is changed or deleted;
 - a Role bound in the project changes;
 - a member is removed from a group bound in the project;
 - the Project is suspended or deleted; and
-- a ServiceEntitlement for the project is suspended or deactivated. The service
-  catalog owns this source.
+- a ServiceEntitlement for the project is suspended or deactivated, as
+  reported under [Service catalog 1](#service-catalog-1-entitlement-changes-raise-the-fence).
 
 Milo raises the generation only after the change takes effect in the
-authorizer. Each participating service writes its own acknowledgment object
-with the highest generation it has settled. Milo reports a suspension or
-deletion as in force only after every registered participant has acknowledged
-its generation.
+authorizer's source of truth. Each participating service writes its own
+acknowledgment with the highest generation it has settled. Milo reports a
+suspension or deletion as in force only after every registered participant has
+acknowledged its generation.
+
+The fence and the acknowledgments must stay writable while the project is
+suspended or deleting, either by living outside the project or by an
+exemption.
+
+A participant that never acknowledges blocks the report, not the suspension:
+the project is suspended as it is today. Milo names the participant in the
+status. A platform administrator can remove a participant's registration,
+which Milo records with the generation it was removed at.
 
 **Acceptance criteria.**
 
 - Each listed change raises the generation at least once, and nothing
   lowers it.
-- An access review evaluated after the generation is raised reflects the
-  change.
+- An uncached access review ([Milo 5](#milo-5-fresh-access-reviews-for-a-retained-caller))
+  evaluated after the generation is raised reflects the change.
 - Only Milo can write the fence. Each participant can write only its own
-  acknowledgment.
-- A suspension reports in force only after every participant acknowledges.
+  acknowledgment, including while the project is suspended or deleting.
+- A suspension reports in force only after every participant acknowledges, and
+  the status names a participant that has not.
+- Removing a participant's registration is recorded and unblocks the report.
 - A test covers a revocation that races a participant's commit.
 
 #### Milo 5: Fresh access reviews for a retained caller
 
-**Problem.** Access review results are cached, so an allowed answer can last
-minutes after the access is revoked. Fleet checks access for a retained
-creator with only a username and UID.
+**Problem.** The authorizer may answer an access review from a cache, so an
+allowed answer can outlive a revocation. Fleet checks access for a retained
+creator with only a username and UID, so it cannot supply current groups.
 
-**Request.** Offer an access review that bypasses the decision cache and
+**Request.** Offer an access review that bypasses any decision cache and
 resolves the user's current group membership from the username and UID. This
 may need a change in the authorization provider as well as Milo.
 
 **Acceptance criteria.**
 
-- After a PolicyBinding is deleted, an uncached review for its subject is
-  denied as soon as the change takes effect.
+- After a PolicyBinding is deleted and the change takes effect, an uncached
+  review for its subject is denied.
 - A review naming only a user's name and UID reflects that user's current
   groups.
-- The uncached path is limited to service principals that are granted it.
+- Only service principals granted the uncached path can use it.
+
+#### Service catalog 1: Entitlement changes raise the fence
+
+**Problem.** A ServiceEntitlement can be suspended or deactivated while a
+service commits work under it, and nothing orders the two.
+
+**Request.** When a ServiceEntitlement for a project is suspended or
+deactivated, raise that project's fence from Milo 4 before reporting the
+change as effective.
+
+**Acceptance criteria.**
+
+- Suspending or deactivating an entitlement raises the fence of its project.
+- The entitlement reports the change as in force only after the fence's
+  participants acknowledge.
 
 ### Implementation decisions
 
@@ -352,8 +407,8 @@ Record these decisions before production allocation is enabled:
 
 - **Interim fence.** Until Milo provides the fence, Fleet can raise a fence of
   its own when it observes invalidations. Its order is then only as good as
-  Fleet's observation and the authorizer cache. Decide whether production
-  allocation may run on it, and with which limit on the delay.
+  Fleet's observation. Decide whether production allocation may run on it,
+  and with which limit on the delay.
 - **Unprotected finalizers.** Decide whether production allocation may run
   while customers can remove Fleet's quota and Machine finalizers.
 - **Fence location.** Decide where the fence lives and which component owns
@@ -364,16 +419,20 @@ Record these decisions before production allocation is enabled:
 These tests are required and not implemented:
 
 - A client sends a creator, and the webhook replaces it with the caller.
-- A client changes the creator, and admission refuses it.
+- A client changes, adds, or removes the creator, and admission refuses it.
 - A Machine without a creator never binds.
 - A caller without class `use` cannot create a Machine.
 - Access is revoked between the check and the commit, and the Machine does not
   bind.
 - A revocation and a commit race on one allocation, and exactly one wins.
-- An admitted allocation loses its Device, and the allocator checks admission
-  again.
+- An admitted allocation fails to claim its Device, and the allocator checks
+  admission again.
+- A Machine is refused, or deleted before allocation, and its claim is
+  released.
 - A Machine's namespace is purged during cleaning, and quota stays held until
   the quota gate closes.
+- A consumer's service consumer record is deleted while Fleet holds claims,
+  and Fleet still releases them.
 - A quota claim's finalizer is removed while its allocation is active, and
   Fleet reports `QuotaCustodyLost` without reclaiming the machine.
 - A provider project is deleted while an allocation is active, and purge waits
@@ -396,8 +455,8 @@ the required permissions fail. Synthetic admission remains a separate mode.
 
 ### What must operators monitor?
 
-Fence generations that no participant acknowledges, `CreatorUnknown`
-Machines, `QuotaCustodyLost` reports, and failed access reviews.
+Fence generations that Fleet has not acknowledged, `CreatorUnknown` Machines,
+`QuotaCustodyLost` reports, and failed access reviews.
 
 ### What does the feature depend on?
 
@@ -406,7 +465,7 @@ lifecycle, and the service catalog for entitlements.
 
 ### Does the feature add API types or calls?
 
-It adds the Machine creator, admission fields on MachineAllocation, two
+It adds the Machine creator, fence generations on MachineAllocation, two
 webhooks, and one access review per permission for each create and each
 commit.
 

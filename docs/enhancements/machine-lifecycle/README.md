@@ -1088,6 +1088,9 @@ API resource versions and cached reads cannot establish this order.
 
 This requires a new Milo integration protocol. Owners must specify and test its
 participants and ordering; simulator-only policy tests are insufficient.
+[Production allocation admission](../production-admission/README.md#admission-fence)
+proposes that protocol. It checks quota, class and profile policy, and
+eligibility at commit instead of fencing them.
 
 ### Provider configuration resolution
 
