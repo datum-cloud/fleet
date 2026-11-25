@@ -1,5 +1,6 @@
-// Package simwork is the simulator site: an access type and install and wipe
-// workers for synthetic Devices that have no BMC. The simulated server is a
+// Package simwork is the simulator site's install and wipe workers for
+// synthetic Devices that have no BMC. The site reaches them through
+// fixture.Access. The simulated server is a
 // record in the site's store, so every effect goes through the same fenced
 // journal as a real one, and a site restart keeps both. It is never a
 // production executor.
@@ -9,55 +10,14 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
-	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site"
+	"go.datum.net/fleet/internal/site/fixture"
 )
-
-// Target is one enrolled synthetic Device: the identity its fixture Device
-// records, the key digest its fixture discovery records, and its disks.
-type Target struct {
-	BMCEndpoint        string   `json:"bmcEndpoint"`
-	SystemUUID         string   `json:"systemUUID"`
-	BootMACAddress     string   `json:"bootMACAddress"`
-	BMCPublicKeySHA256 string   `json:"bmcPublicKeySHA256"`
-	Disks              []string `json:"disks"`
-}
-
-// Enrollment maps "<namespace>/<name>" to each Device the site serves.
-type Enrollment map[string]Target
-
-// Connection is what Access prepares: the enrolled target.
-type Connection struct {
-	Device string
-	Target Target
-}
-
-// Access checks the admitted snapshot against the site's enrollment, as
-// RedfishAccess does against a real BMC. A synthetic Device has no
-// credential; its pin is the enrolled key digest.
-type Access struct{ Enrollment Enrollment }
-
-var _ site.Access = Access{}
-
-func (a Access) Prepare(_ context.Context, assignment site.Assignment) (any, *custody.Refusal) {
-	target, ok := a.Enrollment[assignment.Device]
-	if !ok {
-		return nil, &custody.Refusal{Reason: site.ReasonNotEnrolled, Message: "this site does not serve the Device"}
-	}
-	snapshot := assignment.Snapshot
-	if !strings.EqualFold(target.SystemUUID, snapshot.SystemUUID) || target.BMCEndpoint != snapshot.BMCEndpoint || (snapshot.BootMACAddress != "" && !strings.EqualFold(target.BootMACAddress, snapshot.BootMACAddress)) {
-		return nil, &custody.Refusal{Reason: custody.ReasonDeviceIdentityMismatch, Message: "the site's enrollment does not match the admitted snapshot"}
-	}
-	if target.BMCPublicKeySHA256 != snapshot.BMCPublicKeySHA256 {
-		return nil, &custody.Refusal{Reason: site.ReasonPublicKeyMismatch, Message: "the enrolled key differs from the key discovery recorded at admission"}
-	}
-	return &Connection{Device: assignment.Device, Target: target}, nil
-}
 
 // Server is the simulated server's state.
 type Server struct {
@@ -89,8 +49,8 @@ func ReadServer(store *site.Store, device string) (Server, error) {
 	return server, err
 }
 
-func connection(work *site.Work) *Connection {
-	connection, _ := work.Connection.(*Connection)
+func connection(work *site.Work) *fixture.Connection {
+	connection, _ := work.Connection.(*fixture.Connection)
 	return connection
 }
 

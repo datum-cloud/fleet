@@ -23,6 +23,7 @@ import (
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	"go.datum.net/fleet/internal/site"
+	"go.datum.net/fleet/internal/site/fixture"
 	"go.datum.net/fleet/internal/site/simwork"
 	"go.datum.net/fleet/internal/site/siteapi"
 )
@@ -71,7 +72,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	results := site.NewResults(store)
-	runner := &site.Runner{Site: siteName, Store: store, Results: results, Access: simwork.Access{Enrollment: enrollment},
+	runner := &site.Runner{Site: siteName, Store: store, Results: results, Access: fixture.Access{Enrollment: enrollment},
 		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx, Logger: logger}
 	server := newServer(address, siteapi.Handler(dispatcher, store, results, func() (string, error) { return readToken(tokenPath) }), logger)
@@ -82,7 +83,7 @@ func main() {
 		}
 		go func() {
 			for {
-				if err := simwork.Discover(ctx, api, enrollment, time.Now()); err != nil && ctx.Err() == nil {
+				if err := fixture.Discover(ctx, api, enrollment, time.Now()); err != nil && ctx.Err() == nil {
 					logger.Info("fixture discovery incomplete", "error", err.Error())
 				}
 				select {
@@ -122,7 +123,7 @@ func main() {
 	}
 }
 
-func readEnrollment(path string) (simwork.Enrollment, error) {
+func readEnrollment(path string) (fixture.Enrollment, error) {
 	if path == "" {
 		return nil, errors.New("an enrollment file is required")
 	}
@@ -132,7 +133,7 @@ func readEnrollment(path string) (simwork.Enrollment, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var enrollment simwork.Enrollment
+	var enrollment fixture.Enrollment
 	if err := decoder.Decode(&enrollment); err != nil {
 		return nil, err
 	}

@@ -9,10 +9,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"go.datum.net/fleet/internal/allocation"
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
-	"go.datum.net/fleet/internal/allocation"
 	"go.datum.net/fleet/internal/controller"
 )
 

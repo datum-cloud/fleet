@@ -18,9 +18,9 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"go.datum.net/fleet/internal/allocation"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
-	"go.datum.net/fleet/internal/allocation"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/manager"

@@ -24,8 +24,9 @@ import (
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/delivery"
 	"go.datum.net/fleet/internal/site"
-	"go.datum.net/fleet/internal/site/siteapi"
+	"go.datum.net/fleet/internal/site/fixture"
 	"go.datum.net/fleet/internal/site/simwork"
+	"go.datum.net/fleet/internal/site/siteapi"
 )
 
 const (
@@ -50,7 +51,7 @@ type env struct {
 	allocator  *Allocator
 	loop       *delivery.Loop
 	store      *site.Store
-	enrollment simwork.Enrollment
+	enrollment fixture.Enrollment
 	class      *fleetv1.MachineClass
 	profile    *fleetv1.MachineProfile
 }
@@ -88,7 +89,7 @@ func startEnv(t *testing.T) *env {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	e := &env{t: t, ctx: ctx, admin: admin, enrollment: simwork.Enrollment{}}
+	e := &env{t: t, ctx: ctx, admin: admin, enrollment: fixture.Enrollment{}}
 	e.create(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
 
 	dir := t.TempDir()
@@ -99,7 +100,7 @@ func startEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &site.Runner{Site: siteName, Store: e.store, Results: site.NewResults(e.store), Access: simwork.Access{Enrollment: e.enrollment},
+	runner := &site.Runner{Site: siteName, Store: e.store, Results: site.NewResults(e.store), Access: fixture.Access{Enrollment: e.enrollment},
 		Kinds: map[string]site.Kind{"DeviceInstallation": simwork.Installation{}, "DeviceWipe": simwork.Wipe{}}, Poll: 20 * time.Millisecond}
 	dispatcher := &siteapi.Dispatcher{Runner: runner, Context: ctx}
 	server := httptest.NewServer(siteapi.Handler(dispatcher, e.store, runner.Results, func() (string, error) { return siteToken, nil }))
@@ -153,7 +154,7 @@ func (e *env) server(n int) *inventory.Device {
 	}}
 	e.create(device)
 	key := fmt.Sprintf("%064x", n)
-	e.enrollment[namespace+"/"+name] = simwork.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: key, Disks: []string{"disk-0"}}
+	e.enrollment[namespace+"/"+name] = fixture.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: key, Disks: []string{"disk-0"}}
 	e.loop.Courier.Sites.Devices[name] = []string{siteName}
 	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "capacity-" + name, Namespace: namespace, Labels: map[string]string{"pool": "example"}},
 		Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: name}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "example-cleaning"}, ReclaimPolicy: "Retain"}}
@@ -165,7 +166,7 @@ func (e *env) server(n int) *inventory.Device {
 	if err := e.admin.Status().Update(e.ctx, capacity); err != nil {
 		e.t.Fatal(err)
 	}
-	if err := simwork.Discover(e.ctx, e.admin, simwork.Enrollment{namespace + "/" + name: e.enrollment[namespace+"/"+name]}, time.Now()); err != nil {
+	if err := fixture.Discover(e.ctx, e.admin, fixture.Enrollment{namespace + "/" + name: e.enrollment[namespace+"/"+name]}, time.Now()); err != nil {
 		e.t.Fatal(err)
 	}
 	e.until("custody is Verified", func() bool {

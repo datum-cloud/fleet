@@ -2,7 +2,6 @@ package staging
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,34 +27,12 @@ import (
 	"go.datum.net/fleet/internal/manager"
 	"go.datum.net/fleet/internal/multiclustertest"
 	"go.datum.net/fleet/internal/projectdiscovery"
-	"go.datum.net/fleet/internal/simulator"
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
 	locationsv1alpha1 "go.miloapis.com/locations/api/v1alpha1"
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
 	resourcemanagerv1alpha1 "go.miloapis.com/milo/pkg/apis/resourcemanager/v1alpha1"
 	servicesv1alpha1 "go.miloapis.com/service-catalog/api/v1alpha1"
 )
-
-type safeExecutor struct {
-	mu      sync.Mutex
-	results map[string]simulator.OperationResult
-}
-
-func (e *safeExecutor) Execute(_ context.Context, request simulator.Request) (simulator.OperationResult, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	now := time.Now().UTC()
-	result := simulator.OperationResult{ID: request.ID, Kind: request.Kind, Phase: "Succeeded", Result: "clean", CreatedAt: now, CompletedAt: &now}
-	e.results[request.ID] = result
-	return result, nil
-}
-
-func (e *safeExecutor) Lookup(_ context.Context, id string) (simulator.OperationResult, bool, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	result, found := e.results[id]
-	return result, found, nil
-}
 
 func stagingScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -91,19 +68,23 @@ func stagingProject(t *testing.T, name string, objects ...client.Object) *multic
 // cross-project staging through the multi-project manager: discovery engages
 // the publication consumer and another project with identically named
 // Machines. The publisher writes only into the consumer, only the consumer's
-// Machine is allocated, and the other project gets requested-hardware
-// resolution and nothing else.
+// Machine is allocated on custody, and the other project gets
+// requested-hardware resolution and nothing else.
 func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
+	// Custody and allocations live on a real API server; the provider
+	// project's fake cluster carries the source class, profile and the
+	// capacity the handler observes.
+	s := startStack(t)
+	device := s.server(1)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	scheme := stagingScheme(t)
 	const authority = "staging"
-	profileName, className := "general-purpose-24c-128g", "central-metal"
 	sourceProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: profileName, UID: "source-profile-uid"}, Spec: fleetv1.MachineProfileSpec{CPU: fleetv1.CPURequirement{Architecture: "amd64", Cores: 24}, Memory: fleetv1.MemoryRequirement{Capacity: "128Gi"}}}
-	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: className, UID: "source-class-uid", Generation: 1}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: profileName}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: "default", Selector: metav1.LabelSelector{MatchLabels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}}}}}
-	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "central-metal-01", UID: "capacity-uid", Labels: map[string]string{"fleet.datumapis.com/capacity-pool": "central"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: "central-metal-01"}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "synthetic-reuse"}, ReclaimPolicy: "Retain"}}
+	sourceClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: className, UID: "source-class-uid", Generation: 1}, Spec: fleetv1.MachineClassSpec{ProfilePolicy: &fleetv1.ProfilePolicy{AllowedProfiles: []fleetv1.LocalReference{{Name: profileName}}}, Access: &fleetv1.AccessPolicy{}, Capacity: &fleetv1.CapacityPolicy{MachineCapacities: fleetv1.MachineSelector{Namespace: providerNamespace, Selector: metav1.LabelSelector{MatchLabels: map[string]string{"pool": "example"}}}}}}
+	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Namespace: providerNamespace, Name: "capacity-" + device.Name, UID: "capacity-uid", Labels: map[string]string{"pool": "example"}}, Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: device.Name}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "example-cleaning"}, ReclaimPolicy: "Retain"}}
 	claim := func() *fleetv1.Machine {
-		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "m", UID: "shared-claim-uid", Generation: 1}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: className}, MachineProfileRef: fleetv1.LocalReference{Name: profileName}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
+		return &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "m", UID: types.UID(uid(901)), Generation: 1}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: className}, MachineProfileRef: fleetv1.LocalReference{Name: profileName}, LocationRef: fleetv1.LocalReference{Name: "us-central-1"}, PowerState: "Off"}}
 	}
 	// The provider project is also an Active metal consumer with its own
 	// Machine of the same name; it must engage with requested hardware only.
@@ -138,9 +119,9 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 		return manager.RegisterPrivateIndexes(ctx, indexer, "fleet-system-private")
 	})})
 	root := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "datum-cloud", UID: "provider-project"}},
-		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "consumer", UID: "consumer-project"}},
-		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "other", UID: "other-project"}},
+		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "datum-cloud", UID: "00000000-0000-4000-8000-000000000021"}},
+		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "consumer", UID: "00000000-0000-4000-8000-000000000022"}},
+		&resourcemanagerv1alpha1.Project{ObjectMeta: metav1.ObjectMeta{Name: "other", UID: "00000000-0000-4000-8000-000000000023"}},
 	).Build()
 	identity := func(name string) controller.ProjectIdentity {
 		project, err := manager.ResolveProjectIdentity(ctx, root, authority, name)
@@ -159,11 +140,6 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	}
 	consumerProject, providerProject := identity("consumer"), identity("datum-cloud")
 
-	executor := &safeExecutor{results: map[string]simulator.OperationResult{}}
-	coordinator, err := controller.NewCoordinator(private.Client, "fleet-system-private", executor, controller.LocalDigestImageResolver{}, nil, 10*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
 	discovery := multiclustertest.NewProvider()
 	projects := manager.NewProjects(func(ctx context.Context, name multicluster.ClusterName) (controller.ProjectIdentity, error) {
 		return manager.ResolveProjectIdentity(ctx, root, authority, string(name))
@@ -176,7 +152,7 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 		t.Fatal(err)
 	}
 	providerCluster := provider.NewCluster()
-	template := Handler{Coordinator: coordinator, Location: "us-central-1", Provider: providerCluster.GetClient(), ProviderProject: providerProject, Now: time.Now}
+	template := Handler{Allocator: s.allocator, Location: locationName, Provider: providerCluster.GetClient(), ProviderProject: providerProject, Now: time.Now}
 	if err := SetupPublisher(mgr, projects, providerCluster, PublisherOptions{ConsumerProject: consumerProject, ProviderProject: providerProject, ClassName: className, ProfileName: profileName}); err != nil {
 		t.Fatal(err)
 	}
@@ -246,21 +222,20 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 		return m.Status.Phase == "" && len(m.Finalizers) == 0 && len(m.Status.Conditions) == 1 &&
 			c != nil && c.Status == metav1.ConditionFalse && capacityStatusWrites.Load() == writes && get(consumer).Status.Phase == "Ready"
 	})
-	// Every private record belongs to the consumer project.
-	var secrets corev1.SecretList
-	if err := private.Client.List(ctx, &secrets, client.InNamespace("fleet-system-private")); err != nil {
+	// Only the consumer's Machine holds provider capacity, on custody, and
+	// the power projector reports for it alone.
+	var allocations fleetv1.MachineAllocationList
+	if err := s.admin.List(ctx, &allocations, client.InNamespace(providerNamespace)); err != nil {
 		t.Fatal(err)
 	}
-	if len(secrets.Items) == 0 {
-		t.Fatal("staging retained no private custody")
+	if len(allocations.Items) != 1 || allocations.Items[0].Spec.MachineRef.ProjectUID != string(consumerProject.UID) || allocations.Items[0].Spec.DeviceRef.Name != device.Name {
+		t.Fatalf("allocations = %#v, want one for the consumer on %s", allocations.Items, device.Name)
 	}
-	for i := range secrets.Items {
-		route, err := controller.DecodePrivateLifecycleRoute(&secrets.Items[i])
-		if err != nil {
-			continue
-		}
-		if route.ConsumerProject.UID != "" && route.ConsumerProject.UID != types.UID("consumer-project") {
-			t.Fatalf("private record %s belongs to %q", secrets.Items[i].Name, route.ConsumerProject.UID)
-		}
+	if holder := s.custody(device.Name).Spec.Holder; holder.AllocationRef == nil || holder.AllocationRef.Name != allocations.Items[0].Name {
+		t.Fatalf("holder = %+v", holder)
+	}
+	multiclustertest.Eventually(t, "the consumer's power is projected from custody", func() bool { return get(consumer).Status.Power != nil })
+	if get(other).Status.Power != nil || get(provider).Status.Power != nil {
+		t.Fatal("power was projected for a project without a custody-backed Machine")
 	}
 }

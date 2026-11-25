@@ -1,4 +1,4 @@
-package simwork
+package fixture
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 )
 
-// Discover is fixture discovery for the simulator site's Devices. BMC
+// Discover is fixture discovery for a site's synthetic Devices. BMC
 // discovery runs at the site and writes only the status of the Devices that
 // site serves; a synthetic Device has no BMC, so this writes what discovery
 // would observe: the enrolled key at the recorded endpoint, the enrolled

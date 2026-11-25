@@ -18,7 +18,7 @@ import (
 	"go.datum.net/fleet/internal/allocation"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/delivery"
-	"go.datum.net/fleet/internal/site/simwork"
+	"go.datum.net/fleet/internal/site/fixture"
 	"go.datum.net/fleet/internal/site/siteapi"
 )
 
@@ -97,7 +97,7 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 	// discovery for the synthetic site's Devices instead.
 	discover := func(ctx context.Context) error {
 		for {
-			if err := simwork.Discover(ctx, provider, enrollment, time.Now()); err != nil && ctx.Err() == nil {
+			if err := fixture.Discover(ctx, provider, enrollment, time.Now()); err != nil && ctx.Err() == nil {
 				log.Info("fixture discovery incomplete", "error", err.Error())
 			}
 			select {
@@ -128,12 +128,12 @@ func readToken(path string) (string, error) {
 	return token, nil
 }
 
-func readEnrollment(path string) (simwork.Enrollment, error) {
+func readEnrollment(path string) (fixture.Enrollment, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var enrollment simwork.Enrollment
+	var enrollment fixture.Enrollment
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&enrollment); err != nil {

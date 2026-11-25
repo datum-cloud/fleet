@@ -402,6 +402,9 @@ func ConsumerHandlers(base manager.HandlerFactory, consumer controller.ProjectId
 		if err != nil || string(binding.ClusterName) != consumer.RouteName {
 			return handlers, err
 		}
+		if template.Allocator == nil {
+			return manager.Handlers{}, fmt.Errorf("%w: synthetic staging has no allocator", manager.ErrEventWiringUnavailable)
+		}
 		if !binding.Project.SameLifetime(consumer) {
 			return manager.Handlers{}, fmt.Errorf("%w: synthetic consumer %q is engaged as a different project lifetime", manager.ErrProjectIdentityUnavailable, binding.ClusterName)
 		}
