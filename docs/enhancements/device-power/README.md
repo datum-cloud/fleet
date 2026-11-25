@@ -165,10 +165,10 @@ Disabled capacity on a Device does not block staff power, because it leaves
 the holder `None`. [Custody admission][admission] defines the reasons every
 kind shares.
 
-Power adds these reasons. The coordinator checks run under the admission rule
-for a kind's own inputs, which `DiscoveryNotCurrent` extends to the freshness of
-the discovery facts the other checks read. The worker checks run before the
-command. None sends a command:
+Power adds these reasons. The coordinator checks compare the action and the
+expected UUID with the Device record and discovery, under the admission rule
+for a kind's own inputs. The worker checks run before the command. None sends
+a command:
 
 | Reason | Refused by | When |
 | --- | --- | --- |
@@ -214,8 +214,9 @@ A `Settle` recovery must cite discovery evidence that:
 
 The power operation created after a `Retry` recovery repeats the held
 operation's action, passes power's checks again, and settles the hold only if
-it ends `Succeeded` under the [outcome table](#execution-and-outcomes). For
-`ForceRestart` and `PowerCycle`, a retry is a second reset of the server.
+it ends `Succeeded` under the [outcome table](#execution-and-outcomes). A staff
+retry carries `reason` and `expectedSystemUUID` again. For `ForceRestart` and
+`PowerCycle`, a retry is a second reset of the server.
 
 The Fleet provider for Metal creates a retry without comparing observed power,
 which is `Unknown` during the hold. It creates one only if the Machine's
@@ -249,8 +250,8 @@ number of commands at the BMC:
 - A staff operation on a Device with disabled capacity and holder `None`.
 - A refused customer operation is not retried until the Machine generation
   changes.
-- After a customer `Retry`, a changed `powerState` produces no retry, and the
-  newer operation runs after staff `Settle` the hold.
+- After a `Retry` on a customer hold, a changed `powerState` produces no retry,
+  and the newer operation runs after staff `Settle` the hold.
 - A power hold settles only with discovery evidence that meets the
   [Recovery](#recovery) rules, or with a retried operation that succeeds, and
   the held Machine reports power as `Unknown` until then.
