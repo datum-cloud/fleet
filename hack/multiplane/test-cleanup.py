@@ -162,7 +162,16 @@ with tempfile.TemporaryDirectory() as t:
     tomb = runs / '.fleet-multiplane-removing.Tomb01'
     (tomb / 'evidence').mkdir(parents=True)
     (tomb / 'prefix').write_text('fleet-mp-00000016\n')
-    containers.append({'name': 'fleet-mp-00000017-registry', 'state': 'created', 'finishedAt': '0001-01-01T00:00:00Z'})
+    # Never started, though old enough: only its state keeps it.
+    containers.append({'name': 'fleet-mp-00000017-registry', 'state': 'created', 'finishedAt': stamp(3 * DAY)})
+    # A run that becomes live between the first check and the removal.
+    rechecked = old_run('Rechk1', 'fleet-mp-00000019', with_containers=False)
+    keeper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])
+    # pgrep finds a live process for that run only from its fourth lookup on:
+    # after the first check's three, so only the recheck sees it.
+    (bin_dir / 'pgrep').write_text('#!/bin/sh\ncase "$*" in *Rechk1*) n=$(cat %s 2>/dev/null || echo 0); n=$((n+1)); echo $n > %s; [ $n -ge 4 ] && echo %d && exit 0 ;; esac\nexit 1\n'
+                                   % (tmp / 'pgrep-count', tmp / 'pgrep-count', keeper.pid))
+    (bin_dir / 'pgrep').chmod(0o755)
     db = tmp / 'containers.json'
     db.write_text(json.dumps(containers))
     env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOTS=str(runs),
@@ -192,6 +201,31 @@ with tempfile.TemporaryDirectory() as t:
           str(record['removed']))
     left = {c['name'] for c in json.loads(db.read_text())}
     check('a never-started orphan is kept', 'fleet-mp-00000017-registry' in left)
+    check('a run that became live before removal is kept', rechecked.exists() and kept.get(rechecked.name) == 'a live process names it', str(kept))
+    keeper.kill()
+    keeper.wait()
+
+# Orphaned containers are kept while any state directory cannot be read: it
+# may be theirs.
+with tempfile.TemporaryDirectory() as t:
+    tmp = pathlib.Path(t)
+    runs, bin_dir = tmp / 'runs', tmp / 'bin'
+    for d in (runs, bin_dir):
+        d.mkdir()
+    (bin_dir / 'docker').write_text(FAKE_DOCKER.replace('#!/usr/bin/env python3', '#!' + sys.executable))
+    (bin_dir / 'docker').chmod(0o755)
+    db = tmp / 'containers.json'
+    db.write_text(json.dumps([{'name': 'fleet-mp-00000018-cell-control-plane', 'state': 'exited', 'finishedAt': stamp(3 * DAY)}]))
+    hidden = runs / 'fleet-multiplane.Hiddn1'
+    hidden.mkdir()
+    (hidden / 'prefix').write_text('fleet-mp-00000018\n')
+    (hidden / 'prefix').chmod(0)
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOTS=str(runs),
+               FLEET_MULTIPLANE_LOCK_DIR=str(tmp / 'lock'), FAKE_CONTAINERS=str(db), FAKE_TRACE=str(tmp / 'trace'))
+    r = subprocess.run([sys.executable, str(harness), 'cleanup', '--max-age-hours', '24', '--verbose'], env=env, text=True, capture_output=True, timeout=120)
+    (hidden / 'prefix').chmod(0o600)
+    check('orphans are kept while a state cannot be read', r.returncode == 0 and 'fleet-mp-00000018-cell-control-plane' in db.read_text()
+          and 'could not be read' in r.stdout, r.stdout[-400:] + r.stderr[-300:])
 
 if failures:
     print('FAIL cleanup tests:\n  ' + '\n  '.join(failures))
