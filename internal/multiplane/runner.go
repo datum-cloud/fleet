@@ -470,18 +470,14 @@ func Pending(err error) bool { return errors.Is(err, errPending) }
 func (r *Runner) Release(ctx context.Context) error       { return r.ReleaseIndex(ctx, 0) }
 func (r *Runner) ReleaseSecond(ctx context.Context) error { return r.ReleaseIndex(ctx, 1) }
 
-// ReleaseIndex deletes the consumer's Machine and advances its release one
-// step; the phase repeats it until the allocation is Released.
+// ReleaseIndex advances the consumer's release one step; the phase repeats
+// it until the allocation is Released, then publishes the Machine Released.
+// The acceptance releases a Machine that still exists, as the consumer's
+// release request; the management identity cannot delete Machines.
 func (r *Runner) ReleaseIndex(ctx context.Context, index int) error {
 	q, err := r.request(ctx, index)
 	if err != nil {
 		return err
-	}
-	if q.machine.DeletionTimestamp == nil {
-		uid, version := q.machine.UID, q.machine.ResourceVersion
-		if err := q.project.API.Delete(ctx, q.machine, client.Preconditions{UID: &uid, ResourceVersion: &version}); err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
 	}
 	released, err := r.Allocator.ReleaseMachine(ctx, q.alloc.Machine)
 	if errors.Is(err, allocation.ErrWipeFailed) {

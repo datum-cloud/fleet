@@ -145,8 +145,15 @@ func phase(name, configPath string, once bool) error {
 		"allocate": r.Allocate, "admit-install": r.AdmitInstall, "install": r.Install, "install-b": r.InstallSecond,
 		"release": r.Release, "release-b": r.ReleaseSecond, "reuse": r.Reuse,
 	}[name]
+	last := ""
 	for {
 		err = action(ctx)
+		// Report each new reason a phase is waiting, so a phase that times
+		// out shows what it waited for.
+		if err != nil && err.Error() != last {
+			last = err.Error()
+			fmt.Printf("%s: waiting: %v\n", name, err)
+		}
 		if name == "admit-install" && errors.Is(err, multiplane.ErrAdmittedUnknown) {
 			fmt.Println("Installation admitted and delivered; its result remains Unknown")
 			return nil
