@@ -527,12 +527,18 @@ def resume_plan(args):
     if not (ev / 'result.json').exists():
         return refuse('%s has no result: the run is still going, or was killed before it could stop its containers' % state)
     previous = json.loads((ev / 'result.json').read_text())
-    if previous['status'] not in RESUMABLE:
+    # An earlier resume that did not complete leaves the run resumable, even
+    # when it stopped before the suite: in preflight, queued for the lock, or
+    # restarting the topology. Its phase is the default again.
+    earlier = previous.get('resumed') if previous['status'] != 'resumed' else None
+    if previous['status'] not in RESUMABLE and not earlier:
         return refuse('%s ended %s; only a failed, timed-out or interrupted run can be resumed' % (state, previous['status']))
     suite = (state / 'suite').read_text().strip() if (state / 'suite').exists() else 'acceptance'
     provider = (state / 'site-provider').read_text().strip()
     names = suite_phases(suite, provider)
     phase_name = args.phase or previous.get('failedPhase')
+    if not args.phase and earlier and phase_name not in names:
+        phase_name = earlier['from']
     if phase_name not in names:
         return refuse('%s is not a phase of the %s suite; a run that failed before the suite started cannot be resumed, so start a fresh run' % (phase_name, suite))
     if not (state / 'fleet-multiplane-host').exists() or not (state / 'acceptance.json').exists():
@@ -543,9 +549,13 @@ def resume_plan(args):
             (ev / name).replace(ev / name.replace('.', '-attempt%d.' % (attempt - 1), 1))
     for name in ('current-phase', 'completed', 'skip-until'):
         (state / name).unlink(missing_ok=True)
-    # The Go sources the run's readiness gate covered and its binaries came from.
-    gated = state / 'readiness-SHA256'
-    original = gated.read_text().strip() if gated.exists() else None
+    # The Go sources the original run's readiness gate covered and its
+    # binaries came from, kept once: each attempt's preflight rewrites the
+    # gate's own record with the sources it gated.
+    kept = state / 'readiness-original-SHA256'
+    if not kept.exists() and (state / 'readiness-SHA256').exists():
+        kept.write_text((state / 'readiness-SHA256').read_text())
+    original = kept.read_text().strip() if kept.exists() else None
     record = {'attempt': attempt, 'from': phase_name, 'resumedAt': now(), 'previousStatus': previous['status'],
               'previousFailedPhase': previous.get('failedPhase'), 'binariesFromOriginalRun': True, 'binarySourceChanged': None if original is None else original != readiness_digest('.')}
     write_json(ev / ('resume-%d.json' % attempt), record)
@@ -887,7 +897,7 @@ def result(args):
              'stateDirectory': str(state), 'evidenceDirectory': str(ev),
              'summary': 'summary.json' if summary.exists() and status == 'passed' else None,
              'custody': 'released and verified' if status == 'passed' else
-             'released and verified in a resumed run; not an acceptance pass' if status == 'resumed' else 'Unknown: inspect private state before any cleanup',
+             'unverified: a resumed run skipped earlier phases; not release or acceptance evidence' if status == 'resumed' else 'Unknown: inspect private state before any cleanup',
              'productionAuthority': False}
     write_json(ev / 'result.json', value)
     print('RESULT %s suite=%s exit=%s evidence=%s' % (status, suite, code, ev / 'result.json'))

@@ -489,7 +489,17 @@ waits until every API, Flux and the site are available, restarts the
 coordinator, and runs the suite from the named phase. It records each earlier
 suite phase as `skipped`. It refuses a run that passed, a run with no result
 (still going, or killed before it stopped its containers), and a phase
-outside the suite: a run that failed during bootstrap must be run fresh.
+outside the suite: a run that failed during bootstrap must be run fresh. It
+cannot be combined with `--redfish`, `--suite` or `--preflight-only`. A resume
+that stops before its suite starts, for example in preflight, waiting for the
+lock or restarting the topology, leaves the run resumable at the same phase.
+
+Skipped phases are not replayed, so their side effects are not recreated:
+coordinator flags, a partition, a suspended Flux object, or a file an earlier
+phase wrote. Resuming at a phase that depends on such state starts from a
+different state than the original run did; pick `--from` with that in mind.
+If the Go sources changed while the resume waited for the lock, it runs the
+readiness tests again under the lock, as a fresh run does.
 
 A resumed run reuses the retained run's binaries and site image, so Go
 changes made since then are not under test; `resume-<N>.json` records
@@ -497,8 +507,11 @@ whether the Go sources changed. Each attempt's phase records and result are
 kept as `phases-attempt<N>.jsonl` and `result-attempt<N>.json`.
 
 A resumed run is never an acceptance pass. Its `result.json` carries the
-resume record. When it completes, its status is `resumed` and it exits 5;
-when it fails, it records the failure like any run. Only a fresh run whose
+resume record. When it completes, its status is `resumed`, it exits 5, it
+says it is not a pass, and its custody is recorded as unverified; when it
+fails, it records the failure like any run. Its `summary.json` says
+`resumed: true`, and a teardown after it records that it is not acceptance or
+release evidence. Only a fresh run whose
 every phase passed and that reached teardown counts. After debugging with
 `--resume`, a final fresh run is still required.
 

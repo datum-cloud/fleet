@@ -17,7 +17,7 @@ for arg in "$@"; do
  if [[ -n $pending ]]; then
   case $pending in
    suite) [[ $arg == acceptance || $arg == flux-qualification ]] || usage; suite=$arg ;;
-   resume) resume=$arg ;;
+   resume) [[ -n $arg ]] || usage; resume=$arg ;;
    from) [[ $arg =~ ^[a-z0-9-]+$ ]] || usage; from=$arg ;;
   esac
   pending=''
@@ -200,4 +200,8 @@ else
 fi
 # The last act of a completed run: only now may the result record passed.
 : > "$state/completed"
-printf 'Local %s suite (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$suite" "$provider"
+if [[ -n $resume ]]; then
+ printf 'Resumed %s suite (%s provider) completed from %s. This is NOT an acceptance pass; run it fresh.\n' "$suite" "$provider" "$from"
+else
+ printf 'Local %s suite (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$suite" "$provider"
+fi

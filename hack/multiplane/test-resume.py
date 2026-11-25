@@ -93,6 +93,39 @@ with tempfile.TemporaryDirectory() as t:
     result = json.loads((s / 'evidence/result.json').read_text())
     check('a failed resumed run is failed', result['status'] == 'failed' and result['resumed'] and result['failedPhase'] is None, str(result))
 
+with tempfile.TemporaryDirectory() as t:
+    tmp = pathlib.Path(t)
+    env = dict(os.environ, FLEET_MULTIPLANE_STATE_ROOT=str(tmp))
+    # A resume that stopped before its suite (preflight, the lock, or the
+    # topology restart) leaves the run resumable at the same phase, as a
+    # second attempt whose records sit beside the first's.
+    for status, failed in (('preflight-failed', None), ('timeout', 'runtime-lock'), ('failed', 'resume-topology')):
+        s = retained(tmp, name='fleet-multiplane.Again' + str(len(status)))
+        (s / 'readiness-SHA256').write_text('original\n')
+        check('first attempt planned', run(['resume-plan', '--target', str(s)], env).returncode == 0)
+        (s / 'readiness-SHA256').write_text('rewritten by the attempt\n')
+        (s / 'evidence/result.json').write_text(json.dumps({'status': status, 'failedPhase': failed, 'resumed': json.loads((s / 'resume.json').read_text())}))
+        r = run(['resume-plan', '--target', str(s)], env)
+        check('a resume stopped by %s stays resumable' % status, r.returncode == 0 and r.stdout.split()[1:] == ['release'], r.stdout + r.stderr)
+        record = json.loads((s / 'resume.json').read_text())
+        check('second attempt recorded: ' + status, record['attempt'] == 2 and (s / 'evidence/result-attempt1.json').exists() and (s / 'evidence/result-attempt0.json').exists())
+        check('the original source digest is kept: ' + status, (s / 'readiness-original-SHA256').read_text().strip() == 'original')
+
+    # A resumed run's own retained containers do not block its contention check.
+    bin_dir = tmp / 'bin'
+    bin_dir.mkdir()
+    (bin_dir / 'docker').write_text('#!/bin/sh\n[ "$1" = ps ] && echo fleet-mp-0000beef-cell-control-plane\nexit 0\n')
+    (bin_dir / 'colima').write_text('#!/bin/sh\necho "/dev/vda1 100 1 99999999 1%% /var/lib/docker"\n')
+    for tool in ('docker', 'colima'):
+        (bin_dir / tool).chmod(0o755)
+    s = tmp / 'contention'
+    s.mkdir()
+    cenv = dict(env, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOTS=str(tmp))
+    r = run(['preflight', '--checks', 'contention', '--state', str(s), '--allow-prefix', 'fleet-mp-0000beef'], cenv)
+    check('own retained containers are allowed', r.returncode == 0, r.stdout)
+    r = run(['preflight', '--checks', 'contention', '--state', str(s), '--allow-prefix', 'fleet-mp-0000aaaa'], cenv)
+    check('only its own', r.returncode == 2, r.stdout)
+
 # The real run.sh: --resume reuses the retained state, skips the topology
 # build, restarts the retained topology, and runs the suite from the phase.
 SHIM = '''import importlib.util, sys
@@ -131,11 +164,23 @@ with tempfile.TemporaryDirectory() as t:
     check('run.sh --resume restarted the topology and ran from the phase',
           calls.read_text().split('\n')[:4] == ['steps resume-topology', 'allocate', 'release', 'evidence'], calls.read_text())
     check('run.sh --resume used no new state', [p.name for p in runs.iterdir()] == [s.name])
+    check('run.sh --resume never says passed', 'NOT an acceptance pass' in r.stdout and ' passed.' not in r.stdout, r.stdout[-400:])
     names = [(p['name'], p['status']) for p in map(json.loads, (s / 'evidence/phases.jsonl').read_text().splitlines())]
     check('run.sh --resume records the skipped phase', ('rbac', 'skipped') in names and ('build', 'passed') not in names and ('topology', 'passed') not in names, str(names))
     for args in (['--resume', str(s), '--redfish'], ['--resume', str(s), '--suite', 'acceptance'], ['--from', 'release'], ['--resume', str(s), '--preflight-only']):
         r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh'), *args], cwd=repo, env=env, text=True, capture_output=True, timeout=60)
         check('run.sh usage: ' + ' '.join(a for a in args if a != str(s)), r.returncode == 64, str(r.returncode))
+    # With --keep, a completed resumed run still exits 5.
+    k = retained(runs, name='fleet-multiplane.Keep01')
+    r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh'), '--resume', str(k), '--from', 'release', '--keep'], cwd=repo, env=env, text=True, capture_output=True, timeout=120)
+    check('run.sh --resume --keep exits 5', r.returncode == 5 and json.loads((k / 'evidence/result.json').read_text())['status'] == 'resumed', str(r.returncode))
+    # A phase the suite script never reaches fails the run instead of skipping everything.
+    u = retained(runs, name='fleet-multiplane.Unrch1')
+    r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh'), '--resume', str(u), '--from', 'heal'], cwd=repo, env=env, text=True, capture_output=True, timeout=120)
+    check('run.sh --resume to an unreached phase exits 64', r.returncode == 64 and json.loads((u / 'evidence/result.json').read_text())['status'] != 'resumed', str(r.returncode))
+    r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh'), '--resume', ''], cwd=repo, env=env, text=True, capture_output=True, timeout=60)
+    check('run.sh --resume with no target is usage', r.returncode == 64 and [p.name for p in runs.iterdir() if p.name.startswith('fleet-multiplane.')] == sorted(
+        [s.name, k.name, u.name], key=lambda n: [p.name for p in runs.iterdir()].index(n)), str(r.returncode))
     # A resumed run cannot be resumed into a pass.
     r = subprocess.run(['bash', str(repo / 'hack/multiplane/run.sh'), '--resume', str(s)], cwd=repo, env=env, text=True, capture_output=True, timeout=60)
     check('a resumed run that completed cannot be resumed again', r.returncode == 64, str(r.returncode))
