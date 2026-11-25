@@ -237,3 +237,50 @@ func TestARefusalNeverUsesCustodyReadBeforeAHolderChange(t *testing.T) {
 		t.Fatal("installation missing")
 	}
 }
+
+// TestFencesFollowTheSiteReport separates the fence a site has seen from the
+// fence for which it confirmed older workers stopped.
+func TestFencesFollowTheSiteReport(t *testing.T) {
+	e := startEnv(t)
+	device := e.verified("server-example-810", uid(810), fmt.Sprintf("%064x", 810))
+	hold := e.holdOn(device)
+	// The site has seen fence 20 from an assignment custody never recorded,
+	// and has confirmed stopped workers only up to the held fence.
+	e.sites.report(device.Name, hold.Fence)
+	e.sites.reportSeen(device.Name, 20)
+	retire := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetire, Hold: heldRef(hold)})
+	e.settle(device.Name)
+	active := e.custody(device.Name).Spec.ActiveOperation
+	if active == nil || active.Fence <= 20 {
+		t.Fatalf("admitted at %+v, at or below the fence the site has seen", active)
+	}
+	// Seen alone never confirms a recovery.
+	e.sites.reportSeen(device.Name, active.Fence)
+	e.settle(device.Name)
+	e.requirePhase(retire, ops.PhaseAdmitted, "")
+	e.sites.report(device.Name, active.Fence)
+	e.settle(device.Name)
+	e.requirePhase(retire, ops.PhaseSucceeded, "")
+}
+
+// TestAHeldOperationIsNeverACandidate checks the exclusion on its own,
+// without the status copy that also ends a held operation.
+func TestAHeldOperationIsNeverACandidate(t *testing.T) {
+	e := startEnv(t)
+	device := e.verified("server-example-820", uid(820), fmt.Sprintf("%064x", 820))
+	if err := e.coord.Claim(e.ctx, device.Name, "alloc-held"); err != nil {
+		t.Fatal(err)
+	}
+	install := e.installation(device, "alloc-held", "request-1")
+	custody := e.custody(device.Name)
+	custody.Spec.RecoveryHold = &ops.RecoveryHold{OperationReference: reference("DeviceInstallation", install), Fence: 0, Since: metav1.NewTime(e.clock.Now()), Reason: ReasonRebuilt}
+	candidates, err := e.coord.candidates(e.ctx, custody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range candidates {
+		if candidate.operation.GetUID() == install.UID {
+			t.Fatal("the held operation is a candidate for admission")
+		}
+	}
+}

@@ -340,6 +340,7 @@ a real API server:
 | Rebuild holds unproven and unfinished installations and wipes without admitting them again, settled outcomes, several unproven outcomes, `Resolve` against live allocations, fences above the site's, retirements kept past retention | `TestRebuildKeepsUnprovenOutcomes` |
 | Two allocators, allocator against staff, two coordinators, admission against a holder change, two Devices, a lost claim response | `TestConcurrency` |
 | A claim and its installation landing between the custody read and the operation list | `TestARefusalNeverUsesCustodyReadBeforeAHolderChange` |
+| Admission above the fence a site has seen; a recovery confirmed only by the stopped fence; a held operation never a candidate | `TestFencesFollowTheSiteReport`, `TestAHeldOperationIsNeverACandidate` |
 | A crash between each pair of custody and status writes, with dropped and lost responses | `TestWriteOrderCrashRecovery` |
 | CEL rules | `TestCRDRules` |
 | Seams, rows, principals, ordering, evidence bounds, capacity for every input | `TestRegistryRejectsIncompleteKindsAndRows`, `TestAddingRowsLeavesExistingRowsAlone`, `TestPrincipals`, `TestCandidatesOrderOldestFirstWithADeterministicTieBreak`, `TestEvidenceIsTypedAndBounded`, `TestCapacityProjection` |

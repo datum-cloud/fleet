@@ -65,10 +65,14 @@ type fakeSites struct {
 	mu      sync.Mutex
 	serving map[string][]string
 	fences  map[string]int64
+	// seen, when set for a Device, is reported as the site's seen fence in
+	// place of its stopped fence, as a site whose older worker has not yet
+	// stopped would report.
+	seen map[string]int64
 }
 
 func newFakeSites() *fakeSites {
-	return &fakeSites{serving: map[string][]string{}, fences: map[string]int64{}}
+	return &fakeSites{serving: map[string][]string{}, fences: map[string]int64{}, seen: map[string]int64{}}
 }
 
 func (s *fakeSites) Serving(device *inventory.Device) []string {
@@ -80,13 +84,24 @@ func (s *fakeSites) Serving(device *inventory.Device) []string {
 	return []string{testSite}
 }
 
-// Fence reports one fence as both seen and stopped: the fake site's workers
-// stop as soon as a newer fence arrives.
+// Fence reports the stored fence as both seen and stopped, unless a seen
+// fence was set for the Device.
 func (s *fakeSites) Fence(_ context.Context, site string, device *inventory.Device) (SiteFence, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fence, ok := s.fences[site+"/"+device.Name]
-	return SiteFence{Seen: fence, Stopped: fence}, ok, nil
+	seen := fence
+	if value, set := s.seen[device.Name]; set {
+		seen = value
+	}
+	return SiteFence{Seen: seen, Stopped: fence}, ok, nil
+}
+
+// reportSeen makes the site report a seen fence above its stopped fence.
+func (s *fakeSites) reportSeen(device string, seen int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seen[device] = seen
 }
 
 // report stores the fence a site reports for a Device.
