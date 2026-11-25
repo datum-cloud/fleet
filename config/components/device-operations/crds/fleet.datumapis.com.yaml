@@ -1,0 +1,1031 @@
+# DeviceCustody and the Device operation kinds proposed in #174 at 3907eec.
+# The coordinator is the only writer of custody and of operation status.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicecustodies.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceCustody
+    listKind: DeviceCustodyList
+    plural: devicecustodies
+    singular: devicecustody
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: State
+      type: string
+      jsonPath: .spec.state
+    - name: Holder
+      type: string
+      jsonPath: .spec.holder.type
+    - name: Fence
+      type: integer
+      jsonPath: .spec.fence
+    - name: Active
+      type: string
+      jsonPath: .spec.activeOperation.name
+    - name: Hold
+      type: string
+      jsonPath: .spec.recoveryHold.name
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              deviceRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                required:
+                - name
+                - uid
+              state:
+                type: string
+                enum:
+                - Verified
+                - Unverified
+              holder:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum:
+                    - None
+                    - Allocation
+                    - Release
+                    - Service
+                    - Retired
+                  allocationRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - name
+                  openGates:
+                    type: array
+                    maxItems: 16
+                    items:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    x-kubernetes-list-type: set
+                required:
+                - type
+                x-kubernetes-validations:
+                - rule: (self.type == 'Allocation' || self.type == 'Release') == has(self.allocationRef)
+                  message: allocationRef is set exactly for Allocation and Release
+                - rule: self.type == 'Release' || !has(self.openGates) || size(self.openGates) == 0
+                  message: only Release has open gates
+              fence:
+                type: integer
+                format: int64
+                minimum: 0
+              activeOperation:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 1
+                  phase:
+                    type: string
+                    enum:
+                    - Admitted
+                    - Dispatched
+                    - Verifying
+                  admittedAt:
+                    type: string
+                    format: date-time
+                  deadline:
+                    type: string
+                    format: date-time
+                  inputDigest:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                  snapshot:
+                    type: object
+                    properties:
+                      bmcEndpoint:
+                        type: string
+                        maxLength: 2048
+                      systemUUID:
+                        type: string
+                        maxLength: 64
+                      bootMACAddress:
+                        type: string
+                        maxLength: 32
+                      bmcPublicKeySHA256:
+                        type: string
+                        maxLength: 128
+                      deviceGeneration:
+                        type: integer
+                        format: int64
+                      discoveryObservedAt:
+                        type: string
+                        maxLength: 64
+                  creator:
+                    type: object
+                    properties:
+                      username:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                      uid:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                    required:
+                    - username
+                    - uid
+                  settles:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      uid:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                    required:
+                    - kind
+                    - name
+                    - uid
+                required:
+                - kind
+                - name
+                - uid
+                - fence
+                - phase
+                - admittedAt
+                - deadline
+                - inputDigest
+                - snapshot
+                - creator
+              lastResult:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                  phase:
+                    type: string
+                    enum:
+                    - Pending
+                    - Admitted
+                    - Dispatched
+                    - Verifying
+                    - Succeeded
+                    - Failed
+                    - Cancelled
+                    - OutcomeUnknown
+                  reason:
+                    type: string
+                    maxLength: 128
+                  message:
+                    type: string
+                    maxLength: 1024
+                  finishedAt:
+                    type: string
+                    format: date-time
+                  evidence:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                required:
+                - kind
+                - name
+                - uid
+                - fence
+                - phase
+                - finishedAt
+              recoveryHold:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                  since:
+                    type: string
+                    format: date-time
+                  reason:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
+                  retryAuthorizedBy:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                        minLength: 1
+                        maxLength: 63
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      uid:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                    required:
+                    - kind
+                    - name
+                    - uid
+                required:
+                - kind
+                - name
+                - uid
+                - fence
+                - since
+                - reason
+              conflicts:
+                type: array
+                maxItems: 16
+                items:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                x-kubernetes-list-type: set
+              rejectedResults:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                  last:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                        maxLength: 63
+                      name:
+                        type: string
+                        maxLength: 253
+                      fence:
+                        type: integer
+                        format: int64
+                      site:
+                        type: string
+                        maxLength: 253
+                      rejectedAt:
+                        type: string
+                        format: date-time
+                required:
+                - count
+                - last
+            required:
+            - deviceRef
+            - state
+            - holder
+            - fence
+            x-kubernetes-validations:
+            - rule: self.deviceRef.name == oldSelf.deviceRef.name
+              message: custody names one Device
+            - rule: self.fence >= oldSelf.fence
+              message: the fence never decreases
+            - rule: oldSelf.holder.type != 'Retired' || self.holder.type == 'Retired'
+              message: Retired is terminal
+            - rule: '!has(self.activeOperation) || self.activeOperation.fence == self.fence'
+              message: the active operation carries the current fence
+        required:
+        - spec
+        x-kubernetes-validations:
+        - rule: self.metadata.name == self.spec.deviceRef.name
+          message: custody has the same name as its Device
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: deviceinstallations.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceInstallation
+    listKind: DeviceInstallationList
+    plural: deviceinstallations
+    singular: deviceinstallation
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Device
+      type: string
+      jsonPath: .spec.deviceRef.name
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Reason
+      type: string
+      jsonPath: .status.reason
+    - name: Fence
+      type: integer
+      jsonPath: .status.fence
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              creator:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                required:
+                - username
+                - uid
+              deviceRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                required:
+                - name
+                - uid
+              authority:
+                type: object
+                properties:
+                  allocationRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - name
+                  serviceRequest:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                    required:
+                    - reason
+                x-kubernetes-validations:
+                - rule: has(self.allocationRef) != has(self.serviceRequest)
+                  message: set exactly one of allocationRef and serviceRequest
+              requestUID:
+                type: string
+                minLength: 1
+                maxLength: 64
+              image:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^sha256:[0-9a-f]{64}$
+                required:
+                - name
+                - digest
+              bootstrap:
+                type: object
+                properties:
+                  ref:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  digest:
+                    type: string
+                    pattern: ^sha256:[0-9a-f]{64}$
+                required:
+                - ref
+                - digest
+              bootInterface:
+                type: string
+                minLength: 1
+                maxLength: 63
+              targetDisks:
+                type: array
+                minItems: 1
+                maxItems: 16
+                items:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                x-kubernetes-list-type: set
+            required:
+            - creator
+            - deviceRef
+            - authority
+            - requestUID
+            - image
+            - bootInterface
+            - targetDisks
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: an operation spec is immutable after create
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                - Pending
+                - Admitted
+                - Dispatched
+                - Verifying
+                - Succeeded
+                - Failed
+                - Cancelled
+                - OutcomeUnknown
+              reason:
+                type: string
+                maxLength: 128
+              message:
+                type: string
+                maxLength: 1024
+              fence:
+                type: integer
+                format: int64
+                minimum: 0
+              admittedAt:
+                type: string
+                format: date-time
+              deadline:
+                type: string
+                format: date-time
+              finishedAt:
+                type: string
+                format: date-time
+              inputDigest:
+                type: string
+                maxLength: 128
+              snapshot:
+                type: object
+                properties:
+                  bmcEndpoint:
+                    type: string
+                    maxLength: 2048
+                  systemUUID:
+                    type: string
+                    maxLength: 64
+                  bootMACAddress:
+                    type: string
+                    maxLength: 32
+                  bmcPublicKeySHA256:
+                    type: string
+                    maxLength: 128
+                  deviceGeneration:
+                    type: integer
+                    format: int64
+                  discoveryObservedAt:
+                    type: string
+                    maxLength: 64
+              evidence:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            x-kubernetes-validations:
+            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
+              message: operation phases move forward only, and an ended phase is final
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicewipes.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceWipe
+    listKind: DeviceWipeList
+    plural: devicewipes
+    singular: devicewipe
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Device
+      type: string
+      jsonPath: .spec.deviceRef.name
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Reason
+      type: string
+      jsonPath: .status.reason
+    - name: Fence
+      type: integer
+      jsonPath: .status.fence
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              creator:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                required:
+                - username
+                - uid
+              deviceRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                required:
+                - name
+                - uid
+              authority:
+                type: object
+                properties:
+                  allocationRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - name
+                  serviceRequest:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                    required:
+                    - reason
+                x-kubernetes-validations:
+                - rule: has(self.allocationRef) != has(self.serviceRequest)
+                  message: set exactly one of allocationRef and serviceRequest
+              step:
+                type: integer
+                format: int32
+                minimum: 1
+              cleaningPolicyDigest:
+                type: string
+                pattern: ^sha256:[0-9a-f]{64}$
+              targetDisks:
+                type: array
+                minItems: 1
+                maxItems: 16
+                items:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                x-kubernetes-list-type: set
+            required:
+            - creator
+            - deviceRef
+            - authority
+            - step
+            - cleaningPolicyDigest
+            - targetDisks
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: an operation spec is immutable after create
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                - Pending
+                - Admitted
+                - Dispatched
+                - Verifying
+                - Succeeded
+                - Failed
+                - Cancelled
+                - OutcomeUnknown
+              reason:
+                type: string
+                maxLength: 128
+              message:
+                type: string
+                maxLength: 1024
+              fence:
+                type: integer
+                format: int64
+                minimum: 0
+              admittedAt:
+                type: string
+                format: date-time
+              deadline:
+                type: string
+                format: date-time
+              finishedAt:
+                type: string
+                format: date-time
+              inputDigest:
+                type: string
+                maxLength: 128
+              snapshot:
+                type: object
+                properties:
+                  bmcEndpoint:
+                    type: string
+                    maxLength: 2048
+                  systemUUID:
+                    type: string
+                    maxLength: 64
+                  bootMACAddress:
+                    type: string
+                    maxLength: 32
+                  bmcPublicKeySHA256:
+                    type: string
+                    maxLength: 128
+                  deviceGeneration:
+                    type: integer
+                    format: int64
+                  discoveryObservedAt:
+                    type: string
+                    maxLength: 64
+              evidence:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            x-kubernetes-validations:
+            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
+              message: operation phases move forward only, and an ended phase is final
+        required:
+        - spec
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: devicerecoveries.fleet.datumapis.com
+  annotations:
+    discovery.miloapis.com/parent-contexts: Project
+spec:
+  group: fleet.datumapis.com
+  names:
+    kind: DeviceRecovery
+    listKind: DeviceRecoveryList
+    plural: devicerecoveries
+    singular: devicerecovery
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Device
+      type: string
+      jsonPath: .spec.deviceRef.name
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Reason
+      type: string
+      jsonPath: .status.reason
+    - name: Fence
+      type: integer
+      jsonPath: .status.fence
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              creator:
+                type: object
+                properties:
+                  username:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                required:
+                - username
+                - uid
+              deviceRef:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  uid:
+                    type: string
+                    minLength: 1
+                    maxLength: 64
+                required:
+                - name
+                - uid
+              authority:
+                type: object
+                properties:
+                  allocationRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - name
+                  serviceRequest:
+                    type: object
+                    properties:
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 512
+                    required:
+                    - reason
+                x-kubernetes-validations:
+                - rule: has(self.allocationRef) != has(self.serviceRequest)
+                  message: set exactly one of allocationRef and serviceRequest
+              decision:
+                type: string
+                enum:
+                - Settle
+                - Retry
+                - Retire
+                - Resolve
+              hold:
+                type: object
+                properties:
+                  kind:
+                    type: string
+                    minLength: 1
+                    maxLength: 63
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 253
+                  fence:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                required:
+                - kind
+                - name
+                - fence
+              evidence:
+                type: object
+                properties:
+                  observedAt:
+                    type: string
+                    format: date-time
+                  summary:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                  data:
+                    type: object
+                    maxProperties: 16
+                    additionalProperties:
+                      type: string
+                      maxLength: 256
+                required:
+                - observedAt
+                - summary
+              diskDisposal:
+                type: object
+                properties:
+                  method:
+                    type: string
+                    enum:
+                    - Destroyed
+                    - Removed
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                required:
+                - method
+                - reference
+              resolve:
+                type: object
+                properties:
+                  holder:
+                    type: string
+                    enum:
+                    - None
+                    - Allocation
+                    - Release
+                    - Retired
+                  allocationRef:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                    required:
+                    - name
+                required:
+                - holder
+            required:
+            - creator
+            - deviceRef
+            - authority
+            - decision
+            - evidence
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: an operation spec is immutable after create
+            - rule: (self.decision == 'Resolve') == has(self.resolve)
+              message: resolve is set exactly for Resolve
+            - rule: self.decision == 'Resolve' || has(self.hold)
+              message: Settle, Retry and Retire name the hold
+            - rule: '!has(self.diskDisposal) || self.decision == ''Retire'''
+              message: only Retire records disk disposal
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum:
+                - Pending
+                - Admitted
+                - Dispatched
+                - Verifying
+                - Succeeded
+                - Failed
+                - Cancelled
+                - OutcomeUnknown
+              reason:
+                type: string
+                maxLength: 128
+              message:
+                type: string
+                maxLength: 1024
+              fence:
+                type: integer
+                format: int64
+                minimum: 0
+              admittedAt:
+                type: string
+                format: date-time
+              deadline:
+                type: string
+                format: date-time
+              finishedAt:
+                type: string
+                format: date-time
+              inputDigest:
+                type: string
+                maxLength: 128
+              snapshot:
+                type: object
+                properties:
+                  bmcEndpoint:
+                    type: string
+                    maxLength: 2048
+                  systemUUID:
+                    type: string
+                    maxLength: 64
+                  bootMACAddress:
+                    type: string
+                    maxLength: 32
+                  bmcPublicKeySHA256:
+                    type: string
+                    maxLength: 128
+                  deviceGeneration:
+                    type: integer
+                    format: int64
+                  discoveryObservedAt:
+                    type: string
+                    maxLength: 64
+              evidence:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            x-kubernetes-validations:
+            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
+              message: operation phases move forward only, and an ended phase is final
+        required:
+        - spec

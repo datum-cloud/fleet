@@ -1,0 +1,17 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-installation-requester
+  annotations:
+    kubernetes.io/display-name: Fleet Device Installation Requester
+    kubernetes.io/description: The Fleet provider for Metal. Creates DeviceInstallations from Installations and reads custody.
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fleet.datumapis.com/deviceinstallations.create
+    - fleet.datumapis.com/deviceinstallations.get
+    - fleet.datumapis.com/deviceinstallations.list
+    - fleet.datumapis.com/deviceinstallations.watch
+    - fleet.datumapis.com/devicecustodies.get
+    - fleet.datumapis.com/devicecustodies.list
+    - fleet.datumapis.com/devicecustodies.watch

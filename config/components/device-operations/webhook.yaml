@@ -1,0 +1,24 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: fleet-operation-creator
+webhooks:
+  # Milo's root API server calls this webhook, because Milo does not evaluate
+  # admission policies stored in a project. It rejects a create whose
+  # spec.creator is not the authenticated caller, and any change to it. It is
+  # fail-closed. Status writes are not routed; only the coordinator role can
+  # make them.
+  - name: creator.operations.fleet.datumapis.com
+    admissionReviewVersions: [v1]
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    sideEffects: None
+    timeoutSeconds: 10
+    clientConfig:
+      url: https://fleet-registration.fleet-system.svc:9443/validate-operation-creator
+    rules:
+      - apiGroups: [fleet.datumapis.com]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [deviceinstallations, devicewipes, devicerecoveries]
+        scope: Namespaced

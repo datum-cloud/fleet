@@ -1,0 +1,43 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fleet.datumapis.com-device-coordinator
+  annotations:
+    kubernetes.io/display-name: Fleet Device Coordinator
+    kubernetes.io/description: The only writer of Device custody and of operation status. Reads inventory and allocations to rebuild custody.
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fleet.datumapis.com/devicecustodies.get
+    - fleet.datumapis.com/devicecustodies.list
+    - fleet.datumapis.com/devicecustodies.watch
+    - fleet.datumapis.com/devicecustodies.create
+    - fleet.datumapis.com/devicecustodies.update
+    - fleet.datumapis.com/devicecustodies.delete
+    - fleet.datumapis.com/deviceinstallations.get
+    - fleet.datumapis.com/deviceinstallations.list
+    - fleet.datumapis.com/deviceinstallations.watch
+    - fleet.datumapis.com/deviceinstallations.delete
+    - fleet.datumapis.com/deviceinstallations.updateStatus
+    - fleet.datumapis.com/deviceinstallations/status.update
+    - fleet.datumapis.com/devicewipes.get
+    - fleet.datumapis.com/devicewipes.list
+    - fleet.datumapis.com/devicewipes.watch
+    - fleet.datumapis.com/devicewipes.delete
+    - fleet.datumapis.com/devicewipes.updateStatus
+    - fleet.datumapis.com/devicewipes/status.update
+    - fleet.datumapis.com/devicerecoveries.get
+    - fleet.datumapis.com/devicerecoveries.list
+    - fleet.datumapis.com/devicerecoveries.watch
+    - fleet.datumapis.com/devicerecoveries.delete
+    - fleet.datumapis.com/devicerecoveries.updateStatus
+    - fleet.datumapis.com/devicerecoveries/status.update
+    - fleet.datumapis.com/devices.get
+    - fleet.datumapis.com/devices.list
+    - fleet.datumapis.com/devices.watch
+    - metal.datumapis.com/machineallocations.get
+    - metal.datumapis.com/machineallocations.list
+    - metal.datumapis.com/machineallocations.watch
+    - metal.datumapis.com/machinecapacities.get
+    - metal.datumapis.com/machinecapacities.list
+    - metal.datumapis.com/machinecapacities.watch
