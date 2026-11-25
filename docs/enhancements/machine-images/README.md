@@ -101,7 +101,9 @@ custody](../device-operations/README.md):
 
 - **[Customer data](../device-operations/README.md#customer-data):** the
   site's boot service can also read a payload, only while that operation's
-  boot is open. See [Site delivery](#site-delivery).
+  boot is open. The site controller that creates every worker can also read
+  site payloads; it grants no new access, because that controller can already
+  run a worker as any operation's identity. See [Site delivery](#site-delivery).
 - **[Admission](../device-operations/README.md#admission):** DeviceInstallation
   adds one check of its own inputs.
 
@@ -386,9 +388,10 @@ the Secret again.
 ### Site delivery
 
 Federation delivers the payload to the site with the operation, as a separate
-Secret, never inside the operation's handoff. The handoff names that Secret,
-and the site grants that operation's worker `get` on exactly that Secret. No
-site identity can list or watch these Secrets.
+object, never inside the operation's handoff. It is a dedicated kind, not a
+Secret, so permission on it reaches nothing else. The handoff names that
+object, and the site grants that operation's worker `get` on exactly that
+object. No worker can list or watch payloads.
 
 The worker checks the payload against the operation's digest, and refuses with
 `InputMismatch` before it sends anything if they differ. It renders the payload
@@ -409,10 +412,9 @@ installer trusts. The installer writes it where the image's bootstrap format
 reads it on first boot. The boot service drops its copy when the admission
 closes.
 
-The site deletes the payload Secret and every copy when the operation ends,
-when a higher fence stops its worker, or when the coordinator answers its
-result, whichever comes first. Federation removes its copy when the coordinator
-answers the result.
+The site deletes every copy it made when the operation ends or a higher fence
+stops its worker. When the coordinator answers the result, federation deletes
+the delivered object at the site.
 
 ### Implementation decisions
 
