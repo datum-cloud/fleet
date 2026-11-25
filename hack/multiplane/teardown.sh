@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Delete only this run's exact containers, kind clusters and provider image tag.
-# Default: only after evidence/summary.json records passed acceptance (verified
-# cleanup and release), then remove private credentials and keep evidence.
+# Default: only after evidence/summary.json records verified acceptance evidence
+# (verified cleanup and release), then remove private credentials and keep
+# evidence. Whether the run passed is recorded only in evidence/result.json.
 # --discard-unknown is an explicit human decision to abandon an Unknown run; it
 # deletes the same exact resources, keeps all private state, and never claims release.
 set -euo pipefail
@@ -16,8 +17,8 @@ prefix=$(cat "$state/prefix")
 bash hack/multiplane/coordinator.sh stop "$state" >/dev/null
 export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker
 if [[ $mode == passed ]]; then
- python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("acceptance")!="passed")' "$state/evidence/summary.json" 2>/dev/null || {
-  echo 'No passed acceptance summary; refusing teardown. Use --discard-unknown only after inspection.' >&2; exit 1; }
+ python3 -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("acceptance")!="evidence-verified")' "$state/evidence/summary.json" 2>/dev/null || {
+  echo 'No verified acceptance evidence; refusing teardown. Use --discard-unknown only after inspection.' >&2; exit 1; }
 fi
 hub="$prefix-hub-control-plane"
 if docker inspect "$hub" >/dev/null 2>&1; then

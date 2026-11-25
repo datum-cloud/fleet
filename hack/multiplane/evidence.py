@@ -432,7 +432,9 @@ for name in FAILURE_SCENARIOS:
     failure_scenarios[name] = json.loads((ev / (name + '.json')).read_text())
 
 summary = {
-    'schemaVersion': 2, 'acceptance': 'passed',
+    # The evidence verified; the run is not finished. Only result.json, which
+    # run.sh writes last, records whether the run passed.
+    'schemaVersion': 3, 'acceptance': 'evidence-verified',
     'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prefix': prefix,
     'qualification': {'nativeMiloProjectAPIs': True, 'actualKarmadaDeliveryAndReflection': True, 'realLocalPXE': True,
                       'kubernetesJobExecution': True, 'actualKroController': True, 'fluxReconciledServices': True,
