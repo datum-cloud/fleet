@@ -369,16 +369,22 @@ The `redfish-dhcp-synced` phase runs after `boot-denials` and writes
 2. each operation that ran at the site published the snapshot's boot MAC at its
    address, and Kea reported serving it after that boot opened and reported it
    withdrawn later;
-3. Kea holds a lease for the boot MAC at that address for every operation whose
-   boot script was delivered, at least one installation and both wipes, and
-   leased no static or out-of-range address;
+3. for every operation that powered on for a network boot, Kea leased the boot
+   MAC that operation's address during that operation's own boot window; at
+   least two installations and two wipes did, and Kea leased no static or
+   out-of-range address;
 4. the lab network has no `<dhcp>` element and no dnsmasq runs; and
 5. Kea's last report serves nothing.
 
-Consumer B's installation on the same server and both release wipes each get
-their own claim and reservation. The stand-in may hand a released address out
-again, as IPAM may, so freshness is judged by claim and by report time, not by
-address.
+The second installation is consumer B's, on the same server after consumer
+A's release. It gets its own claim and reservation, and its firmware leases
+that address from Kea, but the failure scenarios withhold its boot script and
+hold it at its deadline, so it never installs. Both release wipes boot and
+complete. The stand-in may hand a released address out again, as IPAM may, so
+freshness is judged by claim and by lease and report times, not by address.
+
+The mode is implemented and its offline checks pass. No synced run has passed
+yet.
 
 ## Acceptance phases
 

@@ -476,7 +476,14 @@ def dhcp_synced(s):
     leases = run('cat', '/var/lib/kea/dhcp4.leases', container='kea').stdout.splitlines()
     header = leases[0].split(',') if leases else []
     rows = [dict(zip(header, l.split(','))) for l in leases[1:] if l.strip()]
+    if not rows or not {'address', 'hwaddr', 'expire', 'valid_lifetime'} <= set(header):
+        die('Kea recorded no leases')
     answered = {(r.get('address'), r.get('hwaddr', '').lower()) for r in rows}
+    # When Kea granted each lease: its expiry less its lifetime, in seconds.
+    granted = [(r['address'], r['hwaddr'].lower(), int(r['expire']) - int(r['valid_lifetime'])) for r in rows]
+    # An operation asked for a network boot once its power-on was journaled,
+    # whether or not the boot server then served it.
+    network_boots = {o['operation'] for o in journal(s) if any(n in ('installer-power-on', 'wipe-power-on') for n, _ in o['steps'])}
     record = {'observedAt': now(), 'bootMAC': mac, 'operations': []}
     for o in ops:
         boot = run('cat', '%s/boot/%s.json' % (device, o['uid']))
@@ -500,16 +507,23 @@ def dhcp_synced(s):
         if not withdrawn:
             die('%s %s: Kea never reported its reservation withdrawn' % (o['kind'], o['name']))
         delivered = run('sh', '-c', 'cat /var/lib/fleet-boot/%s/boot-delivery.log 2>/dev/null; true' % harness.key(o['uid'])).stdout
-        entry.update(published=True, servedAt=served[0]['at'], withdrawnAt=withdrawn[0]['at'], bootScriptDelivered='admitted boot.ipxe' in delivered,
-                     keaAnswered=(o['address'], mac) in answered)
-        if entry['bootScriptDelivered'] and not entry['keaAnswered']:
-            die('%s %s booted over the network, but Kea holds no lease for %s at %s' % (o['kind'], o['name'], mac, o['address']))
+        # Kea leased this operation's address to the boot NIC inside this
+        # operation's own window: after its boot opened and before Kea
+        # withdrew its reservation, with five seconds for clock rounding.
+        start, end = opened.timestamp() - 5, at(withdrawn[0]['at']).timestamp() + 5
+        leased = [g for a, m, g in granted if a == o['address'] and m == mac and start <= g <= end]
+        entry.update(published=True, servedAt=served[0]['at'], withdrawnAt=withdrawn[0]['at'], networkBoot=o['uid'] in network_boots,
+                     bootScriptDelivered='admitted boot.ipxe' in delivered, keaLeasesInWindow=len(leased))
+        if entry['networkBoot'] and not leased:
+            die('%s %s powered on for a network boot, but Kea leased %s no address %s during its boot' % (o['kind'], o['name'], mac, o['address']))
+        if entry['bootScriptDelivered'] and not entry['networkBoot']:
+            die('%s %s delivered a boot script with no journaled network boot' % (o['kind'], o['name']))
         record['operations'].append(entry)
     if applied[-1]['feed']['reservations']:
         die('Kea still serves a reservation after the last operation ended')
-    booted = [e for e in record['operations'] if e.get('bootScriptDelivered')]
-    if sum(e['kind'] == 'DeviceWipe' for e in booted) < 2 or not any(e['kind'] == 'DeviceInstallation' for e in booted):
-        die('expected network boots of at least one installation and two wipes, got %s' % [(e['kind'], e['name']) for e in booted])
+    booted = [e for e in record['operations'] if e.get('networkBoot')]
+    if sum(e['kind'] == 'DeviceWipe' for e in booted) < 2 or sum(e['kind'] == 'DeviceInstallation' for e in booted) < 2:
+        die('expected Kea-leased network boots of two installations and two wipes, got %s' % [(e['kind'], e['name']) for e in booted])
     static = {t['ip'] for t in json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text())}
     if any(a in static for a, _ in answered) or any(not first <= tuple(int(x) for x in a.split('.')) <= last for a, _ in answered if a):
         die('Kea leased an address outside the lab IPAM range: %s' % sorted(answered))
@@ -521,7 +535,8 @@ def dhcp_synced(s):
                   claimsRemaining=0, distinctClaims=len(ops))
     write(s / 'evidence' / 'redfish-dhcp.json', record)
     print('redfish-dhcp-synced: %d operations each carried their own IPAM boot address; Kea served each reservation only after its boot opened and reported it withdrawn; '
-          'firmware leased every booted address from Kea; the lab network had no DHCP; no claim remains' % len(ops))
+          'firmware leased each operation\'s address from Kea during its own boot (%d network boots, two installations and two wipes); the lab network had no DHCP; no claim remains'
+          % (len(ops), len(booted)))
 
 
 def audit_mark(s):

@@ -26,9 +26,10 @@ patches:
           name: kea
           image: "${FLEET_SITE_IMAGE}"
           imagePullPolicy: IfNotPresent
-          # Kea starts once the lab BMC adapter has created the bridge. Kea
-          # refuses a control socket directory that is not 0750.
-          command: [sh, -c, 'mkdir -p /var/run/kea && chmod 0750 /var/run/kea && until [ -e /sys/class/net/fleetpxe0 ]; do sleep 2; done && exec kea-dhcp4 -c /etc/kea-base/kea-dhcp4.conf']
+          # Kea starts once the lab BMC adapter has created the bridge and
+          # libvirt has given it its address. Kea refuses a control socket
+          # directory that is not 0750.
+          command: [sh, -c, 'mkdir -p /var/run/kea && chmod 0750 /var/run/kea && until [ -e /sys/class/net/fleetpxe0 ] && grep -qw 192.168.77.1 /proc/net/fib_trie; do sleep 2; done && exec kea-dhcp4 -c /etc/kea-base/kea-dhcp4.conf']
           env:
             - {name: KEA_PIDFILE_DIR, value: /var/run/kea}
             - {name: KEA_LOCKFILE_DIR, value: none}
