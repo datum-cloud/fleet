@@ -278,6 +278,6 @@ requirements.
 | Relay, provisioning VLAN, isolation and LACP fallback at a site | Network operations; see the [server networking enhancement][server-networking] |
 | Telling firmware what to boot in synced mode (Redfish `HttpBootUri` for UEFI HTTP Boot, or a DHCP boot-file option) | Proposed; the Redfish worker still arms `Pxe`, which relies on site DHCP for the boot file |
 | DHCPv6 reservations | Proposed; the feed accepts IPv6, the Kea DHCPv4 synchronizer and the claim reject it |
-| Lab acceptance in synced mode | Not run; the lab uses static DHCP |
+| Lab acceptance in synced mode | Implemented as `run.sh --redfish --synced-dhcp`, with a synthetic IPAM stand-in; see the [Redfish lab](redfish-lab.md#synchronized-dhcp-mode) for its result |
 
 [server-networking]: https://github.com/datum-cloud/fleet/pull/186

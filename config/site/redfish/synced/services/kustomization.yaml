@@ -1,0 +1,87 @@
+# Redfish lab with synchronized DHCP (run.sh --redfish --synced-dhcp). The lab
+# provisioning network keeps its bridge but has no DHCP of its own; Kea, fed by
+# Fleet's reservation feed, is the only DHCP server on it. Kea and its
+# synchronizer run in the runtime Pod because the bridge lives in that Pod's
+# network namespace. The feed runs beside the boot service, as at a site.
+# The harness creates the Secrets fleet-site-dhcp-sync and
+# fleet-site-dhcp-feed-tls before this layer reconciles; they are never in Git.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../services
+  - kea.yaml
+components:
+  - ../../../dhcp/feed
+patches:
+  - target: {kind: Deployment, name: fleet-site-bmc}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: FLEET_LAB_DHCP, value: synced}
+  - target: {kind: Deployment, name: fleet-site-runtime}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: kea
+          image: "${FLEET_SITE_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          # Kea starts once the lab BMC adapter has created the bridge. Kea
+          # refuses a control socket directory that is not 0750.
+          command: [sh, -c, 'mkdir -p /var/run/kea && chmod 0750 /var/run/kea && until [ -e /sys/class/net/fleetpxe0 ]; do sleep 2; done && exec kea-dhcp4 -c /etc/kea-base/kea-dhcp4.conf']
+          env:
+            - {name: KEA_PIDFILE_DIR, value: /var/run/kea}
+            - {name: KEA_LOCKFILE_DIR, value: none}
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL], add: [NET_BIND_SERVICE, NET_RAW]}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: dhcp-base, mountPath: /etc/kea-base, readOnly: true}
+            - {name: kea-control, mountPath: /var/run/kea}
+            - {name: state, mountPath: /var/lib/kea, subPath: kea-leases}
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: dhcp-sync
+          image: "${FLEET_SITE_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          # One instance with a fixed name: a restarted Pod reports as the
+          # same instance, so its earlier reports never strand a withdrawal.
+          command:
+            - /usr/local/bin/fleet-dhcp-sync
+            - -feed=https://fleet-site-dhcp-feed.fleet-site.svc:8081
+            - -token-file=/etc/fleet-dhcp/token
+            - -ca-file=/etc/fleet-dhcp-tls/ca.crt
+            - -instance=lab-kea
+            - -kea-socket=/var/run/kea/kea4-ctrl-socket
+            - -base-config=/etc/kea-base/kea-dhcp4.conf
+            - -interval=2s
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: dhcp-base, mountPath: /etc/kea-base, readOnly: true}
+            - {name: kea-control, mountPath: /var/run/kea}
+            - {name: dhcp-sync-token, mountPath: /etc/fleet-dhcp, readOnly: true}
+            - {name: dhcp-feed-ca, mountPath: /etc/fleet-dhcp-tls, readOnly: true}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: dhcp-base, configMap: {name: fleet-site-dhcp-base}}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: kea-control, emptyDir: {}}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: dhcp-sync-token, secret: {secretName: fleet-site-dhcp-sync, defaultMode: 0400}}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: dhcp-feed-ca, secret: {secretName: fleet-site-dhcp-feed-tls, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}}

@@ -157,6 +157,15 @@ func phase(name, configPath string, once bool) error {
 	}[name]
 	last := ""
 	for {
+		// With synchronized lab DHCP, bind the boot address claims this phase
+		// is waiting on, in IPAM's place.
+		if r.IPAM != nil {
+			if bound, bindErr := r.IPAM.Bind(ctx); bindErr != nil {
+				fmt.Printf("%s: lab IPAM stand-in: %v\n", name, bindErr)
+			} else if bound > 0 {
+				fmt.Printf("%s: lab IPAM stand-in bound %d boot address claim(s)\n", name, bound)
+			}
+		}
 		err = action(ctx)
 		// Report each new reason a phase is waiting, so a phase that times
 		// out shows what it waited for.

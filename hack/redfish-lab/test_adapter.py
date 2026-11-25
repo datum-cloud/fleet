@@ -99,6 +99,17 @@ class AdapterTest(unittest.TestCase):
         self.assertNotIn('synthetic-test-password', text)
         self.assertNotIn('Authorization', text)
 
+    def test_7_synced_dhcp_network_has_no_dhcp_server(self):
+        targets = {'System-1': {'mac': '52:54:00:77:01:0a', 'ip': '192.168.77.10'}}
+        static = adapter.network_xml(targets, '10.96.0.80', 'static')
+        synced = adapter.network_xml(targets, '10.96.0.80', 'synced')
+        self.assertIn('<dhcp>', static)
+        self.assertNotIn('dhcp', synced)
+        self.assertNotIn('52:54:00:77:01:0a', synced)
+        self.assertIn("<bridge name='fleetpxe0'", synced)
+        with self.assertRaises(ValueError):
+            adapter.network_xml(targets, '10.96.0.80', 'other')
+
     def test_6_lost_libvirt_definitions_are_redefined_with_the_same_identity(self):
         s = virsh_state()
         s['domains'].pop('fleet-lab-target-a')

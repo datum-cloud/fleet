@@ -8,10 +8,12 @@ enrollment matches the lab targets, and every phase is implemented. Never
 contacts a container runtime or cluster.
 """
 import argparse
+import importlib
 import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -96,6 +98,54 @@ check('BMC image and Service IP substituted by Flux', '${FLEET_BMC_IMAGE}' in js
 check('every site role selects the Redfish provider', all(any(e.get('name') == 'FLEET_SITE_PROVIDER' and e.get('value') == 'redfish' for e in deployments[n]['spec']['template']['spec']['containers'][0].get('env', []))
                                                           for n in ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observer')))
 
+check('static Redfish services run no DHCP of their own', not any(c['name'] in ('kea', 'dhcp-sync', 'dhcp-feed') for d in deployments.values() for c in d['spec']['template']['spec']['containers']))
+
+# Synchronized lab DHCP (run.sh --synced-dhcp).
+synced_graph = build(root / 'config/site/redfish/synced/graph')
+synced_rgd = next((d for d in synced_graph if d.get('kind') == 'ResourceGraphDefinition'), {})
+synced_env = {e['name']: e.get('value') for e in next((r for r in synced_rgd.get('spec', {}).get('resources', []) if r['id'] == 'workers'), {}).get('template', {}).get('spec', {}).get('template', {}).get('spec', {}).get('containers', [{}])[0].get('env', [])}
+synced_enrollment = json.loads(synced_env.get('FLEET_REDFISH_ENROLLMENT', '{}'))
+check('synced graph changes only the DHCP mode', synced_enrollment.get('dhcp') == 'synced' and dict(synced_enrollment, dhcp='static') == enrollment
+      and {k: v for k, v in synced_env.items() if k != 'FLEET_REDFISH_ENROLLMENT'} == {k: v for k, v in env.items() if k != 'FLEET_REDFISH_ENROLLMENT'})
+synced_services = build(root / 'config/site/redfish/synced/services')
+synced_deployments = {d['metadata']['name']: d for d in synced_services if d.get('kind') == 'Deployment'}
+pod = lambda n: synced_deployments.get(n, {}).get('spec', {}).get('template', {}).get('spec', {})
+runtime_containers = {c['name']: c for c in pod('fleet-site-runtime').get('containers', [])}
+check('synced runtime adds Kea and the synchronizer beside libvirt', sorted(runtime_containers) == ['dhcp-sync', 'kea', 'libvirt'], str(sorted(runtime_containers)))
+check('Kea and the synchronizer are not privileged and add only the network capabilities Kea needs',
+      not any(runtime_containers.get(n, {}).get('securityContext', {}).get('privileged') for n in ('kea', 'dhcp-sync'))
+      and runtime_containers.get('kea', {}).get('securityContext', {}).get('capabilities') == {'drop': ['ALL'], 'add': ['NET_BIND_SERVICE', 'NET_RAW']}
+      and runtime_containers.get('dhcp-sync', {}).get('securityContext', {}).get('capabilities') == {'drop': ['ALL']})
+sync_args = runtime_containers.get('dhcp-sync', {}).get('command', [])
+check('the synchronizer reports as one fixed instance over TLS', '-instance=lab-kea' in sync_args and '-feed=https://fleet-site-dhcp-feed.fleet-site.svc:8081' in sync_args
+      and '-ca-file=/etc/fleet-dhcp-tls/ca.crt' in sync_args, str(sync_args))
+check('Kea makes its control socket directory 0750 and waits for the lab bridge', 'chmod 0750 /var/run/kea' in ' '.join(runtime_containers.get('kea', {}).get('command', []))
+      and 'fleetpxe0' in ' '.join(runtime_containers.get('kea', {}).get('command', [])))
+check('the feed runs beside the boot service', any(c['name'] == 'dhcp-feed' and c['command'][:2] == ['fleet-multiplane', 'dhcp-feed'] for c in pod('fleet-site-boot').get('containers', [])))
+check('the lab BMC defines the network without DHCP', any(e == {'name': 'FLEET_LAB_DHCP', 'value': 'synced'} for e in pod('fleet-site-bmc').get('containers', [{}])[0].get('env', [])))
+kea_config = json.loads(next((d['data']['kea-dhcp4.conf'] for d in synced_services if d.get('kind') == 'ConfigMap' and d['metadata']['name'] == 'fleet-site-dhcp-base'), '{}'))
+subnets = kea_config.get('Dhcp4', {}).get('subnet4', [])
+check('lab Kea serves the bridge subnet from reservations only, with the boot program', kea_config.get('Dhcp4', {}).get('interfaces-config', {}).get('interfaces') == ['fleetpxe0']
+      and len(subnets) == 1 and subnets[0].get('subnet') == '192.168.77.0/24' and 'pools' not in subnets[0]
+      and subnets[0].get('boot-file-name') == 'http://${FLEET_BOOT_SERVICE_IP}:8080/pxe/boot.ipxe'
+      and kea_config['Dhcp4'].get('control-socket', {}).get('socket-name') == '/var/run/kea/kea4-ctrl-socket', json.dumps(kea_config)[:300])
+check('no Secret in the synced services', not any(d.get('kind') == 'Secret' for d in synced_services))
+for name, d in synced_deployments.items():
+    volumes = {v['name'] for v in d['spec']['template']['spec'].get('volumes', [])}
+    missing = {m['name'] for c in d['spec']['template']['spec']['containers'] for m in c.get('volumeMounts', [])} - volumes
+    check('synced %s mounts only volumes it declares' % name, not missing, str(missing))
+os.environ['FLEET_LAB_DHCP'] = 'synced'
+importlib.reload(flux)
+check('synced Flux inventory holds the base configuration and the feed Service',
+      {'fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_fleet-site-dhcp-feed__Service'} <= set(flux.LAYER_INVENTORY['flux-system/fleet-site-services']))
+os.environ['FLEET_LAB_DHCP'] = 'static'
+importlib.reload(flux)
+check('run.sh accepts --synced-dhcp only with --redfish', "--synced-dhcp) lab_dhcp=synced" in (root / 'hack/multiplane/run.sh').read_text()
+      and '[[ $lab_dhcp == static || $provider == redfish ]] || usage' in (root / 'hack/multiplane/run.sh').read_text())
+check('the synced acceptance asserts the DHCP evidence', 'rf dhcp-synced' in (root / 'hack/multiplane/acceptance-redfish.sh').read_text())
+check('synced evidence requires the DHCP phase', "markers += ('redfish-dhcp-synced: ',)" in (root / 'hack/multiplane/evidence.py').read_text()
+      and "print('redfish-dhcp-synced: " in (root / 'hack/multiplane/redfish_steps.py').read_text())
+
 base = build(root / 'config/site/redfish/base')
 policy = next((d for d in base if d.get('kind') == 'ValidatingAdmissionPolicy' and d['metadata']['name'] == 'fleet-site-kro-worker-jobs'), {})
 text = json.dumps(policy)
@@ -135,6 +185,22 @@ with tempfile.TemporaryDirectory() as tmp:
         used |= set(re.findall(r'\$\{(FLEET_[A-Z_]+)\}', f.read_text()))
     defined = set(re.findall(r'^  (FLEET_[A-Z_]+): ', cell, re.M))
     check('Redfish substituted variables defined', used <= defined, str(sorted(used - defined)))
+    # The same revision with synchronized lab DHCP selects the synced graph
+    # and services and keeps the Redfish base.
+    os.environ['FLEET_LAB_DHCP'] = 'synced'
+    importlib.reload(flux)
+    flux.INSTALL_SHA256 = flux.sha256(s / 'flux-tools' / 'install.yaml')
+    shutil.rmtree(s / 'gitops')
+    check('stage a synced Redfish revision', flux.stage(args) == 0)
+    cell = subprocess.run(['kustomize', 'build', str(s / 'gitops/r2/environment/cell')], text=True, capture_output=True).stdout
+    check('synced cell layers use the synced overlays', 'path: ./config/site/redfish/synced/services' in cell and 'path: ./config/site/redfish/synced/graph' in cell
+          and 'path: ./config/site/redfish/base' in cell)
+    used = set()
+    for f in (root / 'config/site/redfish/synced/services').glob('*.yaml'):
+        used |= set(re.findall(r'\$\{(FLEET_[A-Z_]+)\}', f.read_text()))
+    check('synced substituted variables defined', used <= set(re.findall(r'^  (FLEET_[A-Z_]+): ', cell, re.M)), str(sorted(used)))
+    os.environ['FLEET_LAB_DHCP'] = 'static'
+    importlib.reload(flux)
 check('ownership audit expects the BMC', ('deployments', 'fleet-site', 'fleet-site-bmc') in flux.SHARED and 'fleet-site-bmc' in flux.SITE_DEPLOYMENTS)
 
 # Every Redfish phase is implemented, and the lab fault hooks stay in the lab.

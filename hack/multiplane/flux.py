@@ -95,11 +95,20 @@ SITE_DEPLOYMENTS = ('fleet-site-runtime', 'fleet-site-boot', 'fleet-site-observe
 if PROVIDER == 'redfish':
     SHARED.update({('deployments', SITE, 'fleet-site-bmc'): 'fleet-site-services', ('services', SITE, 'fleet-site-bmc'): 'fleet-site-services',
                    ('serviceaccounts', SITE, 'fleet-site-bmc'): 'fleet-site-base'})
+# Lab DHCP: static (libvirt dnsmasq) or synced (run.sh --synced-dhcp, Redfish
+# only): the site's Kea, fed by Fleet's reservation feed, from the
+# config/site/redfish/synced overlays.
+LAB_DHCP = os.environ.get('FLEET_LAB_DHCP', 'static')
+if LAB_DHCP not in ('static', 'synced') or (LAB_DHCP == 'synced' and PROVIDER != 'redfish'):
+    raise SystemExit('FLEET_LAB_DHCP=synced needs the Redfish provider')
+SYNCED_OBJECTS = ['fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_fleet-site-dhcp-feed__Service'] if LAB_DHCP == 'synced' else []
+if LAB_DHCP == 'synced':
+    SHARED.update({('configmaps', SITE, 'fleet-site-dhcp-base'): 'fleet-site-services', ('services', SITE, 'fleet-site-dhcp-feed'): 'fleet-site-services'})
 LAYER_INVENTORY = {
     'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap',
                                                'fleet-site_fleet-site-runtime_apps_Deployment', 'fleet-site_fleet-site-boot_apps_Deployment',
                                                'fleet-site_fleet-site-observer_apps_Deployment'] + (
-                                                   ['fleet-site_fleet-site-bmc__Service', 'fleet-site_fleet-site-bmc_apps_Deployment'] if PROVIDER == 'redfish' else [])),
+                                                   ['fleet-site_fleet-site-bmc__Service', 'fleet-site_fleet-site-bmc_apps_Deployment'] if PROVIDER == 'redfish' else []) + SYNCED_OBJECTS),
     'flux-system/fleet-site-graph': ['_fleet-handoff-dispatcher_kro.run_ResourceGraphDefinition'],
     'flux-system/fleet-site-dispatch': ['fleet-site_dispatcher_site.fleet.datumapis.com_HandoffDispatcher'],
 }
@@ -266,7 +275,9 @@ def stage(args):
                 # Environment selection, as a commit would make it: the cell's
                 # site layers reconcile the Redfish overlays of the same source.
                 for layer in ('fleet-site-base', 'fleet-site-graph') + (('fleet-site-services',) if args.site != 'absent' else ()):
-                    patches.append(child_path(layer, './config/site/redfish/' + layer.rsplit('-', 1)[1]))
+                    kind = layer.rsplit('-', 1)[1]
+                    overlay = 'synced/' + kind if LAB_DHCP == 'synced' and kind != 'base' else kind
+                    patches.append(child_path(layer, './config/site/redfish/' + overlay))
                 if args.site != 'absent':
                     data.update(FLEET_BMC_IMAGE=env['bmcImage'], FLEET_BMC_SERVICE_IP=BMC_SERVICE_IP)
             if args.site != 'absent':

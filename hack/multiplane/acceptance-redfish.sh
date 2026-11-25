@@ -58,6 +58,9 @@ step release-status-b 120
 step rebuild 1200
 step wrong-location 300
 step boot-denials 300
+# Synchronized lab DHCP (run.sh --synced-dhcp): every boot's reservation came
+# from its own IPAM claim and Kea served it only while the boot was open.
+[[ ${FLEET_LAB_DHCP:-static} != synced ]] || rf dhcp-synced 300
 step flux-final 900
 rf isolation 600
 ph evidence 600 python3 hack/multiplane/evidence.py "$state"

@@ -1,0 +1,49 @@
+# The reservation feed: a container beside the boot service, which reads the
+# site store and writes the applied reports beside the boot evidence, and a
+# Service reachable only inside the site cluster. The environment supplies
+# the Secrets fleet-site-dhcp-sync (key token) and fleet-site-dhcp-feed-tls
+# (tls.crt, tls.key, ca.crt), never in Git. The Kea component and the
+# Redfish lab's synchronized DHCP both use it.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - service.yaml
+patches:
+  # The feed reads the site store and writes the applied reports beside the
+  # boot evidence, so it runs in the boot Pod, which holds the state volume.
+  - target: {kind: Deployment, name: fleet-site-boot}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/-
+        value:
+          name: dhcp-feed
+          image: "${FLEET_SITE_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          command: [fleet-multiplane, dhcp-feed, -sync-token-file, /etc/fleet-dhcp/token, -tls-cert, /etc/fleet-dhcp-tls/tls.crt, -tls-key, /etc/fleet-dhcp-tls/tls.key]
+          env:
+            - {name: FLEET_SITE_PROVIDER, value: redfish}
+            - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
+          ports:
+            - {name: dhcp-feed, containerPort: 8081}
+          readinessProbe:
+            tcpSocket: {port: 8081}
+            periodSeconds: 5
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/fleet-local, subPath: journal, readOnly: true}
+            - {name: state, mountPath: /var/lib/fleet-boot, subPath: boot-evidence}
+            - {name: dhcp-sync-token, mountPath: /etc/fleet-dhcp, readOnly: true}
+            - {name: dhcp-feed-tls, mountPath: /etc/fleet-dhcp-tls, readOnly: true}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: dhcp-sync-token, secret: {secretName: fleet-site-dhcp-sync, defaultMode: 0400}}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value: {name: dhcp-feed-tls, secret: {secretName: fleet-site-dhcp-feed-tls, defaultMode: 0400}}

@@ -80,7 +80,11 @@ for role in roles:
  apply(config,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}})
  rules=[{'apiGroups':[''],'resources':['namespaces'],'verbs':['get']},{'apiGroups':['metal.datumapis.com'],'resources':['machineclasses','machineprofiles','machinecapacities','machines','installations'],'verbs':['get','list','watch']}]
  if role=='provider':
-  for crds in ('config/components/inventory/crds/fleet.datumapis.com.yaml','config/components/device-operations/crds/fleet.datumapis.com.yaml'):
+  # Synchronized lab DHCP claims boot addresses from IPAM. The lab has no
+  # IPAM service, so a CRD with IPAM's claim kind stands in for its API, and
+  # the acceptance runner binds claims in IPAM's place.
+  synced=os.environ.get('FLEET_LAB_DHCP')=='synced'
+  for crds in ('config/components/inventory/crds/fleet.datumapis.com.yaml','config/components/device-operations/crds/fleet.datumapis.com.yaml')+(('internal/bootaddress/testdata/ipclaims.yaml',) if synced else ()):
    kubectl(config,'apply','-f',crds,stdout=subprocess.DEVNULL)
   kubectl(config,'wait','--for=condition=Established','crd','--all','--timeout=90s',stdout=subprocess.DEVNULL)
   # The CRD rule check writes its synthetic objects here, away from the
@@ -91,12 +95,16 @@ for role in roles:
   # reads custody and Devices only to skip taken capacity.
   rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},
           {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
+  # Each requester claims and releases its own boot addresses; the release
+  # controller reads custody to keep a held operation's claim.
+  claims={'apiGroups':['ipam.miloapis.com'],'resources':['ipclaims'],'verbs':['get','list','create','delete']}
+  if synced:rules.append(claims)
   components={
    'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations','devicewipes','devicerecoveries'],'verbs':['get','list','watch','delete']},
                   {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations/status','devicewipes/status','devicerecoveries/status'],'verbs':['get','update']},
-                  {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}],
-   'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}],
+                  {'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch']}]+([{'apiGroups':['ipam.miloapis.com'],'resources':['ipclaims'],'verbs':['get']}] if synced else []),
+   'release':[{'apiGroups':['fleet.datumapis.com'],'resources':['devicewipes'],'verbs':['get','create']}]+([claims,{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get']}] if synced else []),
    'discovery':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices/status'],'verbs':['get','update']}],
    # Staff create recoveries and read inventory and custody, nothing else.
    # The coordinator treats every unconfigured creator as staff.

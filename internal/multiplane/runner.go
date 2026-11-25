@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,9 @@ type Runner struct {
 	Consumers [2]Project
 	Allocator *allocation.Allocator
 	Hub       *coordination.Hub
+	// IPAM binds boot address claims in IPAM's place when the lab's DHCP is
+	// synchronized. Nil otherwise.
+	IPAM *StandInIPAM
 }
 
 func Scheme() *runtime.Scheme {
@@ -242,6 +246,13 @@ func New(ctx context.Context, c Config) (*Runner, error) {
 	}
 	if c.BootAddressClass != "" {
 		r.Allocator.BootAddresses = &bootaddress.Claimer{Class: c.BootAddressClass, Scope: map[string]bootaddress.ScopeRef{"location": {APIGroup: "networking.datumapis.com", Kind: "Location", Name: Location}}}
+		bootstrap, err := API(filepath.Join(c.State, "provider", "bootstrap-project.json"))
+		if err != nil {
+			return nil, err
+		}
+		// The lab bridge is 192.168.77.0/24. Its static leases sit below .100,
+		// so a boot address from this range is never a static lease.
+		r.IPAM = &StandInIPAM{Client: bootstrap, Namespace: DeviceNamespace, First: netip.MustParseAddr("192.168.77.100"), Last: netip.MustParseAddr("192.168.77.199")}
 	}
 	return r, nil
 }

@@ -14,9 +14,14 @@ ENV FLEET_LOCAL_VM=disposable-container LIBVIRT_DEFAULT_URI=qemu:///system
 # fleet-multiplane binary from the named build context "fleetbin". Runtime,
 # boot service, observer and per-operation worker Jobs all use this image.
 FROM tcg AS site
+# Kea and the DHCP synchronizer serve the Redfish lab's synchronized DHCP
+# mode from the runtime Pod, on the provisioning bridge. Debian's Kea is the
+# native-architecture build; ISC publishes its image for amd64 only.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends kea-dhcp4-server && rm -rf /var/lib/apt/lists/*
 COPY site-runtime /usr/local/bin/fleet-site-runtime
 COPY --from=fleetbin fleet-multiplane /usr/local/bin/fleet-multiplane
-RUN chmod 755 /usr/local/bin/fleet-site-runtime /usr/local/bin/fleet-multiplane && printf '%s\n' 'unix_sock_dir = "/run/fleet-libvirt"' >> /etc/libvirt/libvirtd.conf
+COPY --from=fleetbin fleet-dhcp-sync /usr/local/bin/fleet-dhcp-sync
+RUN chmod 755 /usr/local/bin/fleet-site-runtime /usr/local/bin/fleet-multiplane /usr/local/bin/fleet-dhcp-sync && printf '%s\n' 'unix_sock_dir = "/run/fleet-libvirt"' >> /etc/libvirt/libvirtd.conf
 
 FROM fleet-vm-local AS kvm
 USER root

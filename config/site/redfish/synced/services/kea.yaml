@@ -1,0 +1,24 @@
+# The lab's base Kea configuration, in the network owner's role: the
+# provisioning subnet on the lab bridge, its gateway and the boot program. It
+# has no pools, so Kea answers only the MACs the reservation feed names. Kea
+# keeps its leases on the site volume as evidence of each answer.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-site-dhcp-base
+  namespace: fleet-site
+data:
+  kea-dhcp4.conf: |
+    {"Dhcp4": {
+      "interfaces-config": {"interfaces": ["fleetpxe0"], "dhcp-socket-type": "raw"},
+      "control-socket": {"socket-type": "unix", "socket-name": "/var/run/kea/kea4-ctrl-socket"},
+      "lease-database": {"type": "memfile", "persist": true, "name": "/var/lib/kea/dhcp4.leases", "lfc-interval": 0},
+      "host-reservation-identifiers": ["hw-address"],
+      "valid-lifetime": 600,
+      "subnet4": [{
+        "id": 1,
+        "subnet": "192.168.77.0/24",
+        "option-data": [{"name": "routers", "data": "192.168.77.1"}],
+        "boot-file-name": "http://${FLEET_BOOT_SERVICE_IP}:8080/pxe/boot.ipxe"
+      }]
+    }}

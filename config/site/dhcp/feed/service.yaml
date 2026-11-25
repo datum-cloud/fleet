@@ -1,0 +1,11 @@
+# The feed, reachable only inside the site cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-site-dhcp-feed
+  namespace: fleet-site
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: fleet-site-boot}
+  ports:
+    - {name: dhcp-feed, port: 8081, targetPort: 8081, protocol: TCP}
