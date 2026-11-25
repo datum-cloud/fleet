@@ -185,6 +185,48 @@ func TestCreatorAgainstAPIServer(t *testing.T) {
 			}
 		}
 	})
+	t.Run("a Machine recreated with the same name does not inherit its creator", func(t *testing.T) {
+		first := newMachine(nil)
+		first.GenerateName, first.Name = "", "machine-recreated"
+		if err := customer.Create(ctx, first); err != nil {
+			t.Fatal(err)
+		}
+		stored := &metal.Machine{}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(first), stored); err != nil {
+			t.Fatal(err)
+		}
+		previous := stored.UID
+		// Release the Machine as the manager would, then delete it.
+		stored.Finalizers = nil
+		if err := admin.Update(ctx, stored); err != nil {
+			t.Fatal(err)
+		}
+		if err := admin.Delete(ctx, stored); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(15 * time.Second)
+		for !apierrors.IsNotFound(admin.Get(ctx, client.ObjectKeyFromObject(first), &metal.Machine{})) {
+			if time.Now().After(deadline) {
+				t.Fatal("the first Machine was not deleted")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		// Another caller recreates the name and sends the old creator.
+		second := newMachine(&self)
+		second.GenerateName, second.Name = "", "machine-recreated"
+		if err := actor("other-example", "consumer-example").Create(ctx, second); err != nil {
+			t.Fatal(err)
+		}
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(second), stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored.UID == previous {
+			t.Fatal("the recreated Machine kept its UID")
+		}
+		if stored.Spec.Creator == nil || *stored.Spec.Creator != (metal.MachineCreator{Username: "other-example", UID: "other-example-uid"}) {
+			t.Fatalf("recreated creator = %+v", stored.Spec.Creator)
+		}
+	})
 	t.Run("a caller without a project is refused", func(t *testing.T) {
 		// The API server's own identity carries no project.
 		if err := admin.Create(ctx, newMachine(&self)); !apierrors.IsForbidden(err) {
