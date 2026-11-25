@@ -3,6 +3,7 @@ package custody
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -74,7 +75,9 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		e.allocation(device, "alloc-p-"+device.Name, "Active")
 		install := e.installation(device, "alloc-p-"+device.Name, "request-1")
 		// It may have run before custody was lost: its status says Admitted.
-		install.Status = ops.OperationStatus{Phase: ops.PhaseAdmitted, Fence: 4}
+		deadline := metav1.NewTime(e.clock.Now().Add(InstallationDeadline))
+		recorded := ops.DeviceSnapshot{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: device.Spec.Identity.SystemUUID, BMCPublicKeySHA256: fmt.Sprintf("%064x", n), Extra: map[string]string{"resetTypes": "On"}}
+		install.Status = ops.OperationStatus{Phase: ops.PhaseAdmitted, Fence: 4, Deadline: &deadline, Snapshot: &recorded}
 		if err := e.admin.Status().Update(e.ctx, install); err != nil {
 			t.Fatal(err)
 		}
@@ -83,6 +86,10 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		custody = e.custody(device.Name)
 		if hold := custody.Spec.RecoveryHold; hold == nil || hold.UID != string(install.UID) || custody.Spec.ActiveOperation != nil || custody.Spec.Fence <= 4 {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
+		}
+		// The rebuilt hold keeps the deadline and snapshot the status recorded.
+		if hold := custody.Spec.RecoveryHold; hold.Deadline == nil || !hold.Deadline.Equal(&deadline) || hold.Snapshot == nil || !reflect.DeepEqual(*hold.Snapshot, recorded) {
+			t.Fatalf("rebuilt hold = %+v", hold)
 		}
 		e.requirePhase(install, ops.PhaseOutcomeUnknown, ReasonRebuilt)
 	})
@@ -99,6 +106,11 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		custody := verify(e, device, 0)
 		if custody.Spec.Holder.Type != ops.HolderRelease || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.UID != string(wipe.UID) || custody.Spec.ActiveOperation != nil {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
+		}
+		// A Pending status recorded no deadline or snapshot, so the hold has
+		// none.
+		if hold := custody.Spec.RecoveryHold; hold.Deadline != nil || hold.Snapshot != nil {
+			t.Fatalf("rebuilt hold = %+v", hold)
 		}
 		e.requirePhase(wipe, ops.PhaseOutcomeUnknown, ReasonRebuilt)
 	})

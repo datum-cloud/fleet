@@ -56,6 +56,9 @@ func TestExtensionSeams(t *testing.T) {
 
 	t.Run("a newer pending operation replaces only its own kind under the same authority", func(t *testing.T) {
 		e := e.sub(t)
+		// Two kinds that supersede share one allocation, as power and a
+		// future provider kind would.
+		e.coord.Registry.Kind("DeviceInstallation").Supersedes = true
 		device := fresh()
 		if err := e.coord.Claim(e.ctx, device.Name, "alloc-scope"); err != nil {
 			t.Fatal(err)
@@ -63,13 +66,18 @@ func TestExtensionSeams(t *testing.T) {
 		running := e.installation(device, "alloc-scope", "request-running")
 		e.settle(device.Name)
 		e.requirePhase(running, ops.PhaseAdmitted, "")
-		install := e.installation(device, "alloc-scope", "request-waiting")
+		olderInstall := e.installation(device, "alloc-scope", "request-older")
 		time.Sleep(1100 * time.Millisecond)
 		older := e.providerOp(device, "alloc-scope", "older")
 		time.Sleep(1100 * time.Millisecond)
+		newerInstall := e.installation(device, "alloc-scope", "request-newer")
+		time.Sleep(1100 * time.Millisecond)
 		newer := e.providerOp(device, "alloc-scope", "newer")
 		e.settle(device.Name)
-		e.requirePhase(install, ops.PhasePending, ReasonOperationActive)
+		// Each kind's newest pending operation replaces only that kind's
+		// older one.
+		e.requirePhase(olderInstall, ops.PhaseCancelled, ReasonSuperseded)
+		e.requirePhase(newerInstall, ops.PhasePending, ReasonOperationActive)
 		e.requirePhase(older, ops.PhaseCancelled, ReasonSuperseded)
 		e.requirePhase(newer, ops.PhasePending, ReasonOperationActive)
 	})
@@ -126,6 +134,26 @@ func TestExtensionSeams(t *testing.T) {
 		retry := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
 		e.settle(device.Name)
 		e.requirePhase(retry, ops.PhaseFailed, ReasonNotRetryable)
+		// A kind that another kind settles after a retry still refuses Retry
+		// unless it declares itself Retryable.
+		e.coord.Registry.Kind("DeviceWipe").Retryable = false
+		wiped := fresh()
+		if err := e.coord.Claim(e.ctx, wiped.Name, "alloc-nr"); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.coord.BeginRelease(e.ctx, wiped.Name, "alloc-nr"); err != nil {
+			t.Fatal(err)
+		}
+		e.wipe(wiped, "alloc-nr", 1)
+		e.settle(wiped.Name)
+		if err := e.result(wiped.Name, ops.PhaseOutcomeUnknown, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.settle(wiped.Name)
+		wipeHold := *e.custody(wiped.Name).Spec.RecoveryHold
+		refused := e.recovery(wiped, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(wipeHold)})
+		e.settle(wiped.Name)
+		e.requirePhase(refused, ops.PhaseFailed, ReasonNotRetryable)
 	})
 
 	t.Run("a worker refusal with nothing sent ends Failed and returns a Service holder to None", func(t *testing.T) {

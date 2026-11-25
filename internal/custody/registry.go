@@ -155,8 +155,10 @@ type Admission struct {
 
 // RecoverySettleContext is what a held kind's settle hook sees. Hold carries
 // when the held operation ended (Since), its deadline and its admission
-// snapshot. Device is read when the hook runs, at admission of the recovery
-// and again when it is applied.
+// snapshot. A hold that rebuild created has Since set to the rebuild time,
+// and has no deadline or snapshot if the operation's status never recorded
+// them, so a hook must check both for nil. Device is read when the hook runs,
+// at admission of the recovery and again when it is applied.
 type RecoverySettleContext struct {
 	Hold     ops.RecoveryHold
 	Recovery *ops.DeviceRecovery
@@ -312,8 +314,11 @@ func (r *Registry) declaredRefusal(kind, held string, refusal *Refusal) *Refusal
 	return refuse(ReasonUndeclared, "%s refused with %s, which it does not declare", kind, refusal.Reason)
 }
 
-func heldKind(custody *ops.DeviceCustody) string {
-	if hold := custody.Spec.RecoveryHold; hold != nil {
+// settleHookKind is the held kind whose settle hook may refuse through this
+// operation: only a non-effectful kind admitted to decide a hold, such as a
+// DeviceRecovery, calls one. Any other kind's refusals must be its own.
+func settleHookKind(kind *Kind, row Rule, custody *ops.DeviceCustody) string {
+	if hold := custody.Spec.RecoveryHold; hold != nil && !kind.Effectful && row.Hold == HoldRequired {
 		return hold.Kind
 	}
 	return ""

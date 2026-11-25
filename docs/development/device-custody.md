@@ -273,8 +273,8 @@ these seams. Each is decided here.
 | 1 | Kind checks see the Device the snapshot records, an injected clock and the discovery interval | Checks get the Device object the snapshot is built from, `Admission.Now` and `Admission.DiscoveryInterval`. Before the custody update, the coordinator reads the Device again. If its resourceVersion changed, it decides again, so discovery cannot change between the check and the update unseen. | Implemented and inert |
 | 2 | Pending replacement is scoped to the kind and the authority | A newer pending operation replaces only an older one of the same kind under the same authority. A power request never cancels a pending installation. | Implemented and inert |
 | 3 | Kinds add bounded snapshot fields | `SnapshotExtra` adds up to 16 camelCase fields of at most 256 bytes each. The snapshot goes to the operation, the active operation, the hold, and the site. | Implemented and inert |
-| 4 | The settle hook sees the hold's end time, its deadline and current Device status | The hold records when it ended (`Since`), the operation's deadline and its snapshot. The hook gets the Device as read when the recovery is admitted and again when it is applied. | Implemented and inert |
-| 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal with an undeclared reason ends `UndeclaredReason`. | Implemented and inert. Worker reasons are checked when results arrive, in B. |
+| 4 | The settle hook sees the hold's end time, its deadline and current Device status | The hold records when it ended (`Since`), the operation's deadline and its snapshot. The hook gets the Device as read when the recovery is admitted and again when it is applied. A hold that rebuild created has `Since` set to the rebuild time, and copies the deadline and snapshot from the operation's status, so both are absent for an operation whose status never recorded them. A hook checks for that. | Implemented and inert |
+| 5 | Kinds register their refusal reasons | Each reason is declared with where it is raised. The registry refuses a malformed name, a shared name, a duplicate, or a missing source. A coordinator refusal with an undeclared reason ends `UndeclaredReason`. A recovery's refusal may carry the held kind's declared reason only when it comes from that kind's settle hook. | Implemented and inert. Worker reasons are checked when results arrive, in B. |
 | 6 | A kind may settle no hold, and declares whether `Retry` applies | `Settles` may be empty. `Retryable` marks a kind whose holds a `Retry` may unblock. | Implemented and inert |
 | 7 | End-to-end proof that Milo enforces the CRD rules | The `custody-crd-rules` phase of both local end-to-end runs installs only these CRDs into the provider project, requires the project API to refuse eight forbidden writes, and removes them. | Implemented and verified in the local end-to-end runs |
 | 8 | Journal steps carry a kind's payload | A step records a bounded payload, such as the send time or the power state before. Observation after a crash reads it. | Proposed for B |
@@ -354,7 +354,8 @@ four seams. It needs no change to the coordinator. The test-only kinds in
    can settle a hold of the kind, set `RecoverySettle` to validate the staff
    evidence. The hook sees the hold, with when the held operation ended
    (`Since`), its deadline and its admission snapshot, and the Device as read
-   when the hook runs. Power, for example, accepts only a power state that
+   when the hook runs. A hold that rebuild created may lack the deadline and
+   snapshot, and its `Since` is the rebuild time. Power, for example, accepts only a power state that
    discovery read after the operation ended.
 
 Test the kind with the shared harness in `internal/custody`: register it

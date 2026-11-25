@@ -410,7 +410,7 @@ func (c *Coordinator) progressActive(ctx context.Context, custody *ops.DeviceCus
 		return c.writeCustody(ctx, custody)
 	}
 	spec, refusal := kind.Apply(ctx, &ApplyContext{Operation: operation, Custody: custody.DeepCopy(), Device: device, Registry: c.Registry, Reader: c.Client, ConfirmedFence: confirmed, HighestFence: highest, Now: now})
-	if refusal = c.Registry.declaredRefusal(kind.GVK.Kind, heldKind(custody), refusal); refusal != nil {
+	if refusal = c.Registry.declaredRefusal(kind.GVK.Kind, settleHookKind(kind, Rule{Hold: HoldRequired}, custody), refusal); refusal != nil {
 		c.finishActive(custody, active, ops.PhaseFailed, refusal.Reason, refusal.Message, nil)
 		return c.writeCustody(ctx, custody)
 	}
@@ -734,7 +734,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 	}
 	if kind.Check != nil {
-		if refusal := c.Registry.declaredRefusal(kind.GVK.Kind, heldKind(custody), kind.Check(ctx, admission)); refusal != nil {
+		if refusal := c.Registry.declaredRefusal(kind.GVK.Kind, settleHookKind(kind, row, custody), kind.Check(ctx, admission)); refusal != nil {
 			return fail(refusal.Reason, "%s", refusal.Message)
 		}
 	}
