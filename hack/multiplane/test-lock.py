@@ -185,6 +185,51 @@ with tempfile.TemporaryDirectory() as t:
     check('with-lock: usage', r.returncode == 64)
     stop(a, b, wa, wb, w)
 
+    # Nested through a shell that is not the wrapper, the outer lock still serves.
+    (tmp / 'inner.sh').write_text('%s %s lock --state %s --owner $$ --timeout 3 && touch %s\n'
+                                  % (sys.executable, harness, tmp / 'inner', tmp / 'inner-done'))
+    r = subprocess.run(wrapper + ['bash', '-c', '%s bash %s; true' % (wrapper[0], tmp / 'inner.sh')], env=env, capture_output=True, text=True, timeout=60)
+    check('with-lock: a nested wrapper uses the outer lock', (tmp / 'inner-done').exists(), r.stderr[-300:])
+
+    # Killing the wrapped command ends it and releases the lock: the wrapper
+    # is the command, not a shell left waiting for it.
+    marker = 'with-lock-victim-%d' % os.getpid()
+    w = subprocess.Popen(wrapper + [sys.executable, '-c', 'import time; time.sleep(600)', marker], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1.5)
+    c = owner()
+    probe = waiter(tmp, c, 'probe-held', timeout=1)
+    check('with-lock: holds the lock while the command runs', finished(probe, 10) and probe.returncode == 4, str(probe.returncode))
+    w.kill()
+    w.wait()
+    left = subprocess.run(['pgrep', '-f', marker], capture_output=True, text=True).stdout.split()
+    check('with-lock: killing it ends the command', not left, str(left))
+    probe = waiter(tmp, c, 'probe-free', timeout=10)
+    check('with-lock: killing it releases the lock', finished(probe, 15) and probe.returncode == 0, str(probe.returncode))
+    stop(c, probe)
+    for pid in left:
+        os.kill(int(pid), signal.SIGKILL)
+
+# A stale holder record naming a dead owner never lets a run skip the lock:
+# it queues and really takes the lock.
+with tempfile.TemporaryDirectory() as t:
+    tmp = pathlib.Path(t)
+    dead = owner()
+    started = subprocess.run(['ps', '-o', 'lstart=', '-p', str(dead.pid)], capture_output=True, text=True).stdout.strip()
+    dead.kill()
+    dead.wait()
+    (tmp / 'lock/queue').mkdir(parents=True, mode=0o700)
+    (tmp / 'lock').chmod(0o700)
+    (tmp / 'lock/holder.json').write_text(json.dumps({'owner': dead.pid, 'ownerStarted': started, 'state': 'x'}))
+    a, b = owner(), owner()
+    state = tmp / 'a'
+    state.mkdir()
+    r = subprocess.run([sys.executable, str(harness), 'lock', '--state', str(state), '--owner', str(a.pid), '--timeout', '10'],
+                       env=dict(os.environ, FLEET_MULTIPLANE_LOCK_DIR=str(tmp / 'lock'), FLEET_MULTIPLANE_LOCK_OWNER=str(dead.pid)), capture_output=True, text=True)
+    check('stale owner env: acquires through the queue', r.returncode == 0 and 'heldBy' not in lock_record(tmp, 'a'), r.stderr)
+    wb = waiter(tmp, b, 'b', timeout=2)
+    check('stale owner env: the lock is really held', finished(wb, 15) and wb.returncode == 4, str(wb.returncode))
+    stop(a, b, wb)
+
 # The holder ignores signals while its owner lives, so a run stopping its own
 # process tree keeps the lock through its cleanup.
 with tempfile.TemporaryDirectory() as t:

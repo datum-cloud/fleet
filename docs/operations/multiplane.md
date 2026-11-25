@@ -148,8 +148,10 @@ directory must be private to the user; the harness refuses one that is not.
 A script that starts runs without the lock, such as one queueing runs of an
 older checkout, gets its fair turn by running each through
 `hack/multiplane/with-lock.sh COMMAND...`. The wrapper takes a place in the same
-queue, holds the lock while the command runs, and a `run.sh` inside it uses the
-lock the wrapper holds. A script that only polls for an idle profile can keep
+queue, holds the lock while the command runs, and a `run.sh` or another
+`with-lock.sh` inside it uses the lock the wrapper holds. Start the runs inside
+one wrapper one after another; runs it starts in parallel would share the
+lock. A script that only polls for an idle profile can keep
 losing the race to runs that queue.
 
 All waiting shares one bound, by default 4 hours
