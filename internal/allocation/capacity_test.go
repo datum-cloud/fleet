@@ -88,3 +88,31 @@ func TestADuplicateDeviceWithdrawsTheOffer(t *testing.T) {
 		t.Fatalf("the allocator offered a server with a duplicate: %v", err)
 	}
 }
+
+// TestAnAllocationOnDisabledCapacityIsWithdrawn creates an allocation, as an
+// allocator would after selecting the capacity, and then disables the
+// capacity before the claim. The allocator withdraws the allocation instead
+// of claiming the Device.
+func TestAnAllocationOnDisabledCapacityIsWithdrawn(t *testing.T) {
+	e := startEnv(t)
+	device := e.server(1)
+	capacity := e.capacity(device.Name)
+	stale, err := e.allocator.newAllocation(e.request(1), capacity, device, fleetv1.Hardware{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.create(stale)
+	capacity.Spec.AllocationPolicy = "Disabled"
+	if err := e.admin.Update(e.ctx, capacity); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.allocator.Allocate(e.ctx, e.request(1)); !errors.Is(err, ErrInsufficientCapacity) {
+		t.Fatalf("allocation on Disabled capacity: %v", err)
+	}
+	if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(stale), stale); err == nil {
+		t.Fatal("the allocation on Disabled capacity was kept")
+	}
+	if holder := e.custody(device.Name).Spec.Holder; holder.Type != ops.HolderNone {
+		t.Fatalf("custody was claimed for Disabled capacity: %+v", holder)
+	}
+}

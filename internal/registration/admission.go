@@ -221,7 +221,11 @@ func (handler *Handler) evaluateUpdate(ctx context.Context, name string, request
 		return errors.New(mutationDisabled)
 	}
 	enabled := func(capacity metal.MachineCapacity) bool { return capacity.Spec.AllocationPolicy == "Enabled" }
+	unchanged := previous.Spec.AllocationPolicy == next.Spec.AllocationPolicy && reflect.DeepEqual(previous.Spec.CleaningPolicyRef, next.Spec.CleaningPolicyRef) && previous.Labels[PoolLabel] == next.Labels[PoolLabel]
 	switch {
+	case unchanged:
+		// An identical update, such as an unchanged apply, changes nothing.
+		return nil
 	case next.Spec.AllocationPolicy != "Enabled" && next.Spec.AllocationPolicy != "Disabled":
 		return errors.New("the allocation policy is Enabled or Disabled")
 	case enabled(previous) && (enabled(next) || !reflect.DeepEqual(previous.Spec.CleaningPolicyRef, next.Spec.CleaningPolicyRef) || previous.Labels[PoolLabel] != next.Labels[PoolLabel]):
@@ -253,6 +257,9 @@ func (handler *Handler) evaluateUpdate(ctx context.Context, name string, request
 	}
 	if lifecycle := inventory.LifecycleOf(device); lifecycle != inventory.DeviceActive {
 		return fmt.Errorf("capacity cannot leave Disabled: its Device is %s; only an Active Device can back available capacity", lifecycle)
+	}
+	if !eligible(device) {
+		return errors.New("capacity cannot leave Disabled: its Device no longer records a complete, non-placeholder identity")
 	}
 	if next.Labels[PoolLabel] == "" {
 		return errors.New("capacity cannot leave Disabled without a " + PoolLabel + " label")
@@ -295,8 +302,10 @@ func onlyStageTwoFields(previous, next metal.MachineCapacity) bool {
 // Disabled, its annotated Device is missing, another incarnation or
 // Retired, no MachineAllocation that is not Released names it, and the
 // caller may delete it. Enabling needs an Active Device of the annotated
-// incarnation and allocation needs Enabled capacity, so these facts cannot
-// change between this check and the delete.
+// incarnation, so the capacity stays Disabled. An allocator that selected
+// the capacity while it was Enabled re-reads it after creating its
+// allocation and withdraws the allocation if the capacity is gone or
+// Disabled, before it claims the Device.
 func (handler *Handler) evaluateDelete(ctx context.Context, name string, request admission.Request) error {
 	var registered metal.MachineCapacity
 	if err := json.Unmarshal(request.OldObject.Raw, &registered); err != nil {
@@ -328,7 +337,8 @@ func (handler *Handler) evaluateDelete(ctx context.Context, name string, request
 		return errors.New("the allocations that may name the capacity are unavailable")
 	}
 	for _, allocation := range allocations.Items {
-		if allocation.Spec.MachineCapacityRef.Name == registered.Name && allocation.Status.Phase != metal.AllocationReleased {
+		reference := allocation.Spec.MachineCapacityRef
+		if reference.Name == registered.Name && (reference.Namespace == "" || reference.Namespace == registered.Namespace) && allocation.Status.Phase != metal.AllocationReleased {
 			return fmt.Errorf("allocation %s still names the capacity", allocation.Name)
 		}
 	}
