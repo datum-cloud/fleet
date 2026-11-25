@@ -73,6 +73,13 @@ func TestHandler(t *testing.T) {
 			}
 		})
 	}
+	t.Run("creator keys are read case-sensitively", func(t *testing.T) {
+		// encoding/json into a struct would let the later "Creator" win.
+		raw := runtime.RawExtension{Raw: []byte(`{"spec":{"creator":{"username":"other","uid":"other-uid"},"Creator":{"username":"staff-example","uid":"staff-example-uid"}}}`)}
+		if handler.Handle(context.Background(), request(admissionv1.Create, staff, raw, runtime.RawExtension{})).Allowed {
+			t.Fatal("a differently cased duplicate key decided the creator")
+		}
+	})
 	t.Run("ungoverned resources and subresources are denied", func(t *testing.T) {
 		other := request(admissionv1.Create, staff, object(t, self), runtime.RawExtension{})
 		other.Resource.Resource = "devicecustodies"

@@ -23,9 +23,20 @@ type Sites interface {
 	// Serving returns the sites explicitly configured to serve the Device.
 	// The coordinator never infers a site from placement.
 	Serving(device *inventory.Device) []string
-	// Fence returns the highest fence the site has stored for the Device,
-	// and false if the site has not reported one.
-	Fence(ctx context.Context, site string, device *inventory.Device) (int64, bool, error)
+	// Fence returns the site's fence report for the Device, and false if
+	// the site has not reported one.
+	Fence(ctx context.Context, site string, device *inventory.Device) (SiteFence, bool, error)
+}
+
+// SiteFence is one site's fence report for one Device.
+type SiteFence struct {
+	// Seen is the highest fence the site has stored. Admission and rebuild
+	// set the new fence above it.
+	Seen int64
+	// Stopped is the highest fence for which the site confirmed that every
+	// older worker stopped. A DeviceRecovery applies only once it reaches
+	// the recovery's fence.
+	Stopped int64
 }
 
 // Config holds the coordinator's tunable values. Zero values take the
@@ -268,6 +279,22 @@ func (c *Coordinator) copyStatus(ctx context.Context, custody *ops.DeviceCustody
 			}
 		}
 	}
+	// A held operation has ended, even if a rebuild found it unfinished. It
+	// is never admitted again.
+	if hold := custody.Spec.RecoveryHold; hold != nil {
+		operation, _, err := c.get(ctx, hold.OperationReference)
+		if err != nil {
+			return false, err
+		}
+		if operation != nil && !operation.OperationStatus().Phase.Ended() {
+			status := *operation.OperationStatus()
+			finished := metav1.NewTime(c.now())
+			status.Phase, status.Reason, status.Message, status.FinishedAt = ops.PhaseOutcomeUnknown, hold.Reason, "custody holds this operation because its outcome is unknown", &finished
+			if changed, err := c.writeStatus(ctx, operation, status); err != nil || changed {
+				return changed, err
+			}
+		}
+	}
 	active := custody.Spec.ActiveOperation
 	if active == nil {
 		return false, nil
@@ -372,7 +399,7 @@ func (c *Coordinator) progressActive(ctx context.Context, custody *ops.DeviceCus
 		c.finishActive(custody, active, ops.PhaseCancelled, ReasonWithdrawn, "the operation was deleted before it was applied", nil)
 		return c.writeCustody(ctx, custody)
 	}
-	spec, refusal := kind.Apply(ctx, &ApplyContext{Operation: operation, Custody: custody.DeepCopy(), Device: device, Registry: c.Registry, ConfirmedFence: confirmed, HighestFence: highest, Now: now})
+	spec, refusal := kind.Apply(ctx, &ApplyContext{Operation: operation, Custody: custody.DeepCopy(), Device: device, Registry: c.Registry, Reader: c.Client, ConfirmedFence: confirmed, HighestFence: highest, Now: now})
 	if refusal != nil {
 		c.finishActive(custody, active, ops.PhaseFailed, refusal.Reason, refusal.Message, nil)
 		return c.writeCustody(ctx, custody)
@@ -404,16 +431,32 @@ func (c *Coordinator) siteFence(ctx context.Context, device *inventory.Device, f
 		return 0, 0, false, nil
 	}
 	for _, site := range sites {
-		stored, reported, err := c.Sites.Fence(ctx, site, device)
+		report, reported, err := c.Sites.Fence(ctx, site, device)
+		stored := report.Stopped
 		if err != nil || !reported || stored < fence {
 			return 0, 0, false, err
 		}
 		if lowest < 0 || stored < lowest {
 			lowest = stored
 		}
-		highest = max(highest, stored)
+		highest = max(highest, report.Seen)
 	}
 	return lowest, highest, true, nil
+}
+
+// siteSeen returns the highest fence any serving site reports having seen.
+func (c *Coordinator) siteSeen(ctx context.Context, device *inventory.Device) (int64, error) {
+	var highest int64
+	for _, site := range c.Sites.Serving(device) {
+		report, reported, err := c.Sites.Fence(ctx, site, device)
+		if err != nil {
+			return 0, err
+		}
+		if reported {
+			highest = max(highest, report.Seen, report.Stopped)
+		}
+	}
+	return highest, nil
 }
 
 // finishActive ends the active operation without a hold. A staff holder
@@ -470,6 +513,9 @@ func (c *Coordinator) candidates(ctx context.Context, custody *ops.DeviceCustody
 			if active := custody.Spec.ActiveOperation; active != nil && active.Kind == kind.GVK.Kind && active.UID == string(operation.GetUID()) {
 				continue
 			}
+			if hold := custody.Spec.RecoveryHold; hold != nil && hold.Kind == kind.GVK.Kind && hold.UID == string(operation.GetUID()) {
+				continue
+			}
 			out = append(out, candidate{operation: operation, kind: kind})
 		}
 	}
@@ -510,6 +556,17 @@ func (c *Coordinator) admit(ctx context.Context, custody *ops.DeviceCustody, dev
 	candidates, err := c.candidates(ctx, custody)
 	if err != nil {
 		return Outcome{}, err
+	}
+	// Decide only on custody that is still current after the list. A holder
+	// change that landed between the custody read and the list, such as a
+	// claim followed by its installation's create, is then seen before any
+	// refusal is written.
+	fresh := &ops.DeviceCustody{}
+	if err := c.Client.Get(ctx, client.ObjectKeyFromObject(custody), fresh); err != nil {
+		return Outcome{}, err
+	}
+	if fresh.ResourceVersion != custody.ResourceVersion {
+		return Outcome{Changed: true}, nil
 	}
 	superseded := c.superseded(candidates)
 	queued := false
@@ -636,6 +693,9 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 	case row.Hold == HoldRequired:
 	case hold != nil:
 		if !c.settlesHold(kind, *hold) {
+			if row.Queue {
+				return decision{phase: ops.PhasePending, reason: ReasonRecoveryHold, message: "waiting: " + hold.Kind + " " + hold.Name + " is held, and only its settling operations are admitted"}
+			}
 			return fail(ReasonRecoveryHold, "%s %s is held; only its settling operations are admitted", hold.Kind, hold.Name)
 		}
 		reference := hold.OperationReference
@@ -661,7 +721,7 @@ func (c *Coordinator) decide(ctx context.Context, kind *Kind, operation ops.Oper
 		}
 	}
 	if kind.Check != nil {
-		if refusal := kind.Check(ctx, &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Now: now}); refusal != nil {
+		if refusal := kind.Check(ctx, &Admission{Operation: operation, Custody: custody.DeepCopy(), Device: device, Row: row, Registry: c.Registry, Reader: c.Client, Now: now}); refusal != nil {
 			return fail(refusal.Reason, "%s", refusal.Message)
 		}
 	}
@@ -737,7 +797,13 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 	}
 	now := c.now()
 	spec := &custody.Spec
-	spec.Fence++
+	// The fence rises above every fence a site has seen, so a site report at
+	// or above it proves the site received this admission.
+	seen, err := c.siteSeen(ctx, device)
+	if err != nil {
+		return Outcome{}, err
+	}
+	spec.Fence = max(spec.Fence, seen) + 1
 	active := &ops.ActiveOperation{
 		OperationReference: ops.OperationReference{Kind: kind.GVK.Kind, Name: operation.GetName(), UID: string(operation.GetUID())},
 		Fence:              spec.Fence,

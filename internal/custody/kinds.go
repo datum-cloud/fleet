@@ -170,6 +170,13 @@ func DeviceRecoveryKind() Kind {
 			return checkRecovery(ctx, admission.Operation.(*ops.DeviceRecovery), admission.Custody, admission.Registry, admission)
 		},
 		Apply: applyRecovery,
+		Clears: func(operation ops.Operation) *ops.HeldOperationReference {
+			spec := operation.(*ops.DeviceRecovery).Spec
+			if spec.Decision == ops.DecisionSettle || spec.Decision == ops.DecisionRetire {
+				return spec.Hold
+			}
+			return nil
+		},
 		Retires: func(operation ops.Operation) bool {
 			spec := operation.(*ops.DeviceRecovery).Spec
 			return spec.Decision == ops.DecisionRetire || (spec.Decision == ops.DecisionResolve && spec.Resolve != nil && spec.Resolve.Holder == ops.HolderRetired)
@@ -195,7 +202,7 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 		default:
 			return refuse(ReasonInvalidResolve, "Resolve cannot record holder %s", resolve.Holder)
 		}
-		return nil
+		return resolveMatchesAllocations(ctx, admission, resolve)
 	}
 	hold := custody.Spec.RecoveryHold
 	if hold == nil || spec.Hold == nil || spec.Hold.Kind != hold.Kind || spec.Hold.Name != hold.Name || spec.Hold.Fence != hold.Fence {
@@ -229,12 +236,43 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 	return refuse(ReasonNoMatchingRule, "unknown decision %q", spec.Decision)
 }
 
+// resolveMatchesAllocations requires the holder a Resolve records to agree
+// with the Device's live MachineAllocations: none for None or Retired, and
+// exactly the one named, Releasing for Release, for Allocation and Release.
+func resolveMatchesAllocations(ctx context.Context, admission *Admission, resolve *ops.ResolveInput) *Refusal {
+	if admission.Reader == nil {
+		return refuse(ReasonInvalidResolve, "the live allocations could not be read")
+	}
+	allocations, err := LiveAllocations(ctx, admission.Reader, admission.Device)
+	if err != nil {
+		return refuse(ReasonInvalidResolve, "the live allocations could not be read")
+	}
+	switch {
+	case len(allocations) > 1:
+		return refuse(ReasonInvalidResolve, "%d live allocations name the Device; end all but one first", len(allocations))
+	case len(allocations) == 0:
+		if resolve.Holder != ops.HolderNone && resolve.Holder != ops.HolderRetired {
+			return refuse(ReasonInvalidResolve, "no live allocation names the Device, so the holder is None or Retired")
+		}
+	default:
+		allocation := allocations[0]
+		want := ops.HolderAllocation
+		if allocation.Status.Phase == "Releasing" {
+			want = ops.HolderRelease
+		}
+		if resolve.Holder != want || resolve.AllocationRef == nil || resolve.AllocationRef.Name != allocation.Name {
+			return refuse(ReasonInvalidResolve, "allocation %s names the Device, so the holder is %s with that allocation", allocation.Name, want)
+		}
+	}
+	return nil
+}
+
 // applyRecovery applies a confirmed recovery. It re-checks against the
 // custody read now, because custody may have changed since admission.
 func applyRecovery(ctx context.Context, apply *ApplyContext) (*ops.DeviceCustodySpec, *Refusal) {
 	recovery := apply.Operation.(*ops.DeviceRecovery)
 	custody := apply.Custody
-	if refusal := checkRecovery(ctx, recovery, custody, apply.Registry, &Admission{Operation: recovery, Custody: custody, Device: apply.Device, Registry: apply.Registry, Now: apply.Now}); refusal != nil {
+	if refusal := checkRecovery(ctx, recovery, custody, apply.Registry, &Admission{Operation: recovery, Custody: custody, Device: apply.Device, Registry: apply.Registry, Reader: apply.Reader, Now: apply.Now}); refusal != nil {
 		return nil, refusal
 	}
 	spec := custody.Spec

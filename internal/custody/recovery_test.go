@@ -216,13 +216,51 @@ func TestRecovery(t *testing.T) {
 		e.settle(device.Name)
 		e.requirePhase(first, ops.PhaseOutcomeUnknown, "")
 		hold := *e.custody(device.Name).Spec.RecoveryHold
-		blocked := e.wipe(device, "alloc-w", 2)
+		// A wipe that cannot settle the hold yet waits; its name is
+		// deterministic, so it could not be created again.
+		next := e.wipe(device, "alloc-w", 2)
 		e.settle(device.Name)
-		e.requirePhase(blocked, ops.PhaseFailed, ReasonRecoveryHold)
+		e.requirePhase(next, ops.PhasePending, ReasonRecoveryHold)
 		// Settle is not how a wipe hold ends.
 		settle := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionSettle, Hold: heldRef(hold)})
 		e.settle(device.Name)
 		e.requirePhase(settle, ops.PhaseFailed, ReasonNotSettleable)
+		retry := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
+		e.settle(device.Name)
+		e.sites.report(device.Name, e.custody(device.Name).Spec.Fence)
+		e.settle(device.Name)
+		e.requirePhase(retry, ops.PhaseSucceeded, "")
+		// The waiting wipe is the one settling operation the Retry allows.
+		e.requirePhase(next, ops.PhaseAdmitted, "")
+		custody := e.custody(device.Name)
+		if got := custody.Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy != nil || custody.Spec.ActiveOperation.Settles == nil || custody.Spec.ActiveOperation.Settles.UID != hold.UID {
+			t.Fatalf("the retry was not used by the waiting wipe: %+v", custody.Spec)
+		}
+		if err := e.result(device.Name, ops.PhaseSucceeded, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.settle(device.Name)
+		if got := e.custody(device.Name).Spec.RecoveryHold; got != nil {
+			t.Fatalf("hold survived the retried wipe: %+v", got)
+		}
+	})
+
+	t.Run("a second Retry for the same hold is refused", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		if err := e.coord.Claim(e.ctx, device.Name, "alloc-rr"); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-rr"); err != nil {
+			t.Fatal(err)
+		}
+		e.wipe(device, "alloc-rr", 1)
+		e.settle(device.Name)
+		if err := e.result(device.Name, ops.PhaseOutcomeUnknown, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.settle(device.Name)
+		hold := *e.custody(device.Name).Spec.RecoveryHold
 		retry := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
 		e.settle(device.Name)
 		e.sites.report(device.Name, e.custody(device.Name).Spec.Fence)
@@ -234,19 +272,6 @@ func TestRecovery(t *testing.T) {
 		second := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionRetry, Hold: heldRef(hold)})
 		e.settle(device.Name)
 		e.requirePhase(second, ops.PhaseFailed, ReasonRetryAuthorized)
-		third := e.wipe(device, "alloc-w", 3)
-		e.settle(device.Name)
-		e.requirePhase(third, ops.PhaseAdmitted, "")
-		if got := e.custody(device.Name).Spec.RecoveryHold; got == nil || got.RetryAuthorizedBy != nil {
-			t.Fatalf("the retry was not consumed: %+v", got)
-		}
-		if err := e.result(device.Name, ops.PhaseSucceeded, ""); err != nil {
-			t.Fatal(err)
-		}
-		e.settle(device.Name)
-		if got := e.custody(device.Name).Spec.RecoveryHold; got != nil {
-			t.Fatalf("hold survived the retried wipe: %+v", got)
-		}
 	})
 
 	t.Run("retiring from Release records disk disposal", func(t *testing.T) {

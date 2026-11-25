@@ -35,18 +35,26 @@ type Handler struct {
 	Resources []string
 }
 
-type envelope struct {
-	Spec struct {
-		Creator *ops.Creator `json:"creator"`
-	} `json:"spec"`
-}
-
+// creatorOf reads spec.creator with exact, case-sensitive keys, as the API
+// server does. encoding/json into a struct would match keys without regard
+// to case and let a later duplicate win.
 func creatorOf(raw []byte) (*ops.Creator, error) {
-	var object envelope
+	var object map[string]any
 	if err := json.Unmarshal(raw, &object); err != nil {
 		return nil, err
 	}
-	return object.Spec.Creator, nil
+	spec, _ := object["spec"].(map[string]any)
+	value, ok := spec["creator"]
+	if !ok {
+		return nil, nil
+	}
+	fields, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("spec.creator is not an object")
+	}
+	username, _ := fields["username"].(string)
+	uid, _ := fields["uid"].(string)
+	return &ops.Creator{Username: username, UID: uid}, nil
 }
 
 // project returns the caller's Milo project. Milo sets these extras when it

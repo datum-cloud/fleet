@@ -171,7 +171,7 @@ spec:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
             x-kubernetes-validations:
-            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
+            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
               message: operation phases move forward only, and an ended phase is final
         required:
         - spec
@@ -347,7 +347,7 @@ spec:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
             x-kubernetes-validations:
-            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
+            - rule: '!has(oldSelf.phase) || (has(self.phase) && self.phase in {''Pending'': [''Pending'', ''Admitted'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Admitted'': [''Admitted'', ''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Dispatched'': [''Dispatched'', ''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Verifying'': [''Verifying'', ''Succeeded'', ''Failed'', ''Cancelled'', ''OutcomeUnknown''], ''Succeeded'': [''Succeeded''], ''Failed'': [''Failed''], ''Cancelled'': [''Cancelled''], ''OutcomeUnknown'': [''OutcomeUnknown'']}[oldSelf.phase])'
               message: operation phases move forward only, and an ended phase is final
         required:
         - spec

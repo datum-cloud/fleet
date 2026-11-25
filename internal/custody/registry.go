@@ -89,8 +89,12 @@ type Kind struct {
 	// confirmed by its site fence. It returns the custody to write.
 	Apply func(context.Context, *ApplyContext) (*ops.DeviceCustodySpec, *Refusal)
 	// Retires reports whether a succeeded operation of this kind retired the
-	// Device. Rebuild reads it.
+	// Device. Rebuild and retention read it.
 	Retires func(ops.Operation) bool
+	// Clears returns the hold a succeeded operation of this kind cleared, if
+	// any. Rebuild reads it to tell a settled unknown outcome from one that
+	// is still held.
+	Clears func(ops.Operation) *ops.HeldOperationReference
 }
 
 func (k *Kind) checksDiscovery(operation ops.Operation) bool {
@@ -111,7 +115,9 @@ type Admission struct {
 	Device    *inventory.Device
 	Row       Rule
 	Registry  *Registry
-	Now       time.Time
+	// Reader reads the provider project. A check must not write.
+	Reader client.Reader
+	Now    time.Time
 }
 
 // RecoverySettleContext is what a held kind's settle hook sees.
@@ -129,6 +135,8 @@ type ApplyContext struct {
 	Custody   *ops.DeviceCustody
 	Device    *inventory.Device
 	Registry  *Registry
+	// Reader reads the provider project. Apply must not write.
+	Reader client.Reader
 	// ConfirmedFence is the lowest fence the serving sites report, and
 	// HighestFence the highest. Both are at least the operation's fence.
 	ConfirmedFence int64

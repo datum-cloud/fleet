@@ -80,11 +80,13 @@ func (s *fakeSites) Serving(device *inventory.Device) []string {
 	return []string{testSite}
 }
 
-func (s *fakeSites) Fence(_ context.Context, site string, device *inventory.Device) (int64, bool, error) {
+// Fence reports one fence as both seen and stopped: the fake site's workers
+// stop as soon as a newer fence arrives.
+func (s *fakeSites) Fence(_ context.Context, site string, device *inventory.Device) (SiteFence, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fence, ok := s.fences[site+"/"+device.Name]
-	return fence, ok, nil
+	return SiteFence{Seen: fence, Stopped: fence}, ok, nil
 }
 
 // report stores the fence a site reports for a Device.
