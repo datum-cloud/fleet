@@ -593,16 +593,21 @@ def protected_states():
 
 
 def container_records():
-    """Every fleet-mp container: name, state and when it stopped."""
+    """Every fleet-mp container: name, state and when it stopped. None when
+    Docker cannot be read, so nothing that depends on it is removed."""
     code, out, _ = capture(['docker', 'ps', '-a', '--filter', 'name=^fleet-mp-', '--format', '{{.Names}}'], 30)
-    names = [n for n in out.split() if PREFIX.match(n)] if code == 0 else []
-    if not names:
-        return []
-    code, out, _ = capture(['docker', 'inspect', '--format', '{{.Name}}\t{{.State.Status}}\t{{.State.FinishedAt}}', *names], 60)
+    if code != 0:
+        return None
     records = []
-    for line in out.splitlines() if code == 0 else []:
-        name, status, finished = line.split('\t')
-        records.append({'name': name.lstrip('/'), 'state': status, 'finishedAt': finished})
+    for name in (n for n in out.split() if PREFIX.match(n)):
+        # One at a time: a container removed meanwhile is simply gone.
+        code, line, err = capture(['docker', 'inspect', '--format', '{{.Name}}\t{{.State.Status}}\t{{.State.FinishedAt}}', name], 30)
+        if code != 0:
+            if 'No such' in err:
+                continue
+            return None
+        cname, status, finished = line.strip().split('\t')
+        records.append({'name': cname.lstrip('/'), 'state': status, 'finishedAt': finished})
     return records
 
 
@@ -615,79 +620,144 @@ def stopped_since(finished):
     return (datetime.datetime.now(datetime.timezone.utc) - stamp).total_seconds()
 
 
+# A state being removed is renamed out of every search first.
+TOMBSTONE = '.fleet-multiplane-removing.'
+
+
+def removable(d, age, protected):
+    """Why a finished run's state must be kept, or None if it may go."""
+    result = d / 'evidence' / 'result.json'
+    if d.resolve() in protected:
+        return 'holds or waits for the lock'
+    if not result.exists():
+        return 'no result: still going, being resumed, or killed before it stopped'
+    if (d / 'resume.json').exists() and (d / 'resume.json').stat().st_mtime > result.stat().st_mtime:
+        return 'being resumed'
+    if time.time() - result.stat().st_mtime < age:
+        return 'finished less than %gh ago' % (age / 3600)
+    try:
+        prefix = (d / 'prefix').read_text().strip()
+    except OSError:
+        prefix = None
+    if prefix and live_run(prefix):
+        return 'a live process names it'
+    return None
+
+
 def cleanup(args):
     """Remove what finished runs left behind once it is older than the age:
     their stopped containers and image tags, then their state directories.
-    Never a run that holds or waits for the lock, one a live process names,
-    one with no result, or one with any running container."""
+    Never a run that holds or waits for the lock, one being resumed, one a
+    live process names, one with no result, or one with any running
+    container; and nothing that needs Docker when Docker cannot be read."""
     age = args.max_age_hours * 3600
-    protected = protected_states()
     containers = container_records()
-    by_prefix = {}
-    for c in containers:
-        by_prefix.setdefault(PREFIX.match(c['name']).group(0), []).append(c)
     removed, kept = [], []
 
     def keep(what, why):
         kept.append({'what': what, 'why': why})
 
-    states = {}
-    for root in state_roots():
-        for d in root.glob('fleet-multiplane.*'):
-            if STATE_NAME.match(d.name) and d.is_dir() and not d.is_symlink() and d.stat().st_uid == os.getuid():
-                states[d.resolve()] = d
-    owned_prefixes = set()
-    for real, d in sorted(states.items()):
+    def prefix_of(d):
         try:
-            prefix = (d / 'prefix').read_text().strip()
+            return (d / 'prefix').read_text().strip()
         except OSError:
-            prefix = None
-        if prefix:
-            owned_prefixes.add(prefix)
-        result = d / 'evidence' / 'result.json'
-        if real in protected:
-            keep(d.name, 'holds or waits for the lock')
-            continue
-        if not result.exists():
-            keep(d.name, 'no result: still going, or killed before it stopped')
-            continue
-        if time.time() - result.stat().st_mtime < age:
-            keep(d.name, 'finished less than %gh ago' % args.max_age_hours)
-            continue
-        if prefix and live_run(prefix):
-            keep(d.name, 'a live process names it')
-            continue
-        mine = by_prefix.get(prefix, []) if prefix else []
-        if any(c['state'] not in ('exited', 'created', 'dead') for c in mine):
-            keep(d.name, 'a container is still running')
-            continue
-        if args.dry_run:
-            removed.append({'state': d.name, 'prefix': prefix, 'containers': len(mine), 'dryRun': True})
-            continue
-        if mine:
-            # The exact-prefix teardown, recorded as an abandoned Unknown run.
-            code, _, err = capture(['bash', 'hack/multiplane/teardown.sh', str(d), '--discard-unknown'], 900, cwd=args.root)
-            if code != 0:
-                keep(d.name, 'teardown failed: ' + err.strip()[-200:])
+            return None
+    by_prefix = {}
+    for c in containers or []:
+        by_prefix.setdefault(PREFIX.match(c['name']).group(0), []).append(c)
+    states, tombstones, unreadable = [], [], False
+    for root in state_roots():
+        for d in sorted(root.glob('fleet-multiplane.*')) + sorted(root.glob(TOMBSTONE + '*')):
+            if not d.is_dir() or d.is_symlink():
                 continue
-        shutil.rmtree(d)
-        removed.append({'state': d.name, 'prefix': prefix, 'containers': len(mine)})
-    # Stopped containers whose run state is already gone.
-    for prefix, mine in sorted(by_prefix.items()):
-        if prefix in owned_prefixes:
-            continue
-        since = [stopped_since(c['finishedAt']) for c in mine]
-        if any(c['state'] not in ('exited', 'created', 'dead') for c in mine):
-            keep(prefix, 'a container is still running')
-        elif any(x is None or x < age for x in since):
-            keep(prefix, 'stopped less than %gh ago' % args.max_age_hours)
-        elif args.dry_run:
-            removed.append({'prefix': prefix, 'containers': len(mine), 'dryRun': True})
-        else:
-            code, _, err = capture(['docker', 'rm', '-f', '-v', *[c['name'] for c in mine]], 300)
-            for image in (prefix + '-site-image', prefix + '-bmc-image', prefix + '-provider-image'):
-                capture(['docker', 'image', 'rm', image], 60)
-            (removed if code == 0 else kept).append({'prefix': prefix, 'containers': len(mine)} if code == 0 else {'what': prefix, 'why': err.strip()[-200:]})
+            name = 'fleet-multiplane.' + d.name[len(TOMBSTONE):] if d.name.startswith(TOMBSTONE) else d.name
+            if not STATE_NAME.match(name):
+                continue
+            if d.stat().st_uid != os.getuid() or (d / 'prefix').exists() and prefix_of(d) is None:
+                unreadable = True
+                continue
+            (tombstones if d.name.startswith(TOMBSTONE) else states).append(d)
+    owned = {prefix_of(d) for d in states + tombstones} - {None}
+
+    def remove(tomb, record):
+        """Tear down a tombstoned run's exact resources, then delete it."""
+        prefix = prefix_of(tomb)
+        mine = by_prefix.get(prefix, []) if prefix else []
+        if mine:
+            code, _, err = capture(['bash', 'hack/multiplane/teardown.sh', str(tomb), '--discard-unknown'], 900, cwd=args.root)
+            if code != 0:
+                keep(tomb.name, 'teardown failed: ' + err.strip()[-200:])
+                return False
+        elif prefix:
+            # No containers, but a coordinator may outlive its run.
+            capture(['bash', 'hack/multiplane/coordinator.sh', 'stop', str(tomb)], 60, cwd=args.root)
+        try:
+            shutil.rmtree(tomb)
+        except OSError as e:
+            keep(tomb.name, 'delete failed: %s' % e)
+            return False
+        removed.append(dict(record, prefix=prefix, containers=len(mine)))
+        return True
+
+    budget = args.max_teardowns
+    if containers is None:
+        keep('all runs', 'docker unavailable')
+    else:
+        # An earlier cleanup that stopped part way finishes first.
+        for tomb in tombstones:
+            if not args.dry_run:
+                remove(tomb, {'state': 'fleet-multiplane.' + tomb.name[len(TOMBSTONE):], 'resumedCleanup': True})
+        protected = protected_states()
+        for d in states:
+            prefix = prefix_of(d)
+            why = removable(d, age, protected)
+            mine = by_prefix.get(prefix, []) if prefix else []
+            if not why and any(c['state'] not in ('exited', 'created', 'dead') for c in mine):
+                why = 'a container is still running'
+            if not why and mine and budget <= 0:
+                why = 'teardown budget for this cleanup spent'
+            if why:
+                keep(d.name, why)
+                continue
+            result = json.loads((d / 'evidence' / 'result.json').read_text())
+            record = {'state': d.name, 'status': result.get('status'), 'failedPhase': result.get('failedPhase')}
+            if args.dry_run:
+                removed.append(dict(record, prefix=prefix, containers=len(mine), dryRun=True))
+                continue
+            # Check again just before acting, then move the state where no
+            # search finds it, so a resume cannot pick it up mid-removal.
+            why = removable(d, age, protected_states())
+            if why:
+                keep(d.name, why)
+                continue
+            tomb = d.parent / (TOMBSTONE + d.name[len('fleet-multiplane.'):])
+            d.rename(tomb)
+            if mine:
+                budget -= 1
+            remove(tomb, record)
+        # Stopped containers whose run state is gone, unless a state could not be read.
+        for prefix, mine in sorted(by_prefix.items()):
+            if prefix in owned:
+                continue
+            since = [stopped_since(c['finishedAt']) for c in mine]
+            if unreadable:
+                keep(prefix, 'a state directory could not be read; it may own these containers')
+            elif any(c['state'] not in ('exited', 'dead') for c in mine):
+                keep(prefix, 'a container is running or was never started')
+            elif any(x is None or x < age for x in since):
+                keep(prefix, 'stopped less than %gh ago' % args.max_age_hours)
+            elif args.dry_run:
+                removed.append({'prefix': prefix, 'containers': len(mine), 'dryRun': True})
+            else:
+                code, _, err = capture(['docker', 'rm', '-f', '-v', *[c['name'] for c in mine]], 300)
+                if code != 0:
+                    keep(prefix, err.strip()[-200:])
+                    continue
+                code, out, _ = capture(['docker', 'images', '--format', '{{.Repository}}:{{.Tag}}'], 60)
+                for image in out.split() if code == 0 else []:
+                    if image.endswith(':' + prefix) or image.split(':')[0] in (prefix + '-site-image', prefix + '-bmc-image', prefix + '-provider-image'):
+                        capture(['docker', 'image', 'rm', image], 60)
+                removed.append({'prefix': prefix, 'containers': len(mine)})
     record = {'observedAt': now(), 'maxAgeHours': args.max_age_hours, 'dryRun': args.dry_run, 'removed': removed, 'kept': kept}
     if args.state:
         write_json(evidence_dir(args.state) / 'cleanup.json', record)
@@ -1051,6 +1121,8 @@ def main():
     s.add_argument('--root', default='.')
     s.add_argument('--max-age-hours', type=float, default=CLEANUP_AGE_HOURS)
     s.add_argument('--dry-run', action='store_true')
+    s.add_argument('--max-teardowns', type=int, default=int(os.environ.get('FLEET_MULTIPLANE_CLEANUP_MAX_TEARDOWNS', '2')),
+                   help='bound on teardowns per cleanup, so a backlog cannot hold the lock long')
     s.add_argument('--verbose', action='store_true')
     s = sub.add_parser('resume-plan')
     s.add_argument('--target', required=True)

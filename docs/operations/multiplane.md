@@ -466,7 +466,8 @@ hack/multiplane/teardown.sh /tmp/fleet-multiplane.REPLACE --discard-unknown
 ```
 
 `teardown.sh` without `--discard-unknown` refuses unless `summary.json` records
-verified acceptance evidence. `--discard-unknown` is an explicit human decision after inspection: it
+verified acceptance evidence. `--discard-unknown` is an explicit human decision after inspection,
+until the retention age passes ([automatic cleanup](#automatic-cleanup)): it
 deletes the same exact-prefix resources, keeps every private file, and records
 in `teardown.json` that it is not release evidence. Neither script touches other
 prefixes. The original limit of 128 inotify instances was insufficient for this
@@ -475,26 +476,38 @@ value 1024 resolves that local prerequisite.
 
 ### Automatic cleanup
 
+Retained runs are kept for a set age, then removed. This replaces the
+explicit discard decision for runs nobody inspected in time: after
+`FLEET_MULTIPLANE_CLEANUP_AGE_HOURS` (default 12) a failed run's
+Unknown-custody state, evidence and containers are gone. Copy out any
+evidence you need before then, or set `FLEET_MULTIPLANE_CLEANUP=0`.
+
 Each run, once it holds the lock, removes what old finished runs left
-behind, so their stopped containers do not fill the profile's disk. It only
-touches a run whose result is older than 12 hours
-(`FLEET_MULTIPLANE_CLEANUP_AGE_HOURS`): it tears down that run's exact-prefix
-containers, clusters and image tags as an abandoned Unknown run, then deletes
-its state directory. It also removes `fleet-mp-*` containers whose state
-directory is already gone, once all of them have been stopped that long. It
-never touches the following:
+behind, so their stopped containers do not fill the profile's disk. For a
+run whose result is older than the age, it tears down the exact-prefix
+containers, clusters and image tags with `teardown.sh --discard-unknown`, or
+stops its coordinator when it has no containers, then deletes its state
+directory. It also removes stopped `fleet-mp-*` containers, and their image
+tags, whose state directory is gone once all of them have been stopped that
+long. It never touches the following:
 
 - a run that holds or waits for the lock;
-- a run that a live process names;
+- a run being resumed, or one a live process names;
 - a run with no result;
-- a run with a running container;
-- containers outside the `fleet-mp-` prefix.
+- a run with a running container, or a container that was never started;
+- containers outside the `fleet-mp-` prefix;
+- anything that needs Docker, when Docker cannot be read;
+- orphaned containers, when any state directory cannot be read.
 
-`evidence/cleanup.json` lists what the run removed and what it kept and why.
-Copy out any evidence you need before that age. `FLEET_MULTIPLANE_CLEANUP=0`
-turns the automatic step off. `task multiplane:cleanup -- --dry-run` lists
-what would be removed; without `--dry-run` it removes it. A CI runner is
-single-use, so CI mode does not clean up.
+It checks a run again just before acting, and first renames its state out of
+every search, so a resume cannot pick it up while it is removed. A cleanup
+that stopped part way is finished by the next one. Each cleanup tears down at
+most two runs (`FLEET_MULTIPLANE_CLEANUP_MAX_TEARDOWNS`), so a backlog cannot
+hold the lock for long. `evidence/cleanup.json` lists each removed run with its
+status and failed phase, and what was kept and why.
+`task multiplane:cleanup -- --dry-run` lists what would be removed; without
+`--dry-run` it removes it. A CI runner is single-use, so CI mode does not
+clean up.
 
 ### Resuming a failed run
 
