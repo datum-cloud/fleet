@@ -120,7 +120,7 @@ server.
 | Relays, the provisioning VLAN, and each switch port's base profile | Network operations |
 | A switch port's membership in customer networks | The network owner's physical realizer |
 | Customer addresses and interfaces | NSO, through IPAM |
-| Interface requests for a Machine, and their UIDs on the allocation | The Fleet provider for Metal |
+| Interface requests for a Machine, and their claims' UIDs in the allocation's status | The Fleet provider for Metal |
 | Machine network status | The Fleet provider for Metal |
 
 A switch port has two writers in the network owner's systems, each for its own
@@ -144,8 +144,9 @@ claim for it, in the provider project, before it creates the operation:
 
 The claim is named from the operation and scoped to the site's location, so a
 requester that crashes and runs again finds the same claim. IPAM assigns a host
-address when the claim is created. The requester copies the claim's name, UID,
-and address into the operation:
+address when the claim is created. The requester copies the claim's name and
+address into the operation. Like every spec in this enhancement, it holds no
+object UID:
 
 ```yaml
 apiVersion: fleet.datumapis.com/v1alpha1
@@ -156,14 +157,17 @@ spec:
   # ...the envelope and other inputs are unchanged.
   bootInterface: primary
   bootNetwork:
-    addressClaim: {name: alloc-3b9d61c2-install-1-boot, uid: 1d2f7a9e-0b3c-4e5f-8a6b-7c8d9e0f1a2b}
+    addressClaim: {name: alloc-3b9d61c2-install-1-boot}
     address: 198.51.100.10
 ```
 
 `DeviceWipe` gains the same `bootInterface` and `bootNetwork` fields.
 
-Admission adds one kind check. The claim must exist with that UID, be bound,
-and hold that address. Otherwise admission refuses the operation with
+Admission adds one kind check. The claim must be the operation's own by its
+name and labels, be bound, hold that address, and be created no later than the
+operation, since the requester always creates it first. A claim deleted and
+recreated under the name after the operation is refused, even with the same
+address. Otherwise admission refuses the operation with
 `BootAddressUnavailable`. The Device snapshot already records the boot NIC's
 MAC from Device inventory, and the site uses only that MAC.
 
@@ -345,7 +349,7 @@ the server on the boot network as before.
 | --- | --- | --- |
 | Boot address for an operation | IPAM claim, then operation, both named from the operation | The requester finds the claim by name and creates the operation. A claim whose operation will never be created is deleted. |
 | Release a boot address | Operation ends, then the requester deletes the claim | The requester deletes the claim again. |
-| Interface claims | Allocation, then each claim, named from the allocation and interface, then the claim's UID on the allocation | The provider finds each claim by name in a namespace only it can write, requires its spec to match, and records its UID. A claim with another spec or another UID is a conflict, and the Machine reports `NetworkReady=False`. |
+| Interface claims | Allocation, then each claim, named from the allocation and interface, then the claim's UID in the allocation's status | The provider finds each claim by name in a namespace only it can write, requires its spec and its Machine label to match, and records its UID in status. A claim with another spec or another UID is a conflict, and the Machine reports `NetworkReady=False`. |
 | Release an interface | Delete the claim, then observe it gone | The release controller observes again. A gate closes only on absence. |
 
 ### Requests to other teams
