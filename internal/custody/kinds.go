@@ -347,9 +347,9 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 }
 
 // disposedDrive checks a DisposeDrive and returns the disposed drive's serial
-// number. The hold must be a wipe held for a drive it could not clean, the
-// holder Release, the drive one that wipe planned as Missing or Uncovered and
-// not already disposed of, and discovery must no longer report it: an
+// number. The hold must be a wipe held for drives it could not clean, the
+// holder Release, and the drive one that custody recorded with that hold and
+// that is not already disposed of. Discovery must no longer report it: an
 // uncovered drive is pulled before its disposal is recorded.
 func disposedDrive(_ context.Context, recovery *ops.DeviceRecovery, custody *ops.DeviceCustody, admission *Admission) (string, *Refusal) {
 	hold, drive := custody.Spec.RecoveryHold, recovery.Spec.Drive

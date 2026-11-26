@@ -665,6 +665,8 @@ fails if its guard is removed:
 | Device | Custody's `device-uid` label must match the Device, or custody stays `Unverified` until a `Resolve` | `TestARecreatedDeviceLeavesCustodyUnverified` |
 | Device, against free capacity | Custody for another Device incarnation is never free | `TestCustodyForAnotherDeviceIncarnationIsNotFree` |
 | Device, against a release wipe | The release controller plans a wipe only if the Device's UID is the allocation's `device-uid` label | `TestAWipeIsNeverPlannedForARecreatedDevice` |
+| Wipe, against a drive disposal | `DisposeDrive` reads the held drives custody recorded with the hold, never the wipe object | `TestWipeAdmissionChecksThePlan` (a wipe recreated under the held wipe's name) |
+| Wipe, after rebuild | A rebuilt hold records no drives, so `DisposeDrive` is refused | `TestARebuiltHoldCannotBeDisposed` |
 | Device, against an operation | An operation's `device-uid` label must match the Device at admission | `TestAdmissionPreconditions` |
 | Device, against an existing operation | The Metal provider and release controller require an existing same-name operation to carry the same labels | `TestAnOperationForAnotherDeviceIncarnationIsAConflict` |
 | Installation | The `DeviceInstallation` name hashes the Installation UID, so a same-name Installation gets a new operation | `TestAllocateInstallReleaseReuse` |
