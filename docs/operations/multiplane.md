@@ -10,8 +10,8 @@ artifact built from the checkout; see [Flux-reconciled local environment](gitops
 production overlay. Production authority and deployment equivalence remain
 **unqualified**.
 
-Status: the run on Device custody is **implemented**. Verification of the local VM
-run and of the [Redfish run](redfish-lab.md) on custody is pending. The run
+Status: the run on Device custody is **implemented and verified**: the local VM
+run and the [Redfish run](redfish-lab.md) both pass every phase on custody. The run
 records under [Verification and remaining gaps](#verification-and-remaining-gaps)
 were observed on the path before the cutover, with the Secret-backed coordinator,
 and are not evidence for the custody path.
@@ -523,7 +523,7 @@ path before the cutover to Device custody. They used the Secret-backed
 coordinator, a site-wide provider journal and a single-writer `executor.Client`.
 They show what the earlier composition proved, and the Flux, kro and Karmada
 findings there still describe the same infrastructure. They are not evidence for
-the custody path. Verification of the local VM run on custody is pending.
+the custody path. The local VM and Redfish runs on custody pass every phase.
 
 ### Flux-owned shared site acceptance (2026-11-16)
 

@@ -15,7 +15,7 @@ is the same pipeline:
 
 Status: the Redfish workers are **implemented and verified** by unit tests,
 including against TLS BMC stubs. The multi-plane Redfish run on custody is
-**implemented**, and its verification is pending. The execution records at the
+**implemented and verified**: it passes every phase. The execution records at the
 end of this page describe runs on the path before the cutover.
 
 It is a **local MVP proof**, not hardware qualification. No physical server, BMC,
@@ -332,7 +332,7 @@ These are documented lab seams, not production designs:
 `hack/multiplane/acceptance-redfish.sh` runs every scenario of the
 [libvirt-mode sequence](multiplane.md#acceptance-phases) through the same
 federation and kro path, with these differences. The phase descriptions follow the
-harness at this change; verification of the run on custody is pending.
+harness at this change, and the run on custody passes every phase.
 
 **Before topology:**
 
@@ -445,8 +445,8 @@ kustomize and checks the following:
 The records below describe runs on the path before the cutover to Device custody,
 with the old executor, a site-wide journal and a shared credential over plain
 HTTP. They show what the lab and the harness proved then. They are not evidence
-for the Redfish workers. The multi-plane Redfish run on custody is implemented,
-and its verification is pending.
+for the Redfish workers. The multi-plane Redfish run on custody is implemented
+and passes every phase.
 
 ### Attempts before the first pass (2026-11-16)
 

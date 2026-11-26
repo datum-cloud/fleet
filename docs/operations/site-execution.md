@@ -357,8 +357,8 @@ journal in the site store.
 ## Implemented versus proposed
 
 Rows marked "exercised" were observed in runs on the path before the cutover to
-Device custody. The same phases now run on custody. Verification of that run is
-pending.
+Device custody. The same phases now run on custody, and that run passes every
+phase.
 
 | Behavior | Status |
 | --- | --- |
@@ -371,7 +371,7 @@ pending.
 | Pod/Job lifecycle not changing the site store, guest or allocation | Implemented and exercised |
 | Facility-edge DaemonSet, multi-node volumes, HA runtime, live hardware fencing | Proposed only |
 | A credential broker so no worker holds a long-lived BMC credential | Proposed only ([open questions](../enhancements/pxe-installation/README.md#open-design-questions)) |
-| Redfish workers with no libvirt path, against the DMTF Redfish Interface Emulator and lab VMs | Implemented as a separate mode; see [Redfish-mode acceptance](redfish-lab.md). Verification of the run on custody is pending. |
+| Redfish workers with no libvirt path, against the DMTF Redfish Interface Emulator and lab VMs | Implemented as a separate mode and verified by the Redfish run on custody; see [Redfish-mode acceptance](redfish-lab.md). |
 | Synchronized DHCP boot reservations with served and withdrawn evidence, read from the site store | Implemented and unit tested; not exercised at a site ([Boot network](boot-network.md)) |
 | Physical Redfish/BMC execution Jobs | Not qualified (lab emulator only; see the [hardware readiness checklist](redfish-lab.md#limitations-and-physical-hardware-readiness)) |
 | Per-Device fence store and journal, older-worker stop with a confirmation, worker deadlines, fenced typed results, per-Device credentials with the approved TLS pin, and the operation handoff payload ([device custody](../development/device-custody.md#site-execution-increment-b)) | Implemented: unit tested, and every site runs it since the cutover. The multi-plane run on it awaits verification. |

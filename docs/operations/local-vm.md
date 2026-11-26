@@ -10,7 +10,7 @@ not KVM or hardware qualification.
 
 Status: **implemented**. The standalone smoke does not use it. The
 [multi-plane acceptance](multiplane.md) (`task multiplane:acceptance`) runs it,
-and verification of that run after the cutover is pending.
+and that run passes every phase after the cutover.
 
 ## The single-plane harness is retired
 

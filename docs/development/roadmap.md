@@ -52,8 +52,7 @@ hardware qualification. Increment A (the control-plane foundation), Increment B
 mode onto custody and deletes the Secret-backed path. An allocation's private
 facts live on its MachineAllocation. The standalone smoke and both multi-plane
 runs, local VM and Redfish, verify C. Increment D (end-to-end failure
-scenarios) is implemented, and its verification in both multi-plane runs is
-pending.
+scenarios) is implemented, and both multi-plane runs verify it.
 
 Acceptance: the #174 acceptance tests pass, in envtest and in fresh local
 end-to-end runs, with "nothing sent" proven by the lab BMC audit.
