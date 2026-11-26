@@ -3,6 +3,7 @@ package milo
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
@@ -82,18 +83,72 @@ func TestTheQuotaClaimIsNamedFromTheMachineAndGrantedOnce(t *testing.T) {
 	}
 }
 
-// TestReleaseIsObservedNotAssumed deletes the claim and reports it released
-// only once it is gone.
+// TestReleaseIsObservedNotAssumed deletes the claim, then removes Fleet's
+// finalizer, and reports it released only once it is gone.
 func TestReleaseIsObservedNotAssumed(t *testing.T) {
 	ctx := context.Background()
 	api := quotaClient(t)
 	quota := Quota{Consumers: consumers(api, machine.ConsumerUID)}
 	_, _ = quota.Acquire(ctx, machine)
 	if err := quota.Release(ctx, machine); !errors.Is(err, ErrQuotaPending) {
-		t.Fatalf("release while deleting = %v", err)
+		t.Fatalf("release requesting deletion = %v", err)
+	}
+	// The deleting claim is still held, and so still counted, until Fleet
+	// removes its finalizer.
+	claim := &quotav1alpha1.ResourceClaim{}
+	if err := api.Get(ctx, client.ObjectKey{Namespace: machine.Namespace, Name: ClaimName(machine)}, claim); err != nil || claim.DeletionTimestamp == nil || !slices.Contains(claim.Finalizers, QuotaFinalizer) {
+		t.Fatalf("claim after deletion request = %+v, %v", claim.ObjectMeta, err)
+	}
+	if err := quota.Release(ctx, machine); !errors.Is(err, ErrQuotaPending) {
+		t.Fatalf("release removing the finalizer = %v", err)
 	}
 	if err := quota.Release(ctx, machine); err != nil {
 		t.Fatalf("release after deletion = %v", err)
+	}
+}
+
+// TestTheClaimIsHeldUntilFleetReleasesIt keeps the quota of a claim that
+// someone else deletes, and restores a finalizer removed from a live claim.
+func TestTheClaimIsHeldUntilFleetReleasesIt(t *testing.T) {
+	ctx := context.Background()
+	api := quotaClient(t)
+	quota := Quota{Consumers: consumers(api, machine.ConsumerUID)}
+	_, _ = quota.Acquire(ctx, machine)
+	key := client.ObjectKey{Namespace: machine.Namespace, Name: ClaimName(machine)}
+	claim := &quotav1alpha1.ResourceClaim{}
+	if err := api.Get(ctx, key, claim); err != nil || !slices.Contains(claim.Finalizers, QuotaFinalizer) {
+		t.Fatalf("created claim = %+v, %v", claim.ObjectMeta, err)
+	}
+
+	// A finalizer removed from a live claim is restored on the next acquire.
+	claim.Finalizers = nil
+	if err := api.Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := quota.Acquire(ctx, machine); !errors.Is(err, ErrQuotaPending) {
+		t.Fatalf("acquire restoring the finalizer = %v", err)
+	}
+	if err := api.Get(ctx, key, claim); err != nil || !slices.Contains(claim.Finalizers, QuotaFinalizer) {
+		t.Fatalf("restored claim = %+v, %v", claim.ObjectMeta, err)
+	}
+
+	// A delete by someone else, such as a namespace purge, leaves the claim
+	// held and counted. Acquire reports it unknown rather than granted.
+	if err := api.Delete(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Get(ctx, key, claim); err != nil || claim.DeletionTimestamp == nil {
+		t.Fatalf("claim deleted by another actor = %+v, %v", claim.ObjectMeta, err)
+	}
+	if _, err := quota.Acquire(ctx, machine); !errors.Is(err, ErrQuotaUnknown) {
+		t.Fatalf("acquire of a deleting claim = %v", err)
+	}
+	// Release finishes what the other actor started.
+	if err := quota.Release(ctx, machine); !errors.Is(err, ErrQuotaPending) {
+		t.Fatalf("release of a deleting claim = %v", err)
+	}
+	if err := quota.Release(ctx, machine); err != nil {
+		t.Fatalf("release after the finalizer = %v", err)
 	}
 }
 
@@ -119,5 +174,89 @@ func TestQuotaServesOnlyTheMachinesProjectIncarnation(t *testing.T) {
 	var claims quotav1alpha1.ResourceClaimList
 	if err := api.List(ctx, &claims); err != nil || len(claims.Items) != 0 {
 		t.Fatalf("claims = %+v, %v", claims.Items, err)
+	}
+}
+
+// TestAnotherFinalizerKeepsTheClaimCounted removes only Fleet's finalizer.
+// A claim another actor still holds exists, so Milo still counts it, and
+// release stays pending until that actor lets go.
+func TestAnotherFinalizerKeepsTheClaimCounted(t *testing.T) {
+	ctx := context.Background()
+	api := quotaClient(t)
+	quota := Quota{Consumers: consumers(api, machine.ConsumerUID)}
+	_, _ = quota.Acquire(ctx, machine)
+	key := client.ObjectKey{Namespace: machine.Namespace, Name: ClaimName(machine)}
+	claim := &quotav1alpha1.ResourceClaim{}
+	if err := api.Get(ctx, key, claim); err != nil {
+		t.Fatal(err)
+	}
+	claim.Finalizers = append(claim.Finalizers, "example.com/other")
+	if err := api.Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := quota.Release(ctx, machine); !errors.Is(err, ErrQuotaPending) {
+			t.Fatalf("release while another finalizer holds the claim = %v", err)
+		}
+	}
+	if err := api.Get(ctx, key, claim); err != nil || !slices.Equal(claim.Finalizers, []string{"example.com/other"}) {
+		t.Fatalf("claim = %+v, %v", claim.ObjectMeta, err)
+	}
+	claim.Finalizers = nil
+	if err := api.Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := quota.Release(ctx, machine); err != nil {
+		t.Fatalf("release after the other finalizer = %v", err)
+	}
+}
+
+// TestARecreatedMachineGetsItsOwnClaim recreates a Machine with the same
+// consumer, namespace and name. The claim name hashes the Machine UID and the
+// claim carries it as a label, so the new Machine neither finds nor releases
+// the old Machine's granted claim.
+func TestARecreatedMachineGetsItsOwnClaim(t *testing.T) {
+	ctx := context.Background()
+	api := quotaClient(t)
+	quota := Quota{Consumers: consumers(api, machine.ConsumerUID)}
+	_, _ = quota.Acquire(ctx, machine)
+	old := &quotav1alpha1.ResourceClaim{}
+	if err := api.Get(ctx, client.ObjectKey{Namespace: machine.Namespace, Name: ClaimName(machine)}, old); err != nil {
+		t.Fatal(err)
+	}
+	old.Status.ObservedGeneration = old.Generation
+	old.Status.Conditions = []metav1.Condition{{Type: quotav1alpha1.ResourceClaimGranted, Status: metav1.ConditionTrue}}
+	if err := api.Update(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+
+	recreated := machine
+	recreated.UID = "00000000-0000-4000-8000-000000000602"
+	if ClaimName(recreated) == ClaimName(machine) {
+		t.Fatal("a recreated Machine shares its predecessor's claim name")
+	}
+	if _, err := quota.Acquire(ctx, recreated); !errors.Is(err, ErrQuotaPending) {
+		t.Fatalf("recreated acquire = %v; the predecessor's grant must not carry over", err)
+	}
+	// Releasing the new Machine leaves the predecessor's claim held.
+	for range 3 {
+		_ = quota.Release(ctx, recreated)
+	}
+	if err := api.Get(ctx, client.ObjectKeyFromObject(old), old); err != nil || old.DeletionTimestamp != nil {
+		t.Fatalf("predecessor claim after the new Machine's release = %+v, %v", old.ObjectMeta, err)
+	}
+
+	// A claim at the new Machine's name that records another Machine is not
+	// the new Machine's claim: acquire and release both refuse it.
+	forged := desired(recreated)
+	forged.Labels[fleetv1.LabelMachineUID] = string(machine.UID)
+	if err := api.Create(ctx, forged); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := quota.Acquire(ctx, recreated); !errors.Is(err, ErrQuotaInvalid) {
+		t.Fatalf("acquire of a claim recording another Machine = %v", err)
+	}
+	if err := quota.Release(ctx, recreated); !errors.Is(err, ErrQuotaInvalid) {
+		t.Fatalf("release of a claim recording another Machine = %v", err)
 	}
 }

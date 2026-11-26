@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 
 	quotav1alpha1 "go.miloapis.com/milo/pkg/apis/quota/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +20,12 @@ import (
 )
 
 var _ allocation.Quota = Quota{}
+
+// QuotaFinalizer holds a Machine's quota claim until Fleet releases it.
+// Milo keeps counting a deleting claim while a finalizer holds it, so a
+// claim deleted by anyone else, or by namespace purge, keeps its quota until
+// Fleet removes this finalizer. Its removal is the release acknowledgment.
+const QuotaFinalizer = "fleet.datumapis.com/quota-custody"
 
 // Quota reserves one Machine's quota as a Milo ResourceClaim in the Machine's
 // namespace. The claim is named from the Machine UID within its consumer
@@ -37,7 +44,7 @@ func ClaimName(machine allocation.Machine) string {
 
 func desired(machine allocation.Machine) *quotav1alpha1.ResourceClaim {
 	return &quotav1alpha1.ResourceClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: ClaimName(machine), Namespace: machine.Namespace, Labels: map[string]string{
+		ObjectMeta: metav1.ObjectMeta{Name: ClaimName(machine), Namespace: machine.Namespace, Finalizers: []string{QuotaFinalizer}, Labels: map[string]string{
 			"fleet.datumapis.com/quota-claim": "machine", fleetv1.LabelMachineUID: string(machine.UID), fleetv1.LabelConsumerUID: string(machine.ConsumerUID),
 		}},
 		Spec: quotav1alpha1.ResourceClaimSpec{
@@ -77,6 +84,14 @@ func (q Quota) Acquire(ctx context.Context, machine allocation.Machine) (string,
 	if claim.DeletionTimestamp != nil {
 		return "", ErrQuotaUnknown
 	}
+	// Someone removed Fleet's finalizer from a live claim. Restore the hold
+	// before relying on the grant; a conflict is retried.
+	if !slices.Contains(claim.Finalizers, QuotaFinalizer) {
+		claim.Finalizers = append(claim.Finalizers, QuotaFinalizer)
+		if err := api.Update(ctx, claim); err != nil {
+			return "", fmt.Errorf("%w: restore the quota finalizer: %v", ErrQuotaUnknown, err)
+		}
+	}
 	granted := apiMeta.FindStatusCondition(claim.Status.Conditions, quotav1alpha1.ResourceClaimGranted)
 	switch {
 	case granted == nil || claim.Status.ObservedGeneration != claim.Generation:
@@ -89,8 +104,8 @@ func (q Quota) Acquire(ctx context.Context, machine allocation.Machine) (string,
 	return claim.Name, nil
 }
 
-// Release deletes the Machine's claim. It returns nil once the claim is
-// gone.
+// Release deletes the Machine's claim, then removes Fleet's finalizer. It
+// returns nil once the claim is gone.
 func (q Quota) Release(ctx context.Context, machine allocation.Machine) error {
 	name := ClaimName(machine)
 	api, err := q.client(ctx, machine)
@@ -109,9 +124,20 @@ func (q Quota) Release(ctx context.Context, machine allocation.Machine) error {
 	if !matches(machine, claim) {
 		return ErrQuotaInvalid
 	}
-	uid := claim.UID
-	if err := api.Delete(ctx, claim, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("%w: delete ResourceClaim: %v", ErrQuotaUnknown, err)
+	if claim.DeletionTimestamp == nil {
+		uid := claim.UID
+		if err := api.Delete(ctx, claim, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("%w: delete ResourceClaim: %v", ErrQuotaUnknown, err)
+		}
+		return fmt.Errorf("%w: the claim is being deleted", ErrQuotaPending)
+	}
+	// The claim is deleting and still counted. Removing the finalizer frees
+	// the quota; the update is conditional on the version read.
+	if index := slices.Index(claim.Finalizers, QuotaFinalizer); index >= 0 {
+		claim.Finalizers = slices.Delete(claim.Finalizers, index, index+1)
+		if err := api.Update(ctx, claim); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("%w: remove the quota finalizer: %v", ErrQuotaUnknown, err)
+		}
 	}
 	// Deletion is observed, not assumed: the next call sees the claim gone.
 	return fmt.Errorf("%w: the claim is being deleted", ErrQuotaPending)
