@@ -448,6 +448,65 @@ func TestRefusedContactsAreRetainedOncePerInterval(t *testing.T) {
 	}
 }
 
+// TestAReportMustEchoAServedFeed refuses, and does not retain, a report
+// whose issue time and revision the feed never served to that instance: a
+// forged future issue time, or a feed served to another instance. After the
+// feed restarts it remembers nothing, so an earlier fetch is refused, and
+// the next fetch and report are accepted.
+func TestAReportMustEchoAServedFeed(t *testing.T) {
+	g := newGate(t)
+	fetched := g.fetch("dhcp-a")
+	forged := fetched
+	forged.Issued = g.now.Add(365 * 24 * time.Hour)
+	if code := g.post("dhcp-a", forged); code != http.StatusConflict {
+		t.Fatalf("report with a forged issue time = %d", code)
+	}
+	if code := g.post("dhcp-b", fetched); code != http.StatusConflict {
+		t.Fatalf("report of a feed served to another instance = %d", code)
+	}
+	if retained, _ := reports(g.server.BootRoot); len(retained) != 0 {
+		t.Fatalf("a refused report was retained: %+v", retained)
+	}
+	restarted, err := g.server.DHCPHandler(syncToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.handler = restarted
+	if code := g.post("dhcp-a", fetched); code != http.StatusConflict {
+		t.Fatalf("report of a feed served before the restart = %d", code)
+	}
+	g.tick()
+	if feed := g.apply("dhcp-a"); !feed.Issued.After(fetched.Issued) {
+		t.Fatalf("refetched feed issued %v", feed.Issued)
+	}
+	if retained, _ := reports(g.server.BootRoot); len(retained) != 1 {
+		t.Fatalf("retained %+v", retained)
+	}
+}
+
+// TestARefreshedReportProvesWithdrawal: dhcp-b applied the empty feed before
+// the admission was published and never fetched the reservation's revision.
+// After the admission closes the revision is the same as its last report's,
+// and its refreshed report, of a feed issued after publication, proves
+// withdrawal.
+func TestARefreshedReportProvesWithdrawal(t *testing.T) {
+	g := newGate(t)
+	before := g.apply("dhcp-b")
+	boot := g.admit("op-a", 1, address)
+	g.apply("dhcp-a")
+	g.close(boot)
+	g.apply("dhcp-a")
+	if err := g.withdrawn(boot); err == nil {
+		t.Fatal("withdrawal proven from dhcp-b's report before publication")
+	}
+	if refreshed := g.apply("dhcp-b"); refreshed.Revision != before.Revision || !refreshed.Issued.After(boot.Published) {
+		t.Fatalf("refreshed feed = %+v, earlier %+v", refreshed, before)
+	}
+	if err := g.withdrawn(boot); err != nil {
+		t.Fatalf("withdrawal after dhcp-b's refreshed report: %v", err)
+	}
+}
+
 // TestTheFeedServesOnlyExpectedInstances refuses a feed request without an
 // instance or from an instance outside the expected set, and refuses and
 // does not retain such an instance's report. An expected instance gets the

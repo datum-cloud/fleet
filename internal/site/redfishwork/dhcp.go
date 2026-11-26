@@ -39,6 +39,15 @@ const contactInterval = 30 * time.Second
 // by then.
 const contactQuiet = contactInterval + 15*time.Second
 
+// issuesKept is how many served feeds the feed remembers per instance.
+const issuesKept = 32
+
+// issue is one feed the feed server served: a report must echo one.
+type issue struct {
+	issued   time.Time
+	revision string
+}
+
 // report is one retained applied report: when the boot server accepted it,
 // and which DHCP instance applied which exact feed, as the feed server issued
 // it. A Rejected record is instead an authenticated contact the feed refused
@@ -117,6 +126,14 @@ func (b BootServer) Issue() (bootnet.Feed, error) {
 // to, and retains a report only from, an instance in the enrollment's
 // expected set, so an instance outside it never gets a reservation to
 // serve; a feed request names its instance in bootnet.InstanceHeader.
+//
+// A report is retained only if it echoes a feed this handler served to the
+// same instance, by issue time and revision, among the last issuesKept it
+// served it; any other is refused with 409 and not retained. So a report's
+// issue time is one the site's clock gave, never one a token holder chose.
+// The handler remembers issues in memory only: after a restart, reports are
+// refused until the instance fetches again, which its synchronizer does on
+// its next cycle before it reports again.
 func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 	if len(token) < 32 || strings.ContainsAny(token, " \t\r\n") {
 		return nil, errors.New("the DHCP synchronizer token must be at least 32 characters without whitespace")
@@ -127,6 +144,8 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 	allowed := expected(b.DHCPInstances)
 	var mu sync.Mutex
 	recorded := map[string]time.Time{}
+	var issuedMu sync.Mutex
+	issues := map[string][]issue{}
 	// refuse retains, at most once per instance name per contactInterval,
 	// that an authenticated instance outside the expected set is still
 	// running, then answers 403 whether or not that was retained.
@@ -169,6 +188,14 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 				http.Error(w, "reservations unavailable", http.StatusServiceUnavailable)
 				return
 			}
+			instance := request.Header.Get(bootnet.InstanceHeader)
+			issuedMu.Lock()
+			kept := append(issues[instance], issue{issued: feed.Issued, revision: feed.Revision})
+			if len(kept) > issuesKept {
+				kept = kept[len(kept)-issuesKept:]
+			}
+			issues[instance] = kept
+			issuedMu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(feed)
 		case request.Method == http.MethodPost && request.URL.Path == "/dhcp/v1/applied" && request.URL.RawQuery == "":
@@ -181,6 +208,18 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 			}
 			if !allowed[applied.Instance] {
 				refuse(w, applied.Instance)
+				return
+			}
+			served := false
+			issuedMu.Lock()
+			for _, i := range issues[applied.Instance] {
+				if i.issued.Equal(applied.Feed.Issued) && i.revision == applied.Feed.Revision {
+					served = true
+				}
+			}
+			issuedMu.Unlock()
+			if !served {
+				http.Error(w, "the report echoes no feed served to this instance", http.StatusConflict)
 				return
 			}
 			if err := b.retain(applied); err != nil {
