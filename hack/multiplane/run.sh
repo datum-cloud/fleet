@@ -9,8 +9,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 umask 077
-usage() { echo 'usage: hack/multiplane/run.sh [--redfish] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
-preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt
+usage() { echo 'usage: hack/multiplane/run.sh [--redfish [--synced-dhcp]] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
+preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt lab_dhcp=static
 for arg in "$@"; do
  case "$arg" in
   --preflight-only) preflight_only=1 ;;
@@ -21,15 +21,21 @@ for arg in "$@"; do
   # Redfish mode: workers drive lab VMs only through the DMTF Redfish emulator
   # and its lab adapter (docs/operations/redfish-lab.md).
   --redfish) provider=redfish ;;
+  # Synchronized DHCP: the site's Kea, fed by Fleet's reservation feed, is the
+  # lab bridge's only DHCP server, and boot addresses come from a synthetic
+  # IPAM stand-in (docs/operations/redfish-lab.md).
+  --synced-dhcp) lab_dhcp=synced ;;
   *) usage ;;
  esac
 done
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider
+[[ $lab_dhcp == static || $provider == redfish ]] || usage
+export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider FLEET_LAB_DHCP=$lab_dhcp
 harness=(python3 hack/multiplane/harness.py)
 state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
 mkdir -m 0700 "$state/evidence"
 printf '%s\n' "$provider" > "$state/site-provider"
-printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\n' "$state" "$state" "$provider"
+printf '%s\n' "$lab_dhcp" > "$state/lab-dhcp"
+printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\nLab DHCP: %s\n' "$state" "$state" "$provider" "$lab_dhcp"
 
 finish() {
  code=$1
@@ -91,11 +97,12 @@ PY
 flux=(python3 hack/multiplane/flux.py)
 # The site binary is built into its own directory: it is the only build context
 # input besides hack/local-vm, so no private state can enter the image.
-ph build 600 sh -c 'mkdir -m 0700 "$1/site-bin" && go build -o "$1/fleet-multiplane-host" ./cmd/fleet-multiplane && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "$1/site-bin/fleet-multiplane" ./cmd/fleet-multiplane && cp "$1/site-bin/fleet-multiplane" "$1/fleet-multiplane"' sh "$state"
+ph build 600 sh -c 'mkdir -m 0700 "$1/site-bin" && go build -o "$1/fleet-multiplane-host" ./cmd/fleet-multiplane && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "$1/site-bin/fleet-multiplane" ./cmd/fleet-multiplane && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "$1/site-bin/fleet-dhcp-sync" ./cmd/fleet-dhcp-sync && cp "$1/site-bin/fleet-multiplane" "$1/fleet-multiplane"' sh "$state"
 ph site-image 2400 docker build --target site --build-context "fleetbin=$state/site-bin" -t "$prefix-site-image" -f hack/local-vm/Containerfile hack/local-vm
 ph site-image-verify 120 sh -c '
  sum=$(shasum -a 256 "$2/site-bin/fleet-multiplane" | cut -d" " -f1)
- printf "%s  /usr/local/bin/fleet-multiplane\n" "$sum" | docker run --rm -i --entrypoint sha256sum "$1-site-image" -c - >/dev/null
+ sync=$(shasum -a 256 "$2/site-bin/fleet-dhcp-sync" | cut -d" " -f1)
+ printf "%s  /usr/local/bin/fleet-multiplane\n%s  /usr/local/bin/fleet-dhcp-sync\n" "$sum" "$sync" | docker run --rm -i --entrypoint sha256sum "$1-site-image" -c - >/dev/null
  docker run --rm -e FLEET_LOCAL_VM_ACCEL=tcg --entrypoint fleet-multiplane "$1-site-image" image > "$2/image"
  echo "site image: checksum-verified executable; artifact reference recorded"' sh "$prefix" "$state"
 if [[ $provider == redfish ]]; then
@@ -123,11 +130,13 @@ ph federation-enrollment 600 python3 hack/multiplane/roles.py "$state"
 # Redfish mode enrolls the per-Device BMC credentials and the lab BMC's TLS
 # key first: fixture discovery reports that key's digest.
 [[ $provider != redfish ]] || ph redfish-enroll 120 python3 hack/multiplane/redfish_steps.py enroll "$state"
-python3 - "$state" "$provider" <<'PY'
+python3 - "$state" "$provider" "$lab_dhcp" <<'PY'
 import json,pathlib,sys
 s=pathlib.Path(sys.argv[1]).resolve()
 enrollment=json.loads((s/'redfish'/'fixture-enrollment.json').read_text() if sys.argv[2]=='redfish' else pathlib.Path('config/site/base/enrollment.json').read_text())
-c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip(),'Enrollment':enrollment};(s/'acceptance.json').write_text(json.dumps(c))
+c={'State':str(s),'HubKubeconfig':str(s/'management-hub.json'),'Cell':(s/'prefix').read_text().strip()+'-cell','Image':(s/'image').read_text().strip(),'Enrollment':enrollment}
+if sys.argv[3]=='synced':c['BootAddressClass']='lab-provisioning'
+(s/'acceptance.json').write_text(json.dumps(c))
 PY
 ph seed 600 "$state/fleet-multiplane-host" seed --config "$state/acceptance.json"
 ph coordinator 120 bash hack/multiplane/coordinator.sh start "$state"

@@ -129,6 +129,28 @@ def credential_name(device):
     return 'bmc-' + hashlib.sha256(device.encode()).hexdigest()[:20]
 
 
+def synced(s):
+    """Whether this run's lab DHCP is synchronized (run.sh --synced-dhcp)."""
+    p = s / 'lab-dhcp'
+    return p.exists() and p.read_text().strip() == 'synced'
+
+
+def enroll_dhcp(s, d):
+    """The synchronizer's token and the feed's TLS key, generated per run and
+    never committed: Secrets the site DHCP layer mounts."""
+    (d / 'dhcp-sync.token').write_text(secrets.token_hex(32) + '\n')
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', str(d / 'dhcp-feed.key'),
+                    '-out', str(d / 'dhcp-feed.crt'), '-days', '2', '-subj', '/CN=fleet-site-dhcp-feed',
+                    '-addext', 'subjectAltName=DNS:fleet-site-dhcp-feed.fleet-site.svc'], check=True, capture_output=True)
+    for p in d.iterdir():
+        p.chmod(0o600)
+    kubectl(s, '-n', SITE, 'create', 'secret', 'generic', 'fleet-site-dhcp-sync', '--from-file=token=%s' % (d / 'dhcp-sync.token'))
+    # The certificate is self-signed, so it is also the CA the synchronizer
+    # trusts.
+    kubectl(s, '-n', SITE, 'create', 'secret', 'generic', 'fleet-site-dhcp-feed-tls', '--from-file=tls.crt=%s' % (d / 'dhcp-feed.crt'),
+            '--from-file=tls.key=%s' % (d / 'dhcp-feed.key'), '--from-file=ca.crt=%s' % (d / 'dhcp-feed.crt'))
+
+
 def enroll(s):
     d = s / 'redfish'
     d.mkdir(mode=0o700, exist_ok=True)
@@ -148,10 +170,15 @@ def enroll(s):
         p.chmod(0o600)
     kubectl(s, '-n', SITE, 'create', 'secret', 'generic', SECRET, '--from-file=username=%s' % (d / 'bmc-username'), '--from-file=password=%s' % (d / 'bmc-password.token'))
     kubectl(s, '-n', SITE, 'create', 'secret', 'tls', TLS_SECRET, '--cert=%s' % (d / 'bmc-tls.crt'), '--key=%s' % (d / 'bmc-tls.key'))
+    if synced(s):
+        enroll_dhcp(s, d)
     # One credential Secret per Device, by the BMC discovery contract.
     if kubectl(s, 'get', 'namespace', CREDENTIALS, check=False).returncode != 0:
         kubectl(s, 'create', 'namespace', CREDENTIALS)
-    enrollment = json.loads(next(l for l in pathlib.Path('config/site/redfish/graph/kustomization.yaml').read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1])
+    # The enrollment this run's workers get: the synced graph's, with its
+    # expected DHCP instance, under --synced-dhcp.
+    graph = 'config/site/redfish/synced/graph/kustomization.yaml' if synced(s) else 'config/site/redfish/graph/kustomization.yaml'
+    enrollment = json.loads(next(l for l in pathlib.Path(graph).read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1])
     # The boot NIC is a Device inventory fact; the lab's VM definitions
     # record it.
     lab_macs = {t['system']: t['mac'] for t in json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text())}
@@ -390,6 +417,134 @@ def isolation(s):
     print('redfish-isolation: target B never started, never received a Redfish effect and its disk is unchanged; target A disk independently hashes as all zeroes after the final cleanup')
 
 
+LAB_IPAM_FIRST, LAB_IPAM_LAST = '192.168.77.100', '192.168.77.199'
+
+
+def at(text):
+    """A Go RFC 3339 time as an aware datetime, to compare report and boot times."""
+    text = text.replace('Z', '+00:00')
+    head, _, rest = text.partition('.')
+    if rest:
+        digits = rest[:len(rest) - len(rest.lstrip('0123456789'))]
+        zone = rest[len(digits):]
+        text = head + '.' + (digits + '000000')[:6] + zone
+    return datetime.datetime.fromisoformat(text)
+
+
+def dhcp_synced(s):
+    """Synchronized lab DHCP: every installation and wipe carried a boot address
+    from its own IPAM claim, the site published its reservation for the boot
+    NIC only while its boot was open, Kea answered the firmware with that
+    address, and the lab network had no DHCP of its own."""
+    if not synced(s):
+        die('dhcp-synced runs only with --synced-dhcp')
+    bootstrap = s / 'provider' / 'bootstrap-project.json'
+    def provider(*args):
+        r = subprocess.run(['kubectl', '--kubeconfig', str(bootstrap), '--request-timeout=30s', '-n', 'fleet-provider', *args, '-o', 'json'], text=True, capture_output=True, timeout=60)
+        if r.returncode:
+            die('provider read failed: %s' % r.stderr.strip()[-300:])
+        return json.loads(r.stdout)['items']
+    mac = json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text())[0]['mac'].lower()
+    first, last = [tuple(int(x) for x in a.split('.')) for a in (LAB_IPAM_FIRST, LAB_IPAM_LAST)]
+    ops = []
+    for kind in ('deviceinstallations', 'devicewipes'):
+        for o in provider('get', kind):
+            network = o['spec'].get('bootNetwork')
+            if not network:
+                die('%s %s carries no boot address' % (o['kind'], o['metadata']['name']))
+            if network['addressClaim']['name'] != o['metadata']['name'] + '-boot':
+                die('%s %s names a claim other than its own' % (o['kind'], o['metadata']['name']))
+            if not first <= tuple(int(x) for x in network['address'].split('.')) <= last:
+                die('%s %s boot address %s is outside the lab IPAM range' % (o['kind'], o['metadata']['name'], network['address']))
+            ops.append({'kind': o['kind'], 'name': o['metadata']['name'], 'uid': o['metadata']['uid'], 'phase': o.get('status', {}).get('phase'),
+                        'address': network['address'], 'claim': network['addressClaim']['name'],
+                        'snapshotMAC': (o.get('status', {}).get('snapshot') or {}).get('bootMACAddress', '').lower()})
+    kinds = [o['kind'] for o in ops]
+    if kinds.count('DeviceInstallation') < 2 or kinds.count('DeviceWipe') < 2:
+        die('expected at least two installations and two wipes, got %s' % kinds)
+    # Claim names derive from operation names, which differ per operation.
+    if len({o['claim'] for o in ops}) != len(ops):
+        die('two operations shared one boot address claim')
+    leftover = provider('get', 'ipclaims')
+    if leftover:
+        die('boot address claims remain after every release: %s' % [c['metadata']['name'] for c in leftover])
+
+    def run(*command, container='libvirt'):
+        return kubectl(s, '-n', SITE, 'exec', 'deploy/fleet-site-runtime', '-c', container, '--', *command, check=False, timeout=120)
+    device = harness.device_dir()
+    applied = [json.loads(l) for l in run('cat', '/var/lib/fleet-boot/dhcp-applied.log').stdout.splitlines() if l.strip()]
+    if not applied or {r['instance'] for r in applied} != {'lab-kea'}:
+        die('the site retained no applied report, or one from an instance other than lab-kea')
+    if not all(r['feed'].get('issued', '0001-01-01T00:00:00Z') != '0001-01-01T00:00:00Z' for r in applied):
+        die('a retained report has no feed issue time')
+    def serves(report, address):
+        return any(r['mac'] == mac and r['address'] == address for r in report['feed']['reservations'])
+    leases = run('cat', '/var/lib/kea/dhcp4.leases', container='kea').stdout.splitlines()
+    header = leases[0].split(',') if leases else []
+    rows = [dict(zip(header, l.split(','))) for l in leases[1:] if l.strip()]
+    if not rows or not {'address', 'hwaddr', 'expire', 'valid_lifetime'} <= set(header):
+        die('Kea recorded no leases')
+    answered = {(r.get('address'), r.get('hwaddr', '').lower()) for r in rows}
+    # When Kea granted each lease: its expiry less its lifetime, in seconds.
+    granted = [(r['address'], r['hwaddr'].lower(), int(r['expire']) - int(r['valid_lifetime'])) for r in rows]
+    # An operation asked for a network boot once its power-on was journaled,
+    # whether or not the boot server then served it.
+    network_boots = {o['operation'] for o in journal(s) if any(n in ('installer-power-on', 'wipe-power-on') for n, _ in o['steps'])}
+    record = {'observedAt': now(), 'bootMAC': mac, 'operations': []}
+    for o in ops:
+        boot = run('cat', '%s/boot/%s.json' % (device, o['uid']))
+        entry = {k: o[k] for k in ('kind', 'name', 'phase', 'address')}
+        if boot.returncode:
+            # Admitted but never run at the site, or refused before any
+            # effect: no reservation was ever published for it.
+            if o['phase'] not in ('Failed', 'Cancelled'):
+                die('%s %s ended %s with no boot admission at the site' % (o['kind'], o['name'], o['phase']))
+            entry['published'] = False
+            record['operations'].append(entry)
+            continue
+        b = json.loads(boot.stdout)
+        if b.get('mac') != mac or b.get('address') != o['address'] or o['snapshotMAC'] != mac:
+            die('%s %s published %s at %s, want the inventory boot MAC %s at %s' % (o['kind'], o['name'], b.get('mac'), b.get('address'), mac, o['address']))
+        opened = at(b['created'])
+        served = [r for r in applied if at(r['at']) > opened and serves(r, o['address'])]
+        if not served:
+            die('%s %s: Kea never reported serving its reservation after its boot opened' % (o['kind'], o['name']))
+        withdrawn = [r for r in applied if at(r['at']) > at(served[0]['at']) and not serves(r, o['address'])]
+        if not withdrawn:
+            die('%s %s: Kea never reported its reservation withdrawn' % (o['kind'], o['name']))
+        delivered = run('sh', '-c', 'cat /var/lib/fleet-boot/%s/boot-delivery.log 2>/dev/null; true' % harness.key(o['uid'])).stdout
+        # Kea leased this operation's address to the boot NIC inside this
+        # operation's own window: after its boot opened and before Kea
+        # withdrew its reservation, with five seconds for clock rounding.
+        start, end = opened.timestamp() - 5, at(withdrawn[0]['at']).timestamp() + 5
+        leased = [g for a, m, g in granted if a == o['address'] and m == mac and start <= g <= end]
+        entry.update(published=True, servedAt=served[0]['at'], withdrawnAt=withdrawn[0]['at'], networkBoot=o['uid'] in network_boots,
+                     bootScriptDelivered='admitted boot.ipxe' in delivered, keaLeasesInWindow=len(leased))
+        if entry['networkBoot'] and not leased:
+            die('%s %s powered on for a network boot, but Kea leased %s no address %s during its boot' % (o['kind'], o['name'], mac, o['address']))
+        if entry['bootScriptDelivered'] and not entry['networkBoot']:
+            die('%s %s delivered a boot script with no journaled network boot' % (o['kind'], o['name']))
+        record['operations'].append(entry)
+    if applied[-1]['feed']['reservations']:
+        die('Kea still serves a reservation after the last operation ended')
+    booted = [e for e in record['operations'] if e.get('networkBoot')]
+    if sum(e['kind'] == 'DeviceWipe' for e in booted) < 2 or sum(e['kind'] == 'DeviceInstallation' for e in booted) < 2:
+        die('expected Kea-leased network boots of two installations and two wipes, got %s' % [(e['kind'], e['name']) for e in booted])
+    static = {t['ip'] for t in json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text())}
+    if any(a in static for a, _ in answered) or any(not first <= tuple(int(x) for x in a.split('.')) <= last for a, _ in answered if a):
+        die('Kea leased an address outside the lab IPAM range: %s' % sorted(answered))
+    network = runtime(s, 'virsh', '--connect', harness.LIBVIRT_URI, 'net-dumpxml', 'fleet-lab-pxe').stdout
+    dnsmasq = run('sh', '-c', 'for p in /proc/[0-9]*/comm; do cat "$p" 2>/dev/null; done | grep -c dnsmasq; true').stdout.strip()
+    if '<dhcp' in network or dnsmasq not in ('', '0'):
+        die('the lab network still runs its own DHCP')
+    record.update(appliedReports=len(applied), keaLeases=len(rows), labNetworkDHCP=False, dnsmasqProcesses=0,
+                  claimsRemaining=0, distinctClaims=len(ops))
+    write(s / 'evidence' / 'redfish-dhcp.json', record)
+    print('redfish-dhcp-synced: %d operations each carried their own IPAM boot address; Kea served each reservation only after its boot opened and reported it withdrawn; '
+          'firmware leased each operation\'s address from Kea during its own boot (%d network boots, two installations and two wipes); the lab network had no DHCP; no claim remains'
+          % (len(ops), len(booted)))
+
+
 def audit_mark(s):
     """Record the BMC audit's length for a later audit-unchanged."""
     (s / 'redfish' / 'audit-mark').write_text('%d\n' % len(audit(s)))
@@ -407,4 +562,4 @@ if __name__ == '__main__':
     step, state = sys.argv[1], pathlib.Path(sys.argv[2])
     {'enroll': enroll, 'baseline': baseline, 'discovery-faults': discovery_faults, 'arm-lost-response': arm_lost_response,
      'lost-response': lost_response, 'bmc-interrupt': bmc_interrupt, 'isolation': isolation,
-     'audit-mark': audit_mark, 'audit-unchanged': audit_unchanged}[step](state)
+     'audit-mark': audit_mark, 'audit-unchanged': audit_unchanged, 'dhcp-synced': dhcp_synced}[step](state)

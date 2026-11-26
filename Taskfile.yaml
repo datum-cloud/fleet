@@ -6,6 +6,11 @@ tasks:
     cmds:
       - ./hack/run-standalone-smoke.sh
 
+  boot-network:kea-lab:
+    desc: Prove the site DHCP path with real Kea, the synchronizer and the feed on one container bridge.
+    cmds:
+      - ./hack/boot-network/kea-lab.sh
+
   multiplane:acceptance:
     desc: Fresh local Milo/Karmada/kro/PXE acceptance, every service installed by per-cluster Flux from the checkout, in the task-owned Colima profile (exit 0 pass, 1 fail, 2 preflight, 3 blocked, 4 timeout).
     env:

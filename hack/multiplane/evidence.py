@@ -22,6 +22,7 @@ prefix = (s / 'prefix').read_text().strip()
 ev = s / 'evidence'
 os.environ['DOCKER_CONTEXT'] = 'colima-fleet-acceptance-tcg'
 REDFISH = (s / 'site-provider').exists() and (s / 'site-provider').read_text().strip() == 'redfish'
+SYNCED = (s / 'lab-dhcp').exists() and (s / 'lab-dhcp').read_text().strip() == 'synced'
 
 
 def out(*args):
@@ -93,6 +94,10 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'kro RBAC and admission confine it to per-operation objects',
            'flux-restart: every Flux controller', 'flux-fail-closed: absent kro chart digest', 'shared site layers applied it with services untouched',
            'flux-retention: removing the volume claim', 'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
+if SYNCED:
+    markers += ('redfish-dhcp-synced: ',)
+    if not (s / 'evidence' / 'redfish-dhcp.json').exists():
+        fail('synchronized lab DHCP left no redfish-dhcp.json evidence')
 if REDFISH:
     markers += ('bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified', 'bmc-self-test: upstream emulator and lab adapter self-test passed',
                 'redfish-enroll: synthetic per-Device BMC credentials', 'redfish-baseline: both lab target disks present', 'redfish-discovery-faults: real emulator discovery',
@@ -487,7 +492,8 @@ if REDFISH:
     summary['seams'] = [x for x in summary['seams'] if 'root libvirtd' not in x] + [
         'DMTF Redfish Interface Emulator with a lab-only adapter in place of a physical BMC; libvirt/QEMU TCG VMs in place of servers',
         'Basic authentication over TLS pinned to a lab key generated per run, with synthetic per-Device credential Secrets enrolled by the harness (no rotation or vault)',
-        'static lab provisioning network (libvirt dnsmasq) with MAC-chained iPXE; MAC is routing, not authentication',
+        ('synchronized lab DHCP: Kea in the runtime Pod fed by the site reservation feed, boot addresses from a synthetic IPAM stand-in, no relay or switch'
+         if SYNCED else 'static lab provisioning network (libvirt dnsmasq)') + ' with MAC-chained iPXE; MAC is routing, not authentication',
         'installation receipts read from a read-only serial-console capture (stand-in for SOL or an installer callback)',
         'trusted graph authors: worker Jobs list the site BMC credential Secrets; only the runtime and the lab BMC hold the libvirt socket',
         'one allocatable lab target; the site store fences each Device separately']

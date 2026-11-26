@@ -1,0 +1,12 @@
+# The feed, over TLS only. An environment exposes it to the cluster that
+# runs the site's DHCP instances, which authenticate with the site's token.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-site-dhcp-feed
+  namespace: fleet-site
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: fleet-site-boot}
+  ports:
+    - {name: dhcp-feed, port: 8081, targetPort: 8081, protocol: TCP}

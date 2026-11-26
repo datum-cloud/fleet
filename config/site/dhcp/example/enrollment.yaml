@@ -1,0 +1,10 @@
+# A synthetic synced enrollment for the render check. An environment supplies
+# the same enrollment its site workers get, naming the StatefulSet's Pods as
+# the expected DHCP instances.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-site-redfish-enrollment
+  namespace: fleet-site
+data:
+  enrollment: '{"dhcp":"synced","dhcpInstances":["fleet-site-dhcp-0","fleet-site-dhcp-1"],"targets":[{"device":"fleet-provider/server-example-001","endpoint":"https://192.0.2.10:8443","systemID":"System-1","systemUUID":"00000000-0000-4000-8000-000000000001","diskBytes":2147483648,"console":"server-example-001.log"}]}'

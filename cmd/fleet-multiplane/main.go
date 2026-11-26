@@ -21,7 +21,6 @@ import (
 	"go.datum.net/fleet/internal/multiplane"
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
-	"go.datum.net/fleet/internal/site/redfishwork"
 )
 
 func main() {
@@ -33,7 +32,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|boot-denials|dhcp-feed|dhcp-retire|redfish-probe|<management phase> [flags]")
+		return fmt.Errorf("usage: fleet-multiplane coordinator|site-worker|site-observer|image|boot-service|boot-withhold|boot-denials|dhcp-feed|redfish-probe|<management phase> [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	once := fs.Bool("once", false, "one attempt, for fault injection")
@@ -51,7 +50,8 @@ func run() error {
 	pin := fs.String("pin", "", "the BMC's approved key digest; the probe connects only to that key (redfish-probe)")
 	syncToken := fs.String("sync-token-file", "", "file holding the DHCP synchronizer bearer token (dhcp-feed)")
 	installationDeadline := fs.Duration("installation-deadline", 0, "replace the installation deadline for operations this coordinator admits (coordinator)")
-	instance := fs.String("instance", "", "DHCP instance an operator retires (dhcp-retire)")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate the DHCP feed serves (dhcp-feed)")
+	tlsKey := fs.String("tls-key", "", "TLS key of the DHCP feed (dhcp-feed)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
@@ -79,11 +79,9 @@ func run() error {
 		fmt.Println(image)
 		return nil
 	case "boot-service", "boot-denials", "dhcp-feed":
-		return boot(os.Args[1], *origin, *extraMAC, *syncToken)
+		return boot(os.Args[1], *origin, *extraMAC, *syncToken, *tlsCert, *tlsKey)
 	case "boot-withhold":
 		return armWithhold(fs.Arg(0))
-	case "dhcp-retire":
-		return redfishwork.RetireInstance(os.Getenv("FLEET_BOOT_EVIDENCE"), *instance)
 	case "site-worker", "site-observer":
 	default:
 		return fmt.Errorf("unknown command")
@@ -155,6 +153,15 @@ func phase(name, configPath string, once bool) error {
 	}[name]
 	last := ""
 	for {
+		// With synchronized lab DHCP, bind the boot address claims this phase
+		// is waiting on, in IPAM's place.
+		if r.IPAM != nil {
+			if bound, bindErr := r.IPAM.Bind(ctx); bindErr != nil {
+				fmt.Printf("%s: lab IPAM stand-in: %v\n", name, bindErr)
+			} else if bound > 0 {
+				fmt.Printf("%s: lab IPAM stand-in bound %d boot address claim(s)\n", name, bound)
+			}
+		}
 		err = action(ctx)
 		// Report each new reason a phase is waiting, so a phase that times
 		// out shows what it waited for.

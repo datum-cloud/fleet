@@ -1,0 +1,13 @@
+# Render check only: the Redfish site services with the feed, and the site's
+# central DHCP instances with a synthetic base configuration, in one render.
+# An environment deploys the two to different clusters and supplies its own
+# base configuration from network operations.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../redfish/services
+  - base.yaml
+  - enrollment.yaml
+components:
+  - ../feed
+  - ../component

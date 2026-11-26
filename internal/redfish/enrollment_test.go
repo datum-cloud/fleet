@@ -45,3 +45,29 @@ func TestEnrollmentNamesEachDeviceOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestASyncedSiteNamesItsDHCPInstances requires a synced enrollment to name a
+// non-empty set of unique, valid DHCP instances, and a static one to name
+// none.
+func TestASyncedSiteNamesItsDHCPInstances(t *testing.T) {
+	with := func(dhcp, instances string) string {
+		return `{"dhcp":"` + dhcp + `"` + instances + `,"targets":[` + targetA + `]}`
+	}
+	parsed, err := ParseEnrollment([]byte(with("synced", `,"dhcpInstances":["fleet-site-dhcp-0","fleet-site-dhcp-1"]`)))
+	if err != nil || len(parsed.DHCPInstances) != 2 || parsed.DHCPInstances[1] != "fleet-site-dhcp-1" {
+		t.Fatalf("synced enrollment = %+v, %v", parsed, err)
+	}
+	for name, body := range map[string]string{
+		"synced without instances":  with("synced", ""),
+		"synced with an empty set":  with("synced", `,"dhcpInstances":[]`),
+		"static with instances":     with("static", `,"dhcpInstances":["fleet-site-dhcp-0"]`),
+		"duplicate instance":        with("synced", `,"dhcpInstances":["fleet-site-dhcp-0","fleet-site-dhcp-0"]`),
+		"invalid instance":          with("synced", `,"dhcpInstances":["Fleet_DHCP"]`),
+		"empty instance name":       with("synced", `,"dhcpInstances":[""]`),
+		"instance name with prefix": with("synced", `,"dhcpInstances":["-kea"]`),
+	} {
+		if _, err := ParseEnrollment([]byte(body)); err == nil {
+			t.Errorf("%s: enrollment accepted", name)
+		}
+	}
+}

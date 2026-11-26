@@ -46,6 +46,10 @@ RESET_TYPES = ('On', 'ForceOff', 'ForceRestart')
 BOOT_TARGETS = ('None', 'Pxe', 'Hdd')
 BOOT_ENABLED = ('Disabled', 'Once')
 NETWORK = 'fleet-lab-pxe'
+# Lab DHCP mode. static: libvirt's dnsmasq hands each target a fixed lease.
+# synced: the network has no DHCP of its own, and the site's Kea, fed by
+# Fleet's reservation feed, is the only DHCP server on the bridge.
+LAB_DHCP = os.environ.get('FLEET_LAB_DHCP', 'static')
 LOCK = threading.RLock()
 
 
@@ -123,12 +127,17 @@ def domain_xml(t, boot):
             "</devices></domain>").format(boot=boot, **t)
 
 
-def network_xml(targets, boot_ip):
+def network_xml(targets, boot_ip, dhcp=None):
+    head = ("<network><name>" + NETWORK + "</name><forward mode='nat'/><bridge name='fleetpxe0' stp='off' delay='0'/><dns enable='no'/>"
+            "<ip address='192.168.77.1' netmask='255.255.255.0'>")
+    if (dhcp or LAB_DHCP) == 'synced':
+        return head + "</ip></network>"
+    if (dhcp or LAB_DHCP) != 'static':
+        raise ValueError('FLEET_LAB_DHCP must be static or synced')
     hosts = ''.join("<host mac='%s' ip='%s'/>" % (t['mac'], t['ip']) for t in targets.values())
     ips = sorted(t['ip'] for t in targets.values())
-    return ("<network><name>" + NETWORK + "</name><forward mode='nat'/><bridge name='fleetpxe0' stp='off' delay='0'/><dns enable='no'/>"
-            "<ip address='192.168.77.1' netmask='255.255.255.0'><dhcp><range start='%s' end='%s'/>%s"
-            "<bootp file='http://%s:8080/pxe/boot.ipxe'/></dhcp></ip></network>") % (ips[0], ips[-1], hosts, boot_ip)
+    return head + ("<dhcp><range start='%s' end='%s'/>%s"
+                   "<bootp file='http://%s:8080/pxe/boot.ipxe'/></dhcp></ip></network>") % (ips[0], ips[-1], hosts, boot_ip)
 
 
 class Lab:

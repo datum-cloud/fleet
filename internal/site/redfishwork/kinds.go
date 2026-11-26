@@ -69,9 +69,15 @@ type Config struct {
 	PowerOffBound time.Duration
 	// Synced means the site's DHCP is synchronized: a network boot waits
 	// until DHCP applied the boot NIC's reservation, and the operation ends
-	// only once every DHCP instance that served it withdrew it.
+	// only once every expected DHCP instance reported it withdrawn.
 	Synced bool
-	Now    func() time.Time
+	// DHCPInstances is the enrollment's expected DHCP instance set. Only
+	// their reports count, and withdrawal needs every one of them.
+	DHCPInstances []string
+	// ContactQuiet replaces contactQuiet, the least time after an admission
+	// was published before withdrawal can be proven. Tests shorten it.
+	ContactQuiet time.Duration
+	Now          func() time.Time
 }
 
 func (c Config) now() time.Time {
@@ -256,7 +262,13 @@ type Boot struct {
 	// Created is when the admission was created; DHCP reports before it
 	// are not this operation's.
 	Created time.Time `json:"created"`
-	Expires time.Time `json:"expires"`
+	// Published is the worker's clock read after the admission was first
+	// stored, before any network boot it admits. Every feed issued after it
+	// carries the reservation while the admission is open. Created is not
+	// enough: the clock is read before the admission is stored, so a feed
+	// issued between the two lacks the reservation without proving it gone.
+	Published time.Time `json:"published,omitempty"`
+	Expires   time.Time `json:"expires"`
 	// Phase is the network-booting phase, set while it may boot.
 	Phase  string `json:"phase,omitempty"`
 	Closed bool   `json:"closed,omitempty"`
@@ -338,6 +350,10 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 		}
 		if ph.mode != "" {
 			boot.Phase = ph.name
+			// c.boot stored the admission, so this read follows it.
+			if boot.Published.IsZero() {
+				boot.Published = c.now().UTC()
+			}
 			if err := c.saveBoot(work, boot); err != nil {
 				return nil, err
 			}

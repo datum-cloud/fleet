@@ -28,11 +28,20 @@ type Reservation struct {
 }
 
 // Feed is the complete desired reservation set. Revision is derived from the
-// reservations, so a report of an applied Feed is self-verifying.
+// reservations, so a report of an applied Feed is self-verifying. Issued is
+// when the site's feed server took its clock, in UTC to the second, before it
+// read the reservations it served; it is not part of the revision, so the
+// same reservations served at different times are the same revision. A feed
+// built here, or a report retained before feeds carried it, has the zero
+// time.
 type Feed struct {
 	Revision     string        `json:"revision"`
 	Reservations []Reservation `json:"reservations"`
+	Issued       time.Time     `json:"issued"`
 }
+
+// InstanceHeader names, on a feed request, the DHCP instance fetching it.
+const InstanceHeader = "X-Fleet-DHCP-Instance"
 
 // Applied reports that one DHCP instance now serves exactly Feed.
 type Applied struct {
@@ -41,6 +50,10 @@ type Applied struct {
 }
 
 var instanceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$`)
+
+// ValidInstance reports whether name can be a DHCP instance name: a
+// StatefulSet Pod name or another DNS label-like name.
+func ValidInstance(name string) bool { return instanceName.MatchString(name) }
 
 // NormalizeMAC returns the canonical lower-case colon form of a 48-bit MAC.
 func NormalizeMAC(v string) (string, bool) {
@@ -101,12 +114,14 @@ func NewFeed(rs []Reservation) (Feed, error) {
 	return Feed{Revision: revision(out), Reservations: out}, nil
 }
 
-// Verify accepts only a feed already in canonical form whose revision matches.
+// Verify accepts only a feed already in canonical form whose revision
+// matches, with Issued in UTC to the second. Issued is outside the revision.
 func (f Feed) Verify() error {
 	want, err := NewFeed(f.Reservations)
 	if err != nil {
 		return err
 	}
+	want.Issued = f.Issued.UTC().Truncate(time.Second)
 	got, _ := json.Marshal(f)
 	exact, _ := json.Marshal(want)
 	if string(got) != string(exact) {
@@ -117,7 +132,7 @@ func (f Feed) Verify() error {
 
 // Verify checks the instance name and the applied feed.
 func (a Applied) Verify() error {
-	if !instanceName.MatchString(a.Instance) {
+	if !ValidInstance(a.Instance) {
 		return errors.New("invalid DHCP instance name")
 	}
 	return a.Feed.Verify()

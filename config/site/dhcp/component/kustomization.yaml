@@ -1,0 +1,14 @@
+# One synchronized site's DHCP service, deployed to a central cluster: Kea
+# DHCPv4 instances, each with its synchronizer, behind one load-balancer
+# address on UDP 67. The site's feed is the separate ../feed component,
+# beside the site's boot service. Network operations owns the base
+# configuration (ConfigMap fleet-site-dhcp-base) and the relays that point at
+# the instances' addresses. The environment supplies the Secrets
+# fleet-site-dhcp-sync (key token, at least 32 characters) and
+# fleet-site-dhcp-feed-tls (ca.crt), never in Git, and the
+# FLEET_DHCP_FEED_URL and FLEET_DHCP_SYNC_IMAGE substitutions. See
+# docs/operations/boot-network.md.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - dhcp.yaml

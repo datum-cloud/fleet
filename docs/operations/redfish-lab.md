@@ -328,6 +328,70 @@ These are documented lab seams, not production designs:
   phase proves each denial as kro's identity, and evidence re-checks every real
   worker Job spec.
 
+## Synchronized DHCP mode
+
+`hack/multiplane/run.sh --redfish --synced-dhcp` runs the same Redfish
+acceptance with the site's synchronized DHCP instead of the static leases. It
+exercises boot addresses, reservations and Kea end to end in the lab:
+
+- **No lab DHCP.** The lab BMC defines the provisioning network with
+  `FLEET_LAB_DHCP=synced`: the same bridge and NAT, with no `<dhcp>` element, so
+  libvirt starts no dnsmasq.
+- **Kea on the bridge.** The bridge lives in the runtime Pod's network
+  namespace, so Kea and `fleet-dhcp-sync` run as two more containers in that
+  Pod (`config/site/redfish/synced/services`). Kea is Debian's
+  `kea-dhcp4-server` from the site image, which is native to the arm64 lab;
+  ISC's image is amd64 only. Kea is not privileged: it adds only `NET_RAW` and
+  `NET_BIND_SERVICE`. It listens on `fleetpxe0` with a raw socket, has no pool,
+  and keeps its leases on the site volume. The production component differs:
+  its Kea answers relayed requests on a UDP socket and adds only
+  `NET_BIND_SERVICE`. The synchronizer reports as the one
+  fixed instance `lab-kea`, so a restarted runtime Pod never strands a
+  withdrawal. In production Kea runs in a central cluster behind the site's
+  relays; the lab has no WAN link or relay, so its Kea sits on the emulated
+  site's bridge instead. The feed, the reports and the gates are the same.
+- **Feed.** The `dhcp-feed` container from `config/site/dhcp/feed` runs beside
+  the boot service over TLS. Redfish enrollment generates the synchronizer
+  token and a self-signed feed key per run, as Secrets in `fleet-site`, never
+  in Git or evidence.
+- **Worker mode.** `config/site/redfish/synced/graph` sets the worker
+  enrollment's `dhcp` to `synced`, with `lab-kea` as its one expected DHCP
+  instance, so every network boot needs a boot address and waits for Kea to
+  apply and withdraw its reservation. The feed reads the same enrollment from
+  a ConfigMap in `config/site/redfish/synced/services`.
+- **IPAM stand-in.** The lab has no IPAM service. The provider project serves
+  IPAM's `IPClaim` kind from a CRD, and the acceptance runner binds each
+  unbound claim, with the bootstrap identity, to the lowest free address in
+  192.168.77.100–199, as IPAM would on create. Fleet's own code claims,
+  checks at admission and releases the addresses. The static leases (.10 and
+  .11) are outside that range.
+
+The `redfish-dhcp-synced` phase runs after `boot-denials` and writes
+`evidence/redfish-dhcp.json`. It fails unless:
+
+1. every installation and wipe carried a boot address from its own claim
+   (`<operation>-boot`), within the stand-in range, and no claim remains after
+   both releases;
+2. each operation that ran at the site published the snapshot's boot MAC at its
+   address, and Kea reported serving it after that boot opened and reported it
+   withdrawn later;
+3. for every operation that powered on for a network boot, Kea leased the boot
+   MAC that operation's address during that operation's own boot window; at
+   least two installations and two wipes did, and Kea leased no static or
+   out-of-range address;
+4. the lab network has no `<dhcp>` element and no dnsmasq runs; and
+5. Kea's last report serves nothing.
+
+The second installation is consumer B's, on the same server after consumer
+A's release. It gets its own claim and reservation, and its firmware leases
+that address from Kea, but the failure scenarios withhold its boot script and
+hold it at its deadline, so it never installs. Both release wipes boot and
+complete. The stand-in may hand a released address out again, as IPAM may, so
+freshness is judged by claim and by lease and report times, not by address.
+
+The mode is implemented and its offline checks pass. No synced run has passed
+yet.
+
 ## Acceptance phases
 
 `hack/multiplane/acceptance-redfish.sh` runs every scenario of the

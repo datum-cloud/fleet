@@ -73,12 +73,17 @@ func (k *fakeKea) applied() int {
 	return len(k.configs)
 }
 
-// fakeSite serves a feed and records applied reports.
+// fakeSite serves a feed, stamped with a later issue time on each request,
+// only to an instance that names itself, and records applied reports.
 type fakeSite struct {
 	mu      sync.Mutex
 	feed    bootnet.Feed
+	served  int
+	refuse  bool
 	reports []bootnet.Applied
 }
+
+var issuedBase = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
 func (f *fakeSite) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
@@ -90,12 +95,23 @@ func (f *fakeSite) handler(t *testing.T) http.Handler {
 		defer f.mu.Unlock()
 		switch q.URL.Path {
 		case "/dhcp/v1/reservations":
-			_ = json.NewEncoder(w).Encode(f.feed)
+			if q.Header.Get(bootnet.InstanceHeader) != "kea-0" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			f.served++
+			feed := f.feed
+			feed.Issued = issuedBase.Add(time.Duration(f.served) * time.Second)
+			_ = json.NewEncoder(w).Encode(feed)
 		case "/dhcp/v1/applied":
 			var a bootnet.Applied
 			b, _ := io.ReadAll(q.Body)
 			if json.Unmarshal(b, &a) != nil || a.Verify() != nil {
 				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if f.refuse {
+				w.WriteHeader(http.StatusConflict)
 				return
 			}
 			f.reports = append(f.reports, a)
@@ -154,8 +170,13 @@ func TestAppliesReservationIntoItsContainingSubnetThenReports(t *testing.T) {
 	if len(reports) != 2 || !reports[1].Feed.Has(reservation.MAC, reservation.Address) || reports[1].Instance != "kea-0" {
 		t.Fatalf("applied revision not reported: %+v", reports)
 	}
-	// An unchanged feed is neither re-applied nor re-reported; a restarted
-	// Kea (new pid) lost its reservations and is re-applied without a report.
+	// The report echoes the feed as served, issue time included.
+	if !reports[1].Feed.Issued.Equal(issuedBase.Add(2*time.Second)) || !reports[0].Feed.Issued.Equal(issuedBase.Add(time.Second)) {
+		t.Fatalf("report did not echo the served feed's issue time: %+v", reports)
+	}
+	// An unchanged feed, though issued later, is neither re-applied nor
+	// re-reported before the refresh interval; a restarted Kea (new pid)
+	// lost its reservations and is re-applied without a report.
 	if err := s.Cycle(ctx); err != nil || kea.applied() != 2 || len(site.reported()) != 2 {
 		t.Fatalf("unchanged feed churned: %v", err)
 	}
@@ -168,6 +189,50 @@ func TestAppliesReservationIntoItsContainingSubnetThenReports(t *testing.T) {
 	site.set(t)
 	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 3 || site.reported()[2].Feed.Serves(reservation.MAC, reservation.Address) {
 		t.Fatalf("withdrawal not applied and reported: %v", err)
+	}
+}
+
+// TestAnUnchangedFeedIsReportedAgainAfterTheRefreshInterval: an instance
+// whose applied revision never changes still reports, once per refresh
+// interval, the feed with the issue time of its latest fetch, without
+// applying it again. A refused report is sent again on the next cycle.
+func TestAnUnchangedFeedIsReportedAgainAfterTheRefreshInterval(t *testing.T) {
+	s, kea, site := newSyncer(t)
+	ctx := context.Background()
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 1 {
+		t.Fatalf("first report: %v", err)
+	}
+	now = now.Add(DefaultRefresh - time.Second)
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 1 {
+		t.Fatalf("re-reported before the refresh interval: %v, %d", err, len(site.reported()))
+	}
+	now = now.Add(time.Second)
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 2 || kea.applied() != 1 {
+		t.Fatalf("not re-reported after the refresh interval, or re-applied: %v, %d reports, %d applies", err, len(site.reported()), kea.applied())
+	}
+	if r := site.reported(); r[1].Feed.Revision != r[0].Feed.Revision || !r[1].Feed.Issued.Equal(issuedBase.Add(3*time.Second)) {
+		t.Fatalf("refreshed report = %+v, want the latest fetch's issue time", r[1].Feed)
+	}
+	// The site refuses a report: it is not believed sent.
+	site.mu.Lock()
+	site.refuse = true
+	site.mu.Unlock()
+	now = now.Add(DefaultRefresh)
+	if err := s.Cycle(ctx); err == nil {
+		t.Fatal("a refused report was not an error")
+	}
+	site.mu.Lock()
+	site.refuse = false
+	site.mu.Unlock()
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 3 || !site.reported()[2].Feed.Issued.Equal(issuedBase.Add(5*time.Second)) {
+		t.Fatalf("refused report not sent again with the next fetch: %v, %+v", err, site.reported())
+	}
+	// A changed revision is reported at once, inside the interval.
+	site.set(t, reservation)
+	if err := s.Cycle(ctx); err != nil || len(site.reported()) != 4 || !site.reported()[3].Feed.Has(reservation.MAC, reservation.Address) {
+		t.Fatalf("changed revision not reported at once: %v", err)
 	}
 }
 
@@ -199,6 +264,20 @@ func TestNothingIsReportedThatKeaDidNotAccept(t *testing.T) {
 	s.Token = "wrong-token-wrong-token-wrong-token-0000"
 	if err := s.Cycle(ctx); err == nil {
 		t.Fatal("an unauthenticated feed was accepted")
+	}
+}
+
+// TestTheSynchronizerNamesItselfOnTheFeedRequest: the site serves its feed
+// only to an expected instance, so the request carries the instance name.
+func TestTheSynchronizerNamesItselfOnTheFeedRequest(t *testing.T) {
+	s, kea, site := newSyncer(t)
+	s.Instance = "kea-9"
+	if err := s.Cycle(context.Background()); err == nil || kea.applied() != 0 || len(site.reported()) != 0 {
+		t.Fatal("a feed refused to this instance was applied")
+	}
+	s.Instance = "kea-0"
+	if err := s.Cycle(context.Background()); err != nil || kea.applied() != 1 {
+		t.Fatalf("the named instance was not served: %v", err)
 	}
 }
 
