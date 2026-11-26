@@ -408,11 +408,20 @@ socket, where the central Kea answers relays on a UDP socket. It has no VLAN, no
 switch and no firmware, so it proves none of the network operations
 requirements.
 
+The synced Redfish acceptance (`run.sh --redfish --synced-dhcp`) goes further.
+Its boot addresses come from the real IPAM service (`milo-os/ipam` v0.6.0),
+which runs with its own PostgreSQL and with quota off, and which the provider
+project's Milo API aggregates. A lab pool hands out only 192.168.77.100–199.
+The acceptance asserts that every address Kea leased was allocated by IPAM to
+that operation's own claim during its boot, and that no claim or allocation
+remains afterwards. It does not prove quota, Milo's production IAM, or pool
+exhaustion through IPAM. See [IPAM in the lab](redfish-lab.md#ipam-in-the-lab).
+
 ## Implemented versus proposed
 
 | Behavior | Status |
 | --- | --- |
-| Boot addresses claimed from IPAM per operation, checked at admission, and released only after the operation ended unheld | Implemented; tested against a real API server with a stand-in for IPAM's claim API. No run sets a class, and IPAM itself is not exercised |
+| Boot addresses claimed from IPAM per operation, checked at admission, and released only after the operation ended unheld | Implemented; tested against a real API server with a stand-in for IPAM's claim API. The synced Redfish lab claims from real IPAM, but no synced run has passed yet |
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
 | Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device | Implemented; unit tested with a fake BMC and synchronizer |
 | Reports bound to feeds the feed served, and refreshed reports of an unchanged feed | Implemented; unit tested, including a forged issue time, another instance's feed, a feed restart and an instance that never fetched the reservation |
@@ -424,6 +433,6 @@ requirements.
 | Relay, provisioning VLAN, isolation and LACP fallback at a site | Network operations; see the [server networking enhancement][server-networking] |
 | Telling firmware what to boot in synced mode (Redfish `HttpBootUri` for UEFI HTTP boot, or the DHCP boot-file option above) | Proposed; the Redfish worker still arms `Pxe`, and the base configuration's HTTP boot class names a loader the boot service does not serve yet |
 | DHCPv6 reservations | Proposed; the feed accepts IPv6, the Kea DHCPv4 synchronizer and the claim reject it |
-| Lab acceptance in synced mode | Implemented as `run.sh --redfish --synced-dhcp`, with a synthetic IPAM stand-in; not yet run. See the [Redfish lab](redfish-lab.md#synchronized-dhcp-mode) |
+| Lab acceptance in synced mode | Implemented as `run.sh --redfish --synced-dhcp`, with IPAM v0.6.0 (its own PostgreSQL, quota off) aggregated by the provider Milo API; not yet run. See [IPAM in the lab](redfish-lab.md#ipam-in-the-lab) |
 
 [server-networking]: https://github.com/datum-cloud/fleet/pull/186

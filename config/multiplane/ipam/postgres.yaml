@@ -1,0 +1,66 @@
+# IPAM's own PostgreSQL. IPAM owns this storage; Fleet never connects to it.
+# IPAM's postgres component floats its chart (16.x) and image, so the lab runs
+# the official image pinned by digest instead. The postgres-credentials
+# Secret (password, and the DSN IPAM reads) is written by bootstrap.
+apiVersion: v1
+kind: Service
+metadata: {name: ipam-postgres, namespace: ipam-system}
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: ipam-postgres}
+  ports:
+    - {name: postgres, port: 5432, targetPort: 5432}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: ipam-postgres, namespace: ipam-system}
+spec:
+  serviceName: ipam-postgres
+  replicas: 1
+  # The database outlives the Pod and the StatefulSet.
+  persistentVolumeClaimRetentionPolicy: {whenDeleted: Retain, whenScaled: Retain}
+  selector:
+    matchLabels: {app.kubernetes.io/name: ipam-postgres}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: ipam-postgres}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: postgres
+          # PostgreSQL 17.10, official Alpine image (multi-arch index).
+          image: postgres:17.10-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+          args: [-c, shared_buffers=32MB, -c, max_connections=50]
+          env:
+            - {name: POSTGRES_USER, value: ipam}
+            - {name: POSTGRES_DB, value: ipam}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: postgres-credentials, key: password}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - {name: postgres, containerPort: 5432}
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, ipam, -d, ipam, -h, 127.0.0.1]
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 1Gi}}

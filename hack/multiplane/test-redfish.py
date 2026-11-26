@@ -145,8 +145,70 @@ os.environ['FLEET_LAB_DHCP'] = 'synced'
 importlib.reload(flux)
 check('synced Flux inventory holds the base configuration, the feed enrollment and the feed Service',
       {'fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_fleet-site-dhcp-feed__Service', 'fleet-site_fleet-site-redfish-enrollment__ConfigMap'} <= set(flux.LAYER_INVENTORY['flux-system/fleet-site-services']))
+# Synced mode runs real IPAM on the platform cluster: its namespace,
+# PostgreSQL and NetworkPolicy from this source, exactly, and its apiserver
+# from IPAM's published manifests pinned by digest.
+check('synced platform waits for both IPAM layers', flux.EXPECTED['platform'][-2:] == ['flux-system/ipam-system', 'flux-system/ipam-apiserver'])
+ipam_layer = build(root / 'config/multiplane/ipam')
+ipam_ids = sorted('%s_%s_%s_%s' % (d['metadata'].get('namespace', ''), d['metadata']['name'], d['apiVersion'].rpartition('/')[0], d['kind']) for d in ipam_layer)
+check('IPAM layer inventory is exact', ipam_ids == flux.PLATFORM_LAYER_INVENTORY['flux-system/ipam-system'], str(ipam_ids))
+check('no Secret in the IPAM layer', not any(d.get('kind') == 'Secret' for d in ipam_layer))
+postgres = next((d for d in ipam_layer if d.get('kind') == 'StatefulSet'), {}).get('spec', {}).get('template', {}).get('spec', {})
+check('IPAM PostgreSQL is pinned and reads its password from the enrolled Secret',
+      re.search(r'@sha256:[0-9a-f]{64}$', postgres.get('containers', [{}])[0].get('image', '')) is not None
+      and {'name': 'POSTGRES_PASSWORD', 'valueFrom': {'secretKeyRef': {'name': 'postgres-credentials', 'key': 'password'}}} in postgres['containers'][0].get('env', []))
+ipam_flux = documents((root / 'config/multiplane/clusters/platform-ipam/ipam.yaml').read_text())
+ipam_source = next((d for d in ipam_flux if d['kind'] == 'OCIRepository'), {})
+ipam_apiserver = next((d for d in ipam_flux if d['kind'] == 'Kustomization' and d['metadata']['name'] == 'ipam-apiserver'), {}).get('spec', {})
+check('IPAM manifests and image pinned by digest', ipam_source.get('spec', {}).get('ref') == {'digest': flux.IPAM_KUSTOMIZE_DIGEST}
+      and ipam_source['spec']['url'] == 'oci://ghcr.io/milo-os/ipam-kustomize' and ipam_apiserver.get('path') == './base'
+      and [i['name'] + '@' + i['digest'] for i in ipam_apiserver.get('images', [])] == [flux.IPAM_IMAGE])
+check('IPAM delegates to the provider Milo API with quota off', ipam_apiserver.get('targetNamespace') == 'ipam-system'
+      and {'name': 'milo-provider', 'namespace': 'flux-system'} in ipam_apiserver.get('dependsOn', [])
+      and all(x in json.dumps(ipam_apiserver['patches']) for x in ('{name: ENABLE_QUOTA, value: \\"false\\"}', 'AUTHORIZATION_KUBECONFIG', 'ipam-milo-credentials', 'ipam-apiserver-tls')))
 os.environ['FLEET_LAB_DHCP'] = 'static'
 importlib.reload(flux)
+check('static mode runs no IPAM', 'flux-system/ipam-apiserver' not in flux.EXPECTED['platform'] and not flux.PLATFORM_LAYER_INVENTORY)
+provider_milo = json.dumps(build(root / 'config/multiplane/milo/provider'))
+check('provider Milo API runs the aggregation layer', all(f in provider_milo for f in (
+    '--proxy-client-cert-file=/private/front-proxy-client.crt', '--requestheader-client-ca-file=/private/front-proxy-ca.crt',
+    '--requestheader-allowed-names=fleet-front-proxy-client', '--requestheader-extra-headers-prefix=X-Remote-Extra-')))
+milo_py = (root / 'hack/multiplane/milo.py').read_text()
+check('the lab claims from IPAM, not a stand-in CRD', 'ipclaims.yaml' not in milo_py and not (root / 'internal/multiplane/ipam.go').exists()
+      and "'reservations':{'leading':100,'trailing':56,'unitPrefixLength':32}" in milo_py and "'cidr':'192.168.77.0/24'" in milo_py)
+
+# IPAM evidence: a claim's record must come from inside the boot window, and
+# name an allocation that names the claim back and holds exactly address/32.
+import redfish_steps  # noqa: E402
+state = lambda frm, to, claims, allocations: {'from': frm, 'to': to, 'sample': {'claims': claims, 'allocations': allocations}}
+claim = {'name': 'op-a-boot', 'phase': 'Bound', 'address': '192.168.77.100', 'allocation': 'alloc-1'}
+allocation = {'name': 'alloc-1', 'claim': 'op-a-boot', 'cidr': '192.168.77.100/32', 'phase': 'Ready'}
+t0 = redfish_steps.at('2026-11-20T10:00:00Z').timestamp()
+held = [state('2026-11-20T10:00:00Z', '2026-11-20T10:05:00Z', [claim], [allocation])]
+check('IPAM record found inside the window', (redfish_steps.ipam_record(held, 'op-a-boot', '192.168.77.100', t0 + 60, t0 + 120) or {}).get('allocation') == 'alloc-1')
+check('IPAM record outside the window refused', redfish_steps.ipam_record(held, 'op-a-boot', '192.168.77.100', t0 + 400, t0 + 500) is None)
+check('IPAM record for another address refused', redfish_steps.ipam_record(held, 'op-a-boot', '192.168.77.101', t0, t0 + 60) is None)
+check('IPAM record for another claim refused', redfish_steps.ipam_record(held, 'op-b-boot', '192.168.77.100', t0, t0 + 60) is None)
+for name, bad in (('names another claim', dict(allocation, claim='op-b-boot')), ('holds a wider block', dict(allocation, cidr='192.168.77.100/31'))):
+    check('IPAM allocation that %s refused' % name, redfish_steps.ipam_record([state('2026-11-20T10:00:00Z', '2026-11-20T10:05:00Z', [claim], [bad])],
+                                                                         'op-a-boot', '192.168.77.100', t0, t0 + 60) is None)
+check('a pending claim is not an allocation', redfish_steps.ipam_record([state('2026-11-20T10:00:00Z', '2026-11-20T10:05:00Z', [dict(claim, phase='Pending')], [allocation])],
+                                                                        'op-a-boot', '192.168.77.100', t0, t0 + 60) is None)
+check('a failed sample is no record', redfish_steps.ipam_record([{'from': '2026-11-20T10:00:00Z', 'to': '2026-11-20T10:05:00Z', 'sample': {'error': 'timed out'}}],
+                                                                'op-a-boot', '192.168.77.100', t0, t0 + 60) is None)
+failed = lambda frm, to: {'from': frm, 'to': to, 'sample': {'error': 'connection refused'}}
+outage = [state('2026-11-20T09:55:00Z', '2026-11-20T09:59:58Z', [claim], [allocation]), failed('2026-11-20T10:00:00Z', '2026-11-20T10:01:00Z')]
+check('an IPAM outage inside the window, bracketed by the same allocation, is a record',
+      (redfish_steps.ipam_record(outage + [state('2026-11-20T10:01:02Z', '2026-11-20T10:05:00Z', [claim], [allocation])], 'op-a-boot', '192.168.77.100', t0 + 10, t0 + 50) or {}).get('observedTo') == '2026-11-20T10:05:00Z')
+check('an outage bracketed by another allocation is no record',
+      redfish_steps.ipam_record(outage + [state('2026-11-20T10:01:02Z', '2026-11-20T10:05:00Z', [dict(claim, allocation='alloc-2')], [dict(allocation, name='alloc-2')])],
+                                'op-a-boot', '192.168.77.100', t0 + 10, t0 + 50) is None)
+check('an answer inside the window without the allocation breaks the bracket',
+      redfish_steps.ipam_record([outage[0], state('2026-11-20T10:00:00Z', '2026-11-20T10:00:20Z', [], []), failed('2026-11-20T10:00:22Z', '2026-11-20T10:01:00Z'),
+                                 state('2026-11-20T10:01:02Z', '2026-11-20T10:05:00Z', [claim], [allocation])], 'op-a-boot', '192.168.77.100', t0 + 10, t0 + 50) is None)
+owners = redfish_steps.lease_owners([('192.168.77.100', 'm', t0 + 30), ('192.168.77.100', 'm', t0 + 300), ('192.168.77.101', 'm', t0 + 30)],
+                                    {'op-a': ('192.168.77.100', t0, t0 + 60), 'op-b': ('192.168.77.100', t0 + 200, t0 + 400)})
+check('each Kea lease belongs to the boot window holding its address', [o for _, o in owners] == [['op-a'], ['op-b'], []], str(owners))
 check('run.sh accepts --synced-dhcp only with --redfish', "--synced-dhcp) lab_dhcp=synced" in (root / 'hack/multiplane/run.sh').read_text()
       and '[[ $lab_dhcp == static || $provider == redfish ]] || usage' in (root / 'hack/multiplane/run.sh').read_text())
 check('the synced acceptance asserts the DHCP evidence', 'rf dhcp-synced' in (root / 'hack/multiplane/acceptance-redfish.sh').read_text())
@@ -206,8 +268,16 @@ with tempfile.TemporaryDirectory() as tmp:
     for f in (root / 'config/site/redfish/synced/services').glob('*.yaml'):
         used |= set(re.findall(r'\$\{(FLEET_[A-Z_]+)\}', f.read_text()))
     check('synced substituted variables defined', used <= set(re.findall(r'^  (FLEET_[A-Z_]+): ', cell, re.M)), str(sorted(used)))
+    platform = subprocess.run(['kustomize', 'build', str(s / 'gitops/r2/environment/platform')], text=True, capture_output=True).stdout
+    check('synced platform reconciles IPAM beside the Milo APIs', 'name: ipam-apiserver' in platform and 'path: ./config/multiplane/ipam' in platform
+          and 'url: oci://ghcr.io/milo-os/ipam-kustomize' in platform and 'name: milo-provider' in platform)
     os.environ['FLEET_LAB_DHCP'] = 'static'
     importlib.reload(flux)
+    flux.INSTALL_SHA256 = flux.sha256(s / 'flux-tools' / 'install.yaml')
+    shutil.rmtree(s / 'gitops')
+    check('stage a static Redfish revision', flux.stage(args) == 0)
+    platform = subprocess.run(['kustomize', 'build', str(s / 'gitops/r2/environment/platform')], text=True, capture_output=True).stdout
+    check('static platform runs no IPAM', 'ipam' not in platform and 'name: milo-provider' in platform)
 check('ownership audit expects the BMC', ('deployments', 'fleet-site', 'fleet-site-bmc') in flux.SHARED and 'fleet-site-bmc' in flux.SITE_DEPLOYMENTS)
 
 # Every Redfish phase is implemented, and the lab fault hooks stay in the lab.

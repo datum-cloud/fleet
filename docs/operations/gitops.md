@@ -37,6 +37,13 @@ under [what is not production](#what-is-not-production).
                                                      RoleBinding and worker Job only
 ```
 
+In synchronized lab DHCP mode (`run.sh --redfish --synced-dhcp`), the platform
+cluster also reconciles `ipam-system` (IPAM's namespace, its PostgreSQL and a
+NetworkPolicy toward the provider Milo API, from `config/multiplane/ipam`) and
+`ipam-apiserver` (IPAM's published `ipam-kustomize` bundle, pinned by digest,
+from its own OCIRepository). See
+[IPAM in the lab](redfish-lab.md#ipam-in-the-lab).
+
 | Surface | Writer | Never written by |
 | --- | --- | --- |
 | Flux controllers and sync objects (`flux-system`) | Bootstrap once, then each cluster's own Flux (`fleet-cluster` reconciles `environment/<cluster>/flux-system`) | — |

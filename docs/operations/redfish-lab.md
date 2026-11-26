@@ -359,35 +359,98 @@ exercises boot addresses, reservations and Kea end to end in the lab:
   instance, so every network boot needs a boot address and waits for Kea to
   apply and withdraw its reservation. The feed reads the same enrollment from
   a ConfigMap in `config/site/redfish/synced/services`.
-- **IPAM stand-in.** The lab has no IPAM service. The provider project serves
-  IPAM's `IPClaim` kind from a CRD, and the acceptance runner binds each
-  unbound claim, with the bootstrap identity, to the lowest free address in
-  192.168.77.100–199, as IPAM would on create. Fleet's own code claims,
-  checks at admission and releases the addresses. The static leases (.10 and
-  .11) are outside that range.
+- **IPAM.** Boot addresses come from the real IPAM service, described below.
+  Fleet's own code claims, checks at admission and releases the addresses.
+  The static leases (.10 and .11) are outside the range IPAM allocates.
+
+### IPAM in the lab
+
+Synced mode runs IPAM (`milo-os/ipam` v0.6.0) on the platform cluster, beside
+the provider project's Milo API. It is set up the way the platform runs it:
+
+- **Published manifests.** The `ipam-apiserver` Flux layer reconciles IPAM's
+  published Kustomize bundle (`oci://ghcr.io/milo-os/ipam-kustomize`, its
+  `base`). The bundle and the IPAM image are pinned by digest. The lab changes
+  only four things: the serving key is a Secret instead of a cert-manager CSI
+  volume, authentication and authorization go to the provider Milo API, quota
+  is off, and it runs one smaller replica.
+- **Its own PostgreSQL.** The `ipam-system` layer runs a single PostgreSQL
+  17.10 StatefulSet, pinned by digest, in IPAM's namespace. IPAM owns this
+  storage. Fleet adds no database and never connects to it. IPAM's own
+  PostgreSQL component is not used because its chart version and image float.
+- **Aggregated through Milo.** The provider Milo API runs its aggregation layer
+  with a front-proxy client key and a CA that bootstrap generates per run.
+  Bootstrap registers the `v1alpha1.ipam.miloapis.com` APIService in that API.
+  Milo proxies project requests
+  (`/apis/resourcemanager.miloapis.com/v1alpha1/projects/provider/control-plane/apis/ipam.miloapis.com/...`)
+  to IPAM, forwarding the caller and the project extras
+  (`iam.miloapis.com/parent-{api-group,type,name}`) as `X-Remote-*` headers.
+  IPAM trusts that CA for the headers. It sends TokenReview and
+  SubjectAccessReview to the same Milo API with its own static token, which is
+  in `system:masters` like the platform's IPAM client identity. The static-token
+  RBAC that bootstrap writes therefore decides what each Fleet identity may do
+  in IPAM.
+- **Availability seam.** On the platform, Milo's controller-manager marks a
+  remote APIService `Available`. The lab runs no controller-manager, so
+  bootstrap sets the condition once Flux reports IPAM's apiserver Ready.
+- **Quota off.** The lab Milo API serves no quota API, so IPAM runs with
+  `ENABLE_QUOTA=false`. Claims are not counted against any quota, which the
+  platform does count.
+- **Fixtures.** In the provider project, bootstrap creates the `lab-provisioning`
+  IPClass (IPv4, Private, /32 only, reclaim Delete). It also creates an IPPool
+  for 192.168.77.0/24 scoped to the lab Location, which reserves the first 100
+  and last 56 addresses, so IPAM allocates only .100–.199. Kea's base subnet is
+  the same /24 with the bridge at .1.
+- **Credentials.** Bootstrap generates IPAM's Milo token, serving key, database
+  password and kubeconfig per run and enrolls them as Secrets in `ipam-system`.
+  None is in the source or the evidence. `evidence/ipam.json` records the
+  running image digest, the APIService condition, the class and the pool.
 
 The `redfish-dhcp-synced` phase runs after `boot-denials` and writes
-`evidence/redfish-dhcp.json`. It fails unless:
+`evidence/redfish-dhcp.json`. For the whole acceptance run, a background
+sampler (`redfish_steps.py ipam-watch`) reads every IPClaim and IPAllocation in
+`fleet-provider` every two seconds. Those records outlive the claims, which
+are gone by the time the phase runs. A failed read is recorded as such, never
+fatal, and the phase requires the sampler's last state to be under a minute
+old. The phase fails unless:
 
 1. every installation and wipe carried a boot address from its own claim
-   (`<operation>-boot`), within the stand-in range, and no claim remains after
-   both releases;
-2. each operation that ran at the site published the snapshot's boot MAC at its
+   (`<operation>-boot`), within .100–.199;
+2. for each operation that ran at the site, while its boot was open, IPAM
+   recorded that claim Bound to the operation's address and naming an
+   IPAllocation, and that allocation names the claim back and holds exactly
+   the address as a /32. If IPAM could not be read for the whole window,
+   samples just before and just after it must show the same allocation, with
+   only failed reads between;
+3. each operation that ran at the site published the snapshot's boot MAC at its
    address, and Kea reported serving it after that boot opened and reported it
    withdrawn later;
-3. for every operation that powered on for a network boot, Kea leased the boot
-   MAC that operation's address during that operation's own boot window; at
-   least two installations and two wipes did, and Kea leased no static or
-   out-of-range address;
-4. the lab network has no `<dhcp>` element and no dnsmasq runs; and
-5. Kea's last report serves nothing.
+4. for every operation that powered on for a network boot, Kea leased the boot
+   MAC that operation's address during that operation's own boot window, and
+   at least two installations and two wipes did. Every lease Kea granted falls
+   in the boot window of an operation whose claim IPAM held that address for,
+   and no lease is a static or out-of-range address;
+5. after both releases, no IPClaim and no IPAllocation remain in
+   `fleet-provider`, and the pool reports 156 of 256 addresses allocated: its
+   reservations and nothing else;
+6. the lab network has no `<dhcp>` element and no dnsmasq runs; and
+7. Kea's last report serves nothing.
 
 The second installation is consumer B's, on the same server after consumer
 A's release. It gets its own claim and reservation, and its firmware leases
 that address from Kea, but the failure scenarios withhold its boot script and
 hold it at its deadline, so it never installs. Both release wipes boot and
-complete. The stand-in may hand a released address out again, as IPAM may, so
-freshness is judged by claim and by lease and report times, not by address.
+complete. IPAM's first-fit allocation hands a released address out again, so
+freshness is judged by claim, allocation, lease and report times, not by
+address.
+
+What the lab proves: Fleet's requesters, admission check and release
+verification work against the real IPAM API through Milo's project routing and
+aggregation, and Kea serves only addresses IPAM allocated to each operation's
+own claim. What it does not prove: quota, Milo's OpenFGA-backed IAM (the lab
+uses static-token RBAC), IPAM's high-availability deployment, pool exhaustion
+through IPAM (unit tests cover how Fleet handles a 507 `Exhausted`), and
+anything about a physical site's IPAM pools.
 
 The mode is implemented and its offline checks pass. No synced run has passed
 yet.
@@ -503,7 +566,16 @@ kustomize and checks the following:
 - variable substitution;
 - phase coverage;
 - that no fault hook appears in `internal/redfish`;
-- source pins, and no OpenStack dependency.
+- source pins, and no OpenStack dependency;
+- in synced mode, the IPAM layer's exact inventory, the IPAM bundle and image
+  digests, the provider Milo API's aggregation flags, and the IPAM evidence
+  matching (a claim's record inside the boot window, an allocation naming it
+  back at exactly /32, and each Kea lease belonging to one boot window).
+
+The `ipam-apiserver` layer renders from IPAM's remote bundle, so CI does not
+render it. Its inventory in `flux.py` was taken from the v0.6.0 bundle
+rendered with the layer's patches. `flux-verify` checks the inventory, the
+pinned source and the running image on every live run.
 
 ## Execution record
 
