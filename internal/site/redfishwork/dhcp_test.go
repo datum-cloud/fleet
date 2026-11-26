@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/bootnet"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site"
@@ -32,7 +33,7 @@ func newRequest(method, url, body string) (*http.Request, error) {
 }
 
 func bootNetwork() *ops.BootNetworkInput {
-	return &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: "alloc-example-install-boot"}, Address: address}
+	return &ops.BootNetworkInput{AddressClaim: fleetv1.TypedReference{APIGroup: "ipam.miloapis.com", Kind: "IPClaim", Name: "alloc-example-install-boot"}, Address: address}
 }
 
 // synchronizer stands in for one Kea instance and its synchronizer: each

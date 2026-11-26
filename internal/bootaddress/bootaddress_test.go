@@ -116,7 +116,7 @@ func TestVerifyRequiresTheExactBoundIncarnation(t *testing.T) {
 		}
 	}
 	stamp(created)
-	good := ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: claim.GetName()}, Address: "198.51.100.10"}
+	good := ops.BootNetworkInput{AddressClaim: Reference(claim.GetName()), Address: "198.51.100.10"}
 	operation := &ops.DeviceInstallation{}
 	operation.Name, operation.Namespace = "alloc-a-install-1", namespace
 	operation.CreationTimestamp = metav1.NewTime(created.Add(time.Second))
@@ -133,7 +133,7 @@ func TestVerifyRequiresTheExactBoundIncarnation(t *testing.T) {
 		t.Fatalf("another kind's claim verified: %v", err)
 	}
 	for name, input := range map[string]ops.BootNetworkInput{
-		"other name":     {AddressClaim: ops.LocalReference{Name: "other-boot"}, Address: good.Address},
+		"other name":     {AddressClaim: Reference("other-boot"), Address: good.Address},
 		"other address":  {AddressClaim: good.AddressClaim, Address: "198.51.100.11"},
 		"not an address": {AddressClaim: good.AddressClaim, Address: "198.51.100.10/24"},
 	} {
@@ -325,7 +325,7 @@ func TestVerifyWaitsWhenIPAMCannotBeRead(t *testing.T) {
 	operation := &ops.DeviceInstallation{}
 	operation.Name, operation.Namespace = "alloc-a-install-1", namespace
 	operation.CreationTimestamp = metav1.NewTime(time.Now().Add(time.Hour))
-	input := ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: ClaimName(operation.Name)}, Address: "198.51.100.10"}
+	input := ops.BootNetworkInput{AddressClaim: Reference(ClaimName(operation.Name)), Address: "198.51.100.10"}
 	if err := Verify(ctx, api, operation, "DeviceInstallation", input); !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnreachable) {
 		t.Fatalf("a missing claim: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestARetainingClaimIsNeverUsed(t *testing.T) {
 	operation := &ops.DeviceInstallation{}
 	operation.Name, operation.Namespace = "alloc-a-install-1", namespace
 	operation.CreationTimestamp = metav1.NewTime(created.Add(time.Second))
-	input := ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: claim.GetName()}, Address: "198.51.100.10"}
+	input := ops.BootNetworkInput{AddressClaim: Reference(claim.GetName()), Address: "198.51.100.10"}
 	if err := Verify(ctx, api, operation, "DeviceInstallation", input); err != nil {
 		t.Fatal(err)
 	}

@@ -552,7 +552,10 @@ def dhcp_synced(s):
             network = o['spec'].get('bootNetwork')
             if not network:
                 die('%s %s carries no boot address' % (o['kind'], o['metadata']['name']))
-            if network['addressClaim']['name'] != o['metadata']['name'] + '-boot':
+            claim = network['addressClaim']
+            if claim.get('apiGroup') != 'ipam.miloapis.com' or claim.get('kind') != 'IPClaim':
+                die('%s %s names a %s/%s boot address claim, not an IPAM IPClaim' % (o['kind'], o['metadata']['name'], claim.get('apiGroup'), claim.get('kind')))
+            if claim['name'] != o['metadata']['name'] + '-boot':
                 die('%s %s names a claim other than its own' % (o['kind'], o['metadata']['name']))
             if not first <= tuple(int(x) for x in network['address'].split('.')) <= last:
                 die('%s %s boot address %s is outside the lab IPAM range' % (o['kind'], o['metadata']['name'], network['address']))

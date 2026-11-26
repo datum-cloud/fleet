@@ -1,6 +1,11 @@
 // Package bootaddress claims a provisioning address from IPAM for one
 // network-booting operation, and checks a claimed address at admission.
 //
+// Source is the seam a requester uses for an operation's boot attachment and
+// address. Claimer, IPAM's implementation, is the default: today's sites
+// attach boot NICs to the provisioning network statically, so its attach and
+// detach steps do nothing.
+//
 // The requester of an installation or wipe claims the address before it
 // creates the operation, under a name derived from the operation, so a retry
 // finds the same claim. It releases the claim once the operation can no
@@ -30,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 )
 
 // GVK is IPAM's address claim.
@@ -114,6 +120,43 @@ func claimExists(err error) bool {
 // ClaimName is the only name an operation's boot address claim may have.
 func ClaimName(operation string) string { return operation + "-boot" }
 
+// Reference is the typed reference an operation carries to its IPAM claim.
+func Reference(name string) fleetv1.TypedReference {
+	return fleetv1.TypedReference{APIGroup: GVK.Group, Kind: GVK.Kind, Name: name}
+}
+
+// Source attaches an operation's boot NIC to the boot network and claims its
+// provisioning address, for one requester and one operation kind. The
+// requester calls Attach, then Claim, then creates the operation with the
+// claimed input. It releases with Release, then Detach, under the
+// allocator's rules for ended and held operations; the release counts only
+// once both report it verified. Every claim is named from the operation, so
+// a requester that crashes and runs again finds it.
+type Source interface {
+	// Requester returns the source for one requester: its own client, the
+	// operations' namespace, and the operation kind it creates.
+	Requester(api client.Client, namespace, kind string) Source
+	// Attach puts the operation's boot NIC on the boot network. It returns
+	// nil once the network owner reports the port there, ErrPending until
+	// then, and ErrExhausted or ErrRefused when the owner refused it.
+	Attach(ctx context.Context, allocation *fleetv1.MachineAllocation, operation string) error
+	// Claim returns the operation's bound boot address. It returns
+	// ErrPending until the address is bound, and ErrExhausted or ErrRefused
+	// when none can be.
+	Claim(ctx context.Context, allocation, operation string) (*ops.BootNetworkInput, error)
+	// Release returns true only once the operation's address is verified
+	// released.
+	Release(ctx context.Context, operation string) (bool, error)
+	// Detach returns true only once the operation's boot NIC is verified off
+	// the boot network.
+	Detach(ctx context.Context, operation string) (bool, error)
+	// Operations returns the operations of the source's kind in an
+	// allocation that still hold a claim.
+	Operations(ctx context.Context, allocation string) ([]string, error)
+}
+
+var _ Source = Claimer{}
+
 // ScopeRef is one IPAM scope reference, such as the site's location.
 type ScopeRef struct {
 	APIGroup string
@@ -136,6 +179,21 @@ type Claimer struct {
 	// Scope is passed to IPAM as the claim's scope.
 	Scope map[string]ScopeRef
 }
+
+// Requester returns the claimer with the requester's client, namespace and
+// kind.
+func (c Claimer) Requester(api client.Client, namespace, kind string) Source {
+	c.Client, c.Namespace, c.Kind = api, namespace, kind
+	return c
+}
+
+// Attach does nothing: the site attaches boot NICs to its provisioning
+// network itself.
+func (c Claimer) Attach(context.Context, *fleetv1.MachineAllocation, string) error { return nil }
+
+// Detach does nothing, and reports the boot NIC detached, for the same
+// reason.
+func (c Claimer) Detach(context.Context, string) (bool, error) { return true, nil }
 
 func (c Claimer) desired(allocation, operation string) *unstructured.Unstructured {
 	claim := &unstructured.Unstructured{}
@@ -180,7 +238,7 @@ func (c Claimer) Claim(ctx context.Context, allocation, operation string) (*ops.
 	if err != nil {
 		return nil, err
 	}
-	return &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: claim.GetName()}, Address: address}, nil
+	return &ops.BootNetworkInput{AddressClaim: Reference(claim.GetName()), Address: address}, nil
 }
 
 // Release deletes the operation's claim. It returns true only once the
@@ -194,7 +252,7 @@ func (c Claimer) Claim(ctx context.Context, allocation, operation string) (*ops.
 func (c Claimer) Release(ctx context.Context, operation string) (bool, error) {
 	claim, err := c.get(ctx, ClaimName(operation))
 	if apierrors.IsNotFound(err) {
-		return c.unallocated(ctx, ClaimName(operation))
+		return Unallocated(ctx, c.Client, c.Namespace, ClaimName(operation))
 	}
 	if err != nil {
 		return false, err
@@ -208,14 +266,15 @@ func (c Claimer) Release(ctx context.Context, operation string) (bool, error) {
 	if _, err := c.get(ctx, claim.GetName()); !apierrors.IsNotFound(err) {
 		return false, err
 	}
-	return c.unallocated(ctx, claim.GetName())
+	return Unallocated(ctx, c.Client, c.Namespace, claim.GetName())
 }
 
-// unallocated reports whether no IPAM allocation names the claim.
-func (c Claimer) unallocated(ctx context.Context, claim string) (bool, error) {
+// Unallocated reports whether no IPAM allocation in the namespace names the
+// IPAM claim. It returns ErrReleaseUnverified when one does.
+func Unallocated(ctx context.Context, reader client.Reader, namespace, claim string) (bool, error) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(AllocationGVK.GroupVersion().WithKind(AllocationGVK.Kind + "List"))
-	if err := c.Client.List(ctx, list, client.InNamespace(c.Namespace)); err != nil {
+	if err := reader.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		return false, err
 	}
 	for _, allocation := range list.Items {
@@ -261,7 +320,7 @@ func Verify(ctx context.Context, reader client.Reader, operation ops.Operation, 
 		return ErrUnavailable
 	}
 	namespace := operation.GetNamespace()
-	if input.AddressClaim.Name != ClaimName(operation.GetName()) {
+	if input.AddressClaim != Reference(ClaimName(operation.GetName())) {
 		return fmt.Errorf("%w: the claim is not the operation's own", ErrUnavailable)
 	}
 	claim := &unstructured.Unstructured{}

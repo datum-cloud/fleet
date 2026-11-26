@@ -118,11 +118,12 @@ type Allocator struct {
 	// BootInterface and TargetDisks are pinned on each allocation.
 	BootInterface string
 	TargetDisks   []string
-	// BootAddresses claims each installation's and wipe's provisioning
-	// address from IPAM when the site's DHCP is synchronized. Its client is
-	// replaced by the requester's own. Nil means the site's DHCP is
-	// configured independently of Fleet.
-	BootAddresses *bootaddress.Claimer
+	// BootAddresses attaches each installation's and wipe's boot NIC and
+	// claims its provisioning address when the site's DHCP is synchronized.
+	// IPAM's bootaddress.Claimer is the default source. Each requester uses
+	// it with its own client. Nil means the site's DHCP is configured
+	// independently of Fleet.
+	BootAddresses bootaddress.Source
 }
 
 // Get returns the Machine's allocation, or nil.
@@ -377,33 +378,36 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	return operation, a.createOnce(ctx, a.Provider, operation, &ops.DeviceInstallation{})
 }
 
-// installClaims and wipeClaims are each requester's boot address claimer,
+// installClaims and wipeClaims are each requester's boot address source,
 // with the requester's own client. They are nil when the site's DHCP is not
 // synchronized.
-func (a *Allocator) installClaims() *bootaddress.Claimer {
+func (a *Allocator) installClaims() bootaddress.Source {
 	return a.claims(a.Provider, "DeviceInstallation")
 }
 
-func (a *Allocator) wipeClaims() *bootaddress.Claimer {
+func (a *Allocator) wipeClaims() bootaddress.Source {
 	return a.claims(a.Releaser, "DeviceWipe")
 }
 
-func (a *Allocator) claims(api client.Client, kind string) *bootaddress.Claimer {
+func (a *Allocator) claims(api client.Client, kind string) bootaddress.Source {
 	if a.BootAddresses == nil {
 		return nil
 	}
-	claimer := *a.BootAddresses
-	claimer.Client, claimer.Namespace, claimer.Kind = api, a.Namespace, kind
-	return &claimer
+	return a.BootAddresses.Requester(api, a.Namespace, kind)
 }
 
-// bootNetwork claims the operation's boot address before the operation
-// exists. It returns nil when the site's DHCP is not synchronized.
-func (a *Allocator) bootNetwork(ctx context.Context, claimer *bootaddress.Claimer, allocation *fleetv1.MachineAllocation, operation string) (*ops.BootNetworkInput, error) {
-	if claimer == nil {
+// bootNetwork attaches the operation's boot NIC, then claims its boot
+// address, before the operation exists. No address is claimed until the
+// boot NIC is on the boot network. It returns nil when the site's DHCP is
+// not synchronized.
+func (a *Allocator) bootNetwork(ctx context.Context, source bootaddress.Source, allocation *fleetv1.MachineAllocation, operation string) (*ops.BootNetworkInput, error) {
+	if source == nil {
 		return nil, nil
 	}
-	return claimer.Claim(ctx, allocation.Name, operation)
+	if err := source.Attach(ctx, allocation, operation); err != nil {
+		return nil, err
+	}
+	return source.Claim(ctx, allocation.Name, operation)
 }
 
 func (a *Allocator) envelope(allocation *fleetv1.MachineAllocation, creator ops.Creator) ops.OperationEnvelope {

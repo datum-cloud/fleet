@@ -97,9 +97,10 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 	return false, nil
 }
 
-// releaseBootAddresses deletes the boot address claims of the allocation's
-// ended operations, each with its requester's client, and reports whether
-// none remain. A held operation keeps its claim, because a silent DHCP
+// releaseBootAddresses releases the boot addresses, then detaches the boot
+// NICs, of the allocation's ended operations, each with its requester's
+// client, and reports whether none remain. An operation's claims count as
+// gone only once both are verified. A held operation keeps its claim, because a silent DHCP
 // instance may still serve its address, and so does an operation not yet
 // created. The hold names the held operation, and, after a retry that also
 // ended unknown, the original operation as its retry name; both keep their
@@ -110,7 +111,7 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, all bool) (bool, error) {
 	none := true
 	for _, pair := range []struct {
-		claimer *bootaddress.Claimer
+		claimer bootaddress.Source
 		api     client.Client
 		new     func() ops.Operation
 	}{
@@ -146,11 +147,19 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 					continue
 				}
 			}
-			gone, err := pair.claimer.Release(ctx, name)
+			released, err := pair.claimer.Release(ctx, name)
 			if err != nil {
 				return false, err
 			}
-			none = none && gone
+			if !released {
+				none = false
+				continue
+			}
+			detached, err := pair.claimer.Detach(ctx, name)
+			if err != nil {
+				return false, err
+			}
+			none = none && detached
 		}
 	}
 	return none, nil

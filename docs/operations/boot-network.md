@@ -45,24 +45,36 @@ The claim is an IPAM `IPClaim` in the provider project named
 `<operation>-boot`, labeled with the allocation, the operation and the
 operation kind, and scoped to the site's location. It asks for one IPv4 host
 address and `reclaimPolicy: Delete`.
-IPAM binds it when it is created. The requester copies the claim's name and
-address into the operation's `spec.bootNetwork`. The spec holds no UID:
+IPAM binds it when it is created. The requester copies a typed reference to
+the claim, its API group, kind and name, and the address into the operation's
+`spec.bootNetwork`. The spec holds no UID:
 
 ```yaml
 spec:
   bootInterface: primary
   bootNetwork:
-    addressClaim: {name: alloc-3b9d61c2-install-1-boot}
+    addressClaim:
+      apiGroup: ipam.miloapis.com
+      kind: IPClaim
+      name: alloc-3b9d61c2-install-1-boot
     address: 198.51.100.10
 ```
 
-Admission refuses the operation with `BootAddressUnavailable` unless that claim
-is the operation's own, by name and labels, exists, is `Bound`, holds that
-address, and was created no later than the operation. The requester always
-creates the claim first, so a claim deleted and recreated under the name after
-the operation is refused even if it holds the same address. It refuses it with
-`BootInterfaceUnknown` unless the Device records the boot interface with a MAC.
-The admission snapshot records that MAC.
+Admission picks its check by the claim's API group and kind. IPAM's `IPClaim`
+is the only kind with a check by default. A claim of any other kind can never
+be checked, so the operation fails at once with `UnsupportedBootAddressClaim`,
+naming the kind, and is never retried.
+
+For an `IPClaim`, admission fails the operation with
+`BootAddressClaimMismatch` unless that claim is the operation's own, by name
+and labels, exists, is `Bound`, holds that address, and was created no later
+than the operation. The requester always creates the claim first, so a claim
+deleted and recreated under the name after the operation is refused even if
+it holds the same address. Only a claim that cannot be read leaves the
+operation `Pending` with `BootAddressUnavailable`; see [IPAM's claim
+contract](#ipams-claim-contract). Admission refuses the operation with
+`BootInterfaceUnknown` unless the Device records the boot interface with a
+MAC. The admission snapshot records that MAC.
 
 Each requester deletes only its own kind's claims, during release:
 
@@ -107,7 +119,24 @@ Fleet follows the contract IPAM implements, not only its documentation:
   the coordinator checks it again. This holds for every creator: a staff
   operation waits the same way and is cancelled only by staff expiry, so a
   brief IPAM outage fails no installation or wipe. A missing, rebound or
-  recreated claim fails the operation.
+  recreated claim fails the operation with `BootAddressClaimMismatch`.
+
+### The address source seam
+
+Each requester reaches its boot address through one source with five steps:
+attach the boot NIC to the boot network, claim the address, release the
+address, detach the boot NIC, and list an allocation's claims. The requester
+attaches, waits until the boot NIC is on the boot network, then claims the
+address and creates the operation. At release it releases the address, then
+detaches the boot NIC, under the rules above, and a claim counts as gone only
+when both are verified. IPAM's claimer is the default source. Its attach and
+detach steps do nothing, because today's sites attach boot NICs to the
+provisioning network themselves.
+
+Admission is the second seam: one check per claim kind. A new source brings a
+new claim kind and its check. The coordinator must gain the check before any
+requester uses the new source, or it fails the new kind's operations with
+`UnsupportedBootAddressClaim`.
 
 ## Enrollment
 

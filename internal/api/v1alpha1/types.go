@@ -45,6 +45,14 @@ type LocalReference struct {
 	Name string `json:"name"`
 }
 
+// TypedReference names an object by API group, kind and name, never by UID.
+// Increment C defines the same type.
+type TypedReference struct {
+	APIGroup string `json:"apiGroup"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+}
+
 type TypedLocalReference struct {
 	APIGroup string `json:"apiGroup"`
 	Kind     string `json:"kind"`

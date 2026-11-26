@@ -253,14 +253,45 @@ var sharedReasons = []string{ReasonUnsupportedKind, ReasonInputMismatch, ReasonC
 
 var reasonPattern = regexp.MustCompile(`^[A-Z][A-Za-z0-9]{0,62}$`)
 
-// Registry holds the operation kinds and the admission rules.
+// Registry holds the operation kinds, the admission rules, and the checks
+// for each kind of boot address claim.
 type Registry struct {
-	kinds map[string]*Kind
-	order []string
-	rules []Rule
+	kinds      map[string]*Kind
+	order      []string
+	rules      []Rule
+	bootClaims map[schema.GroupKind]BootAddressCheck
 }
 
-func NewRegistry() *Registry { return &Registry{kinds: map[string]*Kind{}} }
+func NewRegistry() *Registry {
+	return &Registry{kinds: map[string]*Kind{}, bootClaims: map[schema.GroupKind]BootAddressCheck{}}
+}
+
+// BootAddressCheck checks at admission that an operation's boot address
+// claim is the operation's own and holds exactly the input's address. kind
+// is the operation's kind. It must not write. It returns an error wrapping
+// bootaddress.ErrUnreachable when the claim's source cannot be read, so the
+// operation waits, and any other error when the claim does not hold the
+// address, so the operation fails.
+type BootAddressCheck func(ctx context.Context, reader client.Reader, operation ops.Operation, kind string, input ops.BootNetworkInput) error
+
+// RegisterBootAddressClaim adds the check for one kind of boot address
+// claim. Registering a claim kind twice is an error.
+func (r *Registry) RegisterBootAddressClaim(apiGroup, kind string, check BootAddressCheck) error {
+	key := schema.GroupKind{Group: apiGroup, Kind: kind}
+	if apiGroup == "" || kind == "" || check == nil {
+		return errors.New("a boot address claim check needs an API group, a kind and a check")
+	}
+	if _, ok := r.bootClaims[key]; ok {
+		return fmt.Errorf("boot address claim %s/%s is already registered", apiGroup, kind)
+	}
+	r.bootClaims[key] = check
+	return nil
+}
+
+// BootAddressClaim returns the check for a boot address claim kind, or nil.
+func (r *Registry) BootAddressClaim(apiGroup, kind string) BootAddressCheck {
+	return r.bootClaims[schema.GroupKind{Group: apiGroup, Kind: kind}]
+}
 
 // Register adds a kind. Registering a kind twice is an error.
 func (r *Registry) Register(kind Kind) error {

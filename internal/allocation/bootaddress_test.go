@@ -196,7 +196,7 @@ func TestBootAddressesFollowTheirOperations(t *testing.T) {
 	if wipe.Spec.BootNetwork == nil || wipe.Spec.BootInterface != "primary" || wipe.Spec.BootNetwork.Address == network.Address {
 		t.Fatalf("wipe boot network = %+v on %q, want its own address", wipe.Spec.BootNetwork, wipe.Spec.BootInterface)
 	}
-	for _, claimer := range []*bootaddress.Claimer{claims, e.allocator.wipeClaims()} {
+	for _, claimer := range []bootaddress.Source{claims, e.allocator.wipeClaims()} {
 		if remaining, err := claimer.Operations(e.ctx, allocation.Name); err != nil || len(remaining) != 0 {
 			t.Fatalf("claims left after release: %v, %v", remaining, err)
 		}

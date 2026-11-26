@@ -38,7 +38,15 @@ const (
 	ReasonRetryAuthorized      = "RetryAlreadyAuthorized"
 	ReasonDisposalRequired     = "DisposalRequired"
 	ReasonInvalidResolve       = "InvalidResolve"
-	ReasonBootAddress          = "BootAddressUnavailable"
+	// ReasonBootAddress means the boot address claim's source could not be
+	// read. The operation waits and is checked again.
+	ReasonBootAddress = "BootAddressUnavailable"
+	// ReasonBootAddressMismatch means the boot address claim is not the
+	// operation's own, or does not hold its address. The operation fails.
+	ReasonBootAddressMismatch = "BootAddressClaimMismatch"
+	// ReasonBootAddressUnsupported means no check is registered for the
+	// boot address claim's kind, so it can never be checked.
+	ReasonBootAddressUnsupported = "UnsupportedBootAddressClaim"
 	// Reasons every site's install and wipe workers raise.
 	ReasonTargetUnsupported = "TargetUnsupported"
 	ReasonTargetDisks       = "TargetDisksUnknown"
@@ -65,11 +73,13 @@ func NoBootNetwork(network *ops.BootNetworkInput) *Refusal {
 
 // networkBootReasons are the coordinator's reasons for a network boot's
 // inputs.
-var networkBootReasons = []Reason{{Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootAddress, RaisedBy: RaisedByCoordinator}}
+var networkBootReasons = []Reason{{Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootAddress, RaisedBy: RaisedByCoordinator},
+	{Name: ReasonBootAddressMismatch, RaisedBy: RaisedByCoordinator}, {Name: ReasonBootAddressUnsupported, RaisedBy: RaisedByCoordinator}}
 
 // checkNetworkBoot requires the boot interface to have a MAC in Device
 // inventory and a boot address, when given, to still be bound to the
-// operation's claim.
+// operation's claim. The check is the one registered for the claim's kind;
+// a kind with none is refused for good.
 func checkNetworkBoot(ctx context.Context, admission *Admission, kind, bootInterface string, network *ops.BootNetworkInput) *Refusal {
 	found := false
 	for _, iface := range admission.Device.Spec.Interfaces {
@@ -83,13 +93,18 @@ func checkNetworkBoot(ctx context.Context, admission *Admission, kind, bootInter
 	if network == nil {
 		return nil
 	}
-	if err := bootaddress.Verify(ctx, admission.Reader, admission.Operation, kind, *network); errors.Is(err, bootaddress.ErrUnreachable) {
+	claim := network.AddressClaim
+	check := admission.Registry.BootAddressClaim(claim.APIGroup, claim.Kind)
+	if check == nil {
+		return refuse(ReasonBootAddressUnsupported, "boot address claims of kind %s/%s cannot be checked", claim.APIGroup, claim.Kind)
+	}
+	if err := check(ctx, admission.Reader, admission.Operation, kind, *network); errors.Is(err, bootaddress.ErrUnreachable) {
 		// Fail closed without deciding: the claim may still hold the address.
-		refusal := refuse(ReasonBootAddress, "waiting: IPAM could not be read to check the boot address claim %s", network.AddressClaim.Name)
+		refusal := refuse(ReasonBootAddress, "waiting: the boot address claim %s could not be read", claim.Name)
 		refusal.Retry = true
 		return refusal
 	} else if err != nil {
-		return refuse(ReasonBootAddress, "the boot address claim %s does not hold %s", network.AddressClaim.Name, network.Address)
+		return refuse(ReasonBootAddressMismatch, "the boot address claim %s does not hold %s: %v", claim.Name, network.Address, err)
 	}
 	return nil
 }
@@ -385,6 +400,10 @@ func DefaultRegistry() (*Registry, error) {
 		if err := registry.AddRule(rule); err != nil {
 			return nil, err
 		}
+	}
+	// IPAM's claim is the only boot address claim kind built in.
+	if err := registry.RegisterBootAddressClaim(bootaddress.GVK.Group, bootaddress.GVK.Kind, bootaddress.Verify); err != nil {
+		return nil, err
 	}
 	return registry, nil
 }
