@@ -116,7 +116,7 @@ func newFixture(t *testing.T) *rig {
 
 func (f *rig) wipe(fence int64, uid string) site.Assignment {
 	spec := ops.DeviceWipeSpec{OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: "release", UID: "u"}, DeviceRef: ops.DeviceReference{Name: "server-example-001"}, Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: "alloc-example"}}},
-		Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + keyDigest}, TargetDisks: []string{"disk-0"}}
+		Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + keyDigest}, Assurance: ops.AssuranceClear, Drives: []ops.PlannedDrive{overwriteDrive("disk-0")}}
 	inputs, _ := json.Marshal(spec)
 	digest, _ := custody.SpecDigest(spec)
 	now := time.Now().UTC()
@@ -292,4 +292,11 @@ func TestTheCellRunsOnlyItsOwnAssignments(t *testing.T) {
 			}
 		})
 	}
+}
+
+// overwriteDrive is one planned drive the site cleans by overwriting it and
+// reading it back.
+func overwriteDrive(name string) ops.PlannedDrive {
+	return ops.PlannedDrive{ManifestDrive: ops.ManifestDrive{Name: name, SerialNumber: "EXAMPLE-SN-0001", Model: "EXAMPLE-NVME", Firmware: "EX1", Protocol: ops.ProtocolNVMe, MediaType: ops.MediaSSD, CapacityBytes: 2 << 30, Rule: "nvme-ssd"},
+		Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: &ops.VerifySpec{Mode: ops.VerifyFull}}
 }

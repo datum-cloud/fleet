@@ -129,7 +129,7 @@ func installSpec() ops.DeviceInstallationSpec {
 }
 
 func wipeSpec() ops.DeviceWipeSpec {
-	return ops.DeviceWipeSpec{OperationEnvelope: envelope(), Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + key}, TargetDisks: []string{"disk-0"}}
+	return ops.DeviceWipeSpec{OperationEnvelope: envelope(), Step: 1, Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: "sha256:" + key}, Assurance: ops.AssuranceClear, Drives: []ops.PlannedDrive{overwriteDrive("disk-0")}}
 }
 
 // TestInstallThenWipe installs directly, proves each phase by its receipt,
@@ -276,4 +276,11 @@ func TestAFailedNetworkBootClosesItsAdmission(t *testing.T) {
 	if found, err := r.store.GetRecord(device, bootRecords, Key(assignment.Key()), &boot); err != nil || !found || boot.Open || !boot.Closed {
 		t.Fatalf("admission after the failure = %+v, %v, %v", boot, found, err)
 	}
+}
+
+// overwriteDrive is one planned drive the site cleans by overwriting it and
+// reading it back.
+func overwriteDrive(name string) ops.PlannedDrive {
+	return ops.PlannedDrive{ManifestDrive: ops.ManifestDrive{Name: name, SerialNumber: "EXAMPLE-SN-0001", Model: "EXAMPLE-NVME", Firmware: "EX1", Protocol: ops.ProtocolNVMe, MediaType: ops.MediaSSD, CapacityBytes: 2 << 30, Rule: "nvme-ssd"},
+		Methods: []ops.CleaningMethod{ops.MethodOverwrite}, Verify: &ops.VerifySpec{Mode: ops.VerifyFull}}
 }

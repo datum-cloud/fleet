@@ -723,22 +723,48 @@ spec:
                 - name
                 - generation
                 - digest
-              targetDisks:
+              assurance:
+                type: string
+                enum: [Clear, Purge]
+              drives:
                 type: array
                 minItems: 1
                 maxItems: 16
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
                 items:
-                  type: string
-                  minLength: 1
-                  maxLength: 63
-                x-kubernetes-list-type: set
+                  type: object
+                  required: [name, serialNumber, model, firmware, protocol, mediaType, capacityBytes]
+                  properties:
+                    name: {type: string, pattern: '^disk-[0-9]+$', maxLength: 12}
+                    serialNumber: {type: string, maxLength: 253}
+                    model: {type: string, maxLength: 253}
+                    firmware: {type: string, maxLength: 63}
+                    protocol: {type: string, maxLength: 31}
+                    mediaType: {type: string, maxLength: 31}
+                    capacityBytes: {type: integer, minimum: 0}
+                    rule: {type: string, maxLength: 63}
+                    methods:
+                      type: array
+                      maxItems: 6
+                      x-kubernetes-list-type: set
+                      items: {type: string, enum: [CryptographicErase, BlockErase, SanitizeOverwrite, Format, SecureErase, Overwrite]}
+                    verify:
+                      type: object
+                      required: [mode]
+                      properties:
+                        mode: {type: string, enum: [Full, Canary]}
+                        samples: {type: integer, format: int32, minimum: 0, maximum: 1024}
+                    timePerTiB: {type: string, maxLength: 32, pattern: '^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$'}
+                    state: {type: string, enum: [Missing, Uncovered]}
             required:
             - creator
             - deviceRef
             - authority
             - step
             - policy
-            - targetDisks
+            - assurance
+            - drives
             x-kubernetes-validations:
             - rule: self == oldSelf
               message: an operation spec is immutable after create

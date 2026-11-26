@@ -2,12 +2,17 @@ package allocation
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apiMeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/cleaning"
 	"go.datum.net/fleet/internal/custody"
 )
@@ -58,13 +63,23 @@ func TestAllocationPinsItsCleaningPolicy(t *testing.T) {
 	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: custody.WipeName(allocation.Name, 1)}, wipe); err != nil {
 		t.Fatal(err)
 	}
-	if wipe.Spec.Policy != pinned.CleaningPolicyReference {
+	if wipe.Spec.Policy != pinned.CleaningPolicyReference || wipe.Spec.Assurance != ops.AssuranceClear {
 		t.Fatalf("wipe policy = %+v, want %+v", wipe.Spec.Policy, pinned.CleaningPolicyReference)
+	}
+	// The manifest pinned the server's one drive, and the wipe plans it with
+	// the pinned rule's method and check.
+	if len(allocation.Spec.Drives) != 1 || allocation.Spec.Drives[0].Name != "disk-0" || allocation.Spec.Drives[0].SerialNumber == "" {
+		t.Fatalf("manifest = %+v", allocation.Spec.Drives)
+	}
+	if len(wipe.Spec.Drives) != 1 || wipe.Spec.Drives[0].ManifestDrive != allocation.Spec.Drives[0] || wipe.Spec.Drives[0].State != "" ||
+		wipe.Spec.Drives[0].Verify == nil || wipe.Spec.Drives[0].Verify.Mode != ops.VerifyFull {
+		t.Fatalf("plan = %+v", wipe.Spec.Drives)
 	}
 }
 
 // TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated skips capacity
-// whose policy is missing or invalid, and claims nothing.
+// whose policy is missing or invalid, or whose drives the policy does not
+// cover, and claims nothing.
 func TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated(t *testing.T) {
 	cases := map[string]func(e *env){
 		"missing policy": func(e *env) {
@@ -82,6 +97,20 @@ func TestCapacityWithoutAUsableCleaningPolicyIsNotAllocated(t *testing.T) {
 			invalid.Spec.Rules[0].Verify = ops.VerifySpec{Mode: ops.VerifyCanary, Samples: 64}
 			e.create(invalid)
 		},
+	}
+	cases["drives not reported"] = func(e *env) {
+		device := e.device("server-example-001")
+		device.Status.Discovery.Inventory.Systems[0].Storage = nil
+		if err := e.admin.Status().Update(e.ctx, device); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	cases["a drive no rule covers"] = func(e *env) {
+		device := e.device("server-example-001")
+		device.Status.Discovery.Inventory.Systems[0].Storage.Drives[0].Protocol = "SAS"
+		if err := e.admin.Status().Update(e.ctx, device); err != nil {
+			e.t.Fatal(err)
+		}
 	}
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -143,5 +172,144 @@ func TestARecreatedPolicyChangesNoPin(t *testing.T) {
 	}
 	if wipe.Spec.Policy != original.CleaningPolicyReference {
 		t.Fatalf("the release must wipe under the original pin: %+v, want %+v", wipe.Spec.Policy, original.CleaningPolicyReference)
+	}
+}
+
+// TestReleaseWaitsWhileADriveCannotBeCleaned creates no wipe while a pinned
+// drive is missing, so a gap in discovery spends no wipe step, and plans
+// again when the drive returns.
+func TestReleaseWaitsWhileADriveCannotBeCleaned(t *testing.T) {
+	e := startEnv(t)
+	device := e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := e.device(device.Name).Status.Discovery.Inventory.Systems[0].Storage.Drives
+	setDrives := func(drives []inventory.ObservedDrive) {
+		t.Helper()
+		current := e.device(device.Name)
+		current.Status.Discovery.Inventory.Systems[0].Storage.Drives = drives
+		if err := e.admin.Status().Update(e.ctx, current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setDrives(nil)
+	var blocked error
+	e.until("release reports the missing drive", func() bool {
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), allocation); err != nil {
+			t.Fatal(err)
+		}
+		_, blocked = e.allocator.Release(e.ctx, allocation, machine(1))
+		return errors.Is(blocked, ErrCleaningBlocked)
+	})
+	if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), allocation); err != nil {
+		t.Fatal(err)
+	}
+	condition := apiMeta.FindStatusCondition(allocation.Status.Conditions, ConditionCleaning)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != custody.ReasonDriveMissing || allocation.Status.Wipe != nil {
+		t.Fatalf("condition = %+v, wipe = %+v", condition, allocation.Status.Wipe)
+	}
+	wipes := &ops.DeviceWipeList{}
+	if err := e.admin.List(e.ctx, wipes); err != nil || len(wipes.Items) != 0 {
+		t.Fatalf("no wipe may exist while a drive cannot be cleaned: %d, %v", len(wipes.Items), err)
+	}
+	setDrives(saved)
+	e.release(allocation, machine(1))
+	if apiMeta.FindStatusCondition(allocation.Status.Conditions, ConditionCleaning) != nil {
+		t.Fatal("the Cleaning condition must clear once a wipe is planned")
+	}
+}
+
+// TestPlanMismatchSpendsNoWipeStep counts only failures that are not plan
+// mismatches toward the release's limit.
+func TestPlanMismatchSpendsNoWipeStep(t *testing.T) {
+	e := startEnv(t)
+	device := e.server(1)
+	for step, reason := range map[int32]string{1: custody.ReasonPlanMismatch, 2: custody.ReasonPlanMismatch, 3: "TargetDisksUnknown"} {
+		wipe := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: custody.WipeName("alloc-steps", step), Namespace: namespace}, Spec: ops.DeviceWipeSpec{
+			OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: releaseUser, UID: uid(802)}, DeviceRef: ops.DeviceReference{Name: device.Name},
+				Authority: ops.Authority{AllocationRef: &ops.LocalReference{Name: "alloc-steps"}}},
+			Step: step, Policy: ops.CleaningPolicyReference{Name: "p", Generation: 1, Digest: "sha256:" + strings.Repeat("a", 64)}, Assurance: ops.AssuranceClear,
+			Drives: []ops.PlannedDrive{{ManifestDrive: ops.ManifestDrive{Name: "disk-0", SerialNumber: "SN", Model: "M", Firmware: "F", Protocol: ops.ProtocolNVMe, MediaType: ops.MediaSSD, CapacityBytes: 1}, State: ops.DriveMissing}}}}
+		e.create(wipe)
+		wipe.Status = ops.OperationStatus{Phase: ops.PhaseFailed, Reason: reason}
+		if err := e.admin.Status().Update(e.ctx, wipe); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failed, err := e.allocator.failedSteps(e.ctx, "alloc-steps", 3)
+	if err != nil || failed != 1 {
+		t.Fatalf("failed steps = %d, %v; want 1", failed, err)
+	}
+}
+
+// TestInstallTargetMustBeAPinnedDrive skips capacity whose drives do not
+// include the disk installations target.
+func TestInstallTargetMustBeAPinnedDrive(t *testing.T) {
+	e := startEnv(t)
+	e.server(1)
+	e.allocator.TargetDisks = []string{"disk-1"}
+	if _, err := e.allocator.Allocate(e.ctx, e.request(1)); !errors.Is(err, ErrInsufficientCapacity) || !errors.Is(err, ErrCleaningUncovered) {
+		t.Fatalf("allocate = %v", err)
+	}
+}
+
+// TestARetriedWipeAdoptsTheExistingOne keeps a wipe whose create response was
+// lost even when discovery changed before the retry: admission plans it again.
+func TestARetriedWipeAdoptsTheExistingOne(t *testing.T) {
+	e := startEnv(t)
+	e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := fleetv1.WipeReference{Name: custody.WipeName(allocation.Name, 1), Step: 1}
+	existing := &ops.DeviceWipe{ObjectMeta: metav1.ObjectMeta{Name: reference.Name, Namespace: namespace}, Spec: ops.DeviceWipeSpec{
+		OperationEnvelope: e.allocator.envelope(allocation, e.allocator.ReleaseCreator), Step: 1,
+		Policy: allocation.Spec.CleaningPolicy.CleaningPolicyReference, Assurance: ops.AssuranceClear,
+		Drives: []ops.PlannedDrive{{ManifestDrive: allocation.Spec.Drives[0], State: ops.DriveMissing}}}}
+	e.create(existing)
+	if err := e.allocator.wipe(e.ctx, allocation, reference); err != nil {
+		t.Fatalf("wipe = %v, want the existing wipe adopted", err)
+	}
+	got := &ops.DeviceWipe{}
+	if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(existing), got); err != nil || got.Spec.Drives[0].State != ops.DriveMissing {
+		t.Fatalf("the existing wipe must stand: %+v, %v", got.Spec.Drives, err)
+	}
+}
+
+// TestAWipeIsNeverPlannedForARecreatedDevice deletes the allocated Device and
+// creates another under its name. The release controller must not plan a
+// wipe from the new Device's drives: the allocation's device-uid label names
+// the server it pinned.
+func TestAWipeIsNeverPlannedForARecreatedDevice(t *testing.T) {
+	e := startEnv(t)
+	e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := e.device("server-example-001")
+	if err := e.admin.Delete(e.ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: device.Name, Namespace: namespace}, Spec: device.Spec}
+	e.until("the Device is recreated", func() bool { return e.admin.Create(e.ctx, replacement) == nil })
+	if replacement.UID == device.UID {
+		t.Fatal("the recreated Device has the old UID")
+	}
+	// The new Device reports the same drives, so only the incarnation check
+	// stands between it and a wipe.
+	replacement.Status = device.Status
+	if err := e.admin.Status().Update(e.ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	reference := fleetv1.WipeReference{Name: custody.WipeName(allocation.Name, 1), Step: 1}
+	if err := e.allocator.wipe(e.ctx, allocation, reference); !errors.Is(err, ErrCustodyLost) {
+		t.Fatalf("wipe = %v, want ErrCustodyLost", err)
+	}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: reference.Name}, &ops.DeviceWipe{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("no wipe may be created for a recreated Device: %v", err)
 	}
 }

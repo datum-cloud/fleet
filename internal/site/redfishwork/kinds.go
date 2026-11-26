@@ -138,7 +138,11 @@ func (k Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	if conn(work).Target.DiskBytes <= 0 {
 		return &custody.Refusal{Reason: ReasonTargetDisks, Message: "the site's enrollment records no disk size to verify the wipe against"}
 	}
-	return checkTarget(work, spec.TargetDisks, wipePhases)
+	names, ok := spec.OverwriteDrives()
+	if !ok {
+		return &custody.Refusal{Reason: ReasonUnsupportedTarget, Message: "this site cleans only by overwriting every planned drive and reading it back"}
+	}
+	return checkTarget(work, names, wipePhases)
 }
 
 // checkTarget requires the one enrolled disk and every capability the phases

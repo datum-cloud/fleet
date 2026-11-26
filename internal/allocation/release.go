@@ -7,22 +7,39 @@ import (
 	"slices"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/cleaning"
 	"go.datum.net/fleet/internal/custody"
 )
 
 // maxWipeSteps bounds the wipes one release creates after wipes that ended
 // Failed, which sent nothing. A wipe whose outcome is unknown is never
-// repeated without a DeviceRecovery Retry.
-const maxWipeSteps = 3
+// repeated without a DeviceRecovery Retry. A wipe refused because discovery
+// changed between planning and admission (PlanMismatch) does not count
+// toward it, but every release stops at maxPlanSteps steps in all.
+const (
+	maxWipeSteps = 3
+	maxPlanSteps = 16
+)
+
+// ConditionCleaning is the MachineAllocation condition the release
+// controller sets False while no wipe can be planned, with the reason.
+const ConditionCleaning = "Cleaning"
 
 // ErrWipeFailed means the release created its last wipe step and it failed.
 // The Cleaning gate stays open, and the Device stays in Release.
 var ErrWipeFailed = errors.New("every wipe step of the release failed")
+
+// ErrCleaningBlocked means a drive cannot be cleaned now: discovery does not
+// report a pinned drive, or reports one no method covers. No wipe is
+// created; the release plans again when discovery changes.
+var ErrCleaningBlocked = errors.New("a drive cannot be cleaned")
 
 // Release advances the release of an allocation by one step and reports
 // whether it is Released. Callers repeat it while the custody coordinator
@@ -152,7 +169,11 @@ func (a *Allocator) clean(ctx context.Context, state *ops.DeviceCustody, allocat
 	case ops.PhaseSucceeded:
 		return true, nil
 	case ops.PhaseFailed, ops.PhaseCancelled:
-		if current.Step >= maxWipeSteps {
+		failed, err := a.failedSteps(ctx, allocation.Name, current.Step)
+		if err != nil {
+			return false, err
+		}
+		if failed >= maxWipeSteps || current.Step >= maxPlanSteps {
 			return false, fmt.Errorf("%w: %s: %s", ErrWipeFailed, wipe.Status.Reason, wipe.Status.Message)
 		}
 		step := current.Step + 1
@@ -166,9 +187,57 @@ func (a *Allocator) clean(ctx context.Context, state *ops.DeviceCustody, allocat
 	return false, nil
 }
 
+// failedSteps counts the release's wipes up to step that ended Failed or
+// Cancelled for a reason other than PlanMismatch.
+func (a *Allocator) failedSteps(ctx context.Context, allocation string, step int32) (int, error) {
+	failed := 0
+	for n := int32(1); n <= step; n++ {
+		wipe := &ops.DeviceWipe{}
+		if err := a.Releaser.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: custody.WipeName(allocation, n)}, wipe); apierrors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			return 0, err
+		}
+		if (wipe.Status.Phase == ops.PhaseFailed || wipe.Status.Phase == ops.PhaseCancelled) && wipe.Status.Reason != custody.ReasonPlanMismatch {
+			failed++
+		}
+	}
+	return failed, nil
+}
+
 // wipe records the wipe in status, then creates it, so a crash between the
-// two creates the same wipe again.
+// two creates the same wipe again. Its plan comes from the shared planner:
+// the allocation's pinned policy and manifest, and the drives discovery
+// reports now. Until discovery reports the server's drives, no wipe is
+// created.
 func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocation, reference fleetv1.WipeReference) error {
+	device := &inventory.Device{}
+	if err := a.Provider.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: allocation.Spec.DeviceRef.Name}, device); err != nil {
+		return err
+	}
+	// The allocation's device-uid label records the incarnation it holds;
+	// a Device recreated under the same name is not that server.
+	if string(device.UID) != allocation.Labels[fleetv1.LabelDeviceUID] {
+		return fmt.Errorf("%w: the Device is another incarnation", ErrCustodyLost)
+	}
+	pin := allocation.Spec.CleaningPolicy
+	plan, err := cleaning.Plan(pin.Spec, allocation.Spec.Drives, cleaning.StorageOf(device), nil)
+	if err != nil {
+		return fmt.Errorf("plan the wipe: %w", err)
+	}
+	if blocked := blockedReason(plan); blocked != nil {
+		if changed := apiMeta.SetStatusCondition(&allocation.Status.Conditions, *blocked); changed {
+			if err := a.Provider.Status().Update(ctx, allocation); err != nil {
+				return err
+			}
+		}
+		return fmt.Errorf("%w: %s", ErrCleaningBlocked, blocked.Message)
+	}
+	if apiMeta.RemoveStatusCondition(&allocation.Status.Conditions, ConditionCleaning) {
+		if err := a.Provider.Status().Update(ctx, allocation); err != nil {
+			return err
+		}
+	}
 	if current := allocation.Status.Wipe; current == nil || *current != reference {
 		allocation.Status.Wipe = &reference
 		if err := a.Provider.Status().Update(ctx, allocation); err != nil {
@@ -180,9 +249,36 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 		Spec: ops.DeviceWipeSpec{
 			OperationEnvelope: a.envelope(allocation, a.ReleaseCreator),
 			Step:              reference.Step,
-			Policy:            allocation.Spec.CleaningPolicy.CleaningPolicyReference,
-			TargetDisks:       slices.Clone(allocation.Spec.TargetDisks),
+			Policy:            pin.CleaningPolicyReference,
+			Assurance:         pin.Spec.Assurance,
+			Drives:            plan,
 		},
 	}
-	return a.createOnce(ctx, a.Releaser, wipe, &ops.DeviceWipe{})
+	err = a.createOnce(ctx, a.Releaser, wipe, &ops.DeviceWipe{})
+	if errors.Is(err, ErrConflict) {
+		// A wipe with this name exists with another plan: a crash lost the
+		// response, and discovery changed before the retry. Admission plans
+		// that wipe again, so it stands.
+		return nil
+	}
+	return err
+}
+
+// blockedReason is the Cleaning condition for a plan with a drive that
+// cannot be cleaned, or nil.
+func blockedReason(plan []ops.PlannedDrive) *metav1.Condition {
+	for _, d := range plan {
+		reason := ""
+		switch d.State {
+		case ops.DriveMissing:
+			reason = custody.ReasonDriveMissing
+		case ops.DriveUncovered:
+			reason = custody.ReasonDriveUncovered
+		default:
+			continue
+		}
+		return &metav1.Condition{Type: ConditionCleaning, Status: metav1.ConditionFalse, Reason: reason,
+			Message: fmt.Sprintf("drive %s (%s) cannot be cleaned", d.Name, d.SerialNumber)}
+	}
+	return nil
 }

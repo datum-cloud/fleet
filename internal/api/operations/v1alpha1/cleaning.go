@@ -137,3 +137,62 @@ type CleaningPolicyList struct {
 
 func (in *CleaningPolicy) DeepCopyObject() runtime.Object     { return deepCopy(in) }
 func (in *CleaningPolicyList) DeepCopyObject() runtime.Object { return deepCopy(in) }
+
+// ManifestDrive is one drive an allocation pinned: its name for the
+// allocation, its identity, and the rule that covers it.
+type ManifestDrive struct {
+	Name          string        `json:"name"`
+	SerialNumber  string        `json:"serialNumber"`
+	Model         string        `json:"model"`
+	Firmware      string        `json:"firmware"`
+	Protocol      DriveProtocol `json:"protocol"`
+	MediaType     MediaType     `json:"mediaType"`
+	CapacityBytes int64         `json:"capacityBytes"`
+	Rule          string        `json:"rule"`
+}
+
+// DriveState marks a planned drive the plan cannot clean.
+type DriveState string
+
+const (
+	// DriveMissing is a pinned drive that discovery no longer reports.
+	DriveMissing DriveState = "Missing"
+	// DriveUncovered is a drive no qualified method of the pinned policy
+	// can clean.
+	DriveUncovered DriveState = "Uncovered"
+)
+
+// PlannedDrive is one step of a wipe: a drive as discovery reports it now,
+// and the methods and check the pinned policy plans for it. State is set
+// only for a drive the plan cannot clean.
+type PlannedDrive struct {
+	ManifestDrive `json:",inline"`
+	Methods       []CleaningMethod `json:"methods,omitempty"`
+	Verify        *VerifySpec      `json:"verify,omitempty"`
+	TimePerTiB    *metav1.Duration `json:"timePerTiB,omitempty"`
+	State         DriveState       `json:"state,omitempty"`
+}
+
+// OverwriteDrives returns the names of the planned drives when every one can
+// be cleaned by Overwrite with Full verification, the only method today's
+// sites run. It returns false when a drive is Missing or Uncovered or its
+// plan does not allow that method.
+func (in *DeviceWipeSpec) OverwriteDrives() ([]string, bool) {
+	var names []string
+	for _, d := range in.Drives {
+		if d.State != "" || d.Verify == nil || d.Verify.Mode != VerifyFull || !containsMethod(d.Methods, MethodOverwrite) {
+			return nil, false
+		}
+		names = append(names, d.Name)
+	}
+	return names, len(names) > 0
+}
+
+func containsMethod(methods []CleaningMethod, m CleaningMethod) bool {
+	for _, have := range methods {
+		if have == m {
+			return true
+		}
+	}
+	return false
+}

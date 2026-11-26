@@ -664,6 +664,7 @@ fails if its guard is removed:
 | Consumer project, against quota | Quota resolves the project and requires the incarnation the Machine was admitted in | `TestQuotaServesOnlyTheMachinesProjectIncarnation` |
 | Device | Custody's `device-uid` label must match the Device, or custody stays `Unverified` until a `Resolve` | `TestARecreatedDeviceLeavesCustodyUnverified` |
 | Device, against free capacity | Custody for another Device incarnation is never free | `TestCustodyForAnotherDeviceIncarnationIsNotFree` |
+| Device, against a release wipe | The release controller plans a wipe only if the Device's UID is the allocation's `device-uid` label | `TestAWipeIsNeverPlannedForARecreatedDevice` |
 | Device, against an operation | An operation's `device-uid` label must match the Device at admission | `TestAdmissionPreconditions` |
 | Device, against an existing operation | The Metal provider and release controller require an existing same-name operation to carry the same labels | `TestAnOperationForAnotherDeviceIncarnationIsAConflict` |
 | Installation | The `DeviceInstallation` name hashes the Installation UID, so a same-name Installation gets a new operation | `TestAllocateInstallReleaseReuse` |
@@ -720,12 +721,38 @@ real API server. The rest of #183 is **proposed**.
 
 BMC discovery records each System's drives from Redfish in Device status, and
 fixture discovery reports one simulated drive per enrolled disk. The Redfish
-lab serves a Storage collection for its targets. These are observations only.
+lab's targets each have one emulated NVMe drive.
 
-Not implemented yet: drive inventory from commissioning, the media
-manifest and pinned drive names, the per-drive plan in `DeviceWipe`, the
-in-band methods and their evidence, the evidence check and its reasons, and
-`DisposeDrive`. Until then, every site still wipes its one enrolled disk.
+- **Manifest.** The allocator pins every drive the server reports, named
+  `disk-0`, `disk-1` and so on by protocol and serial number, with the rule
+  that covers it. A server whose drives are unknown, back a RAID volume, lack
+  a serial number, or have no planned method is skipped as uncovered.
+  Installation target disks must be names in the manifest.
+- **Plan.** One shared planner turns the pin and current discovery into one
+  step per drive. It matches a pinned drive by serial number and requires
+  the same model, protocol, media type and capacity; firmware may change but
+  must still be qualified. A drive that shares its serial number with another,
+  or reports none, is `Uncovered`. The release controller writes the plan into
+  each `DeviceWipe`, and admission plans again and refuses a wipe whose plan
+  differs, with reason `PlanMismatch`. Such a refusal does not count toward
+  the release's three failed steps, but a release stops after 16 steps. A
+  retried create that finds a wipe with another plan keeps it, because
+  admission plans it again.
+- **Missing and uncovered drives (interim).** While a planned drive is
+  `Missing` or `Uncovered`, the release controller creates no wipe. It sets
+  the allocation's `Cleaning` condition to `False` with reason `DriveMissing`
+  or `DriveUncovered`, and plans again when discovery changes. Admission also
+  refuses such a wipe. #183 instead ends it `OutcomeUnknown` under a recovery
+  hold that `DisposeDrive` settles; that comes with `DisposeDrive`.
+- **Sites.** Every site cleans only by overwriting each planned drive and
+  reading it back, and refuses any other plan before sending anything. Sites
+  match planned drives to their enrolled disks by name, and fixture drives'
+  serial numbers sort in enrollment order so the names agree. Matching by
+  serial number on the server comes with the wipe environment.
+
+Not implemented yet: drive inventory from commissioning, the in-band methods
+other than overwrite and their evidence, the evidence check and its reasons,
+the plan-derived deadline, and `DisposeDrive`.
 
 ### Cutover decisions
 
