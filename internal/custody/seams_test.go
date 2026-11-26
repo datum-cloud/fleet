@@ -252,6 +252,19 @@ func TestCRDRules(t *testing.T) {
 				s.Decision, s.Hold, s.DiskDisposal = ops.DecisionSettle, &ops.HeldOperationReference{Kind: "k", Name: "n"}, &ops.DiskDisposal{Method: ops.DisposalDestroyed, Reference: "r"}
 				return s
 			},
+			// DisposeDrive names its drive and hold, and only it names a drive.
+			func(s ops.DeviceRecoverySpec) ops.DeviceRecoverySpec {
+				s.Decision, s.Hold = ops.DecisionDisposeDrive, &ops.HeldOperationReference{Kind: "k", Name: "n"}
+				return s
+			},
+			func(s ops.DeviceRecoverySpec) ops.DeviceRecoverySpec {
+				s.Decision, s.Drive = ops.DecisionDisposeDrive, &ops.DriveDisposal{Name: "disk-0", Method: ops.DisposalRemoved, Reference: "r"}
+				return s
+			},
+			func(s ops.DeviceRecoverySpec) ops.DeviceRecoverySpec {
+				s.Decision, s.Hold, s.Drive = ops.DecisionSettle, &ops.HeldOperationReference{Kind: "k", Name: "n"}, &ops.DriveDisposal{Name: "disk-0", Method: ops.DisposalRemoved, Reference: "r"}
+				return s
+			},
 		} {
 			requireInvalid(t, e.admin.Create(ctx, &ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "r-", Namespace: "default"}, Spec: spec(base)}))
 		}
@@ -266,6 +279,9 @@ func TestCRDRules(t *testing.T) {
 		requireInvalid(t, e.admin.Create(ctx, &ops.DeviceCustody{ObjectMeta: metav1.ObjectMeta{Name: "mismatch", Namespace: "default"}, Spec: ops.DeviceCustodySpec{DeviceRef: ops.DeviceReference{Name: "other"}, State: ops.CustodyUnverified, Holder: ops.Holder{Type: ops.HolderNone}}}))
 		custody = e.custody(device.Name)
 		custody.Spec.Holder = ops.Holder{Type: ops.HolderAllocation}
+		requireInvalid(t, e.admin.Update(ctx, custody))
+		custody = e.custody(device.Name)
+		custody.Spec.Holder.DisposedDrives = []ops.DisposedDrive{{Name: "disk-0", SerialNumber: "SN", Method: ops.DisposalRemoved, Reference: "r", Recovery: "rec"}}
 		requireInvalid(t, e.admin.Update(ctx, custody))
 	})
 }

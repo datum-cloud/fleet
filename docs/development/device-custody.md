@@ -665,6 +665,8 @@ fails if its guard is removed:
 | Device | Custody's `device-uid` label must match the Device, or custody stays `Unverified` until a `Resolve` | `TestARecreatedDeviceLeavesCustodyUnverified` |
 | Device, against free capacity | Custody for another Device incarnation is never free | `TestCustodyForAnotherDeviceIncarnationIsNotFree` |
 | Device, against a release wipe | The release controller plans a wipe only if the Device's UID is the allocation's `device-uid` label | `TestAWipeIsNeverPlannedForARecreatedDevice` |
+| Wipe, against a drive disposal | `DisposeDrive` reads the held drives custody recorded with the hold, never the wipe object | `TestWipeAdmissionChecksThePlan` (a wipe recreated under the held wipe's name) |
+| Wipe, after rebuild | A rebuilt hold records no drives, so `DisposeDrive` is refused | `TestARebuiltHoldCannotBeDisposed` |
 | Device, against an operation | An operation's `device-uid` label must match the Device at admission | `TestAdmissionPreconditions` |
 | Device, against an existing operation | The Metal provider and release controller require an existing same-name operation to carry the same labels | `TestAnOperationForAnotherDeviceIncarnationIsAConflict` |
 | Installation | The `DeviceInstallation` name hashes the Installation UID, so a same-name Installation gets a new operation | `TestAllocateInstallReleaseReuse` |
@@ -738,12 +740,39 @@ lab's targets each have one emulated NVMe drive.
   the release's three failed steps, but a release stops after 16 steps. A
   retried create that finds a wipe with another plan keeps it, because
   admission plans it again.
-- **Missing and uncovered drives (interim).** While a planned drive is
-  `Missing` or `Uncovered`, the release controller creates no wipe. It sets
-  the allocation's `Cleaning` condition to `False` with reason `DriveMissing`
-  or `DriveUncovered`, and plans again when discovery changes. Admission also
-  refuses such a wipe. #183 instead ends it `OutcomeUnknown` under a recovery
-  hold that `DisposeDrive` settles; that comes with `DisposeDrive`.
+- **Missing and uncovered drives.** While a planned drive is `Missing` or
+  `Uncovered`, the release controller sets the allocation's `Cleaning`
+  condition to `False` with reason `DriveMissing` or `DriveUncovered`, and
+  waits 10 minutes (the allocator's `CleaningGrace`) for discovery to report
+  the drive again. A brief gap in discovery therefore spends no wipe step and
+  pages nobody. After the grace it creates the wipe. Admission checks its
+  plan, then admits it and ends it `OutcomeUnknown` with that reason in the
+  same custody update (a kind's `HoldOnAdmit`), so the fence rises, nothing is
+  delivered, and the server is under a recovery hold. If that wipe was
+  settling an installation hold, the drive hold replaces it: every drive the
+  installation could have written is then wiped by a later step or recorded
+  as disposed of, which is what settling it requires. A rebuild holds the
+  installation again, which fails closed. Each blocked plan gets its own
+  grace: settling a drive hold restarts it.
+- **DisposeDrive.** A `DeviceRecovery` with decision `DisposeDrive` names the
+  hold, the drive, and how it was destroyed or removed, with a reference. It
+  is admitted only from a `Release` holder under that hold, for a drive the
+  held wipe planned as `Missing` or `Uncovered` and that discovery no longer
+  reports, so an uncovered drive is pulled first. When it forms the hold, the
+  coordinator records in custody, with the hold, each drive the wipe could
+  not clean, by name, serial number and state. `DisposeDrive` reads only that
+  record, never the wipe object, so a wipe recreated under the same name,
+  which never matches custody, cannot authorize a disposal. Discovery proves only that
+  no drive reports the planned serial number; for a drive whose serial
+  changed, the recorded method and reference are the proof. Retry is refused for this
+  hold, because a retried wipe would plan the same drive. Like every
+  recovery, it applies once the sites report its fence. It clears the hold
+  and records the drive in custody's `holder.disposedDrives`; the planner
+  omits it, and the release controller plans the next step. If every pinned
+  drive was disposed of, no wipe remains to run and the `Cleaning` gate
+  closes. The record ends when the holder leaves `Release`; rebuilt custody
+  does not have it, so staff record the disposal again. The recovery operator
+  role, which creates `DeviceRecovery`, can record it.
 - **Sites.** Every site cleans only by overwriting each planned drive and
   reading it back, and refuses any other plan before sending anything. Sites
   match planned drives to their enrolled disks by name, and fixture drives'
@@ -752,7 +781,7 @@ lab's targets each have one emulated NVMe drive.
 
 Not implemented yet: drive inventory from commissioning, the in-band methods
 other than overwrite and their evidence, the evidence check and its reasons,
-the plan-derived deadline, and `DisposeDrive`.
+and the plan-derived deadline.
 
 ### Cutover decisions
 

@@ -45,6 +45,9 @@ func uid(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) 
 // env is a real API server with the metal, inventory and custody CRDs, one
 // simulator site behind its HTTP API, and the coordinator loop.
 type env struct {
+	// disks are the disks the site enrolls for each new server; empty means
+	// disk-0.
+	disks      []string
 	t          *testing.T
 	ctx        context.Context
 	admin      client.Client
@@ -154,7 +157,7 @@ func (e *env) server(n int) *inventory.Device {
 	}}
 	e.create(device)
 	key := fmt.Sprintf("%064x", n)
-	e.enrollment[namespace+"/"+name] = fixture.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: key, Disks: []string{"disk-0"}}
+	e.enrollment[namespace+"/"+name] = fixture.Target{BMCEndpoint: device.Spec.BMC.Endpoint, SystemUUID: uid(100 + n), BootMACAddress: mac, BMCPublicKeySHA256: key, Disks: e.diskNames()}
 	e.loop.Courier.Sites.Devices[name] = []string{siteName}
 	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "capacity-" + name, Namespace: namespace, Labels: map[string]string{"pool": "example"}},
 		Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: name}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "example-cleaning"}, ReclaimPolicy: "Retain"}}
@@ -260,4 +263,12 @@ func (e *env) addDrive(name, disk string) {
 	if err := e.admin.Status().Update(e.ctx, device); err != nil {
 		e.t.Fatal(err)
 	}
+}
+
+// diskNames are the disks the site enrolls for each new server.
+func (e *env) diskNames() []string {
+	if len(e.disks) == 0 {
+		return []string{"disk-0"}
+	}
+	return e.disks
 }

@@ -89,6 +89,41 @@ spec:
                       minLength: 1
                       maxLength: 63
                     x-kubernetes-list-type: set
+                  disposedDrives:
+                    type: array
+                    maxItems: 16
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys:
+                    - name
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          pattern: ^disk-[0-9]+$
+                          maxLength: 12
+                        serialNumber:
+                          type: string
+                          maxLength: 253
+                        method:
+                          type: string
+                          enum:
+                          - Destroyed
+                          - Removed
+                        reference:
+                          type: string
+                          minLength: 1
+                          maxLength: 256
+                        recovery:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                      required:
+                      - name
+                      - serialNumber
+                      - method
+                      - reference
+                      - recovery
                 required:
                 - type
                 x-kubernetes-validations:
@@ -96,6 +131,8 @@ spec:
                   message: allocationRef is set exactly for Allocation and Release
                 - rule: self.type == 'Release' || !has(self.openGates) || size(self.openGates) == 0
                   message: only Release has open gates
+                - rule: self.type == 'Release' || !has(self.disposedDrives) || size(self.disposedDrives) == 0
+                  message: only Release records disposed drives
               fence:
                 type: integer
                 format: int64
@@ -323,6 +360,31 @@ spec:
                   retryName:
                     type: string
                     maxLength: 253
+                  drives:
+                    type: array
+                    maxItems: 16
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys:
+                    - name
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          pattern: ^disk-[0-9]+$
+                          maxLength: 12
+                        serialNumber:
+                          type: string
+                          maxLength: 253
+                        state:
+                          type: string
+                          enum:
+                          - Missing
+                          - Uncovered
+                      required:
+                      - name
+                      - serialNumber
+                      - state
                 required:
                 - kind
                 - name
@@ -949,6 +1011,7 @@ spec:
                 - Retry
                 - Retire
                 - Resolve
+                - DisposeDrive
               hold:
                 type: object
                 properties:
@@ -1002,6 +1065,26 @@ spec:
                 required:
                 - method
                 - reference
+              drive:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    pattern: ^disk-[0-9]+$
+                    maxLength: 12
+                  method:
+                    type: string
+                    enum:
+                    - Destroyed
+                    - Removed
+                  reference:
+                    type: string
+                    minLength: 1
+                    maxLength: 256
+                required:
+                - name
+                - method
+                - reference
               resolve:
                 type: object
                 properties:
@@ -1035,9 +1118,11 @@ spec:
             - rule: (self.decision == 'Resolve') == has(self.resolve)
               message: resolve is set exactly for Resolve
             - rule: self.decision == 'Resolve' || has(self.hold)
-              message: Settle, Retry and Retire name the hold
+              message: Settle, Retry, Retire and DisposeDrive name the hold
             - rule: '!has(self.diskDisposal) || self.decision == ''Retire'''
               message: only Retire records disk disposal
+            - rule: (self.decision == 'DisposeDrive') == has(self.drive)
+              message: drive is set exactly for DisposeDrive
           status:
             type: object
             properties:

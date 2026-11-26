@@ -82,6 +82,14 @@ type Kind struct {
 	// preconditions pass and before the custody update. A non-nil refusal
 	// ends the operation Failed with that reason, and nothing is sent.
 	Check func(context.Context, *Admission) *Refusal
+	// HoldOnAdmit, when it returns a reason, admits the operation and ends it
+	// OutcomeUnknown in the same custody update, so the server is held and
+	// nothing is delivered. It is for an outcome that is already unproven
+	// before anything runs, such as a drive whose data a wipe cannot reach.
+	// Its reasons must be declared as raised by the coordinator.
+	HoldOnAdmit func(context.Context, *Admission) *Refusal
+	// HeldDrives returns the drives to record with a hold HoldOnAdmit forms.
+	HeldDrives func(ops.Operation) []ops.HeldDrive
 	// Settles lists the held kinds a success of this kind settles. It may be
 	// empty: a kind whose holds only a DeviceRecovery settles, such as power,
 	// settles no hold itself.

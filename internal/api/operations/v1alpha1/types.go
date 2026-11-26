@@ -101,11 +101,33 @@ type LocalReference struct {
 }
 
 // Holder is who holds the Device. AllocationRef is set only for Allocation
-// and Release, and OpenGates only for Release.
+// and Release, and OpenGates and DisposedDrives only for Release.
 type Holder struct {
 	Type          HolderType      `json:"type"`
 	AllocationRef *LocalReference `json:"allocationRef,omitempty"`
 	OpenGates     []ReleaseGate   `json:"openGates,omitempty"`
+	// DisposedDrives are pinned drives staff recorded as destroyed or
+	// removed with DisposeDrive. The release's wipes omit them. The record
+	// ends when the holder leaves Release.
+	DisposedDrives []DisposedDrive `json:"disposedDrives,omitempty"`
+}
+
+// HeldDrive is one drive a held wipe could not clean, as its plan named it.
+type HeldDrive struct {
+	Name         string     `json:"name"`
+	SerialNumber string     `json:"serialNumber"`
+	State        DriveState `json:"state"`
+}
+
+// DisposedDrive is one drive a DisposeDrive recovery settled.
+type DisposedDrive struct {
+	Name         string             `json:"name"`
+	SerialNumber string             `json:"serialNumber"`
+	Method       DiskDisposalMethod `json:"method"`
+	Reference    string             `json:"reference"`
+	// Recovery names the DeviceRecovery that recorded the disposal, for
+	// audit. It is not a join key; recoveries get generated names.
+	Recovery string `json:"recovery"`
 }
 
 // OperationReference names an operation by kind and name. Custody always
@@ -171,6 +193,10 @@ type RecoveryHold struct {
 	Deadline *metav1.Time `json:"deadline,omitempty"`
 	// Snapshot is the Device snapshot the held operation was admitted with.
 	Snapshot *DeviceSnapshot `json:"snapshot,omitempty"`
+	// Drives are the drives a wipe held at admission could not clean. Only
+	// these can be settled with DisposeDrive, so a same-name wipe created
+	// later never authorizes a disposal.
+	Drives []HeldDrive `json:"drives,omitempty"`
 	// RetryAuthorizedBy names the DeviceRecovery with Retry, and the fence it
 	// was admitted at, that lets the held operation's requester create one
 	// settling operation.
@@ -373,6 +399,9 @@ const (
 	DecisionRetry   RecoveryDecision = "Retry"
 	DecisionRetire  RecoveryDecision = "Retire"
 	DecisionResolve RecoveryDecision = "Resolve"
+	// DecisionDisposeDrive records that a drive a held wipe could not clean
+	// was destroyed or removed, and clears that hold.
+	DecisionDisposeDrive RecoveryDecision = "DisposeDrive"
 )
 
 type DeviceRecoverySpec struct {
@@ -387,6 +416,16 @@ type DeviceRecoverySpec struct {
 	DiskDisposal *DiskDisposal `json:"diskDisposal,omitempty"`
 	// Resolve names the holder of Unverified custody.
 	Resolve *ResolveInput `json:"resolve,omitempty"`
+	// Drive names the drive a DisposeDrive disposed of and how. Required for
+	// DisposeDrive only.
+	Drive *DriveDisposal `json:"drive,omitempty"`
+}
+
+// DriveDisposal is how one drive a held wipe could not clean was disposed of.
+type DriveDisposal struct {
+	Name      string             `json:"name"`
+	Method    DiskDisposalMethod `json:"method"`
+	Reference string             `json:"reference"`
 }
 
 // HeldOperationReference names an operation and the fence it was admitted

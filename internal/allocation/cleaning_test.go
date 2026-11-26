@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -312,4 +313,115 @@ func TestAWipeIsNeverPlannedForARecreatedDevice(t *testing.T) {
 	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: reference.Name}, &ops.DeviceWipe{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("no wipe may be created for a recreated Device: %v", err)
 	}
+}
+
+// TestAPulledDriveIsDisposedAndReleaseFinishes holds the server once a pinned
+// drive stays missing past the grace, and finishes release after staff record
+// the drive's disposal.
+func TestAPulledDriveIsDisposedAndReleaseFinishes(t *testing.T) {
+	e := startEnv(t)
+	device := e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := time.Duration(0)
+	e.allocator.CleaningGrace = &zero
+	pulled := e.device(device.Name)
+	pulled.Status.Discovery.Inventory.Systems[0].Storage.Drives = nil
+	if err := e.admin.Status().Update(e.ctx, pulled); err != nil {
+		t.Fatal(err)
+	}
+	var hold *ops.RecoveryHold
+	e.until("the release holds the server for the missing drive", func() bool {
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), allocation); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.allocator.Release(e.ctx, allocation, machine(1)); err != nil && !errors.Is(err, ErrCleaningBlocked) {
+			t.Logf("release: %v", err)
+		}
+		hold = e.custody(device.Name).Spec.RecoveryHold
+		return hold != nil && hold.Reason == custody.ReasonDriveMissing
+	})
+	staff := ops.Creator{Username: "staff-example@example.com", UID: uid(803)}
+	recovery := &ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "dispose-", Namespace: namespace, Labels: map[string]string{ops.LabelDeviceUID: string(device.UID)}}, Spec: ops.DeviceRecoverySpec{
+		OperationEnvelope: ops.OperationEnvelope{Creator: staff, DeviceRef: ops.DeviceReference{Name: device.Name},
+			Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "drive pulled during the allocation"}}},
+		Decision: ops.DecisionDisposeDrive,
+		Hold:     &ops.HeldOperationReference{Kind: hold.Kind, Name: hold.Name, Fence: hold.Fence},
+		Evidence: ops.RecoveryEvidence{ObservedAt: metav1.Now(), Summary: "drive destroyed after removal"},
+		Drive:    &ops.DriveDisposal{Name: "disk-0", Method: ops.DisposalDestroyed, Reference: "ticket-example-1"},
+	}}
+	e.create(recovery)
+	e.release(allocation, machine(1))
+	state := e.custody(device.Name)
+	if state.Spec.Holder.Type != ops.HolderNone || len(state.Spec.Holder.DisposedDrives) != 0 {
+		t.Fatalf("after release: holder %+v", state.Spec.Holder)
+	}
+}
+
+// TestEachBlockedDriveGetsItsOwnGrace waits the full grace for a second drive
+// that cannot be cleaned after staff disposed of the first, instead of
+// holding the server at once.
+func TestEachBlockedDriveGetsItsOwnGrace(t *testing.T) {
+	e := startEnv(t)
+	e.disks = []string{"disk-0", "disk-1"}
+	device := e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	e.allocator.Now = func() time.Time { return now }
+	all := e.device(device.Name).Status.Discovery.Inventory.Systems[0].Storage.Drives
+	setDrives := func(drives ...inventory.ObservedDrive) {
+		t.Helper()
+		current := e.device(device.Name)
+		current.Status.Discovery.Inventory.Systems[0].Storage.Drives = drives
+		if err := e.admin.Status().Update(e.ctx, current); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step := func() error {
+		t.Helper()
+		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), allocation); err != nil {
+			t.Fatal(err)
+		}
+		_, err := e.allocator.Release(e.ctx, allocation, machine(1))
+		return err
+	}
+	// disk-1 goes missing: release waits within the grace.
+	setDrives(all[0])
+	e.until("release waits for disk-1", func() bool { return errors.Is(step(), ErrCleaningBlocked) })
+	// Past the grace, the server is held for disk-1.
+	now = now.Add(DefaultCleaningGrace + time.Minute)
+	var hold *ops.RecoveryHold
+	e.until("the server is held for disk-1", func() bool {
+		_ = step()
+		hold = e.custody(device.Name).Spec.RecoveryHold
+		return hold != nil && hold.Reason == custody.ReasonDriveMissing
+	})
+	e.create(&ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "dispose-", Namespace: namespace, Labels: map[string]string{ops.LabelDeviceUID: string(device.UID)}}, Spec: ops.DeviceRecoverySpec{
+		OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: "staff-example@example.com", UID: uid(803)}, DeviceRef: ops.DeviceReference{Name: device.Name},
+			Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "disk-1 pulled"}}},
+		Decision: ops.DecisionDisposeDrive, Hold: &ops.HeldOperationReference{Kind: hold.Kind, Name: hold.Name, Fence: hold.Fence},
+		Evidence: ops.RecoveryEvidence{ObservedAt: metav1.Now(), Summary: "destroyed"},
+		Drive:    &ops.DriveDisposal{Name: "disk-1", Method: ops.DisposalDestroyed, Reference: "ticket-example-2"},
+	}})
+	e.until("the disposal clears the hold", func() bool { return e.custody(device.Name).Spec.RecoveryHold == nil })
+	// Now disk-0 goes missing as well. Release must wait a fresh grace
+	// rather than hold the server at once.
+	setDrives()
+	e.until("release waits for disk-0", func() bool { return errors.Is(step(), ErrCleaningBlocked) })
+	for range 3 {
+		if err := step(); !errors.Is(err, ErrCleaningBlocked) {
+			t.Fatalf("release = %v, want it still waiting within the grace", err)
+		}
+	}
+	if hold := e.custody(device.Name).Spec.RecoveryHold; hold != nil {
+		t.Fatalf("held within the grace: %+v", hold)
+	}
+	// disk-0 returns, and release finishes with disk-1 disposed of.
+	setDrives(all[0])
+	e.release(allocation, machine(1))
 }

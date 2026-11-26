@@ -19,6 +19,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
@@ -128,6 +129,11 @@ type Allocator struct {
 	// in it too.
 	Namespace string
 	Quota     Quota
+	// CleaningGrace is how long release waits for a drive it cannot clean
+	// before it holds the server for staff. Nil means DefaultCleaningGrace.
+	CleaningGrace *time.Duration
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 	// BootInterface and TargetDisks are pinned on each allocation.
 	BootInterface string
 	TargetDisks   []string

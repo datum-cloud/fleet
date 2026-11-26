@@ -64,6 +64,23 @@ func checkDisks(work *site.Work, disks []string) *custody.Refusal {
 	return nil
 }
 
+// wipeDisks requires every planned drive to be an enrolled disk. A plan may
+// cover fewer than all of them once staff disposed of a drive.
+func wipeDisks(work *site.Work, disks []string) *custody.Refusal {
+	if connection(work) == nil {
+		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "this site does not run the simulator"}
+	}
+	for _, disk := range disks {
+		if !slices.Contains(connection(work).Target.Disks, disk) {
+			return &custody.Refusal{Reason: custody.ReasonTargetDisks, Message: "drive " + disk + " is not one of the site's enrolled disks"}
+		}
+	}
+	if len(disks) == 0 {
+		return &custody.Refusal{Reason: custody.ReasonTargetDisks, Message: "the wipe plans no drive"}
+	}
+	return nil
+}
+
 // Installation is the simulator's DeviceInstallation worker.
 type Installation struct{}
 
@@ -166,7 +183,7 @@ func (Wipe) Check(_ context.Context, work *site.Work) *custody.Refusal {
 	if !ok {
 		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "this site cleans only by overwriting every planned drive and reading it back"}
 	}
-	return checkDisks(work, names)
+	return wipeDisks(work, names)
 }
 
 func (Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
