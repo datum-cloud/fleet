@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
@@ -75,6 +76,11 @@ func (b BootAttachments) Requester(api client.Client, namespace, kind string) bo
 		b.Namespace = namespace
 	}
 	return b
+}
+
+// ClaimKind is NSO's NetworkInterfaceClaim.
+func (BootAttachments) ClaimKind() schema.GroupKind {
+	return schema.GroupKind{Group: BootClaimGroup, Kind: BootClaimKind}
 }
 
 // AttachesBootNIC marks the source as the one that moves boot NICs.

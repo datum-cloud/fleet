@@ -138,6 +138,13 @@ new claim kind and its check. The coordinator must gain the check before any
 requester uses the new source, or it fails the new kind's operations with
 `UnsupportedBootAddressClaim`.
 
+Switching a requester to another source changes only where new claims go.
+Each claim an operation already holds is released, listed and verified
+through the source of its own claim kind. IPAM's claimer always takes part as
+the default, so an IPAM claim made before the switch is still released only
+once IPAM's claim is gone and no `IPAllocation` names it, and release does not
+finish while it remains. Each source touches only its own kind's claims.
+
 ### The NSO boot attachment source
 
 A second source attaches the boot NIC through NSO and takes the address from

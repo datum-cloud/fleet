@@ -153,6 +153,9 @@ type Source interface {
 	// Operations returns the operations of the source's kind in an
 	// allocation that still hold a claim.
 	Operations(ctx context.Context, allocation string) ([]string, error)
+	// ClaimKind is the API group and kind of the claims the source makes,
+	// as an operation's boot network input names them.
+	ClaimKind() schema.GroupKind
 }
 
 var _ Source = Claimer{}
@@ -190,6 +193,9 @@ func (c Claimer) Requester(api client.Client, namespace, kind string) Source {
 // Attach does nothing: the site attaches boot NICs to its provisioning
 // network itself.
 func (c Claimer) Attach(context.Context, *fleetv1.MachineAllocation, string) error { return nil }
+
+// ClaimKind is IPAM's IPClaim.
+func (Claimer) ClaimKind() schema.GroupKind { return GVK.GroupKind() }
 
 // Detach does nothing, and reports the boot NIC detached, for the same
 // reason.

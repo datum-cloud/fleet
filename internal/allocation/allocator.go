@@ -24,6 +24,7 @@ import (
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -122,7 +123,10 @@ type Allocator struct {
 	// claims its provisioning address when the site's DHCP is synchronized.
 	// IPAM's bootaddress.Claimer is the default source. Each requester uses
 	// it with its own client. Nil means the site's DHCP is configured
-	// independently of Fleet.
+	// independently of Fleet. New claims go through it; claims an operation
+	// already holds are released through the source of their claim kind, so
+	// after a switch to another source IPAM's claims are still released by
+	// IPAM's verified release.
 	BootAddresses bootaddress.Source
 }
 
@@ -394,6 +398,28 @@ func (a *Allocator) claims(api client.Client, kind string) bootaddress.Source {
 		return nil
 	}
 	return a.BootAddresses.Requester(api, a.Namespace, kind)
+}
+
+// releaseSources returns, by claim kind, every source whose claims a
+// requester may still hold: the configured source, and IPAM's claimer, which
+// is the default and so holds the claims made before a switch. Each is the
+// requester's own. It is empty when the site's DHCP is not synchronized.
+func (a *Allocator) releaseSources(api client.Client, kind string) []bootaddress.Source {
+	if a.BootAddresses == nil {
+		return nil
+	}
+	byKind := map[schema.GroupKind]bootaddress.Source{bootaddress.GVK.GroupKind(): bootaddress.Claimer{}}
+	byKind[a.BootAddresses.ClaimKind()] = a.BootAddresses
+	kinds := make([]schema.GroupKind, 0, len(byKind))
+	for claimKind := range byKind {
+		kinds = append(kinds, claimKind)
+	}
+	sort.Slice(kinds, func(i, j int) bool { return kinds[i].String() < kinds[j].String() })
+	sources := make([]bootaddress.Source, 0, len(kinds))
+	for _, claimKind := range kinds {
+		sources = append(sources, byKind[claimKind].Requester(api, a.Namespace, kind))
+	}
+	return sources
 }
 
 // bootNetwork attaches the operation's boot NIC, then claims its boot

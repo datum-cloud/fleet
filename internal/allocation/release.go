@@ -99,7 +99,8 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 
 // releaseBootAddresses releases the boot addresses, then detaches the boot
 // NICs, of the allocation's ended operations, each with its requester's
-// client, and reports whether none remain. An operation's claims count as
+// client and through the source of its claim's kind, and reports whether
+// none remain of any kind. An operation's claims count as
 // gone only once both are verified. A held operation keeps its claim, because a silent DHCP
 // instance may still serve its address, and so does an operation not yet
 // created. The hold names the held operation, and, after a retry that also
@@ -110,17 +111,19 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 // is held or can still be created.
 func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, all bool) (bool, error) {
 	none := true
-	for _, pair := range []struct {
+	type requester struct {
 		claimer bootaddress.Source
 		api     client.Client
 		new     func() ops.Operation
-	}{
-		{a.installClaims(), a.Provider, func() ops.Operation { return &ops.DeviceInstallation{} }},
-		{a.wipeClaims(), a.Releaser, func() ops.Operation { return &ops.DeviceWipe{} }},
-	} {
-		if pair.claimer == nil {
-			continue
-		}
+	}
+	var pairs []requester
+	for _, claimer := range a.releaseSources(a.Provider, "DeviceInstallation") {
+		pairs = append(pairs, requester{claimer, a.Provider, func() ops.Operation { return &ops.DeviceInstallation{} }})
+	}
+	for _, claimer := range a.releaseSources(a.Releaser, "DeviceWipe") {
+		pairs = append(pairs, requester{claimer, a.Releaser, func() ops.Operation { return &ops.DeviceWipe{} }})
+	}
+	for _, pair := range pairs {
 		operations, err := pair.claimer.Operations(ctx, allocation.Name)
 		if err != nil {
 			return false, err
