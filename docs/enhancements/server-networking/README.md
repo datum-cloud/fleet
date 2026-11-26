@@ -356,7 +356,12 @@ and reports to that site alone. It has these parts:
   its name. Removing a name is the only way to stop the withdrawal proof from
   waiting on that instance, and an operator removes it only after that
   instance is stopped and out of the load balancer, so a removed instance can
-  never answer with a reservation the proof no longer watches.
+  never answer with a reservation the proof no longer watches. Fleet enforces
+  the order where it can see it: the feed records every request from an
+  undeclared name, and the withdrawal proof does not pass while a removed
+  instance still contacts the feed. The feed cannot see the cluster's Pods,
+  so an instance whose synchronizer stopped while Kea keeps serving is not
+  detected; for that case the order still rests on the operator.
 - **Replies.** Kea answers each request at the relay address the request
   carries, on UDP port 67. The central cluster must route to every relay
   address, and each relay must accept replies from the cluster's egress
