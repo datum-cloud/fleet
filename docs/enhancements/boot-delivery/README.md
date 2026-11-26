@@ -547,18 +547,24 @@ The requester deletes an operation's claims in every other case too, as
 [#186][server-networking-pr] does for boot claims:
 
 - **Failed or cancelled.** Nothing was sent, so both claims are deleted.
-- **Never created.** The requester deletes every claim, one or two, labeled
-  with an operation that still does not exist five minutes after the first
-  claim was created. A slow requester whose claims were deleted is refused at
-  admission, so the cleanup never races an effect.
+- **Never created.** A requester creates an operation only within five
+  minutes of its first claim. Past that it abandons the name and starts again
+  under a new one. The requester also sweeps when it starts and then
+  periodically: it deletes every claim, one or two, labeled with an operation
+  that still does not exist five minutes after the first claim. A requester
+  that crashed therefore cleans up after itself when it restarts. Because no
+  requester creates an operation after five minutes, the sweep cannot delete
+  claims under an operation that is about to be admitted. If claims are
+  missing anyway, admission refuses the operation and nothing is sent.
 - **Held.** The held claims stay, and the port stays on the provider network,
   until a settling operation is admitted. Admission raises the fence, so the
   held worker stops and the first-boot service refuses the held operation.
   The settling worker powers the server off and ejects every medium before it
-  prepares its own delivery, and the requester then deletes the held
-  attachment claim. The port stays attached under the settling operation's
-  own claim. The held address claim is deleted with the settling operation's
-  own, only after its release proves no attachment claim left.
+  prepares its own delivery. The settling operation's requester then deletes
+  the held attachment claim, which it finds through the hold. The port stays
+  attached under the settling operation's own claim. The held address claim
+  is deleted with the settling operation's own, only after its release proves
+  no attachment claim left.
 - **Retry.** A custody `Retry` creates a new operation with a new name, so it
   gets a new claim pair.
 - **Retired.** Retiring the Device deletes any claims left.
@@ -675,8 +681,9 @@ These tests are required and not implemented:
 - A wipe sends no report and ends `OutcomeUnknown`. When a settling wipe is
   admitted, the held operation's late report is refused, and the held address
   claim is deleted only after the settling wipe proves the port detached.
-- A requester creates one claim and crashes. The claim is deleted after five
-  minutes, and an operation created later is refused at admission.
+- A requester creates one claim and crashes. After it restarts, its sweep
+  deletes the claim once five minutes have passed, and it never creates that
+  operation.
 - A wipe that fails before sending anything leaves no claims behind.
 - A second first-boot report for the same operation is refused, and the first
   result stands.
