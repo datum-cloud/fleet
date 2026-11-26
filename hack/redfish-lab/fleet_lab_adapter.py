@@ -12,9 +12,9 @@ authentication. This module, loaded into the same Flask process, adds only:
     persistent libvirt domain per System, and PowerState read from libvirt;
   * Boot source override (Pxe or Hdd, Once) persisted like BMC NVRAM and
     consumed when the domain is started;
-  * a Storage collection with one Drive per System: the target's disk, with a
-    fixed lab serial number and its size. The emulator's SimpleStorage
-    reports only a capacity;
+  * a Storage collection with one Drive per System: the target's emulated
+    NVMe drive, with its fixed serial number and size. The emulator's
+    SimpleStorage reports only a capacity;
   * an append-only request audit log (no bodies, no credentials);
   * bounded, one-shot lab fault injection driven by a state file.
 
@@ -115,17 +115,24 @@ class LibvirtError(Exception):
 
 def domain_xml(t, boot):
     # Persistent lab target: fixed UUID, MAC, disk and console. Only the boot
-    # device changes, from the Redfish boot override at power-on.
-    return ("<domain type='qemu'><name>{domain}</name><uuid>{uuid}</uuid><memory unit='MiB'>2048</memory><vcpu>2</vcpu>"
+    # device changes, from the Redfish boot override at power-on. The disk is
+    # an emulated NVMe drive with the target's fixed serial number, attached
+    # with QEMU arguments because this libvirt has no NVMe disk bus, so libvirt
+    # neither labels nor chowns the disk file: the lab's libvirt runs QEMU as
+    # root with no security driver. libvirt 9.0 emits -boot strict=on and gives
+    # the NIC boot index 1 for a network boot; the drive's boot index 2 keeps it
+    # bootable in both modes.
+    return ("<domain type='qemu' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'><name>{domain}</name><uuid>{uuid}</uuid><memory unit='MiB'>2048</memory><vcpu>2</vcpu>"
             "<cpu><topology sockets='1' cores='2' threads='1'/></cpu><features><acpi/><apic/></features>"
             "<os><type arch='x86_64' machine='pc'>hvm</type><boot dev='{boot}'/></os>"
             "<on_poweroff>destroy</on_poweroff><on_reboot>destroy</on_reboot><on_crash>destroy</on_crash>"
             "<devices><emulator>/usr/bin/qemu-system-x86_64</emulator>"
-            "<disk type='file' device='disk'><driver name='qemu' type='raw' discard='unmap' detect_zeroes='unmap'/>"
-            "<source file='{disk}'/><target dev='vda' bus='virtio'/></disk>"
             "<interface type='network'><source network='" + NETWORK + "'/><mac address='{mac}'/><model type='e1000'/></interface>"
             "<serial type='file'><source path='{console}' append='on'/><target port='0'/></serial>"
-            "</devices></domain>").format(boot=boot, **t)
+            "</devices><qemu:commandline>"
+            "<qemu:arg value='-drive'/><qemu:arg value='file={disk},if=none,id=lab-disk,format=raw,discard=unmap,detect-zeroes=unmap'/>"
+            "<qemu:arg value='-device'/><qemu:arg value='nvme,serial={diskSerial},drive=lab-disk,bootindex=2'/>"
+            "</qemu:commandline></domain>").format(boot=boot, **t)
 
 
 def network_xml(targets, boot_ip):
@@ -305,13 +312,13 @@ def create_app(targets, state, credentials, boot_ip):
         return None
 
     def storage(sid, one, drive):
-        """The lab target's one disk. Protocol and media type are absent: a
-        virtio disk is neither NVMe nor SATA, so the lab does not claim one."""
+        """The lab target's one emulated NVMe drive."""
         base = '/redfish/v1/Systems/%s/Storage' % sid
         if drive:
             t = targets[sid]
             return {'@odata.id': base + '/1/Drives/0', '@odata.type': '#Drive.v1_17_0.Drive', 'Id': '0', 'Name': 'Lab disk',
-                    'SerialNumber': t['diskSerial'], 'Model': 'Fleet lab virtio disk', 'Revision': 'lab', 'CapacityBytes': LAB_DISK_BYTES}, 200
+                    'SerialNumber': t['diskSerial'], 'Model': 'QEMU NVMe Ctrl', 'Revision': 'lab', 'Protocol': 'NVMe', 'MediaType': 'SSD',
+                    'CapacityBytes': LAB_DISK_BYTES}, 200
         if one:
             return {'@odata.id': base + '/1', '@odata.type': '#Storage.v1_15_0.Storage', 'Id': '1', 'Name': 'Lab storage',
                     'Drives': [{'@odata.id': base + '/1/Drives/0'}]}, 200

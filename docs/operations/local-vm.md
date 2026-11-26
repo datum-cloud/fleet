@@ -62,7 +62,7 @@ network boot, with no libvirt kernel, initrd or disk-boot shortcut in PXE mode.
 The installer partitions and formats an empty 2 GiB disk, copies its Linux
 filesystem, installs GRUB, and writes the operation's random receipt onto the
 disk. A separate boot uses only that disk: no external kernel, initrd or
-installer medium. Its one-shot init script checks that `/` is `/dev/vda1` ext4,
+installer medium. Its one-shot init script checks that `/` is the disk's first partition, ext4,
 prints the receipt on the serial console, and powers off. Installer exit,
 QEMU running, an old receipt, or missing evidence never counts as installed.
 There is no ongoing guest agent. The installer also accepts `fleet.mode=wipe`,

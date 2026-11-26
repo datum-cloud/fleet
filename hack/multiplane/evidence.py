@@ -271,7 +271,9 @@ def redfish_provider():
                 fail('missing completed boot delivery of %s for %s' % (name, o['kind']))
     if expected != sorted(expected) or sum(1 for l in console if l.startswith('FLEET-')) != len(expected):
         fail('console receipts are out of order or include another operation')
-    if sum(1 for l in console if l.startswith('+ sfdisk /dev/vda')) != 2:
+    # Redfish lab targets have one emulated NVMe drive (local VM targets keep
+    # virtio, checked above).
+    if sum(1 for l in console if l.startswith('+ sfdisk /dev/nvme0n1')) != 2:
         fail('the installer partitioned the target disk other than once per install')
     qemu = (raw / 'libvirt-qemu' / 'fleet-lab-target-a.log').read_text(errors='replace')
     blocks = re.split(r'^\S+ \S+: starting up ', qemu, flags=re.M)[1:]

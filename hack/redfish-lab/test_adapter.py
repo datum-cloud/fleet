@@ -58,13 +58,24 @@ class AdapterTest(unittest.TestCase):
         info = self.app.get(s['Actions']['#ComputerSystem.Reset']['@Redfish.ActionInfo'], headers=AUTH).json
         self.assertEqual(info['Parameters'][0]['AllowableValues'], ['On', 'ForceOff', 'ForceRestart'])
 
+    def test_3a_lab_domain_has_one_emulated_nvme_drive(self):
+        for t in adapter.load_targets().values():
+            for boot in ('network', 'hd'):
+                xml = adapter.domain_xml(t, boot)
+                self.assertIn("xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'", xml)
+                self.assertIn('nvme,serial=%s,drive=lab-disk,bootindex=2' % t['diskSerial'], xml)
+                self.assertIn('file=%s,if=none,id=lab-disk,format=raw' % t['disk'], xml)
+                self.assertNotIn('<disk', xml)
+                self.assertIn("<boot dev='%s'/>" % boot, xml)
+            self.assertLessEqual(len(t['diskSerial']), 20)
+
     def test_3b_storage_reports_the_lab_disk(self):
         s = self.app.get('/redfish/v1/Systems/System-2', headers=AUTH).json
         collection = self.app.get(s['Storage']['@odata.id'], headers=AUTH).json
         storage = self.app.get(collection['Members'][0]['@odata.id'], headers=AUTH).json
         drive = self.app.get(storage['Drives'][0]['@odata.id'], headers=AUTH).json
         self.assertEqual((drive['SerialNumber'], drive['CapacityBytes']), ('FLEETLAB-DISK-B', 2 << 30))
-        self.assertNotIn('Protocol', drive)
+        self.assertEqual((drive['Protocol'], drive['MediaType']), ('NVMe', 'SSD'))
         self.assertEqual(self.app.get(storage['Drives'][0]['@odata.id']).status_code, 401)
         self.assertEqual(self.app.patch(storage['Drives'][0]['@odata.id'], json={}, headers=AUTH).status_code, 405)
 

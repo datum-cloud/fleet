@@ -8,7 +8,18 @@ exec >/dev/ttyS0 2>&1
 set -exo pipefail
 modprobe virtio_pci
 modprobe virtio_blk
+# Local VM targets have no NVMe drive; a kernel without the module still
+# installs onto virtio.
+modprobe nvme || true
 modprobe ext4
+# The Redfish lab's targets have one emulated NVMe drive; local VM targets
+# have one virtio disk.
+disk=vda part=vda1
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+ if [ -b /dev/nvme0n1 ]; then disk=nvme0n1 part=nvme0n1p1; break; fi
+ if [ -b /dev/vda ]; then break; fi
+ sleep 1
+done
 mode=install
 for arg in $(cat /proc/cmdline); do case "$arg" in fleet.receipt=*) receipt=${arg#fleet.receipt=};; fleet.mode=*) mode=${arg#fleet.mode=};; esac; done
 [ ${#receipt} = 64 ] || /bin/busybox poweroff -f
@@ -17,8 +28,8 @@ if [ "$mode" = wipe ]; then
  # reading it back. The receipt is printed only after the readback compared
  # equal. This is a logical overwrite of a virtual disk, not media sanitization.
  trap '/bin/busybox poweroff -f' EXIT
- size=$(($(cat /sys/block/vda/size) * 512))
- dd if=/dev/zero of=/dev/vda bs=4M count=$((size / 4194304)) conv=fsync
+ size=$(($(cat /sys/block/$disk/size) * 512))
+ dd if=/dev/zero of=/dev/$disk bs=4M count=$((size / 4194304)) conv=fsync
  sync
  echo 3 > /proc/sys/vm/drop_caches
  # This static BusyBox shell runs its own applets first. BusyBox cmp limits -n
@@ -26,7 +37,7 @@ if [ "$mode" = wipe ]; then
  off=0
  while [ "$off" -lt "$size" ]; do
   n=$((size - off)); [ "$n" -le 1073741824 ] || n=1073741824
-  /bin/busybox cmp -n "$n" /dev/vda /dev/zero "$off" 0 || exit 1
+  /bin/busybox cmp -n "$n" /dev/$disk /dev/zero "$off" 0 || exit 1
   off=$((off + n))
  done
  printf 'FLEET-WIPED:%s:%s\n' "$receipt" "$size"
@@ -34,10 +45,10 @@ if [ "$mode" = wipe ]; then
  exit 0
 fi
 [ "$mode" = install ] || /bin/busybox poweroff -f
-printf 'label: dos\n, , L, *\n' | sfdisk /dev/vda
-mkfs.ext4 -F /dev/vda1
+printf 'label: dos\n, , L, *\n' | sfdisk /dev/$disk
+mkfs.ext4 -F /dev/$part
 mkdir -p /target
-mount /dev/vda1 /target
+mount /dev/$part /target
 # The payload is this pinned installer filesystem; exclude virtual mounts.
 /bin/tar -cf - --exclude=./target --exclude=./proc --exclude=./sys --exclude=./dev --exclude=./out . | /bin/tar -xf - -C /target
 mkdir -p /target/dev /target/proc /target/sys
@@ -45,13 +56,13 @@ mount --bind /dev /target/dev
 mount --bind /proc /target/proc
 mount --bind /sys /target/sys
 printf '%s\n' "$receipt" > /target/fleet-receipt
-chroot /target grub-install --target=i386-pc /dev/vda
+chroot /target grub-install --target=i386-pc /dev/$disk
 kernel=$(basename /boot/vmlinuz-*)
 initrd=$(basename /boot/initrd.img-*)
 cat > /target/boot/grub/grub.cfg <<CFG
 set timeout=0
 menuentry Fleet {
- linux /boot/$kernel root=/dev/vda1 ro console=ttyS0 init=/fleet-boot
+ linux /boot/$kernel root=/dev/$part ro console=ttyS0 init=/fleet-boot
  initrd /boot/$initrd
 }
 CFG
