@@ -22,8 +22,9 @@ for arg in "$@"; do
   # and its lab adapter (docs/operations/redfish-lab.md).
   --redfish) provider=redfish ;;
   # Synchronized DHCP: the site's Kea, fed by Fleet's reservation feed, is the
-  # lab bridge's only DHCP server, and boot addresses come from a synthetic
-  # IPAM stand-in (docs/operations/redfish-lab.md).
+  # lab bridge's only DHCP server, and boot addresses come from IPAM
+  # (milo-os/ipam) aggregated by the provider Milo API
+  # (docs/operations/redfish-lab.md).
   --synced-dhcp) lab_dhcp=synced ;;
   *) usage ;;
  esac

@@ -96,8 +96,18 @@ markers = ('custody-crd-rules: the provider project API refused every forbidden 
            'flux-retention: removing the volume claim', 'flux-final: platform, hub and cell Ready', 'one writer per site object') + tuple(m + ': management rejected' for m in REFLECTION_FAULTS)
 if SYNCED:
     markers += ('redfish-dhcp-synced: ',)
+    markers += ('ipam: milo-os/ipam v0.6.0 aggregated by the provider Milo API', 'IPAM allocated every leased address')
     if not (s / 'evidence' / 'redfish-dhcp.json').exists():
         fail('synchronized lab DHCP left no redfish-dhcp.json evidence')
+    if not (s / 'evidence' / 'ipam.json').exists():
+        fail('synchronized lab DHCP left no ipam.json evidence')
+    dhcp = json.loads((s / 'evidence' / 'redfish-dhcp.json').read_text())
+    published = [o for o in dhcp['operations'] if o.get('published')]
+    if not published or any(not o.get('ipam') or o['ipam']['claim'] != o['name'] + '-boot' or o['ipam']['allocationClaimRef'] != o['ipam']['claim']
+                            or o['ipam']['allocatedCIDR'] != o['address'] + '/32' for o in published):
+        fail('an operation booted without IPAM allocating its address to its own claim')
+    if dhcp.get('claimsRemaining') != 0 or dhcp.get('allocationsRemaining') != 0:
+        fail('IPAM still held boot address claims or allocations after the run')
 if REDFISH:
     markers += ('bmc-upstream: DMTF Redfish-Interface-Emulator 1.2.2 archive verified', 'bmc-self-test: upstream emulator and lab adapter self-test passed',
                 'redfish-enroll: synthetic per-Device BMC credentials', 'redfish-baseline: both lab target disks present', 'redfish-discovery-faults: real emulator discovery',
@@ -492,11 +502,18 @@ if REDFISH:
     summary['seams'] = [x for x in summary['seams'] if 'root libvirtd' not in x] + [
         'DMTF Redfish Interface Emulator with a lab-only adapter in place of a physical BMC; libvirt/QEMU TCG VMs in place of servers',
         'Basic authentication over TLS pinned to a lab key generated per run, with synthetic per-Device credential Secrets enrolled by the harness (no rotation or vault)',
-        ('synchronized lab DHCP: Kea in the runtime Pod fed by the site reservation feed, boot addresses from a synthetic IPAM stand-in, no relay or switch'
+        ('synchronized lab DHCP: Kea in the runtime Pod fed by the site reservation feed, boot addresses from IPAM (milo-os/ipam v0.6.0, its own PostgreSQL, quota off) '
+         'aggregated by the provider Milo API with a bootstrap-marked Available APIService, no relay or switch'
          if SYNCED else 'static lab provisioning network (libvirt dnsmasq)') + ' with MAC-chained iPXE; MAC is routing, not authentication',
         'installation receipts read from a read-only serial-console capture (stand-in for SOL or an installer callback)',
         'trusted graph authors: worker Jobs list the site BMC credential Secrets; only the runtime and the lab BMC hold the libvirt socket',
         'one allocatable lab target; the site store fences each Device separately']
+    if SYNCED:
+        service = json.loads((ev / 'ipam.json').read_text())
+        summary['scenarios']['bootAddresses'] = {'evidence': ['ipam.json', 'redfish-dhcp.json'], 'ipam': service['service'], 'image': service['image'], 'imageID': service['imageID'],
+                                                 'storage': service['storage'], 'quota': service['quota'], 'pool': service['pool']['spec']['cidr'],
+                                                 'operations': [{k: o[k] for k in ('kind', 'name', 'address')} | {'allocation': o['ipam']['allocation']} for o in published],
+                                                 'claimsRemaining': 0, 'allocationsRemaining': 0, 'poolCapacityAfter': dhcp['poolCapacityAfter']}
 (ev / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
 for name in ('source-SHA256SUMS', 'sysctl.json'):
     if (s / name).exists():

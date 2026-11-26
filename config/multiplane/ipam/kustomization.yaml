@@ -1,0 +1,11 @@
+# IPAM's namespace and its own PostgreSQL, beside the provider project's Milo
+# API (synchronized lab DHCP mode only). The IPAM apiserver itself comes from
+# IPAM's published manifests (config/multiplane/clusters/platform-ipam).
+# Bootstrap enrolls the database password, IPAM's serving key and its Milo
+# credentials as Secrets; none is in the source.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - networkpolicy.yaml

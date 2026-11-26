@@ -105,6 +105,25 @@ SYNCED_OBJECTS = ['fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_flee
 if LAB_DHCP == 'synced':
     SHARED.update({('configmaps', SITE, 'fleet-site-dhcp-base'): 'fleet-site-services', ('services', SITE, 'fleet-site-dhcp-feed'): 'fleet-site-services',
                    ('configmaps', SITE, 'fleet-site-redfish-enrollment'): 'fleet-site-services'})
+# Synced mode also runs IPAM (milo-os/ipam v0.6.0) on the platform cluster,
+# aggregated by the provider project's Milo API: its namespace and PostgreSQL
+# from this source, and its apiserver from IPAM's published manifests. The
+# published auth-reader RoleBinding renders into ipam-system, not kube-system,
+# so it grants nothing; it is inert here because IPAM reads Milo's
+# extension-apiserver-authentication through its authentication kubeconfig.
+IPAM_KUSTOMIZE_DIGEST = 'sha256:62305dde600b8efa10a68a786e60b2e826837897cd93378c9e94d7adbff3f647'
+IPAM_IMAGE = 'ghcr.io/milo-os/ipam@sha256:18d472179ddff8db77a812fd0f0874248dd08e5a2425197152cc4cc2e9a7ce0d'
+PLATFORM_LAYER_INVENTORY = {
+    'flux-system/ipam-system': sorted(['_ipam-system__Namespace', 'ipam-system_ipam-postgres__Service', 'ipam-system_ipam-postgres_apps_StatefulSet',
+                                       'ipam-system_ipam-apiserver-milo_networking.k8s.io_NetworkPolicy']),
+    'flux-system/ipam-apiserver': sorted(['ipam-system_ipam-apiserver__ServiceAccount', '_ipam-apiserver_rbac.authorization.k8s.io_ClusterRole',
+                                          'ipam-system_ipam-apiserver-auth-reader_rbac.authorization.k8s.io_RoleBinding',
+                                          '_ipam-apiserver_rbac.authorization.k8s.io_ClusterRoleBinding',
+                                          '_ipam-apiserver:system:auth-delegator_rbac.authorization.k8s.io_ClusterRoleBinding',
+                                          'ipam-system_ipam-apiserver__Service', 'ipam-system_ipam-apiserver_apps_Deployment',
+                                          'ipam-system_ipam-apiserver_policy_PodDisruptionBudget', 'ipam-system_ipam-apiserver_networking.k8s.io_NetworkPolicy']),
+} if LAB_DHCP == 'synced' else {}
+EXPECTED['platform'] += list(PLATFORM_LAYER_INVENTORY)
 LAYER_INVENTORY = {
     'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap',
                                                'fleet-site_fleet-site-runtime_apps_Deployment', 'fleet-site_fleet-site-boot_apps_Deployment',
@@ -268,6 +287,8 @@ def stage(args):
         data = {'FLEET_CELL': env['cell'], 'FLEET_CELL_ENDPOINT': env['cellEndpoint'], 'FLEET_SOURCE_MARKER': marker}
         maps = []
         patches = []
+        if cluster == 'platform' and LAB_DHCP == 'synced':
+            resources.insert(2, '../../config/multiplane/clusters/platform-ipam')
         if cluster == 'hub':
             # Karmada-API Kustomizations live beside their kubeconfig Secret.
             maps.append(config_map('fleet-environment', 'karmada-system', data))
@@ -674,6 +695,19 @@ def verify(args):
     karmada_hist = (hub['helmReleases'].get('flux-system/karmada', {}).get('history') or [{}])[0]
     if karmada_hist.get('chartVersion') != 'v1.16.0' or karmada_hist.get('status') != 'deployed':
         problems.append('karmada release history: %s' % karmada_hist)
+    if PLATFORM_LAYER_INVENTORY:
+        platform = snaps['platform']
+        ipam_src = platform['sources'].get('flux-system/ipam-kustomize', {})
+        if (ipam_src.get('ref') or {}).get('digest') != IPAM_KUSTOMIZE_DIGEST or not str(ipam_src.get('artifactRevision', '')).endswith(IPAM_KUSTOMIZE_DIGEST):
+            problems.append('IPAM manifests source not at pinned digest: %s' % ipam_src)
+        for layer, expected in PLATFORM_LAYER_INVENTORY.items():
+            got = platform['kustomizations'].get(layer, {}).get('inventory')
+            if got != expected:
+                problems.append('%s inventory is not exactly %s: %s' % (layer, expected, got))
+        images = sorted({c['image'] for p in kget(s, 'platform', '-n', 'ipam-system', 'get', 'pods', '-l', 'app=ipam-apiserver')['items']
+                         for c in p['spec']['containers'] + p['spec'].get('initContainers', [])})
+        if images != [IPAM_IMAGE]:
+            problems.append('IPAM Pods do not run only the pinned image %s: %s' % (IPAM_IMAGE, images))
     # Ownership: Flux layers own the shared site; kro alone owns per-operation workers.
     owners, owner_problems = ownership(s, snaps)
     problems += owner_problems

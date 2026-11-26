@@ -16,10 +16,17 @@ never the BMC credential, boot capabilities or request bodies.
                       the replacement observed the target instead of repeating it
   bmc-interrupt       delete the BMC Pod mid-installer; the guest keeps running
   isolation           target B untouched, target A disk verifiably zeroed
+  ipam-watch          synced DHCP only, in the background for the whole run:
+                      sample IPAM's claims and allocations in the provider
+                      project, so dhcp-synced can show what IPAM held during
+                      each boot after the claims are gone
+  dhcp-synced         synced DHCP: boot addresses, reservations, Kea leases
+                      and IPAM's allocations agree, and nothing remains held
 """
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 import secrets
 import socket
@@ -417,7 +424,99 @@ def isolation(s):
     print('redfish-isolation: target B never started, never received a Redfish effect and its disk is unchanged; target A disk independently hashes as all zeroes after the final cleanup')
 
 
+# What the lab IPAM pool can allocate: 192.168.77.0/24 less 100 leading and
+# 56 trailing reserved addresses (milo.py).
 LAB_IPAM_FIRST, LAB_IPAM_LAST = '192.168.77.100', '192.168.77.199'
+LAB_POOL = {'total': '256', 'allocated': '156', 'available': '100'}
+IPAM_KINDS = 'ipclaims.ipam.miloapis.com,ipallocations.ipam.miloapis.com'
+
+
+def ipam_sample(s):
+    """One read, through the provider project, of IPAM's boot address claims
+    and the allocations it holds for them."""
+    try:
+        r = subprocess.run(['kubectl', '--kubeconfig', str(s / 'provider' / 'bootstrap-project.json'), '--request-timeout=10s', '-n', 'fleet-provider',
+                            'get', IPAM_KINDS, '-o', 'json'], text=True, capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return {'error': 'timed out'}
+    if r.returncode:
+        return {'error': r.stderr.strip()[-200:]}
+    items = json.loads(r.stdout)['items']
+    status = lambda i: i.get('status') or {}
+    return {'claims': sorted(({'name': i['metadata']['name'], 'phase': status(i).get('phase'), 'address': status(i).get('address'),
+                               'allocation': (status(i).get('boundAllocationRef') or {}).get('name')} for i in items if i['kind'] == 'IPClaim'), key=lambda c: c['name']),
+            'allocations': sorted(({'name': i['metadata']['name'], 'claim': ((i.get('spec') or {}).get('claimRef') or {}).get('name'), 'cidr': status(i).get('allocatedCIDR'),
+                                    'phase': status(i).get('phase')} for i in items if i['kind'] == 'IPAllocation'), key=lambda a: a['name'])}
+
+
+def ipam_watch(s):
+    """Sample IPAM every two seconds until the acceptance script that started
+    this exits. Consecutive equal samples collapse into one state that held
+    from its first to its last sample."""
+    parent, path, states = os.getppid(), s / 'redfish' / 'ipam-observations.json', []
+    while os.getppid() == parent:
+        at_ = now()
+        try:
+            sample = ipam_sample(s)
+        except Exception as e:  # recorded, never fatal: a gap is visible as an error sample
+            sample = {'error': repr(e)[-200:]}
+        if states and states[-1]['sample'] == sample:
+            states[-1]['to'] = at_
+        else:
+            states.append({'from': at_, 'to': at_, 'sample': sample})
+        try:
+            part = path.with_suffix('.part')
+            part.write_text(json.dumps(states))
+            part.replace(path)
+        except OSError:
+            pass  # the next write carries every state; dhcp-synced checks freshness
+        time.sleep(2)
+
+
+def ipam_held(sample, claim, address):
+    """The allocation name if the sample shows the claim bound to address and
+    an allocation that names the claim back and holds exactly address/32."""
+    c = next((c for c in sample.get('claims', []) if c['name'] == claim), None)
+    if not c or c['phase'] != 'Bound' or c['address'] != address or not c['allocation']:
+        return None
+    a = next((a for a in sample['allocations'] if a['name'] == c['allocation']), None)
+    return a['name'] if a and a['claim'] == claim and a['cidr'] == address + '/32' else None
+
+
+def ipam_record(states, claim, address, start, end):
+    """IPAM's record of the claim bound to address, and of the allocation that
+    claim names, held over start..end (epoch seconds). Either a sample inside
+    the window shows it, or, when IPAM could not be read inside the window,
+    samples just before and just after it show the same allocation with only
+    failed reads between: a claim is immutable and its allocation goes only
+    with it. None without one."""
+    def record(allocation, first, last):
+        return {'claim': claim, 'address': address, 'allocation': allocation, 'allocationClaimRef': claim, 'allocatedCIDR': address + '/32',
+                'observedFrom': first['from'], 'observedTo': last['to']}
+    before = None
+    for state in states:
+        sample, began, ended = state['sample'], at(state['from']).timestamp(), at(state['to']).timestamp()
+        held = ipam_held(sample, claim, address) if 'claims' in sample else None
+        if ended < start:
+            before = (held, state) if held else (None if 'claims' in sample else before)
+            continue
+        if began > end:
+            if held and before and before[0] == held:
+                return record(held, before[1], state)
+            return None
+        if held:
+            return record(held, state, state)
+        if 'claims' in sample:
+            # IPAM answered inside the window without the allocation.
+            before = None
+    return None
+
+
+def lease_owners(granted, windows):
+    """For each lease Kea granted (address, MAC, grant time), the operations
+    whose boot window contains it at that address. windows maps an operation
+    name to (address, start, end)."""
+    return [(lease, [n for n, (address, start, end) in windows.items() if address == lease[0] and start <= lease[2] <= end]) for lease in granted]
 
 
 def at(text):
@@ -435,7 +534,8 @@ def dhcp_synced(s):
     """Synchronized lab DHCP: every installation and wipe carried a boot address
     from its own IPAM claim, the site published its reservation for the boot
     NIC only while its boot was open, Kea answered the firmware with that
-    address, and the lab network had no DHCP of its own."""
+    address, IPAM held it for that operation's claim meanwhile, and the lab
+    network had no DHCP of its own."""
     if not synced(s):
         die('dhcp-synced runs only with --synced-dhcp')
     bootstrap = s / 'provider' / 'bootstrap-project.json'
@@ -468,6 +568,22 @@ def dhcp_synced(s):
     leftover = provider('get', 'ipclaims')
     if leftover:
         die('boot address claims remain after every release: %s' % [c['metadata']['name'] for c in leftover])
+    held = provider('get', 'ipallocations')
+    if held:
+        die('IPAM still holds allocations after every release: %s' % [(a['metadata']['name'], (a.get('spec', {}).get('claimRef') or {}).get('name')) for a in held])
+    # Only the pool's own reservations hold addresses now: no release leaked.
+    r = subprocess.run(['kubectl', '--kubeconfig', str(bootstrap), '--request-timeout=30s', 'get', 'ippool', 'lab-provisioning', '-o', 'json'], text=True, capture_output=True, timeout=60)
+    if r.returncode:
+        die('IPAM pool read failed: %s' % r.stderr.strip()[-300:])
+    capacity = (json.loads(r.stdout).get('status') or {}).get('capacity') or {}
+    if capacity != LAB_POOL:
+        die('the lab IPAM pool reports %s, want %s: only its reservations should hold addresses' % (capacity, LAB_POOL))
+    states = json.loads((s / 'redfish' / 'ipam-observations.json').read_text()) if (s / 'redfish' / 'ipam-observations.json').exists() else []
+    if not any('claims' in st['sample'] for st in states):
+        die('no IPAM sample was recorded during the run')
+    # The sampler ran to the end: its last state is recent.
+    if time.time() - at(states[-1]['to']).timestamp() > 60:
+        die('the IPAM sampler stopped at %s; its last sample was %s' % (states[-1]['to'], states[-1]['sample']))
 
     def run(*command, container='libvirt'):
         return kubectl(s, '-n', SITE, 'exec', 'deploy/fleet-site-runtime', '-c', container, '--', *command, check=False, timeout=120)
@@ -486,7 +602,11 @@ def dhcp_synced(s):
         die('Kea recorded no leases')
     answered = {(r.get('address'), r.get('hwaddr', '').lower()) for r in rows}
     # When Kea granted each lease: its expiry less its lifetime, in seconds.
-    granted = [(r['address'], r['hwaddr'].lower(), int(r['expire']) - int(r['valid_lifetime'])) for r in rows]
+    # A row with no lifetime records a released or deleted lease. Its grant
+    # time is unknown, so it is only counted among the answers; the row that
+    # granted the lease carries the grant time.
+    granted = [(r['address'], r['hwaddr'].lower(), int(r['expire']) - int(r['valid_lifetime'])) for r in rows if int(r['valid_lifetime'])]
+    windows = {}
     # An operation asked for a network boot once its power-on was journaled,
     # whether or not the boot server then served it.
     network_boots = {o['operation'] for o in journal(s) if any(n in ('installer-power-on', 'wipe-power-on') for n, _ in o['steps'])}
@@ -518,8 +638,14 @@ def dhcp_synced(s):
         # withdrew its reservation, with five seconds for clock rounding.
         start, end = opened.timestamp() - 5, at(withdrawn[0]['at']).timestamp() + 5
         leased = [g for a, m, g in granted if a == o['address'] and m == mac and start <= g <= end]
+        # IPAM allocated the address to this operation's own claim while its
+        # boot was open, as sampled by ipam-watch.
+        ipam = ipam_record(states, o['claim'], o['address'], start, end)
+        if not ipam:
+            die('%s %s: IPAM recorded no allocation of %s to claim %s during its boot' % (o['kind'], o['name'], o['address'], o['claim']))
+        windows[o['name']] = (o['address'], start, end)
         entry.update(published=True, servedAt=served[0]['at'], withdrawnAt=withdrawn[0]['at'], networkBoot=o['uid'] in network_boots,
-                     bootScriptDelivered='admitted boot.ipxe' in delivered, keaLeasesInWindow=len(leased))
+                     bootScriptDelivered='admitted boot.ipxe' in delivered, keaLeasesInWindow=len(leased), ipam=ipam)
         if entry['networkBoot'] and not leased:
             die('%s %s powered on for a network boot, but Kea leased %s no address %s during its boot' % (o['kind'], o['name'], mac, o['address']))
         if entry['bootScriptDelivered'] and not entry['networkBoot']:
@@ -527,6 +653,11 @@ def dhcp_synced(s):
         record['operations'].append(entry)
     if applied[-1]['feed']['reservations']:
         die('Kea still serves a reservation after the last operation ended')
+    # Every lease Kea granted falls in the boot window of an operation whose
+    # claim IPAM held that address for, so Kea served only IPAM's allocations.
+    for (address, hwaddr, grant), owners in lease_owners(granted, windows):
+        if not owners:
+            die('Kea leased %s to %s at %d outside every operation boot window with an IPAM allocation of it' % (address, hwaddr, grant))
     booted = [e for e in record['operations'] if e.get('networkBoot')]
     if sum(e['kind'] == 'DeviceWipe' for e in booted) < 2 or sum(e['kind'] == 'DeviceInstallation' for e in booted) < 2:
         die('expected Kea-leased network boots of two installations and two wipes, got %s' % [(e['kind'], e['name']) for e in booted])
@@ -537,11 +668,13 @@ def dhcp_synced(s):
     dnsmasq = run('sh', '-c', 'for p in /proc/[0-9]*/comm; do cat "$p" 2>/dev/null; done | grep -c dnsmasq; true').stdout.strip()
     if '<dhcp' in network or dnsmasq not in ('', '0'):
         die('the lab network still runs its own DHCP')
-    record.update(appliedReports=len(applied), keaLeases=len(rows), labNetworkDHCP=False, dnsmasqProcesses=0,
-                  claimsRemaining=0, distinctClaims=len(ops))
+    record.update(appliedReports=len(applied), keaLeases=len(rows), keaLeasesAttributed=len(granted), labNetworkDHCP=False, dnsmasqProcesses=0,
+                  claimsRemaining=0, allocationsRemaining=0, distinctClaims=len(ops), poolCapacityAfter=capacity,
+                  ipamSamples={'states': len(states), 'errors': sum('error' in st['sample'] for st in states), 'from': states[0]['from'], 'to': states[-1]['to']})
     write(s / 'evidence' / 'redfish-dhcp.json', record)
     print('redfish-dhcp-synced: %d operations each carried their own IPAM boot address; Kea served each reservation only after its boot opened and reported it withdrawn; '
-          'firmware leased each operation\'s address from Kea during its own boot (%d network boots, two installations and two wipes); the lab network had no DHCP; no claim remains'
+          'firmware leased each operation\'s address from Kea during its own boot (%d network boots, two installations and two wipes); IPAM allocated every leased address '
+          'to that operation\'s own claim during its boot; the lab network had no DHCP; no claim or allocation remains'
           % (len(ops), len(booted)))
 
 
@@ -562,4 +695,4 @@ if __name__ == '__main__':
     step, state = sys.argv[1], pathlib.Path(sys.argv[2])
     {'enroll': enroll, 'baseline': baseline, 'discovery-faults': discovery_faults, 'arm-lost-response': arm_lost_response,
      'lost-response': lost_response, 'bmc-interrupt': bmc_interrupt, 'isolation': isolation,
-     'audit-mark': audit_mark, 'audit-unchanged': audit_unchanged, 'dhcp-synced': dhcp_synced}[step](state)
+     'audit-mark': audit_mark, 'audit-unchanged': audit_unchanged, 'ipam-watch': ipam_watch, 'dhcp-synced': dhcp_synced}[step](state)

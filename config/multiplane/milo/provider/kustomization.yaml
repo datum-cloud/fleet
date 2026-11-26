@@ -11,3 +11,21 @@ patches:
       - op: replace
         path: /spec/ports/0/nodePort
         value: 30441
+  # The aggregation layer, as the platform's Milo runs it: Milo proxies
+  # aggregated APIs (IPAM, in synchronized lab DHCP mode) with a front-proxy
+  # client certificate, and the APIs trust its CA for the X-Remote-* identity
+  # headers, project extras included. Bootstrap enrolls the CA and client key
+  # in milo-apiserver-private; they are never in the source.
+  - target: {kind: Deployment, name: milo-apiserver}
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/0/name
+        value: apiserver
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --proxy-client-cert-file=/private/front-proxy-client.crt}
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --proxy-client-key-file=/private/front-proxy-client.key}
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --requestheader-client-ca-file=/private/front-proxy-ca.crt}
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --requestheader-allowed-names=fleet-front-proxy-client}
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --requestheader-username-headers=X-Remote-User}
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --requestheader-uid-headers=X-Remote-Uid}
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --requestheader-group-headers=X-Remote-Group}
+      - {op: add, path: /spec/template/spec/containers/0/args/-, value: --requestheader-extra-headers-prefix=X-Remote-Extra-}

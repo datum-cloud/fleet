@@ -1,0 +1,98 @@
+# Platform cluster, synchronized lab DHCP mode only (run.sh --synced-dhcp):
+# the IPAM service (milo-os/ipam v0.6.0) beside the provider project's Milo
+# API, which aggregates it as ipam.miloapis.com. IPAM's own published
+# manifests, pinned by digest, as the platform's Flux consumes them; the lab
+# patches below are the only changes. Bootstrap enrolls the credentials and
+# registers the APIService in the provider Milo API.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: ipam-kustomize, namespace: flux-system}
+spec:
+  interval: 1h
+  url: oci://ghcr.io/milo-os/ipam-kustomize
+  # v0.6.0 (revision v0.6.0@sha1:1f6f22938dd165e568bb0fb1e4c50167ab09d6ae).
+  ref:
+    digest: sha256:62305dde600b8efa10a68a786e60b2e826837897cd93378c9e94d7adbff3f647
+---
+# Namespace, IPAM's PostgreSQL and the NetworkPolicy toward Milo.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: ipam-system, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: fleet-gitops, namespace: flux-system}
+  path: ./config/multiplane/ipam
+---
+# IPAM's published base: the apiserver Deployment, Service, PDB,
+# NetworkPolicy and the host-cluster RBAC it ships with.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: ipam-apiserver, namespace: flux-system}
+spec:
+  interval: 10m
+  retryInterval: 30s
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef: {kind: OCIRepository, name: ipam-kustomize, namespace: flux-system}
+  path: ./base
+  targetNamespace: ipam-system
+  dependsOn:
+    - {name: ipam-system, namespace: flux-system}
+    - {name: milo-provider, namespace: flux-system}
+  images:
+    # ghcr.io/milo-os/ipam:v0.6.0 (multi-arch index).
+    - name: ghcr.io/milo-os/ipam
+      digest: sha256:18d472179ddff8db77a812fd0f0874248dd08e5a2425197152cc4cc2e9a7ce0d
+  patches:
+    # No cert-manager CSI driver in the lab: the serving key is a Secret
+    # enrolled by bootstrap, whose certificate is the APIService caBundle.
+    - target: {kind: Deployment, name: ipam-apiserver}
+      patch: |-
+        - op: test
+          path: /spec/template/spec/volumes/0/name
+          value: tls-certs
+        - op: replace
+          path: /spec/template/spec/volumes/0
+          value: {name: tls-certs, secret: {secretName: ipam-apiserver-tls, defaultMode: 288}}
+    # Delegate TokenReview and SubjectAccessReview to the provider Milo API,
+    # as the platform does, through a kubeconfig bootstrap enrolls. The
+    # control-plane-ca ConfigMap the base mounts holds Milo's front-proxy CA.
+    # The lab Milo serves no quota API, so quota is off. One replica and
+    # smaller requests fit the single platform node. Mode 288 is 0440: IPAM
+    # runs as 65532 with that fsGroup.
+    - target: {kind: Deployment, name: ipam-apiserver}
+      patch: |-
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata: {name: ipam-apiserver}
+        spec:
+          replicas: 1
+          template:
+            spec:
+              containers:
+                - name: apiserver
+                  env:
+                    - {name: KUBECONFIG, value: /etc/kubernetes/milo/kubeconfig}
+                    - {name: AUTHENTICATION_KUBECONFIG, value: /etc/kubernetes/milo/kubeconfig}
+                    - {name: AUTHORIZATION_KUBECONFIG, value: /etc/kubernetes/milo/kubeconfig}
+                    - {name: ENABLE_QUOTA, value: "false"}
+                  resources:
+                    requests: {cpu: 50m, memory: 96Mi}
+                    # IPAM publishes a 4Gi limit for production; the lab
+                    # bounds it at 1Gi, well above its startup with five
+                    # informers, so an OOM is not the first failure.
+                    limits: {cpu: "1", memory: 1Gi}
+                  volumeMounts:
+                    - {name: milo-credentials, mountPath: /etc/kubernetes/milo, readOnly: true}
+              initContainers:
+                - name: migrate
+                  resources:
+                    requests: {cpu: 10m, memory: 32Mi}
+              volumes:
+                - name: milo-credentials
+                  secret: {secretName: ipam-milo-credentials, defaultMode: 288}

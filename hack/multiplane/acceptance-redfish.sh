@@ -12,6 +12,14 @@ ph() { python3 hack/multiplane/harness.py phase --state "$state" --name "$1" --t
 step() { ph "$1" "$2" bash hack/multiplane/steps.sh "$1" "$state"; }
 rf() { ph "redfish-$1" "$2" python3 hack/multiplane/redfish_steps.py "$1" "$state"; }
 flux() { ph "flux-$1" "$2" python3 hack/multiplane/flux.py "$1" "$state"; }
+# Synchronized lab DHCP: sample IPAM's claims and allocations for the whole
+# run, so dhcp-synced can show what IPAM held during each boot. The sampler
+# stops when this script exits.
+if [[ ${FLEET_LAB_DHCP:-static} == synced ]]; then
+ python3 hack/multiplane/redfish_steps.py ipam-watch "$state" >/dev/null 2>&1 &
+ watcher=$!
+ trap 'kill "$watcher" 2>/dev/null || true' EXIT
+fi
 
 ph rbac 600 python3 hack/multiplane/verify-rbac.py "$state"
 ph custody-crd-rules 600 python3 hack/multiplane/custody_crd_rules.py "$state"

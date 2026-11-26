@@ -1,0 +1,27 @@
+# Additive to the NetworkPolicy in IPAM's published base, which admits only
+# kube-system and telemetry-system. Here the front proxy is the provider
+# project's Milo API, and IPAM delegates authentication and authorization back
+# to it, so both directions name that namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: ipam-apiserver-milo, namespace: ipam-system}
+spec:
+  podSelector:
+    matchLabels: {app: ipam-apiserver}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: milo-provider}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: milo-apiserver}
+      ports:
+        - {protocol: TCP, port: 8443}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: milo-provider}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: milo-apiserver}
+      ports:
+        - {protocol: TCP, port: 6443}
