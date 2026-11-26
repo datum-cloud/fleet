@@ -65,15 +65,6 @@ real API server verify it. No handler reads the creator yet, and no Machine
 without one is refused. See the [production admission
 proposal](https://github.com/datum-cloud/fleet/pull/187).
 
-The Milo quota claim is created with Fleet's quota custody finalizer, so a
-claim deleted by anyone else, or by namespace purge, keeps its quota until
-release. Release deletes the claim, removes the finalizer with a conditional
-update, and reports the quota free only once the claim is gone. A finalizer
-removed from a live claim is restored on the next acquire. No mode wires the
-quota claim into allocation yet; synthetic staging still reserves no quota.
-See the proposed [quota
-custody](../enhancements/production-admission/README.md#quota-custody).
-
 Production Kustomize roots now package the implemented manager, admission, API,
 Milo IAM, service, and quota boundaries; packaging is not runtime readiness.
 
@@ -632,12 +623,19 @@ SHA-256 of the consumer project UID and the Machine UID, in the Machine's
 namespace, before it creates the MachineAllocation. A retried create finds the
 claim by name. Only a granted claim reserves quota, so a pending claim returns
 `ErrQuotaPending` and the allocator retries. A claim that is not the claim Fleet
-would create for that Machine is `ErrQuotaInvalid`. Release deletes the claim and
-reports it released only once it is gone (`TestReleaseIsObservedNotAssumed`).
+would create for that Machine is `ErrQuotaInvalid`.
 
-Milo v0.32.5 supplies ResourceClaim evidence but no service-owned quota custody
-anchor or explicit release acknowledgment, so deletion is observed, not
-acknowledged.
+Fleet holds each claim with its quota custody finalizer from the moment it
+creates it, so a claim deleted by anyone else, or by namespace purge, keeps its
+quota until release. Milo still counts a deleting claim while a finalizer
+holds it. Release deletes the claim, removes the finalizer with a conditional
+update, and reports the quota free only once the claim is gone
+(`TestReleaseIsObservedNotAssumed`). Removing the finalizer is the release
+acknowledgment. A finalizer removed from a live claim is restored on the next
+acquire. Milo itself supplies neither a custody anchor nor an acknowledgment,
+and it lets anyone who can update the claim remove the finalizer. See the
+[production admission
+proposal](https://github.com/datum-cloud/fleet/pull/187).
 
 ## Simulator site
 
@@ -793,7 +791,8 @@ acceptance inventory.
   authorization. The network adapter remains deliberately unwired until
   production location, authorization, and object-guard owners are available.
 - Milo v0.32.5 supplies ResourceClaim evidence but no service-owned quota custody
-  anchor or explicit release acknowledgment. It also does not supply Fleet's
+  anchor or explicit release acknowledgment; Fleet's own finalizer stands in
+  for both and is not protected. It also does not supply Fleet's
   caller-preserving source/provenance receipt, atomic invalidation-versus-bind
   fence, consumer-project deletion recovery, or provider-project purge guard.
   Production cross-project allocation therefore fails closed, and the quota claim
