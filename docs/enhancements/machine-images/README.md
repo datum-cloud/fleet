@@ -427,7 +427,11 @@ reads it on first boot. The payload also carries the salt and the admitted
 data, so the installer reads them back from the target disk, recomputes the
 salted digest, and reports it. The worker reports success only when that
 digest matches the operation's digest. Success never depends on what the
-installed OS does or prints, because Fleet does not own the guest. The boot
+installed OS does or prints, because Fleet does not own the guest. The one
+exception is virtual media delivery, proposed in [#227][boot-delivery-pr].
+There, success also depends on one first-boot report from the provider-built
+image's first-boot step, which runs before the customer's bootstrap data. Fleet
+accepts that report once and trusts nothing the guest does after it. The boot
 service drops its copy when the admission closes.
 
 The site deletes every copy it made when the operation ends or a higher fence
@@ -532,4 +536,5 @@ boot service, and an artifact registry. The local VM and Redfish lab modes can
 prove the install path without hardware.
 
 [pxe-pr]: https://github.com/datum-cloud/fleet/pull/59
+[boot-delivery-pr]: https://github.com/datum-cloud/fleet/pull/227
 [milo-policybinding]: https://github.com/milo-os/milo/blob/cd469ff4235c0847d9863a132bdb58f3ff8d3845/pkg/apis/iam/v1alpha1/policybinding_types.go
