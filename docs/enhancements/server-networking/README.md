@@ -326,27 +326,35 @@ The site worker gates effects on those reports:
 1. Before it powers on the server for a network boot, it waits for a report,
    accepted after the operation's boot window opened, that serves the boot NIC
    at the operation's address.
-2. Before it reports success, it waits until at least one instance served the
-   reservation during the operation, and no instance's latest report, however
-   old, serves any MAC or address the site ever published for the Device. An
-   instance that went silent while serving one keeps the outcome unknown until
-   an operator retires the instance for the site.
+2. Before it reports success, it waits until at least one of the site's
+   declared instances served the reservation during the operation, and every
+   declared instance's latest report is of a feed issued after the reservation
+   was published and serves no MAC or address the site ever published for the
+   Device. A declared instance that never reports, or went silent while it may
+   serve one, keeps the outcome unknown until an operator removes it from the
+   declared set.
 
 #### DHCP service
 
-The DHCP service runs in a central cluster, not at the site. Nothing for
-provisioning runs at the site except the relays network operations already
-operates. Each site has its own set of instances there, because each set
-applies one site's feed and reports to that site alone. It has these parts:
+The DHCP service runs in a central cluster, not at the site, and so does the
+boot service. No DHCP or boot service runs at the site; the site's relays,
+which network operations already operates, carry the boot traffic there. Each
+site has its own set of instances, because each set applies one site's feed
+and reports to that site alone. It has these parts:
 
 - **Instances.** At least two Kea DHCPv4 servers per site, each paired with one
   synchronizer and each with a stable name. They share one load-balancer
   address on UDP port 67, which the site's relays reach over the site's WAN
   link. Kea accepts only relayed requests, so it needs no broadcast and no
   host networking. Any instance may answer. Each applies the same feed and
-  reports under its own name, so the withdrawal proof covers every instance;
-  one that has not applied a reservation yet stays silent, and the firmware
-  retries.
+  reports under its own name; one that has not applied a reservation yet stays
+  silent, and the firmware retries.
+- **Declared set.** The site declares its instances' names. The feed serves and
+  accepts reports only from a declared name, so an undeclared replica never
+  receives a reservation to serve. Scaling up declares the new name first.
+  Scaling down drains the instance until it reports an empty feed, then removes
+  its name. Removing a name is the only way to stop the withdrawal proof from
+  waiting on that instance.
 - **Replies.** Kea answers each request at the relay address the request
   carries, on UDP port 67. The central cluster must route to every relay
   address, and each relay must accept replies from the cluster's egress
@@ -359,16 +367,22 @@ applies one site's feed and reports to that site alone. It has these parts:
   site's token. The token and the TLS key are delivered as secrets, never in
   Git.
 
-Scaling down drains the instance first, until it reports an empty feed.
-
 #### Boot files
 
 Firmware boots over UEFI HTTP boot, never TFTP, because the boot files now
 cross from the central cluster to the site. The base configuration answers the
-HTTP boot vendor class with the boot service's URL in the central cluster. The
-boot service still answers a boot NIC only while its operation's boot window is
-open, and the installer image is pinned by digest. Servers whose firmware
-cannot boot over HTTP are not supported.
+HTTP boot vendor class with the boot service's URL in the central cluster.
+
+The boot service identifies the booting NIC by the MAC address in the request
+path, never by the request's source address, which relays and address
+translation can change. It answers that NIC only while its operation's boot
+window is open. The boot files hold no secrets, and the boot service serves
+the installer from an image pinned by digest. Over plain HTTP that pin protects
+the files only if the path between the site and the central cluster is
+private; whether boot files require HTTPS, which needs the boot service's CA in
+each server's firmware, is listed under [Decisions for a
+person](#decisions-for-a-person). Servers whose firmware cannot boot over HTTP
+are not supported.
 
 #### Fence and withdrawal proof across the WAN
 
@@ -378,14 +392,16 @@ reservation or proves it gone:
 - The feed is still computed from the site's admitted operations under
   custody's fence, so only the operation holding the Device's stored fence has
   a reservation, wherever Kea runs.
-- Each report still names its instance and the exact feed it applied, so the
-  power-on gate and the withdrawal gate read the same evidence as before.
-- A WAN outage makes the site's instances silent to Fleet. Fleet fails safe:
-  an operation waiting for a serving report does not power the server on, and
-  an operation whose reservation an instance last reported serving stays
-  unknown until that instance reports it withdrawn or an operator retires it.
-  An instance that cannot reach the feed keeps its last applied configuration,
-  and its last report still shows what it may be serving.
+- Each report names a declared instance and the exact feed it applied, so the
+  power-on gate and the withdrawal gate read the same evidence as before, over
+  a set of instances fixed in advance rather than whichever replica answered.
+- A WAN outage cuts the site's relays off from the central cluster. The feed
+  and the reports are unaffected, but no DHCP request or boot file reaches the
+  site, so boots stall: firmware gets no answer, and an operation that cannot
+  boot ends unknown, never succeeded.
+- An instance that cannot reach the feed, or goes silent, keeps its last
+  applied configuration. Its last report still shows what it may be serving,
+  so the withdrawal gate keeps any operation it may serve unknown.
 
 #### Network operations requirements
 
@@ -593,6 +609,10 @@ unavailable](#when-nso-is-unavailable).
 
 ### Decisions for a person
 
+- **HTTPS for boot files.** Over plain HTTP, boot files are only as trustworthy
+  as the path between the site and the central cluster. HTTPS needs the boot
+  service's CA enrolled in every server's firmware. Decide which the platform
+  requires.
 - **Who operates the DHCP service.** This enhancement ships Kea as a Fleet
   component in a central cluster, and network operations owns its base
   configuration. Someone must be on call for it.
@@ -639,10 +659,10 @@ These tests are required and not implemented:
 ### How do operators enable or disable the feature?
 
 A site enables the boot network by declaring synchronized DHCP and deploying its
-DHCP instances in the central cluster. The declaration requires NSO's boot network at that
-location: without it, every installation and wipe there waits with nothing
-sent. A location enables customer attachment when NSO supports `Physical`
-there. Disabling attachment refuses new Machines
+DHCP instances in the central cluster, whose names it declares. The declaration
+requires NSO's boot network at that location: without it, every installation
+and wipe there waits with nothing sent. A location enables customer attachment
+when NSO supports `Physical` there. Disabling attachment refuses new Machines
 with interfaces and leaves existing ones attached.
 
 ### What must operators monitor?
@@ -702,8 +722,9 @@ claim per Machine interface.
 
 ## Infrastructure needed
 
-The lab can run Kea, the synchronizer, and the feed against emulated DHCP
-clients, with Kea beside the emulated site because the lab has no WAN link, IPAM, and NSO's API with a test realizer. Real switches are needed for
+The lab can run IPAM, NSO's API with a test realizer, and Kea, the
+synchronizer, and the feed against emulated DHCP clients. The lab has no WAN
+link, so its Kea sits beside the emulated site. Real switches are needed for
 relays, LACP fallback, port isolation, the realizer, and moving a port between
 the boot network and customer networks.
 
