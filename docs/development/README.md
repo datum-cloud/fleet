@@ -37,8 +37,7 @@ Increment C, the cutover. Every mode allocates, installs and releases on
 Secret-backed coordinator, its private records and the old executors are deleted,
 and an allocation's private facts live on its MachineAllocation. The standalone
 smoke and both multi-plane runs verify it. The end-to-end failure scenarios
-(Increment D) are implemented, and their verification in both multi-plane runs
-is pending.
+(Increment D) are implemented, and both multi-plane runs verify them.
 
 The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
 the [local VM site](../operations/local-vm.md) with native Milo project APIs, the
@@ -48,13 +47,13 @@ Each local cluster's [Flux](../operations/gitops.md) installs Milo, Karmada, kro
 an OCI artifact staged from the checkout. Run it
 with `task multiplane:acceptance`. Its exit codes, bounded phases and sanitized
 `evidence/` directory are documented there; `task multiplane:test-harness` runs its
-offline tests, which CI also runs. Verification of that run on custody is
-pending. The Redfish site workers (`internal/site/redfishwork`) read each
+offline tests, which CI also runs. The run passes every phase on custody. The
+Redfish site workers (`internal/site/redfishwork`) read each
 Device's own credential and connect only to its approved TLS key.
 [Redfish-mode acceptance](../operations/redfish-lab.md)
 (`task multiplane:redfish-acceptance`) exercises them against the unmodified DMTF
-Redfish Interface Emulator and a lab-only libvirt adapter, and its verification is
-pending too. They are not qualified against a physical BMC or server, and the
+Redfish Interface Emulator and a lab-only libvirt adapter, and that run passes
+every phase on custody too. They are not qualified against a physical BMC or server, and the
 production manager does not use them.
 
 Production Kustomize roots now package the implemented manager, admission, API,
