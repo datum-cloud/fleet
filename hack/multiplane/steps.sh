@@ -147,9 +147,14 @@ case "$step" in
   "$host" recovery-mismatch --config "$state/acceptance.json"
   [[ $before == "$(journal_digest)" ]] || { echo 'site store changed for a refused recovery' >&2; exit 1; }
   audit_unchanged
+  # The hook withheld the installation's boot: it counted at least one
+  # denial since it was armed.
+  denied=$(site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold denied)
+  [[ $denied =~ ^[0-9]+$ ]] && (( denied > 0 )) || { echo "the lab boot hook denied no boot request: ${denied:-none}" >&2; exit 1; }
   # The release's wipe boots normally.
   trap - ERR
   site exec deploy/fleet-site-boot -c boot -- fleet-multiplane boot-withhold clear
+  printf 'deadline-hold: the lab boot hook denied %s boot requests\n' "$denied"
   ;;
  deadline-settled)
   scenario deadline-settled "$state"
