@@ -110,9 +110,12 @@ fi
 # turn comes. Then the run queues for the profile's lock, which it holds until
 # it exits, and repeats the checks another run can change under the lock.
 "${harness[@]}" preflight --checks host --state "$state" --root . "${bootstrap[@]}" "${skip_tests[@]}" & wait $!
-# Only the shared Colima profile is locked: a CI runner is single-use.
+# Only the shared Colima profile is locked and cleaned: a CI runner is single-use.
 if [[ ${FLEET_MULTIPLANE_RUNTIME:-colima} == colima ]]; then
  "${harness[@]}" lock --state "$state" --owner $$ & wait $!
+ # Holding the lock, remove what old finished runs left behind, so their
+ # stopped containers do not fill the disk the next check requires.
+ [[ ${FLEET_MULTIPLANE_CLEANUP:-1} == 0 ]] || { "${harness[@]}" cleanup --state "$state" & wait $!; } || echo 'cleanup failed; continuing' >&2
 fi
 # A resumed run's own retained containers do not block it.
 own=()

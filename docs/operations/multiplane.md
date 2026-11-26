@@ -466,12 +466,48 @@ hack/multiplane/teardown.sh /tmp/fleet-multiplane.REPLACE --discard-unknown
 ```
 
 `teardown.sh` without `--discard-unknown` refuses unless `summary.json` records
-verified acceptance evidence. `--discard-unknown` is an explicit human decision after inspection: it
+verified acceptance evidence. `--discard-unknown` is an explicit human decision after inspection,
+until the retention age passes ([automatic cleanup](#automatic-cleanup)): it
 deletes the same exact-prefix resources, keeps every private file, and records
 in `teardown.json` that it is not release evidence. Neither script touches other
 prefixes. The original limit of 128 inotify instances was insufficient for this
 API count: the real Karmada webhook exited with `too many open files`. The bounded
 value 1024 resolves that local prerequisite.
+
+### Automatic cleanup
+
+Retained runs are kept for a set age, then removed. This replaces the
+explicit discard decision for runs nobody inspected in time: after
+`FLEET_MULTIPLANE_CLEANUP_AGE_HOURS` (default 12) a failed run's
+Unknown-custody state, evidence and containers are gone. Copy out any
+evidence you need before then, or set `FLEET_MULTIPLANE_CLEANUP=0`.
+
+Each run, once it holds the lock, removes what old finished runs left
+behind, so their stopped containers do not fill the profile's disk. For a
+run whose result is older than the age, it tears down the exact-prefix
+containers, clusters and image tags with `teardown.sh --discard-unknown`, or
+stops its coordinator when it has no containers, then deletes its state
+directory. It also removes stopped `fleet-mp-*` containers, and their image
+tags, whose state directory is gone once all of them have been stopped that
+long. It never touches the following:
+
+- a run that holds or waits for the lock;
+- a run being resumed, or one a live process names;
+- a run with no result;
+- a run with a running container, or a container that was never started;
+- containers outside the `fleet-mp-` prefix;
+- anything that needs Docker, when Docker cannot be read;
+- orphaned containers, when any state directory cannot be read.
+
+It checks a run again just before acting, and first renames its state out of
+every search, so a resume cannot pick it up while it is removed. A cleanup
+that stopped part way is finished by the next one. Each cleanup tears down at
+most two runs (`FLEET_MULTIPLANE_CLEANUP_MAX_TEARDOWNS`), so a backlog cannot
+hold the lock for long. `evidence/cleanup.json` lists each removed run with its
+status and failed phase, and what was kept and why.
+`task multiplane:cleanup -- --dry-run` lists what would be removed; without
+`--dry-run` it removes it. A CI runner is single-use, so CI mode does not
+clean up.
 
 ### Resuming a failed run
 
@@ -520,7 +556,7 @@ They use fake runtime tools to cover preflight outcomes, the runtime lock
 (concurrent starts, arrival order, release on exit and TERM, recovery from a
 killed holder, waiter or unreaped owner, the bounded wait, the checks repeated
 under the lock, waiting for a live run without the lock), resuming (refusals,
-skipped phases, the `resumed` result), Flux source staging
+skipped phases, the `resumed` result), cleanup (only old, finished, unlocked runs), Flux source staging
 (credential refusal, revision variants, rendering), push records, reconcile waits
 (stale acknowledgements rejected, stripped requests reissued), fault-guard
 suspension and root-revision receipts, bounded phase timeouts

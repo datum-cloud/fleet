@@ -298,7 +298,7 @@ with tempfile.TemporaryDirectory() as t:
     (other / 'prefix').write_text('fleet-mp-1234abcd\n')
     mine = tmp / 'mine'
     mine.mkdir()
-    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(runs))
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(runs), FLEET_MULTIPLANE_STATE_ROOTS=str(runs))
 
     def contention(wait):
         return subprocess.Popen([sys.executable, str(harness), 'preflight', '--checks', 'contention', '--wait', str(wait), '--state', str(mine)],
@@ -368,7 +368,7 @@ with tempfile.TemporaryDirectory() as t:
         (bin_dir / tool).chmod(0o755)
     runs = tmp / 'runs'
     runs.mkdir()
-    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(runs),
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], FLEET_MULTIPLANE_STATE_ROOT=str(runs), FLEET_MULTIPLANE_STATE_ROOTS=str(runs),
                FLEET_MULTIPLANE_LOCK_DIR=str(tmp / 'lock'))
     p = subprocess.Popen(['bash', str(repo / 'hack/multiplane/run.sh')], cwd=repo, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
