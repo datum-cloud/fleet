@@ -513,21 +513,29 @@ every interface is `Programmed`.
 A wipe, a burn-in, and a commissioning probe hold no Machine, so under virtual
 media each gets a provider network attachment for that one operation:
 
-1. Before it creates the operation, the requester creates an NSO attachment
-   claim for the Device's port on the site's provider network, named from the
+1. The requester fixes the operation's name first, either derived or
+   generated and recorded. It then creates an NSO attachment claim for the
+   Device's port on the site's provider network, named and labeled from the
    operation, and waits until NSO reports it `Programmed`.
 2. The requester then claims one provider address from IPAM, also named from
    the operation, and records typed references to both claims and the address
    in the operation's inputs.
-3. The worker writes the address onto the config medium as static
+3. Admission checks that both claims exist and are the operation's own, as
+   [#186][server-networking-pr] does for boot claims. Otherwise it refuses the
+   operation, and nothing is sent.
+4. The worker writes the address onto the config medium as static
    configuration. The image posts its report from that address.
+
+NSO keeps a port on the provider network while any attachment claim for it
+remains. The first-boot service refuses a report or a fetch from an operation
+whose fence is below the Device's stored fence.
 
 Release adds two proofs to the media proofs, in this order:
 
 1. The first-boot service accepts the report, which spends the token, and the
    operation moves to `Verifying`. The requester deletes the attachment claim,
-   and the worker waits until NSO reports every provider attachment for the
-   Device gone and the port off the provider network.
+   and the worker waits until NSO reports no attachment claim left for the
+   Device and the port off the provider network.
 2. With the port detached and the token spent, nothing can use the address.
    The requester deletes the address claim, and the worker waits until IPAM
    reports it released.
@@ -539,13 +547,18 @@ The requester deletes an operation's claims in every other case too, as
 [#186][server-networking-pr] does for boot claims:
 
 - **Failed or cancelled.** Nothing was sent, so both claims are deleted.
-- **Never created.** A claim pair whose operation was never created is deleted
-  by its requester, which finds it by the operation's name.
+- **Never created.** The requester deletes every claim, one or two, labeled
+  with an operation that still does not exist five minutes after the first
+  claim was created. A slow requester whose claims were deleted is refused at
+  admission, so the cleanup never races an effect.
 - **Held.** The held claims stay, and the port stays on the provider network,
-  until a settling operation is admitted. Admission raises the fence and stops
-  the held worker, so the requester then deletes the held claims. The settling
-  operation's own release proof covers every provider attachment for the
-  Device, including the held one.
+  until a settling operation is admitted. Admission raises the fence, so the
+  held worker stops and the first-boot service refuses the held operation.
+  The settling worker powers the server off and ejects every medium before it
+  prepares its own delivery, and the requester then deletes the held
+  attachment claim. The port stays attached under the settling operation's
+  own claim. The held address claim is deleted with the settling operation's
+  own, only after its release proves no attachment claim left.
 - **Retry.** A custody `Retry` creates a new operation with a new name, so it
   gets a new claim pair.
 - **Retired.** Retiring the Device deletes any claims left.
@@ -660,8 +673,10 @@ These tests are required and not implemented:
 - NSO cannot prove a wipe's port detached by the deadline, and the wipe ends
   `OutcomeUnknown` with a hold.
 - A wipe sends no report and ends `OutcomeUnknown`. When a settling wipe is
-  admitted, the held claims are deleted, and the settling wipe succeeds only
-  after both its own and the held attachments are proven gone.
+  admitted, the held operation's late report is refused, and the held address
+  claim is deleted only after the settling wipe proves the port detached.
+- A requester creates one claim and crashes. The claim is deleted after five
+  minutes, and an operation created later is refused at admission.
 - A wipe that fails before sending anything leaves no claims behind.
 - A second first-boot report for the same operation is refused, and the first
   result stands.
