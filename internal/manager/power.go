@@ -2,10 +2,12 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -19,9 +21,12 @@ import (
 // PowerProjector is the only writer of Machine status.power. It reads the
 // custody of the Machine's allocation in the provider project: while a
 // recovery hold exists, or custody is unverified, power is Unknown, because
-// nothing proves what the server did. Otherwise it is the power state the
-// Device's last discovery observed. A Machine without an active allocation
-// reports no power.
+// nothing proves what the server did. Otherwise it is the newer of the power
+// state the Device's last discovery observed and the state custody's last
+// succeeded power operation proved. When an operation that may have changed
+// power, other than a recovery, finished after discovery's read and proved no
+// power state, power is Unknown until discovery reads it again. A Machine
+// without an active allocation reports no power.
 type PowerProjector struct {
 	Client  client.Client
 	Project controller.ProjectIdentity
@@ -101,18 +106,47 @@ func power(ctx context.Context, provider client.Reader, namespace string, machin
 	} else if err != nil {
 		return nil, err
 	}
-	if device.UID != types.UID(current.Labels[fleetv1.LabelDeviceUID]) || device.Status.Discovery == nil || device.Status.Discovery.Inventory == nil {
+	if device.UID != types.UID(current.Labels[fleetv1.LabelDeviceUID]) {
 		return unknown, nil
 	}
-	for _, system := range device.Status.Discovery.Inventory.Systems {
-		if strings.EqualFold(system.UUID, device.Spec.Identity.SystemUUID) {
-			switch system.PowerState {
-			case "On", "Off":
-				return &fleetv1.PowerStatus{State: system.PowerState}, nil
+	var observed metav1.Time
+	result := unknown
+	if discovery := device.Status.Discovery; discovery != nil && discovery.Inventory != nil {
+		for _, system := range discovery.Inventory.Systems {
+			if strings.EqualFold(system.UUID, device.Spec.Identity.SystemUUID) {
+				switch system.PowerState {
+				case "On", "Off":
+					observed, result = discovery.Inventory.ObservedAt, &fleetv1.PowerStatus{State: system.PowerState}
+				}
 			}
 		}
 	}
-	return unknown, nil
+	// A tie favors the operation's proven state: a discovery read stamped in
+	// the same second cannot be shown to be later.
+	if after := provenPower(state); after != nil && (result == unknown || !after.ObservedAt.Before(&observed)) {
+		return &fleetv1.PowerStatus{State: string(after.State)}, nil
+	}
+	// An operation that finished after discovery's read, and proved no power
+	// state, may have changed power since: discovery no longer shows it. A
+	// tie in the one-second timestamps cannot be ordered, so it counts too.
+	if last := state.Spec.LastResult; last != nil && last.Kind != "DeviceRecovery" && !last.FinishedAt.Before(&observed) {
+		return unknown, nil
+	}
+	return result, nil
+}
+
+// provenPower returns the power state custody's last result proved, when
+// that result is a succeeded power operation with a settled state.
+func provenPower(state *ops.DeviceCustody) *ops.PowerObservation {
+	last := state.Spec.LastResult
+	if last == nil || last.Kind != "DevicePowerOperation" || last.Phase != ops.PhaseSucceeded || last.Evidence == nil {
+		return nil
+	}
+	var evidence ops.PowerEvidence
+	if json.Unmarshal(last.Evidence.Raw, &evidence) != nil || evidence.Power == nil || evidence.Power.After == nil || !evidence.Power.After.State.Settled() {
+		return nil
+	}
+	return evidence.Power.After
 }
 
 // Chain runs projectors in order and stops at the first that must retry.

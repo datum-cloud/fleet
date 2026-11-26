@@ -17,9 +17,21 @@ import (
 // discovery runs at the site and writes only the status of the Devices that
 // site serves; a synthetic Device has no BMC, so this writes what discovery
 // would observe: the enrolled key at the recorded endpoint, the enrolled
-// system identity, and power off. A Device whose recorded identity differs
-// from the enrollment gets IdentityMatched False.
+// system identity, and power off with no reset types offered. A Device
+// whose recorded identity differs from the enrollment gets IdentityMatched
+// False.
 func Discover(ctx context.Context, api client.Client, enrollment Enrollment, now time.Time) error {
+	return DiscoverPower(ctx, api, enrollment, now, nil)
+}
+
+// PowerObserver reports a synthetic Device's power state and the reset
+// types its site's power worker offers, as BMC discovery would read them.
+type PowerObserver func(device string) (state string, resetTypes []string, err error)
+
+// DiscoverPower is Discover with the power each Device reports. Without an
+// observer, every Device reports power off and offers no reset types, so no
+// power operation is admitted.
+func DiscoverPower(ctx context.Context, api client.Client, enrollment Enrollment, now time.Time, observe PowerObserver) error {
 	var failed error
 	for key, target := range enrollment {
 		namespace, name, _ := strings.Cut(key, "/")
@@ -41,6 +53,16 @@ func Discover(ctx context.Context, api client.Client, enrollment Enrollment, now
 			Inventory: &inventory.ObservedInventory{ObservedAt: observed, Endpoint: endpoint, Systems: []inventory.ObservedSystem{{
 				ID: "simulated", UUID: target.SystemUUID, PowerState: "Off",
 			}}},
+		}
+		if observe != nil {
+			// A server the observer cannot read keeps the default: power off,
+			// with nothing offered.
+			if state, offered, err := observe(key); err != nil {
+				failed = errors.Join(failed, err)
+			} else {
+				system := &device.Status.Discovery.Inventory.Systems[0]
+				system.PowerState, system.ResetTypes = state, offered
+			}
 		}
 		status, reason := metav1.ConditionTrue, "FixtureEnrollment"
 		if !matched {

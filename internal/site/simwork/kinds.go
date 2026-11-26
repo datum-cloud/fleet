@@ -25,6 +25,13 @@ type Server struct {
 	Image string `json:"image,omitempty"`
 	// Booted is the digest the server last booted from disk.
 	Booted string `json:"booted,omitempty"`
+	// Power is On or Off; empty is Off.
+	Power string `json:"power,omitempty"`
+	// LastReset is when the server last came out of a reset.
+	LastReset *metav1.Time `json:"lastReset,omitempty"`
+	// Unresponsive is a test fault: the server ignores power resets, so a
+	// power operation cannot prove its outcome.
+	Unresponsive bool `json:"unresponsive,omitempty"`
 }
 
 const serverRecords = "simulator"
@@ -40,6 +47,17 @@ func read(work *site.Work) (Server, error) {
 
 func write(work *site.Work, server Server) error {
 	return work.Store().PutRecord(work.Device, work.Fence, serverRecords, serverName, server)
+}
+
+// WriteServer replaces a Device's simulated server at its stored fence. Tests
+// use it to set the server's power or a fault, only while no worker runs for
+// the Device: it reads the fence and writes under separate locks.
+func WriteServer(store *site.Store, device string, server Server) error {
+	fence, _, err := store.Current(device)
+	if err != nil {
+		return err
+	}
+	return store.PutRecord(device, fence, serverRecords, serverName, server)
 }
 
 // ReadServer returns a Device's simulated server, for evidence checks.
