@@ -95,7 +95,10 @@ with tempfile.TemporaryDirectory(prefix='test-fleet-smoke-') as temporary:
     suite = Path(temporary)
     names = []
 
-    def case(scenario, expected, missing=None, timeout=None, send_signal=None, arguments=()):
+    # Cleanup that is expected to finish gets a deadline a loaded machine can
+    # meet: each mock is a fresh Python process. Only the cases that test the
+    # cleanup deadline itself use a short one.
+    def case(scenario, expected, missing=None, timeout=None, send_signal=None, arguments=(), cleanup_timeout='10'):
         directory = suite / (scenario + '-' + str(len(list(suite.iterdir()))))
         directory.mkdir()
         repository = directory / 'repo'
@@ -128,7 +131,7 @@ with tempfile.TemporaryDirectory(prefix='test-fleet-smoke-') as temporary:
                            ALLOW_KIND_CONTEXT_ALIAS='true', KIND_EXPERIMENTAL_PROVIDER='podman',
                            SCENARIO=scenario, CASE_DIRECTORY=str(directory),
                            FLEET_SMOKE_TIMEOUT_SECONDS=timeout or '10',
-                           FLEET_SMOKE_CLEANUP_TIMEOUT_SECONDS='1')
+                           FLEET_SMOKE_CLEANUP_TIMEOUT_SECONDS=cleanup_timeout)
         started = time.monotonic()
         process = subprocess.Popen([str(wrapper), *arguments], env=environment,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -201,12 +204,12 @@ with tempfile.TemporaryDirectory(prefix='test-fleet-smoke-') as temporary:
     case('get_timeout', 124, timeout='1')
     case('create_timeout', 124, timeout='1')
     case('standalone-smoke.sh_timeout', 124, timeout='1')
-    case('delete_timeout', 1)
+    case('delete_timeout', 1, cleanup_timeout='1')
     case('get_signal', 143, send_signal=signal.SIGTERM)
     case('create_signal', 143, send_signal=signal.SIGTERM)
     case('standalone-smoke.sh_signal', 130, send_signal=signal.SIGINT)
     case('standalone-smoke.sh_signal', 129, send_signal=signal.SIGHUP)
-    case('delete_signal', 1, send_signal=signal.SIGTERM)
+    case('delete_signal', 1, send_signal=signal.SIGTERM, cleanup_timeout='1')
     check(len(names) == len(set(names)), 'cluster names reused across invocations')
     print('All disposable standalone smoke tests passed; no real tools or clusters used.')
 PY
