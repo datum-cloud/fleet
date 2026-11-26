@@ -138,6 +138,78 @@ new claim kind and its check. The coordinator must gain the check before any
 requester uses the new source, or it fails the new kind's operations with
 `UnsupportedBootAddressClaim`.
 
+### The NSO boot attachment source
+
+A second source attaches the boot NIC through NSO and takes the address from
+NSO. It is off by default: nothing configures it, the coordinator has no
+check for its claim kind unless one is registered, and the synchronized lab
+keeps IPAM's claimer. It is tested only against NSO's real types with a test
+realizer that stands in for the NSO behavior below.
+
+For each installation and wipe, the requester creates one NSO
+`NetworkInterfaceClaim` named `<operation>-boot`, in the namespace Fleet
+controls in the provider's NSO API, on a boot network the provider owns. The
+claim uses the `Physical` attachment mode, names the boot NIC's MAC and the
+switch and port from inventory's cable records, and carries the allocation,
+operation and operation kind labels. The requester waits until NSO reports
+the claim `Programmed`, then reads the claim's IPv4 address and copies a
+reference to the claim, kind `networking.datumapis.com/NetworkInterfaceClaim`,
+and the address into the operation. While NSO cannot be read or has not
+programmed the port, no address is read and no operation is created. When
+NSO reports that IPAM refused the address, such as a full pool, the requester
+reports it as for an IPAM claim and creates no operation.
+
+Admission checks the claim with the same rules as an IPAM claim: the
+operation's own name and labels, created no later than the operation, not
+being deleted, `Programmed` on the boot network, and holding exactly the
+address. An unreadable claim leaves the operation `Pending` with
+`BootAddressUnavailable`; any other problem fails it with
+`BootAddressClaimMismatch`.
+
+Release follows the same rules as for an IPAM claim, so a held operation
+keeps its claim, and its port stays on the boot network, until the hold is
+settled. The requester deletes the claim. The release counts only once a read
+finds NSO's claim gone and IPAM holds no allocation for the address NSO
+claimed for it. While an allocation is active, a hand-over step releases the
+claims of ended, unheld operations under the same rules, so NSO can hand a
+shared boot NIC to the customer.
+
+Fleet writes only claims and never a switch port. NSO alone decides a port's
+membership: while a boot attachment claim names the port, the port is on the
+boot network only, and the customer's claims for it stay unprogrammed; once
+the claim is released, NSO moves the port to the customer's networks in one
+step. While a boot attachment claim holds a boot NIC that also carries the
+Machine's networks, the allocator gives the Machine's `NetworkReady=False`,
+with reason `BootNetworkAttached`, or `RecoveryHold` while its operation is
+held. Release closes the `Network` gate, after the customer's claims are
+gone, before it creates the wipe and its boot attachment claim. Customer
+network attachment, which calls the hand-over step and reports
+`NetworkReady`, is not part of this source; the tests stand in for its
+claims.
+
+#### Assumed NSO contract
+
+The source relies on NSO behavior that NSO does not have yet. Fleet keeps the
+list in one place in its code:
+
+1. A `Physical` attachment mode for an interface with no node, container or
+   hypervisor.
+2. The attachment point as claim annotations:
+   `networking.datumapis.com/attachment-mac`,
+   `networking.datumapis.com/attachment-switch` and
+   `networking.datumapis.com/attachment-port`. Customer claims for a physical
+   server carry them too.
+3. A provider-owned boot network, addressed at each site from the
+   provisioning class, untagged on an attached port and isolated between
+   servers.
+4. Port membership derived from claims, as above, with `Programmed` on a boot
+   attachment claim meaning its port is on the boot network.
+5. The provisioning address as the claim's IPv4 interface address.
+6. A `Physical` claim kept until its port left the claim's network, then its
+   addresses released.
+7. NSO's IPAM claim for that address named `<claim>-f-ipv4` in the project's
+   IPAM namespace, which is NSO's naming today but not a documented contract.
+
 ## Enrollment
 
 The site enrollment (`FLEET_REDFISH_ENROLLMENT`) is the explicit mapping of the
@@ -452,6 +524,8 @@ exhaustion through IPAM. See [IPAM in the lab](redfish-lab.md#ipam-in-the-lab).
 | --- | --- |
 | Boot addresses claimed from IPAM per operation, checked at admission, and released only after the operation ended unheld | Implemented; tested against a real API server with a stand-in for IPAM's claim API. The synced Redfish lab claims from real IPAM, but no synced run has passed yet |
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
+| Boot address source seam and admission checks by claim kind | Implemented; tested against a real API server |
+| NSO boot attachment source, off by default | Implemented against NSO's real types and an assumed contract; tested with a fake client and with a test realizer on a real API server. NSO does not implement the contract yet |
 | Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device | Implemented; unit tested with a fake BMC and synchronizer |
 | Reports bound to feeds the feed served, and refreshed reports of an unchanged feed | Implemented; unit tested, including a forged issue time, another instance's feed, a feed restart and an instance that never fetched the reservation |
 | Expected DHCP instance set in the enrollment: the feed refuses other instances, withdrawal needs every expected instance's report of a feed issued after the admission, and retirement only by shrinking the set | Implemented; unit tested, including an instance that never reported and one that stopped after fetching the reservation. Restarting the workers and the feed after a change is an operator step |
