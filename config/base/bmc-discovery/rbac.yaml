@@ -3,9 +3,10 @@ kind: ServiceAccount
 metadata:
   name: fleet-bmc-discovery
 ---
-# Reads credential Secrets in its own namespace only. Kubernetes RBAC cannot
-# narrow this to the labelled Secrets, so keep discovery in a namespace that
-# holds nothing else it should not read.
+# Lists and watches credential Secrets in its own namespace; discovery never
+# gets one by name. Kubernetes RBAC cannot narrow this to the labelled
+# Secrets, so keep discovery in a namespace that holds credential Secrets
+# only. hack/validate-bmc-credential-namespace.sh checks every render here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -13,7 +14,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [get, list, watch]
+    verbs: [list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
