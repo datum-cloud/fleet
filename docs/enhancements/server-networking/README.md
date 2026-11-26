@@ -14,8 +14,10 @@ stage: alpha
   - [Ownership](#ownership)
   - [Boot network](#boot-network)
   - [Customer network attachment](#customer-network-attachment)
+  - [When NSO is unavailable](#when-nso-is-unavailable)
+  - [Boot NIC choice](#boot-nic-choice)
   - [Write order and crash recovery](#write-order-and-crash-recovery)
-  - [Requests to other teams](#requests-to-other-teams)
+  - [Dependencies and requests to other teams](#dependencies-and-requests-to-other-teams)
   - [Decisions for a person](#decisions-for-a-person)
   - [Acceptance tests](#acceptance-tests)
 - [Production readiness review questionnaire](#production-readiness-review-questionnaire)
@@ -33,19 +35,27 @@ the customer's networks for as long as the customer holds the server.
 This enhancement defines both on top of [Device custody and
 operations](../device-operations/README.md):
 
-- **Boot network.** Each installation and wipe carries a provisioning address
-  from IPAM and the boot NIC from Device inventory. A site DHCP service answers
-  that NIC only while the operation runs, and the operation ends only after
-  DHCP reports the reservation withdrawn.
+- **Boot network.** The boot network is a provider-owned NSO network. Each
+  installation and wipe carries a provisioning address and the boot NIC from
+  Device inventory. Fleet's boot services answer that NIC over DHCP only while
+  the operation is admitted, boot it over PXE or iPXE into the installer, and
+  end the operation only after every DHCP instance reports the reservation
+  withdrawn.
 - **Customer network attachment.** The Fleet provider for Metal asks NSO for one
   interface per requested Machine interface. NSO assigns addresses through
-  IPAM, and the network owner connects the server's switch port to the
-  customer's network. Fleet reports the result on the Machine.
+  IPAM. Handing the server to the customer is one NSO step that moves its
+  switch ports from the boot network to the customer's networks. Fleet reports
+  the result on the Machine.
 
-Fleet never configures a switch, a router, or a relay. A reservation feed, two
-evidence gates, and a Kea synchronizer exist today and take their values from
-site enrollment. This enhancement changes all three, and everything in it is
-proposed.
+NSO is the only writer of a switch port's network membership, boot and
+customer alike. Fleet never configures a switch, a router, or a relay. NSO's
+physical attachment mode is a planned dependency, designed separately. Until
+it lands, the provisioning address comes from a direct IPAM claim, and that
+source is built to be replaced by an NSO interface on the boot network.
+
+A reservation feed, two evidence gates, and a Kea synchronizer exist today and
+take their values from site enrollment. This enhancement changes all three,
+and everything in it is proposed.
 
 ## Motivation
 
@@ -53,7 +63,7 @@ Today a site's enrollment lists each server's boot NIC MAC and provisioning
 address by hand, and the site's DHCP reservations come from those values.
 A Machine can request network interfaces, but Fleet cannot attach a physical
 NIC to a customer network, because NSO has no attachment mode for a physical
-server.
+server yet. That mode is planned.
 
 ### Goals
 
@@ -61,8 +71,9 @@ server.
 - Answer DHCP for a boot NIC only while an operation that network-boots it
   runs, and prove the answer stopped before the operation succeeds.
 - Ship the site DHCP service as a deployable site component.
-- Attach an allocated server's NICs to the customer's networks through NSO and
-  IPAM, with one writer for each switch port.
+- Attach an allocated server's NICs to the boot network and the customer's
+  networks through NSO, with NSO as the one writer of each switch port's
+  network membership.
 - Report each Machine interface's addresses and readiness on the Machine.
 - State exactly what network operations and the networking teams must provide.
 
@@ -106,6 +117,10 @@ server.
   its static mode at synchronized sites.
 - **Network handoff ([#61][handoff-pr]):** both propose physical attachment
   and disconnect. See [Decisions for a person](#decisions-for-a-person).
+- **NSO physical attachment (planned):** NSO's own design for physical
+  interfaces, a provider-owned boot network, and moving a port between
+  networks in one step. This enhancement depends on it. See
+  [Dependencies](#dependencies-and-requests-to-other-teams).
 
 ## Design details
 
@@ -114,21 +129,49 @@ server.
 | Surface | Single writer |
 | --- | --- |
 | Which boot NIC holds a reservation, and when | The site, from its admitted operations |
-| Provisioning addresses | IPAM, from claims the operation's requester makes |
+| Network boot: PXE, iPXE, and the installer | The site's boot service |
+| Provisioning addresses | IPAM, from claims the operation's requester makes; later NSO, through the boot network |
 | Kea runtime configuration | The synchronizer next to each Kea instance |
 | Kea base configuration: subnets, gateways, boot options | Network operations |
+| The boot network and its segment at each site | NSO, as a network the provider owns |
+| A switch port's network membership: boot and customer | NSO, through its physical realizer |
 | Relays, the provisioning VLAN, and each switch port's base profile | Network operations |
-| A switch port's membership in customer networks | The network owner's physical realizer |
 | Customer addresses and interfaces | NSO, through IPAM |
 | Interface requests for a Machine, and their claims' UIDs in the allocation's status | The Fleet provider for Metal |
 | Machine network status | The Fleet provider for Metal |
 
-A switch port has two writers in the network owner's systems, each for its own
-fields. Network operations sets the base profile once: speed, bond, native
-provisioning VLAN, isolation, and LLDP. The physical realizer adds and removes
-customer network membership. Neither changes the other's fields.
+Network operations sets a switch port's base profile once: speed, bond,
+isolation, edge mode, and LLDP. It provides each site's provisioning VLAN to
+NSO as the boot network's segment there. NSO alone decides which networks a
+port belongs to. Every server port starts on the boot network. Handing a
+server to a customer is one NSO step: detach the ports from the boot network
+and attach them to the customer's networks. Taking the server back is the
+reverse step. Fleet asks for each step and never writes a port.
 
 ### Boot network
+
+#### What Fleet keeps
+
+Fleet keeps the boot services, because they follow custody and NSO's do not:
+
+- DHCP that serves a boot NIC's reservation only while its operation is
+  admitted under custody's fence;
+- PXE, iPXE, and the installer; and
+- proof that every DHCP instance dropped the reservation before the operation
+  succeeds.
+
+NSO owns where the boot NIC's port is attached. Fleet owns what answers it
+there, and when.
+
+#### Boot attachment
+
+Before the requester creates an operation that network-boots the server, it
+asks NSO to attach the server's boot port to the boot network, and waits until
+NSO reports the attachment programmed. For a wipe at release, that is the same
+NSO step that detaches the customer's networks; for a reinstall on a shared
+boot NIC, it detaches them for the install. The operation's own checks are
+unchanged: the site still powers the server on only after DHCP reports the
+reservation served.
 
 #### Provisioning address
 
@@ -136,16 +179,18 @@ Each site has one provisioning subnet. Network operations defines one IPAM
 class for provisioning addresses, with one pool per site that covers that
 subnet, reserves its gateway, and keeps each address unique within the pool.
 
-The requester of an operation that network-boots the server makes one IPAM
-claim for it, in the provider project, before it creates the operation:
+Until NSO serves addresses on the boot network, the address comes from a
+direct IPAM claim. The requester of an operation that network-boots the server
+makes one IPAM claim for it, in the provider project, before it creates the
+operation:
 
 - the Fleet provider for Metal, for a `DeviceInstallation`;
 - the release controller, for a `DeviceWipe`.
 
 The claim is named from the operation and scoped to the site's location, so a
 requester that crashes and runs again finds the same claim. IPAM assigns a host
-address when the claim is created. The requester copies the claim's name and
-address into the operation. Like every spec in this enhancement, it holds no
+address when the claim is created. The requester copies a typed reference to
+the claim, its API group, kind and name, and the address into the operation. Like every spec in this enhancement, it holds no
 object UID:
 
 ```yaml
@@ -157,18 +202,26 @@ spec:
   # ...the envelope and other inputs are unchanged.
   bootInterface: primary
   bootNetwork:
-    addressClaim: {name: alloc-3b9d61c2-install-1-boot}
+    addressClaim:
+      apiGroup: ipam.miloapis.com
+      kind: IPClaim
+      name: alloc-3b9d61c2-install-1-boot
     address: 198.51.100.10
 ```
 
 `DeviceWipe` gains the same `bootInterface` and `bootNetwork` fields.
 
-Admission adds one kind check. The claim must be the operation's own by its
-name and labels, be bound, hold that address, and be created no later than the
+Admission adds one kind check, chosen by the claim's kind. IPAM's claim is the
+only kind it knows. A claim of any other kind can never be checked, so the
+operation fails at once with `UnsupportedBootAddressClaim`, naming the kind,
+and is never retried. The claim must be the operation's own by its name and
+labels, be bound, hold that address, and be created no later than the
 operation, since the requester always creates it first. A claim deleted and
 recreated under the name after the operation is refused, even with the same
-address. Otherwise admission refuses the operation with
-`BootAddressUnavailable`. The Device snapshot already records the boot NIC's
+address. Otherwise the operation fails with `BootAddressClaimMismatch`. Only
+when the claim cannot be read, because its address source is unavailable,
+does the operation wait instead, `Pending` with `BootAddressUnavailable`, and
+admission checks it again. The Device snapshot already records the boot NIC's
 MAC from Device inventory, and the site uses only that MAC.
 
 A claim's address belongs to the operation until no DHCP instance can still
@@ -190,6 +243,24 @@ new operation with a new name, so it claims a new address while the held claim
 stays. A claim whose operation will never be created, because the Installation
 or the release that would create it is gone, is deleted by its requester when
 the allocation is released, and so is any claim still left then.
+
+#### Replacing the address source
+
+The address source has two seams. Each requester uses a claimer that claims a
+bound address under a name derived from the operation, releases it when the
+rules above allow, and lists the claims of an allocation. Admission picks its
+check by the kind the operation's claim reference names. IPAM's claim is the
+only claimer and the only check today.
+
+Once NSO serves the boot network, the source becomes an NSO interface claim on
+the boot network for the boot NIC, one per operation, and NSO takes the address
+from the same IPAM class. The swap is a new claimer and a new admission check
+for NSO's kind, with the same rules for name, labels, bound address, creation
+time, and verified release, plus the requesters' permission to write NSO's
+claims. Nothing else changes: not the operation's fields, the reservation feed,
+the DHCP service, the evidence gates, or the release rules above. Operations
+created before the swap name the IPAM kind, so admission still checks them
+against IPAM until they end.
 
 #### Reservation lifecycle
 
@@ -247,8 +318,9 @@ Scaling down drains the instance first, until it reports an empty feed.
 
 Each site needs:
 
-1. **Provisioning VLAN.** One per site or per rack, untagged on each server's
-   boot NIC port, so firmware boots without VLAN settings.
+1. **Provisioning VLAN.** One per site or per rack, provided to NSO as the boot
+   network's segment, and untagged on a boot NIC's port while NSO attaches it
+   to the boot network, so firmware boots without VLAN settings.
 2. **Isolation on the provisioning VLAN only.** A private VLAN or equivalent,
    so a server reaches only the gateway on the provisioning VLAN. Isolation
    must not apply to customer VLANs on the same port.
@@ -302,7 +374,7 @@ Machine releases the server.
 After allocation, the Fleet provider for Metal creates one NSO interface claim
 per Machine interface, named from the allocation and the interface. Claims live
 where only the Fleet provider can write them, so a customer cannot create or
-replace one. Each claim uses the proposed `Physical` attachment mode and names
+replace one. Each claim uses NSO's planned `Physical` attachment mode and names
 its attachment point:
 
 - the host interface's MAC address, from Device inventory; and
@@ -312,10 +384,10 @@ Then:
 
 1. NSO assigns addresses through IPAM and writes the interface: addresses,
    gateway, and MTU.
-2. The network owner's physical realizer checks that the attachment point
-   belongs to the allocation, reports the interface `Prepared`, adds the
-   switch port to the Network's segment at that location, and reports it
-   `Programmed`.
+2. NSO's physical realizer checks that the attachment point belongs to the
+   allocation and reports the interface `Prepared`. When the server is handed
+   over, it moves the switch port from the boot network to the Network's
+   segment at that location in one step, and reports it `Programmed`.
 3. Fleet copies the interface's addresses, gateway, MTU, and the host
    interface's MAC address into `Machine.status.network`.
 
@@ -336,12 +408,47 @@ reports the same values in status, and the customer configures the OS.
 #### Release
 
 When a Machine is deleted, the Fleet provider for Metal deletes its interface
-claims. NSO keeps each claim until the realizer removes the port from the
-customer's segment. Then it returns the addresses to IPAM, or keeps them for
-an interface that asked to retain them. The release controller closes the
-`Network` and `Address` gates when every claim of the allocation is gone, and
-a claim that never goes away keeps the server out of use. Release then wipes
-the server on the boot network as before.
+claims. NSO keeps each claim until the realizer has moved the port from the
+customer's segment back to the boot network. Then it returns the addresses to
+IPAM, or keeps them for an interface that asked to retain them. The release
+controller closes the `Network` and `Address` gates when every claim of the
+allocation is gone, and a claim that never goes away keeps the server out of
+use. Release then wipes the server on the boot network as before.
+
+### When NSO is unavailable
+
+Every network boot depends on NSO, because only NSO attaches a port to the
+boot network. That includes the wipe at release and every recovery that
+settles a hold with a later network boot. While NSO is unavailable:
+
+- Fleet creates no installation or wipe whose boot attachment it cannot
+  confirm. The request waits, sends nothing, and is tried again.
+- An operation already admitted keeps running. Its port is already on the boot
+  network, and its DHCP, boot, and withdrawal proof are Fleet's own.
+- Release waits with the server held. The `Network` gate stays open, the
+  server stays out of capacity, and no wipe starts on a port that may still
+  be on a customer's network.
+- A recovery that settles a hold by network boot waits the same way. One that
+  only records a decision, such as retiring the Device, does not need NSO.
+- Handoff to the customer waits, and the Machine reports `NetworkReady=False`
+  with the reason.
+- Fleet never writes a switch port to work around NSO.
+
+### Boot NIC choice
+
+Whether the boot NIC is dedicated or shared with customer networks stays open.
+It changes what NSO does at handoff, not what Fleet's boot services do:
+
+- **Shared boot NIC.** The boot NIC also carries customer networks. NSO moves
+  that port between the boot network, untagged, and the customer's networks,
+  tagged, at every handoff and every return, and the port needs isolation on
+  the provisioning VLAN only. Where the NIC is in an LACP bond, the port needs
+  bond fallback to boot.
+- **Dedicated boot NIC.** The boot NIC carries only the boot network, and
+  customer ports never do. NSO attaches the boot port for each operation that
+  network-boots the server and detaches it while the customer holds the
+  server. Handoff is still one NSO step, over separate ports. It costs a port
+  per server and needs no bond fallback.
 
 ### Write order and crash recovery
 
@@ -351,37 +458,43 @@ the server on the boot network as before.
 | Release a boot address | Operation ends, then the requester deletes the claim | The requester deletes the claim again. |
 | Interface claims | Allocation, then each claim, named from the allocation and interface, then the claim's UID in the allocation's status | The provider finds each claim by name in a namespace only it can write, requires its spec and its Machine label to match, and records its UID in status. A claim with another spec or another UID is a conflict, and the Machine reports `NetworkReady=False`. |
 | Release an interface | Delete the claim, then observe it gone | The release controller observes again. A gate closes only on absence. |
+| Boot attachment before an operation | NSO attachment programmed, then the operation | The requester asks NSO again and creates the operation only once NSO reports the port on the boot network. |
 
-### Requests to other teams
+### Dependencies and requests to other teams
 
-Fleet opens nothing in other repositories. These are the asks, in priority
-order.
+Fleet opens nothing in other repositories.
 
-#### NSO
+#### NSO (planned dependency)
 
-1. **Physical attachment mode.** Add `Physical` to the interface attachment
-   modes. A physical interface has no node, container, or hypervisor.
-2. **Attachment point.** Add an attachment point to the interface claim and
-   copy it to the interface: a host MAC address, and a switch and port name.
-   Validate the MAC's format and require both names for `Physical`.
-3. **Claim placement.** Define where a provider that is not compute creates
-   claims for a consumer project, in a namespace the consumer cannot write.
-   Compute creates them in a location cell's namespace. Fleet runs in the
-   provider project and reaches the consumer project through Milo.
-4. **Who may attach a port.** Allow only the Fleet provider's identity to
-   create `Physical` claims.
-5. **Detach before delete.** Keep a `Physical` claim until the realizer reports
-   the port removed from the segment, then release or retain its addresses.
+NSO's physical attachment mode is being designed in NSO. This enhancement
+assumes it provides:
 
-#### Networking and network operations
+1. **Physical attachment mode.** A `Physical` interface attachment mode, for an
+   interface with no node, container, or hypervisor.
+2. **Attachment point.** A host MAC address and a switch and port name on the
+   interface claim, copied to the interface.
+3. **Provider-owned boot network.** A network the provider owns at each site,
+   on the provisioning VLAN, that every server port starts on.
+4. **One-step handoff.** Moving a port between the boot network and customer
+   networks in one step, with NSO's realizer as the only writer of the port's
+   membership, and `Prepared` and `Programmed` reported for each interface.
+5. **Claim placement and authority.** Claims a provider creates for a consumer
+   project live where the consumer cannot write, and only the Fleet
+   provider's identity may create `Physical` claims.
+6. **Detach before delete.** A `Physical` claim stays until its port is off the
+   customer's network, then its addresses are released or retained.
+7. **Boot network addresses (later).** Interface claims on the boot network
+   that bind one provisioning address from the site's IPAM class, for the
+   address source swap.
 
-1. **Physical realizer.** A component that reads `Physical` interfaces, checks
-   each attachment point against the allocation Fleet records for that
-   server, adds and removes the named port's membership in the Network's
-   segment, and writes `Prepared`, `Programmed`, and the attachment reference.
-   It is the only writer of that membership.
-2. **Base port profiles and site requirements.** The list under [Network
-   operations requirements](#network-operations-requirements).
+Fleet relies on NSO being available for every network boot. See [When NSO is
+unavailable](#when-nso-is-unavailable).
+
+#### Network operations
+
+1. **Base port profiles and site requirements.** The list under [Network
+   operations requirements](#network-operations-requirements), with each
+   site's provisioning VLAN provided to NSO as the boot network's segment.
 
 #### IPAM
 
@@ -395,12 +508,8 @@ order.
 - **Who operates the site DHCP service.** This enhancement ships Kea as a Fleet
   site component, and network operations owns its base configuration. Someone
   must be on call for it.
-- **Dedicated boot NIC.** Isolation on the provisioning VLAN is enough when the
-  boot NIC also carries customer networks as tagged VLANs. A dedicated boot NIC
-  costs a port per server and avoids bond fallback.
-- **The `Physical` attachment contract.** NSO and Networking must accept or
-  change the asks above. Until they do, Fleet refuses Machines that request
-  interfaces.
+- **Dedicated or shared boot NIC.** See [Boot NIC choice](#boot-nic-choice) for
+  how each option changes NSO's role.
 - **Overlap with network handoff ([#61][handoff-pr]).** Both propose physical
   attachment and disconnect. Decide which one owns them.
 
@@ -423,19 +532,22 @@ These tests are required and not implemented:
   capacity.
 - A Machine reports `NetworkReady` only after every interface is programmed, and
   its status shows each interface's addresses and MAC address.
+- While NSO is unavailable, no installation or wipe is created, an admitted
+  operation runs to its result, and release keeps the server held.
 - Release closes the `Network` and `Address` gates only after every interface
   claim is gone.
 - End to end at a site with real switches: a relayed boot on an LACP member,
-  attachment to two customer networks, isolation from a second customer, and
-  release with the port removed from both networks.
+  handoff from the boot network to two customer networks in one NSO step,
+  isolation from a second customer, and release with the port back on the boot
+  network.
 
 ## Production readiness review questionnaire
 
 ### How do operators enable or disable the feature?
 
 A site enables the boot network by declaring synchronized DHCP and deploying the
-site DHCP service. A location enables customer attachment when NSO and the
-realizer support `Physical` there. Disabling attachment refuses new Machines
+site DHCP service. A location enables customer attachment when NSO supports
+`Physical` there. Disabling attachment refuses new Machines
 with interfaces and leaves existing ones attached.
 
 ### What must operators monitor?
@@ -446,8 +558,10 @@ interfaces not `Programmed`, and releases waiting on interface claims.
 
 ### What does the feature depend on?
 
-IPAM for addresses. NSO and the physical realizer for attachment. Network
-operations for relays, VLANs, and port profiles.
+IPAM for addresses. NSO and its physical realizer for every port's attachment,
+including the boot network, so every installation, wipe, and recovery by
+network boot needs NSO. Network operations for relays, VLANs, and port
+profiles.
 
 ### Does the feature add API types or calls?
 
@@ -458,11 +572,14 @@ interface.
 ## Implementation history
 
 - 2026-11-25: Proposed.
+- 2026-11-25: NSO owns the boot network and every port's attachment; the direct
+  IPAM claim becomes the interim address source.
 
 ## Drawbacks
 
 - Every network boot depends on the site DHCP service and its reports.
-- Customer attachment waits on two other teams.
+- Customer attachment and every network boot wait on NSO's physical mode, and
+  on NSO being available.
 - Installations carry static network configuration, so a customer who changes
   addresses later must also change the OS.
 
@@ -473,6 +590,11 @@ interface.
   still serves it.
 - **Fleet configures switch ports.** Fleet would hold the switches'
   credentials and write the network owner's systems.
+- **Network operations owns the boot attachment.** A static native VLAN on every
+  port needs no NSO step to boot, but gives each port two writers, and a
+  handoff would need both to change the same port in the right order.
+- **NSO serves boot DHCP.** NSO would need custody's fence and the withdrawal
+  proof, which Fleet already has.
 - **DHCP on customer networks.** NSO has no DHCP, and a server would get a
   customer address before Fleet hands it off.
 - **Central DHCP outside the site.** Possible behind the same feed, but each
@@ -481,8 +603,9 @@ interface.
 ## Infrastructure needed
 
 The lab can run Kea, the synchronizer, and the feed against emulated DHCP
-clients, and NSO's API with a test realizer. Real switches are needed for
-relays, LACP fallback, port isolation, and the realizer.
+clients, IPAM, and NSO's API with a test realizer. Real switches are needed for
+relays, LACP fallback, port isolation, the realizer, and moving a port between
+the boot network and customer networks.
 
 [boot-pr]: https://github.com/datum-cloud/fleet/pull/87
 [handoff-pr]: https://github.com/datum-cloud/fleet/pull/61
