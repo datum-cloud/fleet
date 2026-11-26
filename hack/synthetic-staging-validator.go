@@ -80,7 +80,7 @@ func main() {
 	require(has(p.Args, "--listen-address=0.0.0.0:8090") && has(p.Args, "--state-dir=/var/lib/fleet/site"), "provider runtime and persistent store paths must match mounts")
 	require(!has(p.Args, "--discover"), "the provider site has no Kubernetes API credential, so it must not run discovery")
 	require(has(m.Args, "--synthetic-site-enrollment-file=/etc/fleet/enrollment/enrollment.json") && has(p.Args, "--enrollment-file=/etc/fleet/enrollment/enrollment.json"), "the manager and the site must read the same enrollment")
-	require(has(m.Args, "--synthetic-coordinator-token-file=/var/run/fleet/coordinator/token") && has(m.Args, "--synthetic-release-token-file=/var/run/fleet/release/token"), "the coordinator and release controller need their own credentials")
+	require(has(m.Args, "--synthetic-coordinator-client-cert-dir=/var/run/fleet/coordinator") && has(m.Args, "--synthetic-release-client-cert-dir=/var/run/fleet/release"), "the coordinator and release controller need their own Milo client certificates")
 	for _, arg := range p.Args {
 		require(!strings.HasPrefix(arg, "--admin-"), "provider must not expose an admin listener")
 	}
@@ -118,8 +118,8 @@ func main() {
 		}
 		return false
 	}
-	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/coordinator", "fleet-custody-coordinator-auth"), "the coordinator token must resolve to its external Secret")
-	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/release", "fleet-release-controller-auth"), "the release controller token must resolve to its external Secret")
+	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/coordinator", "fleet-custody-coordinator-client-cert"), "the coordinator's client certificate must resolve to its external Secret")
+	require(mountsSecret(manager.Spec.Template.Spec, "/var/run/fleet/release", "fleet-release-controller-client-cert"), "the release controller's client certificate must resolve to its external Secret")
 	var enrollment core.ConfigMap
 	read("ConfigMap/fleet-synthetic-site-enrollment", &enrollment)
 	for _, pod := range []core.PodSpec{manager.Spec.Template.Spec, provider.Spec.Template.Spec} {

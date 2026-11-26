@@ -35,10 +35,10 @@ patches:
         value: --synthetic-published-profile-name=$(FLEET_PUBLISHED_PROFILE_NAME)
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --synthetic-coordinator-token-file=/var/run/fleet/coordinator/token
+        value: --synthetic-coordinator-client-cert-dir=/var/run/fleet/coordinator
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --synthetic-release-token-file=/var/run/fleet/release/token
+        value: --synthetic-release-client-cert-dir=/var/run/fleet/release
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --synthetic-site-enrollment-file=/etc/fleet/enrollment/enrollment.json
@@ -83,13 +83,13 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/volumeMounts/-
         value:
-          name: custody-coordinator-token
+          name: custody-coordinator-client-cert
           mountPath: /var/run/fleet/coordinator
           readOnly: true
       - op: add
         path: /spec/template/spec/containers/0/volumeMounts/-
         value:
-          name: release-controller-token
+          name: release-controller-client-cert
           mountPath: /var/run/fleet/release
           readOnly: true
       - op: add
@@ -101,23 +101,31 @@ patches:
       - op: add
         path: /spec/template/spec/volumes/-
         value:
-          name: custody-coordinator-token
+          name: custody-coordinator-client-cert
+          # A cert-manager Certificate's Secret for the coordinator's Milo
+          # identity. The whole Secret is mounted so a renewal is picked up.
           secret:
-            secretName: fleet-custody-coordinator-auth
+            secretName: fleet-custody-coordinator-client-cert
             defaultMode: 0440
             items:
-              - key: token
-                path: token
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
       - op: add
         path: /spec/template/spec/volumes/-
         value:
-          name: release-controller-token
+          name: release-controller-client-cert
+          # A cert-manager Certificate's Secret for the release controller's
+          # Milo identity.
           secret:
-            secretName: fleet-release-controller-auth
+            secretName: fleet-release-controller-client-cert
             defaultMode: 0440
             items:
-              - key: token
-                path: token
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
       - op: add
         path: /spec/template/spec/volumes/-
         value:

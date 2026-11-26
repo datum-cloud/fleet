@@ -331,14 +331,18 @@ private custody namespace on the hub host is gone.
 | Multi-plane, local VM and Redfish | A workstation process for the run (`hack/multiplane/coordinator.sh`) | The cell, over Karmada | A separate discovery identity on the workstation | **Implemented and verified** by both runs. |
 
 - **Synthetic staging.** The manager runs the coordinator loop and fixture
-  discovery. Its flags are `--synthetic-coordinator-token-file`,
-  `--synthetic-release-token-file`, `--synthetic-site-enrollment-file` and
-  `--synthetic-device-namespace`. The overlay mounts two environment-supplied
-  Secrets, `fleet-custody-coordinator-auth` and `fleet-release-controller-auth`,
+  discovery. Its flags are `--synthetic-coordinator-client-cert-dir`,
+  `--synthetic-release-client-cert-dir`, `--synthetic-site-enrollment-file` and
+  `--synthetic-device-namespace`. The coordinator and the release controller
+  each sign in to Milo with their own client certificate, on the manager's
+  endpoint and server CA and without its credentials. The overlay mounts two
+  environment-supplied cert-manager Secrets,
+  `fleet-custody-coordinator-client-cert` and
+  `fleet-release-controller-client-cert`, each with `tls.crt` and `tls.key`,
   and a `fleet-synthetic-site-enrollment` ConfigMap. The ConfigMap in the overlay
   holds a synthetic placeholder, and an environment replaces it. An environment
-  must also re-import its records and create the two credentials; see [Points for
-  a person](#points-for-a-person).
+  must also make sure its records exist and create the two client-certificate
+  identities; see [Points for a person](#points-for-a-person).
 - **Multi-plane.** The provider project gets the inventory and custody CRDs and one
   token per component. The lab BMC serves TLS with a key generated per run, and
   each Device's credential carries that key's digest as its pin. Real BMC
@@ -790,17 +794,23 @@ These need a decision before the increment that depends on them.
   and reads none of them. Before the new manager runs in an environment, a
   person must, in order:
   1. Release every old synthetic allocation, or discard the synthetic state.
-  2. Re-import the Devices with their BMC endpoints and identities, and the
-     capacities.
-  3. Create two credentials with the `fleet.datumapis.com-device-coordinator`
-     and `fleet.datumapis.com-device-wipe-requester` roles.
+  2. Make sure each Device, with its BMC endpoint and identity, and each
+     capacity exists in the provider project. Records GitOps already manages
+     stay with it; import by hand only the ones it does not.
+  3. Create two Milo identities that sign in with client certificates, bound
+     to the `fleet.datumapis.com-device-coordinator` and
+     `fleet.datumapis.com-device-wipe-requester` roles, and issue each a
+     cert-manager client certificate.
   4. Grant the manager's own identity, the Metal provider, the
      `metal.datumapis.com-controller`,
      `fleet.datumapis.com-device-installation-requester` and
      `fleet.datumapis.com-inventory-discoverer` roles in the provider project.
   5. Supply the site's enrollment.
   6. Delete the old `fleet-system-private` namespace and its Secrets.
-  7. After rollout, verify a fresh allocation and a verified release.
+  7. Delete the publisher's copy of the MachineClass in the consumer project.
+     Its source names the old `project` field and is immutable, so the
+     publisher recreates it with `publisherRef`.
+  8. After rollout, verify a fresh allocation and a verified release.
 
   The commands are in [Moving from the Secret-backed
   staging](../../config/README.md#moving-from-the-secret-backed-staging). No

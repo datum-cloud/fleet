@@ -133,13 +133,16 @@ following before the new manager runs:
 
 1. Release every old synthetic allocation, or discard the synthetic state. Do not
    treat missing public Machines as proof of cleanup.
-2. Import the provider project's records again: Devices with their BMC endpoints
-   and identities, and the capacities, as in [Planning and registering physical
-   devices](../docs/operations/physical-inventory.md).
-3. Create two credentials for the provider project, with the
-   `fleet.datumapis.com-device-coordinator` and
-   `fleet.datumapis.com-device-wipe-requester` roles, and supply them as the
-   Secrets below.
+2. Make sure the provider project has its records: Devices with their BMC
+   endpoints and identities, and the capacities, as in [Planning and
+   registering physical devices](../docs/operations/physical-inventory.md).
+   Records GitOps already manages stay with it; import by hand only the ones it
+   does not.
+3. Create two Milo identities that sign in with client certificates, bind one
+   to `fleet.datumapis.com-device-coordinator` and the other to
+   `fleet.datumapis.com-device-wipe-requester` in the provider project, and
+   issue each a client certificate with a cert-manager Certificate whose
+   Secret is the one below.
 4. Give the manager's own identity, the Metal provider, these roles in the
    provider project: `metal.datumapis.com-controller`, which now deletes an
    allocation that lost its Device before it held it;
@@ -152,7 +155,10 @@ following before the new manager runs:
 5. Replace the site enrollment placeholder with the Devices the site serves.
 6. Delete the old `fleet-system-private` namespace and its Secrets by hand.
    Its manifest was never pruned, so Flux leaves it in place.
-7. After rollout, verify both Deployments, Service routing, PVC binding, and a
+7. Delete the publisher's copy of the MachineClass in the consumer project. Its
+   source names the old `project` field and is immutable, so the publisher
+   recreates it with `publisherRef`.
+8. After rollout, verify both Deployments, Service routing, PVC binding, and a
    fresh allocation and verified release. Do not delete the PVC as a recovery
    shortcut.
 
@@ -246,8 +252,8 @@ manager runs under its leader lease together with fixture discovery:
 
 | Input | Flag | Content |
 | --- | --- | --- |
-| Secret `fleet-system/fleet-custody-coordinator-auth`, key `token` | `--synthetic-coordinator-token-file` | A credential for the provider project with the `fleet.datumapis.com-device-coordinator` role. Supplied by the environment. |
-| Secret `fleet-system/fleet-release-controller-auth`, key `token` | `--synthetic-release-token-file` | A credential for the provider project with the `fleet.datumapis.com-device-wipe-requester` role. Supplied by the environment. |
+| Secret `fleet-system/fleet-custody-coordinator-client-cert`, keys `tls.crt` and `tls.key` | `--synthetic-coordinator-client-cert-dir` | The Milo client certificate of an identity with the `fleet.datumapis.com-device-coordinator` role in the provider project, as a cert-manager Certificate writes it. Supplied by the environment. |
+| Secret `fleet-system/fleet-release-controller-client-cert`, keys `tls.crt` and `tls.key` | `--synthetic-release-client-cert-dir` | The Milo client certificate of an identity with the `fleet.datumapis.com-device-wipe-requester` role in the provider project. Supplied by the environment. |
 | ConfigMap `fleet-system/fleet-synthetic-site-enrollment`, key `enrollment.json` | `--synthetic-site-enrollment-file` | The Devices the synthetic site serves, keyed `<namespace>/<name>`, each with its BMC endpoint, system UUID, boot MAC address, key digest and disks. The overlay ships a synthetic placeholder for `server-example-001`, and an environment replaces it with the Devices it imports. |
 | `--synthetic-device-namespace` | Default `default` | The namespace of the Devices, capacities and allocations in the provider project. Every enrolled Device must be in it. |
 

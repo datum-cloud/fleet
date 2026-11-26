@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,14 +34,21 @@ const syntheticCleaningPolicy = `{"method":"overwrite","disks":"all"}`
 // syntheticCustody builds the allocator, the custody coordinator loop and
 // fixture discovery for synthetic staging. The manager's own identity is the
 // Metal provider; the coordinator and the release controller authenticate
-// with their own tokens, so each component's writes carry its identity.
+// to Milo with their own client certificates, so each component's writes
+// carry its identity.
 func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfig *rest.Config, flags *managerFlags) (*allocation.Allocator, *delivery.Loop, func(context.Context) error, error) {
 	enrollment, err := readEnrollment(flags.syntheticEnrollmentFile)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	coordinatorConfig := withToken(providerConfig, flags.syntheticCoordinatorTokenFile)
-	releaseConfig := withToken(providerConfig, flags.syntheticReleaseTokenFile)
+	coordinatorConfig, err := withClientCert(providerConfig, flags.syntheticCoordinatorCertDir)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("custody coordinator credential: %w", err)
+	}
+	releaseConfig, err := withClientCert(providerConfig, flags.syntheticReleaseCertDir)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("release controller credential: %w", err)
+	}
 	clients := make([]ctrlclient.Client, 3)
 	for index, config := range []*rest.Config{providerConfig, coordinatorConfig, releaseConfig} {
 		// Decisions read through to the API server, never a cache.
@@ -102,10 +111,19 @@ func syntheticCustody(ctx context.Context, scheme *runtime.Scheme, providerConfi
 	return allocator, loop, discover, nil
 }
 
-func withToken(config *rest.Config, tokenFile string) *rest.Config {
+// withClientCert is the Milo connection of config, the same endpoint and
+// server CA, authenticated only by the client certificate in dir. The
+// directory holds a cert-manager certificate Secret's tls.crt and tls.key.
+// client-go rereads both files, so a renewed certificate is used without a
+// restart; mount the whole Secret, never a subPath.
+func withClientCert(config *rest.Config, dir string) (*rest.Config, error) {
+	certFile, keyFile := filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key")
+	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+		return nil, fmt.Errorf("load the client certificate in %s: %w", dir, err)
+	}
 	copied := rest.AnonymousClientConfig(config)
-	copied.BearerTokenFile = tokenFile
-	return copied
+	copied.CertFile, copied.KeyFile = certFile, keyFile
+	return copied, nil
 }
 
 func readToken(path string) (string, error) {
