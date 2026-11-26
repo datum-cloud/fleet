@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.datum.net/fleet/internal/bootnet"
+	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
 	"go.datum.net/fleet/internal/site/redfishwork"
 )
@@ -26,7 +27,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: lab serve|open|close|retire [flags]")
+		return errors.New("usage: lab serve|open|close [flags]")
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	storeDir := fs.String("store", "", "site store directory")
@@ -39,12 +40,8 @@ func run() error {
 	fence := fs.Int64("fence", 1, "operation fence (open)")
 	mac := fs.String("mac", "", "boot NIC MAC (open)")
 	address := fs.String("address", "", "boot address (open)")
-	instance := fs.String("instance", "", "DHCP instance (retire)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
-	}
-	if os.Args[1] == "retire" {
-		return redfishwork.RetireInstance(*bootDir, *instance)
 	}
 	store, err := site.OpenStore(*storeDir, nil)
 	if err != nil {
@@ -56,8 +53,16 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		// The same listener the site's dhcp-feed role runs, on :8081.
-		return redfishwork.BootServer{Store: store, BootRoot: *bootDir}.ServeDHCP(strings.TrimSpace(string(token)), *cert, *key)
+		// The same listener the site's dhcp-feed role runs, on :8081, serving
+		// the expected DHCP instances of the same synced enrollment.
+		enrollment, err := redfish.ParseEnrollment([]byte(os.Getenv("FLEET_REDFISH_ENROLLMENT")))
+		if err != nil {
+			return err
+		}
+		if enrollment.DHCP != redfish.DHCPSynced {
+			return errors.New("the lab feed needs a synced enrollment")
+		}
+		return redfishwork.BootServer{Store: store, BootRoot: *bootDir, DHCPInstances: enrollment.DHCPInstances}.ServeDHCP(strings.TrimSpace(string(token)), *cert, *key)
 	case "open":
 		normalized, ok := bootnet.NormalizeMAC(*mac)
 		if !ok || *operation == "" {

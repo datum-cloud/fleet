@@ -353,8 +353,10 @@ exercises boot addresses, reservations and Kea end to end in the lab:
   token and a self-signed feed key per run, as Secrets in `fleet-site`, never
   in Git or evidence.
 - **Worker mode.** `config/site/redfish/synced/graph` sets the worker
-  enrollment's `dhcp` to `synced`, so every network boot needs a boot address
-  and waits for Kea to apply and withdraw its reservation.
+  enrollment's `dhcp` to `synced`, with `lab-kea` as its one expected DHCP
+  instance, so every network boot needs a boot address and waits for Kea to
+  apply and withdraw its reservation. The feed reads the same enrollment from
+  a ConfigMap in `config/site/redfish/synced/services`.
 - **IPAM stand-in.** The lab has no IPAM service. The provider project serves
   IPAM's `IPClaim` kind from a CRD, and the acceptance runner binds each
   unbound claim, with the bootstrap identity, to the lowest free address in

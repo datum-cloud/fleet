@@ -16,6 +16,8 @@ boot = one("Deployment", "fleet-site-boot")["spec"]["template"]["spec"]
 feed = next(c for c in boot["containers"] if c["name"] == "dhcp-feed")
 assert feed["command"][:2] == ["fleet-multiplane", "dhcp-feed"] and "-tls-cert" in feed["command"] and "-tls-key" in feed["command"], feed["command"]
 assert {"name": "state", "mountPath": "/var/lib/fleet-local", "subPath": "journal", "readOnly": True} in feed["volumeMounts"], "the feed reads the store read-only"
+ref = next(e["valueFrom"]["configMapKeyRef"] for e in feed["env"] if e["name"] == "FLEET_REDFISH_ENROLLMENT")
+enrollment = json.loads(one("ConfigMap", ref["name"])["data"][ref["key"]])
 service = one("Service", "fleet-site-dhcp-feed")
 assert service["spec"]["type"] == "ClusterIP" and service["spec"]["ports"][0]["port"] == 8081
 kea = one("StatefulSet", "fleet-site-dhcp")["spec"]
@@ -37,6 +39,8 @@ assert base.get("authoritative") is False, "an instance without the reservation 
 assert all("next-server" not in s for s in base["subnet4"]), "no TFTP server"
 assert any(c["name"] == "HTTPClient" and c["boot-file-name"].startswith("http") for c in base["client-classes"]), "UEFI HTTP boot"
 assert any(e["name"] == "POD_NAME" for e in containers["sync"]["env"]), "the instance name is the Pod name"
+pods = ["%s-%d" % (one("StatefulSet", "fleet-site-dhcp")["metadata"]["name"], i) for i in range(kea["replicas"])]
+assert enrollment["dhcp"] == "synced" and enrollment["dhcpInstances"] == pods, "the expected DHCP instances are exactly the StatefulSet Pods: %s" % enrollment["dhcpInstances"]
 assert "chmod 0750 /var/run/kea" in " ".join(containers["kea"]["command"]), "Kea 2.6 needs its socket directory 0750"
 for pod in (boot, kea["template"]["spec"]):
     volumes = {v["name"] for v in pod["volumes"]}
@@ -47,5 +51,5 @@ labels = one("Deployment", "fleet-site-boot")["spec"]["template"]["metadata"]["l
 assert all(labels.get(k) == v for k, v in service["spec"]["selector"].items()), "the feed Service selects the boot Pod"
 budget = one("PodDisruptionBudget", "fleet-site-dhcp")["spec"]["selector"]["matchLabels"]
 assert budget == kea["selector"]["matchLabels"], "the budget covers the Kea Pods"
-print("PASS site DHCP render: %d objects, feed over TLS, Kea pinned behind one UDP 67 load balancer, HTTP boot, no Secret, no pool" % len(docs))
+print("PASS site DHCP render: %d objects, feed over TLS to the expected instances, Kea pinned behind one UDP 67 load balancer, HTTP boot, no Secret, no pool" % len(docs))
 '

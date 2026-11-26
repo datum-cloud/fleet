@@ -48,7 +48,10 @@ EOF
 # Docker assigns container addresses from the lower half only, so it never
 # hands out the reserved address.
 docker network create --subnet 198.51.100.0/24 --ip-range 198.51.100.0/25 --gateway 198.51.100.1 "$prefix" >/dev/null
-docker create --name "$prefix-feed" --platform linux/amd64 --user 0 --network "$prefix" --network-alias feed --entrypoint sh "$image" \
+# The feed reads the site's synced enrollment, as the site's dhcp-feed role
+# does: it serves, and takes reports from, only the expected instance kea-a.
+enrollment='{"dhcp":"synced","dhcpInstances":["kea-a"],"targets":[{"device":"fleet-provider/server-example-001","endpoint":"https://192.0.2.10:8443","systemID":"System-1","systemUUID":"00000000-0000-4000-8000-000000000001","diskBytes":2147483648,"console":"lab.log"}]}'
+docker create --name "$prefix-feed" --platform linux/amd64 --user 0 --network "$prefix" --network-alias feed -e FLEET_REDFISH_ENROLLMENT="$enrollment" --entrypoint sh "$image" \
   -c 'mkdir -p -m 0700 /state/store /state/boot && exec /lab/lab serve -store /state/store -boot /state/boot -token-file /lab/token -cert /lab/feed.crt -key /lab/feed.key' >/dev/null
 # As in the site component: the socket directory starts 0777, like an
 # emptyDir, and Kea's command makes it 0750 before Kea starts.

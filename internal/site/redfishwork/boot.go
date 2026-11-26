@@ -37,7 +37,10 @@ type BootServer struct {
 	// BootRoot holds the per-operation delivery evidence and the retained
 	// DHCP reports the workers read.
 	BootRoot string
-	Now      func() time.Time
+	// DHCPInstances is the enrollment's expected DHCP instance set. The
+	// reservation feed serves, and retains reports from, only these.
+	DHCPInstances []string
+	Now           func() time.Time
 }
 
 func (b BootServer) now() time.Time {

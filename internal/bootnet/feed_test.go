@@ -1,6 +1,7 @@
 package bootnet
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -51,5 +52,43 @@ func TestFeedIsCanonicalAndSelfVerifying(t *testing.T) {
 	}
 	if (Applied{Instance: "kea-0", Feed: empty}).Verify() != nil || (Applied{Instance: "-kea", Feed: empty}).Verify() == nil {
 		t.Fatal("instance names not checked")
+	}
+}
+
+// TestIssuedIsOutsideTheRevision: the same reservations issued at different
+// times are one revision, both verify, and a feed retained before feeds
+// carried an issue time still verifies with the zero time. Issued must be
+// UTC to the second.
+func TestIssuedIsOutsideTheRevision(t *testing.T) {
+	r := Reservation{MAC: "52:54:00:77:01:0a", Address: "192.0.2.10", Expires: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
+	a, _ := NewFeed([]Reservation{r})
+	b := a
+	a.Issued = time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	b.Issued = a.Issued.Add(time.Hour)
+	if a.Revision != b.Revision || a.Verify() != nil || b.Verify() != nil {
+		t.Fatalf("issue time changed the revision or failed verification: %+v %+v", a, b)
+	}
+	encoded, _ := json.Marshal(a)
+	var decoded Feed
+	if json.Unmarshal(encoded, &decoded) != nil || decoded.Verify() != nil || !decoded.Issued.Equal(a.Issued) {
+		t.Fatalf("issue time did not round-trip: %s", encoded)
+	}
+	again, _ := json.Marshal(decoded)
+	if string(again) != string(encoded) {
+		t.Fatalf("encoding is not deterministic: %s != %s", again, encoded)
+	}
+	var old Feed
+	if err := json.Unmarshal([]byte(`{"revision":"`+a.Revision+`","reservations":[{"mac":"52:54:00:77:01:0a","address":"192.0.2.10","expires":"2030-01-02T03:04:05Z"}]}`), &old); err != nil || old.Verify() != nil || !old.Issued.IsZero() {
+		t.Fatalf("a feed without an issue time: %v, %v", err, old.Verify())
+	}
+	for name, issued := range map[string]time.Time{
+		"sub-second": a.Issued.Add(time.Millisecond),
+		"not UTC":    a.Issued.In(time.FixedZone("x", 3600)),
+	} {
+		f := a
+		f.Issued = issued
+		if f.Verify() == nil {
+			t.Errorf("%s issue time verified", name)
+		}
 	}
 }

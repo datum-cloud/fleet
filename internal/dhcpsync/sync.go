@@ -76,6 +76,8 @@ func (s *Syncer) request(ctx context.Context, method, path string, body []byte) 
 		return nil, err
 	}
 	q.Header.Set("Authorization", "Bearer "+s.Token)
+	// The site serves its feed only to an instance it expects.
+	q.Header.Set(bootnet.InstanceHeader, s.Instance)
 	if body != nil {
 		q.Header.Set("Content-Type", "application/json")
 	}
@@ -97,6 +99,9 @@ func (s *Syncer) fetch(ctx context.Context) (bootnet.Feed, error) {
 	return feed, nil
 }
 
+// report echoes the applied feed exactly as the site served it, issue time
+// included: the site proves withdrawal from when each reported feed was
+// issued.
 func (s *Syncer) report(ctx context.Context, feed bootnet.Feed) error {
 	b, _ := json.Marshal(bootnet.Applied{Instance: s.Instance, Feed: feed})
 	resp, err := s.request(ctx, http.MethodPost, "/dhcp/v1/applied", b)

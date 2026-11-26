@@ -7,6 +7,7 @@ kind: Kustomization
 resources:
   - ../../redfish/services
   - base.yaml
+  - enrollment.yaml
 components:
   - ../feed
   - ../component

@@ -1,7 +1,9 @@
 # Redfish lab with synchronized DHCP (run.sh --redfish --synced-dhcp): the
 # Redfish graph with the site enrollment's DHCP mode set to synced, so a
 # network boot needs a boot address and waits for the site's Kea to apply and
-# later withdraw its reservation.
+# later withdraw its reservation. The lab's one Kea instance, lab-kea, is the
+# expected DHCP instance set; the feed reads the same enrollment from the
+# ConfigMap in ../services.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -14,4 +16,4 @@ patches:
         value: FLEET_REDFISH_ENROLLMENT
       - op: replace
         path: /spec/resources/9/template/spec/template/spec/containers/0/env/6/value
-        value: '{"dhcp":"synced","targets":[{"device":"fleet-provider/synthetic-device-central-01","endpoint":"https://10.96.0.81:8443","systemID":"System-1","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a","diskBytes":2147483648,"console":"target-a.log"},{"device":"fleet-provider/synthetic-device-central-02","endpoint":"https://10.96.0.81:8443","systemID":"System-2","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b","diskBytes":2147483648,"console":"target-b.log"}]}'
+        value: '{"dhcp":"synced","dhcpInstances":["lab-kea"],"targets":[{"device":"fleet-provider/synthetic-device-central-01","endpoint":"https://10.96.0.81:8443","systemID":"System-1","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0a","diskBytes":2147483648,"console":"target-a.log"},{"device":"fleet-provider/synthetic-device-central-02","endpoint":"https://10.96.0.81:8443","systemID":"System-2","systemUUID":"7f3d0c2e-1a5b-4c6d-8e9f-0a1b2c3d4e0b","diskBytes":2147483648,"console":"target-b.log"}]}'

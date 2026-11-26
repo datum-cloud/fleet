@@ -9,10 +9,11 @@ automountServiceAccountToken: false
 # last report. The instances share one load-balancer address on UDP 67
 # (below), which the site's relays reach over the WAN link. Kea answers only relayed
 # requests, on a UDP socket, so it needs no host networking; the base
-# configuration's relay filter limits it to the site's relays. Scale down
-# only after the instance being removed reports an empty feed: an instance
-# removed while serving keeps its operations' outcomes unknown until an
-# operator retires it.
+# configuration's relay filter limits it to the site's relays. The site's
+# enrollment lists these Pods' names as its expected DHCP instances. To
+# retire one, make sure it no longer answers, scale down (the highest
+# ordinal goes first), shrink the enrollment's dhcpInstances to match, and
+# restart the site's workers and feed.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -92,8 +93,8 @@ spec:
         - name: feed-ca
           secret: {secretName: fleet-site-dhcp-feed-tls, defaultMode: 0400, items: [{key: ca.crt, path: ca.crt}]}
 ---
-# One instance may restart at a time. Draining before scale-down is an
-# operator step; see the comment on the StatefulSet.
+# One instance may restart at a time. Retiring an instance is an operator
+# step; see the comment on the StatefulSet.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -107,7 +108,7 @@ spec:
 # One load-balancer address on UDP 67 for all of the site's instances, which
 # the site's relays forward to. Any instance may answer a request. Each
 # instance applies the same feed through its own synchronizer and reports it
-# under its own stable name, so the withdrawal gate covers every instance;
+# under its own stable name, so the withdrawal gate covers every expected one;
 # an instance that has not applied a reservation yet stays silent, because
 # Kea is not authoritative, and the firmware retries. Client-IP affinity
 # keeps one relay's exchange on one instance. Kea replies to the relay

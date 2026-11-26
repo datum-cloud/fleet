@@ -2,8 +2,11 @@
 # site store and writes the applied reports beside the boot evidence, and a
 # Service. The site's central DHCP instances reach it over TLS only. The environment supplies
 # the Secrets fleet-site-dhcp-sync (key token) and fleet-site-dhcp-feed-tls
-# (tls.crt, tls.key, ca.crt), never in Git. The Kea component and the
-# Redfish lab's synchronized DHCP both use it.
+# (tls.crt, tls.key, ca.crt), never in Git, and the ConfigMap
+# fleet-site-redfish-enrollment (key enrollment): the same synced Redfish
+# enrollment the site's workers get. The feed serves, and takes reports from,
+# only the enrollment's dhcpInstances. The Kea component and the Redfish
+# lab's synchronized DHCP both use it.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 resources:
@@ -23,6 +26,8 @@ patches:
           env:
             - {name: FLEET_SITE_PROVIDER, value: redfish}
             - {name: FLEET_BOOT_EVIDENCE, value: /var/lib/fleet-boot}
+            - name: FLEET_REDFISH_ENROLLMENT
+              valueFrom: {configMapKeyRef: {name: fleet-site-redfish-enrollment, key: enrollment}}
           ports:
             - {name: dhcp-feed, containerPort: 8081}
           readinessProbe:

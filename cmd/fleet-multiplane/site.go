@@ -155,7 +155,7 @@ func redfishConfig() (redfishwork.Config, redfish.Enrollment, error) {
 	if err != nil {
 		return redfishwork.Config{}, redfish.Enrollment{}, err
 	}
-	return redfishwork.Config{ConsoleRoot: console, BootRoot: boot, Synced: enrollment.DHCP == redfish.DHCPSynced}, enrollment, nil
+	return redfishwork.Config{ConsoleRoot: console, BootRoot: boot, Synced: enrollment.DHCP == redfish.DHCPSynced, DHCPInstances: enrollment.DHCPInstances}, enrollment, nil
 }
 
 // siteRunner is the site runner for this cell's mode. A Redfish worker reads
@@ -229,16 +229,25 @@ func boot(command, origin, extraMAC, syncToken, tlsCert, tlsKey string) error {
 	if redfishMode() && command == "dhcp-feed" {
 		// Reservations come from the admitted operations in the store, and
 		// reports go beside the boot evidence. The feed serves no boot
-		// artifacts, so it needs no boot origin or installer image.
+		// artifacts, so it needs no boot origin or installer image. It reads
+		// the workers' enrollment for one thing: the expected DHCP instances,
+		// the only ones it serves and takes reports from.
 		root, err := bootRoot()
 		if err != nil {
 			return err
+		}
+		enrollment, err := redfish.ParseEnrollment([]byte(os.Getenv("FLEET_REDFISH_ENROLLMENT")))
+		if err != nil {
+			return err
+		}
+		if enrollment.DHCP != redfish.DHCPSynced {
+			return errors.New("the DHCP reservation feed serves only a site whose enrollment has synced DHCP")
 		}
 		token, err := os.ReadFile(syncToken)
 		if err != nil {
 			return fmt.Errorf("DHCP synchronizer token: %w", err)
 		}
-		return redfishwork.BootServer{Store: store, BootRoot: root}.ServeDHCP(strings.TrimSpace(string(token)), tlsCert, tlsKey)
+		return redfishwork.BootServer{Store: store, BootRoot: root, DHCPInstances: enrollment.DHCPInstances}.ServeDHCP(strings.TrimSpace(string(token)), tlsCert, tlsKey)
 	}
 	if redfishMode() {
 		server, err := redfishBootServer(store)

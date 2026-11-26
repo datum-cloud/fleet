@@ -81,12 +81,14 @@ coordinator `get`.
 ## Enrollment
 
 The site enrollment (`FLEET_REDFISH_ENROLLMENT`) is the explicit mapping of the
-Devices a Redfish site serves. It sets the site's DHCP mode and, per target, the
-BMC endpoint, the Redfish System, the disk size and the console capture:
+Devices a Redfish site serves. It sets the site's DHCP mode, the DHCP
+instances a synced site expects and, per target, the BMC endpoint, the Redfish
+System, the disk size and the console capture:
 
 ```json
 {
   "dhcp": "synced",
+  "dhcpInstances": ["fleet-site-dhcp-0", "fleet-site-dhcp-1"],
   "targets": [{
     "device": "default/server-example-001",
     "endpoint": "https://192.0.2.20:443",
@@ -108,6 +110,13 @@ BMC endpoint, the Redfish System, the disk size and the console capture:
   out fixed leases. The simulator and local VM sites refuse a boot address too.
 - **`dhcp: synced`** means Fleet publishes reservations. The site refuses a
   network boot without a boot address (`BootNetworkRequired`).
+- **`dhcpInstances`** is the expected set: every DHCP instance that may serve
+  the site's reservations, by the stable name it reports under (the
+  StatefulSet's Pod names). It is required, non-empty and without duplicates
+  when `dhcp` is `synced`, and must be absent when it is `static`. The feed
+  serves only these instances and takes reports only from them, and
+  withdrawal is proven only when every one of them reported it. The workers
+  and the feed read the same enrollment.
 
 The enrollment names no MAC and no address. Before it sends anything, the site
 worker checks the BMC endpoint and system UUID against the admitted snapshot.
@@ -129,33 +138,50 @@ withdrawal is proven.
 
 The worker gates its effects on reports:
 
+Only reports from expected instances count.
+
 1. **Before powering on for a network boot** it waits, with no effect, until
-   some DHCP instance reports a feed that serves the boot NIC at the exact
+   some expected instance reports a feed that serves the boot NIC at the exact
    address, accepted after this operation's boot admission was created. If the
    boot window expires first, the outcome is unknown.
 2. **Before reporting success** it waits, for up to ten minutes, until some
-   instance served the reservation during this operation and no instance's
-   latest report, however old, serves any MAC or address the site ever
-   published for the Device. That covers an earlier, held operation's
-   reservation, so a later success settles the hold safely.
+   expected instance served the reservation during this operation, and every
+   expected instance's latest report is of a feed issued after the admission
+   was stored that serves no MAC or address the site ever published for the
+   Device. That covers an earlier, held operation's reservation, so a later
+   success settles the hold safely. Past ten minutes the outcome is unknown.
 
-An instance that went silent while serving keeps the outcome unknown. After
-making sure its server no longer answers, an operator retires it for the site:
+Every feed carries the time the feed server issued it. While the admission is
+open, every feed issued after it was stored carries the reservation, so a
+report of a later feed without it proves the instance dropped it, and every
+later feed lacks it too. An instance that fetched a feed with the reservation
+and stopped before reporting still has a latest report that is older than the
+admission or serves the reservation, so it keeps the outcome unknown. So does
+an expected instance that never reported. Issue times are the feed's clock and
+admission times the worker's, so both roles must run on the same clock; they
+share the site's state volume.
 
-```sh
-FLEET_BOOT_EVIDENCE=/var/lib/fleet-boot fleet-multiplane dhcp-retire -instance dhcp-a
-```
+### Retiring a DHCP instance
 
-A later report from a retired instance counts again. Report times are the boot
-service's clock and admission times the worker's, so both roles must run on
-synchronized clocks.
+Removing an instance from the expected set is the only way to stop waiting for
+it. To retire one on purpose:
+
+1. make sure it no longer answers, then scale the StatefulSet down. A
+   StatefulSet removes its highest ordinals first, so the instances left are
+   the lowest ones;
+2. shrink `dhcpInstances` to match the Pods that remain; and
+3. restart the site's workers and its feed, so both read the new set.
+
+The feed then refuses the removed instance, and a later report from it is
+rejected and not retained. An instance removed while it may still answer could
+serve a reservation that nothing tracks, so check it first.
 
 These gates do not depend on where Kea runs. The feed comes only from the
 site's admitted operations at the Device's stored fence, and every report
 names its instance and the exact feed it applied. A WAN outage between the
 site and the central cluster makes the instances silent: an operation waiting
-to power on does not, and one whose reservation an instance last reported
-serving stays unknown until that instance reports it withdrawn or is retired.
+to power on does not, and one waiting for withdrawal stays unknown until every
+expected instance reports it withdrawn, or the set shrinks.
 An instance that cannot reach the feed keeps its last applied configuration,
 which its last report shows.
 
@@ -165,26 +191,36 @@ The site's `dhcp-feed` role (`fleet-multiplane dhcp-feed -sync-token-file …
 -tls-cert … -tls-key …`) listens with TLS on `:8081`, never on the
 firmware-facing boot listener. It reads the
 site store read-only and writes only `dhcp-applied.log` in the boot-evidence
-directory. Every request needs `Authorization: Bearer <token>`; the token is at
-least 32 characters.
+directory. It reads the expected set from the site's synced enrollment, and
+refuses to start without one. Every request needs `Authorization: Bearer
+<token>`; the token is at least 32 characters.
 
-- `GET /dhcp/v1/reservations` returns the canonical feed:
-  `{"revision": "<sha256>", "reservations": [{"mac", "address", "expires"}]}`.
-  An address is one host address with no prefix. Reservations are sorted by MAC;
-  the revision is the SHA-256 of their canonical JSON, so a feed is
-  self-verifying.
-- `POST /dhcp/v1/applied` takes `{"instance": "<name>", "feed": <feed>}`. The
-  feed must be canonical with a matching revision; anything else is rejected and
-  not retained. An accepted report is synced to disk before `204`.
+- `GET /dhcp/v1/reservations` needs `X-Fleet-DHCP-Instance: <name>` naming an
+  expected instance; otherwise it is refused with `403` and nothing is served.
+  It returns the canonical feed:
+  `{"revision": "<sha256>", "reservations": [{"mac", "address", "expires"}],
+  "issued": "<UTC time>"}`. An address is one host address with no prefix.
+  Reservations are sorted by MAC; the revision is the SHA-256 of their
+  canonical JSON, so a feed is self-verifying. `issued` is the feed server's
+  clock, to the second, read before it read the reservations. It is not part
+  of the revision.
+- `POST /dhcp/v1/applied` takes `{"instance": "<name>", "feed": <feed>}`, with
+  the feed exactly as it was served. The feed must be canonical with a
+  matching revision, and the instance must be expected; anything else is
+  rejected and not retained. An accepted report is synced to disk before
+  `204`.
 
-The retained log holds MACs, addresses, revisions, instance names and
-retirements. It holds no token, receipt or boot capability. An unreadable line
-is treated as corruption, never as evidence.
+The retained log holds MACs, addresses, revisions, issue times and instance
+names. It holds no token, receipt or boot capability. An unreadable line is
+treated as corruption, never as evidence. A report retained before feeds
+carried an issue time counts as issued at the zero time, so it can never prove
+a withdrawal. A record left by the removed retirement command is ignored.
 
 ## Kea synchronizer
 
 `fleet-dhcp-sync` (in the manager image) runs beside one Kea DHCPv4 instance,
-with a stable instance name such as a StatefulSet pod name. `-ca-file` names
+with a stable instance name such as a StatefulSet pod name, which it sends on
+every feed request and report. `-ca-file` names
 the CA bundle the feed's certificate must chain to. Kea 2.6 accepts a control
 socket only under `/var/run/kea`, which is the synchronizer's default. Each
 cycle it:
@@ -194,13 +230,13 @@ cycle it:
 3. when the revision changed or Kea restarted, adds each reservation to the one
    base subnet that contains its address and sends `config-set` over Kea's
    control socket;
-4. reports the feed only after Kea accepted it, once per revision.
+4. reports the feed, unchanged, only after Kea accepted it, once per revision.
 
 The base configuration supplies each subnet's prefix, gateway (`routers`) and
 boot options. A reservation that no base subnet contains, or that two contain,
 fails the cycle; it is never dropped. A restarted Kea loses its reservations
-and fails closed until the next cycle re-applies them. Before scaling down,
-drain the instance being removed until it reports an empty feed.
+and fails closed until the next cycle re-applies them. To remove an instance,
+see [Retiring a DHCP instance](#retiring-a-dhcp-instance).
 
 ## DHCP service
 
@@ -209,7 +245,7 @@ places:
 
 | Component | Object | What it runs |
 | --- | --- | --- |
-| `config/site/dhcp/feed`, beside the site's boot service | `dhcp-feed` container in `fleet-site-boot` | The feed, so it reads the site store read-only and appends reports to the boot evidence on the same volume |
+| `config/site/dhcp/feed`, beside the site's boot service | `dhcp-feed` container in `fleet-site-boot` | The feed, so it reads the site store read-only and appends reports to the boot evidence on the same volume. It reads the enrollment from the `fleet-site-redfish-enrollment` ConfigMap, which the environment supplies with the same enrollment its workers get |
 | | `fleet-site-dhcp-feed` Service | The feed on `:8081`, over TLS only. The environment exposes it to the central cluster |
 | `config/site/dhcp/component`, in a central cluster, once per site | `fleet-site-dhcp` StatefulSet | At least two Pods without host networking, with stable names, so a replaced Pod keeps its instance name and its last report. Each runs ISC's Kea DHCPv4 image, pinned by digest, answering relayed requests on a UDP socket, and the synchronizer, sharing Kea's control socket on an `emptyDir` that Kea's command makes `0750`, as Kea 2.6 requires. The Pod name is the instance name |
 | | `fleet-site-dhcp` Service | One load-balancer address on UDP 67 in front of every instance, with local traffic policy and client-IP affinity. The site's relays forward to it |
@@ -217,8 +253,8 @@ places:
 
 Any instance may answer a request. Each applies the same feed through its own
 synchronizer and reports under its own name, so the power-on gate needs one
-instance serving and the withdrawal gate covers every instance that ever
-reported. An instance that has not applied a reservation yet stays silent,
+expected instance serving and the withdrawal gate needs every expected
+instance. An instance that has not applied a reservation yet stays silent,
 because Kea is not authoritative, and the firmware retries; client-IP affinity
 keeps one relay's exchange on one instance.
 
@@ -308,7 +344,8 @@ requirements.
 | --- | --- |
 | Boot addresses claimed from IPAM per operation, checked at admission, and released only after the operation ended unheld | Implemented; tested against a real API server with a stand-in for IPAM's claim API. No run sets a class, and IPAM itself is not exercised |
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
-| Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device, instance retirement | Implemented; unit tested with a fake BMC and synchronizer, including a silent instance |
+| Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device | Implemented; unit tested with a fake BMC and synchronizer |
+| Expected DHCP instance set in the enrollment: the feed refuses other instances, withdrawal needs every expected instance's report of a feed issued after the admission, and retirement only by shrinking the set | Implemented; unit tested, including an instance that never reported and one that stopped after fetching the reservation. Restarting the workers and the feed after a change is an operator step |
 | Kea synchronizer: containing-subnet placement, restart re-apply, report only after Kea accepted | Implemented; unit tested against a fake Kea control socket |
 | Feed over TLS beside the boot service; Kea and the synchronizer as a central component, several instances behind one UDP 67 load balancer | Implemented; render checked in CI, and reservation-gated answers proved by the boot network lab with real Kea. Not deployed, and relayed requests across a WAN are not exercised |
 | Boot service and boot files in the central cluster, serving a UEFI HTTP boot loader | Proposed; the boot service runs in the site's boot Pod beside the site store, and serves the iPXE script but no EFI loader yet |

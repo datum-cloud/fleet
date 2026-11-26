@@ -101,9 +101,10 @@ if PROVIDER == 'redfish':
 LAB_DHCP = os.environ.get('FLEET_LAB_DHCP', 'static')
 if LAB_DHCP not in ('static', 'synced') or (LAB_DHCP == 'synced' and PROVIDER != 'redfish'):
     raise SystemExit('FLEET_LAB_DHCP=synced needs the Redfish provider')
-SYNCED_OBJECTS = ['fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_fleet-site-dhcp-feed__Service'] if LAB_DHCP == 'synced' else []
+SYNCED_OBJECTS = ['fleet-site_fleet-site-dhcp-base__ConfigMap', 'fleet-site_fleet-site-dhcp-feed__Service', 'fleet-site_fleet-site-redfish-enrollment__ConfigMap'] if LAB_DHCP == 'synced' else []
 if LAB_DHCP == 'synced':
-    SHARED.update({('configmaps', SITE, 'fleet-site-dhcp-base'): 'fleet-site-services', ('services', SITE, 'fleet-site-dhcp-feed'): 'fleet-site-services'})
+    SHARED.update({('configmaps', SITE, 'fleet-site-dhcp-base'): 'fleet-site-services', ('services', SITE, 'fleet-site-dhcp-feed'): 'fleet-site-services',
+                   ('configmaps', SITE, 'fleet-site-redfish-enrollment'): 'fleet-site-services'})
 LAYER_INVENTORY = {
     'flux-system/fleet-site-services': sorted(['fleet-site_fleet-site-boot__Service', 'fleet-site_fleet-site-worker-policy__ConfigMap',
                                                'fleet-site_fleet-site-runtime_apps_Deployment', 'fleet-site_fleet-site-boot_apps_Deployment',

@@ -73,12 +73,16 @@ func (k *fakeKea) applied() int {
 	return len(k.configs)
 }
 
-// fakeSite serves a feed and records applied reports.
+// fakeSite serves a feed, stamped with a later issue time on each request,
+// only to an instance that names itself, and records applied reports.
 type fakeSite struct {
 	mu      sync.Mutex
 	feed    bootnet.Feed
+	served  int
 	reports []bootnet.Applied
 }
+
+var issuedBase = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
 func (f *fakeSite) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
@@ -90,7 +94,14 @@ func (f *fakeSite) handler(t *testing.T) http.Handler {
 		defer f.mu.Unlock()
 		switch q.URL.Path {
 		case "/dhcp/v1/reservations":
-			_ = json.NewEncoder(w).Encode(f.feed)
+			if q.Header.Get(bootnet.InstanceHeader) != "kea-0" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			f.served++
+			feed := f.feed
+			feed.Issued = issuedBase.Add(time.Duration(f.served) * time.Second)
+			_ = json.NewEncoder(w).Encode(feed)
 		case "/dhcp/v1/applied":
 			var a bootnet.Applied
 			b, _ := io.ReadAll(q.Body)
@@ -154,7 +165,12 @@ func TestAppliesReservationIntoItsContainingSubnetThenReports(t *testing.T) {
 	if len(reports) != 2 || !reports[1].Feed.Has(reservation.MAC, reservation.Address) || reports[1].Instance != "kea-0" {
 		t.Fatalf("applied revision not reported: %+v", reports)
 	}
-	// An unchanged feed is neither re-applied nor re-reported; a restarted
+	// The report echoes the feed as served, issue time included.
+	if !reports[1].Feed.Issued.Equal(issuedBase.Add(2*time.Second)) || !reports[0].Feed.Issued.Equal(issuedBase.Add(time.Second)) {
+		t.Fatalf("report did not echo the served feed's issue time: %+v", reports)
+	}
+	// An unchanged feed, though issued later, is neither re-applied nor
+	// re-reported; a restarted
 	// Kea (new pid) lost its reservations and is re-applied without a report.
 	if err := s.Cycle(ctx); err != nil || kea.applied() != 2 || len(site.reported()) != 2 {
 		t.Fatalf("unchanged feed churned: %v", err)
@@ -199,6 +215,20 @@ func TestNothingIsReportedThatKeaDidNotAccept(t *testing.T) {
 	s.Token = "wrong-token-wrong-token-wrong-token-0000"
 	if err := s.Cycle(ctx); err == nil {
 		t.Fatal("an unauthenticated feed was accepted")
+	}
+}
+
+// TestTheSynchronizerNamesItselfOnTheFeedRequest: the site serves its feed
+// only to an expected instance, so the request carries the instance name.
+func TestTheSynchronizerNamesItselfOnTheFeedRequest(t *testing.T) {
+	s, kea, site := newSyncer(t)
+	s.Instance = "kea-9"
+	if err := s.Cycle(context.Background()); err == nil || kea.applied() != 0 || len(site.reported()) != 0 {
+		t.Fatal("a feed refused to this instance was applied")
+	}
+	s.Instance = "kea-0"
+	if err := s.Cycle(context.Background()); err != nil || kea.applied() != 1 {
+		t.Fatalf("the named instance was not served: %v", err)
 	}
 }
 

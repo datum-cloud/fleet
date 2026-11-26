@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"go.datum.net/fleet/internal/bootnet"
 )
 
 // Target is one enrolled server: the Device it is, its BMC endpoint and its
@@ -41,9 +43,17 @@ const (
 )
 
 // Enrollment is the site's explicit Device to BMC mapping.
+//
+// DHCPInstances is, at a synced site, the complete set of DHCP instances
+// that may serve the site's reservations: each is the stable name an
+// instance reports under, such as a StatefulSet Pod name. The feed serves
+// and accepts reports only from these instances, and withdrawal is proven
+// only when every one of them reported it. Retiring an instance means
+// removing it from this set. A static site names none.
 type Enrollment struct {
-	DHCP    string   `json:"dhcp"`
-	Targets []Target `json:"targets"`
+	DHCP          string   `json:"dhcp"`
+	DHCPInstances []string `json:"dhcpInstances,omitempty"`
+	Targets       []Target `json:"targets"`
 }
 
 // Target returns the enrolled server of a "<namespace>/<name>" Device.
@@ -63,6 +73,9 @@ func ParseEnrollment(b []byte) (Enrollment, error) {
 	if err := d.Decode(&e); err != nil || len(e.Targets) == 0 || (e.DHCP != DHCPStatic && e.DHCP != DHCPSynced) {
 		return Enrollment{}, errors.New("invalid Redfish enrollment")
 	}
+	if err := checkInstances(e.DHCP, e.DHCPInstances); err != nil {
+		return Enrollment{}, err
+	}
 	seen := map[string]bool{}
 	for i, t := range e.Targets {
 		endpoint, err := ParseEndpoint(t.Endpoint)
@@ -76,6 +89,28 @@ func ParseEnrollment(b []byte) (Enrollment, error) {
 		e.Targets[i].Endpoint = endpoint
 	}
 	return e, nil
+}
+
+// checkInstances requires a non-empty set of unique, valid DHCP instance
+// names at a synced site, and none at a static one.
+func checkInstances(mode string, instances []string) error {
+	if mode == DHCPStatic {
+		if len(instances) != 0 {
+			return errors.New("a static DHCP site names no DHCP instances")
+		}
+		return nil
+	}
+	if len(instances) == 0 {
+		return errors.New("a synced DHCP site must name its DHCP instances")
+	}
+	seen := map[string]bool{}
+	for _, instance := range instances {
+		if !bootnet.ValidInstance(instance) || seen[instance] {
+			return errors.New("invalid or duplicate DHCP instance in the Redfish enrollment")
+		}
+		seen[instance] = true
+	}
+	return nil
 }
 
 // ParseBootOrigin accepts only a literal http://IPv4:port origin.

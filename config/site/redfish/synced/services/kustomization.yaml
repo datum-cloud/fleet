@@ -5,11 +5,14 @@
 # network namespace. The feed runs beside the boot service, as at a site.
 # The harness creates the Secrets fleet-site-dhcp-sync and
 # fleet-site-dhcp-feed-tls before this layer reconciles; they are never in Git.
+# enrollment.yaml gives the feed the synced graph's enrollment, whose one
+# expected DHCP instance is lab-kea.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../services
   - kea.yaml
+  - enrollment.yaml
 components:
   - ../../../dhcp/feed
 patches:

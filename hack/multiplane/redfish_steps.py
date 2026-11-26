@@ -175,7 +175,10 @@ def enroll(s):
     # One credential Secret per Device, by the BMC discovery contract.
     if kubectl(s, 'get', 'namespace', CREDENTIALS, check=False).returncode != 0:
         kubectl(s, 'create', 'namespace', CREDENTIALS)
-    enrollment = json.loads(next(l for l in pathlib.Path('config/site/redfish/graph/kustomization.yaml').read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1])
+    # The enrollment this run's workers get: the synced graph's, with its
+    # expected DHCP instance, under --synced-dhcp.
+    graph = 'config/site/redfish/synced/graph/kustomization.yaml' if synced(s) else 'config/site/redfish/graph/kustomization.yaml'
+    enrollment = json.loads(next(l for l in pathlib.Path(graph).read_text().splitlines() if l.strip().startswith("value: '{")).split("'")[1])
     # The boot NIC is a Device inventory fact; the lab's VM definitions
     # record it.
     lab_macs = {t['system']: t['mac'] for t in json.loads(pathlib.Path('hack/redfish-lab/targets.json').read_text())}
@@ -472,6 +475,8 @@ def dhcp_synced(s):
     applied = [json.loads(l) for l in run('cat', '/var/lib/fleet-boot/dhcp-applied.log').stdout.splitlines() if l.strip()]
     if not applied or {r['instance'] for r in applied} != {'lab-kea'}:
         die('the site retained no applied report, or one from an instance other than lab-kea')
+    if not all(r['feed'].get('issued', '0001-01-01T00:00:00Z') != '0001-01-01T00:00:00Z' for r in applied):
+        die('a retained report has no feed issue time')
     def serves(report, address):
         return any(r['mac'] == mac and r['address'] == address for r in report['feed']['reservations'])
     leases = run('cat', '/var/lib/kea/dhcp4.leases', container='kea').stdout.splitlines()

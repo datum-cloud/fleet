@@ -19,7 +19,7 @@ import (
 )
 
 // withdrawalWindow bounds how long a worker waits, after the network boot
-// closed, for every DHCP instance that served the reservation to report it
+// closed, for every expected DHCP instance to report the reservation
 // withdrawn. Past it the outcome stays unknown, and a resumed worker waits
 // again.
 const withdrawalWindow = 10 * time.Minute
@@ -27,14 +27,30 @@ const withdrawalWindow = 10 * time.Minute
 const dhcpLog = "dhcp-applied.log"
 
 // report is one retained applied report: when the boot server accepted it,
-// and which DHCP instance applied which exact feed. A Retired record is an
-// operator's statement that the instance is gone and serves nothing; a later
-// report from the same instance counts again.
+// and which DHCP instance applied which exact feed, as the feed server issued
+// it.
 type report struct {
 	At       time.Time    `json:"at"`
 	Instance string       `json:"instance"`
 	Feed     bootnet.Feed `json:"feed"`
-	Retired  bool         `json:"retired,omitempty"`
+}
+
+// retainedLine is how a retained line is read. A line carrying "retired" was
+// written by the operator retirement command this site no longer has; it
+// is ignored and has no effect: it is neither a report nor evidence, and an
+// instance is retired only by leaving the enrollment's expected set.
+type retainedLine struct {
+	report
+	Retired bool `json:"retired"`
+}
+
+// expected is the enrollment's expected DHCP instance set.
+func expected(instances []string) map[string]bool {
+	out := map[string]bool{}
+	for _, instance := range instances {
+		out[instance] = true
+	}
+	return out
 }
 
 // Reservations is the complete desired reservation set: each boot NIC whose
@@ -61,13 +77,29 @@ func (b BootServer) Reservations() (bootnet.Feed, error) {
 	return bootnet.NewFeed(reservations)
 }
 
+// Issue is the feed served now: the clock is read before the reservations,
+// so every reservation stored before Issued is in the feed.
+func (b BootServer) Issue() (bootnet.Feed, error) {
+	issued := b.now().UTC().Truncate(time.Second)
+	feed, err := b.Reservations()
+	feed.Issued = issued
+	return feed, err
+}
+
 // DHCPHandler serves the reservation feed and accepts applied reports from
 // the DHCP owner's synchronizer, authenticated by a bearer token. It is
-// never served on the firmware-facing boot listener.
+// never served on the firmware-facing boot listener. It serves a feed only
+// to, and retains a report only from, an instance in the enrollment's
+// expected set, so an instance outside it never gets a reservation to
+// serve; a feed request names its instance in bootnet.InstanceHeader.
 func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 	if len(token) < 32 || strings.ContainsAny(token, " \t\r\n") {
 		return nil, errors.New("the DHCP synchronizer token must be at least 32 characters without whitespace")
 	}
+	if len(b.DHCPInstances) == 0 {
+		return nil, errors.New("the DHCP feed needs the enrollment's expected DHCP instances")
+	}
+	allowed := expected(b.DHCPInstances)
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		got, ok := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
@@ -77,7 +109,11 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 		}
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/dhcp/v1/reservations" && request.URL.RawQuery == "":
-			feed, err := b.Reservations()
+			if !allowed[request.Header.Get(bootnet.InstanceHeader)] {
+				http.Error(w, "not an expected DHCP instance", http.StatusForbidden)
+				return
+			}
+			feed, err := b.Issue()
 			if err != nil {
 				http.Error(w, "reservations unavailable", http.StatusServiceUnavailable)
 				return
@@ -90,6 +126,10 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 			decoder.DisallowUnknownFields()
 			if decoder.Decode(&applied) != nil || decoder.Decode(&struct{}{}) != io.EOF || applied.Verify() != nil {
 				http.Error(w, "invalid applied report", http.StatusBadRequest)
+				return
+			}
+			if !allowed[applied.Instance] {
+				http.Error(w, "not an expected DHCP instance", http.StatusForbidden)
 				return
 			}
 			if err := b.retain(applied); err != nil {
@@ -126,23 +166,10 @@ func (b BootServer) retain(applied bootnet.Applied) error {
 	return appendEvidence(b.BootRoot, dhcpLog, string(data)+"\n")
 }
 
-// RetireInstance records that a DHCP instance is gone. Withdrawal then stops
-// waiting for it. Only an operator at the site runs it, after making sure the
-// instance's server no longer answers.
-func RetireInstance(root, instance string) error {
-	empty, _ := bootnet.NewFeed(nil)
-	if err := (bootnet.Applied{Instance: instance, Feed: empty}).Verify(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(report{At: time.Now().UTC(), Instance: instance, Feed: empty, Retired: true})
-	if err != nil {
-		return err
-	}
-	return appendEvidence(root, dhcpLog, string(data)+"\n")
-}
-
 // reports reads every retained report in order. An unreadable line is
-// corruption, never evidence in either direction.
+// corruption, never evidence in either direction. A report retained before
+// feeds carried an issue time reads as issued at the zero time, so it can
+// never prove a withdrawal. A retired line is skipped (see retainedLine).
 func reports(root string) ([]report, error) {
 	file, err := os.Open(filepath.Join(root, dhcpLog))
 	if os.IsNotExist(err) {
@@ -156,27 +183,30 @@ func reports(root string) ([]report, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for scanner.Scan() {
-		var r report
-		if json.Unmarshal(scanner.Bytes(), &r) != nil || r.At.IsZero() || (bootnet.Applied{Instance: r.Instance, Feed: r.Feed}).Verify() != nil {
+		var line retainedLine
+		if json.Unmarshal(scanner.Bytes(), &line) != nil || line.At.IsZero() || (bootnet.Applied{Instance: line.Instance, Feed: line.Feed}).Verify() != nil {
 			return nil, errors.New("invalid retained DHCP report")
 		}
-		out = append(out, r)
+		if !line.Retired {
+			out = append(out, line.report)
+		}
 	}
 	return out, scanner.Err()
 }
 
-// awaitReservation waits, without any effect, until some DHCP instance
-// reports serving the boot NIC at the operation's exact address since this
-// operation's boot admission was created.
+// awaitReservation waits, without any effect, until some expected DHCP
+// instance reports serving the boot NIC at the operation's exact address
+// since this operation's boot admission was created.
 func (c Config) awaitReservation(ctx context.Context, boot Boot) error {
 	poll, _, _, _ := c.durations()
+	allowed := expected(c.DHCPInstances)
 	for {
 		retained, err := reports(c.BootRoot)
 		if err != nil {
 			return err
 		}
 		for _, r := range retained {
-			if !r.Retired && r.At.After(boot.Created) && r.Feed.Has(boot.MAC, boot.Address) {
+			if allowed[r.Instance] && r.At.After(boot.Created) && r.Feed.Has(boot.MAC, boot.Address) {
 				return nil
 			}
 		}
@@ -189,15 +219,29 @@ func (c Config) awaitReservation(ctx context.Context, boot Boot) error {
 	}
 }
 
-// awaitWithdrawal requires that some DHCP instance served the reservation
-// during this operation, and that no instance's latest report, however old,
-// serves any MAC or address this site ever published for the Device. An
-// instance that went silent while serving one keeps the outcome unknown
-// until an operator retires it, so a success also proves that every earlier
-// reservation for the Device, such as a held operation's, is withdrawn.
+// awaitWithdrawal requires that some expected DHCP instance reported
+// serving the reservation during this operation, and that every expected
+// instance's latest report is of a feed issued after the admission was
+// published (Boot.Published) that serves no MAC or address this site ever
+// published for the Device. Reports from instances outside the enrollment's
+// expected set never count.
+//
+// While the admission is open, every feed issued after it was published
+// carries the reservation. So a report of a feed issued after that without
+// it was issued after the reservation left the feed, and every later feed
+// lacks it too. An instance that fetched a feed with the reservation and
+// stopped before reporting it still has a latest report that was either
+// issued before the admission was published or serves the reservation, so
+// it blocks; so does an expected instance that never reported. Blocking
+// keeps the outcome unknown past withdrawalWindow; it never passes. The
+// feed server and the worker read one site clock: both mount the site's
+// state volume. A success also proves that every earlier reservation for
+// the Device, such as a held operation's, is withdrawn. The only way past an
+// instance that is gone is to remove it from the expected set.
 func (c Config) awaitWithdrawal(ctx context.Context, store *site.Store, device string, boot Boot) error {
 	poll, _, _, _ := c.durations()
 	deadline := c.now().Add(withdrawalWindow)
+	allowed := expected(c.DHCPInstances)
 	for {
 		published, err := publishedFor(store, device)
 		if err != nil {
@@ -209,8 +253,7 @@ func (c Config) awaitWithdrawal(ctx context.Context, store *site.Store, device s
 		}
 		served, latest := false, map[string]bootnet.Feed{}
 		for _, r := range retained {
-			if r.Retired {
-				delete(latest, r.Instance)
+			if !allowed[r.Instance] {
 				continue
 			}
 			if r.At.After(boot.Created) && r.Feed.Has(boot.MAC, boot.Address) {
@@ -218,8 +261,13 @@ func (c Config) awaitWithdrawal(ctx context.Context, store *site.Store, device s
 			}
 			latest[r.Instance] = r.Feed
 		}
-		withdrawn := served
-		for _, feed := range latest {
+		withdrawn := served && !boot.Published.IsZero() && len(allowed) > 0
+		for instance := range allowed {
+			feed, reported := latest[instance]
+			if !reported || !feed.Issued.After(boot.Published) {
+				withdrawn = false
+				continue
+			}
 			for _, p := range published {
 				if feed.Serves(p.MAC, p.Address) {
 					withdrawn = false
