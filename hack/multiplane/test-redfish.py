@@ -206,6 +206,9 @@ check('an outage bracketed by another allocation is no record',
 check('an answer inside the window without the allocation breaks the bracket',
       redfish_steps.ipam_record([outage[0], state('2026-11-20T10:00:00Z', '2026-11-20T10:00:20Z', [], []), failed('2026-11-20T10:00:22Z', '2026-11-20T10:01:00Z'),
                                  state('2026-11-20T10:01:02Z', '2026-11-20T10:05:00Z', [claim], [allocation])], 'op-a-boot', '192.168.77.100', t0 + 10, t0 + 50) is None)
+check('an answer before the window without the allocation clears the sample before it',
+      redfish_steps.ipam_record([outage[0], state('2026-11-20T09:59:59Z', '2026-11-20T09:59:59Z', [], []), failed('2026-11-20T10:00:00Z', '2026-11-20T10:01:00Z'),
+                                 state('2026-11-20T10:01:02Z', '2026-11-20T10:05:00Z', [claim], [allocation])], 'op-a-boot', '192.168.77.100', t0 + 10, t0 + 50) is None)
 owners = redfish_steps.lease_owners([('192.168.77.100', 'm', t0 + 30), ('192.168.77.100', 'm', t0 + 300), ('192.168.77.101', 'm', t0 + 30)],
                                     {'op-a': ('192.168.77.100', t0, t0 + 60), 'op-b': ('192.168.77.100', t0 + 200, t0 + 400)})
 check('each Kea lease belongs to the boot window holding its address', [o for _, o in owners] == [['op-a'], ['op-b'], []], str(owners))
