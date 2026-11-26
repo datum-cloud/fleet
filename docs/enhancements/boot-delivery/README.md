@@ -25,7 +25,6 @@ stage: alpha
 - [Implementation history](#implementation-history)
 - [Drawbacks](#drawbacks)
 - [Alternatives](#alternatives)
-- [Open questions](#open-questions)
 - [Infrastructure needed](#infrastructure-needed)
 
 ## Summary
@@ -125,7 +124,9 @@ and evidence handling are the same for every method.
   ([#186][server-networking-pr]):** become the network boot method. Their
   evidence gates are its verify and release steps. Two changes: a site can
   offer more than one method, and the boot override is read back after
-  release.
+  release. Virtual media also uses NSO to attach a port to a provider network
+  for one operation. See [Operations with no
+  Machine](#operations-with-no-machine).
 - **Central DHCP ([#197][central-dhcp-pr]):** its proof that every declared Kea
   instance dropped a reservation is the network boot release step. The media
   service and the first-boot service run in the same central cluster.
@@ -139,8 +140,7 @@ and evidence handling are the same for every method.
 - **Commissioning ([#185][commissioning-pr]):** commissioning gains a delivery
   phase, burn-in boots with any qualified method instead of only network boot,
   and burn-in reports over the network instead of the console. `Available`
-  gains two conditions. Virtual media burn-in and probes wait on an [open
-  question](#open-questions).
+  gains two conditions.
 - **PXE installation ([#59][pxe-pr]):** its customer Redfish gateway already
   refuses virtual media. That stays true.
 
@@ -156,8 +156,8 @@ is not allowed.
 1. **Exact inputs first.** The operation records its method, image digest,
    bootstrap digest, host network configuration, and the digest of every
    artifact the installer downloads, before any effect. A method adds its own
-   inputs, such as a provisioning address, and never reads a mutable source
-   after admission.
+   inputs, such as a provisioning or provider address, and never reads a
+   mutable source after admission.
 2. **Prepare under the fence.** Every prepare step, on the server or on a
    Fleet delivery service, runs only while the operation holds the Device's
    stored fence. The journal records each step before it is sent.
@@ -335,7 +335,9 @@ fetched and applied.
 
 The service accepts the report only from one of the Machine's IPAM addresses,
 and only if every value matches the operation. An accepted report also proves
-that the OS came up with its IPAM addresses.
+that the OS came up with its IPAM addresses. A wipe, a burn-in, or a probe
+posts its token and result from its provider address instead. See [Operations
+with no Machine](#operations-with-no-machine).
 
 The report comes from the provider-built image's first-boot step, before the
 customer's bootstrap runs, and the service accepts it only once. That trusts
@@ -506,8 +508,33 @@ programs the Machine's interfaces as it does for a dedicated boot NIC in
 [#186][server-networking-pr]. A virtual media install powers on only after
 every interface is `Programmed`.
 
-A wipe, a burn-in, and a commissioning probe hold no Machine. How they report
-under virtual media is an [open question](#open-questions).
+#### Operations with no Machine
+
+A wipe, a burn-in, and a commissioning probe hold no Machine, so under virtual
+media each gets a provider network attachment for that one operation:
+
+1. Before it creates the operation, the requester creates an NSO attachment
+   claim for the Device's port on the site's provider network, named from the
+   operation, and waits until NSO reports it `Programmed`.
+2. The requester then claims one provider address from IPAM, also named from
+   the operation, and records typed references to both claims and the address
+   in the operation's inputs.
+3. The worker writes the address onto the config medium as static
+   configuration. The image posts its report from that address.
+4. When the report is accepted, the operation moves to `Verifying`, and the
+   requester deletes both claims.
+
+Release for these operations adds two proofs to the media proofs: NSO reports
+that the attachment claim is gone and the port is off the provider network,
+and IPAM reports the address claim released. The proof covers every provider
+attachment for the Device, so it also covers one a held operation left. If
+either proof is missing at the deadline, the operation ends `OutcomeUnknown`
+with a hold, and the port stays where it is until a settling operation proves
+it detached.
+
+A wipe at release runs after the Machine's interface claims are gone, as
+[#186][server-networking-pr] requires, so the port is already off the
+customer's networks.
 
 ### Isolation and security
 
@@ -517,9 +544,13 @@ under virtual media is an [open question](#open-questions).
   inserts media, and only at the BMC endpoint in the operation's Device
   snapshot. No customer-facing session can insert media.
 - **Site network paths.** These are site network prerequisites:
-  - a route from the site's BMC network to the central media service; and
+  - a route from the site's BMC network to the central media service;
   - a route from the Machine's data network to the first-boot service and to
-    the source or mirror of every artifact the installer downloads.
+    the source or mirror of every artifact the installer downloads; and
+  - a provider network that NSO can attach the site's ports to, with an IPAM
+    pool for provider addresses and a route to the first-boot service. NSO
+    keeps ports on it isolated from each other, and no customer network
+    reaches it.
 - **Media service access.** The media service accepts requests only from BMC
   network addresses, and serves a config URL only to the Device's BMC address
   from the snapshot.
@@ -528,8 +559,9 @@ under virtual media is an [open question](#open-questions).
   over HTTPS that the BMC verifies, at its capability URL, while its window is
   open. A BMC that does not verify gets the [fallback
   mode](#bmcs-that-do-not-verify-the-media-certificate).
-- **First-boot service access.** It accepts a report or a fetch only from one
-  of the Machine's IPAM addresses, with a token for an open operation.
+- **First-boot service access.** It accepts a report or a fetch only from the
+  operation's own address, a Machine's IPAM address or a provider address,
+  with a token for an open operation.
 - **No secrets in records.** Journals, evidence, and logs record a digest of
   each URL and compare readbacks by digest. They never record a capability, a
   token, or a config URL.
@@ -571,6 +603,7 @@ The product owner decided these on 2026-11-26:
 | Installers that download during install | Allowed only for artifacts pinned by digest in the operation's inputs. |
 | Virtual media deadline | 45 minutes: 15 for media, 30 for first boot, overridable per site. |
 | Sites whose DHCP is configured outside Fleet | No network boot, with no exception. They use virtual media. |
+| Wipes, burn-ins, and probes under virtual media | A provider address from IPAM and an NSO attachment to a provider network, for one operation, proven detached on release. |
 
 ### Acceptance tests
 
@@ -603,6 +636,17 @@ These tests are required and not implemented:
 - A fallback fetch token is used a second time, and the operation ends
   `OutcomeUnknown` with a hold.
 - A fetch from another address, or after the window closes, gets nothing.
+- A wipe under virtual media succeeds. Its report comes from its provider
+  address, and release proves the media gone, the port off the provider
+  network, and the address claim released.
+- NSO cannot prove a wipe's port detached by the deadline, and the wipe ends
+  `OutcomeUnknown` with a hold.
+- A second first-boot report for the same operation is refused, and the first
+  result stands.
+- A fallback-mode report whose bootstrap digest does not match the payload the
+  first-boot service served does not succeed.
+- An installer still reading the media when the window closes sends no report,
+  and the operation ends `OutcomeUnknown` at the end of the first-boot phase.
 - The network boot tests in [#87][boot-network-pr] and [#197][central-dhcp-pr]
   still pass through the shared contract.
 
@@ -629,7 +673,8 @@ near either phase deadline.
 ### What does the feature depend on?
 
 Redfish virtual media on each BMC, the central media and first-boot services,
-the site network routes listed above, and boot media in the image catalog.
+the site network paths listed above, NSO attachment to the provider network,
+and boot media in the image catalog.
 
 ### Does the feature add API types or calls?
 
@@ -641,7 +686,8 @@ report.
 ## Implementation history
 
 - 2026-11-26: Proposed.
-- 2026-11-26: Product decisions recorded.
+- 2026-11-26: Product decisions recorded, including operations with no
+  Machine.
 
 ## Drawbacks
 
@@ -670,22 +716,13 @@ report.
 - **Network boot with static addresses and no DHCP.** Firmware support is
   limited, and it still needs a provisioning network.
 
-## Open questions
-
-- **Reports from wipes, burn-ins, and probes under virtual media.** They hold
-  no Machine, so they have no IPAM address to post from. The proposed answer
-  is that the requester claims a provider address from IPAM and NSO attaches
-  the port to a provider network for the operation, released like a boot
-  attachment claim. Until this is decided, virtual media cannot qualify a
-  server, wipe one, or burn one in, and the virtual media qualification and
-  wipe acceptance tests cannot run.
-
 ## Infrastructure needed
 
 Testing needs a site with both methods, BMC emulators whose virtual media can
 fail to mount, report stale state, and refuse to eject, BMCs that do and do not
-verify certificates, and central media and first-boot services reachable from
-an emulated BMC network and data network. Hardware qualification needs servers
+verify certificates, central media and first-boot services reachable from an
+emulated BMC network and data network, and a provider network that NSO can
+attach ports to. Hardware qualification needs servers
 from each BMC vendor the provider plans to support.
 
 [boot-network-pr]: https://github.com/datum-cloud/fleet/pull/87
