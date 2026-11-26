@@ -433,7 +433,7 @@ for name in FAILURE_SCENARIOS:
 summary = {
     # The evidence verified; the run is not finished. Only result.json, which
     # run.sh writes last, records whether the run passed.
-    'schemaVersion': 3, 'suite': 'acceptance', 'acceptance': 'evidence-verified',
+    'schemaVersion': 3, 'suite': 'acceptance', 'acceptance': 'evidence-verified', 'resumed': (s / 'resume.json').exists(),
     'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prefix': prefix,
     'qualification': {'nativeMiloProjectAPIs': True, 'actualKarmadaDeliveryAndReflection': True, 'realLocalPXE': True,
                       'kubernetesJobExecution': True, 'actualKroController': True, 'fluxReconciledServices': True,

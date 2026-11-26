@@ -9,6 +9,7 @@ python3 "$root"/hack/multiplane/test-k8s-evidence.py "$root"
 python3 "$root"/hack/multiplane/test-redfish.py "$root"
 python3 "$root"/hack/multiplane/test-interrupt.py "$root"
 python3 "$root"/hack/multiplane/test-lock.py "$root"
+python3 "$root"/hack/multiplane/test-resume.py "$root"
 python3 -m py_compile "$root"/hack/redfish-lab/*.py
 exec python3 - "$root" <<'PY'
 import json, os, pathlib, re, stat, subprocess, sys, tempfile, time

@@ -1146,7 +1146,8 @@ def qualification_evidence(args):
     write(ev / 'summary.json', {
         # The evidence verified; the run is not finished. Only result.json
         # records whether the run passed.
-        'schemaVersion': 3, 'suite': 'flux-qualification', 'acceptance': 'evidence-verified', 'observedAt': now(), 'prefix': prefix,
+        'schemaVersion': 3, 'suite': 'flux-qualification', 'acceptance': 'evidence-verified', 'resumed': (s / 'resume.json').exists(),
+        'observedAt': now(), 'prefix': prefix,
         'siteProvider': PROVIDER, 'scenarios': sorted(SCENARIOS), 'evidence': list(files),
         'sourceRevisions': [{k: r[k] for k in ('revision', 'digest', 'purpose', 'gitHead', 'contentSumsSHA256', 'files')} for r in revs],
         'custody': 'released: the one installation released and its projection verified', 'productionAuthority': False})

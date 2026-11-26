@@ -62,7 +62,7 @@ python3 - "$state" "$prefix" "$mode" "$image_tag_removed" <<'PY'
 import datetime,json,pathlib,sys
 s,prefix,mode=pathlib.Path(sys.argv[1]),sys.argv[2],sys.argv[3]
 record={'observedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'prefix':prefix,'deleted':'exact prefix containers (including the run registry) and platform, hub and cell kind clusters', 'providerImageTagRemoved':sys.argv[4]=='true', 'volumesVerifiedAbsent':False,
- 'mode':'after passed acceptance' if mode=='passed' else 'discarded Unknown run by explicit request; not release evidence',
+ 'mode':('after a resumed run; not acceptance or release evidence' if (s/'resume.json').exists() else 'after passed acceptance') if mode=='passed' else 'discarded Unknown run by explicit request; not release evidence',
  'privateCredentialsRemoved':mode=='passed','remainingContainers':[]}
 (s/'evidence'/'teardown.json').write_text(json.dumps(record,indent=2)+'\n')
 PY

@@ -5,21 +5,30 @@
 #
 # Exit codes: 0 passed, 1 failed, 2 preflight failed, 3 blocked by implementation
 # readiness, 4 bounded wait expired, 64 usage, 128 plus the signal number when
-# interrupted. Only a run that reached its last line records passed.
+# interrupted, 5 when a resumed run reached its last line: a resumed run is
+# never an acceptance pass. Only a fresh run that reached its last line records
+# passed.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 umask 077
-usage() { echo 'usage: hack/multiplane/run.sh [--redfish] [--suite acceptance|flux-qualification] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
-preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt suite=acceptance
+usage() { echo 'usage: hack/multiplane/run.sh [--redfish] [--suite acceptance|flux-qualification] [--resume STATE|PREFIX [--from PHASE]] [--preflight-only] [--bootstrap] [--keep] [--leave-running] [--skip-readiness-tests]' >&2; exit 64; }
+preflight_only=0 bootstrap=() keep=0 leave=0 skip_tests=() provider=libvirt suite=acceptance resume='' from='' fresh_only=0 pending=''
 for arg in "$@"; do
- if [[ ${want_suite:-} == 1 ]]; then
-  [[ $arg == acceptance || $arg == flux-qualification ]] || usage
-  suite=$arg want_suite=0
+ if [[ -n $pending ]]; then
+  case $pending in
+   suite) [[ $arg == acceptance || $arg == flux-qualification ]] || usage; suite=$arg ;;
+   resume) [[ -n $arg ]] || usage; resume=$arg ;;
+   from) [[ $arg =~ ^[a-z0-9-]+$ ]] || usage; from=$arg ;;
+  esac
+  pending=''
   continue
  fi
  case "$arg" in
   # The Flux GitOps behavior scenarios are their own suite (flux-qualification.sh).
-  --suite) want_suite=1 ;;
+  --suite) pending=suite fresh_only=1 ;;
+  # Debugging only: restart a failed run's retained topology at a phase.
+  --resume) pending=resume ;;
+  --from) pending=from ;;
   --preflight-only) preflight_only=1 ;;
   --bootstrap) bootstrap=(--bootstrap) ;;
   --keep) keep=1 ;;
@@ -27,18 +36,30 @@ for arg in "$@"; do
   --skip-readiness-tests) skip_tests=(--skip-tests) ;;
   # Redfish mode: workers drive lab VMs only through the DMTF Redfish emulator
   # and its lab adapter (docs/operations/redfish-lab.md).
-  --redfish) provider=redfish ;;
+  --redfish) provider=redfish fresh_only=1 ;;
   *) usage ;;
  esac
 done
-[[ ${want_suite:-} != 1 ]] || usage
-export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker FLEET_SITE_PROVIDER=$provider
+[[ -z $pending ]] || usage
+[[ -z $from || -n $resume ]] || usage
+# A resumed run keeps the retained run's own suite and provider.
+[[ -z $resume || ( $fresh_only == 0 && $preflight_only == 0 ) ]] || usage
+export DOCKER_CONTEXT=colima-fleet-acceptance-tcg KIND_EXPERIMENTAL_PROVIDER=docker
 harness=(python3 hack/multiplane/harness.py)
-state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
-mkdir -m 0700 "$state/evidence"
-printf '%s\n' "$provider" > "$state/site-provider"
-printf '%s\n' "$suite" > "$state/suite"
+if [[ -n $resume ]]; then
+ # Refuses anything but a finished, failed run, and a phase outside its suite.
+ plan=$("${harness[@]}" resume-plan --target "$resume" ${from:+--from "$from"})
+ state=$(sed -n 1p <<<"$plan") from=$(sed -n 2p <<<"$plan")
+ provider=$(cat "$state/site-provider") suite=$(cat "$state/suite" 2>/dev/null || echo acceptance)
+else
+ state=$(mktemp -d "${FLEET_MULTIPLANE_STATE_ROOT:-/tmp}/fleet-multiplane.XXXXXX")
+ mkdir -m 0700 "$state/evidence"
+ printf '%s\n' "$provider" > "$state/site-provider"
+ printf '%s\n' "$suite" > "$state/suite"
+fi
+export FLEET_SITE_PROVIDER=$provider
 printf 'Private run state: %s\nShareable evidence: %s/evidence\nSite provider: %s\nSuite: %s\n' "$state" "$state" "$provider" "$suite"
+[[ -z $resume ]] || printf 'Resumed from phase %s. A resumed run is never an acceptance pass.\n' "$from"
 
 finish() {
  code=$1
@@ -93,8 +114,12 @@ fi
 if [[ ${FLEET_MULTIPLANE_RUNTIME:-colima} == colima ]]; then
  "${harness[@]}" lock --state "$state" --owner $$ & wait $!
 fi
-"${harness[@]}" preflight --checks contention --wait "${FLEET_MULTIPLANE_LOCK_TIMEOUT:-14400}" --state "$state" --root . "${skip_tests[@]}" & wait $!
+# A resumed run's own retained containers do not block it.
+own=()
+[[ -z $resume ]] || own=(--allow-prefix "$(cat "$state/prefix")")
+"${harness[@]}" preflight --checks contention --wait "${FLEET_MULTIPLANE_LOCK_TIMEOUT:-14400}" "${own[@]}" --state "$state" --root . "${skip_tests[@]}" & wait $!
 
+if [[ -z $resume ]]; then
 prefix="fleet-mp-$(openssl rand -hex 4)"
 printf '%s\n' "$prefix" > "$state/prefix"
 # Source identity covers uncommitted files as well as tracked files.
@@ -154,6 +179,11 @@ ph coordinator 120 bash hack/multiplane/coordinator.sh start "$state"
 ph flux-site 1200 "${flux[@]}" publish "$state" --revision 2 --site off --purpose 'shared site services and dispatcher, dispatch disabled' --cluster cell --cluster hub --cluster platform --timeout 900
 ph site-install 900 bash hack/multiplane/site.sh check "$state"
 ph flux-verify 300 "${flux[@]}" verify "$state"
+else
+ ph resume-topology 1800 bash hack/multiplane/steps.sh resume-topology "$state"
+ # Every suite phase before this one is skipped and recorded as skipped.
+ printf '%s\n' "$from" > "$state/skip-until"
+fi
 if [[ $suite == flux-qualification ]]; then
  bash hack/multiplane/flux-qualification.sh "$state" & wait $!
 elif [[ $provider == redfish ]]; then
@@ -161,6 +191,7 @@ elif [[ $provider == redfish ]]; then
 else
  bash hack/multiplane/acceptance.sh "$state" & wait $!
 fi
+[[ ! -f $state/skip-until ]] || { echo "phase $from is not in the $suite suite" >&2; exit 64; }
 ph secret-scan 120 "${harness[@]}" scan --state "$state"
 if [[ $keep == 1 ]]; then
  ph stop 300 bash hack/multiplane/stop.sh "$state"
@@ -169,4 +200,8 @@ else
 fi
 # The last act of a completed run: only now may the result record passed.
 : > "$state/completed"
-printf 'Local %s suite (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$suite" "$provider"
+if [[ -n $resume ]]; then
+ printf 'Resumed %s suite (%s provider) completed from %s. This is NOT an acceptance pass; run it fresh.\n' "$suite" "$provider" "$from"
+else
+ printf 'Local %s suite (%s provider) passed. Production authority and physical hardware remain unqualified.\n' "$suite" "$provider"
+fi
