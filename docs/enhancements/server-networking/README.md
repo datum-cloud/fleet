@@ -37,10 +37,10 @@ operations](../device-operations/README.md):
 
 - **Boot network.** The boot network is a provider-owned NSO network. Each
   installation and wipe carries a provisioning address and the boot NIC from
-  Device inventory. Fleet's boot services answer that NIC over DHCP only while
-  the operation is admitted, boot it over PXE or iPXE into the installer, and
-  end the operation only after every DHCP instance reports the reservation
-  withdrawn.
+  Device inventory. Fleet's boot services, which run in a central cluster rather
+  than at the site, answer that NIC over relayed DHCP only while the operation
+  is admitted, boot it over UEFI HTTP boot into the installer, and end the
+  operation only after every DHCP instance reports the reservation withdrawn.
 - **Customer network attachment.** The Fleet provider for Metal asks NSO for one
   interface per requested Machine interface. NSO assigns addresses through
   IPAM. Handing the server to the customer is one NSO step on each switch port,
@@ -70,7 +70,8 @@ server yet. That mode is planned.
 - Take provisioning addresses from IPAM and boot NICs from Device inventory.
 - Answer DHCP for a boot NIC only while an operation that network-boots it
   runs, and prove the answer stopped before the operation succeeds.
-- Ship the site DHCP service as a deployable site component.
+- Ship the DHCP service as a deployable component that runs in a central
+  cluster and serves each site through the site's relays.
 - Attach an allocated server's NICs to the boot network and the customer's
   networks through NSO, with NSO as the one writer of each switch port's
   network membership.
@@ -129,7 +130,7 @@ server yet. That mode is planned.
 | Surface | Single writer |
 | --- | --- |
 | Which boot NIC holds a reservation, and when | The site, from its admitted operations |
-| Network boot: PXE, iPXE, and the installer | The site's boot service |
+| Network boot over UEFI HTTP boot: boot loader, iPXE, and the installer | The boot service, in the central cluster |
 | Provisioning addresses | IPAM, from claims the operation's requester makes; later NSO, through the boot network |
 | Kea runtime configuration | The synchronizer next to each Kea instance |
 | Kea base configuration: subnets, gateways, boot options | Network operations |
@@ -167,7 +168,8 @@ Fleet keeps the boot services, because they follow custody and NSO's do not:
 
 - DHCP that serves a boot NIC's reservation only while its operation is
   admitted under custody's fence;
-- PXE, iPXE, and the installer; and
+- network boot over UEFI HTTP boot: the boot loader, iPXE, and the
+  installer; and
 - proof that every DHCP instance dropped the reservation before the operation
   succeeds.
 
@@ -328,23 +330,62 @@ The site worker gates effects on those reports:
    reservation during the operation, and no instance's latest report, however
    old, serves any MAC or address the site ever published for the Device. An
    instance that went silent while serving one keeps the outcome unknown until
-   an operator retires the instance at the site.
+   an operator retires the instance for the site.
 
-#### Site DHCP service
+#### DHCP service
 
-The site DHCP service is a site component with these parts:
+The DHCP service runs in a central cluster, not at the site. Nothing for
+provisioning runs at the site except the relays network operations already
+operates. Each site has its own set of instances there, because each set
+applies one site's feed and reports to that site alone. It has these parts:
 
-- **Instances.** At least two Kea DHCPv4 servers, each paired with one
-  synchronizer. Each instance has a stable name and a fixed address that
-  relays can reach.
+- **Instances.** At least two Kea DHCPv4 servers per site, each paired with one
+  synchronizer and each with a stable name. They share one load-balancer
+  address on UDP port 67, which the site's relays reach over the site's WAN
+  link. Kea accepts only relayed requests, so it needs no broadcast and no
+  host networking. Any instance may answer. Each applies the same feed and
+  reports under its own name, so the withdrawal proof covers every instance;
+  one that has not applied a reservation yet stays silent, and the firmware
+  retries.
+- **Replies.** Kea answers each request at the relay address the request
+  carries, on UDP port 67. The central cluster must route to every relay
+  address, and each relay must accept replies from the cluster's egress
+  address, which is not always the load-balancer address it forwarded to.
 - **Base configuration.** Network operations owns it. It names the site's
   provisioning subnet, gateway, and boot options, accepts only relayed
-  requests from known relay addresses, and has no address pools.
-- **Feed.** The site serves the feed over TLS, apart from the firmware-facing
-  boot listener. Each synchronizer authenticates with the site's token. The
-  token and the TLS key are delivered to the site as secrets, never in Git.
+  requests from the site's relay addresses, and has no address pools.
+- **Feed.** Fleet serves each site's feed over TLS only, apart from the
+  firmware-facing boot listener. Each synchronizer authenticates with that
+  site's token. The token and the TLS key are delivered as secrets, never in
+  Git.
 
 Scaling down drains the instance first, until it reports an empty feed.
+
+#### Boot files
+
+Firmware boots over UEFI HTTP boot, never TFTP, because the boot files now
+cross from the central cluster to the site. The base configuration answers the
+HTTP boot vendor class with the boot service's URL in the central cluster. The
+boot service still answers a boot NIC only while its operation's boot window is
+open, and the installer image is pinned by digest. Servers whose firmware
+cannot boot over HTTP are not supported.
+
+#### Fence and withdrawal proof across the WAN
+
+Moving DHCP out of the site changes where Kea runs, not what decides a
+reservation or proves it gone:
+
+- The feed is still computed from the site's admitted operations under
+  custody's fence, so only the operation holding the Device's stored fence has
+  a reservation, wherever Kea runs.
+- Each report still names its instance and the exact feed it applied, so the
+  power-on gate and the withdrawal gate read the same evidence as before.
+- A WAN outage makes the site's instances silent to Fleet. Fleet fails safe:
+  an operation waiting for a serving report does not power the server on, and
+  an operation whose reservation an instance last reported serving stays
+  unknown until that instance reports it withdrawn or an operator retires it.
+  An instance that cannot reach the feed keeps its last applied configuration,
+  and its last report still shows what it may be serving.
 
 #### Network operations requirements
 
@@ -363,11 +404,15 @@ Each site needs:
    its native VLAN. Configure the fallback timeout below the DHCP timeout of
    every firmware qualified at the site, measured during qualification.
    Vendors call this "LACP fallback", "no suspend-individual", or "force-up".
-5. **DHCP relay.** On the gateway of each provisioning subnet, relay to every
-   Kea instance address, with the gateway address as the relay address.
-6. **Reachability.** Provisioning subnets reach only the site's DHCP service and
-   boot service. They reach no customer network, no BMC network, and no
-   internet.
+5. **DHCP relay.** On the gateway of each provisioning subnet, relay to the Kea
+   instances' load-balancer address in the central cluster, with the
+   gateway address as the relay address, and accept the replies described in
+   [DHCP service](#dhcp-service).
+6. **Reachability.** Provisioning subnets reach only the central cluster's DHCP
+   and boot service addresses, over the site's WAN link. They reach no customer
+   network, no BMC network, and no other internet address. Measure the DHCP
+   round trip across the link against every firmware's DHCP timeout during
+   qualification.
 7. **Spoofing protection.** DHCP snooping and source address binding on the
    provisioning VLAN, so a server cannot use another server's boot NIC MAC or
    provisioning address.
@@ -375,8 +420,8 @@ Each site needs:
    which switch port each NIC is cabled to.
 9. **Names.** Fleet inventory's cable records use the switch and port names the
    network owner uses.
-10. **UEFI HTTP Boot.** The base configuration answers the HTTP Boot vendor
-    class with the boot service's URL, for firmware that boots over HTTP.
+10. **UEFI HTTP boot.** Firmware on every server boots over HTTP. There is no
+    TFTP path.
 
 ### Customer network attachment
 
@@ -548,9 +593,9 @@ unavailable](#when-nso-is-unavailable).
 
 ### Decisions for a person
 
-- **Who operates the site DHCP service.** This enhancement ships Kea as a Fleet
-  site component, and network operations owns its base configuration. Someone
-  must be on call for it.
+- **Who operates the DHCP service.** This enhancement ships Kea as a Fleet
+  component in a central cluster, and network operations owns its base
+  configuration. Someone must be on call for it.
 - **Dedicated or shared boot NIC.** See [Boot NIC choice](#boot-nic-choice) for
   how each option changes NSO's role.
 - **A port NSO cannot release.** When NSO stays unavailable or a claim never
@@ -593,8 +638,8 @@ These tests are required and not implemented:
 
 ### How do operators enable or disable the feature?
 
-A site enables the boot network by declaring synchronized DHCP and deploying the
-site DHCP service. The declaration requires NSO's boot network at that
+A site enables the boot network by declaring synchronized DHCP and deploying its
+DHCP instances in the central cluster. The declaration requires NSO's boot network at that
 location: without it, every installation and wipe there waits with nothing
 sent. A location enables customer attachment when NSO supports `Physical`
 there. Disabling attachment refuses new Machines
@@ -610,8 +655,9 @@ interfaces not `Programmed`, and releases waiting on interface claims.
 
 IPAM for addresses. NSO and its physical realizer for every port's attachment,
 including the boot network, so every installation, wipe, and recovery by
-network boot needs NSO. Network operations for relays, VLANs, and port
-profiles.
+network boot needs NSO. The central cluster and the site's WAN link for DHCP
+and boot files, so a site cannot network-boot a server while either is down.
+Network operations for relays, VLANs, and port profiles.
 
 ### Does the feature add API types or calls?
 
@@ -625,10 +671,13 @@ claim per Machine interface.
 - 2026-11-25: Proposed.
 - 2026-11-25: NSO owns the boot network and every port's attachment; the direct
   IPAM claim becomes the interim address source.
+- 2026-11-25: DHCP and boot files move to a central cluster, over relays and
+  UEFI HTTP boot.
 
 ## Drawbacks
 
-- Every network boot depends on the site DHCP service and its reports.
+- Every network boot depends on the central cluster, the site's WAN link, the
+  DHCP service, and its reports.
 - Customer attachment and every network boot wait on NSO's physical mode, and
   on NSO being available.
 - Installations carry static network configuration, so a customer who changes
@@ -648,13 +697,13 @@ claim per Machine interface.
   proof, which Fleet already has.
 - **DHCP on customer networks.** NSO has no DHCP, and a server would get a
   customer address before Fleet hands it off.
-- **Central DHCP outside the site.** Possible behind the same feed, but each
-  boot would depend on a link out of the site.
+- **DHCP at each site.** A boot would not depend on the WAN link, but every
+  site would run and operate provisioning services of its own.
 
 ## Infrastructure needed
 
 The lab can run Kea, the synchronizer, and the feed against emulated DHCP
-clients, IPAM, and NSO's API with a test realizer. Real switches are needed for
+clients, with Kea beside the emulated site because the lab has no WAN link, IPAM, and NSO's API with a test realizer. Real switches are needed for
 relays, LACP fallback, port isolation, the realizer, and moving a port between
 the boot network and customer networks.
 
