@@ -94,6 +94,7 @@ export async function correctDevicePlacement(original: Device, fields: Placement
     { op: 'test', path: '/metadata/resourceVersion', value: original.metadata.resourceVersion },
     { op: 'add', path: '/spec/reportedPlacement', value: report },
   ];
+  await operation.settle();
   operation.dispatch();
   const saved = await proxyFetch<Device>(PROVIDER_PROJECT, path, { method: 'PATCH', contentType: 'application/json-patch+json', body: patch }).catch(error => {
     operation.assertCurrent();

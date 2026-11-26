@@ -141,15 +141,18 @@ describe('host inventory session isolation', () => {
       else if (event === 'hidden') { visibility.mockReturnValue('hidden'); fireEvent(document, new Event('visibilitychange')); visibility.mockReturnValue('visible'); fireEvent(document, new Event('visibilitychange')); }
       else { fireEvent(window, new Event('pagehide')); fireEvent(window, new Event('pageshow')); }
     });
+    await waitFor(() => expect(scope!.held).toBe(false));
     expect(screen.getByText('Visible inventory')).toBeInTheDocument();
     expect(screen.queryByText('Empty inventory cache')).not.toBeInTheDocument();
     expect(inventoryRead).toHaveBeenCalledTimes(1);
-    expect(loader).toHaveBeenCalledTimes(event === 'revalidation' ? 2 : 1);
-    // A host revalidation may be a change of user, so an operation started
-    // before it is fenced; new operations start normally afterwards.
-    if (event === 'revalidation') expect(() => pending.assertCurrent()).toThrow(InventoryOperationInvalidated);
-    else expect(() => pending.assertCurrent()).not.toThrow();
+    // Each one re-runs the host loaders once to confirm the user (a hidden tab
+    // or pagehide on its return); the same user leaves the pending operation
+    // current and unheld, and new operations start normally.
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(scope!.held).toBe(false);
+    await expect(pending.settle()).resolves.toBeUndefined();
     expect(() => scope!.begin().assertCurrent()).not.toThrow();
+    visibility.mockRestore();
   });
 
   it('fails closed outside the authenticated host unless explicitly previewing', () => {

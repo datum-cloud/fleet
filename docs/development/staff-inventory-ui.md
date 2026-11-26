@@ -500,16 +500,16 @@ original UID/resourceVersion and use atomic JSON Patch test operations. They do
 not silently adopt a refreshed baseline. No automatic write retries occur.
 
 Existing session protections are retained: principal-isolated QueryClients,
-operation invalidation at principal/revalidation/navigation/unmount boundaries,
-and a fresh cache even for a React-batched A→B→A principal change. Already-dispatched uncertain
+operation invalidation at principal/navigation/unmount boundaries, operations
+held (not retired) while the host re-runs its loaders or confirms the user on a
+tab return, and a fresh cache even for a React-batched A→B→A principal change. Already-dispatched uncertain
 outcomes stay unknown rather than becoming cancelled-success.
 
 ### Session boundary: a change of signed-in user (implemented)
 
 The inventory treats a change of signed-in user, as the host observes it, as
-the only session boundary. This matches the rest of staff-portal, whose pages
-keep what they loaded and do not re-check the session on focus, tab switches or
-loader revalidation.
+the only session boundary. Nothing else discards loaded inventory or open forms,
+and nothing is shown while the user is being confirmed.
 
 **Decision (2026-11-24).** The earlier design treated hiding the tab
 (`visibilitychange` to hidden, `pagehide`) and every host loader revalidation as
@@ -517,16 +517,60 @@ session boundaries. On each one the page masked the inventory behind "Checking
 inventory access…", re-ran the host loaders, discarded the private query cache
 and read all nine collections again. In use this flashed on every return to the
 tab and on host events such as a theme change, and it cancelled in-flight saves.
-It protected nothing that per-request authorization does not already protect,
-and its own documented limit was that an account change the host has not yet
-observed cannot be detected by the UI. It was removed to match the host.
+That masking and re-reading was removed.
+
+**Decision (2026-11-25): re-check the user when a tab returns.** Removing the
+hidden/pagehide handling also removed the only re-check of the signed-in user
+after a tab had been in the background or in the back-forward cache. If another
+user signed in elsewhere meanwhile, the old user's inventory stayed on screen
+and a save went out under the new session. The host does not cover this:
+
+- The principal reaches the plugin only through the `layouts/milo.layout`
+  loader data, read by `HostedInventory` (`useRouteLoaderData`) and the router
+  subscription in `SessionQueries`. That loader calls `requireStaffUser`
+  ([milo.layout.tsx L16-L18](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/layouts/milo.layout.tsx#L16-L18)) and runs
+  only on navigations and explicit revalidations.
+- Staff-portal has no `focus`, `visibilitychange` or `pageshow` handling under
+  `app/` (searched at staff-portal `ba00ea6`). Its only automatic
+  `revalidate()` is the colour-scheme client hint
+  ([client-hints.tsx L28-L29](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/components/misc/client-hints.tsx#L28-L29)),
+  and the root loader opts out of ordinary revalidation
+  ([root.tsx L73-L85](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/root.tsx#L73-L85)).
+- The host's shared QueryClient
+  ([query.ts L41-L47](https://github.com/datum-cloud/staff-portal/blob/ba00ea6322933632f87ca37a175a386163d1bf02/app/modules/tanstack/query.ts#L41-L47)) keeps
+  TanStack's default refetch on window focus, but that refreshes host queries,
+  not the Milo loader, so it never delivers a new principal to the plugin.
+
+So `SessionQueries` re-checks the user itself (`useReturnCheck` in
+`ui/provider/src/components/inventory-session-boundary.tsx`), invisibly:
+
+1. Hiding the tab or `pagehide` *holds* the session's reads and operations.
+   A hold is not a cancellation. Loaded data stays, and a read or save in flight
+   simply waits: a read waits to start or to deliver its result, and a save
+   waits before it dispatches its write (`InventoryOperation.settle()` runs
+   immediately before every `dispatch()`).
+2. Showing the tab again, or a `pageshow` (always when `persisted`, i.e. a
+   back-forward-cache restore), calls the host's `router.revalidate()`, which
+   re-runs the Milo loader.
+3. When the host loaders have settled: if they name the same user, the hold is
+   released and held reads and saves go on. If they name another user or no
+   user, report an error, or `revalidate()` rejects, the session's operations
+   are invalidated and its reads suspended. Held writes are never sent, and a
+   new principal remounts the private cache, as for any change of user. After a
+   failed check, a later successful check opens the session again for new work
+   only.
+
+No "Checking…" text, placeholder or re-render is shown for any of this, and a
+same-user return makes no request except the host loader.
 
 What happens now:
 
 | Event | Inventory on screen | Private cache | Open forms and in-flight saves |
 | --- | --- | --- | --- |
-| Focus, blur, tab hidden or shown, `pagehide`/`pageshow` | Unchanged | Kept | Unchanged; a save in flight completes |
-| Host loader revalidation, same user (for example a theme change) | Unchanged | Kept | New reads and operations pause while the loaders run; an in-flight save is refused with "No write was dispatched" and can be retried |
+| Focus or blur | Unchanged | Kept | Unchanged |
+| Tab hidden, then shown; `pagehide`, then `pageshow` (including a back-forward-cache restore); same user | Unchanged | Kept | Held while hidden and until the host confirms the user, then continue |
+| Tab return or `pageshow` that finds another user, no user, or cannot confirm the user | Replaced (another user) or session expired / host error | Replaced or discarded | Ended; a held write is never sent |
+| Host loader revalidation, same user (for example a theme change) | Unchanged | Kept | New reads and saves wait while the loaders run, then continue |
 | Filter, record or tab change (presentation navigation) | Stays until the host finishes loading | Kept | Operations pause while the navigation is pending |
 | Change of non-presentation URL parameters | Stays until the host finishes loading | Replaced | Ended |
 | Change of signed-in user, including a fast A→B→A change | Replaced | Replaced, one fresh read | Ended; nothing transfers to the new user |
@@ -545,15 +589,42 @@ Retained protections:
 - Dispatched saves whose outcome is uncertain are reported as unknown, never as
   success.
 
-A denial or permission change that happens while the page is idle is seen on the
-next read or save, as on other staff-portal pages. Refresh inventory re-reads on
-demand.
+Limit: a write already dispatched before the tab was hidden is not recalled; its
+result is reported as unknown if the user turns out to have changed. A denial or
+permission change that happens while the page is idle is seen on the next read
+or save, as on other staff-portal pages. Refresh inventory re-reads on demand
+and re-checks management access with a SelfSubjectAccessReview.
+
+Tests (`ui/provider/src/components/`):
+
+- `inventory-return-check.test.tsx`: the real inventory page. A same-user return
+  shows nothing and requests nothing but the host loader, and a held create
+  resumes. Refresh during a check reads nothing until it resolves. A different
+  user on return removes the old records, and the held create is never sent. A
+  back-forward-cache `pageshow` re-checks, with or without a `pagehide` first.
+  A failed check sends nothing.
+- `inventory-visible-focus-save.test.tsx`: create, display-name and placement
+  saves held at their permission review or baseline read across a tab return,
+  for the same and another user.
+- `reviewer-exact-staging.test.tsx`: overlapping return checks stay held until
+  the newest loader finishes, and logout or host failure on return (immediate
+  and held) removes the private page and refuses held work.
+- `adversarial-review.test.tsx`: a check answered after another `pagehide`
+  keeps work held until the next return.
+- `inventory-session-boundary.test.tsx`: same-user revalidation, hidden and
+  `pagehide` keep data and authority. A failed check stays closed until a later
+  check succeeds.
+- `inventory-navigation-safety.test.tsx`: a same-user host revalidation holds a
+  pending save, then lets it finish with one write.
 
 ### Regression evidence and acceptance limits
 
 The evidence below predates the 2026-11-24 session-boundary change. Statements
-about hidden/pagehide masking, held pageshow restoration and background-return
-checks describe removed behaviour; the tests for them were removed with it.
+about hidden/pagehide masking describe removed behaviour. The background-return
+check was restored on 2026-11-25 without masking (see
+[Session boundary](#session-boundary-a-change-of-signed-in-user-implemented)),
+and its generation, after-pagehide, failed-check and logout/failure tests were
+restored in that form.
 
 PR104's integration with feature-target revision
 `5b60656759033b61674ee202a9ad94f4d49f4a64` retains PR106's removal of provenance,
@@ -612,8 +683,9 @@ Open `/session-fixture.html`. This mounts the actual inventory page and boundary
 under a synthetic host loader, not the preview bypass. API calls are handled in
 memory; writes return a synthetic failure and never reach an API. The console's
 `inventorySessionFixture` exposes `hold(boolean)`, `release()`,
-`principal(string|null)`, `denied(boolean)`, and `stats()`. Blur/focus and
-pagehide/pageshow should do nothing; a principal change replaces the data. This harness
+`principal(string|null)`, `denied(boolean)`, and `stats()`. Blur/focus should
+do nothing. Pagehide/pageshow re-runs the host loader with no visible change. A
+principal change replaces the data. This harness
 is not a production build entry and is not evidence of real Safari acceptance.
 
 Read-only users browse without enabled writes. No-read and direct-link denials
