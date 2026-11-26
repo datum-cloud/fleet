@@ -8,7 +8,7 @@ trap 'rm -rf "$temporary"; rm -f "$sentinel"' EXIT
 
 printf '%s\n' 'must never enter the Docker build context' >"$sentinel"
 cat >"$temporary/Dockerfile" <<'EOF'
-FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648
+FROM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280
 WORKDIR /effective-context
 COPY . .
 RUN test -f go.mod \
