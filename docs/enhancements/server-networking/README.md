@@ -194,6 +194,12 @@ already left the customer's networks when the wipe's boot attachment claim is
 made. On a shared boot NIC, a reinstall's boot attachment moves the port off
 the customer's networks for the install, and the Machine reports
 `NetworkReady=False` until the claim is released and NSO moves the port back.
+The same holds for a first install on a shared boot NIC: that port's interface
+stays unprogrammed, and `NetworkReady` stays `False`, until the installation's
+boot attachment claim is released. A held operation keeps its claim, so the
+Machine stays `NetworkReady=False`, with the hold as the reason, until the hold
+is settled. On a dedicated boot NIC, the customer's ports are attached
+independently of any install.
 
 #### Provisioning address
 
@@ -579,7 +585,8 @@ These tests are required and not implemented:
   claim is gone.
 - End to end at a site with real switches: a relayed boot on an LACP member,
   handoff from the boot network to two customer networks in one NSO step,
-  isolation from a second customer, and release with the port back on the boot
+  isolation from a second customer, and release with the port off both
+  customer networks before the wipe's boot attachment puts it on the boot
   network.
 
 ## Production readiness review questionnaire
