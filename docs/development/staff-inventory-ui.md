@@ -411,7 +411,7 @@ Module Federation remote. The implemented six-kind API, not the broader
 
 ## Native Pencil comparison
 
-Read and rendered `/Users/scotwells/Downloads/asset-inventory.pen` with Pencil's
+Read and rendered the `asset-inventory.pen` design file with Pencil's
 native Get, TakeScreenshot and Export tools. No design mutations were made.
 Source SHA-256:
 `1c20996c68b29206597c69ad2bd6b7833854b906427b2ec30d63b6afd0c40590`.
@@ -590,14 +590,11 @@ coverage. These tests are local regression evidence, not independent signoff.
 
 Earlier synthetic browser geometry/keyboard checks at PR104 head `4a30bb7`
 exercised the now-superseded disabled-view behavior; they are not acceptance
-evidence for this revision. The real staging URL redirected to sign-in and no
-login was manipulated. Authenticated Safari URL-bar acceptance remains unverified.
+evidence for this revision. Authenticated Safari URL-bar acceptance remains
+unverified.
 Independent review, CI and authenticated staging/Safari acceptance remain release
 gates; this work does not merge, deploy or change live inventory/IAM/NetBox data.
 
-Revised local validation (2026-11-21): provider 495 tests in 32 files and consumer
-44 tests in 3 files pass, along with both TypeScript checks/production builds,
-`go test ./internal/api/inventory/...`, documentation links and whitespace.
 Temporarily restoring the management form's blur invalidation fails 29 of 56
 focused stable-controls/pending-save tests; the mutation was removed before the
 full passing run. This is sensitivity evidence, not independent review.
@@ -1426,7 +1423,7 @@ Screenshots are local browser artifacts; the original Pencil exports are separat
 
 ### Local visual evidence
 
-Screenshots below are in `/Users/scotwells/.t3/userdata/browser-artifacts/`
+Screenshots below were kept in a local browser-artifacts directory
 (synthetic data only, not committed application assets):
 
 | Check | Screenshot file |
@@ -1530,7 +1527,5 @@ browser or authenticated host acceptance, live inventory reads/writes, deploymen
 or operational readiness is claimed. Responsive behavior uses the existing scoped
 layout and scrollable Datum tables; visual layout remains unverified in a browser.
 
-Local validation on 2026-11-22: all 41 provider test files / 678 tests passed;
-provider `pnpm typecheck`, `pnpm build`, `bash hack/validate-doc-links.sh` and
-`git diff --check` passed. Consumer/shared API code is unchanged; consumer checks
-were not required for this provider-only presentation change.
+Consumer/shared API code is unchanged by this provider-only presentation
+change.

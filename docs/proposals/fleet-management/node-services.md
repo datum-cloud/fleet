@@ -277,8 +277,8 @@ written per region, by the owning service's writer in that region, and selects
 only that region's nodes. For Private DNS this means regional independence
 needs more than local resolvers: each region keeps publishing records, not
 only serving them, so it needs its own broker storage and eventually its own
-control-plane writer. Today one control plane and one broker in us-central-1
-feed every region, which a region outage in us-central-1 would stop.
+control-plane writer. With one control plane and one broker in a single
+region feeding every region, an outage in that region would stop them all.
 
 Fleet owns placement, slot identity, roll order, and readiness reporting. The
 owning service owns the template, the probe's meaning, and its own

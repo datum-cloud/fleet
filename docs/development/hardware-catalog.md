@@ -244,10 +244,7 @@ Unavailable model/device collections produce unknown counts, not zero; unreadabl
 dependencies lose their labels and links immediately. Resolved subsets remain
 visible with missing-reference guidance. Initial loading stays in the page shell.
 
-Local validation on 2026-11-22: provider full suite (42 files / 692 tests),
-typecheck and production build pass, as do documentation-link and whitespace
-checks. Validation used Node 22.22.0 and pnpm 11.28.9; the documented Node 26
-runtime was not exercised. Focused tests cover reference scope, unrelated and
+Focused tests cover reference scope, unrelated and
 dangling records, duplicate rows/counts/labels, fallback labels, catalog picker
 choices, denied/partial collections, actual destination URLs, reported-only
 location, loading and history/filter retention. Existing session, write-precondition

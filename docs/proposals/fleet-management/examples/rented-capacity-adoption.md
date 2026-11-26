@@ -30,7 +30,7 @@ multiple providers:
 | Provider facility codes | FAC-B1, FAC-A4, retiring FAC-A1 | FAC-B1, FAC-A4 |
 | Channel / environment | stable / production | staging / staging |
 | Service public identity | 203.0.113.29, 2001:db8:40::1d | 203.0.113.131, 2001:db8:60::3 |
-| Fabric site code | 1007 | 1010 |
+| Fabric site code | 9001 | 9002 |
 | Edge-service prefixes | 203.0.113.0/25, 2001:db8:10::/44 | 203.0.113.128/25, 2001:db8:60::/44 |
 | Talos / Kubernetes | v1.13.7 / v1.35.5 | Same |
 | ASN | 64500 | Same |

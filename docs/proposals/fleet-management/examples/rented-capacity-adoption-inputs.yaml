@@ -1,7 +1,7 @@
 # Historical migration inputs from the original enhancement, not API resources.
 # Reverify identity, addresses, provider state, and authority before adoption.
 # Provider codes do not independently prove a canonical physical Facility.
-sourceRevision: 14c67f394af24f07abc8a326a776a725fa994b22
+sourceRevision: <original enhancement revision>
 machines:
 - name: fac-a4-000000000001
   provider: provider-a
@@ -157,7 +157,7 @@ machines:
     - 2001:db8:3000:2::2bf
 networkPolicyInputs:
 - sourceClass: worker
-  sourceKind: Provider BMachineClass
+  sourceKind: ProviderBMachineClass
   routingPolicy:
     peerAsn: 64502
     uplink: eth0
