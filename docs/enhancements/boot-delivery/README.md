@@ -521,16 +521,34 @@ media each gets a provider network attachment for that one operation:
    in the operation's inputs.
 3. The worker writes the address onto the config medium as static
    configuration. The image posts its report from that address.
-4. When the report is accepted, the operation moves to `Verifying`, and the
-   requester deletes both claims.
 
-Release for these operations adds two proofs to the media proofs: NSO reports
-that the attachment claim is gone and the port is off the provider network,
-and IPAM reports the address claim released. The proof covers every provider
-attachment for the Device, so it also covers one a held operation left. If
-either proof is missing at the deadline, the operation ends `OutcomeUnknown`
-with a hold, and the port stays where it is until a settling operation proves
-it detached.
+Release adds two proofs to the media proofs, in this order:
+
+1. The first-boot service accepts the report, which spends the token, and the
+   operation moves to `Verifying`. The requester deletes the attachment claim,
+   and the worker waits until NSO reports every provider attachment for the
+   Device gone and the port off the provider network.
+2. With the port detached and the token spent, nothing can use the address.
+   The requester deletes the address claim, and the worker waits until IPAM
+   reports it released.
+
+If either proof is missing at the deadline, the operation ends
+`OutcomeUnknown` with a hold.
+
+The requester deletes an operation's claims in every other case too, as
+[#186][server-networking-pr] does for boot claims:
+
+- **Failed or cancelled.** Nothing was sent, so both claims are deleted.
+- **Never created.** A claim pair whose operation was never created is deleted
+  by its requester, which finds it by the operation's name.
+- **Held.** The held claims stay, and the port stays on the provider network,
+  until a settling operation is admitted. Admission raises the fence and stops
+  the held worker, so the requester then deletes the held claims. The settling
+  operation's own release proof covers every provider attachment for the
+  Device, including the held one.
+- **Retry.** A custody `Retry` creates a new operation with a new name, so it
+  gets a new claim pair.
+- **Retired.** Retiring the Device deletes any claims left.
 
 A wipe at release runs after the Machine's interface claims are gone, as
 [#186][server-networking-pr] requires, so the port is already off the
@@ -641,6 +659,10 @@ These tests are required and not implemented:
   network, and the address claim released.
 - NSO cannot prove a wipe's port detached by the deadline, and the wipe ends
   `OutcomeUnknown` with a hold.
+- A wipe sends no report and ends `OutcomeUnknown`. When a settling wipe is
+  admitted, the held claims are deleted, and the settling wipe succeeds only
+  after both its own and the held attachments are proven gone.
+- A wipe that fails before sending anything leaves no claims behind.
 - A second first-boot report for the same operation is refused, and the first
   result stands.
 - A fallback-mode report whose bootstrap digest does not match the payload the
