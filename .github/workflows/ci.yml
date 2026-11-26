@@ -34,4 +34,5 @@ jobs:
     - run: ./hack/test-standalone-source-id.sh
     - run: ./hack/test-standalone-preflight.sh
     - run: ./hack/test-standalone-build-context.sh
+    - run: ./hack/test-validate-doc-links.sh
     - run: ./hack/validate-doc-links.sh
