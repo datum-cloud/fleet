@@ -188,9 +188,9 @@ func (c Claimer) Claim(ctx context.Context, allocation, operation string) (*ops.
 // it. The claim's reclaim policy is Delete, so IPAM removes its allocation in
 // the transaction that removes the claim, and a claim found gone, even after
 // a delete whose response was lost, was released. A delete that fails leaves
-// the claim, and its address, held for a later call. IPAM ignores delete preconditions, so the claim's name
-// and labels are the guard: a claim under the operation's name with its
-// labels is that operation's claim.
+// the claim, and its address, held for a later call. IPAM ignores delete
+// preconditions, so the claim's name and labels are the guard: a claim under
+// the operation's name with its labels is that operation's claim.
 func (c Claimer) Release(ctx context.Context, operation string) (bool, error) {
 	claim, err := c.get(ctx, ClaimName(operation))
 	if apierrors.IsNotFound(err) {

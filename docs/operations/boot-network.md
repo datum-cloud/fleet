@@ -106,8 +106,8 @@ Fleet follows the contract IPAM implements, not only its documentation:
   the operation `Pending` with `BootAddressUnavailable`, never admitted, and
   the coordinator checks it again. This holds for every creator: a staff
   operation waits the same way and is cancelled only by staff expiry, so a
-  brief IPAM outage fails no installation or wipe. A missing, rebound or recreated claim fails
-  the operation.
+  brief IPAM outage fails no installation or wipe. A missing, rebound or
+  recreated claim fails the operation.
 
 ## Enrollment
 
