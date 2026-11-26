@@ -143,7 +143,10 @@ type MachineProfileList struct {
 }
 
 type Hardware struct {
-	CPU        HardwareCPU         `json:"cpu,omitempty"`
+	CPU HardwareCPU `json:"cpu,omitempty"`
+	// Firmware is the server's boot firmware. An image installs only on a
+	// server whose firmware mode it lists; an unknown mode installs none.
+	Firmware   *HardwareFirmware   `json:"firmware,omitempty"`
 	Memory     HardwareMemory      `json:"memory,omitempty"`
 	GPUs       []HardwareGPU       `json:"gpus,omitempty"`
 	Disks      []HardwareDisk      `json:"disks,omitempty"`
@@ -155,6 +158,16 @@ type HardwareCPU struct {
 	Sockets      int64  `json:"sockets,omitempty"`
 	Cores        int64  `json:"cores,omitempty"`
 	Threads      int64  `json:"threads,omitempty"`
+}
+
+// Firmware boot modes.
+const (
+	FirmwareUEFI = "UEFI"
+	FirmwareBIOS = "BIOS"
+)
+
+type HardwareFirmware struct {
+	BootMode string `json:"bootMode,omitempty"`
 }
 type HardwareMemory struct {
 	Capacity string `json:"capacity,omitempty"`
@@ -333,9 +346,94 @@ type InstallationSpec struct {
 	BootstrapConfigRef  *LocalReference         `json:"bootstrapConfigRef,omitempty"`
 }
 type InstallationStatus struct {
-	Phase       string             `json:"phase,omitempty"`
-	CompletedAt *metav1.Time       `json:"completedAt,omitempty"`
-	Conditions  []metav1.Condition `json:"conditions,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// ResolvedImage is the provider image and digest Fleet admitted.
+	ResolvedImage *ResolvedImage     `json:"resolvedImage,omitempty"`
+	CompletedAt   *metav1.Time       `json:"completedAt,omitempty"`
+	Conditions    []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type ResolvedImage struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+}
+
+// MachineImage is one OS image release. In the provider project it holds a
+// definition: what the image is and the digest of its artifact manifest. In a
+// consumer project it names its provider source; only the provider's
+// publisher writes it there. The definition and the source never change.
+type MachineImage struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              MachineImageSpec   `json:"spec"`
+	Status            MachineImageStatus `json:"status,omitempty"`
+}
+type MachineImageList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []MachineImage `json:"items"`
+}
+
+// Image availability. A withdrawn image admits no new installation.
+const (
+	ImageAvailable = "Available"
+	ImageWithdrawn = "Withdrawn"
+)
+
+type MachineImageSpec struct {
+	Definition *ImageDefinition `json:"definition,omitempty"`
+	Source     *SourceReference `json:"source,omitempty"`
+	// Availability is set only on a definition, and is its only mutable
+	// field.
+	Availability string `json:"availability,omitempty"`
+}
+
+// Bootstrap formats an image can read on first boot.
+const BootstrapNoCloud = "NoCloud"
+
+type ImageDefinition struct {
+	Family           string   `json:"family"`
+	Version          string   `json:"version"`
+	Architecture     string   `json:"architecture"`
+	FirmwareModes    []string `json:"firmwareModes"`
+	BootstrapFormats []string `json:"bootstrapFormats,omitempty"`
+	// Digest is the digest of the image's artifact manifest.
+	Digest string `json:"digest"`
+}
+type MachineImageStatus struct {
+	// Resolved is the provider definition, for display. Admission reads
+	// the publication record, never this.
+	Resolved   *ImageDefinition   `json:"resolved,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// MachineImagePublication is a protected record in the provider project
+// that one consumer MachineImage was published from one provider
+// MachineImage incarnation. Its name derives from the consumer project,
+// copy and provider image UIDs, so a recreated object finds no record and
+// is not the published one. Admission resolves the digest from it.
+type MachineImagePublication struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              MachineImagePublicationSpec `json:"spec"`
+}
+type MachineImagePublicationList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []MachineImagePublication `json:"items"`
+}
+type MachineImagePublicationSpec struct {
+	ConsumerRef TypedReference `json:"consumerRef"`
+	Image       PublishedImage `json:"image"`
+	Source      LocalReference `json:"source"`
+	Digest      string         `json:"digest"`
+}
+
+// PublishedImage names the consumer MachineImage. The record's name pins
+// its incarnation and its tenant's.
+type PublishedImage struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
 }
 
 // MachineAllocation is a protected, service-owned record in the provider
@@ -472,7 +570,7 @@ type InstallationList struct {
 }
 
 func addKnown(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &MachineClass{}, &MachineClassList{}, &MachineProfile{}, &MachineProfileList{}, &MachineCapacity{}, &MachineCapacityList{}, &Machine{}, &MachineList{}, &MachineAllocation{}, &MachineAllocationList{}, &Installation{}, &InstallationList{})
+	s.AddKnownTypes(GroupVersion, &MachineClass{}, &MachineClassList{}, &MachineProfile{}, &MachineProfileList{}, &MachineCapacity{}, &MachineCapacityList{}, &Machine{}, &MachineList{}, &MachineAllocation{}, &MachineAllocationList{}, &Installation{}, &InstallationList{}, &MachineImage{}, &MachineImageList{}, &MachineImagePublication{}, &MachineImagePublicationList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }
@@ -541,3 +639,24 @@ func (in *InstallationList) DeepCopyObject() runtime.Object {
 }
 
 func deepCopy[T any](in *T, out *T) { b, _ := json.Marshal(in); _ = json.Unmarshal(b, out) }
+
+func (in *MachineImage) DeepCopyObject() runtime.Object {
+	out := new(MachineImage)
+	deepCopy(in, out)
+	return out
+}
+func (in *MachineImageList) DeepCopyObject() runtime.Object {
+	out := new(MachineImageList)
+	deepCopy(in, out)
+	return out
+}
+func (in *MachineImagePublication) DeepCopyObject() runtime.Object {
+	out := new(MachineImagePublication)
+	deepCopy(in, out)
+	return out
+}
+func (in *MachineImagePublicationList) DeepCopyObject() runtime.Object {
+	out := new(MachineImagePublicationList)
+	deepCopy(in, out)
+	return out
+}

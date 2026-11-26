@@ -40,8 +40,8 @@ func TestAllocationCRDContract(t *testing.T) {
 	if GroupVersion.Group != "metal.datumapis.com" || GroupVersion.Version != "v1alpha1" {
 		t.Fatalf("unexpected public API identity: %s", GroupVersion)
 	}
-	if len(crds) != 6 {
-		t.Fatalf("got %d allocation CRDs, want 6", len(crds))
+	if len(crds) != 8 {
+		t.Fatalf("got %d allocation CRDs, want 8", len(crds))
 	}
 	for _, crd := range crds {
 		if crd.Spec.Group != GroupVersion.Group || crd.Name != crd.Spec.Names.Plural+"."+GroupVersion.Group {

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -150,6 +151,10 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 	}
 	if spec.Image.Name+"@"+spec.Image.Digest != k.Image {
 		return &custody.Refusal{Reason: custody.ReasonTargetUnsupported, Message: "the site installs only its verified local image"}
+	}
+	// Every local guest boots the i440FX machine with SeaBIOS.
+	if !slices.Contains(spec.Image.FirmwareModes, "BIOS") {
+		return &custody.Refusal{Reason: custody.ReasonImageIncompatible, Message: "the image does not boot in BIOS mode"}
 	}
 	return enrolled(work, spec.TargetDisks)
 }

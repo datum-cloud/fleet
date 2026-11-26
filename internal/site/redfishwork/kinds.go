@@ -124,6 +124,11 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 	if spec.Bootstrap != nil {
 		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "bootstrap payloads need the sealed store, which is not implemented"}
 	}
+	// Firmware settings can change after allocation: read the mode the
+	// server boots in now.
+	if mode := conn(work).System.BootMode; mode == "" || !contains(spec.Image.FirmwareModes, mode) {
+		return &custody.Refusal{Reason: custody.ReasonImageIncompatible, Message: "the image does not list the server's current firmware mode"}
+	}
 	return checkTarget(work, spec.TargetDisks, installPhases)
 }
 

@@ -21,6 +21,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/catalog"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/delivery"
 	"go.datum.net/fleet/internal/site"
@@ -37,7 +38,8 @@ const (
 	siteName     = "site-example-a"
 	siteToken    = "synthetic-site-token"
 	keyDigest    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	imageRef     = "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"
+	imageName    = "debian-12"
+	imageDigest  = "sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"
 	policyDigest = "sha256:0c2b77e1d9a4000000000000000000000000000000000000000000000000cafe"
 )
 
@@ -160,7 +162,7 @@ func (e *env) server(n int) *inventory.Device {
 	capacity := &fleetv1.MachineCapacity{ObjectMeta: metav1.ObjectMeta{Name: "capacity-" + name, Namespace: namespace, Labels: map[string]string{"pool": "example"}},
 		Spec: fleetv1.MachineCapacitySpec{DeviceRef: fleetv1.LocalReference{Name: name}, AllocationPolicy: "Enabled", CleaningPolicyRef: fleetv1.LocalReference{Name: "example-cleaning"}, ReclaimPolicy: "Retain"}}
 	e.create(capacity)
-	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 2}, Memory: fleetv1.HardwareMemory{Capacity: "2Gi"}}
+	capacity.Status.Hardware = fleetv1.Hardware{CPU: fleetv1.HardwareCPU{Architecture: "amd64", Cores: 2}, Firmware: &fleetv1.HardwareFirmware{BootMode: fleetv1.FirmwareUEFI}, Memory: fleetv1.HardwareMemory{Capacity: "2Gi"}}
 	for _, kind := range []string{"Prepared", "Healthy", "Available"} {
 		capacity.Status.Conditions = append(capacity.Status.Conditions, metav1.Condition{Type: kind, Status: metav1.ConditionTrue, Reason: "Fixture", ObservedGeneration: capacity.Generation, LastTransitionTime: metav1.Now()})
 	}
@@ -210,11 +212,16 @@ func (e *env) request(n int) Request {
 
 func (e *env) installation(n int, name, predecessor string) *fleetv1.Installation {
 	installation := &fleetv1.Installation{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(uid(700 + n))},
-		Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: "allocation"}, ImageRef: fleetv1.LocalReference{Name: imageRef}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}}}
+		Spec: fleetv1.InstallationSpec{MachineRef: fleetv1.MachineReference{Name: "allocation"}, ImageRef: fleetv1.LocalReference{Name: imageName}, ExpectedPredecessor: fleetv1.InstallationPredecessor{Type: "None"}}}
 	if predecessor != "" {
 		installation.Spec.ExpectedPredecessor = fleetv1.InstallationPredecessor{Type: "Installation", Name: predecessor}
 	}
 	return installation
+}
+
+// image is the catalog's resolution of the fixture image.
+func image() catalog.Image {
+	return catalog.Image{Name: imageName, Definition: fleetv1.ImageDefinition{Family: "debian", Version: "12", Architecture: "amd64", FirmwareModes: []string{fleetv1.FirmwareUEFI}, Digest: imageDigest}}
 }
 
 // release repeats Release while the coordinator runs, until it is Released.

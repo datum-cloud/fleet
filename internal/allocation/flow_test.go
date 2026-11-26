@@ -2,6 +2,7 @@ package allocation
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/catalog"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/site/simwork"
 )
@@ -50,7 +52,7 @@ func TestAllocateInstallReleaseReuse(t *testing.T) {
 
 	install := func(allocation *fleetv1.MachineAllocation, installation *fleetv1.Installation, current string) *ops.DeviceInstallation {
 		t.Helper()
-		operation, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: installation, Current: current})
+		operation, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: installation, Current: current, Image: image()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,8 +76,24 @@ func TestAllocateInstallReleaseReuse(t *testing.T) {
 		t.Fatalf("server = %+v, %v", server, err)
 	}
 	// A reinstall must name the current installation.
-	if _, err := e.allocator.Install(e.ctx, first, Installation{Installation: e.installation(2, "debian-12-reinstall", "elsewhere"), Current: "debian-12"}); !errors.Is(err, ErrPredecessor) {
+	if _, err := e.allocator.Install(e.ctx, first, Installation{Installation: e.installation(2, "debian-12-reinstall", "elsewhere"), Current: "debian-12", Image: image()}); !errors.Is(err, ErrPredecessor) {
 		t.Fatalf("stale predecessor err = %v", err)
+	}
+	// The operation retains the resolved digest and the image's firmware
+	// modes for the worker's check.
+	if initial.Spec.Image.Digest != imageDigest || initial.Spec.Image.Name != imageName || len(initial.Spec.Image.FirmwareModes) != 1 {
+		t.Fatalf("image input = %+v", initial.Spec.Image)
+	}
+	// An image that does not match the allocated hardware is refused
+	// before any operation exists.
+	incompatible := image()
+	incompatible.Definition.Architecture = "arm64"
+	refused := e.installation(3, "arm-image", "debian-12")
+	if _, err := e.allocator.Install(e.ctx, first, Installation{Installation: refused, Current: "debian-12", Image: incompatible}); err == nil || !strings.Contains(err.Error(), catalog.ReasonImageIncompatible) {
+		t.Fatalf("incompatible image err = %v", err)
+	}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: custody.InstallationName(first.Name, string(refused.UID))}, &ops.DeviceInstallation{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("a refused image created an operation: %v", err)
 	}
 	reinstall := install(first, e.installation(2, "debian-12-reinstall", "debian-12"), "debian-12")
 	if reinstall.Status.Fence <= initial.Status.Fence {

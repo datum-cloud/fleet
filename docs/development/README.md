@@ -38,6 +38,12 @@ Secret-backed coordinator, its private records and the old executors are deleted
 and an allocation's private facts live on its MachineAllocation. The standalone
 smoke verifies it. The end-to-end failure scenarios (Increment D) are proposed.
 
+[OS images and bootstrap data](machine-images.md) has its image catalog
+**implemented**: a provider-published, digest-pinned `MachineImage` that
+admission resolves through a publication record and checks against the
+server's architecture and firmware mode. The sealed bootstrap store is
+proposed.
+
 The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
 the [local VM site](../operations/local-vm.md) with native Milo project APIs, the
 custody coordinator, and actual Karmada delivery. On the selected cell the site

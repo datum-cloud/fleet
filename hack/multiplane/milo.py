@@ -77,7 +77,7 @@ for role in roles:
  kubectl(config,'wait','--for=condition=Established','crd','--all','--timeout=90s',stdout=subprocess.DEVNULL)
  ns='fleet-provider' if role=='provider' else 'default'
  apply(config,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':ns}})
- rules=[{'apiGroups':[''],'resources':['namespaces'],'verbs':['get']},{'apiGroups':['metal.datumapis.com'],'resources':['machineclasses','machineprofiles','machinecapacities','machines','installations'],'verbs':['get','list','watch']}]
+ rules=[{'apiGroups':[''],'resources':['namespaces'],'verbs':['get']},{'apiGroups':['metal.datumapis.com'],'resources':['machineclasses','machineprofiles','machinecapacities','machines','installations','machineimages'],'verbs':['get','list','watch']}]
  if role=='provider':
   for crds in ('config/components/inventory/crds/fleet.datumapis.com.yaml','config/components/device-operations/crds/fleet.datumapis.com.yaml'):
    kubectl(config,'apply','-f',crds,stdout=subprocess.DEVNULL)
@@ -88,7 +88,7 @@ for role in roles:
   apply(config,{'apiVersion':'v1','kind':'Namespace','metadata':{'name':'fleet-rules'}})
   # The Metal provider records allocations and creates installations; it
   # reads custody and Devices only to skip taken capacity.
-  rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},
+  rules+=[{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations'],'verbs':['get','list','watch','create','delete']},{'apiGroups':['metal.datumapis.com'],'resources':['machineallocations/status'],'verbs':['get','update']},{'apiGroups':['metal.datumapis.com'],'resources':['machineimagepublications'],'verbs':['get']},
           {'apiGroups':['fleet.datumapis.com'],'resources':['deviceinstallations'],'verbs':['get','list','watch','create']},{'apiGroups':['fleet.datumapis.com'],'resources':['devices','devicecustodies'],'verbs':['get','list','watch']}]
   components={
    'coordinator':[{'apiGroups':['fleet.datumapis.com'],'resources':['devices'],'verbs':['get','list','watch']},{'apiGroups':['fleet.datumapis.com'],'resources':['devicecustodies'],'verbs':['get','list','watch','create','update','delete']},

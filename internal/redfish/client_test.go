@@ -126,6 +126,23 @@ func TestDiscoveryWalksEveryPageOfTheSystemsCollection(t *testing.T) {
 	}
 }
 
+// TestDiscoveryReadsTheBootMode maps the System's BootSourceOverrideMode
+// to a firmware mode, and leaves it empty when the BMC reports neither, so
+// the install worker refuses rather than guesses.
+func TestDiscoveryReadsTheBootMode(t *testing.T) {
+	for reported, want := range map[string]string{"UEFI": "UEFI", "Legacy": "BIOS", "": ""} {
+		b := newStub()
+		if reported != "" {
+			b.docs["/redfish/v1/Systems/A"].(map[string]any)["Boot"].(map[string]any)["BootSourceOverrideMode"] = reported
+		}
+		c := stubClient(t, b, time.Second)
+		s, err := c.Discover(context.Background(), Target{SystemID: "A", SystemUUID: uuidA})
+		if err != nil || s.BootMode != want {
+			t.Fatalf("reported %q: boot mode %q, %v", reported, s.BootMode, err)
+		}
+	}
+}
+
 func TestDiscoveryRefusesPartialOrForeignCollections(t *testing.T) {
 	for name, tc := range map[string]struct {
 		mutate func(*bmcStub)

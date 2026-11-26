@@ -488,6 +488,14 @@ spec:
                   digest:
                     type: string
                     pattern: ^sha256:[0-9a-f]{64}$
+                  firmwareModes:
+                    type: array
+                    maxItems: 2
+                    items:
+                      type: string
+                      enum:
+                      - UEFI
+                      - BIOS
                 required:
                 - name
                 - digest

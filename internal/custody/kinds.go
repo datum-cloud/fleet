@@ -40,6 +40,9 @@ const (
 	ReasonTargetUnsupported = "TargetUnsupported"
 	ReasonTargetDisks       = "TargetDisksUnknown"
 	ReasonInputsUnreadable  = "InputsUnreadable"
+	// ReasonImageIncompatible is raised by an install worker that reads the
+	// server's firmware mode and finds the image does not list it.
+	ReasonImageIncompatible = "ImageIncompatible"
 )
 
 // workerReasons are the reasons every site's install and wipe workers
@@ -114,7 +117,7 @@ func DeviceInstallationKind() Kind {
 			return refuse(ReasonBootInterfaceUnknown, "the Device records no interface %q with a MAC address", installation.Spec.BootInterface)
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
-		Reasons: append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}}, workerReasons...),
+		Reasons: append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}, {Name: ReasonImageIncompatible, RaisedBy: RaisedByWorker}}, workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.InstallationEvidence) error {
 			return validateSteps(evidence.Steps)
 		}),

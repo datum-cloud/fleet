@@ -29,6 +29,20 @@ spec:
   bmc: {endpoint: "https://[2001:db8::21]"}
   interfaces: [{name: primary, macAddress: "02:00:00:00:00:21"}]
 ---
+# The provider's one image release. The allocate phase publishes it into the
+# first consumer namespace, which stands in for a consumer project.
+apiVersion: metal.datumapis.com/v1alpha1
+kind: MachineImage
+metadata: {name: debian-12, namespace: fleet-provider}
+spec:
+  definition:
+    family: debian
+    version: "12"
+    architecture: amd64
+    firmwareModes: [UEFI]
+    digest: "sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"
+  availability: Available
+---
 apiVersion: metal.datumapis.com/v1alpha1
 kind: MachineCapacity
 metadata:
@@ -65,7 +79,7 @@ metadata: {name: debian-12, namespace: fleet-project-a}
 spec:
   machineRef: {name: allocation}
   expectedPredecessor: {type: None}
-  imageRef: {name: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"}
+  imageRef: {name: debian-12}
 ---
 apiVersion: metal.datumapis.com/v1alpha1
 kind: Installation
@@ -73,4 +87,4 @@ metadata: {name: debian-12-reinstall, namespace: fleet-project-a}
 spec:
   machineRef: {name: allocation}
   expectedPredecessor: {type: Installation, name: debian-12}
-  imageRef: {name: "debian-12@sha256:9f4ad8d8b8a6f6fc64d2cf2c7e70b9184b74f089adf8c36d84f4fcb99892f3cb"}
+  imageRef: {name: debian-12}

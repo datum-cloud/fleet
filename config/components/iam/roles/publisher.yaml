@@ -20,3 +20,15 @@ spec:
     - metal.datumapis.com/machineprofiles.patch
     - metal.datumapis.com/machineprofiles.delete
     - metal.datumapis.com/machineprofiles.updateStatus
+    # Publishing an image writes the consumer copy and the provider's
+    # publication record. Unpublishing deletes both, which is also how a
+    # publication is repaired after its copy or source is recreated.
+    # Customers hold no write on either kind.
+    - metal.datumapis.com/machineimages.create
+    - metal.datumapis.com/machineimages.update
+    - metal.datumapis.com/machineimages.patch
+    - metal.datumapis.com/machineimages.delete
+    - metal.datumapis.com/machineimages.updateStatus
+    - metal.datumapis.com/machineimagepublications.get
+    - metal.datumapis.com/machineimagepublications.create
+    - metal.datumapis.com/machineimagepublications.delete

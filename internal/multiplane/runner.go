@@ -29,6 +29,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/catalog"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/coordination"
 	"go.datum.net/fleet/internal/custody"
@@ -378,6 +379,14 @@ func (r *Runner) projectPower(ctx context.Context, q *request) error {
 	return manager.ProjectPower(ctx, q.project.API, r.Provider.API, DeviceNamespace, q.alloc.Machine)
 }
 
+// ImageCatalog is the provider's image catalog in the provider project. Its
+// authorizer is the fixture's: every creator may use a published image.
+// This composition has no Milo IAM image-use check.
+func ImageCatalog(provider client.Reader) *catalog.Catalog {
+	return &catalog.Catalog{Provider: provider, Publisher: tenancy.Project("provider"), Namespace: DeviceNamespace,
+		Authorize: func(context.Context, *fleet.Installation, *fleet.MachineImage, *fleet.MachineImage) error { return nil }}
+}
+
 // installation creates the consumer's DeviceInstallation once and returns
 // it with the allocation.
 func (r *Runner) installation(ctx context.Context, index int) (*request, *fleet.MachineAllocation, *fleet.Installation, *ops.DeviceInstallation, error) {
@@ -403,7 +412,23 @@ func (r *Runner) installation(ctx context.Context, index int) (*request, *fleet.
 		if ref := q.machine.Status.CurrentInstallationRef; ref != nil {
 			previous = ref.Name
 		}
-		if operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &install, Current: previous}); err != nil {
+		consumer, err := r.Resolve(ctx, tenancy.Project(q.project.Identity.RouteName))
+		var image catalog.Image
+		if err == nil {
+			image, err = ImageCatalog(r.Provider.API).Resolve(ctx, consumer, &install)
+		}
+		if err == nil {
+			operation, err = r.Allocator.Install(ctx, current, allocation.Installation{Installation: &install, Current: previous, Image: image})
+		}
+		if refusal := (*catalog.Refusal)(nil); errors.As(err, &refusal) {
+			accepted := condition("Accepted", metav1.ConditionFalse, install.Generation, refusal.Reason)
+			accepted.Message = refusal.Message
+			meta.SetStatusCondition(&install.Status.Conditions, accepted)
+			if serr := q.project.API.Status().Update(ctx, &install); serr != nil {
+				return nil, nil, nil, nil, serr
+			}
+		}
+		if err != nil {
 			return nil, nil, nil, nil, err
 		}
 	} else if err != nil {
@@ -452,6 +477,7 @@ func (r *Runner) InstallIndex(ctx context.Context, index int) error {
 		return fmt.Errorf("%w: the installation is %s", errPending, phase)
 	}
 	install.Status.Phase = "Ready"
+	install.Status.ResolvedImage = &fleet.ResolvedImage{Name: operation.Spec.Image.Name, Digest: operation.Spec.Image.Digest}
 	install.Status.Conditions = []metav1.Condition{condition("Ready", metav1.ConditionTrue, install.Generation, "LocalPXEVerifiedViaKarmada")}
 	if err := q.project.API.Status().Update(ctx, install); err != nil {
 		return err

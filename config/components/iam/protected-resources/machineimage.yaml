@@ -1,0 +1,14 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: metal.datumapis.com-machineimage
+spec:
+  serviceRef:
+    name: metal.datumapis.com
+  kind: MachineImage
+  plural: machineimages
+  singular: machineimage
+  permissions: [list, get, watch, create, update, patch, delete, updateStatus, use]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project

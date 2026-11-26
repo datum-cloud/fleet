@@ -49,6 +49,15 @@ rules:
   - apiGroups: [fleet.datumapis.com]
     resources: [deviceinstallations]
     verbs: [get, list, create]
+  # As the provider's publisher, it reads the image it publishes and records
+  # each publication; as the provider, it resolves images through them.
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineimages]
+    resourceNames: [debian-12]
+    verbs: [get]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineimagepublications]
+    verbs: [get, create, delete]
   - apiGroups: [fleet.datumapis.com]
     resources: [devices, devicecustodies]
     verbs: [get]
@@ -64,6 +73,18 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: {name: fleet-synthetic-consumer-writer, namespace: fleet-project-a}
 rules:
+  # The publisher's copy of the provider image.
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineimages]
+    verbs: [create]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineimages]
+    resourceNames: [debian-12]
+    verbs: [get]
+  - apiGroups: [metal.datumapis.com]
+    resources: [machineimages/status]
+    resourceNames: [debian-12]
+    verbs: [get, update]
   - apiGroups: [metal.datumapis.com]
     resources: [machines]
     resourceNames: [allocation]

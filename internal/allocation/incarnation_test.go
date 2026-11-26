@@ -67,7 +67,7 @@ func TestAnOperationForAnotherDeviceIncarnationIsAConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	installation := e.installation(1, "first", "")
-	operation, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: installation})
+	operation, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: installation, Image: image()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAnOperationForAnotherDeviceIncarnationIsAConflict(t *testing.T) {
 	if err := e.admin.Update(e.ctx, stored); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: installation}); !errors.Is(err, ErrConflict) {
+	if _, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: installation, Image: image()}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("an operation recorded for another Device incarnation: %v", err)
 	}
 	if stored.Spec.DeviceRef.Name != device.Name {

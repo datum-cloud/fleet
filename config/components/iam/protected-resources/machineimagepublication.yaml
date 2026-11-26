@@ -1,0 +1,14 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: metal.datumapis.com-machineimagepublication
+spec:
+  serviceRef:
+    name: metal.datumapis.com
+  kind: MachineImagePublication
+  plural: machineimagepublications
+  singular: machineimagepublication
+  permissions: [list, get, watch, create, delete]
+  parentResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project

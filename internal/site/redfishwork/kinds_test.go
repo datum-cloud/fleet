@@ -25,6 +25,7 @@ import (
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/bmcdiscovery"
+	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/redfish"
 	"go.datum.net/fleet/internal/site"
 )
@@ -116,7 +117,7 @@ func (l *lab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/redfish/v1":         map[string]any{"@odata.id": "/redfish/v1", "Systems": map[string]string{"@odata.id": "/redfish/v1/Systems"}},
 		"/redfish/v1/Systems": map[string]any{"Members": []any{map[string]string{"@odata.id": path}}},
 		path: map[string]any{"@odata.id": path, "Id": "A", "UUID": uuid, "PowerState": l.power,
-			"Boot":    map[string]any{"BootSourceOverrideEnabled": l.enabled, "BootSourceOverrideTarget": l.target, "BootSourceOverrideTarget@Redfish.AllowableValues": []string{"Pxe", "Hdd"}},
+			"Boot":    map[string]any{"BootSourceOverrideEnabled": l.enabled, "BootSourceOverrideTarget": l.target, "BootSourceOverrideMode": "Legacy", "BootSourceOverrideTarget@Redfish.AllowableValues": []string{"Pxe", "Hdd"}},
 			"Actions": map[string]any{"#ComputerSystem.Reset": map[string]any{"target": path + "/Actions/ComputerSystem.Reset", "ResetType@Redfish.AllowableValues": []string{"On", "ForceOff"}}}},
 	}
 	doc, ok := docs[strings.TrimSuffix(r.URL.Path, "/")]
@@ -213,7 +214,21 @@ func assignment(l *lab, kind, uid string, fence int64, spec any) site.Assignment
 }
 
 func installSpec() ops.DeviceInstallationSpec {
-	return ops.DeviceInstallationSpec{Image: ops.ImageInput{Name: "debian-12", Digest: "sha256:" + strings.Repeat("a", 64)}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
+	return ops.DeviceInstallationSpec{Image: ops.ImageInput{Name: "debian-12", Digest: "sha256:" + strings.Repeat("a", 64), FirmwareModes: []string{"BIOS"}}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
+}
+
+// TestAnImageForAnotherFirmwareModeSendsNothing reads the mode the server
+// boots in now, which can differ from what allocation recorded, and
+// refuses before any power or boot change.
+func TestAnImageForAnotherFirmwareModeSendsNothing(t *testing.T) {
+	l := newLab(t)
+	r := runner(t, l)
+	spec := installSpec()
+	spec.Image.FirmwareModes = []string{"UEFI"}
+	result, err := r.Run(context.Background(), assignment(l, "DeviceInstallation", "op-uefi", 1, spec))
+	if err != nil || result.Phase != ops.PhaseFailed || result.Reason != custody.ReasonImageIncompatible || l.onCount() != 0 {
+		t.Fatalf("result = %+v, %v, %d power-ons", result, err, l.onCount())
+	}
 }
 
 func TestInstallationRunsBothPhasesWithOneOnEach(t *testing.T) {

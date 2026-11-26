@@ -227,6 +227,9 @@ type System struct {
 	ResetTarget string   `json:"resetTarget"`
 	ResetTypes  []string `json:"resetTypes"`
 	BootTargets []string `json:"bootTargets"`
+	// BootMode is the firmware mode the System boots in, UEFI or BIOS,
+	// from its BootSourceOverrideMode. Empty when it reports neither.
+	BootMode string `json:"bootMode,omitempty"`
 	// noOnce records that the System does not offer a one-time override.
 	noOnce bool
 }
@@ -380,6 +383,12 @@ func (c *Client) Identify(ctx context.Context, t Target) (System, error) {
 		sys.BootTargets = append(sys.BootTargets, string(b))
 	}
 	sys.noOnce = raw.Boot.Enabled != nil && !contains(*raw.Boot.Enabled, "Once")
+	switch s.Boot.BootSourceOverrideMode {
+	case "UEFI":
+		sys.BootMode = "UEFI"
+	case "Legacy":
+		sys.BootMode = "BIOS"
+	}
 	return sys, nil
 }
 

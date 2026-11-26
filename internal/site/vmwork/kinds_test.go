@@ -125,11 +125,23 @@ func envelope() ops.OperationEnvelope {
 
 func installSpec() ops.DeviceInstallationSpec {
 	name, digest, _ := strings.Cut(image, "@")
-	return ops.DeviceInstallationSpec{OperationEnvelope: envelope(), Image: ops.ImageInput{Name: name, Digest: digest}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
+	return ops.DeviceInstallationSpec{OperationEnvelope: envelope(), Image: ops.ImageInput{Name: name, Digest: digest, FirmwareModes: []string{"BIOS"}}, BootInterface: "primary", TargetDisks: []string{"disk-0"}}
 }
 
 func wipeSpec() ops.DeviceWipeSpec {
 	return ops.DeviceWipeSpec{OperationEnvelope: envelope(), Step: 1, CleaningPolicyDigest: "sha256:" + key, TargetDisks: []string{"disk-0"}}
+}
+
+// TestAUEFIOnlyImageSendsNothing refuses an image the local guest's BIOS
+// cannot boot, before any disk or boot.
+func TestAUEFIOnlyImageSendsNothing(t *testing.T) {
+	r := newRig(t)
+	spec := installSpec()
+	spec.Image.FirmwareModes = []string{"UEFI"}
+	result, err := r.runner.Run(context.Background(), r.assignment("DeviceInstallation", "00000000-0000-4000-8000-000000000209", 2, spec))
+	if err != nil || result.Phase != ops.PhaseFailed || result.Reason != custody.ReasonImageIncompatible || r.vm.creates != 0 {
+		t.Fatalf("result = %+v, %v, %d boots", result, err, r.vm.creates)
+	}
 }
 
 // TestInstallThenWipe installs directly, proves each phase by its receipt,
