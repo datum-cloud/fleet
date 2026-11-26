@@ -439,18 +439,23 @@ export interface PhysicalRecord {
 // DeviceCustody and DevicePowerOperation, transcribed from
 // internal/api/operations/v1alpha1. The coordinator is the only writer of
 // custody and of operation status; a requester writes an operation's spec
-// once, at create.
+// once, at create. No spec holds an object UID: the Device incarnation is the
+// LABEL_DEVICE_UID label on an operation and on custody, and custody names an
+// operation by kind, name and the fence it was admitted at.
+
+/** The Device incarnation an operation or custody record is for. */
+export const LABEL_DEVICE_UID = 'fleet.datumapis.com/device-uid';
 
 export type CustodyHolderType = 'None' | 'Allocation' | 'Release' | 'Service' | 'Retired';
 export type OperationPhase = 'Pending' | 'Admitted' | 'Dispatched' | 'Verifying' | 'Succeeded' | 'Failed' | 'Cancelled' | 'OutcomeUnknown';
 
-export interface OperationReference { kind: string; name: string; uid: string }
+export interface OperationReference { kind: string; name: string }
 export interface OperationCreator { username: string; uid: string }
 
 export interface DeviceCustody {
   metadata: ObjectMeta;
   spec: {
-    deviceRef: { name: string; uid: string };
+    deviceRef: { name: string };
     state: 'Verified' | 'Unverified';
     holder: { type: CustodyHolderType; allocationRef?: LocalReference; openGates?: string[] };
     fence: number;
@@ -478,7 +483,7 @@ export interface DevicePowerOperation {
   metadata: ObjectMeta & { generateName?: string };
   spec: {
     creator: OperationCreator;
-    deviceRef: { name: string; uid: string };
+    deviceRef: { name: string };
     /** Exactly one: a staff serviceRequest, or the Metal provider's allocationRef. */
     authority: { serviceRequest?: { reason: string }; allocationRef?: LocalReference };
     action: PowerAction;
@@ -488,6 +493,8 @@ export interface DevicePowerOperation {
     machineGeneration?: number;
   };
   status?: {
+    /** The fence custody admitted this object at, written before custody names it; a same-name object created later has none. */
+    admission?: { fence: number };
     phase?: OperationPhase;
     reason?: string;
     message?: string;

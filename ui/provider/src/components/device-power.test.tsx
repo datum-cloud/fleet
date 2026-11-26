@@ -90,7 +90,7 @@ describe('Power control', () => {
     expect(posts(fetch)).toHaveLength(0);
   });
 
-  it('sends the exact staff request: generated name, caller, Device UID, reason and recorded system UUID', async () => {
+  it('sends the exact staff request: generated name, device-uid label, caller, Device name, reason and recorded system UUID', async () => {
     const fetch = stub();
     const device = named(SERVER);
     show(device);
@@ -104,10 +104,11 @@ describe('Power control', () => {
     expect(JSON.parse(String(init!.body))).toEqual({
       apiVersion: 'fleet.datumapis.com/v1alpha1',
       kind: 'DevicePowerOperation',
-      metadata: { generateName: `${SERVER}-power-`, namespace: 'default' },
+      metadata: { generateName: `${SERVER}-power-`, namespace: 'default', labels: { 'fleet.datumapis.com/device-uid': device.metadata.uid } },
       spec: {
+        // The creator is the only object UID a spec may carry; the Device incarnation is the label.
         creator: { username: 'staff@example.com', uid: 'staff-uid' },
-        deviceRef: { name: SERVER, uid: device.metadata.uid },
+        deviceRef: { name: SERVER },
         authority: { serviceRequest: { reason: 'First power-on after racking' } },
         action: 'On',
         expectedSystemUUID: UUID,
@@ -163,12 +164,14 @@ describe('Power control', () => {
   it.each<[string, (device: Device) => void, Api]>([
     ['Allocated to a customer', () => undefined, { custody: custodyWith({ holder: { type: 'Allocation', allocationRef: { name: 'example-allocation' } } }) }],
     ['Allocated to a customer', () => undefined, { custody: custodyWith({ holder: { type: 'Release', allocationRef: { name: 'example-allocation' }, openGates: ['Cleaning'] } }) }],
-    ['Held: DevicePowerOperation example-held outcome unknown', () => undefined, { custody: custodyWith({ holder: { type: 'Service' }, recoveryHold: { kind: 'DevicePowerOperation', name: 'example-held', uid: 'u', fence: 3, since: '2026-01-02T03:04:05Z', reason: 'SiteCouldNotProve' } }) }],
-    ['DeviceWipe example-wipe is running', () => undefined, { custody: custodyWith({ activeOperation: { kind: 'DeviceWipe', name: 'example-wipe', uid: 'u', fence: 5, phase: 'Dispatched', admittedAt: '', deadline: '', creator: { username: 'release', uid: 'r' } } }) }],
+    ['Held: DevicePowerOperation example-held outcome unknown', () => undefined, { custody: custodyWith({ holder: { type: 'Service' }, recoveryHold: { kind: 'DevicePowerOperation', name: 'example-held', fence: 3, since: '2026-01-02T03:04:05Z', reason: 'SiteCouldNotProve' } }) }],
+    ['DeviceWipe example-wipe is running', () => undefined, { custody: custodyWith({ activeOperation: { kind: 'DeviceWipe', name: 'example-wipe', fence: 5, phase: 'Dispatched', admittedAt: '', deadline: '', creator: { username: 'release', uid: 'r' } } }) }],
     ['Force restart is in progress', () => undefined, { operations: [running] }],
     ['Custody unverified', () => undefined, { custody: custodyWith({ state: 'Unverified' }) }],
     ['Retired', () => undefined, { custody: custodyWith({ holder: { type: 'Retired' } }) }],
     ['No custody record', () => undefined, { custody: null }],
+    ['No custody record', () => undefined, { custody: { ...fixtureCustody(SERVER)!, metadata: { ...fixtureCustody(SERVER)!.metadata, labels: { 'fleet.datumapis.com/device-uid': 'removed-device-uid' } } } }],
+    ['No custody record', () => undefined, { custody: { ...fixtureCustody(SERVER)!, metadata: { ...fixtureCustody(SERVER)!.metadata, labels: undefined } } }],
     ['Custody unreadable', () => undefined, { custody: 403 }],
     ['Not discovered', device => { device.status = undefined; }, {}],
     ['No system UUID recorded', device => { device.spec.identity.systemUUID = undefined; }, {}],
@@ -296,8 +299,8 @@ describe('Power control', () => {
 
 describe('Operations history', () => {
   const operation = (name: string, phase: NonNullable<DevicePowerOperation['status']>['phase'], extra: Partial<NonNullable<DevicePowerOperation['status']>> = {}, created = '2026-01-02T03:04:05Z'): DevicePowerOperation => ({
-    metadata: { name, namespace: 'default', uid: `${name}-uid`, creationTimestamp: created },
-    spec: { creator: { username: 'staff@example.com', uid: 's' }, deviceRef: { name: SERVER, uid: named(SERVER).metadata.uid! }, authority: { serviceRequest: { reason: `Reason for ${name}` } }, action: 'ForceRestart', expectedSystemUUID: UUID },
+    metadata: { name, namespace: 'default', uid: `${name}-uid`, creationTimestamp: created, labels: { 'fleet.datumapis.com/device-uid': named(SERVER).metadata.uid! } },
+    spec: { creator: { username: 'staff@example.com', uid: 's' }, deviceRef: { name: SERVER }, authority: { serviceRequest: { reason: `Reason for ${name}` } }, action: 'ForceRestart', expectedSystemUUID: UUID },
     status: { phase, ...extra },
   });
   const rows = () => within(screen.getByRole('table', { name: 'Power operations' })).getAllByRole('row').slice(1);
@@ -324,12 +327,24 @@ describe('Operations history', () => {
     if (reason) expect(result).toHaveAttribute('title', reason);
   });
 
-  it('names the recovery hold on an unknown outcome custody holds', async () => {
-    const held = operation('held', 'OutcomeUnknown', { reason: 'SiteCouldNotProve' });
-    stub({ operations: [held], custody: { ...fixtureCustody(SERVER)!, spec: { ...fixtureCustody(SERVER)!.spec, holder: { type: 'Service' }, recoveryHold: { kind: 'DevicePowerOperation', name: 'held', uid: 'held-uid', fence: 3, since: '2026-01-02T03:10:00Z', reason: 'SiteCouldNotProve' } } } });
+  const holdOn = (name: string, fence: number) => ({ ...fixtureCustody(SERVER)!, spec: { ...fixtureCustody(SERVER)!.spec, holder: { type: 'Service' as const }, recoveryHold: { kind: 'DevicePowerOperation', name, fence, since: '2026-01-02T03:10:00Z', reason: 'SiteCouldNotProve' } } });
+
+  it('names the recovery hold on an unknown outcome custody holds, matched by kind, name and admission fence', async () => {
+    const held = operation('held', 'OutcomeUnknown', { reason: 'SiteCouldNotProve', admission: { fence: 3 } });
+    stub({ operations: [held], custody: holdOn('held', 3) });
     show(named(SERVER), 'history');
     await waitFor(() => expect(resultOf('held')).toHaveTextContent('Outcome unknown · held'));
     expect(resultOf('held')).toHaveAttribute('title', 'SiteCouldNotProve\nRecovery hold since 2026-01-02T03:10:00Z');
+  });
+
+  it.each<[string, Partial<NonNullable<DevicePowerOperation['status']>>]>([
+    ['a same-name operation created later, with no admission', {}],
+    ['a same-name operation admitted at another fence', { admission: { fence: 9 } }],
+  ])('does not claim the hold for %s', async (_, admission) => {
+    stub({ operations: [operation('held', 'OutcomeUnknown', { reason: 'SiteCouldNotProve', ...admission })], custody: holdOn('held', 3) });
+    show(named(SERVER), 'history');
+    await waitFor(() => expect(resultOf('held')).toHaveTextContent(/^Outcome unknown\. SiteCouldNotProve$/));
+    expect(resultOf('held')).not.toHaveTextContent(/held/i);
   });
 
   it('does not claim a hold for an unknown outcome custody no longer holds', async () => {
@@ -352,8 +367,18 @@ describe('Operations history', () => {
     expect(within(rows()[0]).getByText('On → On')).toHaveAttribute('title', expect.stringContaining('BMC reported a reset'));
   });
 
-  it('ignores operations for another Device of the same name', async () => {
-    stub({ operations: [{ ...operation('old', 'Succeeded'), spec: { ...operation('old', 'Succeeded').spec, deviceRef: { name: SERVER, uid: 'removed-device-uid' } } }] });
+  it('lists by the device-uid label, and ignores operations for another Device of the same name', async () => {
+    const old = operation('old', 'Succeeded');
+    const fetch = stub({ operations: [{ ...old, metadata: { ...old.metadata, labels: { 'fleet.datumapis.com/device-uid': 'removed-device-uid' } } }] });
+    show(named(SERVER), 'history');
+    expect(await screen.findByText('No power operations')).toBeInTheDocument();
+    const list = fetch.mock.calls.find(([url, init]) => url.includes('/devicepoweroperations') && init?.method !== 'POST')![0];
+    expect(new URL(list, 'http://x').searchParams.get('labelSelector')).toBe(`fleet.datumapis.com/device-uid=${named(SERVER).metadata.uid}`);
+  });
+
+  it('ignores an unlabelled operation', async () => {
+    const bare = operation('bare', 'Succeeded');
+    stub({ operations: [{ ...bare, metadata: { ...bare.metadata, labels: undefined } }] });
     show(named(SERVER), 'history');
     expect(await screen.findByText('No power operations')).toBeInTheDocument();
   });
@@ -379,8 +404,8 @@ describe('header power fact', () => {
   });
 
   it('keeps an unknown outcome while custody holds it', async () => {
-    const held = { ...fixturePowerOperations[0], status: { phase: 'OutcomeUnknown' as const, finishedAt: new Date(Date.now() - 5 * 3_600_000).toISOString() } };
-    stub({ operations: [held], custody: { ...fixtureCustody(SERVER)!, spec: { ...fixtureCustody(SERVER)!.spec, recoveryHold: { kind: 'DevicePowerOperation', name: held.metadata.name, uid: held.metadata.uid!, fence: 2, since: held.status.finishedAt, reason: 'SiteCouldNotProve' } } } });
+    const held = { ...fixturePowerOperations[0], status: { phase: 'OutcomeUnknown' as const, admission: { fence: 2 }, finishedAt: new Date(Date.now() - 5 * 3_600_000).toISOString() } };
+    stub({ operations: [held], custody: { ...fixtureCustody(SERVER)!, spec: { ...fixtureCustody(SERVER)!.spec, recoveryHold: { kind: 'DevicePowerOperation', name: held.metadata.name, fence: 2, since: held.status.finishedAt, reason: 'SiteCouldNotProve' } } } });
     show(named(SERVER), 'fact');
     await waitFor(() => expect(screen.getByRole('definition')).toHaveTextContent('On Force restart · Outcome unknown · held'));
   });

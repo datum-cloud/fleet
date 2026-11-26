@@ -930,12 +930,14 @@ discovery interval.
   Power cycle. `ForceOff`, `ForceRestart` and `PowerCycle` ask again: the
   confirmation and its button name the server ("Force restart Compute
   a01-01").
-- **Request.** One POST with `metadata.generateName`, `spec.creator` set to the
-  caller's username and UID from a SelfSubjectReview through the same proxy,
-  `spec.deviceRef` with the Device's name and UID,
+- **Request.** One POST with `metadata.generateName`, the
+  `fleet.datumapis.com/device-uid` label set to the Device's UID, `spec.creator`
+  set to the caller's username and UID from a SelfSubjectReview through the
+  same proxy, `spec.deviceRef` with the Device's name,
   `spec.authority.serviceRequest.reason`, `spec.action`, and
-  `spec.expectedSystemUUID` set to the recorded system UUID in lower case. No
-  field is typed by hand except the reason. A denied (401, 403) or rejected
+  `spec.expectedSystemUUID` set to the recorded system UUID in lower case. The
+  creator is the only object UID in the spec. No field is typed by hand except
+  the reason. A denied (401, 403) or rejected
   (422) create, or a failure before the POST is sent, reports that nothing
   was created. Any other failure after sending is an unknown outcome: because
   the name is generated, a second POST would be a second operation, so the
@@ -949,13 +951,15 @@ discovery interval.
   Admitted, Sent and Verifying (dashed); Succeeded (plain); Refused (red, a
   `Failed` that sent no command) or Failed (red, sent); Expired (amber,
   `Cancelled` with `Expired`) or Cancelled (amber); Outcome unknown (red),
-  with "· held" and the hold time when custody holds that operation. The
-  reason and message are the tooltip.
+  with "· held" and the hold time when custody's hold names that operation's
+  kind and name and the fence it was admitted at. A same-name operation
+  created later has no admission at that fence, so it is never shown as held.
+  The reason and message are the tooltip.
 - **Updates.** Operations and custody are polled every 10 seconds, and every
   2 seconds while an operation runs; a failed read keeps polling. Operations
-  are listed and filtered by
-  the Device's name and UID, because the CRD has no selectable field for the
-  Device.
+  are listed with a selector on the Device's `device-uid` label, and kept only
+  when they name the Device. Custody counts as the Device's only when its
+  `device-uid` label is the Device's UID.
 
 Fixture builds grant the power permission, use a synthetic caller, and keep a
 created operation in memory as `Pending`; nothing is sent. a01-01 is free with

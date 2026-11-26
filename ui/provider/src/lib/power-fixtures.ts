@@ -2,28 +2,35 @@
 // Imported lazily behind the fixture flag, so production bundles drop it.
 // a01-01 is free with a history covering each outcome, a01-02 is allocated,
 // and a01-05 is held for a power cycle whose outcome is unknown.
-import type { DeviceCustody, DevicePowerOperation, OperationPhase, PowerAction, PowerEvidence } from '../../../shared/fleet-api';
+import { LABEL_DEVICE_UID, type DeviceCustody, type DevicePowerOperation, type OperationPhase, type PowerAction, type PowerEvidence } from '../../../shared/fleet-api';
 import { FIXTURE_NAMES, inventoryFixture } from './inventory-fixtures';
 
 const LOADED = Date.now();
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const at = (offsetMs: number) => new Date(LOADED + offsetMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
-const systemUUID = (name: string) => inventoryFixture.devices.find(device => device.metadata.name === name)?.spec.identity.systemUUID;
+const fixtureDevice = (name: string) => inventoryFixture.devices.find(device => device.metadata.name === name)!;
+const systemUUID = (name: string) => fixtureDevice(name).spec.identity.systemUUID;
 
-const deviceRef = (name: string) => ({ name, uid: `synthetic-${name}` });
+// The Device incarnation is a label carrying the Device's UID.
+const incarnation = (name: string) => ({ [LABEL_DEVICE_UID]: fixtureDevice(name).metadata.uid! });
 
-function operation(device: string, suffix: string, created: number, action: PowerAction, reason: string, status: { phase: OperationPhase; reason?: string; message?: string; evidence?: PowerEvidence }, creator = 'staff@example.com'): DevicePowerOperation {
+/** `admitted` is the fence custody admitted the operation at; a refusal before admission has none. */
+function operation(device: string, suffix: string, created: number, action: PowerAction, reason: string, status: { phase: OperationPhase; reason?: string; message?: string; evidence?: PowerEvidence; admitted?: number }, creator = 'staff@example.com'): DevicePowerOperation {
   const name = `${device}-power-${suffix}`;
   const ended = ['Succeeded', 'Failed', 'Cancelled', 'OutcomeUnknown'].includes(status.phase);
   return {
     apiVersion: 'fleet.datumapis.com/v1alpha1', kind: 'DevicePowerOperation',
-    metadata: { name, namespace: 'default', uid: `synthetic-${name}`, creationTimestamp: at(created) },
+    metadata: { name, namespace: 'default', uid: `synthetic-${name}`, creationTimestamp: at(created), labels: incarnation(device) },
     spec: {
-      creator: { username: creator, uid: `synthetic-${creator}` }, deviceRef: deviceRef(device),
+      creator: { username: creator, uid: `synthetic-${creator}` }, deviceRef: { name: device },
       authority: { serviceRequest: { reason } }, action, expectedSystemUUID: systemUUID(device),
     },
-    status: { ...status, ...(ended && { finishedAt: at(created + 2 * MINUTE) }) },
+    status: {
+      phase: status.phase, reason: status.reason, message: status.message, evidence: status.evidence,
+      ...(status.admitted && { admission: { fence: status.admitted }, fence: status.admitted }),
+      ...(ended && { finishedAt: at(created + 2 * MINUTE) }),
+    },
   };
 }
 
@@ -34,7 +41,7 @@ const held = FIXTURE_NAMES.singleFeedServer;
 
 export const fixturePowerOperations: DevicePowerOperation[] = [
   operation(server, 'r7k2q', -20 * MINUTE, 'ForceRestart', 'Hung in firmware during qualification', {
-    phase: 'Succeeded',
+    phase: 'Succeeded', admitted: 4,
     evidence: { requestSentAt: at(-20 * MINUTE + 5_000), power: { before: observed('On', -20 * MINUTE + 4_000), after: observed('On', -20 * MINUTE + 40_000) }, resetEvidence: 'LastResetTime' },
   }),
   operation(server, 'm3x8v', -3 * HOUR, 'PowerCycle', 'Retry after the BMC replacement', {
@@ -44,18 +51,18 @@ export const fixturePowerOperations: DevicePowerOperation[] = [
     phase: 'Cancelled', reason: 'Expired', message: 'a staff operation must be admitted within 5m0s',
   }, 'tech@example.com'),
   operation(server, 'a1b2c', -50 * HOUR, 'On', 'First power-on after racking', {
-    phase: 'Succeeded',
+    phase: 'Succeeded', admitted: 3,
     evidence: { requestSentAt: at(-50 * HOUR + 5_000), power: { before: observed('Off', -50 * HOUR + 4_000), after: observed('On', -50 * HOUR + 60_000) } },
   }),
   operation(held, 'h5j6k', -40 * MINUTE, 'PowerCycle', 'Clear a stuck PCIe device', {
-    phase: 'OutcomeUnknown', reason: 'SiteCouldNotProve', message: 'no reset evidence within 3m0s',
+    phase: 'OutcomeUnknown', reason: 'SiteCouldNotProve', message: 'no reset evidence within 3m0s', admitted: 7,
     evidence: { requestSentAt: at(-40 * MINUTE + 5_000), power: { before: observed('On', -40 * MINUTE + 4_000) } },
   }),
 ];
 
 const custody = (name: string, spec: Partial<DeviceCustody['spec']>): DeviceCustody => ({
-  metadata: { name, namespace: 'default', uid: `synthetic-custody-${name}` },
-  spec: { deviceRef: deviceRef(name), state: 'Verified', holder: { type: 'None' }, fence: 4, ...spec },
+  metadata: { name, namespace: 'default', uid: `synthetic-custody-${name}`, labels: incarnation(name) },
+  spec: { deviceRef: { name }, state: 'Verified', holder: { type: 'None' }, fence: 4, ...spec },
 });
 
 const heldOperation = fixturePowerOperations.find(item => item.metadata.name === `${held}-power-h5j6k`)!;
@@ -65,7 +72,8 @@ const CUSTODY: Record<string, DeviceCustody> = {
   'example-srv-a01-02': custody('example-srv-a01-02', { holder: { type: 'Allocation', allocationRef: { name: 'example-allocation' } } }),
   [held]: custody(held, {
     holder: { type: 'Service' },
-    recoveryHold: { kind: 'DevicePowerOperation', name: heldOperation.metadata.name, uid: heldOperation.metadata.uid!, fence: 7, since: heldOperation.status!.finishedAt!, reason: 'SiteCouldNotProve' },
+    fence: 7,
+    recoveryHold: { kind: 'DevicePowerOperation', name: heldOperation.metadata.name, fence: heldOperation.status!.admission!.fence, since: heldOperation.status!.finishedAt!, reason: 'SiteCouldNotProve' },
   }),
 };
 

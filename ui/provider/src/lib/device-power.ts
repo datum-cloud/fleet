@@ -6,7 +6,7 @@
 // coordinator's alone, because the page does not know the configured interval.
 // See "Device page: power" in docs/development/staff-inventory-ui.md.
 import { useQuery } from '@tanstack/react-query';
-import type { Device, DeviceCustody, DevicePowerOperation, List, ObservedSystem, PowerAction, PowerEvidence } from '../../../shared/fleet-api';
+import { LABEL_DEVICE_UID, type Device, type DeviceCustody, type DevicePowerOperation, type List, type ObservedSystem, type PowerAction, type PowerEvidence } from '../../../shared/fleet-api';
 import { ApiError, PLUGIN_ID, PROVIDER_PROJECT, proxyFetch } from './api';
 import { staleReason, type Tone } from './device-discovery';
 import { INVENTORY_NAMESPACE } from './inventory-namespace';
@@ -88,23 +88,25 @@ export function powerBlock(device: Device, { custody, custodyError, operations =
 export interface Caller { username: string; uid: string }
 
 /**
- * The staff DevicePowerOperation: a generated name, the caller as creator,
- * the Device by name and UID, the reason as the service request, and the
- * recorded system UUID. Nothing here is typed by hand except the reason.
+ * The staff DevicePowerOperation: a generated name, the Device's UID as the
+ * device-uid label, the caller as creator, the Device by name, the reason as
+ * the service request, and the recorded system UUID. Nothing here is typed by
+ * hand except the reason.
  */
 export function powerRequest(device: Device, action: PowerAction, reason: string, caller: Caller) {
   const trimmed = reason.trim();
   if (!trimmed || trimmed.length > 512) throw new ApiError(422, 'A reason is required (at most 512 characters).');
   if (!offeredActions(device).includes(action)) throw new ApiError(422, `${ACTION_WORDS[action]} is not offered.`);
   const uuid = device.spec.identity.systemUUID;
-  if (!device.metadata.uid || !uuid) throw new ApiError(409, 'The Device has no UID or system UUID on record.');
+  // Admission refuses an operation whose device-uid label is not the Device's UID.
+  if (!device.metadata.uid || !uuid) throw new ApiError(409, 'The Device has no UID to label the request with, or no system UUID on record.');
   return {
     apiVersion: 'fleet.datumapis.com/v1alpha1',
     kind: 'DevicePowerOperation',
-    metadata: { generateName: `${device.metadata.name.slice(0, 50).replace(/[.-]+$/, '')}-power-`, namespace: INVENTORY_NAMESPACE },
+    metadata: { generateName: `${device.metadata.name.slice(0, 50).replace(/[.-]+$/, '')}-power-`, namespace: INVENTORY_NAMESPACE, labels: { [LABEL_DEVICE_UID]: device.metadata.uid } },
     spec: {
       creator: { username: caller.username, uid: caller.uid },
-      deviceRef: { name: device.metadata.name, uid: device.metadata.uid },
+      deviceRef: { name: device.metadata.name },
       authority: { serviceRequest: { reason: trimmed } },
       action,
       expectedSystemUUID: uuid.toLowerCase(),
@@ -144,7 +146,9 @@ export function powerOutcome(operation: DevicePowerOperation, custody?: DeviceCu
     case 'Cancelled': return { label: status.reason === 'Expired' ? 'Expired' : 'Cancelled', tone: 'warning', reason };
     case 'OutcomeUnknown': {
       const held = custody?.spec.recoveryHold;
-      const hold = held && held.kind === 'DevicePowerOperation' && held.name === operation.metadata.name && (!operation.metadata.uid || held.uid === operation.metadata.uid)
+      // Custody names a hold by kind, name and the fence it was admitted at; a same-name
+      // operation created later has no admission at that fence, so it is not the held one.
+      const hold = held && held.kind === 'DevicePowerOperation' && held.name === operation.metadata.name && operation.status?.admission?.fence === held.fence
         ? `Recovery hold since ${held.since}` : undefined;
       return { label: 'Outcome unknown', tone: 'danger', reason, hold };
     }
@@ -176,8 +180,9 @@ export function evidenceNote(evidence?: PowerEvidence): string | undefined {
 export const byNewest = (left: DevicePowerOperation, right: DevicePowerOperation) =>
   (right.metadata.creationTimestamp ?? '').localeCompare(left.metadata.creationTimestamp ?? '') || right.metadata.name.localeCompare(left.metadata.name);
 
+/** An operation for this Device incarnation: its name, and its device-uid label. */
 export const isFor = (device: Device) => (operation: DevicePowerOperation) =>
-  operation.spec.deviceRef.name === device.metadata.name && (!device.metadata.uid || operation.spec.deviceRef.uid === device.metadata.uid);
+  operation.spec.deviceRef.name === device.metadata.name && !!device.metadata.uid && operation.metadata.labels?.[LABEL_DEVICE_UID] === device.metadata.uid;
 
 // ---- Reads and the one write ----
 
@@ -189,12 +194,13 @@ export async function fetchPowerOperations(device: Device): Promise<DevicePowerO
     const { fixturePowerOperations } = await import('./power-fixtures');
     return [...fixtureCreated, ...fixturePowerOperations].filter(isFor(device)).sort(byNewest);
   }
-  // Operations are listed and filtered here: the CRD has no selectable field for the Device.
+  // The device-uid label selects this Device incarnation's operations; the name is checked here.
+  const selector = `labelSelector=${encodeURIComponent(`${LABEL_DEVICE_UID}=${device.metadata.uid ?? ''}`)}`;
   const items: DevicePowerOperation[] = [];
   const seen = new Set<string>();
   let continuation = '';
   do {
-    const page = await proxyFetch<List<DevicePowerOperation> & { metadata?: { continue?: string } }>(PROVIDER_PROJECT, `${OPERATIONS}?limit=500${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
+    const page = await proxyFetch<List<DevicePowerOperation> & { metadata?: { continue?: string } }>(PROVIDER_PROJECT, `${OPERATIONS}?${selector}&limit=500${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
     items.push(...(page.items ?? []));
     continuation = page.metadata?.continue ?? '';
     if (continuation && seen.has(continuation)) throw new ApiError(502, 'Power operation pagination repeated');
@@ -208,8 +214,8 @@ export async function fetchCustody(device: Device): Promise<DeviceCustody | null
   if (fixtures) return (await import('./power-fixtures')).fixtureCustody(device.metadata.name);
   try {
     const custody = await proxyFetch<DeviceCustody>(PROVIDER_PROJECT, `${CUSTODIES}/${encodeURIComponent(device.metadata.name)}`);
-    // Custody names its Device by UID: a custody for a removed Device of the same name is not this one's.
-    return custody && (!device.metadata.uid || custody.spec.deviceRef.uid === device.metadata.uid) ? custody : null;
+    // Custody carries its Device incarnation in the device-uid label: a custody for a removed Device of the same name is not this one's.
+    return custody && !!device.metadata.uid && custody.metadata.labels?.[LABEL_DEVICE_UID] === device.metadata.uid ? custody : null;
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) return null;
     throw error;
