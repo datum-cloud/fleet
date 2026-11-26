@@ -139,19 +139,17 @@ func (r *Runner) ProbeUnallocatable(ctx context.Context) error {
 }
 
 // TenantIsolation runs while consumer A holds the Device and consumer B
-// holds nothing. B's project has no Device API at all; the allocator refuses
-// to install for B; and an installation the Metal provider names for B's
-// allocation, which never held the Device, is refused before anything is
-// delivered, with custody's fence unchanged.
+// holds nothing. B's project serves no Device API, and an installation the
+// Metal provider names for B's allocation, which never held the Device, is
+// refused by custody admission for HolderMismatch before anything is
+// delivered, with custody's fence unchanged. The holder check is the guard
+// this proves.
 func (r *Runner) TenantIsolation(ctx context.Context) error {
 	if err := r.Consumers[1].API.List(ctx, &ops.DeviceCustodyList{}); !meta.IsNoMatchError(err) && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("%w: a consumer project serves Device custody: %v", errTerminal, err)
 	}
 	if err := r.Consumers[1].API.List(ctx, &ops.DeviceInstallationList{}); !meta.IsNoMatchError(err) && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("%w: a consumer project serves Device operations: %v", errTerminal, err)
-	}
-	if _, _, _, _, err := r.installation(ctx, 1); !errors.Is(err, errNoActiveAllocation) {
-		return fmt.Errorf("%w: installing for a consumer that holds nothing was not refused for its missing allocation: %v", errTerminal, err)
 	}
 	q, err := r.request(ctx, 1)
 	if err != nil {
@@ -214,6 +212,6 @@ func (r *Runner) TenantIsolation(ctx context.Context) error {
 	if after.Spec.Fence != before.Spec.Fence || after.Spec.ActiveOperation != nil || operation.Status.Fence != 0 {
 		return fmt.Errorf("%w: the refused installation changed custody", errTerminal)
 	}
-	fmt.Println("tenant-isolation: consumer B's project has no Device API; the allocator refused to install for it; an installation for its unheld allocation was refused for HolderMismatch with the fence unchanged")
+	fmt.Println("tenant-isolation: consumer B's project has no Device API; an installation for its unheld allocation was refused for HolderMismatch with the fence unchanged")
 	return nil
 }

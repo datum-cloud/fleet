@@ -47,6 +47,16 @@ func TestAnArmedWithholdDeniesEveryBootRequest(t *testing.T) {
 			t.Fatalf("an armed hook served %s: %d", p, code)
 		}
 	}
+	if data, err := os.ReadFile(path + deniedSuffix); err != nil || strings.Count(string(data), "\n") != len(paths) {
+		t.Fatalf("denials counted = %q, %v, want %d", data, err, len(paths))
+	}
+	// Arming again starts a new count.
+	if err := armWithhold("arm"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + deniedSuffix); !os.IsNotExist(err) {
+		t.Fatalf("arming kept the earlier count: %v", err)
+	}
 	if err := armWithhold("clear"); err != nil {
 		t.Fatal(err)
 	}
@@ -140,4 +150,47 @@ func mustAbs(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return abs
+}
+
+// TestNothingElseInTheRepositorySetsTheWithholdHook scans every tracked
+// kind of file outside the docs: only this package, the lab boot service's
+// one env entry, and the lab steps that arm and clear it may name the hook.
+func TestNothingElseInTheRepositorySetsTheWithholdHook(t *testing.T) {
+	root := mustAbs(t, filepath.Join("..", ".."))
+	allowed := map[string]int{
+		filepath.Join("config", "site", "services", "services.yaml"): 1,
+		filepath.Join("hack", "multiplane", "steps.sh"):              -1,
+	}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		if entry.IsDir() {
+			switch rel {
+			case ".git", "docs", filepath.Join("cmd", "fleet-multiplane"):
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(rel, ".md") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		count := strings.Count(string(data), labWithholdEnv)
+		want, ok := allowed[rel]
+		switch {
+		case !ok && (count > 0 || strings.Contains(string(data), "boot-withhold")):
+			t.Errorf("%s names the lab boot hook", rel)
+		case ok && want >= 0 && count != want:
+			t.Errorf("%s sets the lab boot hook %d times, want %d", rel, count, want)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }

@@ -15,7 +15,7 @@ marked **implemented and verified**, **implemented and inert**, or
 | A: control-plane foundation | API types and CRDs for `DeviceCustody`, `DeviceInstallation`, `DeviceWipe` and `DeviceRecovery`; CEL rules; IAM resources and roles; the creator webhook; the kind registry and admission rule table; the coordinator's custody reconciler, admission, results, recovery, rebuild and retention; the capacity projector | **Implemented and verified**, except the capacity projector, which is **implemented and inert**. Verified with unit tests and with tests against a real API server. Increment C wires the rest into every mode. |
 | B: site execution | Per-Device fence store and journal, older-worker stop with a confirmation, deadlines, fenced typed results, per-Device credentials, pinned TLS, identity checks, the handoff payload, the site fence report, and the Redfish install and wipe phases behind the worker contract | **Implemented and verified.** Unit tested, including against TLS BMC stubs. Increment C delivers to it. |
 | C: cutover | MachineAllocations and quota claims named from the Machine UID, allocation and release on custody, the delivery loop, the simulator, local VM and Redfish sites, the creator webhook in the production Milo root, the manager's power projector, and deletion of the Secret-backed records and executors. See [Cutover](#cutover-increment-c). | **Implemented.** Verified by unit tests, tests against a real API server, the standalone smoke (`task standalone:test`), and both multi-plane runs, local VM and Redfish. |
-| D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests, and the two site fixes they found. See [Failure scenarios](#failure-scenarios-increment-d). | **Implemented.** Unit tested. Verification of both multi-plane runs is pending. |
+| D: end-to-end failure scenarios | Harness phases and evidence checks for the #174 acceptance tests, and the two site fixes they found. See [Failure scenarios](#failure-scenarios-increment-d). | **Implemented and verified** by unit tests and both multi-plane runs, local VM and Redfish. |
 
 ## What Increment A adds
 
@@ -418,9 +418,13 @@ The shorter installation deadline is a flag of the acceptance binary's
 coordinator, and only the deadline scenario sets it. The boot hook lives in
 the acceptance binary's boot service, and only the local multi-plane site's
 Flux source configures it, which no production root may reference.
-`TestOnlyTheLabSiteSourceSetsTheWithholdHook` fails if any other
-configuration sets it, any production root references that source, or any
-other package names it. The emulator lab's limits
+`TestOnlyTheLabSiteSourceSetsTheWithholdHook` fails if any production root
+references that source or any other package names it, and
+`TestNothingElseInTheRepositorySetsTheWithholdHook` fails if any file outside
+the docs, the acceptance binary and the lab steps names it, or the boot
+service sets it more than once. The hook counts each boot it denies, and the
+`deadline-hold` phase requires at least one denial, so a boot that never
+arrived for another reason does not pass as withheld. The emulator lab's limits
 are listed in the coverage inventory.
 
 ## Implementation decisions

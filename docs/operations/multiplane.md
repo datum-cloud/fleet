@@ -239,8 +239,8 @@ The phases are then:
    Pending/InsufficientCapacity for B, and requires custody to name the one
    MachineAllocation, A's. `tenant-isolation` then requires that B, which
    holds nothing, cannot reach the server: its project serves no Device API,
-   the allocator refuses to install for it, and an installation named for its
-   unheld allocation is refused for `HolderMismatch`. The fence, the site
+   and an installation the Metal provider names for its unheld allocation is
+   refused by custody admission for `HolderMismatch`. The fence, the site
    store and, in Redfish mode, the BMC audit stay unchanged, and nothing is
    delivered.
 3. **Admission before effects.** The coordinator admits the `DeviceInstallation`
@@ -346,7 +346,8 @@ The phases are then:
     installer boot is requested but never served. `machine-delete` has the
     customer delete B's Machine mid-install. One release pass must leave
     custody holding the Device for release with the installation still active
-    and no wipe. `deadline-hold` requires the installation to end
+    and no wipe. `deadline-hold` requires the hook to have denied at least
+    one boot request, and the installation to end
     `OutcomeUnknown` with `DeadlineExceeded`, custody to hold it at its fence,
     and its worker to have stopped. A staff `DeviceRecovery` naming the
     held operation at the wrong fence must be refused for `HoldMismatch`, with custody, the site
