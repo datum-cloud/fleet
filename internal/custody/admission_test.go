@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/bootaddress"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -294,7 +296,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		// names it.
 		claim := func(request, phase, address string) *ops.BootNetworkInput {
 			created := e.ipClaim(bootaddress.ClaimName(name(request)), name(request), "DeviceInstallation", phase, address)
-			return &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: created.GetName()}, Address: address}
+			return &ops.BootNetworkInput{AddressClaim: bootaddress.Reference(created.GetName()), Address: address}
 		}
 		withAddress := func(request string, input *ops.BootNetworkInput) *ops.DeviceInstallation {
 			operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: name(request), Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
@@ -327,13 +329,13 @@ func TestAdmissionPreconditions(t *testing.T) {
 			recreatedOperation,
 			withAddress("other-address", otherAddress),
 			withAddress("unbound", claim("unbound", "Pending", "198.51.100.12")),
-			withAddress("missing", &ops.BootNetworkInput{AddressClaim: ops.LocalReference{Name: bootaddress.ClaimName(name("missing"))}, Address: good.Address}),
+			withAddress("missing", &ops.BootNetworkInput{AddressClaim: bootaddress.Reference(bootaddress.ClaimName(name("missing"))), Address: good.Address}),
 			// Another operation's bound claim is not this operation's.
 			withAddress("foreign", good),
 		}
 		e.settle(device.Name)
 		for _, operation := range refused {
-			e.requirePhase(operation, ops.PhaseFailed, ReasonBootAddress)
+			e.requirePhase(operation, ops.PhaseFailed, ReasonBootAddressMismatch)
 		}
 		e.requireUntouched(device.Name, fence)
 		admitted := withAddress("bound", good)
@@ -365,6 +367,33 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.settle(releasing.Name)
 		e.requirePhase(wipe, ops.PhaseFailed, ReasonBootInterfaceUnknown)
 		e.requireUntouched(releasing.Name, wipeFence)
+	})
+
+	t.Run("a boot address claim of a kind with no check fails for good", func(t *testing.T) {
+		e := e.sub(t)
+		device := fresh()
+		if err := e.coord.Claim(e.ctx, device.Name, "alloc-kind"); err != nil {
+			t.Fatal(err)
+		}
+		fence := e.custody(device.Name).Spec.Fence
+		name := InstallationName("alloc-kind", "request-1")
+		// A claim of the unknown kind exists with the operation's labels and
+		// address; no check can read it, so it never counts.
+		e.ipClaim(bootaddress.ClaimName(name), name, "DeviceInstallation", "Bound", "198.51.100.20")
+		operation := &ops.DeviceInstallation{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}, Spec: ops.DeviceInstallationSpec{
+			OperationEnvelope: envelope(device, providerUser, allocated("alloc-kind")), RequestUID: "request-1",
+			Image: ops.ImageInput{Name: "debian-12", Digest: imageDigest}, BootInterface: "primary", TargetDisks: []string{"disk-0"},
+			BootNetwork: &ops.BootNetworkInput{AddressClaim: fleetv1.TypedReference{APIGroup: "networking.example.com", Kind: "AddressLease", Name: bootaddress.ClaimName(name)}, Address: "198.51.100.20"},
+		}}
+		e.create(operation)
+		if outcome := e.settle(device.Name); outcome.RequeueAfter != 0 {
+			t.Fatalf("an unsupported claim kind asked to be checked again: %+v", outcome)
+		}
+		status := e.requirePhase(operation, ops.PhaseFailed, ReasonBootAddressUnsupported)
+		if !strings.Contains(status.Message, "networking.example.com/AddressLease") {
+			t.Fatalf("message = %q, want the claim's group and kind", status.Message)
+		}
+		e.requireUntouched(device.Name, fence)
 	})
 
 	t.Run("a staff operation not admitted within five minutes expires", func(t *testing.T) {

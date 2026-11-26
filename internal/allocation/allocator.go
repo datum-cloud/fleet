@@ -24,6 +24,7 @@ import (
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -49,7 +50,14 @@ var (
 	// ErrUnsupported means a request Fleet does not implement, such as a
 	// bootstrap payload.
 	ErrUnsupported = errors.New("unsupported request")
+	// ErrBootClaimsFull means the allocation's boot claim record is full:
+	// no new boot claim is made until earlier ones are verified released.
+	ErrBootClaimsFull = errors.New("the allocation's boot claims are not yet verified released, so no new boot claim is made")
 )
+
+// MaxBootClaims is how many boot claims an allocation's status records at
+// once. It matches the CRD's limit on status.bootClaims.
+const MaxBootClaims = 64
 
 // Machine names one Machine incarnation in one consumer project
 // incarnation.
@@ -118,11 +126,20 @@ type Allocator struct {
 	// BootInterface and TargetDisks are pinned on each allocation.
 	BootInterface string
 	TargetDisks   []string
-	// BootAddresses claims each installation's and wipe's provisioning
-	// address from IPAM when the site's DHCP is synchronized. Its client is
-	// replaced by the requester's own. Nil means the site's DHCP is
-	// configured independently of Fleet.
-	BootAddresses *bootaddress.Claimer
+	// BootAddresses attaches each installation's and wipe's boot NIC and
+	// claims its provisioning address when the site's DHCP is synchronized.
+	// IPAM's bootaddress.Claimer is the default source. Each requester uses
+	// it with its own client. Nil means the site's DHCP is configured
+	// independently of Fleet. New claims go through it; claims an operation
+	// already holds are released through the source of their claim kind, so
+	// after a switch to another source IPAM's claims are still released by
+	// IPAM's verified release.
+	BootAddresses bootaddress.Source
+	// PreviousBootAddresses are sources the requesters used before
+	// BootAddresses. Their claims are still released, listed and checked
+	// through them, by claim kind, until no operation names their kind.
+	// IPAM's claimer always takes part as the default.
+	PreviousBootAddresses []bootaddress.Source
 }
 
 // Get returns the Machine's allocation, or nil.
@@ -359,7 +376,7 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	} else if !apierrors.IsNotFound(err) {
 		return nil, err
 	}
-	network, err := a.bootNetwork(ctx, a.installClaims(), allocation, name)
+	network, err := a.bootNetwork(ctx, a.installClaims(), allocation, "DeviceInstallation", name)
 	if err != nil {
 		return nil, err
 	}
@@ -377,33 +394,129 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	return operation, a.createOnce(ctx, a.Provider, operation, &ops.DeviceInstallation{})
 }
 
-// installClaims and wipeClaims are each requester's boot address claimer,
+// installClaims and wipeClaims are each requester's boot address source,
 // with the requester's own client. They are nil when the site's DHCP is not
 // synchronized.
-func (a *Allocator) installClaims() *bootaddress.Claimer {
+func (a *Allocator) installClaims() bootaddress.Source {
 	return a.claims(a.Provider, "DeviceInstallation")
 }
 
-func (a *Allocator) wipeClaims() *bootaddress.Claimer {
+func (a *Allocator) wipeClaims() bootaddress.Source {
 	return a.claims(a.Releaser, "DeviceWipe")
 }
 
-func (a *Allocator) claims(api client.Client, kind string) *bootaddress.Claimer {
+func (a *Allocator) claims(api client.Client, kind string) bootaddress.Source {
 	if a.BootAddresses == nil {
 		return nil
 	}
-	claimer := *a.BootAddresses
-	claimer.Client, claimer.Namespace, claimer.Kind = api, a.Namespace, kind
-	return &claimer
+	return a.BootAddresses.Requester(api, a.Namespace, kind)
 }
 
-// bootNetwork claims the operation's boot address before the operation
-// exists. It returns nil when the site's DHCP is not synchronized.
-func (a *Allocator) bootNetwork(ctx context.Context, claimer *bootaddress.Claimer, allocation *fleetv1.MachineAllocation, operation string) (*ops.BootNetworkInput, error) {
-	if claimer == nil {
+// knownSource is one source a requester's claims may belong to. Implicit is
+// IPAM's default claimer when no one configured it: a provider API without
+// IPAM's kinds has no IPAM claims for it to release.
+type knownSource struct {
+	source   bootaddress.Source
+	implicit bool
+}
+
+// releaseSources returns, by claim kind, every source whose claims a
+// requester may still hold: the configured source, the previous ones, and
+// IPAM's claimer, which is the default and so holds the claims made before a
+// switch. Each is the requester's own. It is empty when the site's DHCP is
+// not synchronized.
+func (a *Allocator) releaseSources(api client.Client, kind string) []knownSource {
+	if a.BootAddresses == nil {
+		return nil
+	}
+	byKind := map[schema.GroupKind]knownSource{bootaddress.GVK.GroupKind(): {bootaddress.Claimer{}, true}}
+	for _, previous := range a.PreviousBootAddresses {
+		byKind[previous.ClaimKind()] = knownSource{previous, false}
+	}
+	byKind[a.BootAddresses.ClaimKind()] = knownSource{a.BootAddresses, false}
+	kinds := make([]schema.GroupKind, 0, len(byKind))
+	for claimKind := range byKind {
+		kinds = append(kinds, claimKind)
+	}
+	sort.Slice(kinds, func(i, j int) bool { return kinds[i].String() < kinds[j].String() })
+	sources := make([]knownSource, 0, len(kinds))
+	for _, claimKind := range kinds {
+		known := byKind[claimKind]
+		sources = append(sources, knownSource{known.source.Requester(api, a.Namespace, kind), known.implicit})
+	}
+	return sources
+}
+
+// absentAPI reports whether an error means the API does not serve the kind.
+// A failed or partial discovery is not absence: it may hide a real claim.
+func absentAPI(err error) bool {
+	return apiMeta.IsNoMatchError(err)
+}
+
+// recordBootClaim records, in the allocation's status, the boot claim the
+// requester is about to make for an operation, so its release is verified
+// from the record even after the claim and the operation are gone. Only a
+// source whose address can outlive its claim needs the record; IPAM's
+// claims are verified from the claims that remain, as before.
+func (a *Allocator) recordBootClaim(ctx context.Context, allocation *fleetv1.MachineAllocation, source bootaddress.Source, kind, operation string) error {
+	if _, ok := source.(bootaddress.Lingering); !ok {
+		return nil
+	}
+	claimKind := source.ClaimKind()
+	record := fleetv1.BootClaimRecord{OperationKind: kind, Operation: operation,
+		Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(operation)}}
+	if slices.Contains(allocation.Status.BootClaims, record) {
+		return nil
+	}
+	// A full record fails closed: no entry is ever dropped or overwritten
+	// before its release is verified.
+	if len(allocation.Status.BootClaims) >= MaxBootClaims {
+		return fmt.Errorf("%w: %d recorded", ErrBootClaimsFull, len(allocation.Status.BootClaims))
+	}
+	allocation.Status.BootClaims = append(allocation.Status.BootClaims, record)
+	return a.Provider.Status().Update(ctx, allocation)
+}
+
+// recordedBootClaims returns the operations of one kind whose recorded boot
+// claim is of the claim kind.
+func recordedBootClaims(allocation *fleetv1.MachineAllocation, kind string, claimKind schema.GroupKind) []string {
+	var operations []string
+	for _, record := range allocation.Status.BootClaims {
+		if record.OperationKind == kind && (schema.GroupKind{Group: record.Claim.APIGroup, Kind: record.Claim.Kind}) == claimKind {
+			operations = append(operations, record.Operation)
+		}
+	}
+	return operations
+}
+
+// bootNetwork records the operation's boot claim in the allocation's status,
+// attaches the operation's boot NIC, then claims its boot address, before
+// the operation exists. No address is claimed until the boot NIC is on the
+// boot network. It returns nil when the site's DHCP is not synchronized.
+func (a *Allocator) bootNetwork(ctx context.Context, source bootaddress.Source, allocation *fleetv1.MachineAllocation, kind, operation string) (*ops.BootNetworkInput, error) {
+	if source == nil {
 		return nil, nil
 	}
-	return claimer.Claim(ctx, allocation.Name, operation)
+	if err := a.recordBootClaim(ctx, allocation, source, kind, operation); err != nil {
+		return nil, err
+	}
+	if err := source.Attach(ctx, allocation, operation); err != nil {
+		return nil, err
+	}
+	// A release pass may have found no claim and cleared the record while
+	// the claim was being made, so the record is written again from the
+	// stored allocation before any address is handed out.
+	if _, ok := source.(bootaddress.Lingering); ok {
+		stored := &fleetv1.MachineAllocation{}
+		if err := a.Provider.Get(ctx, client.ObjectKeyFromObject(allocation), stored); err != nil {
+			return nil, err
+		}
+		if err := a.recordBootClaim(ctx, stored, source, kind, operation); err != nil {
+			return nil, err
+		}
+		*allocation = *stored.DeepCopyObject().(*fleetv1.MachineAllocation)
+	}
+	return source.Claim(ctx, allocation.Name, operation)
 }
 
 func (a *Allocator) envelope(allocation *fleetv1.MachineAllocation, creator ops.Creator) ops.OperationEnvelope {

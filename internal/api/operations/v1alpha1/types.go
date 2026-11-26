@@ -17,6 +17,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 )
 
 var GroupVersion = schema.GroupVersion{Group: "fleet.datumapis.com", Version: "v1alpha1"}
@@ -284,16 +286,17 @@ type DeviceInstallationSpec struct {
 	BootNetwork *BootNetworkInput `json:"bootNetwork,omitempty"`
 }
 
-// BootNetworkInput is the provisioning address IPAM assigned to one
-// operation. The site answers DHCP for the boot NIC with Address only while
-// the operation runs. The requester claims the address before it creates the
-// operation and releases the claim when the operation can no longer reach
-// DHCP.
+// BootNetworkInput is the provisioning address the boot address source
+// assigned to one operation. The site answers DHCP for the boot NIC with
+// Address only while the operation runs. The requester claims the address
+// before it creates the operation and releases the claim when the operation
+// can no longer reach DHCP.
 type BootNetworkInput struct {
-	// AddressClaim is the operation's own IPAM claim, by its only name. Its
-	// incarnation is pinned by that name, its labels, and its creation no
-	// later than the operation's; no UID is held in spec.
-	AddressClaim LocalReference `json:"addressClaim"`
+	// AddressClaim is the operation's own address claim, by API group, kind
+	// and its only name. Admission picks its check by the group and kind.
+	// The claim's incarnation is pinned by that name, its labels, and its
+	// creation no later than the operation's; no UID is held in spec.
+	AddressClaim fleetv1.TypedReference `json:"addressClaim"`
 	// Address is the bound host address, without a prefix length.
 	Address string `json:"address"`
 }

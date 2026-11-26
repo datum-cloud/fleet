@@ -97,9 +97,14 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 	return false, nil
 }
 
-// releaseBootAddresses deletes the boot address claims of the allocation's
-// ended operations, each with its requester's client, and reports whether
-// none remain. A held operation keeps its claim, because a silent DHCP
+// releaseBootAddresses releases the boot addresses, then detaches the boot
+// NICs, of the allocation's ended operations, each with its requester's
+// client and through the source of its claim's kind, and reports whether
+// none remain of any kind. An operation's claims count as gone only once
+// both are verified. The operations come from the claims that remain and
+// from the allocation's record of the claims it made, so a release is
+// verified again after its claim, or its operation, is gone; a record is
+// removed only once its release is verified. A held operation keeps its claim, because a silent DHCP
 // instance may still serve its address, and so does an operation not yet
 // created. The hold names the held operation, and, after a retry that also
 // ended unknown, the original operation as its retry name; both keep their
@@ -109,48 +114,114 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 // is held or can still be created.
 func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, all bool) (bool, error) {
 	none := true
-	for _, pair := range []struct {
-		claimer *bootaddress.Claimer
-		api     client.Client
-		new     func() ops.Operation
-	}{
-		{a.installClaims(), a.Provider, func() ops.Operation { return &ops.DeviceInstallation{} }},
-		{a.wipeClaims(), a.Releaser, func() ops.Operation { return &ops.DeviceWipe{} }},
-	} {
-		if pair.claimer == nil {
+	var verified []fleetv1.BootClaimRecord
+	type requester struct {
+		claimer  bootaddress.Source
+		implicit bool
+		api      client.Client
+		kind     string
+		new      func() ops.Operation
+	}
+	var pairs []requester
+	for _, known := range a.releaseSources(a.Provider, "DeviceInstallation") {
+		pairs = append(pairs, requester{known.source, known.implicit, a.Provider, "DeviceInstallation", func() ops.Operation { return &ops.DeviceInstallation{} }})
+	}
+	for _, known := range a.releaseSources(a.Releaser, "DeviceWipe") {
+		pairs = append(pairs, requester{known.source, known.implicit, a.Releaser, "DeviceWipe", func() ops.Operation { return &ops.DeviceWipe{} }})
+	}
+	for _, pair := range pairs {
+		operations, err := pair.claimer.Operations(ctx, allocation.Name)
+		if pair.implicit && absentAPI(err) {
+			// No IPAM API, so no IPAM claim to release.
 			continue
 		}
-		operations, err := pair.claimer.Operations(ctx, allocation.Name)
 		if err != nil {
 			return false, err
 		}
+		surviving := slices.Clone(operations)
+		for _, name := range recordedBootClaims(allocation, pair.kind, pair.claimer.ClaimKind()) {
+			if !slices.Contains(operations, name) {
+				operations = append(operations, name)
+			}
+		}
 		for _, name := range operations {
+			recordOnly := false
 			if !all {
 				operation := pair.new()
-				if err := pair.api.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, operation); apierrors.IsNotFound(err) {
+				err := pair.api.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, operation)
+				switch {
+				case apierrors.IsNotFound(err) && slices.Contains(surviving, name):
+					// A claim whose operation does not exist yet stays: its
+					// requester may still create the operation.
 					none = false
 					continue
-				} else if err != nil {
+				case apierrors.IsNotFound(err):
+					// A record with neither a claim nor an operation, such as
+					// one whose attach failed before any claim was made, is
+					// verified now and cleared once verified. Its requester
+					// may be creating the claim, so this only reads.
+					recordOnly = true
+				case err != nil:
 					return false, err
+				default:
+					if !operation.OperationStatus().Phase.Ended() {
+						none = false
+						continue
+					}
+					held, err := a.held(ctx, allocation, name)
+					if err != nil {
+						return false, err
+					}
+					if held {
+						none = false
+						continue
+					}
 				}
-				if !operation.OperationStatus().Phase.Ended() {
+			}
+			claimKind := pair.claimer.ClaimKind()
+			record := fleetv1.BootClaimRecord{OperationKind: pair.kind, Operation: name,
+				Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(name)}}
+			if recordOnly {
+				lingering, ok := pair.claimer.(bootaddress.Lingering)
+				if !ok {
 					none = false
 					continue
 				}
-				held, err := a.held(ctx, allocation, name)
+				released, err := lingering.Released(ctx, name)
 				if err != nil {
 					return false, err
 				}
-				if held {
+				if !released {
 					none = false
 					continue
 				}
+				verified = append(verified, record)
+				continue
 			}
-			gone, err := pair.claimer.Release(ctx, name)
+			released, err := pair.claimer.Release(ctx, name)
 			if err != nil {
 				return false, err
 			}
-			none = none && gone
+			if !released {
+				none = false
+				continue
+			}
+			detached, err := pair.claimer.Detach(ctx, name)
+			if err != nil {
+				return false, err
+			}
+			none = none && detached
+			if detached {
+				verified = append(verified, record)
+			}
+		}
+	}
+	if kept := slices.DeleteFunc(slices.Clone(allocation.Status.BootClaims), func(record fleetv1.BootClaimRecord) bool {
+		return slices.Contains(verified, record)
+	}); len(kept) != len(allocation.Status.BootClaims) {
+		allocation.Status.BootClaims = kept
+		if err := a.Provider.Status().Update(ctx, allocation); err != nil {
+			return false, err
 		}
 	}
 	return none, nil
@@ -257,7 +328,7 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
-	network, err := a.bootNetwork(ctx, a.wipeClaims(), allocation, reference.Name)
+	network, err := a.bootNetwork(ctx, a.wipeClaims(), allocation, "DeviceWipe", reference.Name)
 	if err != nil {
 		return err
 	}
