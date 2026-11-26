@@ -1,60 +1,73 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="961" viewBox="0 0 1000 961" role="img" aria-labelledby="title description">
-<title id="title">A reservation exists only while its operation runs</title><desc id="description">The requester claims a provisioning address from IPAM and creates the operation with the address. The coordinator checks the claim at admission and delivers the operation with the boot NIC MAC from Device inventory. The site adds the reservation to its feed. The synchronizer applies it to Kea and reports it applied. Only then does the site power on the server, whose firmware gets the address through the relay. When the boot closes, the reservation leaves the feed, the synchronizer reports it withdrawn, and the operation succeeds. The requester then deletes the address claim.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1192" viewBox="0 0 1120 1192" role="img" aria-labelledby="title description">
+<title id="title">A reservation exists only while its operation runs</title><desc id="description">The requester makes a boot attachment claim in NSO and waits until NSO reports the boot port on the boot network. It then claims a provisioning address from IPAM and creates the operation with a typed reference to the claim and the address. The coordinator checks the claim at admission and delivers the operation with the boot NIC MAC from Device inventory. The site adds the reservation to its feed. The synchronizer applies it to Kea and reports it applied. Only then does the site power on the server, whose firmware gets the address through the relay. When the boot closes, the reservation leaves the feed, the synchronizer reports it withdrawn, and the operation succeeds. The requester then deletes the address claim and the boot attachment claim.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
 <style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .heading { font-size: 19px; font-weight: 700; } .label { font-size: 17px; } .detail { font-size: 16px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
-<rect width="1000" height="961" fill="white"/>
+<rect width="1120" height="1192" fill="white"/>
 
-<rect x="18" y="20" width="147" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="92" y="44" class="heading" text-anchor="middle">Requester</text>
-<text x="92" y="67" class="detail" text-anchor="middle">Provider, release</text>
-<path d="M 92 78 L 92 951" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
-<rect x="181" y="20" width="147" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="255" y="55" class="heading" text-anchor="middle">IPAM</text>
-<path d="M 255 78 L 255 951" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
-<rect x="345" y="20" width="147" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="418" y="55" class="heading" text-anchor="middle">Coordinator</text>
-<path d="M 418 78 L 418 951" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
-<rect x="508" y="20" width="147" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="582" y="44" class="heading" text-anchor="middle">Site</text>
-<text x="582" y="67" class="detail" text-anchor="middle">Feed, worker</text>
-<path d="M 582 78 L 582 951" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
-<rect x="671" y="20" width="147" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="745" y="44" class="heading" text-anchor="middle">Synchronizer</text>
-<text x="745" y="67" class="detail" text-anchor="middle">Kea</text>
-<path d="M 745 78 L 745 951" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
-<rect x="835" y="20" width="147" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
-<text x="908" y="44" class="heading" text-anchor="middle">Server</text>
-<text x="908" y="67" class="detail" text-anchor="middle">Firmware</text>
-<path d="M 908 78 L 908 951" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
-<text x="173" y="110" class="label" text-anchor="middle">Claim address</text>
-<path d="M 92 122 L 255 122" class="line"/>
-<text x="173" y="166" class="label" text-anchor="middle">Host address</text>
-<path d="M 255 178 L 92 178" class="line" stroke-dasharray="5 4"/>
-<text x="255" y="222" class="label" text-anchor="middle">Operation with</text>
-<text x="255" y="243" class="label" text-anchor="middle">address</text>
-<path d="M 92 255 L 418 255" class="line"/>
-<text x="500" y="299" class="label" text-anchor="middle">Admit; deliver with</text>
-<text x="500" y="320" class="label" text-anchor="middle">boot NIC MAC</text>
-<path d="M 418 332 L 582 332" class="line"/>
-<text x="663" y="376" class="label" text-anchor="middle">Fetch feed</text>
-<path d="M 745 388 L 582 388" class="line"/>
-<text x="663" y="432" class="label" text-anchor="middle">NIC → address</text>
-<path d="M 582 444 L 745 444" class="line" stroke-dasharray="5 4"/>
-<text x="663" y="488" class="label" text-anchor="middle">Report applied</text>
-<text x="663" y="509" class="label" text-anchor="middle">after Kea accepts</text>
-<path d="M 745 521 L 582 521" class="line"/>
-<text x="745" y="565" class="label" text-anchor="middle">Arm network boot,</text>
-<text x="745" y="586" class="label" text-anchor="middle">power on</text>
-<path d="M 582 598 L 908 598" class="line"/>
-<text x="827" y="642" class="label" text-anchor="middle">DHCP through</text>
-<text x="827" y="663" class="label" text-anchor="middle">the relay</text>
-<path d="M 908 675 L 745 675" class="line"/>
-<text x="582" y="719" class="detail" text-anchor="middle">Boot closes; the</text>
-<text x="582" y="740" class="detail" text-anchor="middle">feed drops the NIC</text>
-<text x="663" y="783" class="label" text-anchor="middle">Report withdrawn</text>
-<path d="M 745 795 L 582 795" class="line"/>
-<text x="500" y="839" class="label" text-anchor="middle">Succeeded</text>
-<path d="M 582 851 L 418 851" class="line"/>
-<text x="173" y="895" class="label" text-anchor="middle">Delete claim</text>
-<path d="M 92 907 L 255 907" class="line"/>
+<rect x="18" y="20" width="141" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="89" y="44" class="heading" text-anchor="middle">Requester</text>
+<text x="89" y="67" class="detail" text-anchor="middle">Provider, release</text>
+<path d="M 89 78 L 89 1182" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="175" y="20" width="141" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="246" y="44" class="heading" text-anchor="middle">NSO</text>
+<text x="246" y="67" class="detail" text-anchor="middle">Boot network</text>
+<path d="M 246 78 L 246 1182" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="332" y="20" width="141" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="403" y="55" class="heading" text-anchor="middle">IPAM</text>
+<path d="M 403 78 L 403 1182" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="489" y="20" width="141" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="560" y="55" class="heading" text-anchor="middle">Coordinator</text>
+<path d="M 560 78 L 560 1182" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="647" y="20" width="141" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="717" y="44" class="heading" text-anchor="middle">Site</text>
+<text x="717" y="67" class="detail" text-anchor="middle">Feed, worker</text>
+<path d="M 717 78 L 717 1182" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="804" y="20" width="141" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="874" y="44" class="heading" text-anchor="middle">Synchronizer</text>
+<text x="874" y="67" class="detail" text-anchor="middle">Kea</text>
+<path d="M 874 78 L 874 1182" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<rect x="961" y="20" width="141" height="58" rx="8" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="1031" y="44" class="heading" text-anchor="middle">Server</text>
+<text x="1031" y="67" class="detail" text-anchor="middle">Firmware</text>
+<path d="M 1031 78 L 1031 1182" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+<text x="167" y="110" class="label" text-anchor="middle">Boot attachment</text>
+<text x="167" y="131" class="label" text-anchor="middle">claim</text>
+<path d="M 89 143 L 246 143" class="line"/>
+<text x="167" y="187" class="label" text-anchor="middle">Programmed: port</text>
+<text x="167" y="208" class="label" text-anchor="middle">on boot network</text>
+<path d="M 246 220 L 89 220" class="line" stroke-dasharray="5 4"/>
+<text x="246" y="264" class="label" text-anchor="middle">Claim address</text>
+<path d="M 89 276 L 403 276" class="line"/>
+<text x="246" y="320" class="label" text-anchor="middle">Host address</text>
+<path d="M 403 332 L 89 332" class="line" stroke-dasharray="5 4"/>
+<text x="324" y="376" class="label" text-anchor="middle">Operation: claim</text>
+<text x="324" y="397" class="label" text-anchor="middle">reference, address</text>
+<path d="M 89 409 L 560 409" class="line"/>
+<text x="639" y="453" class="label" text-anchor="middle">Admit; deliver with</text>
+<text x="639" y="474" class="label" text-anchor="middle">boot NIC MAC</text>
+<path d="M 560 486 L 717 486" class="line"/>
+<text x="796" y="530" class="label" text-anchor="middle">Fetch feed</text>
+<path d="M 874 542 L 717 542" class="line"/>
+<text x="796" y="586" class="label" text-anchor="middle">NIC → address</text>
+<path d="M 717 598 L 874 598" class="line" stroke-dasharray="5 4"/>
+<text x="796" y="642" class="label" text-anchor="middle">Report applied</text>
+<text x="796" y="663" class="label" text-anchor="middle">after Kea accepts</text>
+<path d="M 874 675 L 717 675" class="line"/>
+<text x="874" y="719" class="label" text-anchor="middle">Arm network boot,</text>
+<text x="874" y="740" class="label" text-anchor="middle">power on</text>
+<path d="M 717 752 L 1031 752" class="line"/>
+<text x="953" y="796" class="label" text-anchor="middle">DHCP through</text>
+<text x="953" y="817" class="label" text-anchor="middle">the relay</text>
+<path d="M 1031 829 L 874 829" class="line"/>
+<text x="717" y="873" class="detail" text-anchor="middle">Boot closes; the</text>
+<text x="717" y="894" class="detail" text-anchor="middle">feed drops the NIC</text>
+<text x="796" y="937" class="label" text-anchor="middle">Report withdrawn</text>
+<path d="M 874 949 L 717 949" class="line"/>
+<text x="639" y="993" class="label" text-anchor="middle">Succeeded</text>
+<path d="M 717 1005 L 560 1005" class="line"/>
+<text x="246" y="1049" class="label" text-anchor="middle">Delete address claim</text>
+<path d="M 89 1061 L 403 1061" class="line"/>
+<text x="167" y="1105" class="label" text-anchor="middle">Delete boot</text>
+<text x="167" y="1126" class="label" text-anchor="middle">attachment claim</text>
+<path d="M 89 1138 L 246 1138" class="line"/>
 </svg>
