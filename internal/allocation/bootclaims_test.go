@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -154,5 +155,56 @@ func TestARecordWithNoClaimIsCleared(t *testing.T) {
 	}
 	if none, err := e.allocator.HandOver(e.ctx, allocation); err != nil || !none || len(allocation.Status.BootClaims) != 0 {
 		t.Fatalf("hand over = none %v, %v, record %+v; want the empty record cleared", none, err, allocation.Status.BootClaims)
+	}
+}
+
+// claimAfterList creates a requester's claim right after the first list of
+// NSO claims returns, as a requester that recorded its claim and is still
+// attaching would.
+type claimAfterList struct {
+	client.Client
+	once   *sync.Once
+	create func()
+}
+
+func (c claimAfterList) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	err := c.Client.List(ctx, list, opts...)
+	if _, ok := list.(*networkingv1.NetworkInterfaceClaimList); ok && err == nil {
+		c.once.Do(c.create)
+	}
+	return err
+}
+
+// TestARecordOnlyCheckNeverDeletesAClaimBeingMade records an NSO claim with
+// no claim and no operation yet, then makes the claim right after the
+// release pass listed claims. The check of a record with neither only
+// reads: the claim is kept, and so is the record, and the pass is not done.
+func TestARecordOnlyCheckNeverDeletesAClaimBeingMade(t *testing.T) {
+	e, _ := nsoEnv(t)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := allocation.Name + "-install-attaching"
+	source := e.allocator.installClaims()
+	if err := e.allocator.recordBootClaim(e.ctx, allocation, source, "DeviceInstallation", name); err != nil {
+		t.Fatal(err)
+	}
+	healthy := e.allocator.Provider
+	e.allocator.Provider = claimAfterList{Client: healthy, once: &sync.Once{}, create: func() {
+		if err := source.Attach(e.ctx, allocation, name); !errors.Is(err, bootaddress.ErrPending) {
+			t.Errorf("attach in the hook: %v", err)
+		}
+	}}
+	none, err := e.allocator.HandOver(e.ctx, allocation)
+	e.allocator.Provider = healthy
+	if err != nil || none {
+		t.Fatalf("hand over while the claim was being made: none=%v %v", none, err)
+	}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: bootaddress.ClaimName(name)}, &networkingv1.NetworkInterfaceClaim{}); err != nil {
+		t.Fatalf("the claim being made was deleted: %v", err)
+	}
+	if len(allocation.Status.BootClaims) != 1 || allocation.Status.BootClaims[0].Operation != name {
+		t.Fatalf("record = %+v, want the entry kept", allocation.Status.BootClaims)
 	}
 }

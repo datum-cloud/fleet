@@ -168,6 +168,9 @@ var _ Source = Claimer{}
 type Lingering interface {
 	Source
 	AddressOutlivesClaim()
+	// Released reports, without deleting anything, whether the operation's
+	// claim is absent and its address no longer allocated.
+	Released(ctx context.Context, operation string) (bool, error)
 }
 
 // ScopeRef is one IPAM scope reference, such as the site's location.

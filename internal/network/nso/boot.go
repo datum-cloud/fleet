@@ -258,6 +258,27 @@ func (b BootAttachments) Release(ctx context.Context, operation string) (bool, e
 	if err != nil || !gone {
 		return false, err
 	}
+	return b.unallocated(ctx, operation)
+}
+
+// Released reports whether the operation's claim is absent and IPAM holds
+// no allocation for the address NSO claimed for it. It deletes nothing, so a
+// claim its requester is still creating is never removed.
+func (b BootAttachments) Released(ctx context.Context, operation string) (bool, error) {
+	if err := b.valid(); err != nil {
+		return false, err
+	}
+	if _, err := b.get(ctx, bootaddress.ClaimName(operation)); err == nil {
+		return false, nil
+	} else if !apierrors.IsNotFound(err) {
+		return false, err
+	}
+	return b.unallocated(ctx, operation)
+}
+
+// unallocated reports whether IPAM holds no allocation under either name NSO
+// may claim the operation's address under.
+func (b BootAttachments) unallocated(ctx context.Context, operation string) (bool, error) {
 	if b.IPAM == nil || b.IPAMNamespace == "" || b.Location == "" {
 		return false, errors.New("nso: no IPAM reader, namespace and location to verify the boot address release")
 	}

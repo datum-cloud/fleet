@@ -145,6 +145,7 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 			}
 		}
 		for _, name := range operations {
+			recordOnly := false
 			if !all {
 				operation := pair.new()
 				err := pair.api.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, operation)
@@ -157,7 +158,9 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 				case apierrors.IsNotFound(err):
 					// A record with neither a claim nor an operation, such as
 					// one whose attach failed before any claim was made, is
-					// verified now and cleared once verified.
+					// verified now and cleared once verified. Its requester
+					// may be creating the claim, so this only reads.
+					recordOnly = true
 				case err != nil:
 					return false, err
 				default:
@@ -175,6 +178,26 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 					}
 				}
 			}
+			claimKind := pair.claimer.ClaimKind()
+			record := fleetv1.BootClaimRecord{OperationKind: pair.kind, Operation: name,
+				Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(name)}}
+			if recordOnly {
+				lingering, ok := pair.claimer.(bootaddress.Lingering)
+				if !ok {
+					none = false
+					continue
+				}
+				released, err := lingering.Released(ctx, name)
+				if err != nil {
+					return false, err
+				}
+				if !released {
+					none = false
+					continue
+				}
+				verified = append(verified, record)
+				continue
+			}
 			released, err := pair.claimer.Release(ctx, name)
 			if err != nil {
 				return false, err
@@ -189,9 +212,7 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 			}
 			none = none && detached
 			if detached {
-				claimKind := pair.claimer.ClaimKind()
-				verified = append(verified, fleetv1.BootClaimRecord{OperationKind: pair.kind, Operation: name,
-					Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(name)}})
+				verified = append(verified, record)
 			}
 		}
 	}

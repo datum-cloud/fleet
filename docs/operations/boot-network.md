@@ -200,7 +200,9 @@ allocation's status, and it removes the record only once the claim's release
 is verified. Every release pass removes the entries it verified, including
 the hand-over step, so entries do not wait for the final release. An entry
 with neither a claim nor an operation, such as one whose attach failed before
-any claim was made, is verified and removed the same way. The record holds
+any claim was made, is only read, never deleted: it is removed once its claim
+is still absent and IPAM holds nothing for its address, and a claim its
+requester has made by then is kept, with its entry. The record holds
 at most 64 claims. When it is full, the next installation or wipe is refused
 with `ErrBootClaimsFull` and makes no claim, until earlier entries are
 verified released; no entry is ever dropped or overwritten first. The check
