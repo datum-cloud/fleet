@@ -58,6 +58,16 @@ class AdapterTest(unittest.TestCase):
         info = self.app.get(s['Actions']['#ComputerSystem.Reset']['@Redfish.ActionInfo'], headers=AUTH).json
         self.assertEqual(info['Parameters'][0]['AllowableValues'], ['On', 'ForceOff', 'ForceRestart'])
 
+    def test_3b_storage_reports_the_lab_disk(self):
+        s = self.app.get('/redfish/v1/Systems/System-2', headers=AUTH).json
+        collection = self.app.get(s['Storage']['@odata.id'], headers=AUTH).json
+        storage = self.app.get(collection['Members'][0]['@odata.id'], headers=AUTH).json
+        drive = self.app.get(storage['Drives'][0]['@odata.id'], headers=AUTH).json
+        self.assertEqual((drive['SerialNumber'], drive['CapacityBytes']), ('FLEETLAB-DISK-B', 2 << 30))
+        self.assertNotIn('Protocol', drive)
+        self.assertEqual(self.app.get(storage['Drives'][0]['@odata.id']).status_code, 401)
+        self.assertEqual(self.app.patch(storage['Drives'][0]['@odata.id'], json={}, headers=AUTH).status_code, 405)
+
     def test_4_boot_once_is_consumed_by_power_on(self):
         r = self.app.patch('/redfish/v1/Systems/System-1', headers=AUTH, json={'Boot': {'BootSourceOverrideTarget': 'Pxe', 'BootSourceOverrideEnabled': 'Once'}})
         self.assertEqual(r.status_code, 200)

@@ -266,6 +266,32 @@ type ObservedSystem struct {
 	SKU               string                     `json:"sku,omitempty"`
 	PowerState        string                     `json:"powerState,omitempty"`
 	NetworkInterfaces []ObservedNetworkInterface `json:"networkInterfaces,omitempty"`
+	// Storage is the System's drives. Nil means the BMC reported no Storage
+	// collection, which is unknown, not a verified empty list.
+	Storage *ObservedStorage `json:"storage,omitempty"`
+}
+
+// ObservedStorage is every drive a System's Storage collection reports.
+type ObservedStorage struct {
+	Drives []ObservedDrive `json:"drives,omitempty"`
+}
+
+// ObservedDrive is one Redfish Drive. The serial number is an identity claim
+// to match, not proof.
+type ObservedDrive struct {
+	ID            string `json:"id"`
+	SerialNumber  string `json:"serialNumber,omitempty"`
+	Model         string `json:"model,omitempty"`
+	Firmware      string `json:"firmware,omitempty"`
+	Protocol      string `json:"protocol,omitempty"`
+	MediaType     string `json:"mediaType,omitempty"`
+	CapacityBytes int64  `json:"capacityBytes,omitempty"`
+	// EncryptionStatus is what the BMC reports. It cannot tell always-on
+	// encryption from encryption a customer enabled.
+	EncryptionStatus string `json:"encryptionStatus,omitempty"`
+	// InVolume means the drive backs a RAID volume, so the host does not
+	// address it directly.
+	InVolume bool `json:"inVolume,omitempty"`
 }
 
 // ObservedNetworkInterface is one Redfish EthernetInterface.

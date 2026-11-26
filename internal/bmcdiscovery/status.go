@@ -217,8 +217,31 @@ func observedInventory(inv redfish.Inventory, at metav1.Time, endpoint string) *
 	for _, s := range inv.Systems {
 		if s.ID != "" && len(out.Systems) < 16 {
 			out.Systems = append(out.Systems, inventory.ObservedSystem{ID: clip(s.ID, 253), UUID: canonicalUUIDOrEmpty(s.UUID), Manufacturer: clip(s.Manufacturer, 253),
-				Model: clip(s.Model, 253), SerialNumber: clip(s.SerialNumber, 253), SKU: clip(s.SKU, 253), PowerState: clip(s.PowerState, 63), NetworkInterfaces: nics(s.NetworkInterfaces)})
+				Model: clip(s.Model, 253), SerialNumber: clip(s.SerialNumber, 253), SKU: clip(s.SKU, 253), PowerState: clip(s.PowerState, 63), NetworkInterfaces: nics(s.NetworkInterfaces),
+				Storage: storage(s)})
 		}
+	}
+	return out
+}
+
+// storage keeps the drives a System reports. A System that links no Storage
+// collection keeps nil, so a reader can tell unknown from empty.
+func storage(s redfish.InventorySystem) *inventory.ObservedStorage {
+	if !s.StorageReported {
+		return nil
+	}
+	out := &inventory.ObservedStorage{}
+	if len(s.Drives) > redfish.MaxInventoryDrives {
+		return nil
+	}
+	for _, d := range s.Drives {
+		// A drive that cannot be recorded makes the list incomplete, so
+		// storage stays unknown rather than looking complete.
+		if clip(d.ID, 253) == "" {
+			return nil
+		}
+		out.Drives = append(out.Drives, inventory.ObservedDrive{ID: clip(d.ID, 253), SerialNumber: clip(d.SerialNumber, 253), Model: clip(d.Model, 253), Firmware: clip(d.Revision, 63),
+			Protocol: clip(d.Protocol, 31), MediaType: clip(d.MediaType, 31), CapacityBytes: max(d.CapacityBytes, 0), EncryptionStatus: clip(d.EncryptionStatus, 63), InVolume: d.InVolume})
 	}
 	return out
 }

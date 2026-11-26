@@ -652,6 +652,25 @@ spec:
                                   macAddress: {type: string, maxLength: 17, pattern: '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'}
                                   linkStatus: {type: string, maxLength: 63}
                                   speedMbps: {type: integer, minimum: 0, maximum: 100000000}
+                            storage:
+                              type: object
+                              properties:
+                                drives:
+                                  type: array
+                                  maxItems: 32
+                                  items:
+                                    type: object
+                                    required: [id]
+                                    properties:
+                                      id: {type: string, minLength: 1, maxLength: 253}
+                                      serialNumber: {type: string, maxLength: 253}
+                                      model: {type: string, maxLength: 253}
+                                      firmware: {type: string, maxLength: 63}
+                                      protocol: {type: string, maxLength: 31}
+                                      mediaType: {type: string, maxLength: 31}
+                                      capacityBytes: {type: integer, minimum: 0}
+                                      encryptionStatus: {type: string, maxLength: 63}
+                                      inVolume: {type: boolean}
               conditions:
                 type: array
                 maxItems: 8
