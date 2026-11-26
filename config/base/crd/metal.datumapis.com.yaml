@@ -439,6 +439,22 @@ spec:
                 properties:
                   name: {type: string, minLength: 1}
                   step: {type: integer, format: int32, minimum: 1}
+              bootClaims:
+                type: array
+                maxItems: 64
+                items:
+                  type: object
+                  required: [operationKind, operation, claim]
+                  properties:
+                    operationKind: {type: string, enum: [DeviceInstallation, DeviceWipe]}
+                    operation: {type: string, minLength: 1, maxLength: 253}
+                    claim:
+                      type: object
+                      required: [apiGroup, kind, name]
+                      properties:
+                        apiGroup: {type: string, minLength: 1, maxLength: 253}
+                        kind: {type: string, minLength: 1, maxLength: 63}
+                        name: {type: string, minLength: 1, maxLength: 253}
               conditions:
                 type: array
                 items: {type: object, x-kubernetes-preserve-unknown-fields: true}

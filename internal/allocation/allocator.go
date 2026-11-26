@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
@@ -370,7 +369,7 @@ func (a *Allocator) Install(ctx context.Context, allocation *fleetv1.MachineAllo
 	} else if !apierrors.IsNotFound(err) {
 		return nil, err
 	}
-	network, err := a.bootNetwork(ctx, a.installClaims(), allocation, name)
+	network, err := a.bootNetwork(ctx, a.installClaims(), allocation, "DeviceInstallation", name)
 	if err != nil {
 		return nil, err
 	}
@@ -442,50 +441,47 @@ func (a *Allocator) releaseSources(api client.Client, kind string) []knownSource
 }
 
 // absentAPI reports whether an error means the API does not serve the kind.
+// A failed or partial discovery is not absence: it may hide a real claim.
 func absentAPI(err error) bool {
-	return apiMeta.IsNoMatchError(err) || discovery.IsGroupDiscoveryFailedError(err)
+	return apiMeta.IsNoMatchError(err)
 }
 
-// recordedOperations returns the allocation's operations of one kind whose
-// boot network input names the claim kind. Listing them from the
-// allocator's own record, not only from the claims that remain, lets a
-// release be verified again after the claim is gone.
-func (a *Allocator) recordedOperations(ctx context.Context, api client.Client, kind string, allocation string, claimKind schema.GroupKind) ([]string, error) {
-	var found []string
-	keep := func(name string, authority ops.Authority, network *ops.BootNetworkInput) {
-		if authority.AllocationRef != nil && authority.AllocationRef.Name == allocation && network != nil &&
-			(schema.GroupKind{Group: network.AddressClaim.APIGroup, Kind: network.AddressClaim.Kind}) == claimKind {
-			found = append(found, name)
-		}
+// recordBootClaim records, in the allocation's status, the boot claim the
+// requester is about to make for an operation, so its release is verified
+// from the record even after the claim and the operation are gone.
+func (a *Allocator) recordBootClaim(ctx context.Context, allocation *fleetv1.MachineAllocation, source bootaddress.Source, kind, operation string) error {
+	claimKind := source.ClaimKind()
+	record := fleetv1.BootClaimRecord{OperationKind: kind, Operation: operation,
+		Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(operation)}}
+	if slices.Contains(allocation.Status.BootClaims, record) {
+		return nil
 	}
-	switch kind {
-	case "DeviceInstallation":
-		var list ops.DeviceInstallationList
-		if err := api.List(ctx, &list, client.InNamespace(a.Namespace)); err != nil {
-			return nil, err
-		}
-		for _, item := range list.Items {
-			keep(item.Name, item.Spec.Authority, item.Spec.BootNetwork)
-		}
-	case "DeviceWipe":
-		var list ops.DeviceWipeList
-		if err := api.List(ctx, &list, client.InNamespace(a.Namespace)); err != nil {
-			return nil, err
-		}
-		for _, item := range list.Items {
-			keep(item.Name, item.Spec.Authority, item.Spec.BootNetwork)
-		}
-	}
-	return found, nil
+	allocation.Status.BootClaims = append(allocation.Status.BootClaims, record)
+	return a.Provider.Status().Update(ctx, allocation)
 }
 
-// bootNetwork attaches the operation's boot NIC, then claims its boot
-// address, before the operation exists. No address is claimed until the
-// boot NIC is on the boot network. It returns nil when the site's DHCP is
-// not synchronized.
-func (a *Allocator) bootNetwork(ctx context.Context, source bootaddress.Source, allocation *fleetv1.MachineAllocation, operation string) (*ops.BootNetworkInput, error) {
+// recordedBootClaims returns the operations of one kind whose recorded boot
+// claim is of the claim kind.
+func recordedBootClaims(allocation *fleetv1.MachineAllocation, kind string, claimKind schema.GroupKind) []string {
+	var operations []string
+	for _, record := range allocation.Status.BootClaims {
+		if record.OperationKind == kind && (schema.GroupKind{Group: record.Claim.APIGroup, Kind: record.Claim.Kind}) == claimKind {
+			operations = append(operations, record.Operation)
+		}
+	}
+	return operations
+}
+
+// bootNetwork records the operation's boot claim in the allocation's status,
+// attaches the operation's boot NIC, then claims its boot address, before
+// the operation exists. No address is claimed until the boot NIC is on the
+// boot network. It returns nil when the site's DHCP is not synchronized.
+func (a *Allocator) bootNetwork(ctx context.Context, source bootaddress.Source, allocation *fleetv1.MachineAllocation, kind, operation string) (*ops.BootNetworkInput, error) {
 	if source == nil {
 		return nil, nil
+	}
+	if err := a.recordBootClaim(ctx, allocation, source, kind, operation); err != nil {
+		return nil, err
 	}
 	if err := source.Attach(ctx, allocation, operation); err != nil {
 		return nil, err

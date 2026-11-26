@@ -419,8 +419,21 @@ const (
 type MachineAllocationStatus struct {
 	Phase string `json:"phase,omitempty"`
 	// Wipe is the latest DeviceWipe the release created.
-	Wipe       *WipeReference     `json:"wipe,omitempty"`
+	Wipe *WipeReference `json:"wipe,omitempty"`
+	// BootClaims are the boot claims the allocator made for its
+	// operations, each recorded before the claim is created and removed
+	// only once its release is verified.
+	BootClaims []BootClaimRecord  `json:"bootClaims,omitempty"`
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// BootClaimRecord is one boot claim an allocation's requester made for an
+// operation, by the operation's kind and name and the claim's typed
+// reference.
+type BootClaimRecord struct {
+	OperationKind string         `json:"operationKind"`
+	Operation     string         `json:"operation"`
+	Claim         TypedReference `json:"claim"`
 }
 
 // WipeReference names a release's DeviceWipe and its step.

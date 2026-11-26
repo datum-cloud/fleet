@@ -100,8 +100,11 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 // releaseBootAddresses releases the boot addresses, then detaches the boot
 // NICs, of the allocation's ended operations, each with its requester's
 // client and through the source of its claim's kind, and reports whether
-// none remain of any kind. An operation's claims count as
-// gone only once both are verified. A held operation keeps its claim, because a silent DHCP
+// none remain of any kind. An operation's claims count as gone only once
+// both are verified. The operations come from the claims that remain and
+// from the allocation's record of the claims it made, so a release is
+// verified again after its claim, or its operation, is gone; a record is
+// removed only once its release is verified. A held operation keeps its claim, because a silent DHCP
 // instance may still serve its address, and so does an operation not yet
 // created. The hold names the held operation, and, after a retry that also
 // ended unknown, the original operation as its retry name; both keep their
@@ -111,6 +114,7 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 // is held or can still be created.
 func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, all bool) (bool, error) {
 	none := true
+	var verified []fleetv1.BootClaimRecord
 	type requester struct {
 		claimer  bootaddress.Source
 		implicit bool
@@ -134,17 +138,9 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 		if err != nil {
 			return false, err
 		}
-		// A source whose address can outlive its claim is verified again for
-		// every recorded operation of its kind, after the claim is gone too.
-		if _, ok := pair.claimer.(bootaddress.Lingering); ok {
-			recorded, err := a.recordedOperations(ctx, pair.api, pair.kind, allocation.Name, pair.claimer.ClaimKind())
-			if err != nil {
-				return false, err
-			}
-			for _, name := range recorded {
-				if !slices.Contains(operations, name) {
-					operations = append(operations, name)
-				}
+		for _, name := range recordedBootClaims(allocation, pair.kind, pair.claimer.ClaimKind()) {
+			if !slices.Contains(operations, name) {
+				operations = append(operations, name)
 			}
 		}
 		for _, name := range operations {
@@ -182,6 +178,19 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 				return false, err
 			}
 			none = none && detached
+			if detached {
+				claimKind := pair.claimer.ClaimKind()
+				verified = append(verified, fleetv1.BootClaimRecord{OperationKind: pair.kind, Operation: name,
+					Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(name)}})
+			}
+		}
+	}
+	if kept := slices.DeleteFunc(slices.Clone(allocation.Status.BootClaims), func(record fleetv1.BootClaimRecord) bool {
+		return slices.Contains(verified, record)
+	}); len(kept) != len(allocation.Status.BootClaims) {
+		allocation.Status.BootClaims = kept
+		if err := a.Provider.Status().Update(ctx, allocation); err != nil {
+			return false, err
 		}
 	}
 	return none, nil
@@ -288,7 +297,7 @@ func (a *Allocator) wipe(ctx context.Context, allocation *fleetv1.MachineAllocat
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
-	network, err := a.bootNetwork(ctx, a.wipeClaims(), allocation, reference.Name)
+	network, err := a.bootNetwork(ctx, a.wipeClaims(), allocation, "DeviceWipe", reference.Name)
 	if err != nil {
 		return err
 	}
