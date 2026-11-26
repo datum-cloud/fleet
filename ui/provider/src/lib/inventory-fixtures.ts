@@ -394,7 +394,9 @@ const condition = (type: string, status: Condition['status'], reason: string, me
 const nic = (id: string, macAddress: string, linkStatus = 'LinkUp', speedMbps = 25000) => ({ id, macAddress, linkStatus, speedMbps });
 const key = (byte: string) => byte.repeat(32);
 
-function discovery(device: Device, { serial, key: publicKeySHA256, notAfter, nics, managerNic, conditions }: { serial: string; key: string; notAfter: string; nics: ReturnType<typeof nic>[]; managerNic: ReturnType<typeof nic>; conditions: Condition[] }): DeviceStatus {
+const RESET_TYPES = ['On', 'ForceOff', 'GracefulShutdown', 'ForceRestart', 'PowerCycle', 'Nmi'];
+
+function discovery(device: Device, { serial, key: publicKeySHA256, notAfter, nics, managerNic, conditions, resetTypes = RESET_TYPES }: { serial: string; key: string; notAfter: string; nics: ReturnType<typeof nic>[]; managerNic: ReturnType<typeof nic>; conditions: Condition[]; resetTypes?: string[] }): DeviceStatus {
   const endpoint = device.spec.bmc!.endpoint;
   return {
     observedGeneration: 1,
@@ -407,7 +409,7 @@ function discovery(device: Device, { serial, key: publicKeySHA256, notAfter, nic
         managers: [{ id: 'BMC', model: 'Example BMC 9', firmwareVersion: '7.10.30', networkInterfaces: [managerNic] }],
         systems: [{
           id: 'System.Embedded.1', uuid: device.spec.identity.systemUUID, manufacturer: 'Example Compute', model: `Example ${device.spec.identity.model}`,
-          serialNumber: serial, sku: 'SYNTH-SKU-1', powerState: 'On', networkInterfaces: nics,
+          serialNumber: serial, sku: 'SYNTH-SKU-1', powerState: 'On', networkInterfaces: nics, resetTypes,
         }],
       },
     },
@@ -432,6 +434,7 @@ const DISCOVERED: Record<string, (device: Device) => DeviceStatus> = {
     serial: 'SYNTH-OTHER-99', key: key('5c'), notAfter: at(200 * DAY),
     nics: [nic('EthernetInterface0', '00:00:5e:00:53:21'), nic('EthernetInterface1', '00:00:5e:00:53:29'), nic('EthernetInterface2', '00:00:5e:00:53:23')],
     managerNic: nic('eth0', '00:00:5e:00:53:a2', 'LinkUp', 1000),
+    resetTypes: ['On', 'ForceOff', 'ForceRestart'],
     conditions: [reachable, accepted, read, condition('IdentityMatched', 'False', 'SerialMismatch', 'the System with spec.identity.systemUUID reports another serial; spec is not changed'), unique],
   }),
   [FIXTURE_NAMES.singleFeedServer]: device => discovery(device, {

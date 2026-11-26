@@ -160,7 +160,7 @@ export interface IdentityRow {
 const FIELD_REASON: Record<string, string> = { SerialMismatch: 'Serial', ModelMismatch: 'Model', SystemUUIDMismatch: 'System UUID' };
 
 /**
- * Serial, model, manufacturer, system UUID, SKU and power. A field is red when
+ * Serial, model, manufacturer, system UUID and SKU. Power is the header's. A field is red when
  * IdentityMatched names it in a False reason, or when the two values differ by
  * the rule discovery uses. Manufacturer is shown but not compared, as in
  * discovery. Rows with neither value are left out.
@@ -184,7 +184,6 @@ export function identityRows(device: Device): IdentityRow[] {
     { field: 'Manufacturer', expected: want.manufacturer, observed: system.manufacturer },
     { field: 'System UUID', expected: want.systemUUID, observed: system.uuid, mismatch: differs('System UUID', want.systemUUID, system.uuid, want.systemUUID === system.uuid) },
     { field: 'SKU', observed: system.sku },
-    { field: 'Power', observed: powerWord(system.powerState) },
   ];
   return rows.filter(row => row.expected || row.observed).map(row => stale && row.observed ? { ...row, stale } : row);
 }

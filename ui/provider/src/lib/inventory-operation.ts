@@ -40,4 +40,7 @@ export class InventoryOperation {
     this.assertCurrent();
     this.dispatched = true;
   }
+
+  /** Whether the write was handed to the network, so its outcome may be unknown. */
+  get sent() { return this.dispatched; }
 }

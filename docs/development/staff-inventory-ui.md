@@ -90,8 +90,8 @@ field or view.
    as one quiet **Record** line ("Record example-rack-a01 · created
    2026-10-01"), plus any fact the page shows nowhere else. The namespace
    (always `default`), the UID and a per-record verification row are not
-   shown. No page has a History tab; it returns when an activity timeline
-   exists. The breadcrumb is the way back; there is no separate back link.
+   shown. No page has a general History tab; it returns when an activity
+   timeline exists. A Device's Operations tab lists its power operations. The breadcrumb is the way back; there is no separate back link.
 2. **One primary view per kind**, above the fold:
 
    | Kind | Primary view |
@@ -831,8 +831,9 @@ plain: there is no green. Every reason is a tooltip and accessible text.
   "BMC key shared"); else "BMC ?" in amber.
 - **Hardware: expected next to observed.** When discovery has read a
   System, a Field | Expected | Observed table replaces the reported model
-  and system UUID facts: Serial, Model, Manufacturer, System UUID, SKU and
-  Power (Redfish `powerState` as a short word). Expected is `spec.identity`
+  and system UUID facts: Serial, Model, Manufacturer, System UUID and SKU.
+  The observed power state is in the header strip (see
+  [Device page: power](#device-page-power-implemented-in-the-ui)). Expected is `spec.identity`
   and is blank where spec does not record the field. The compared System is
   the one reporting the spec system UUID, else the spec serial (as serial
   number or SKU), else the only System; with several candidates the table is
@@ -892,6 +893,81 @@ columns, the single count line, the absence of a legend and a diagram
 Cables. `inventory-record-layout.test.tsx` covers the drawn and tiled
 pictures on the fixture pages, the header strip and the Edit button's
 description.
+
+### Device page: power (implemented in the UI)
+
+Staff power a Device on or off, or reset it, from the Device page by creating a
+staff `DevicePowerOperation` (proposed in #173; the kind is in #179). The UI is
+implemented and tested against synthetic data. Its effects are not: no site
+worker runs power operations yet, and discovery does not record reset types
+yet, so on real servers the control stays disabled. The coordinator decides
+admission. The page repeats only the checks its records show; discovery age
+is left to the coordinator, because the page does not know the configured
+discovery interval.
+
+- **Header.** The identity strip shows **Power** with the observed state of the
+  System discovery compares (amber when read from another endpoint). The latest
+  power operation follows it as a badge while it runs, for an hour after it
+  ends, and while custody holds it for an unknown outcome.
+- **Power button.** It sits in the header actions. Users for whom a
+  SelfSubjectAccessReview does not allow `create` on `devicepoweroperations` in
+  `default` do not see it. The answer is cached and rechecked on
+  **Refresh inventory**, like the inventory management checks. The button is
+  disabled, with the reason as its tooltip and accessible description, when:
+  discovery has not read the inventory, read another BMC endpoint, or has not
+  read the System with the recorded system UUID; no system UUID is recorded;
+  the System offers no power action; IdentityMatched is not True at the
+  Device's generation; the BMC key was not read at the recorded endpoint, or
+  another Device shares it; custody is missing, unreadable or
+  Unverified; the holder is `Allocation` or `Release` ("Allocated to a
+  customer") or `Retired`; custody has a recovery hold ("Held") or an active
+  operation; the holder is `Service` without either; a power operation for the
+  Device has not ended; the caller's
+  identity or the operations list cannot be read.
+- **Dialog.** The user chooses an action and enters a required reason (at
+  most 512 characters). The actions are those the System with the recorded
+  system UUID lists in `resetTypes`, in the order On, Force off, Force restart,
+  Power cycle. `ForceOff`, `ForceRestart` and `PowerCycle` ask again: the
+  confirmation and its button name the server ("Force restart Compute
+  a01-01").
+- **Request.** One POST with `metadata.generateName`, the
+  `fleet.datumapis.com/device-uid` label set to the Device's UID, `spec.creator`
+  set to the caller's username and UID from a SelfSubjectReview through the
+  same proxy, `spec.deviceRef` with the Device's name,
+  `spec.authority.serviceRequest.reason`, `spec.action`, and
+  `spec.expectedSystemUUID` set to the recorded system UUID in lower case. The
+  creator is the only object UID in the spec. No field is typed by hand except
+  the reason. A denied (401, 403) or rejected
+  (422) create, or a failure before the POST is sent, reports that nothing
+  was created. Any other failure after sending is an unknown outcome: because
+  the name is generated, a second POST would be a second operation, so the
+  control stays disabled until the Device page is opened again. As in the
+  location correction, leaving the page, a session or navigation change, or a
+  changed Device closes an open request without sending it.
+- **Operations tab.** Up to 20 power operations for the Device, newest first:
+  Time, Action, Result, Power (before → after, with when the command was sent
+  and the reset evidence as the tooltip), Creator, Reason. The tab carries the
+  count, or an amber `?` when the list is unreadable. Results: Pending,
+  Admitted, Sent and Verifying (dashed); Succeeded (plain); Refused (red, a
+  `Failed` that sent no command) or Failed (red, sent); Expired (amber,
+  `Cancelled` with `Expired`) or Cancelled (amber); Outcome unknown (red),
+  with "· held" and the hold time when custody's hold names that operation's
+  kind and name and the fence it was admitted at. A same-name operation
+  created later has no admission at that fence, so it is never shown as held.
+  The reason and message are the tooltip.
+- **Updates.** Operations and custody are polled every 10 seconds, and every
+  2 seconds while an operation runs; a failed read keeps polling. Operations
+  are listed with a selector on the Device's `device-uid` label, and kept only
+  when they name the Device. Custody counts as the Device's only when its
+  `device-uid` label is the Device's UID.
+
+Fixture builds grant the power permission, use a synthetic caller, and keep a
+created operation in memory as `Pending`; nothing is sent. a01-01 is free with
+a history covering each result, a01-02 is allocated, and a01-05 is held for a
+power cycle whose outcome is unknown. `device-power.test.tsx` and
+`device-power.test.ts` cover the offered actions, the required reason, the
+destructive confirmation, the exact request body, the hidden and each disabled
+state, each phase and result, the hold, and the unknown create outcome.
 
 ### Names
 

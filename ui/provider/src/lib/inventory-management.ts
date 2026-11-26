@@ -15,12 +15,17 @@ const resources = inventoryResources;
 const fixtures = import.meta.env.VITE_FLEET_FIXTURES === 'true';
 const resourcePath = (kind: ManagedKind, namespace: string) => `/apis/fleet.datumapis.com/v1alpha1/namespaces/${encodeURIComponent(namespace)}/${resources[kind]}`;
 
-export async function inventoryPermission(kind: ManagedKind, namespace: string, verb: 'create' | 'patch', name?: string): Promise<boolean> {
-  if (namespace !== INVENTORY_NAMESPACE || fixtures) return false;
+/** A SelfSubjectAccessReview: allowed only when the review allows, does not deny, and evaluated cleanly. */
+export async function selfSubjectAllowed(resourceAttributes: { group: string; version: string; resource: string; namespace: string; verb: string; name?: string }): Promise<boolean> {
   const review = await proxyFetch<{ status?: { allowed?: boolean; denied?: boolean; evaluationError?: string } }>(PROVIDER_PROJECT, '/apis/authorization.k8s.io/v1/selfsubjectaccessreviews', {
-    method: 'POST', body: { apiVersion: 'authorization.k8s.io/v1', kind: 'SelfSubjectAccessReview', spec: { resourceAttributes: { group: 'fleet.datumapis.com', version: 'v1alpha1', resource: resources[kind], namespace, verb, ...(name && { name }) } } },
+    method: 'POST', body: { apiVersion: 'authorization.k8s.io/v1', kind: 'SelfSubjectAccessReview', spec: { resourceAttributes } },
   });
   return review?.status?.allowed === true && review.status.denied !== true && !review.status.evaluationError;
+}
+
+export async function inventoryPermission(kind: ManagedKind, namespace: string, verb: 'create' | 'patch', name?: string): Promise<boolean> {
+  if (namespace !== INVENTORY_NAMESPACE || fixtures) return false;
+  return selfSubjectAllowed({ group: 'fleet.datumapis.com', version: 'v1alpha1', resource: resources[kind], namespace, verb, ...(name && { name }) });
 }
 
 /** Permission is checked once per kind and verb, not per record, and reused for ten minutes: it rarely changes. */

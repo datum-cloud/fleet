@@ -71,6 +71,11 @@ export const PAGES: CapturePage[] = [
   { name: 'device-discovery-mismatch', path: record('Device', 'example-srv-a01-02', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-discovery-chips', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
   { name: 'device-discovery-pin', path: record('Device', 'example-srv-a01-05', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-discovery-chips', viewports: ['desktop-light', 'phone'] },
   { name: 'device-discovery-none', path: record('Device', 'example-srv-a02-02', '&tab=hardware'), ready: '[data-tab="hardware"] .inventory-fact-section', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
+  // Staff power: the header control and fact, the dialog and its destructive confirmation, the Operations tab, and a held server.
+  { name: 'device-power-header', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-power-control button', element: '.inventory-record-header', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
+  { name: 'device-power-dialog', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-power-control button:not([disabled])', click: '.inventory-power-control button', viewports: ['desktop-light', 'phone'] },
+  { name: 'device-power-operations', path: record('Device', 'example-srv-a01-01', '&tab=operations'), ready: '[data-tab="operations"] table', element: '.inventory-record-tabs', viewports: ['desktop-light', 'desktop-dark', 'phone'] },
+  { name: 'device-power-held', path: record('Device', 'example-srv-a01-05', '&tab=operations'), ready: '[data-tab="operations"] table', viewports: ['desktop-light', 'phone'] },
   { name: 'device-location', path: record('Device', 'example-srv-a01-01', '&tab=location'), ready: '[data-tab="location"] .inventory-fields', element: '.inventory-record-tabs', viewports: ['desktop-light', 'phone'] },
   { name: 'record-footer', path: record('Device', 'example-srv-a01-01'), ready: '.inventory-record-footer', element: '.inventory-record-footer', viewports: ['desktop-light', 'phone'] },
   // Device detail for a model without a layout (grouped tiles), and the one component table.

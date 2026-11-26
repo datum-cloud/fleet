@@ -20,6 +20,7 @@ import { catalogLabel } from '../lib/manufacturer-inventory';
 import { InventoryAccessState } from './inventory-access-state';
 import { InventoryManagement } from './inventory-management';
 import { DevicePlacementEdit } from './device-placement-edit';
+import { DevicePowerControl, usePowerTabCount } from './device-power';
 import type { ManagedKind, ManagedRecord } from '../lib/inventory-management';
 import { InventoryReadAccessContext, readFailureIssues, redactInventory } from '../lib/inventory-read-access';
 import { inventoryHref } from './inventory-location';
@@ -197,7 +198,7 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
   function detailView(entry: RecordEntry, locationEditor: ReactNode): DetailView {
     const record = entry.record;
     switch (entry.kind) {
-      case 'Device': return deviceDetail(record as RawDevice, helpers, locationEditor);
+      case 'Device': return deviceDetail(record as RawDevice, helpers, locationEditor, powerCount);
       case 'DeviceClaim': return claimDetail(record as RawDeviceClaim, helpers);
       case 'Cable': return cableDetail(record as PhysicalRecord, helpers);
       case 'PowerFeed': return powerFeedDetail(record as PhysicalRecord, helpers);
@@ -242,6 +243,8 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
       feeds={inventory.physical.filter(record => record.kind === 'PowerFeed')}
       catalog={inventory.physical.filter(record => record.kind === 'Manufacturer' || record.kind === 'DeviceType')}
     /> : null;
+  const selectedDevice = selected?.kind === 'Device' && !inventory.issues?.Device ? selected.record as RawDevice : undefined;
+  const powerCount = usePowerTabCount(selectedDevice);
   const placementEditor = selected?.kind === 'Device' && !inventory.issues?.Device ? <DevicePlacementEdit key={`${selectedNamespace}/${selectedName}`} device={selected.record as RawDevice} locations={inventory.physical} issues={inventory.issues} /> : null;
   const navigate = useNavigate();
   const openRow = (event: MouseEvent<HTMLElement>, target: string) => {
@@ -252,7 +255,8 @@ export function PhysicalInventory({ inventory: source, onRetry, showNavigation =
   if (unauthenticated) return <InventoryAccessState status={401} />;
   const view = selected ? detailView(selected, placementEditor) : undefined;
   const refresh = onRetry && <Button type="secondary" theme="outline" size="small" htmlType="button" onClick={onRetry}>Refresh inventory</Button>;
-  const titleActions = <>{refresh}{management}</>;
+  const power = selectedDevice && <DevicePowerControl key={`${selectedNamespace}/${selectedName}`} device={selectedDevice} />;
+  const titleActions = <>{refresh}{management}{power}</>;
   return (
     <InventoryReadAccessContext.Provider value={error => setReadIssues(previous => ({ ...previous, ...readFailureIssues(error) }))}>
     <section className="fleet-inventory" aria-label="Physical inventory">
