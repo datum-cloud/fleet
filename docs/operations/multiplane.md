@@ -83,8 +83,7 @@ kustomize, curl, Git, Colima, network access to GitHub releases, `ghcr.io`,
 with 4 CPUs, 8 GiB memory, amd64 container emulation, and at least 12 GiB free in
 its Docker data root. Never use `fleet-e2e-x86`. The harness never changes the
 global Docker context, never creates a Colima profile, and never stops or deletes
-another run's containers. Stopped diagnostics from earlier runs are left alone;
-only *running* `fleet-local-*`/`fleet-mp-*` containers block a launch.
+another run's containers. Stopped diagnostics from earlier runs are left alone.
 
 One command runs preflight, a fresh topology, every acceptance phase, sanitized
 evidence, and owned-resource teardown:
@@ -117,6 +116,51 @@ run `go test -race -count=1 ./internal/coordination ./internal/custody
 `./internal/redfish` in Redfish mode. Failing either blocks before any resource is
 created.
 
+### One run at a time
+
+Runs share the profile through a lock, so concurrent starts queue instead of
+colliding. Only the shared Colima profile is locked; a run in CI mode
+(`FLEET_MULTIPLANE_RUNTIME=ci`) owns its single-use runner and takes no lock:
+
+1. A run first passes every check that no other run can change, including the
+   readiness tests, so it is ready when its turn comes.
+2. It then queues for the profile's lock. Waiting runs are served in arrival
+   order and print a status line at each change and once a minute: their queue
+   position, and the holder's process, state directory and current phase.
+3. Holding the lock, it repeats the checks another run can change: no running
+   `fleet-local-*` or `fleet-mp-*` container, and free disk. If the sources the
+   readiness tests cover changed while it waited, it runs those tests again.
+   It waits for the containers of a live run from an older checkout that does
+   not take the lock. A run is live while a process other than its coordinator
+   names its state directory, so an open `tail -f` on a dead run's state also
+   counts. Containers no live run owns, such as those left by `--leave-running`
+   or by a run killed outright, fail the check at once; they need a person to
+   inspect them.
+4. It keeps the lock until it exits, including after a signal, once it has
+   stopped its containers and written its result.
+
+The lock is a kernel file lock named for the profile. A detached holder keeps
+it while the owning run's process exists and is not a zombie, so a run killed
+outright cannot leave the profile locked. A waiter whose run was killed gives
+up its place, and the next waiter removes a killed waiter's ticket. The lock
+directory must be private to the user; the harness refuses one that is not.
+
+A script that starts runs without the lock, such as one queueing runs of an
+older checkout, gets its fair turn by running each through
+`hack/multiplane/with-lock.sh COMMAND...`. The wrapper takes a place in the same
+queue, holds the lock while the command runs, and a `run.sh` or another
+`with-lock.sh` inside it uses the lock the wrapper holds. Start the runs inside
+one wrapper one after another; runs it starts in parallel would share the
+lock. A script that only polls for an idle profile can keep
+losing the race to runs that queue.
+
+All waiting shares one bound, by default 4 hours
+(`FLEET_MULTIPLANE_LOCK_TIMEOUT`, in seconds), for the lock and then for a run
+without the lock. A run whose wait expires exits 4 having created nothing; if
+it expired waiting for the lock, `result.json` names `runtime-lock` as the
+failed phase. `evidence/lock.json` records the queue position on arrival, the
+time waited and the outcome. `--preflight-only` does not queue.
+
 Exit codes and `evidence/result.json` status:
 
 | Exit | Status | Meaning | Resources |
@@ -127,6 +171,7 @@ Exit codes and `evidence/result.json` status:
 | 2 | `preflight-failed` | A local prerequisite is missing | None created |
 | 3 | `blocked` | Implementation readiness gate failed | None created |
 | 4 | `timeout` | A bounded phase expired; its process group was terminated | Stopped and retained as for 1 |
+| 4 | `timeout` | The wait for the runtime lock, or for a run without the lock, expired | None created |
 | 64 | `usage` | Invalid option | None created |
 | 129, 130, 143 | `interrupted` | The run received HUP, INT or TERM. It stops every phase it started, records the phase it was in as `interrupted`, and names it as the failed phase | Stopped and retained as for 1 |
 | 1 | `interrupted` | The run exited 0 before its last line, so nothing proves it finished | Stopped and retained as for 1 |
@@ -149,7 +194,6 @@ guest is configured with 2 GiB and 2 vCPUs, using TCG. A 2.5 GiB provider cap
 caused an installer OOM in an earlier fresh run. Evidence fails on any OOM kill
 in the runtime Pod, any kind node, or the site, kro, Flux, Karmada or Milo containers. Expect 20 to 60 minutes,
 mostly bootstrap, image pulls and builds. Every phase has an explicit bound.
-Do not run another full acceptance topology concurrently on an 8 GiB VM.
 
 ### State and evidence layout
 
@@ -402,7 +446,10 @@ API count: the real Karmada webhook exited with `too many open files`. The bound
 value 1024 resolves that local prerequisite.
 
 Offline harness tests run in CI and locally with `task multiplane:test-harness`.
-They use fake runtime tools to cover preflight outcomes, Flux source staging
+They use fake runtime tools to cover preflight outcomes, the runtime lock
+(concurrent starts, arrival order, release on exit and TERM, recovery from a
+killed holder, waiter or unreaped owner, the bounded wait, the checks repeated
+under the lock, waiting for a live run without the lock), Flux source staging
 (credential refusal, revision variants, rendering), push records, reconcile waits
 (stale acknowledgements rejected, stripped requests reissued), fault-guard
 suspension and root-revision receipts, bounded phase timeouts
