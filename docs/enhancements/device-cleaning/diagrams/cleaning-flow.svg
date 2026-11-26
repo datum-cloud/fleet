@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="440" viewBox="0 0 960 440" role="img" aria-labelledby="title description">
+<title id="title">A pinned policy and drive manifest drive each release wipe</title><desc id="description">At allocation, the MachineAllocation pins a copy of the CleaningPolicy and the manifest of drives that discovery and commissioning agree on. At release, the release controller plans one step per drive from that pin and creates a DeviceWipe. The site runs each drive's methods in order and verifies them. The coordinator checks the evidence against the plan. Evidence that meets the plan closes the Cleaning gate. Evidence that falls short puts the server under a recovery hold.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<style>text { font-family: Arial, Helvetica, sans-serif; fill: #172b4d; } .label { font-size: 19px; font-weight: 700; } .detail { font-size: 17px; fill: #475569; } .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }</style>
+<rect width="960" height="440" fill="white"/>
+<rect x="30" y="40" width="230" height="80" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="145" y="73" class="label" text-anchor="middle">CleaningPolicy</text>
+<text x="145" y="98" class="detail" text-anchor="middle">Methods per media</text>
+<rect x="30" y="190" width="230" height="80" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="145" y="223" class="label" text-anchor="middle">Drive inventory</text>
+<text x="145" y="248" class="detail" text-anchor="middle">Redfish and in-band</text>
+<rect x="310" y="115" width="230" height="80" rx="10" fill="#eff6ff" stroke="#93b4df" stroke-width="1.5"/>
+<text x="425" y="148" class="label" text-anchor="middle">MachineAllocation</text>
+<text x="425" y="173" class="detail" text-anchor="middle">Pins policy and drives</text>
+<rect x="640" y="40" width="290" height="80" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="785" y="73" class="label" text-anchor="middle">DeviceWipe at the site</text>
+<text x="785" y="98" class="detail" text-anchor="middle">Methods in order, then verify</text>
+<rect x="640" y="190" width="290" height="80" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="785" y="223" class="label" text-anchor="middle">Coordinator</text>
+<text x="785" y="248" class="detail" text-anchor="middle">Evidence meets the plan?</text>
+<rect x="400" y="330" width="250" height="80" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="525" y="363" class="label" text-anchor="middle">Cleaning gate closes</text>
+<text x="525" y="388" class="detail" text-anchor="middle">Release can end</text>
+<rect x="690" y="330" width="240" height="80" rx="10" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+<text x="810" y="363" class="label" text-anchor="middle">Recovery hold</text>
+<text x="810" y="388" class="detail" text-anchor="middle">Staff retry or retire</text>
+<path d="M 260 80 L 285 80 L 285 140 L 306 140" class="line"/>
+<path d="M 260 230 L 285 230 L 285 170 L 306 170" class="line"/>
+<path d="M 540 155 L 615 155 L 615 80 L 636 80" class="line"/>
+<text x="548" y="125" class="detail">Release</text>
+<text x="548" y="146" class="detail">plans</text>
+<path d="M 785 120 L 785 186" class="line"/>
+<path d="M 720 270 L 720 300 L 525 300 L 525 326" class="line"/>
+<text x="610" y="292" class="detail">Yes</text>
+<path d="M 860 270 L 860 326" class="line"/>
+<text x="870" y="305" class="detail">No</text>
+</svg>
