@@ -147,19 +147,31 @@ Only reports from expected instances count.
 2. **Before reporting success** it waits, for up to ten minutes, until some
    expected instance served the reservation during this operation, and every
    expected instance's latest report is of a feed issued after the admission
-   was stored that serves no MAC or address the site ever published for the
-   Device. That covers an earlier, held operation's reservation, so a later
+   was published that serves no MAC or address the site ever published for
+   the Device. An admission is published when the worker reads its clock
+   after storing it, before the network boot. That covers an earlier, held operation's reservation, so a later
    success settles the hold safely. Past ten minutes the outcome is unknown.
 
 Every feed carries the time the feed server issued it. While the admission is
-open, every feed issued after it was stored carries the reservation, so a
+open, every feed issued after it was published carries the reservation, so a
 report of a later feed without it proves the instance dropped it, and every
 later feed lacks it too. An instance that fetched a feed with the reservation
 and stopped before reporting still has a latest report that is older than the
 admission or serves the reservation, so it keeps the outcome unknown. So does
 an expected instance that never reported. Issue times are the feed's clock and
-admission times the worker's, so both roles must run on the same clock; they
-share the site's state volume.
+publication times the worker's, so both must read the same clock. This
+assumes the feed and the workers run on one node: they mount the site's state
+volume, which is ReadWriteOnce. A site whose feed and workers run on
+different nodes needs synchronized clocks, and the proof is only as good as
+that synchronization.
+
+An expected instance whose applied feed does not change still reports it
+again, with the issue time of its latest fetch, once every refresh interval
+(30 seconds by default, `fleet-dhcp-sync -refresh`). So an instance that
+never fetched the reservation, because it restarted or a fetch failed while
+the admission was open, still proves the withdrawal once it reports a feed
+issued after publication. The retained log grows by about one line per
+instance per refresh interval, plus one per changed revision.
 
 ### Retiring a DHCP instance
 
@@ -178,7 +190,7 @@ replica, and one still running behind the load balancer could keep serving
 its last reservations. So the feed records each refused contact from a
 synchronizer holding the site's token, at most once per instance name every
 30 seconds, and the withdrawal proof refuses to pass while any contact was
-recorded after the operation's admission was stored. It also waits at least
+recorded after the operation's admission was published. It also waits at least
 45 seconds after that, so the rate limit cannot hide a replica that is still
 polling. Stopping an instance before removing it is therefore enforced for any
 instance whose synchronizer still runs: its operations stay unknown until it
@@ -220,7 +232,12 @@ refuses to start without one. Every request needs `Authorization: Bearer
 - `POST /dhcp/v1/applied` takes `{"instance": "<name>", "feed": <feed>}`, with
   the feed exactly as it was served. The feed must be canonical with a
   matching revision, and the instance must be expected; anything else is
-  rejected and not retained as a report. A report from an instance outside
+  rejected and not retained as a report. The feed remembers, in memory, the
+  last 32 feeds it served to each instance, and refuses with `409` a report
+  whose issue time and revision match none of them, so a report's issue time
+  is always one the feed gave. After the feed restarts, reports are refused
+  until the instance fetches again, which its synchronizer does on its next
+  cycle before it reports again. A report from an instance outside
   the set is recorded as a refused contact. An accepted report is synced to
   disk before `204`.
 
@@ -248,7 +265,9 @@ cycle it:
 3. when the revision changed or Kea restarted, adds each reservation to the one
    base subnet that contains its address and sends `config-set` over Kea's
    control socket;
-4. reports the feed, unchanged, only after Kea accepted it, once per revision.
+4. reports the feed, unchanged, only after Kea accepted it: at once when the
+   revision changed, and otherwise again once the refresh interval has passed
+   since its last report. A refused report is sent again on a later cycle.
 
 The base configuration supplies each subnet's prefix, gateway (`routers`) and
 boot options. A reservation that no base subnet contains, or that two contain,
@@ -365,6 +384,7 @@ requirements.
 | Boot addresses claimed from IPAM per operation, checked at admission, and released only after the operation ended unheld | Implemented; tested against a real API server with a stand-in for IPAM's claim API. No run sets a class, and IPAM itself is not exercised |
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
 | Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device | Implemented; unit tested with a fake BMC and synchronizer |
+| Reports bound to feeds the feed served, and refreshed reports of an unchanged feed | Implemented; unit tested, including a forged issue time, another instance's feed, a feed restart and an instance that never fetched the reservation |
 | Expected DHCP instance set in the enrollment: the feed refuses other instances, withdrawal needs every expected instance's report of a feed issued after the admission, and retirement only by shrinking the set | Implemented; unit tested, including an instance that never reported and one that stopped after fetching the reservation. Restarting the workers and the feed after a change is an operator step |
 | Refused contacts recorded and blocking withdrawal, so a removed instance whose synchronizer still polls keeps its operations unknown | Implemented; unit tested, including the rate limit, an unauthenticated request and a log that cannot be written. A removed replica whose synchronizer stopped while Kea serves is not detected |
 | Kea synchronizer: containing-subnet placement, restart re-apply, report only after Kea accepted | Implemented; unit tested against a fake Kea control socket |

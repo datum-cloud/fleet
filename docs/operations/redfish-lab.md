@@ -343,7 +343,9 @@ exercises boot addresses, reservations and Kea end to end in the lab:
   `kea-dhcp4-server` from the site image, which is native to the arm64 lab;
   ISC's image is amd64 only. Kea is not privileged: it adds only `NET_RAW` and
   `NET_BIND_SERVICE`. It listens on `fleetpxe0` with a raw socket, has no pool,
-  and keeps its leases on the site volume. The synchronizer reports as the one
+  and keeps its leases on the site volume. The production component differs:
+  its Kea answers relayed requests on a UDP socket and adds only
+  `NET_BIND_SERVICE`. The synchronizer reports as the one
   fixed instance `lab-kea`, so a restarted runtime Pod never strands a
   withdrawal. In production Kea runs in a central cluster behind the site's
   relays; the lab has no WAN link or relay, so its Kea sits on the emulated
