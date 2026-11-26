@@ -278,3 +278,38 @@ func TestARetriedWipeAdoptsTheExistingOne(t *testing.T) {
 		t.Fatalf("the existing wipe must stand: %+v, %v", got.Spec.Drives, err)
 	}
 }
+
+// TestAWipeIsNeverPlannedForARecreatedDevice deletes the allocated Device and
+// creates another under its name. The release controller must not plan a
+// wipe from the new Device's drives: the allocation's device-uid label names
+// the server it pinned.
+func TestAWipeIsNeverPlannedForARecreatedDevice(t *testing.T) {
+	e := startEnv(t)
+	e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := e.device("server-example-001")
+	if err := e.admin.Delete(e.ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &inventory.Device{ObjectMeta: metav1.ObjectMeta{Name: device.Name, Namespace: namespace}, Spec: device.Spec}
+	e.until("the Device is recreated", func() bool { return e.admin.Create(e.ctx, replacement) == nil })
+	if replacement.UID == device.UID {
+		t.Fatal("the recreated Device has the old UID")
+	}
+	// The new Device reports the same drives, so only the incarnation check
+	// stands between it and a wipe.
+	replacement.Status = device.Status
+	if err := e.admin.Status().Update(e.ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+	reference := fleetv1.WipeReference{Name: custody.WipeName(allocation.Name, 1), Step: 1}
+	if err := e.allocator.wipe(e.ctx, allocation, reference); !errors.Is(err, ErrCustodyLost) {
+		t.Fatalf("wipe = %v, want ErrCustodyLost", err)
+	}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: namespace, Name: reference.Name}, &ops.DeviceWipe{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("no wipe may be created for a recreated Device: %v", err)
+	}
+}

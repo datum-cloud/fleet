@@ -664,6 +664,7 @@ fails if its guard is removed:
 | Consumer project, against quota | Quota resolves the project and requires the incarnation the Machine was admitted in | `TestQuotaServesOnlyTheMachinesProjectIncarnation` |
 | Device | Custody's `device-uid` label must match the Device, or custody stays `Unverified` until a `Resolve` | `TestARecreatedDeviceLeavesCustodyUnverified` |
 | Device, against free capacity | Custody for another Device incarnation is never free | `TestCustodyForAnotherDeviceIncarnationIsNotFree` |
+| Device, against a release wipe | The release controller plans a wipe only if the Device's UID is the allocation's `device-uid` label | `TestAWipeIsNeverPlannedForARecreatedDevice` |
 | Device, against an operation | An operation's `device-uid` label must match the Device at admission | `TestAdmissionPreconditions` |
 | Device, against an existing operation | The Metal provider and release controller require an existing same-name operation to carry the same labels | `TestAnOperationForAnotherDeviceIncarnationIsAConflict` |
 | Installation | The `DeviceInstallation` name hashes the Installation UID, so a same-name Installation gets a new operation | `TestAllocateInstallReleaseReuse` |
