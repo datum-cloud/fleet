@@ -63,6 +63,10 @@ check('Redfish worker reads per-Device credentials from the credential namespace
 creds = resources.get('workerCredentialRoles', {}).get('template', {})
 check("per-operation credential Role gets only the Secret of the Device its assignment names, in the credential namespace", creds.get('metadata', {}).get('namespace') == 'fleet-site-credentials'
       and creds.get('rules') == [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': ["${'bmc-' + '%x'.format([hash.sha256(json.unmarshal(handoff.spec.assignmentJSON).device)]).substring(0, 20)}"], 'verbs': ['get']}], json.dumps(creds)[:300])
+consistent = "${handoffs.filter(h, h.spec.device == json.unmarshal(h.spec.assignmentJSON).device)}"
+check('only a handoff whose Device is its assignment\'s gets a credential Role or binding',
+      all(resources.get(r, {}).get('forEach') == [{'handoff': consistent}] for r in ('workerCredentialRoles', 'workerCredentialBindings')),
+      json.dumps([resources.get(r, {}).get('forEach') for r in ('workerCredentialRoles', 'workerCredentialBindings')]))
 binding = resources.get('workerCredentialBindings', {}).get('template', {})
 check('per-operation credential RoleBinding binds its own Role to its own ServiceAccount', binding.get('metadata', {}).get('namespace') == 'fleet-site-credentials'
       and binding.get('roleRef', {}).get('name') == '${"w-" + handoff.metadata.name}'

@@ -246,7 +246,7 @@ def record_lifecycle(state, old, new):
 
 FAULTS = ('duplicate', 'wrong-cell', 'stale-fence')
 # Faults delivered to the cell; the duplicate never exists.
-JOB_FAULTS = ('wrong-cell', 'stale-fence')
+JOB_FAULTS = ('wrong-cell', 'stale-fence', 'device-mismatch')
 
 
 def handoff(name, cell, spec, fault):
@@ -257,8 +257,9 @@ def handoff(name, cell, spec, fault):
 def delivery_faults(state, action):
     """Each fault derives from the latest delivered assignment, whose fence is
     the Device's stored fence: a duplicate of it, the same assignment for
-    another cell, the same operation below that fence, and a handoff that
-    names another Device's credential Secret."""
+    another cell, the same operation below that fence, a handoff that names
+    another Device's credential Secret, and a handoff whose assignment names
+    another Device than the handoff does."""
     s = pathlib.Path(state)
     cell = (s / 'prefix').read_text().strip() + '-cell'
     private = s / 'fault-handoffs.json'
@@ -285,6 +286,13 @@ def delivery_faults(state, action):
         stale = dict(assignment, fence=assignment['fence'] - 1)
         faults['stale-fence'] = {'handoff': assignment_name(stale), 'operation': harness.operation_key(stale['operation']['kind'], stale['operation']['name'], stale['fence']), 'fence': stale['fence'],
                                  'spec': {'cell': cell, 'device': assignment['device'], 'assignmentJSON': json.dumps(stale, separators=(',', ':'))}}
+        # The handoff names this Device, but its assignment names another, below
+        # the stored fence. Its worker refuses it, and it gets no credential
+        # Role, so neither Device's Secret is granted for it.
+        mismatched = dict(assignment, device=OTHER_DEVICE, fence=assignment['fence'] - 1,
+                          operation=dict(assignment['operation'], name=assignment['operation']['name'] + '-fault-device'))
+        faults['device-mismatch'] = {'handoff': assignment_name(mismatched), 'spec': {'cell': cell, 'device': assignment['device'],
+                                                                                    'assignmentJSON': json.dumps(mismatched, separators=(',', ':'))}}
         for fault in JOB_FAULTS:
             f = faults[fault]
             kubectl(state, 'create', '-f', '-', input=json.dumps(handoff(f['handoff'], cell, f.pop('spec'), fault)))
@@ -325,6 +333,8 @@ def delivery_faults(state, action):
                 raise SystemExit('the wrong-cell handoff gained an observation')
             if fault == 'stale-fence' and (seen or {}).get('result'):
                 raise SystemExit('the stale-fence handoff gained a result')
+            if fault == 'device-mismatch' and kubectl(state, '-n', CREDENTIALS, 'get', 'role', 'w-' + name, check=False).returncode == 0:
+                raise SystemExit('the device-mismatch handoff was granted a credential Role')
             record['faults'][fault] = {'handoff': name, 'job': j, 'pods': ps, 'observedFence': (seen or {}).get('fence'), 'result': None}
         stored = kubectl(state, '-n', SITE, 'exec', 'deploy/fleet-site-runtime', '-c', 'libvirt', '--', 'test', '-e',
                          '%s/%s.json' % (harness.RESULTS_DIR, faults['stale-fence']['operation']), check=False)

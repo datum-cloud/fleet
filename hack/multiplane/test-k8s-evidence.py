@@ -72,6 +72,8 @@ if kind == 'pvc': emit({'metadata': {'uid': 'pvc-uid'}, 'spec': {'volumeName': '
 if kind == 'pv': emit({'metadata': {'uid': 'pv-uid'}, 'spec': {'persistentVolumeReclaimPolicy': 'Retain'}})
 if kind == 'machine':
     emit(world['machines'][config.split('/')[-2]])
+if kind == 'role' and ns() == 'fleet-site-credentials' and name not in world.get('credentialRoles', []):
+    print('NotFound', file=sys.stderr); sys.exit(1)
 if kind == 'role': emit({'metadata': {'labels': {'kro.run/node-id': 'workerRoles'}}, 'rules': [{'resourceNames': [world['handoff']], 'verbs': ['get']}]})
 if kind == 'machineallocationhandoffs': emit({'items': world['handoffs']})
 if kind == 'roles': emit({'items': world.get('roles', [])})
@@ -189,7 +191,7 @@ with tempfile.TemporaryDirectory() as tmp:
     world['acceptCredential'] = False
     world['created'] = []
     r = run('delivery-faults', 'create')
-    check('delivery-faults create', r.returncode == 0 and len(world.get('created', [])) == 2, r.stderr)
+    check('delivery-faults create', r.returncode == 0 and len(world.get('created', [])) == 3, r.stderr)
     faults = json.loads((state / 'fault-handoffs.json').read_text())
     check('duplicate refused by the API', faults['duplicate'] == {'handoff': wipe_name, 'refused': 'AlreadyExists'}, str(faults['duplicate']))
     check('a handoff naming another Device\'s credential is refused by the API', faults['foreign-credential']['refused'] == 'unknown field spec.credential', str(faults['foreign-credential']))
@@ -197,7 +199,9 @@ with tempfile.TemporaryDirectory() as tmp:
     check('stale fault is the same operation below the fence under its own name', stale['operation'] == 'devicewipe.alloc-0123456789abcdef-wipe-1.1' and stale['fence'] == 1
           and stale['handoff'] == 'op-' + hashlib.sha256(('%s/devicewipe.alloc-0123456789abcdef-wipe-1.1' % device).encode()).hexdigest()[:40], str(stale))
     check('faults derive from the latest assignment', faults['source']['handoff'] == wipe_name and faults['source']['fence'] == 2)
-    for fault in ('wrong-cell', 'stale-fence'):
+    mismatch = faults['device-mismatch']
+    check('the device-mismatch fault names another Device in its assignment', mismatch['handoff'].startswith('op-') and mismatch['handoff'] != faults['stale-fence']['handoff'], str(mismatch))
+    for fault in ('wrong-cell', 'stale-fence', 'device-mismatch'):
         name = faults[fault]['handoff']
         check('fault name fits worker names: ' + fault, len('w-' + name) <= 63 and (state / ('fault-%s-job' % fault)).read_text().strip() == 'w-' + name, name)
         world['jobs']['w-' + name] = job('w-' + name, fault, [('Failed', 'PodFailurePolicy')], failed=1)
@@ -209,6 +213,9 @@ with tempfile.TemporaryDirectory() as tmp:
     world['roles'] = [{'metadata': {'name': 'w-op-forged'}, 'rules': [{'apiGroups': [''], 'resources': ['secrets'], 'resourceNames': [other], 'verbs': ['get']}]}]
     check('delivery-faults rejects a Role on another Device\'s credential', run('delivery-faults', 'verify').returncode != 0)
     world['roles'] = []
+    world['credentialRoles'] = ['w-' + faults['device-mismatch']['handoff']]
+    check('delivery-faults rejects a credential Role for a handoff whose Device is not its assignment\'s', run('delivery-faults', 'verify').returncode != 0)
+    world['credentialRoles'] = []
     world['results'] = ['devicewipe.alloc-0123456789abcdef-wipe-1.1.json']
     check('delivery-faults rejects a stored stale result', run('delivery-faults', 'verify').returncode != 0)
     world['results'] = []

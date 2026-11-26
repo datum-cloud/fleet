@@ -45,7 +45,9 @@ patches:
       # Each worker may get exactly its Device's credential Secret. The graph
       # derives the Secret's name from the Device the assignment itself names,
       # as site.CredentialSecretName does, so no handoff field can name
-      # another Device's Secret. It may not list or watch Secrets.
+      # another Device's Secret. Only a handoff whose Device is its
+      # assignment's gets a Role; any other is refused by its worker with no
+      # grant at all. It may not list or watch Secrets.
       - op: add
         path: /spec/resources/-
         value:
@@ -53,7 +55,7 @@ patches:
           includeWhen:
             - ${schema.spec.dispatch}
           forEach:
-            - handoff: ${handoffs}
+            - handoff: ${handoffs.filter(h, h.spec.device == json.unmarshal(h.spec.assignmentJSON).device)}
           template:
             apiVersion: rbac.authorization.k8s.io/v1
             kind: Role
@@ -73,7 +75,7 @@ patches:
           includeWhen:
             - ${schema.spec.dispatch}
           forEach:
-            - handoff: ${handoffs}
+            - handoff: ${handoffs.filter(h, h.spec.device == json.unmarshal(h.spec.assignmentJSON).device)}
           template:
             apiVersion: rbac.authorization.k8s.io/v1
             kind: RoleBinding

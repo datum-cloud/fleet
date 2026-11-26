@@ -153,9 +153,10 @@ added no change to the worker contract.
 
 Increment C moves every mode onto custody and deletes the old path. All of it
 is **implemented**. The standalone smoke (`task standalone:test`) and both
-multi-plane runs, local VM and Redfish, verify it end to end. Increment C adds no migration and no compatibility code. The
-Secret-backed coordinator and its records are gone, and a person re-imports
-records where an environment needs them.
+multi-plane runs, local VM and Redfish, verify it end to end. Increment C adds
+no migration and no compatibility code. The Secret-backed coordinator and its
+records are gone, and a person re-imports records where an environment needs
+them.
 
 | Piece | Status |
 | --- | --- |
@@ -729,13 +730,16 @@ person.
   approved pin; there is no shared credential. No handoff field names a
   Secret. kro derives the name from the Device the operation's own assignment
   names, as the site does, and grants the operation's worker `get` on exactly
-  that Secret, with no list or watch. The API refuses a handoff that names a
-  credential, so no input can get a worker another Device's Secret. The worker
+  that Secret, with no list or watch. Only a handoff whose Device is its
+  assignment's gets that Role; any other gets no grant, and its worker
+  refuses it. The API refuses a handoff that names a credential, so no input
+  can get a worker another Device's Secret. The worker
   refuses a handoff whose Device is not its assignment's, reads the Secret
   with one get, and still requires the contract's annotations and pin.
   Admission lets kro create a credential Role only of that shape. The
-  `delivery-faults` phase forges a handoff naming another Device's credential
-  and checks that it is refused and no Role grants that Secret.
+  `delivery-faults` phase forges a handoff naming another Device's credential,
+  and one whose assignment names another Device, and checks that the first is
+  refused, the second gets no Role, and no Role grants that Secret.
 - **The observer deletes answered results.** The site observer is the only
   handoff status writer, and it deletes the site's copy of a result once the
   coordinator answered it. Its mount of the site store is therefore writable.
