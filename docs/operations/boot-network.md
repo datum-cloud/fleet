@@ -191,15 +191,22 @@ settled. The requester deletes the claim. The release counts only once a read
 finds NSO's claim gone and IPAM holds no allocation for the address NSO
 claimed for it. NSO may remove its claim before IPAM removes that address, so
 the release is checked from the allocation's own record rather than from the
-claims that remain. Before it creates any boot claim, the requester records
+claims that remain. The record is only for a source whose address can outlive
+its claim, such as NSO's. IPAM removes a claim and its address together, so
+IPAM's claims are never recorded and are verified from the claims that
+remain, as before. Before it creates an NSO boot claim, the requester records
 the operation's kind and name and the claim's kind and name in the
 allocation's status, and it removes the record only once the claim's release
-is verified. The record holds at most 64 claims. When it is full, the next
-installation or wipe is refused with `ErrBootClaimsFull` and makes no claim,
-until earlier entries are verified released; no entry is ever dropped or
-overwritten first. The check therefore still runs after the claim is gone, after
-custody retention removed the operation, and for an operation that was never
-created. While an allocation is active, a hand-over step
+is verified. Every release pass removes the entries it verified, including
+the hand-over step, so entries do not wait for the final release. An entry
+with neither a claim nor an operation, such as one whose attach failed before
+any claim was made, is verified and removed the same way. The record holds
+at most 64 claims. When it is full, the next installation or wipe is refused
+with `ErrBootClaimsFull` and makes no claim, until earlier entries are
+verified released; no entry is ever dropped or overwritten first. The check
+therefore still runs after the claim is gone, after custody retention
+removed the operation, and for an operation that was never created. While
+an allocation is active, a hand-over step
 releases the claims of ended, unheld operations under the same rules, so NSO
 can hand a shared boot NIC to the customer.
 
