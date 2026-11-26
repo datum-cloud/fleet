@@ -363,15 +363,24 @@ the projector's identity.
 
 | Mode | Guard | Writer |
 | --- | --- | --- |
-| Production Milo root (`config/milo`) | The Machine power webhook, served by `fleet-registration` at `/validate-machine-power`. Only status writes that change `status.power` are routed, fail-closed. | The username in `fleet-registration`'s `--machine-power-writer` flag: the manager's Milo identity. Unset, every power change is refused. Production wires no projector, so it stays unset there for now. |
+| Production Milo root (`config/milo`) | The Machine power webhook, served by `fleet-registration` at `/validate-machine-power`. Only status writes that change `status.power` are routed, fail-closed. | The username in `fleet-registration`'s `--machine-power-writer` flag: the manager's Milo identity. Unset, every power change is refused. Set it before a power projector runs against this root. |
 | Standalone (`config/standalone`) | A ValidatingAdmissionPolicy on `machines/status` | The smoke runner's service account, which runs the projector for its fixtures |
 | Synthetic Milo root and multi-plane local Milo | None. Neither runs `fleet-registration`, and Milo ignores policies stored in a project. RBAC grants Machine status only to the manager, but the consumer roles' `update` permission still reaches it. | See [Points for a person](#points-for-a-person) |
 
+Who can write Machine status, and who can change power:
+
+| Identity | Machine status | Power |
+| --- | --- | --- |
+| The manager: the power projector, the staging handler and the requested-hardware projector | All fields | The only writer, once the flag names it |
+| The standalone smoke runner | Its fixture Machine | The only writer in standalone |
+| Milo consumer and claimant roles | All fields, through `update` and `patch` | Refused |
+| The Metal provider and allocator, the release controller, the custody coordinator, discovery, the inventory and operation roles, Karmada, kro and federation | None | None |
+
 Within the manager, the staging handler, the requested-hardware projector and
 the runners carry power forward unchanged; admission cannot tell them apart
-from the projector. A render check fails if any other Kubernetes role gains
-Machine status writes, or any other Milo role gains a Machine status, update or
-patch permission.
+from the projector. A render check over every root in `config` fails if any
+other Kubernetes role gains Machine status writes, or any other Milo role gains
+a Machine status, update or patch permission.
 
 ### Deleted, with no compatibility
 

@@ -554,6 +554,11 @@ synthetic ones.
   service blocks writes to inventory-backed capacity and nothing else:
   unmarked capacity, capacity status, Device, namespace and Project writes do
   not pass through the registration webhook.
+- `config/milo` also includes the fail-closed
+  [Machine power webhook](device-custody.md#machine-power) on the same
+  service. It matches only Machine status writes that change `status.power`,
+  so an unreachable service also blocks power changes, and no other Machine
+  write.
 - No root in this repository includes Device deletion protection. A
   deploying repository adds `config/components/device-deletion-protection` to
   the root it applies to Milo when it must keep in-service Devices.
@@ -586,8 +591,13 @@ Environment-owned inputs, none of which this repository supplies:
 2. Supply `fleet-registration-tls` with `tls.crt`, `tls.key` and a dedicated
    `client-ca.crt`. Configure Milo's admission webhook client with an
    API-server client certificate signed by that CA, patch the webhook URL for
-   reachability, and set `clientConfig.caBundle` to the serving CA.
-3. Keep `--provider-projects` equal to the complete provider scope.
+   reachability, and set `clientConfig.caBundle` to the serving CA. Do the
+   same for the Machine power webhook, or every power change fails closed.
+3. Keep `--provider-projects` equal to the complete provider scope. Before a
+   power projector runs against the root, set `--machine-power-writer` to the
+   username Milo reports for the manager's identity in a routed project
+   request. Confirm it with one of the manager's own status writes: a
+   mismatch refuses every power change.
 4. Decide whether the Milo root you apply includes
    `config/components/device-deletion-protection`. With it, the only Device
    deletes admitted are of Retired Devices, of Devices in a deleting namespace,

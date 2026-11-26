@@ -64,7 +64,7 @@ func renderRoots(t *testing.T, kustomize, config string) map[string][]map[string
 }
 
 // walk visits every map in a rendered object, including objects embedded as
-// templates, such as a graph's resources, and YAML held in strings.
+// templates, such as a graph's resources, and YAML or JSON held in strings.
 func walk(value any, visit func(map[string]any)) {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -77,7 +77,7 @@ func walk(value any, visit func(map[string]any)) {
 			walk(item, visit)
 		}
 	case string:
-		if strings.Contains(typed, "kind:") && strings.Contains(typed, "rules:") {
+		if strings.Contains(typed, "kind") {
 			decoder := utilyaml.NewYAMLOrJSONDecoder(strings.NewReader(typed), 4096)
 			for {
 				var object map[string]any
@@ -113,13 +113,17 @@ func name(object map[string]any) (string, string) {
 }
 
 // rbacStatusWriter reports whether a Kubernetes Role or ClusterRole can
-// update or patch Machine status.
+// update or patch Machine status. An aggregated ClusterRole takes its rules
+// from other roles at runtime, so it counts as a writer until reviewed.
 func rbacStatusWriter(object map[string]any) bool {
 	if kind, _ := object["kind"].(string); kind != "Role" && kind != "ClusterRole" {
 		return false
 	}
 	if apiVersion, _ := object["apiVersion"].(string); !strings.HasPrefix(apiVersion, "rbac.authorization.k8s.io/") {
 		return false
+	}
+	if _, aggregated := object["aggregationRule"]; aggregated {
+		return true
 	}
 	rules, _ := object["rules"].([]any)
 	for _, item := range rules {
@@ -131,8 +135,9 @@ func rbacStatusWriter(object map[string]any) bool {
 	return false
 }
 
-// TestOnlyThePowerWriterCanWriteMachineStatus renders every root and lists
-// the roles that can write Machine status. Kubernetes RBAC grants it only to
+// TestOnlyThePowerWriterCanWriteMachineStatus renders every root under config
+// and lists the roles that can write Machine status. Roles made outside
+// config, by a script or at runtime, are not covered. Kubernetes RBAC grants it only to
 // the standalone smoke runner, the power projector's identity there. Milo
 // grants updateStatus and status permissions only to the controller role,
 // the manager's. Milo's authorizer checks a status write against update and

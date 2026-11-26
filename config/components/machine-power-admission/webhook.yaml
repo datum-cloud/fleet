@@ -12,7 +12,7 @@ webhooks:
   # blocks power changes and nothing else. It is fail-closed. The
   # fleet-registration server serves it; its --machine-power-writer flag names
   # the projector's identity, and without it every power change is refused.
-  - name: power.machines.fleet.datumapis.com
+  - name: power.machines.metal.datumapis.com
     admissionReviewVersions: [v1]
     failurePolicy: Fail
     matchPolicy: Equivalent
