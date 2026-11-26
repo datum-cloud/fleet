@@ -18,6 +18,7 @@ import (
 
 	"go.datum.net/fleet/internal/allocation"
 	metal "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 func actor(name, project string) authenticationv1.UserInfo {
@@ -239,6 +240,44 @@ func TestValidatorRefusesMalformedCreators(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if response := (Validator{}).Handle(context.Background(), request(admissionv1.Create, user, runtime.RawExtension{Raw: []byte(raw)}, runtime.RawExtension{})); response.Allowed {
 				t.Fatal("allowed")
+			}
+		})
+	}
+}
+
+// TestOnlyAMiloProjectConsumerIsAdmitted reads the caller's consumer as a
+// typed reference through tenancy. Through Milo a Machine's consumer is a
+// Project; a Namespace, another group or kind, or a missing name is refused
+// by both webhooks.
+func TestOnlyAMiloProjectConsumerIsAdmitted(t *testing.T) {
+	self := &metal.MachineCreator{Username: "customer-example", UID: "customer-example-uid"}
+	with := func(group, kind, name string) authenticationv1.UserInfo {
+		user := actor("customer-example", "consumer-example")
+		user.Extra[iam.ParentAPIGroupExtraKey] = authenticationv1.ExtraValue{group}
+		user.Extra[iam.ParentKindExtraKey] = authenticationv1.ExtraValue{kind}
+		user.Extra[iam.ParentNameExtraKey] = authenticationv1.ExtraValue{name}
+		return user
+	}
+	if ref, err := consumer(actor("customer-example", "consumer-example")); err != nil || ref != tenancy.Project("consumer-example") {
+		t.Fatalf("consumer = %+v, %v", ref, err)
+	}
+	for name, user := range map[string]authenticationv1.UserInfo{
+		"a Namespace":   with("", tenancy.NamespaceKind, "consumer-example"),
+		"another group": with("example.com", tenancy.ProjectKind, "consumer-example"),
+		"another kind":  with(tenancy.ProjectGroup, "Organization", "consumer-example"),
+		"an empty name": with(tenancy.ProjectGroup, tenancy.ProjectKind, ""),
+		"two project names": func() authenticationv1.UserInfo {
+			user := actor("customer-example", "consumer-example")
+			user.Extra[iam.ParentNameExtraKey] = authenticationv1.ExtraValue{"consumer-example", "other"}
+			return user
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if response := (Mutator{}).Handle(context.Background(), request(admissionv1.Create, user, machine(t, nil), runtime.RawExtension{})); response.Allowed {
+				t.Fatal("the mutating webhook allowed it")
+			}
+			if response := (Validator{}).Handle(context.Background(), request(admissionv1.Create, user, machine(t, self, allocation.MachineFinalizer), runtime.RawExtension{})); response.Allowed {
+				t.Fatal("the validating webhook allowed it")
 			}
 		})
 	}

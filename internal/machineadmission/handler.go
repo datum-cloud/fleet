@@ -27,6 +27,7 @@ import (
 
 	"go.datum.net/fleet/internal/allocation"
 	metal "go.datum.net/fleet/internal/api/v1alpha1"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 const (
@@ -43,16 +44,28 @@ type Mutator struct{}
 // protection finalizer, and updates that leave the creator unchanged.
 type Validator struct{}
 
-// caller returns the creator for an authenticated caller in a Milo project.
-// Milo sets the project extras when it routes a request through a project
-// control plane, and overwrites any the client supplied.
-func caller(actor authenticationv1.UserInfo) (metal.MachineCreator, error) {
-	for key, expected := range map[string]string{iam.ParentKindExtraKey: "Project", iam.ParentAPIGroupExtraKey: "resourcemanager.miloapis.com"} {
-		if values := actor.Extra[key]; len(values) != 1 || values[0] != expected {
-			return metal.MachineCreator{}, errors.New("an authenticated Milo project context is required")
-		}
+// consumer returns the typed reference to the caller's Milo project. Milo
+// sets the parent extras when it routes a request through a project control
+// plane, and overwrites any the client supplied. A Machine created through
+// Milo has a Project consumer; tenancy refuses any other kind.
+func consumer(actor authenticationv1.UserInfo) (metal.TypedReference, error) {
+	group, kind, name := actor.Extra[iam.ParentAPIGroupExtraKey], actor.Extra[iam.ParentKindExtraKey], actor.Extra[iam.ParentNameExtraKey]
+	if len(group) != 1 || len(kind) != 1 || len(name) != 1 {
+		return metal.TypedReference{}, errors.New("an authenticated Milo project context is required")
 	}
-	if values := actor.Extra[iam.ParentNameExtraKey]; len(values) != 1 || values[0] == "" || actor.Username == "" || actor.UID == "" {
+	ref := metal.TypedReference{APIGroup: group[0], Kind: kind[0], Name: name[0]}
+	if err := tenancy.Supported(ref); err != nil || ref != tenancy.Project(ref.Name) {
+		return metal.TypedReference{}, errors.New("an authenticated Milo project context is required")
+	}
+	return ref, nil
+}
+
+// caller returns the creator for an authenticated caller in a Milo project.
+func caller(actor authenticationv1.UserInfo) (metal.MachineCreator, error) {
+	if _, err := consumer(actor); err != nil {
+		return metal.MachineCreator{}, err
+	}
+	if actor.Username == "" || actor.UID == "" {
 		return metal.MachineCreator{}, errors.New("an authenticated caller and project are required")
 	}
 	return metal.MachineCreator{Username: actor.Username, UID: actor.UID}, nil
