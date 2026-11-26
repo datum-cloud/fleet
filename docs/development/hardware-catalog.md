@@ -297,8 +297,8 @@ are not proof of real Milo authorization or live NetBox parity.
 
 Validation of the PR106 integration passed the full Go suite, race suite and vet,
 with local Kubernetes 1.37.0 envtest assets including catalog concurrency and
-strict rejection of retired fields. Provider validation covers 459 tests;
-consumer validation covers 44 tests. Both typechecks and production builds pass.
+strict rejection of retired fields. The provider and consumer suites, both
+typechecks and both production builds pass.
 The five CI manifest roots, synthetic-staging render, overlay isolation and its
 regression tests, standalone render, Milo acceptance packaging, documentation
 links and whitespace checks also pass. These are local synthetic checks, not

@@ -82,7 +82,7 @@ Multiple registrations do not select an active asset by time or revision.
 
 ## Existing resource audit integration: source-reviewed, not live verified
 
-On 2026-11-21 the following clean local source revisions were inspected. No
+The following pinned source revisions were inspected. No
 authenticated audit event, deployed audit policy or storage retention was queried
 or verified by this implementation. This is not a claim of live audit completeness.
 

@@ -1400,8 +1400,8 @@ go test ./internal/api/inventory/...
 git diff --check
 ```
 
-Prior UI phase results: 278 tests in 20 files, TypeScript check, production build,
-and the Go inventory package tests pass. Build warnings concern the existing
+Prior UI phase results: the UI tests, TypeScript check, production build and the
+Go inventory package tests pass. Build warnings concern the existing
 transitive undici share and Zod annotation handling; they do not fail the build.
 Documentation relative links and whitespace were checked. At that phase, the 68
 independent tests remained byte-for-byte identical to the supplied review suite.

@@ -7,33 +7,25 @@ adversarial review. It is not approval to deploy or evidence of physical readine
 No deployment, source-tag changes, hardware actions, or inventory
 writes were performed during the implementation checks below.
 
-## Read-only baseline observed on November 20, 2026
+## Read-only baseline before evaluation
 
-The physical-inventory PR is stacked on `feat/manual-inventory-records` at
-`42086bbe2cf05f5d09362fbc777e514907d64462`. Infrastructure configuration was read
-at `3bde916629c7b6c49a6820bc40c2546bbf2afdc1`. Preserve that dependent base;
-do not retarget the PR or mistake a new artifact publication for deployment.
+Before any evaluation, record a read-only baseline:
 
-Read-only staging API queries on that date found:
-
-- Both `fleet-kustomize` and `fleet-inventory-kustomize` configured for
-  `v0.0.0-feat-manual-inventory-records`, with artifact digest
-  `sha256:45dfd12971b44a92d3d078007cfd41dcb23f4d278d17e3c5ea8f02c65d3f2fdc`.
-- `fleet-milo-configuration` reporting Ready with that exact applied artifact.
-- `fleet-provider-inventory` reporting Ready at the infrastructure revision above,
-  with `prune: false`, `deletionPolicy: Orphan`, and the private
-  `apps/fleet-system/staging/provider-inventory` source.
-- Manager and provider/consumer UI Deployments referencing the manual-inventory
-  build ending `20261120-165214`, with one manager and two replicas of each UI ready.
-
-The three DeviceClaims and one Device in that applied Git source passed offline
-creation and unchanged-update validation against the proposed six-kind schemas.
-The source files were handled privately outside Git; no real identities were
-added to public fixtures. Existing identity and claim-binding immutability also
-have negative regression tests. This is schema compatibility, not a live-object
-or hardware audit: the management-cluster project API route did not expose the
-provider project, so direct live provider-record comparison remains an operator
-acceptance step. No production project context was used as a substitute.
+1. Confirm the pull request is stacked on its dependent base. Do not retarget it,
+   and do not mistake a new artifact publication for deployment.
+2. Read the staging Fleet and inventory Kustomizations: the version each tracks,
+   the applied artifact digest, and whether each reports Ready at that digest.
+3. Confirm the provider inventory source is retained on removal (`prune: false`,
+   `deletionPolicy: Orphan`) and note the source revision it applied.
+4. Confirm the manager and the provider and consumer UI Deployments reference the
+   expected build and report their expected replicas ready.
+5. Validate the existing DeviceClaims and Devices in the applied source against
+   the proposed schemas, for creation and for an unchanged update, handling the
+   source files privately outside Git. Add no real identities to public fixtures.
+   Schema compatibility is not a live-object or hardware audit.
+6. Compare live provider records directly through the authorized project route.
+   If that route does not expose the provider project, the comparison remains an
+   operator acceptance step; never substitute a production project context.
 
 ## Acceptance gates for an authorized operator
 

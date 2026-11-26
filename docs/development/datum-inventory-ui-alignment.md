@@ -124,8 +124,7 @@ reuse is not a live freshness or newly granted permission claim.
 
 ## Validation
 
-- Provider after exact-base merge: `pnpm --dir ui/provider test` — 35 files,
-  539 tests; typecheck and
+- Provider after exact-base merge: `pnpm --dir ui/provider test`, typecheck and
   production build pass. Coverage asserts actual library slots/variants, field
   and button semantics, visible blur/focus node identity, permissions, immutable
   baselines, unknown outcomes and existing read/write fences.
@@ -135,11 +134,10 @@ reuse is not a live freshness or newly granted permission claim.
   navigation management readiness, in-flight create fencing, and fresh reads on
   principal, logout, denial, hidden/pagehide, explicit revalidation and unknown
   query changes. These do not mock Datum components.
-- Consumer: `pnpm --dir ui/consumer test` — 3 files, 44 tests; typecheck and
-  production build pass. Consumer implementation is untouched.
+- Consumer: `pnpm --dir ui/consumer test`, typecheck and production build pass. Consumer implementation is untouched.
 - Seven focused session-boundary, tab-navigation, exact-staging, stable-control,
   visible-focus-save, navigation-safety and revalidation-safety files pass three
-  consecutive runs (150 tests each). The inherited settled async `mountHost`
+  consecutive runs. The inherited settled async `mountHost`
   synchronization remains unchanged. The cached-create navigation test now
   asserts the removed recorder/reference controls are absent rather than filling
   obsolete fields; it still checks draft clearing and zero stale writes.
