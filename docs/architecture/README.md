@@ -37,6 +37,7 @@ Key principles to carry into the detailed design:
 | What are the machine resources and project boundaries? | [Machine lifecycle API design](../enhancements/machine-lifecycle/README.md#api-design) |
 | How are reservations and concurrent operations coordinated? | [Durable coordination](../enhancements/machine-lifecycle/README.md#durable-coordination) |
 | How are physical actions on one server serialized? | [Device custody and operations](../enhancements/device-operations/README.md) |
+| How is a server's power changed? | [Device power operations](../enhancements/device-power/README.md) |
 | How are provider effects recovered safely? | [Provider execution and recovery](../enhancements/machine-lifecycle/README.md#provider-execution-and-recovery) |
 | What happens on release or project deletion? | [Release and project lifecycle](../enhancements/machine-lifecycle/README.md#release-and-project-lifecycle) |
 | Which internal interfaces and guarantees exist? | [Implementation status](../development/README.md) |
