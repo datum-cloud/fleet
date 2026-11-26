@@ -7,3 +7,4 @@ resources:
   - ../components/inventory
   - ../components/registration-admission
   - ../components/device-operations
+  - ../components/machine-power-admission

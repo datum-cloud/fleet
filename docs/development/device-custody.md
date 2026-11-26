@@ -356,6 +356,23 @@ manager, custody, allocation and Device events in the provider project wake
 the consumer's Machines, so a new hold shows as `Unknown` without a Machine
 event.
 
+Admission keeps power to that one writer. RBAC alone cannot: Milo authorizes a
+status write with the Machine's `update` and `patch` permissions, which the
+consumer and claimant roles hold, and the manager's other status writers share
+the projector's identity.
+
+| Mode | Guard | Writer |
+| --- | --- | --- |
+| Production Milo root (`config/milo`) | The Machine power webhook, served by `fleet-registration` at `/validate-machine-power`. Only status writes that change `status.power` are routed, fail-closed. | The username in `fleet-registration`'s `--machine-power-writer` flag: the manager's Milo identity. Unset, every power change is refused. Production wires no projector, so it stays unset there for now. |
+| Standalone (`config/standalone`) | A ValidatingAdmissionPolicy on `machines/status` | The smoke runner's service account, which runs the projector for its fixtures |
+| Synthetic Milo root and multi-plane local Milo | None. Neither runs `fleet-registration`, and Milo ignores policies stored in a project. RBAC grants Machine status only to the manager, but the consumer roles' `update` permission still reaches it. | See [Points for a person](#points-for-a-person) |
+
+Within the manager, the staging handler, the requested-hardware projector and
+the runners carry power forward unchanged; admission cannot tell them apart
+from the projector. A render check fails if any other Kubernetes role gains
+Machine status writes, or any other Milo role gains a Machine status, update or
+patch permission.
+
 ### Deleted, with no compatibility
 
 - The Secret-backed coordinator and its records, the private-record RBAC, the
@@ -779,6 +796,16 @@ These need a decision before the increment that depends on them.
   `Healthy` and `Available` themselves.
 - **O10: the sealed store for bootstrap payloads.** Bootstrap stays refused in
   every increment until a store is chosen.
+- **Machine status writes by consumers in Milo.** Milo's authorizer, with
+  subresource authorization off, checks a status write against `update` and
+  `patch`, which the consumer and claimant roles hold. The power webhook refuses
+  their power changes, but they can still write every other Machine status
+  field. Closing it needs subresource authorization enabled in Milo, the
+  Machine ProtectedResource to declare its status subresource, and the
+  controller role alone to hold `machines/status.update` and `.patch`.
+- **The power guard in synthetic staging and the multi-plane local Milo.**
+  Neither runs `fleet-registration`, so neither has the power webhook, as
+  neither has the creator webhook.
 - **A second person for `DeviceRecovery`.** Not required yet. A person
   accepted this for now, and it stays open for a later decision.
 - **Synthetic staging needs its records imported again, new credentials and

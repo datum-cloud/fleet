@@ -25,23 +25,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"go.datum.net/fleet/internal/custody/creatorwebhook"
+	"go.datum.net/fleet/internal/powerwebhook"
 )
 
 func main() {
-	var configFile, providers, cert, key, clientCA string
+	var configFile, providers, powerWriter, cert, key, clientCA string
 	flag.StringVar(&configFile, "config", "", "Fleet manager discovery configuration")
 	flag.StringVar(&providers, "provider-projects", "", "complete comma-separated provider scope searched for duplicate hardware identity")
+	flag.StringVar(&powerWriter, "machine-power-writer", "", "username of the manager's Milo identity, the only writer of Machine status.power; empty refuses every power change")
 	flag.StringVar(&cert, "tls-cert", "/etc/fleet/registration/tls.crt", "serving certificate")
 	flag.StringVar(&key, "tls-key", "/etc/fleet/registration/tls.key", "serving key")
 	flag.StringVar(&clientCA, "client-ca", "/etc/fleet/registration/client-ca.crt", "CA dedicated to trusted API-server webhook clients")
 	flag.Parse()
-	if err := run(ctrl.SetupSignalHandler(), configFile, providers, cert, key, clientCA); err != nil {
+	if err := run(ctrl.SetupSignalHandler(), configFile, providers, powerWriter, cert, key, clientCA); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, configFile, providers, cert, key, clientCA string) error {
+func run(ctx context.Context, configFile, providers, powerWriter, cert, key, clientCA string) error {
 	config, err := projectdiscovery.LoadConfig(configFile)
 	if err != nil {
 		return err
@@ -76,7 +78,7 @@ func run(ctx context.Context, configFile, providers, cert, key, clientCA string)
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Addr: ":9443", Handler: http.MaxBytesHandler(handler.Transport(&creatorwebhook.Handler{Projects: projects, Resources: creatorwebhook.Resources}), 2<<20), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, TLSConfig: tlsConfig}
+	server := &http.Server{Addr: ":9443", Handler: http.MaxBytesHandler(handler.Transport(&creatorwebhook.Handler{Projects: projects, Resources: creatorwebhook.Resources}, &powerwebhook.Handler{Writer: powerWriter}), 2<<20), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 20 * time.Second, TLSConfig: tlsConfig}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
