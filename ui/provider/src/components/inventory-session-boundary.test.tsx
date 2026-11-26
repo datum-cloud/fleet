@@ -155,6 +155,36 @@ describe('host inventory session isolation', () => {
     visibility.mockRestore();
   });
 
+  // Restored from "keeps failed foreground restoration masked until the next
+  // restoration succeeds". Nothing is masked now; a failed check closes the
+  // session's reads and operations (held work is never sent), and only a later
+  // successful check opens them again, for new work only.
+  it('keeps a failed return check closed until the next check succeeds', async () => {
+    let scope: InventoryOperationScope | undefined;
+    function Records() { scope = useContext(InventoryOperationContext); return <p>Private inventory</p>; }
+    const router = await mountHost(() => ({ user: { metadata: { uid: 'staff-a' } } }), <Records />);
+    await screen.findByText('Private inventory');
+    let release!: () => void;
+    const revalidate = vi.spyOn(router, 'revalidate').mockRejectedValueOnce(new Error('verification failed')).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    fireEvent(window, new Event('pagehide'));
+    const held = scope!.begin();
+    const heldOutcome = held.settle().then(() => 'sent', error => error);
+    await act(async () => { fireEvent(window, new Event('pageshow')); });
+    expect(revalidate).toHaveBeenCalledTimes(1);
+    expect(await heldOutcome).toBeInstanceOf(InventoryOperationInvalidated);
+    expect(() => scope!.begin().assertCurrent()).toThrow(InventoryOperationInvalidated);
+    fireEvent(window, new Event('pagehide'));
+    fireEvent(window, new Event('pageshow'));
+    await waitFor(() => expect(release).toBeDefined());
+    expect(revalidate).toHaveBeenCalledTimes(2);
+    expect(() => scope!.begin().assertCurrent()).toThrow(InventoryOperationInvalidated);
+    await act(async () => release());
+    expect(() => scope!.begin().assertCurrent()).not.toThrow();
+    expect(() => held.assertCurrent()).toThrow(InventoryOperationInvalidated);
+    expect(screen.getByText('Private inventory')).toBeInTheDocument();
+    router.dispose();
+  });
+
   it('fails closed outside the authenticated host unless explicitly previewing', () => {
     render(<MemoryRouter><InventorySessionBoundary>Restricted inventory</InventorySessionBoundary></MemoryRouter>);
     expect(screen.queryByText('Restricted inventory')).not.toBeInTheDocument();

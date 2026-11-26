@@ -369,3 +369,37 @@ it('checks management access once per kind, not on every navigation, and again o
   expect(view.writes).not.toHaveBeenCalled();
   view.router.dispose();
 });
+
+// Restored from the pre-#204 denial boundary, which re-read through a host
+// revalidation: exactly nine list GETs, no permission review, no write. The
+// denial now reaches the page through Refresh, which re-reads the nine
+// collections and, by design, also re-checks management access at once
+// (recheckInventoryPermission). That check is issued with the reads, before the
+// denial is known, so the count is one review for the page's one management
+// action (Create device). Once Devices is denied the action's permission query
+// is disabled, so no further review follows.
+it('a denied refresh reads exactly nine collections, one Refresh permission review and no write', async () => {
+  const view = host('?kind=Device', true);
+  await screen.findByRole('table');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh inventory' })).toBeEnabled());
+  await waitFor(() => expect(view.reviews).toHaveBeenCalledTimes(1));
+  const calls = () => vi.mocked(fetch).mock.calls as unknown as [string, RequestInit][];
+  const before = calls().length;
+  expect(view.collections).toHaveBeenCalledTimes(9);
+  view.deny();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh inventory' }));
+  await screen.findByRole('heading', { name: 'Inventory access needed' });
+  expect(screen.queryByText('Example compute server')).not.toBeInTheDocument();
+  // Let anything still scheduled run before counting.
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  const after = calls().slice(before);
+  const lists = after.filter(([url]) => !url.includes('selfsubjectaccessreviews'));
+  const reviews = after.filter(([url]) => url.includes('selfsubjectaccessreviews'));
+  expect(lists).toHaveLength(9);
+  expect(lists.every(([, init]) => init.method === 'GET')).toBe(true);
+  expect(new Set(lists.map(([url]) => url)).size).toBe(9);
+  expect(reviews).toHaveLength(1);
+  expect(reviews[0][1].method).toBe('POST');
+  expect(view.writes).not.toHaveBeenCalled();
+  view.router.dispose();
+});
