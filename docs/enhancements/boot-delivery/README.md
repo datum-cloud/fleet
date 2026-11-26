@@ -97,7 +97,9 @@ and evidence handling are the same for every method.
 
 - An operator brings up a new site. Before its provisioning network and relays
   exist, Fleet installs the site's own infrastructure servers over virtual
-  media.
+  media. The site's BMC network and those servers' data network uplinks
+  already route to the central cluster, through equipment that does not
+  depend on the servers being installed.
 - A provider sells many identical servers at a site with network boot. Fleet
   installs them in parallel over the host NICs, with no traffic through the
   BMCs.
@@ -130,13 +132,15 @@ and evidence handling are the same for every method.
 - **OS images and bootstrap data ([#184][images-pr]):** unchanged for the
   customer. Three additions:
   - an image needs a boot medium artifact to be offered on virtual media;
-  - under virtual media, the installed OS posts a first-boot report; and
+  - under virtual media, the installed OS posts a first-boot report, so Fleet
+    trusts the provider image's first-boot step, which #184 does not yet; and
   - a BMC that does not verify the media certificate gets the bootstrap data
     through the installed OS instead of on its media.
 - **Commissioning ([#185][commissioning-pr]):** commissioning gains a delivery
   phase, burn-in boots with any qualified method instead of only network boot,
-  and under virtual media burn-in reports the same way as an install.
-  `Available` gains two conditions.
+  and burn-in reports over the network instead of the console. `Available`
+  gains two conditions. Virtual media burn-in and probes wait on an [open
+  question](#open-questions).
 - **PXE installation ([#59][pxe-pr]):** its customer Redfish gateway already
   refuses virtual media. That stays true.
 
@@ -221,7 +225,8 @@ Network boot is the method in [#87][boot-network-pr] and
 - **Verify.** The boot service serves the boot script, with the report token,
   only to that NIC while the boot admission is open. The installer returns the
   token over the provisioning network with the digests that [#184][images-pr]
-  defines.
+  defines and the digest of every artifact it downloaded. A burn-in or a probe
+  returns its token and result the same way.
 - **Release.** Every declared DHCP instance reports a feed, issued after the
   reservation was published, that serves no address the site ever published
   for the Device. The worker then reads back that no boot override is set. The
@@ -269,7 +274,7 @@ sequenceDiagram
     W->>B: insert boot medium and config medium
     W->>B: read back both URLs, set one-time boot, power on
     B->>S: fetch media over HTTPS
-    H->>H: install, read the payload back from disk
+    H->>H: install the image
     W->>S: close the window at the end of the media phase
     H->>F: first boot posts the report over HTTPS
     F-->>W: report accepted
@@ -323,11 +328,19 @@ media service. The report carries:
   [#184][images-pr] defines it; and
 - the digest of every artifact the installer downloaded.
 
+In the default mode the installer reads the payload back from the target disk
+before reboot, as [#184][images-pr] requires. In the fallback mode the payload
+first arrives at first boot, so the OS computes the digest of the payload it
+fetched and applied.
+
 The service accepts the report only from one of the Machine's IPAM addresses,
 and only if every value matches the operation. An accepted report also proves
-that the OS came up with its IPAM addresses. A wipe or a burn-in posts the
-token and its own result the same way, from its own address. See [Open
-questions](#open-questions).
+that the OS came up with its IPAM addresses.
+
+The report comes from the provider-built image's first-boot step, before the
+customer's bootstrap runs, and the service accepts it only once. That trusts
+the provider image after install, which [#184][images-pr] does not do today,
+so that proposal must allow this proof for virtual media.
 
 Console output is optional diagnostics. It is never proof.
 
@@ -337,8 +350,13 @@ A virtual media install has a 45-minute deadline in two phases:
 
 | Phase | Default | Ends when |
 | --- | --- | --- |
-| Media | 15 minutes from power-on | The media window closes. The installer must have read everything it needs from the media. |
+| Media | 15 minutes from power-on | The media window closes, always at that time. |
 | First boot | 30 minutes after the media phase | The first-boot report is accepted. |
+
+A qualified boot medium reads everything it needs from the media within the
+media phase. An installer that is still reading when the window closes cannot
+finish, and the operation ends `OutcomeUnknown` at the end of the first-boot
+phase if no report arrives.
 
 A site can override both. The defaults are tuned from lab and site
 measurements.
@@ -488,7 +506,7 @@ programs the Machine's interfaces as it does for a dedicated boot NIC in
 [#186][server-networking-pr]. A virtual media install powers on only after
 every interface is `Programmed`.
 
-A wipe and a burn-in hold no Machine. How they reach the first-boot service
+A wipe, a burn-in, and a commissioning probe hold no Machine. How they report
 under virtual media is an [open question](#open-questions).
 
 ### Isolation and security
@@ -654,11 +672,13 @@ report.
 
 ## Open questions
 
-- **Reports from wipes and burn-ins under virtual media.** They hold no
-  Machine, so they have no IPAM address to post from. The proposed answer is
-  that the requester claims a provider address from IPAM and NSO attaches the
-  port to a provider network for the operation, released like a boot
-  attachment claim. This needs a decision before virtual media handles wipes.
+- **Reports from wipes, burn-ins, and probes under virtual media.** They hold
+  no Machine, so they have no IPAM address to post from. The proposed answer
+  is that the requester claims a provider address from IPAM and NSO attaches
+  the port to a provider network for the operation, released like a boot
+  attachment claim. Until this is decided, virtual media cannot qualify a
+  server, wipe one, or burn one in, and the virtual media qualification and
+  wipe acceptance tests cannot run.
 
 ## Infrastructure needed
 
