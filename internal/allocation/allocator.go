@@ -455,8 +455,13 @@ func absentAPI(err error) bool {
 
 // recordBootClaim records, in the allocation's status, the boot claim the
 // requester is about to make for an operation, so its release is verified
-// from the record even after the claim and the operation are gone.
+// from the record even after the claim and the operation are gone. Only a
+// source whose address can outlive its claim needs the record; IPAM's
+// claims are verified from the claims that remain, as before.
 func (a *Allocator) recordBootClaim(ctx context.Context, allocation *fleetv1.MachineAllocation, source bootaddress.Source, kind, operation string) error {
+	if _, ok := source.(bootaddress.Lingering); !ok {
+		return nil
+	}
 	claimKind := source.ClaimKind()
 	record := fleetv1.BootClaimRecord{OperationKind: kind, Operation: operation,
 		Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(operation)}}

@@ -16,6 +16,7 @@ import (
 	networkingv1 "go.datum.net/network-services-operator/api/v1alpha"
 
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
+	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/bootaddress"
 )
 
@@ -65,6 +66,12 @@ func TestAnNSOReleaseIsVerifiedAfterTheClaimIsGone(t *testing.T) {
 	}
 	if none, err := e.allocator.HandOver(e.ctx, allocation); err != nil || !none {
 		t.Fatalf("hand over once IPAM released: none=%v %v", none, err)
+	}
+	// The verified entry is pruned by hand-over, not left for the final
+	// release.
+	stored := &fleetv1.MachineAllocation{}
+	if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(allocation), stored); err != nil || len(stored.Status.BootClaims) != 0 {
+		t.Fatalf("record after a verified hand-over = %+v, %v", stored.Status.BootClaims, err)
 	}
 
 	// Switch back to IPAM while NSO still holds a boot attachment claim for

@@ -160,6 +160,16 @@ type Source interface {
 
 var _ Source = Claimer{}
 
+// Lingering is a Source whose address can outlive its claim, so the
+// allocator records each claim it makes and verifies its release from that
+// record, even after the claim is gone. IPAM's claimer is not: IPAM removes
+// a claim and its allocation in one transaction, so its surviving claims are
+// the whole record.
+type Lingering interface {
+	Source
+	AddressOutlivesClaim()
+}
+
 // ScopeRef is one IPAM scope reference, such as the site's location.
 type ScopeRef struct {
 	APIGroup string

@@ -90,6 +90,10 @@ func (BootAttachments) ClaimKind() schema.GroupKind {
 	return schema.GroupKind{Group: BootClaimGroup, Kind: BootClaimKind}
 }
 
+// AddressOutlivesClaim marks the source as bootaddress.Lingering: NSO may
+// remove its claim before IPAM removes the address it claimed for it.
+func (BootAttachments) AddressOutlivesClaim() {}
+
 // AttachesBootNIC marks the source as the one that moves boot NICs.
 func (BootAttachments) AttachesBootNIC() {}
 

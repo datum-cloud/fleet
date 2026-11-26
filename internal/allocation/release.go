@@ -138,6 +138,7 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 		if err != nil {
 			return false, err
 		}
+		surviving := slices.Clone(operations)
 		for _, name := range recordedBootClaims(allocation, pair.kind, pair.claimer.ClaimKind()) {
 			if !slices.Contains(operations, name) {
 				operations = append(operations, name)
@@ -146,23 +147,32 @@ func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv
 		for _, name := range operations {
 			if !all {
 				operation := pair.new()
-				if err := pair.api.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, operation); apierrors.IsNotFound(err) {
+				err := pair.api.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: name}, operation)
+				switch {
+				case apierrors.IsNotFound(err) && slices.Contains(surviving, name):
+					// A claim whose operation does not exist yet stays: its
+					// requester may still create the operation.
 					none = false
 					continue
-				} else if err != nil {
+				case apierrors.IsNotFound(err):
+					// A record with neither a claim nor an operation, such as
+					// one whose attach failed before any claim was made, is
+					// verified now and cleared once verified.
+				case err != nil:
 					return false, err
-				}
-				if !operation.OperationStatus().Phase.Ended() {
-					none = false
-					continue
-				}
-				held, err := a.held(ctx, allocation, name)
-				if err != nil {
-					return false, err
-				}
-				if held {
-					none = false
-					continue
+				default:
+					if !operation.OperationStatus().Phase.Ended() {
+						none = false
+						continue
+					}
+					held, err := a.held(ctx, allocation, name)
+					if err != nil {
+						return false, err
+					}
+					if held {
+						none = false
+						continue
+					}
 				}
 			}
 			released, err := pair.claimer.Release(ctx, name)
