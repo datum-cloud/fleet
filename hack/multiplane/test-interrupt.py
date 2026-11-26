@@ -65,13 +65,22 @@ def result_of(tmp):
     return json.loads(results[0].read_text()) if len(results) == 1 else None
 
 
+def default_signals():
+    """Give the run default signal dispositions. A parent started under nohup
+    or as a background job ignores SIGHUP or SIGINT, and bash cannot trap a
+    signal that was ignored when it started, so the test would then exercise
+    the parent's dispositions, not run.sh."""
+    for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+        signal.signal(sig, signal.SIG_DFL)
+
+
 def interrupted(sig):
     with tempfile.TemporaryDirectory() as t:
         tmp = pathlib.Path(t)
         repo, env = scratch(tmp)
         log = open(tmp / 'run.out', 'w')
         p = subprocess.Popen(['bash', str(repo / 'hack/multiplane/run.sh')], cwd=repo, env=env, text=True,
-                             stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                             stdout=log, stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=default_signals)
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline and not list(tmp.glob('fleet-multiplane.*/logs/build.log')):
             time.sleep(0.2)
