@@ -106,6 +106,12 @@ for role in roles:
  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRoleBinding','metadata':{'name':'fleet-management'},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':'fleet-management'},'subjects':[{'kind':'User','name':'management'}]})
  if role!='provider':
   apply(d/'bootstrap.json',{'apiVersion':'v1','kind':'Namespace','metadata':{'name':'default'}})
-  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'Role','metadata':{'name':'customer','namespace':'default'},'rules':[{'apiGroups':['metal.datumapis.com'],'resources':['machines','installations'],'verbs':['get','list','watch','create','delete']}]})
+  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'Role','metadata':{'name':'customer','namespace':'default'},'rules':[{'apiGroups':['metal.datumapis.com'],'resources':['machines','installations'],'verbs':['get','list','watch','create','delete']},
+   # The customer stores its own bootstrap data.
+   {'apiGroups':[''],'resources':['secrets'],'verbs':['get','create','delete']}]})
+  # The Metal provider reads only the one bootstrap Secret consumer A's
+  # Installation names, standing in for the creator's authority.
+  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'Role','metadata':{'name':'fleet-bootstrap-reader','namespace':'default'},'rules':[{'apiGroups':[''],'resources':['secrets'],'resourceNames':['debian-pxe-bootstrap'],'verbs':['get']}]})
+  apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'RoleBinding','metadata':{'name':'fleet-bootstrap-reader','namespace':'default'},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'Role','name':'fleet-bootstrap-reader'},'subjects':[{'kind':'User','name':'management'}]})
   apply(d/'bootstrap.json',{'apiVersion':'rbac.authorization.k8s.io/v1','kind':'RoleBinding','metadata':{'name':'customer','namespace':'default'},'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'Role','name':'customer'},'subjects':[{'kind':'User','name':'customer'}]})
  print(role+': Flux-managed Milo project API ready (static-token RBAC test seam)',flush=True)

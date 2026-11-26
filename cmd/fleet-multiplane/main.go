@@ -113,6 +113,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// The worker may get only its own assignment's payload object, which
+	// federation delivers beside the handoff.
+	runner.Payloads = coordination.HandoffPayloads{API: api, Namespace: coordinationNamespace, Cell: *cell}
 	err = cellView.Work(ctx, *handoff, runner)
 	fmt.Fprintf(os.Stderr, "site-worker: handoff %s: %s\n", *handoff, classify(err))
 	switch {

@@ -323,8 +323,9 @@ objects. This sequence is proposed only.
 
 A handoff carries one assignment: the Device, the operation, the fence, the
 admitted snapshot and the exact inputs. It holds no credential and no
-bootstrap payload. Federation does not yet carry bootstrap payloads, so
-admission refuses an operation that names one. A Redfish worker reads each Device's own
+bootstrap payload: federation carries an operation's payload as its own
+`MachineAllocationPayload` beside the handoff, and the worker may get only
+its own. See [OS images and bootstrap data](../development/machine-images.md). A Redfish worker reads each Device's own
 BMC credential Secret in the site's cluster, never from a handoff. Cell readers
 of handoffs are:
 

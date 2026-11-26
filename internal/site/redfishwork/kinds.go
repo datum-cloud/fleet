@@ -121,9 +121,6 @@ func (k Installation) Check(_ context.Context, work *site.Work) *custody.Refusal
 	if err := json.Unmarshal(work.Inputs, &spec); err != nil {
 		return &custody.Refusal{Reason: ReasonInputs, Message: "the admitted inputs are not a DeviceInstallation spec"}
 	}
-	if spec.Bootstrap != nil {
-		return &custody.Refusal{Reason: custody.ReasonBootstrapUnsupported, Message: "this site cannot yet hand bootstrap data to the server"}
-	}
 	// Firmware settings can change after allocation: read the mode the
 	// server boots in now.
 	if mode := conn(work).System.BootMode; mode == "" || !contains(spec.Image.FirmwareModes, mode) {
@@ -186,7 +183,11 @@ func (k Installation) Run(ctx context.Context, work *site.Work) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ops.InstallationEvidence{Steps: steps}, nil
+	evidence := ops.InstallationEvidence{Steps: steps}
+	if payload := work.Bootstrap(); payload != nil {
+		evidence.InstallerVerifiedBootstrap = payload.Digest
+	}
+	return evidence, nil
 }
 
 func (k Wipe) Run(ctx context.Context, work *site.Work) (any, error) {
@@ -219,9 +220,34 @@ type Boot struct {
 	// Phase is the network-booting phase, set while it may boot.
 	Phase  string `json:"phase,omitempty"`
 	Closed bool   `json:"closed,omitempty"`
+	// Seed is the operation's bootstrap seed archive, served only while the
+	// admission is open and dropped when it closes.
+	Seed []byte `json:"seed,omitempty"`
 }
 
 const bootRecords = "boot"
+
+var _ site.Scrubber = Installation{}
+
+// Scrub drops the seed from every boot admission of the Device below the
+// fence, however its install ended.
+func (Installation) Scrub(store *site.Store, device string, below int64) error {
+	records, err := store.Records(bootRecords)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		var boot Boot
+		if record.Device != device || json.Unmarshal(record.Data, &boot) != nil || boot.Fence >= below || len(boot.Seed) == 0 {
+			continue
+		}
+		boot.Seed = nil
+		if err := store.RewriteRecord(device, bootRecords, record.Name, boot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // boot reads the operation's boot admission, creating it once. The receipt is
 // fixed before any boot, so a replay waits for the same receipt.
@@ -241,6 +267,11 @@ func (c Config) boot(ctx context.Context, work *site.Work, mode string) (Boot, e
 	}
 	_, _, _, window := c.durations()
 	boot = Boot{Operation: work.Key(), Fence: work.Fence, Mode: mode, MAC: strings.ToLower(conn(work).Target.MAC), Receipt: hex.EncodeToString(receipt), Token: hex.EncodeToString(token), Created: c.now().UTC(), Expires: c.now().Add(window).UTC()}
+	if payload := work.Bootstrap(); payload != nil && mode == "install" {
+		if boot.Seed, err = site.SeedArchive(payload, "fleet-"+Key(work.Key())); err != nil {
+			return boot, err
+		}
+	}
 	return boot, store.PutRecord(work.Device, work.Fence, bootRecords, work.Key(), boot)
 }
 
@@ -303,7 +334,7 @@ func (c Config) run(ctx context.Context, work *site.Work, phases []phase) ([]ops
 			return nil, err
 		}
 		if ph.mode != "" {
-			boot.Phase, boot.Closed = "", true
+			boot.Phase, boot.Closed, boot.Seed = "", true, nil
 			if err := c.saveBoot(work, boot); err != nil {
 				return nil, err
 			}
@@ -399,7 +430,14 @@ func (c Config) complete(ctx context.Context, work *site.Work, boot Boot, ph pha
 			if power.State == "Off" {
 				if seen == 1 {
 					if ph.mode != "" {
-						return c.verifyDelivery(work)
+						if err := c.verifyDelivery(work, len(boot.Seed) > 0); err != nil {
+							return err
+						}
+					}
+					// The installer read the seed back from the target disk
+					// and reported its salted digest.
+					if ph.name == "installer" && work.Bootstrap() != nil {
+						return c.verifyBootstrap(work, boot)
 					}
 					return nil
 				}
@@ -473,9 +511,33 @@ func (c Config) deliveries(work *site.Work) map[string]bool {
 	return done
 }
 
-func (c Config) verifyDelivery(work *site.Work) error {
+// verifyBootstrap requires exactly one console line in which the installer
+// reports the salted digest of the bootstrap data it read back from the
+// target disk.
+func (c Config) verifyBootstrap(work *site.Work, boot Boot) error {
+	data, err := os.ReadFile(filepath.Join(c.ConsoleRoot, filepath.Base(conn(work).Target.Console)))
+	if err != nil {
+		return err
+	}
+	want, n := site.BootstrapLine(boot.Receipt, work.Bootstrap().Digest), 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == want {
+			n++
+		}
+	}
+	if n != 1 {
+		return errors.New("the installer did not verify the admitted bootstrap data on disk")
+	}
+	return nil
+}
+
+func (c Config) verifyDelivery(work *site.Work, seed bool) error {
 	done := c.deliveries(work)
-	for _, name := range []string{"boot.ipxe", "kernel", "installer.gz"} {
+	names := []string{"boot.ipxe", "kernel", "installer.gz"}
+	if seed {
+		names = append(names, "seed.cpio")
+	}
+	for _, name := range names {
 		if !done["write-complete "+name] {
 			return fmt.Errorf("missing network delivery: %s", name)
 		}

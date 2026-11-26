@@ -11,7 +11,7 @@ kind: Role
 metadata: {name: fleet-federation, namespace: fleet-coordination}
 rules:
   - apiGroups: [coordination.fleet.datumapis.com]
-    resources: [machineallocationhandoffs]
+    resources: [machineallocationhandoffs, machineallocationpayloads]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [""]
     resources: [events]
@@ -30,7 +30,7 @@ kind: ClusterRole
 metadata: {name: fleet-federation-discovery}
 rules:
   - apiGroups: [coordination.fleet.datumapis.com]
-    resources: [machineallocationhandoffs]
+    resources: [machineallocationhandoffs, machineallocationpayloads]
     verbs: [get, list, watch]
   - apiGroups: [""]
     resources: [nodes, pods, namespaces]

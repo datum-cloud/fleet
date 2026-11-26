@@ -349,6 +349,24 @@ func (s *Store) PutRecord(device string, fence int64, collection, name string, v
 	})
 }
 
+// RewriteRecord replaces a kind's existing record whatever the stored fence,
+// so a newer fence can remove secret material from a superseded one. It
+// writes nothing if there is no record.
+func (s *Store) RewriteRecord(device, collection, name string, value any) error {
+	if !validRecordName(collection) || !validRecordName(name) {
+		return errors.New("site: invalid record name")
+	}
+	return s.locked(device, func(*deviceState) (bool, error) {
+		dir := filepath.Join(s.deviceDir(device), collection)
+		if _, err := os.Stat(filepath.Join(dir, name+".json")); os.IsNotExist(err) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		return false, writeAtomic(dir, name+".json", value)
+	})
+}
+
 // GetRecord reads a kind's record. It returns false if there is none.
 func (s *Store) GetRecord(device, collection, name string, into any) (bool, error) {
 	if !validRecordName(collection) || !validRecordName(name) {

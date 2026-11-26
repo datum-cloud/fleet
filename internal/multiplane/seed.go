@@ -18,8 +18,12 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/sealed"
 	"go.datum.net/fleet/internal/tenancy"
 )
+
+// BootstrapSecret is consumer A's bootstrap Secret.
+const BootstrapSecret = "debian-pxe-bootstrap"
 
 // Seed uses bootstrap only for provider facts and publication: the profile,
 // class and capacity, and one Device for each enrolled Device. Requests use
@@ -73,7 +77,7 @@ func Seed(ctx context.Context, c Config) error {
 		return errors.New("the cell image is not name@digest")
 	}
 	image := &fleet.MachineImage{ObjectMeta: metav1.ObjectMeta{Name: imageName, Namespace: DeviceNamespace}, Spec: fleet.MachineImageSpec{
-		Definition:   &fleet.ImageDefinition{Family: "fleet-local-linux", Version: "1", Architecture: "amd64", FirmwareModes: []string{fleet.FirmwareBIOS}, Digest: imageDigest},
+		Definition:   &fleet.ImageDefinition{Family: "fleet-local-linux", Version: "1", Architecture: "amd64", FirmwareModes: []string{fleet.FirmwareBIOS}, BootstrapFormats: []string{fleet.BootstrapNoCloud}, Digest: imageDigest},
 		Availability: fleet.ImageAvailable,
 	}}
 	if err := ensure(ctx, provider, image); err != nil {
@@ -147,6 +151,18 @@ func Seed(ctx context.Context, c Config) error {
 			return err
 		}
 		installation := &fleet.Installation{ObjectMeta: metav1.ObjectMeta{Name: "debian-pxe", Namespace: Namespace}, Spec: fleet.InstallationSpec{MachineRef: fleet.MachineReference{Name: machine.Name}, ExpectedPredecessor: fleet.InstallationPredecessor{Type: "None"}, ImageRef: fleet.LocalReference{Name: imageName}}}
+		// Consumer A stores synthetic bootstrap data in its own project, as
+		// the customer, and its first install names it.
+		if name == "consumer-a" {
+			secret := &core.Secret{ObjectMeta: metav1.ObjectMeta{Name: BootstrapSecret, Namespace: Namespace}, Type: sealed.SecretType, StringData: map[string]string{
+				sealed.KeyUserData:          "#cloud-config\nhostname: synthetic-example\n",
+				sealed.KeySSHAuthorizedKeys: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISyntheticExampleOnly synthetic@example.com\n",
+			}}
+			if err := ensure(ctx, user, secret); err != nil {
+				return err
+			}
+			installation.Spec.BootstrapConfigRef = &fleet.LocalReference{Name: BootstrapSecret}
+		}
 		if err := ensure(ctx, user, installation); err != nil {
 			return err
 		}

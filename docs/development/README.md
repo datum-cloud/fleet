@@ -41,9 +41,11 @@ smoke verifies it. The end-to-end failure scenarios (Increment D) are proposed.
 [OS images and bootstrap data](machine-images.md) has its image catalog
 **implemented**: a provider-published, digest-pinned `MachineImage` that
 admission resolves through a publication record and checks against the
-server's architecture and firmware mode. The sealed bootstrap store is
-**implemented** through the simulator site; federation and the lab sites do
-not carry bootstrap data yet.
+server's architecture and firmware mode. The sealed bootstrap store and its
+delivery through federation to the local VM and Redfish guests are
+**implemented**: the installer verifies the data on the target disk before
+the install succeeds. The multi-plane runs that prove it in the lab are
+pending.
 
 The opt-in [multi-plane acceptance harness](../operations/multiplane.md) composes
 the [local VM site](../operations/local-vm.md) with native Milo project APIs, the
@@ -793,7 +795,6 @@ acceptance inventory.
   site credential protocol.
 - The capacity projector is unwired (O1); see
   [Device custody](device-custody.md#points-for-a-person). Bootstrap data
-  reaches only the simulator site; see [OS images and bootstrap
-  data](machine-images.md).
+  delivery is described in [OS images and bootstrap data](machine-images.md).
 - The site store is intended for a single site process per Device. Replication,
   migration, backup, and upgrade/downgrade compatibility are not implemented.

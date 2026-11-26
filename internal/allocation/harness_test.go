@@ -2,10 +2,12 @@ package allocation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -55,6 +57,7 @@ type env struct {
 	loop       *delivery.Loop
 	store      *site.Store
 	enrollment fixture.Enrollment
+	site       *sweepingSite
 	class      *fleetv1.MachineClass
 	profile    *fleetv1.MachineProfile
 }
@@ -116,7 +119,8 @@ func startEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: remote}, Devices: map[string][]string{}}
+	e.site = &sweepingSite{Client: remote}
+	sites := &delivery.Sites{Sites: map[string]delivery.Site{siteName: e.site}, Devices: map[string][]string{}}
 	coordinator := &custody.Coordinator{Client: admin, Registry: registry, Sites: sites, Config: custody.Config{Namespace: namespace, Principals: custody.Principals{
 		custody.CreatorMetalProvider: {{Username: providerUser}}, custody.CreatorReleaseController: {{Username: releaseUser}},
 	}}}
@@ -237,4 +241,45 @@ func (e *env) release(allocation *fleetv1.MachineAllocation, owner Machine) {
 		}
 		return released
 	})
+}
+
+// sweepingSite is the simulator site's API, also keeping payloads the way
+// the federation hub does, so a test sees what each coordinator pass tells
+// a site to keep. failDeliver makes every delivery fail.
+type sweepingSite struct {
+	*siteapi.Client
+	mu          sync.Mutex
+	sweeps      [][]string
+	failDeliver bool
+}
+
+func (s *sweepingSite) Deliver(ctx context.Context, assignment site.Assignment, payload *site.Payload) error {
+	s.mu.Lock()
+	fail := s.failDeliver
+	s.mu.Unlock()
+	if fail {
+		return errors.New("delivery failed")
+	}
+	return s.Client.Deliver(ctx, assignment, payload)
+}
+
+func (s *sweepingSite) SweepPayloads(_ context.Context, keep []site.Assignment) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var names []string
+	for _, assignment := range keep {
+		names = append(names, assignment.Operation.Name)
+	}
+	s.sweeps = append(s.sweeps, names)
+	return nil
+}
+
+// lastSweep returns the names the last sweep kept, and how many sweeps ran.
+func (s *sweepingSite) lastSweep() ([]string, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.sweeps) == 0 {
+		return nil, 0
+	}
+	return s.sweeps[len(s.sweeps)-1], len(s.sweeps)
 }

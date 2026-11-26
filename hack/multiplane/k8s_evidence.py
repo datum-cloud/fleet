@@ -117,7 +117,9 @@ def worker_rbac(state, name):
     for args in (('-n', NS, 'get', 'machineallocationhandoff', 'op-other-operation'), ('-n', NS, 'get', 'machineallocationhandoffs'),
                  ('-n', NS, 'patch', 'machineallocationhandoff', name, '--subresource=status', '--type=merge', '-p', '{"status":{}}'),
                  ('-n', NS, 'patch', 'machineallocationhandoff', name, '--type=merge', '-p', '{"spec":{"cell":"other"}}'),
-                 ('-n', NS, 'get', 'secrets'), ('-n', SITE, 'get', 'secrets'), ('-n', SITE, 'create', 'configmap', 'forbidden', '--from-literal=x=y'), ('-n', SITE, 'get', 'jobs'),
+                 ('-n', NS, 'get', 'secrets'), ('-n', NS, 'get', 'machineallocationpayloads'),
+                 ('-n', NS, 'get', 'machineallocationpayload', 'op-other-operation-payload'),
+                 ('-n', NS, 'delete', 'machineallocationpayload', name + '-payload'), ('-n', SITE, 'get', 'secrets'), ('-n', SITE, 'create', 'configmap', 'forbidden', '--from-literal=x=y'), ('-n', SITE, 'get', 'jobs'),
                  # Another Device's credential, and listing or watching them, are
                  # denied in both modes.
                  ('-n', CREDENTIALS, 'get', 'secret', credential_name(OTHER_DEVICE)), ('-n', CREDENTIALS, 'get', 'secrets'),
@@ -127,7 +129,12 @@ def worker_rbac(state, name):
         if r.returncode == 0 or 'forbidden' not in r.stderr.lower():
             raise SystemExit('worker credential allowed: ' + ' '.join(args[:4]) + ' ' + r.stderr[:200])
         denied.append(args[1] + ' ' + ' '.join(args[2:4]) + (' (status)' if '--subresource=status' in args else ''))
-    record = {'observedAt': now(), 'serviceAccount': 'w-' + name, 'ownHandoffReadable': True, 'forbidden': denied}
+    # The worker may get exactly its own payload, which exists only for an
+    # operation with bootstrap data.
+    mine = kubectl(state, 'auth', 'can-i', 'get', 'machineallocationpayload/' + name + '-payload', '-n', NS, check=False, config='worker-kubeconfig.json')
+    if mine.stdout.strip() != 'yes':
+        raise SystemExit('worker cannot get its own payload: ' + (mine.stdout + mine.stderr)[:200])
+    record = {'observedAt': now(), 'serviceAccount': 'w-' + name, 'ownHandoffReadable': True, 'ownPayloadReadable': True, 'forbidden': denied}
     role = get(state, '-n', NS, 'get', 'role', 'w-' + name)
     record.update(roleRules=role['rules'], roleCreatedBy=role['metadata'].get('labels', {}).get('kro.run/node-id'))
     if REDFISH:

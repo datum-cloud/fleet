@@ -285,6 +285,9 @@ func (r *Runner) acquire(ctx context.Context, assignment Assignment) (*runLock, 
 			return nil, err
 		}
 	}
+	if err := r.scrub(assignment.Device, assignment.Fence); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithDeadline(ctx, assignment.Deadline)
 	defer cancel()
 	for {

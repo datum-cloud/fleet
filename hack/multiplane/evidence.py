@@ -166,6 +166,36 @@ def custody_evidence(store, ops, provider, a, b):
     return record
 
 
+def bootstrap_line(provider, o, receipt):
+    """The console line the installer must print after it reads an install's
+    bootstrap data back from the target disk, or None. The operation's
+    evidence must record the same salted digest as installer-verified."""
+    p = provider[o['operation']]
+    digest = (p['spec'].get('bootstrap') or {}).get('digest')
+    if not digest:
+        return None
+    if ((p.get('status') or {}).get('evidence') or {}).get('installerVerifiedBootstrap') != digest:
+        fail('%s succeeded without the installer verifying its bootstrap data' % p['metadata']['name'])
+    return 'FLEET-BOOTSTRAP:%s:%s' % (receipt, digest)
+
+
+def guest_line(installer_line):
+    """The line the lab guest prints on first boot for the same receipt and
+    digest. It is lab evidence, never a condition of the install's success."""
+    return 'FLEET-GUEST-' + installer_line[len('FLEET-'):]
+
+
+def bootstrap_gone():
+    """No copy of a payload remains once the lifecycle ends: not in the
+    provider's sealed store, and not at the cell, which federation clears
+    when the hub deletes its copy."""
+    config = s / 'provider' / 'bootstrap-project.json'
+    sealed = json.loads(out('kubectl', '--kubeconfig', str(config), '--request-timeout=30s', '-n', 'fleet-provider', 'get', 'sealedpayloads', '-o', 'json'))['items']
+    delivered = kget('-n', 'fleet-coordination', 'get', 'machineallocationpayloads')['items']
+    if sealed or delivered:
+        fail('bootstrap payload copies remain: %d sealed, %d at the cell' % (len(sealed), len(delivered)))
+
+
 def boot_record(raw, collection, name):
     p = raw / 'site' / 'devices' / harness.device_dir().rsplit('/', 1)[1] / collection / (name + '.json')
     return json.loads(p.read_text()) if p.exists() else {}
@@ -183,7 +213,7 @@ def libvirt_provider():
     installs = [o for o in ops if o['kind'] == 'DeviceInstallation']
     wipes = [o for o in ops if o['kind'] == 'DeviceWipe']
 
-    receipts, starts = [], {}
+    receipts, starts, bootstrapped = [], {}, []
     for o in installs:
         uid = o['operation']
         directory = raw / 'vm' / harness.key(harness.DEVICE) / harness.key(uid)
@@ -192,9 +222,22 @@ def libvirt_provider():
             fail('boot admission not closed at the install fence')
         log = raw / 'boot-evidence' / harness.key(uid) / 'boot-delivery.log'
         written = log.read_text() if log.exists() else ''
-        for name in ('boot.ipxe', 'kernel', 'installer.gz'):
+        seeded = bootstrap_line(provider, o, boot['receipt'])
+        for name in ('boot.ipxe', 'kernel', 'installer.gz') + (('seed.cpio',) if seeded else ()):
             if not any('write-complete ' + name + ' bytes=' in line for line in written.splitlines()):
                 fail('missing completed broker write for ' + name)
+        if seeded:
+            installer_log = directory / 'installer.log'
+            lines = [line.strip() for line in installer_log.read_text(errors='replace').splitlines()] if installer_log.exists() else []
+            if lines.count(seeded) != 1 or sum(1 for l in lines if l.startswith('FLEET-BOOTSTRAP:')) != 1:
+                fail('the installer did not verify exactly the admitted bootstrap data on disk')
+            # Lab evidence only: the booted guest found the same data where
+            # it reads it. The worker never waits for this line.
+            disk_log = directory / 'disk.log'
+            lines = [line.strip() for line in disk_log.read_text(errors='replace').splitlines()] if disk_log.exists() else []
+            if lines.count(guest_line(seeded)) != 1 or sum(1 for l in lines if l.startswith('FLEET-GUEST-BOOTSTRAP:')) != 1:
+                fail('the booted guest did not find exactly the admitted bootstrap data on first boot')
+            bootstrapped.append(uid)
         for filename, marker in (('installer.log', 'FLEET-INSTALLED:'), ('disk.log', 'FLEET-DISK-BOOT:')):
             p = directory / filename
             lines = [line.strip() for line in p.read_text(errors='replace').splitlines()] if p.exists() else []
@@ -219,6 +262,10 @@ def libvirt_provider():
         starts[uid] = {'qemuStarts': len(blocks), 'networkInstallerStarts': len(network), 'diskOnlyStarts': len(disk_only)}
         if len(blocks) != 2 or len(network) != 1 or len(disk_only) != 1 or blocks.index(network[0]) != 0:
             fail('expected exactly one network installer start followed by one disk-only start, got %s' % starts[uid])
+    # Consumer A's install carries bootstrap data; the installer verified it.
+    if len(bootstrapped) != 1 or bootstrapped[0] != ops[0]['operation']:
+        fail('expected consumer A\'s install, and only it, to report bootstrap data; got %s' % bootstrapped)
+    bootstrap_gone()
     # The release wipes deleted every installation disk of the Device.
     if list((raw / 'vm').rglob('disk.raw')):
         fail('a wiped Device still has an installation disk')
@@ -252,12 +299,17 @@ def redfish_provider():
     if a['systemID'] != 'System-1' or a['console'] != 'target-a.log':
         fail('the allocated Device is not enrolled as lab target A')
     console = [l.strip() for l in (raw / 'lab-console' / 'target-a.log').read_text(errors='replace').splitlines()]
-    expected, receipts = [], []
+    expected, receipts, bootstrapped = [], [], []
     for o in ops:
         boot = boot_record(raw, 'boot', o['operation'])
         if not boot.get('closed') or boot.get('phase') or boot.get('fence') != o['fence'] or boot.get('mac') != a['mac'].lower():
             fail('an operation did not keep a closed boot admission for target A at its fence')
-        want = ['FLEET-INSTALLED:' + boot['receipt'], 'FLEET-DISK-BOOT:' + boot['receipt']] if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
+        seeded = bootstrap_line(provider, o, boot['receipt']) if o['kind'] == 'DeviceInstallation' else None
+        if seeded:
+            bootstrapped.append(o['operation'])
+        # The installer prints its bootstrap check just before its own receipt,
+        # and the lab guest its first-boot report just before the disk receipt.
+        want = (([seeded] if seeded else []) + ['FLEET-INSTALLED:' + boot['receipt']] + ([guest_line(seeded)] if seeded else []) + ['FLEET-DISK-BOOT:' + boot['receipt']]) if o['kind'] == 'DeviceInstallation' else ['FLEET-WIPED:%s:%d' % (boot['receipt'], a['diskBytes'])]
         for line in want:
             if console.count(line) != 1:
                 fail('expected exactly one exact console receipt %s for %s' % (line.split(':')[0], o['kind']))
@@ -266,11 +318,15 @@ def redfish_provider():
                          'receipts': [line.split(':')[0] for line in want], 'receiptSHA256': hashlib.sha256(boot['receipt'].encode()).hexdigest()})
         log = raw / 'boot-evidence' / harness.key(o['operation']) / 'boot-delivery.log'
         written = log.read_text() if log.exists() else ''
-        for name in ('boot.ipxe', 'kernel', 'installer.gz'):
+        for name in ('boot.ipxe', 'kernel', 'installer.gz') + (('seed.cpio',) if seeded else ()):
             if 'write-complete ' + name + ' bytes=' not in written:
                 fail('missing completed boot delivery of %s for %s' % (name, o['kind']))
     if expected != sorted(expected) or sum(1 for l in console if l.startswith('FLEET-')) != len(expected):
         fail('console receipts are out of order or include another operation')
+    # Consumer A's install carries bootstrap data, consumer B's does not.
+    if len(bootstrapped) != 1 or bootstrapped[0] != ops[0]['operation']:
+        fail('expected consumer A\'s install, and only it, to report bootstrap data; got %s' % bootstrapped)
+    bootstrap_gone()
     if sum(1 for l in console if l.startswith('+ sfdisk /dev/vda')) != 2:
         fail('the installer partitioned the target disk other than once per install')
     qemu = (raw / 'libvirt-qemu' / 'fleet-lab-target-a.log').read_text(errors='replace')

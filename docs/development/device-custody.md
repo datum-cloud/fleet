@@ -374,7 +374,7 @@ event.
 
 - The capacity projector stays unwired (O1), so the synthetic fixtures still write
   `Prepared`, `Healthy` and `Available`.
-- Bootstrap data reaches only the simulator site. See
+- Bootstrap data reaches every site through its sealed store. See
   [OS images and bootstrap data](machine-images.md).
 - `DeviceRecovery` needs no second person.
 
@@ -920,7 +920,7 @@ Increment B's site tests run with `go test -race ./internal/site/...`:
 | One worker per assignment, final results, shutdown at each stage, an older worker that does not stop, a fence raised between journal and send | `TestARedeliveryWhileTheSameOperationRunsStoresNothing`, `TestACopyWaitingForTheLockReturnsTheStoredResult`, `TestAStoredResultSurvivesARedelivery`, `TestAWorkerStoppedFromOutsideStoresNoResult`, `TestAShutdownWhileWaitingForTheRunLockStoresNothing`, `TestAShutdownDuringTheChecksStoresNothing`, `TestANewerAssignmentThatCannotStopTheOlderWorkerSendsNothing`, `TestALostLockWithJournaledStepsIsUnknown`, `TestAFenceRaisedBetweenJournalAndSendStopsTheStep` |
 | Per-Device credentials, the fence report | `TestSecretCredentialsUseThePerDeviceContract`, `TestReportGivesTheCoordinatorSeenAndStoppedFences` |
 | Step payloads, the start-by window, identity separate from capabilities, a resumed worker reporting unknown | `TestAStepPayloadIsJournaledAndReadBack`, `TestALateStartIsStaleAndSendsNothing`, `TestIdentityIsSeparateFromInstallCapabilities`, `TestAResumedWorkerThatCannotReachTheBMCReportsUnknown` |
-| Install and wipe against a simulated BMC, one power-on per phase after an interruption in either phase, the power-off bound, fenced boot admission, bootstrap refused by a site that cannot hand it on | `TestAWorkerInterruptedInTheDiskPhaseResumes`, `TestAServerThatNeverPowersOffEndsTheStep`, `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestBootstrapIsRefusedAtTheSiteToo` |
+| Install and wipe against a simulated BMC, one power-on per phase after an interruption in either phase, the power-off bound, fenced boot admission, bootstrap data the installer verifies on disk, bootstrap refused without a payload | `TestAWorkerInterruptedInTheDiskPhaseResumes`, `TestAServerThatNeverPowersOffEndsTheStep`, `TestInstallationRunsBothPhasesWithOneOnEach`, `TestWipeChecksTheEnrolledDisk`, `TestAnInterruptedWorkerResumesWithoutASecondOn`, `TestOnlyTheCurrentFenceHasAnOpenBootAdmission`, `TestTheInstallerVerifiesBootstrapDataOverRedfish`, `TestBootstrapWithoutAPayloadSendsNothing` |
 
 Increment C's tests run with `task test:envtest`, and the smoke runs with
 `task standalone:test`:

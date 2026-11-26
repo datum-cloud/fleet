@@ -111,7 +111,7 @@ func (b BootServer) Handler() http.Handler {
 			boot, name = found, "boot.ipxe"
 		} else {
 			found, open := b.open(parts[1], parts[2])
-			if !open || (parts[3] != "kernel" && parts[3] != "installer.gz") {
+			if !open || (parts[3] != "kernel" && parts[3] != "installer.gz" && (parts[3] != "seed.cpio" || len(found.Seed) == 0)) {
 				deny()
 				return
 			}
@@ -122,7 +122,16 @@ func (b BootServer) Handler() http.Handler {
 		var size int64
 		if name == "boot.ipxe" {
 			base := b.Origin + "/" + Key(boot.Operation) + "/" + boot.Token
-			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s fleet.mode=%s\ninitrd %s/installer.gz\nboot\n", base, boot.Receipt, boot.Mode, base))
+			seed := ""
+			if len(boot.Seed) > 0 {
+				seed = "initrd " + base + "/seed.cpio\n"
+			}
+			data = []byte(fmt.Sprintf("#!ipxe\nkernel %s/kernel console=ttyS0 rdinit=/init fleet.receipt=%s fleet.mode=%s\ninitrd %s/installer.gz\n%sboot\n", base, boot.Receipt, boot.Mode, base, seed))
+			size = int64(len(data))
+		} else if name == "seed.cpio" {
+			// The operation's bootstrap seed, only while its admission is
+			// open; it is never written to the delivery evidence.
+			data = boot.Seed
 			size = int64(len(data))
 		} else {
 			// Hash the pinned artifact, then serve the same open file.
@@ -233,7 +242,7 @@ func (b BootServer) CheckClosedBoot(origin string, extraMACs []string) (string, 
 			return "", fmt.Errorf("a boot admission is not closed")
 		}
 		base := origin + "/" + Key(boot.Operation) + "/" + boot.Token
-		for _, url := range []string{origin + "/pxe/" + strings.ReplaceAll(boot.MAC, ":", "-") + "/boot.ipxe", base + "/kernel", base + "/installer.gz", base + "/disk.raw", base + "/boot.ipxe"} {
+		for _, url := range []string{origin + "/pxe/" + strings.ReplaceAll(boot.MAC, ":", "-") + "/boot.ipxe", base + "/kernel", base + "/installer.gz", base + "/seed.cpio", base + "/disk.raw", base + "/boot.ipxe"} {
 			if err := probe(url); err != nil {
 				return "", err
 			}

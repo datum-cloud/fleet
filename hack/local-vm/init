@@ -45,6 +45,16 @@ mount --bind /dev /target/dev
 mount --bind /proc /target/proc
 mount --bind /sys /target/sys
 printf '%s\n' "$receipt" > /target/fleet-receipt
+# Bootstrap data arrives as a second initrd under /fleet-bootstrap, which the
+# copy above already put on the disk. Install it where the image reads it on
+# first boot: the NoCloud seed, and the default user's SSH keys.
+if [ -d /fleet-bootstrap ]; then
+ mkdir -p /target/var/lib/cloud/seed/nocloud /target/root/.ssh
+ cp /fleet-bootstrap/user-data /fleet-bootstrap/meta-data /target/var/lib/cloud/seed/nocloud/
+ cp /fleet-bootstrap/authorized_keys /target/root/.ssh/authorized_keys
+ chmod 700 /target/root/.ssh /target/fleet-bootstrap
+ chmod 600 /target/root/.ssh/authorized_keys
+fi
 chroot /target grub-install --target=i386-pc /dev/vda
 kernel=$(basename /boot/vmlinuz-*)
 initrd=$(basename /boot/initrd.img-*)
@@ -56,5 +66,17 @@ menuentry Fleet {
 }
 CFG
 sync
+# Read the installed seed back from the disk, past the page cache, and report
+# its salted digest. The worker requires exactly the admitted digest; the
+# installed OS is not asked to prove anything. A copy that differs from the
+# seed on disk stops the install before its receipt.
+if [ -d /fleet-bootstrap ]; then
+ echo 3 > /proc/sys/vm/drop_caches
+ cmp -s /target/fleet-bootstrap/user-data /target/var/lib/cloud/seed/nocloud/user-data
+ cmp -s /target/fleet-bootstrap/meta-data /target/var/lib/cloud/seed/nocloud/meta-data
+ cmp -s /target/fleet-bootstrap/authorized_keys /target/root/.ssh/authorized_keys
+ digest=$(cat /target/fleet-bootstrap/salt /target/fleet-bootstrap/data | sha256sum | cut -d' ' -f1)
+ printf 'FLEET-BOOTSTRAP:%s:sha256:%s\n' "$receipt" "$digest"
+fi
 printf 'FLEET-INSTALLED:%s\n' "$receipt"
 /bin/busybox poweroff -f

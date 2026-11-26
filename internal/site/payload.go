@@ -88,11 +88,33 @@ func (r *Runner) payload(ctx context.Context, assignment Assignment) (*Payload, 
 	return payload, nil
 }
 
-// dropPayload deletes the assignment's payload once nothing can need it.
+// Scrubber is implemented by a kind that keeps copies of a payload in its
+// own site records, such as a boot admission's seed. Scrub removes every
+// such copy for the Device's operations below the fence. The site calls it
+// when an assignment's result is stored or it is passed, with the fence
+// just above it, and whenever it raises the Device's fence.
+type Scrubber interface {
+	Scrub(store *Store, device string, below int64) error
+}
+
+// dropPayload deletes the assignment's payload, and every kind's copy of
+// it, once nothing can need it.
 func (r *Runner) dropPayload(ctx context.Context, assignment Assignment) {
 	if r.Payloads != nil && assignment.Sealed() != nil {
 		_ = r.Payloads.Delete(context.WithoutCancel(ctx), assignment)
 	}
+	r.scrub(assignment.Device, assignment.Fence+1)
+}
+
+// scrub asks every kind to remove its payload copies below the fence.
+func (r *Runner) scrub(device string, below int64) error {
+	var failed error
+	for _, kind := range r.Kinds {
+		if scrubber, ok := kind.(Scrubber); ok {
+			failed = errors.Join(failed, scrubber.Scrub(r.Store, device, below))
+		}
+	}
+	return failed
 }
 
 const payloadRecords = "payload"

@@ -61,6 +61,13 @@ func (s *Sites) Serving(device *inventory.Device) []string {
 	return out
 }
 
+// PayloadSweeper is implemented by a site that keeps delivered payloads
+// itself, such as the federation hub. SweepPayloads deletes every payload
+// it holds that is not for one of the assignments to keep.
+type PayloadSweeper interface {
+	SweepPayloads(ctx context.Context, keep []site.Assignment) error
+}
+
 // PayloadSite is implemented by a site that reports whether it can receive
 // bootstrap payloads. A site that does not implement it cannot.
 type PayloadSite interface {
@@ -128,6 +135,11 @@ type Courier struct {
 	Coordinator *custody.Coordinator
 	Sites       *Sites
 	Namespace   string
+	// delivered are this pass's delivered assignments that carry a
+	// payload, and complete says every Device was reconciled and delivered
+	// without error, so the rest of the sites' payloads are not needed.
+	delivered []site.Assignment
+	complete  bool
 }
 
 // Deliver sends a Device's active operation to every site serving it, once
@@ -165,6 +177,9 @@ func (c *Courier) Deliver(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	if payload != nil {
+		c.delivered = append(c.delivered, assignment)
+	}
 	device := &inventory.Device{}
 	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: name}, device); err != nil {
 		return err
@@ -195,6 +210,27 @@ func (c *Courier) payload(ctx context.Context, assignment site.Assignment) (*sit
 		return nil, errors.New("delivery: the sealed payload does not match the operation")
 	}
 	return payload, nil
+}
+
+// SweepPayloads tells every site that keeps payloads which assignments
+// still need one: the active operations delivered in this pass. It does
+// nothing after a pass that failed to reconcile or deliver any Device, so
+// a payload an active operation needs is never deleted. A payload whose
+// operation ended, was cancelled or superseded, or never got a handoff, is
+// deleted, whether or not its result was collected.
+func (c *Courier) SweepPayloads(ctx context.Context) error {
+	if !c.complete {
+		return nil
+	}
+	var failed error
+	for name, remote := range c.Sites.Sites {
+		if sweeper, ok := remote.(PayloadSweeper); ok {
+			if err := sweeper.SweepPayloads(ctx, c.delivered); err != nil {
+				failed = errors.Join(failed, fmt.Errorf("sweep payloads at %s: %w", name, err))
+			}
+		}
+	}
+	return failed
 }
 
 // Collect reports every site's held results to the coordinator, and tells
@@ -270,16 +306,22 @@ func (l *Loop) Pass(ctx context.Context) error {
 	}
 	slices.Sort(sorted)
 	var failed error
+	l.Courier.delivered, l.Courier.complete = nil, true
 	for _, name := range sorted {
 		if err := l.Settle(ctx, name); err != nil {
 			failed = errors.Join(failed, fmt.Errorf("%s: %w", name, err))
+			l.Courier.complete = false
 			continue
 		}
 		if err := l.Courier.Deliver(ctx, name); err != nil {
 			failed = errors.Join(failed, fmt.Errorf("%s: %w", name, err))
+			l.Courier.complete = false
 		}
 	}
 	if err := l.Courier.Collect(ctx); err != nil {
+		failed = errors.Join(failed, err)
+	}
+	if err := l.Courier.SweepPayloads(ctx); err != nil {
 		failed = errors.Join(failed, err)
 	}
 	// Results were copied to operation status above, so a payload whose

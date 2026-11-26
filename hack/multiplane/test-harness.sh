@@ -250,8 +250,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check('kro writes only worker kinds in their namespaces', sorted(roles) == sorted(write_roles) and all(
         all(k in roles[n] for k in kinds) and not any(x in roles[n] for x in ('deployments', 'services', 'persistentvolumeclaims', 'configmaps', 'secrets'))
         for n, kinds in write_roles.items()), str(sorted(roles)))
-    check('kro writes are shape-checked by admission', kro_rbac.count('kind: ValidatingAdmissionPolicy\n') == 2 and kro_rbac.count('kind: ValidatingAdmissionPolicyBinding\n') == 2
-          and kro_rbac.count("request.userInfo.username == 'system:serviceaccount:kro-system:kro'") == 2 and 'parameterNotFoundAction: Deny' in kro_rbac)
+    check('kro writes are shape-checked by admission', kro_rbac.count('kind: ValidatingAdmissionPolicy\n') == 3 and kro_rbac.count('kind: ValidatingAdmissionPolicyBinding\n') == 3
+          and kro_rbac.count("request.userInfo.username == 'system:serviceaccount:kro-system:kro'") == 3 and 'parameterNotFoundAction: Deny' in kro_rbac)
+    check('kro may not write cluster-wide RBAC', 'name: fleet-site-kro-cluster-rbac' in kro_rbac and 'resources: [clusterroles, clusterrolebindings], operations: [CREATE, UPDATE, DELETE]' in kro_rbac)
+    kro_rules = '\n'.join(line for line in kro_rbac.splitlines() if not line.lstrip().startswith('#'))
+    check('kro holds no escalate or bind', 'escalate' not in kro_rules and not re.search(r'verbs: \[[^]]*\bbind\b', kro_rules))
     kro = (root / 'config/multiplane/kro/kro.yaml').read_text()
     check('unused chart ConfigMap grant removed, failing closed', 'postRenderers:' in kro and 'op: test' in kro and 'resources: [configmaps]' in kro and 'op: remove' in kro)
     check('kro version pinned consistently', 'tag: v0.9.4@sha256:' in kro and "'version': 'v0.9.4'" in evidence and 'digest: sha256:4e8de4d3' in kro)

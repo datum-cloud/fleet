@@ -14,7 +14,7 @@ proposal's API names are provisional. Each piece below is marked
 | --- | --- | --- |
 | 1: image catalog | `MachineImage` and `MachineImagePublication` kinds, publication, admission-time resolution to a pinned digest, architecture and firmware mode checks, the worker's firmware mode check, and IAM | **Implemented and verified.** The CRD rules are checked with the API server's own schema validator, resolution and publication with a fake API server, and installs of a resolved image against a real API server and in the standalone smoke. The multi-plane runs are not yet verified. |
 | 2: sealed bootstrap store | `SealedPayload`, the coordinator's check and sweep, delivery to the operation's worker, deletion at the site, IAM | **Implemented and verified** through the simulator site, by unit tests, tests against a real API server, and the standalone smoke. Admission refuses bootstrap data for a Device served through federation, which the local VM and Redfish labs use. |
-| 3: lab proof | A chosen image with bootstrap data installs in the local VM and Redfish labs, and the guest reports the data it received | **Proposed** |
+| 3: lab delivery | Federation carries a payload to the cell, the local VM and Redfish boot services hand it to the installer, and the installer verifies it on the target disk | **Implemented**, verified by unit tests and tests against a real API server. The local VM and Redfish multi-plane runs are pending. |
 
 ## What increment 1 adds
 
@@ -103,14 +103,58 @@ proposal's API names are provisional. Each piece below is marked
   fence, for a newer operation or a recovery, which removes every payload
   below it, including one whose worker never ran. A worker stopped from
   outside keeps it for its replacement.
-- **Evidence.** A successful install's evidence names the digest of the data
-  the worker handed to the server, recomputed from what it handed. Custody
-  accepts a success only if that equals the admitted digest, and only if it is
-  empty when there was no bootstrap data.
+- **Evidence.** A successful install's evidence records, as installer-verified,
+  the salted digest of the bootstrap data on the target disk: the simulator
+  recomputes it from what it wrote, and a lab installer from what it read
+  back. Custody accepts a success only if it equals the admitted digest, and
+  only if it is empty when there was no bootstrap data.
 - **IAM.** Only the coordinator role reads `SealedPayload`; the installation
   requester may only create it. A test walks every Milo role the repository
   ships, resolves inheritance, and fails if any other role can read it or holds
   a wildcard.
+
+## What increment 3 adds
+
+- **Federation.** The hub writes each payload as a `MachineAllocationPayload`
+  beside its handoff, before the handoff that names it. It is its own kind,
+  not a Secret, because Karmada's member identity watches every kind it
+  propagates across the whole cell, and the lab BMC's credentials are
+  Secrets. A worker that runs before the payload arrives sends nothing,
+  stores no result, and is retried; a payload it cannot read is an error,
+  and one that does not decode refuses the handoff.
+- **Deletion.** The hub deletes a payload when the coordinator answers its
+  result, and after every complete coordinator pass it deletes each payload
+  whose operation is no longer delivered: ended, cancelled, superseded, or
+  never given a handoff. Deleting the hub's copy deletes the cell's.
+- **Site RBAC.** Each worker may get its own handoff and its own payload, by
+  name. kro, which creates every worker, holds only get on payloads, so it
+  can grant that without escalate or bind; it can already run a worker as
+  any operation's identity, so this grants it nothing new. Admission policies
+  admit only the per-operation Role and RoleBinding shapes on create and
+  update, refuse every cluster-wide RBAC write by kro, and admit only Jobs
+  that run the site worker for their own handoff and take environment from
+  literals and the site enrollment. A test against a real API server runs
+  each refused shape as kro and shows that it is admitted once the clauses it
+  names are removed.
+- **Guest.** The worker renders the verified payload as a NoCloud seed archive
+  and attaches it to the operation's boot admission. The boot service serves
+  it as a second initrd only while the admission is open. The site drops the
+  seed when the admission closes, when the operation's result is stored
+  however it ended, and when a newer fence for the Device is raised, so no
+  failed, expired or superseded install leaves it behind. The installer copies
+  the seed to the target disk, puts the user data where NoCloud reads it and
+  the keys in the default user's `authorized_keys`, reads it all back from the
+  disk past the page cache, and reports the salted digest. The worker requires
+  exactly that digest before it lets the disk boot run; a wrong, truncated or
+  missing report fails the install. Fleet does not own the installed OS, so
+  success never depends on what the installed OS prints. A direct kernel boot,
+  which has one initrd, refuses bootstrap data.
+- **Lab first-boot evidence.** On its first disk boot, the lab guest checks
+  that the user data and keys sit where NoCloud and SSH read them and prints
+  the salted digest on a separate line. The multi-plane evidence requires that
+  line for consumer A's install; no worker reads it. The lab guest has no
+  cloud-init, so this proves the booted system found the data in place, not
+  that a datasource consumed it.
 
 ## Not implemented yet
 
@@ -122,10 +166,10 @@ proposal's API names are provisional. Each piece below is marked
 - Artifact mirroring by digest from a provider registry. Each lab site holds
   one pinned image and serves only that one.
 - Firmware mode from BMC discovery. Lab fixtures write it on the capacity.
-- Federation delivery of bootstrap payloads to a cell, and handing them to a
-  local VM or Redfish server. Admission refuses such an operation with
-  `BootstrapUnsupported` before the Device's fence moves.
 - The Milo check that the Installation's creator can read the bootstrap
   Secret. The lab compositions read it with their own identity.
-- Encryption at rest for `SealedPayload` and an audit policy that omits its
-  bodies.
+- Encryption at rest for `SealedPayload` and `MachineAllocationPayload`, on
+  the provider project, the federation hub and its Work objects, and the
+  cell, and an audit policy that omits their bodies.
+- HTTPS for the boot service. The lab serves the seed over HTTP on its
+  isolated provisioning bridge.
