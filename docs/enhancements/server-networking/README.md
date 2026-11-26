@@ -331,8 +331,8 @@ The site worker gates effects on those reports:
    declared instance's latest report is of a feed issued after the reservation
    was published and serves no MAC or address the site ever published for the
    Device. A declared instance that never reports, or went silent while it may
-   serve one, keeps the outcome unknown until an operator removes it from the
-   declared set.
+   serve one, keeps the outcome unknown until an operator stops it and then
+   removes it from the declared set.
 
 #### DHCP service
 
@@ -354,7 +354,9 @@ and reports to that site alone. It has these parts:
   receives a reservation to serve. Scaling up declares the new name first.
   Scaling down drains the instance until it reports an empty feed, then removes
   its name. Removing a name is the only way to stop the withdrawal proof from
-  waiting on that instance.
+  waiting on that instance, and an operator removes it only after that
+  instance is stopped and out of the load balancer, so a removed instance can
+  never answer with a reservation the proof no longer watches.
 - **Replies.** Kea answers each request at the relay address the request
   carries, on UDP port 67. The central cluster must route to every relay
   address, and each relay must accept replies from the cluster's egress
@@ -401,7 +403,8 @@ reservation or proves it gone:
   boot ends unknown, never succeeded.
 - An instance that cannot reach the feed, or goes silent, keeps its last
   applied configuration. Its last report still shows what it may be serving,
-  so the withdrawal gate keeps any operation it may serve unknown.
+  so the withdrawal gate keeps any operation it may serve unknown until an
+  operator stops it, takes it out of the load balancer, and removes its name.
 
 #### Network operations requirements
 
