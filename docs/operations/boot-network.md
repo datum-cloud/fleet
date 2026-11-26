@@ -146,8 +146,10 @@ names their kind, and IPAM's claimer, which always takes part as the default.
 An IPAM claim made before the switch is still released only once IPAM's
 claim is gone and no `IPAllocation` names it, and release does not finish
 while it remains. Each source touches only its own kind's claims. A provider
-API that does not serve IPAM's kinds has no IPAM claims, so the default
-claimer has nothing to release there; a source someone configured still
+API that does not serve IPAM's kinds, as its API reports when asked for
+them, has no IPAM claims, so the default claimer has nothing to release
+there. A failed or partial discovery is not that answer and keeps the
+release open, and a source someone configured, current or previous, still
 reports every error.
 
 ### The NSO boot attachment source
@@ -188,9 +190,13 @@ keeps its claim, and its port stays on the boot network, until the hold is
 settled. The requester deletes the claim. The release counts only once a read
 finds NSO's claim gone and IPAM holds no allocation for the address NSO
 claimed for it. NSO may remove its claim before IPAM removes that address, so
-the requester checks again for every ended operation of the allocation that
-names NSO's claim kind, from its own record of the operation, until IPAM
-holds nothing for it. While an allocation is active, a hand-over step
+the release is checked from the allocation's own record rather than from the
+claims that remain. Before it creates any boot claim, the requester records
+the operation's kind and name and the claim's kind and name in the
+allocation's status, and it removes the record only once the claim's release
+is verified. The check therefore still runs after the claim is gone, after
+custody retention removed the operation, and for an operation that was never
+created. While an allocation is active, a hand-over step
 releases the claims of ended, unheld operations under the same rules, so NSO
 can hand a shared boot NIC to the customer.
 
