@@ -159,6 +159,7 @@ func DeviceWipeKind() Kind {
 		Retryable:   true,
 		Check:       checkWipePlan,
 		HoldOnAdmit: holdUncleanableDrive,
+		HeldDrives:  heldDrives,
 		Reasons: append([]Reason{{Name: ReasonPlanMismatch, RaisedBy: RaisedByCoordinator}, {Name: ReasonDriveMissing, RaisedBy: RaisedByCoordinator},
 			{Name: ReasonDriveUncovered, RaisedBy: RaisedByCoordinator}}, workerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.WipeEvidence) error {
@@ -219,6 +220,18 @@ func DisposedDriveNames(custody *ops.DeviceCustody) []string {
 		}
 	}
 	return names
+}
+
+// heldDrives returns the drives a wipe's plan cannot clean, which custody
+// records with the hold.
+func heldDrives(operation ops.Operation) []ops.HeldDrive {
+	var out []ops.HeldDrive
+	for _, d := range operation.(*ops.DeviceWipe).Spec.Drives {
+		if d.State != "" {
+			out = append(out, ops.HeldDrive{Name: d.Name, SerialNumber: d.SerialNumber, State: d.State})
+		}
+	}
+	return out
 }
 
 // drivesHold reports whether a hold is a wipe held for a drive it could not
@@ -338,7 +351,7 @@ func checkRecovery(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 // holder Release, the drive one that wipe planned as Missing or Uncovered and
 // not already disposed of, and discovery must no longer report it: an
 // uncovered drive is pulled before its disposal is recorded.
-func disposedDrive(ctx context.Context, recovery *ops.DeviceRecovery, custody *ops.DeviceCustody, admission *Admission) (string, *Refusal) {
+func disposedDrive(_ context.Context, recovery *ops.DeviceRecovery, custody *ops.DeviceCustody, admission *Admission) (string, *Refusal) {
 	hold, drive := custody.Spec.RecoveryHold, recovery.Spec.Drive
 	switch {
 	case !drivesHold(hold):
@@ -350,24 +363,14 @@ func disposedDrive(ctx context.Context, recovery *ops.DeviceRecovery, custody *o
 	case slices.Contains(DisposedDriveNames(custody), drive.Name):
 		return "", refuse(ReasonDisposalInvalid, "drive %s is already disposed of", drive.Name)
 	}
-	if admission.Reader == nil {
-		return "", refuse(ReasonDisposalInvalid, "the held wipe could not be read")
-	}
-	// The held wipe is the one the coordinator ended at the hold's fence for
-	// a drive it could not clean. A wipe deleted and recreated under the same
-	// name has no such status, so its plan never names what is disposed of.
-	wipe := &ops.DeviceWipe{}
-	if err := admission.Reader.Get(ctx, client.ObjectKey{Namespace: recovery.Namespace, Name: hold.Name}, wipe); err != nil {
-		return "", refuse(ReasonDisposalInvalid, "the held wipe could not be read")
-	}
-	if status := wipe.Status; status.Phase != ops.PhaseOutcomeUnknown || status.Fence != hold.Fence || status.Reason != hold.Reason {
-		return "", refuse(ReasonDisposalInvalid, "wipe %s is not the wipe held at fence %d", hold.Name, hold.Fence)
-	}
-	i := slices.IndexFunc(wipe.Spec.Drives, func(d ops.PlannedDrive) bool { return d.Name == drive.Name && d.State != "" })
+	// Custody recorded, when it formed the hold, the drives the held wipe
+	// could not clean. Only those can be disposed of; a same-name wipe
+	// created later never matches custody, and its plan is never read.
+	i := slices.IndexFunc(hold.Drives, func(d ops.HeldDrive) bool { return d.Name == drive.Name })
 	if i < 0 {
-		return "", refuse(ReasonDisposalInvalid, "the held wipe did not hold for drive %s", drive.Name)
+		return "", refuse(ReasonDisposalInvalid, "the hold records no drive %s the wipe could not clean", drive.Name)
 	}
-	serial := wipe.Spec.Drives[i].SerialNumber
+	serial := hold.Drives[i].SerialNumber
 	if storage := cleaning.StorageOf(admission.Device); storage == nil || slices.ContainsFunc(storage.Drives, func(d inventory.ObservedDrive) bool { return d.SerialNumber == serial }) {
 		return "", refuse(ReasonDisposalInvalid, "discovery still reports drive %s (%s), or reports no drives; pull it first", drive.Name, serial)
 	}

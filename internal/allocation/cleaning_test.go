@@ -345,7 +345,7 @@ func TestAPulledDriveIsDisposedAndReleaseFinishes(t *testing.T) {
 	})
 	staff := ops.Creator{Username: "staff-example@example.com", UID: uid(803)}
 	recovery := &ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "dispose-", Namespace: namespace}, Spec: ops.DeviceRecoverySpec{
-		OperationEnvelope: ops.OperationEnvelope{Creator: staff, DeviceRef: ops.DeviceReference{Name: device.Name, UID: string(device.UID)},
+		OperationEnvelope: ops.OperationEnvelope{Creator: staff, DeviceRef: ops.DeviceReference{Name: device.Name},
 			Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "drive pulled during the allocation"}}},
 		Decision: ops.DecisionDisposeDrive,
 		Hold:     &ops.HeldOperationReference{Kind: hold.Kind, Name: hold.Name, Fence: hold.Fence},
@@ -402,7 +402,7 @@ func TestEachBlockedDriveGetsItsOwnGrace(t *testing.T) {
 		return hold != nil && hold.Reason == custody.ReasonDriveMissing
 	})
 	e.create(&ops.DeviceRecovery{ObjectMeta: metav1.ObjectMeta{GenerateName: "dispose-", Namespace: namespace}, Spec: ops.DeviceRecoverySpec{
-		OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: "staff-example@example.com", UID: uid(803)}, DeviceRef: ops.DeviceReference{Name: device.Name, UID: string(device.UID)},
+		OperationEnvelope: ops.OperationEnvelope{Creator: ops.Creator{Username: "staff-example@example.com", UID: uid(803)}, DeviceRef: ops.DeviceReference{Name: device.Name},
 			Authority: ops.Authority{ServiceRequest: &ops.ServiceRequest{Reason: "disk-1 pulled"}}},
 		Decision: ops.DecisionDisposeDrive, Hold: &ops.HeldOperationReference{Kind: hold.Kind, Name: hold.Name, Fence: hold.Fence},
 		Evidence: ops.RecoveryEvidence{ObservedAt: metav1.Now(), Summary: "destroyed"},

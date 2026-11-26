@@ -360,6 +360,31 @@ spec:
                   retryName:
                     type: string
                     maxLength: 253
+                  drives:
+                    type: array
+                    maxItems: 16
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys:
+                    - name
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          pattern: ^disk-[0-9]+$
+                          maxLength: 12
+                        serialNumber:
+                          type: string
+                          maxLength: 253
+                        state:
+                          type: string
+                          enum:
+                          - Missing
+                          - Uncovered
+                      required:
+                      - name
+                      - serialNumber
+                      - state
                 required:
                 - kind
                 - name

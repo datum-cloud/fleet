@@ -88,6 +88,8 @@ type Kind struct {
 	// before anything runs, such as a drive whose data a wipe cannot reach.
 	// Its reasons must be declared as raised by the coordinator.
 	HoldOnAdmit func(context.Context, *Admission) *Refusal
+	// HeldDrives returns the drives to record with a hold HoldOnAdmit forms.
+	HeldDrives func(ops.Operation) []ops.HeldDrive
 	// Settles lists the held kinds a success of this kind settles. It may be
 	// empty: a kind whose holds only a DeviceRecovery settles, such as power,
 	// settles no hold itself.

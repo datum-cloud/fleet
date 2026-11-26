@@ -991,6 +991,9 @@ func (c *Coordinator) admitOne(ctx context.Context, custody *ops.DeviceCustody, 
 	// operation is never active and never delivered.
 	if d.hold != nil {
 		c.holdUnknown(custody, *active, d.hold.Reason, d.hold.Message, nil)
+		if kind.HeldDrives != nil {
+			spec.RecoveryHold.Drives = kind.HeldDrives(operation)
+		}
 	}
 	outcome, err := c.writeCustody(ctx, custody)
 	outcome.RequeueAfter = 0

@@ -2,6 +2,7 @@ package custody
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -99,7 +100,7 @@ func TestWipeAdmissionChecksThePlan(t *testing.T) {
 		}
 	})
 
-	t.Run("a held wipe recreated under the same name cannot be disposed of", func(t *testing.T) {
+	t.Run("a wipe recreated under the held wipe's name authorizes no disposal", func(t *testing.T) {
 		release(785, "alloc-dr")
 		device := e.read("server-example-785")
 		device.Status.Discovery.Inventory.Systems[0].Storage.Drives = nil
@@ -107,31 +108,39 @@ func TestWipeAdmissionChecksThePlan(t *testing.T) {
 			t.Fatal(err)
 		}
 		plan := e.planWith(device, "alloc-dr")
-		newWipe := func() *ops.DeviceWipe {
+		newWipe := func(drives []ops.PlannedDrive) *ops.DeviceWipe {
 			wipe := &ops.DeviceWipe{}
 			wipe.Name, wipe.Namespace = WipeName("alloc-dr", 1), "default"
+			wipe.Labels = map[string]string{ops.LabelDeviceUID: string(device.UID)}
 			wipe.Spec = ops.DeviceWipeSpec{OperationEnvelope: envelope(device, releaseUser, allocated("alloc-dr")), Step: 1,
-				Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, Assurance: ops.AssuranceClear, Drives: plan}
+				Policy: ops.CleaningPolicyReference{Name: "tenant-reuse-v1", Generation: 1, Digest: policyDigest}, Assurance: ops.AssuranceClear, Drives: drives}
 			return wipe
 		}
-		held := newWipe()
+		held := newWipe(plan)
 		e.create(held)
 		e.settle(device.Name)
 		e.requirePhase(held, ops.PhaseOutcomeUnknown, ReasonDriveMissing)
 		hold := *e.custody(device.Name).Spec.RecoveryHold
-		// The held wipe is deleted and a new one takes its name. The new one
-		// was never held, so its plan must not authorize a disposal.
+		// Custody records the drives the held wipe could not clean.
+		if len(hold.Drives) != 1 || hold.Drives[0].Name != "disk-0" || hold.Drives[0].State != ops.DriveMissing || hold.Drives[0].SerialNumber != plan[0].SerialNumber {
+			t.Fatalf("hold drives = %+v", hold.Drives)
+		}
+		// The held wipe is deleted, and a new wipe under its name plans a
+		// drive the hold never held as missing.
 		if err := e.admin.Delete(e.ctx, held); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.admin.Get(e.ctx, client.ObjectKeyFromObject(held), &ops.DeviceWipe{}); !apierrors.IsNotFound(err) {
 			t.Fatalf("the held wipe must be gone: %v", err)
 		}
-		e.create(newWipe())
-		dispose := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionDisposeDrive, Hold: heldRef(hold), Drive: &ops.DriveDisposal{Name: "disk-0", Method: ops.DisposalRemoved, Reference: "ticket-4"}})
+		forged := slices.Clone(plan)
+		forged[0].Name, forged[0].SerialNumber = "disk-9", "EXAMPLE-SN-FORGED"
+		e.create(newWipe(forged))
+		e.settle(device.Name)
+		dispose := e.recovery(device, ops.DeviceRecoverySpec{Decision: ops.DecisionDisposeDrive, Hold: heldRef(hold), Drive: &ops.DriveDisposal{Name: "disk-9", Method: ops.DisposalRemoved, Reference: "ticket-4"}})
 		e.settle(device.Name)
 		e.requirePhase(dispose, ops.PhaseFailed, ReasonDisposalInvalid)
-		if state := e.custody(device.Name); state.Spec.RecoveryHold == nil || len(state.Spec.Holder.DisposedDrives) != 0 {
+		if state := e.custody(device.Name); state.Spec.RecoveryHold == nil || state.Spec.RecoveryHold.Name != hold.Name || len(state.Spec.Holder.DisposedDrives) != 0 {
 			t.Fatalf("custody = %+v", state.Spec)
 		}
 	})

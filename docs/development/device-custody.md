@@ -756,9 +756,11 @@ lab's targets each have one emulated NVMe drive.
   hold, the drive, and how it was destroyed or removed, with a reference. It
   is admitted only from a `Release` holder under that hold, for a drive the
   held wipe planned as `Missing` or `Uncovered` and that discovery no longer
-  reports, so an uncovered drive is pulled first. It reads the drive from the
-  held wipe, which must still carry the status the coordinator gave it at the
-  hold's fence; a wipe recreated under the same name has none and is refused. Discovery proves only that
+  reports, so an uncovered drive is pulled first. When it forms the hold, the
+  coordinator records in custody, with the hold, each drive the wipe could
+  not clean, by name, serial number and state. `DisposeDrive` reads only that
+  record, never the wipe object, so a wipe recreated under the same name,
+  which never matches custody, cannot authorize a disposal. Discovery proves only that
   no drive reports the planned serial number; for a drive whose serial
   changed, the recorded method and reference are the proof. Retry is refused for this
   hold, because a retried wipe would plan the same drive. Like every
