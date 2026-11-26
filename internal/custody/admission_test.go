@@ -95,7 +95,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 	t.Run("2: a staff operation on an allocated or releasing server is refused", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-held"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-held"); err != nil {
 			t.Fatal(err)
 		}
 		fence := e.custody(device.Name).Spec.Fence
@@ -114,7 +114,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 	t.Run("3: an allocationRef must name the holder's allocation", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-mine"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-mine"); err != nil {
 			t.Fatal(err)
 		}
 		fence := e.custody(device.Name).Spec.Fence
@@ -136,7 +136,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 		e.requirePhase(second, ops.PhaseFailed, ReasonHolderMismatch)
 
 		queued := fresh()
-		if err := e.coord.Claim(e.ctx, queued.Name, "alloc-queue"); err != nil {
+		if err := e.coord.Claim(e.ctx, queued.Name, queued.UID, "alloc-queue"); err != nil {
 			t.Fatal(err)
 		}
 		running := e.providerOp(queued, "alloc-queue", "a")
@@ -218,7 +218,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 	t.Run("names: deterministic kinds must use their rule, staff kinds a generated name", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-name"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-name"); err != nil {
 			t.Fatal(err)
 		}
 		fence := e.custody(device.Name).Spec.Fence
@@ -248,7 +248,7 @@ func TestAdmissionPreconditions(t *testing.T) {
 	t.Run("bootstrap stays refused", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-boot"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-boot"); err != nil {
 			t.Fatal(err)
 		}
 		fence := e.custody(device.Name).Spec.Fence

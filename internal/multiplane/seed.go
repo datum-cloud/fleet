@@ -18,6 +18,7 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 // Seed uses bootstrap only for provider facts and publication: the profile,
@@ -72,7 +73,7 @@ func Seed(ctx context.Context, c Config) error {
 		}
 		cp := profile.DeepCopyObject().(*fleet.MachineProfile)
 		cp.ObjectMeta = metav1.ObjectMeta{Name: profile.Name}
-		cc := &fleet.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: class.Name}, Spec: fleet.MachineClassSpec{Source: &fleet.SourceReference{Project: "provider", Name: class.Name}}}
+		cc := &fleet.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: class.Name}, Spec: fleet.MachineClassSpec{Source: &fleet.SourceReference{PublisherRef: tenancy.Project("provider"), Name: class.Name}}}
 		if err := ensure(ctx, api, cp); err != nil {
 			return err
 		}

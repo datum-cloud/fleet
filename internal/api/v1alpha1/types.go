@@ -23,9 +23,12 @@ type AccessPolicy struct {
 	ConsoleModes []string `json:"consoleModes,omitempty"`
 	PowerControl bool     `json:"powerControl,omitempty"`
 }
+
+// SourceReference names the provider class a published class copies: the
+// provider that publishes it, as a typed reference, and the class's name.
 type SourceReference struct {
-	Project string `json:"project"`
-	Name    string `json:"name"`
+	PublisherRef TypedReference `json:"publisherRef"`
+	Name         string         `json:"name"`
 }
 type ProfilePolicy struct {
 	AllowedProfiles []LocalReference    `json:"allowedProfiles,omitempty"`
@@ -343,6 +346,10 @@ type InstallationStatus struct {
 // allocation. Fleet writes the spec once and the API server keeps it
 // immutable; status carries the lifecycle, and release is terminal.
 type MachineAllocationSpec struct {
+	// ConsumerRef is the consumer the Machine belongs to: a Milo Project, or
+	// a Namespace in standalone mode. It stays in spec because release needs
+	// it after the consumer is deleted.
+	ConsumerRef        TypedReference            `json:"consumerRef"`
 	MachineRef         AllocatedMachineReference `json:"machineRef"`
 	MachineCapacityRef NamespacedReference       `json:"machineCapacityRef"`
 	DeviceRef          AllocatedDeviceReference  `json:"deviceRef"`
@@ -368,15 +375,23 @@ type MachineAllocationSpec struct {
 // project and Machine UIDs, and these labels let a reader confirm them, so a
 // same-name Machine, project or Device never inherits the allocation.
 const (
-	LabelMachineUID         = "fleet.datumapis.com/machine-uid"
-	LabelConsumerProjectUID = "fleet.datumapis.com/consumer-project-uid"
-	LabelDeviceUID          = "fleet.datumapis.com/device-uid"
+	LabelMachineUID  = "fleet.datumapis.com/machine-uid"
+	LabelConsumerUID = "fleet.datumapis.com/consumer-uid"
+	LabelDeviceUID   = "fleet.datumapis.com/device-uid"
 )
 
-// AllocatedMachineReference names one Machine in one consumer project. The
+// TypedReference names an object by API group, kind and name, with no UID,
+// in the shape of Milo's ResourceClaim consumerRef. An empty APIGroup is the
+// core group.
+type TypedReference struct {
+	APIGroup string `json:"apiGroup"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+}
+
+// AllocatedMachineReference names the Machine within its consumer. The
 // incarnation is in the allocation's name and labels.
 type AllocatedMachineReference struct {
-	Project   string `json:"project"`
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 }

@@ -156,7 +156,7 @@ func TestRecovery(t *testing.T) {
 	t.Run("a wipe after release settles an installation hold", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-i"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-i"); err != nil {
 			t.Fatal(err)
 		}
 		install := e.installation(device, "alloc-i", "request-1")
@@ -206,7 +206,7 @@ func TestRecovery(t *testing.T) {
 	t.Run("a held wipe settles only with a wipe named for the Retry, and retries count on", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-w"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-w"); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-w"); err != nil {
@@ -281,7 +281,7 @@ func TestRecovery(t *testing.T) {
 	t.Run("pending replacement never cancels an operation that settles a hold", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-ps"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-ps"); err != nil {
 			t.Fatal(err)
 		}
 		e.providerOp(device, "alloc-ps", "held")
@@ -303,7 +303,7 @@ func TestRecovery(t *testing.T) {
 	t.Run("a second Retry for the same hold is refused", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-rr"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-rr"); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-rr"); err != nil {
@@ -332,7 +332,7 @@ func TestRecovery(t *testing.T) {
 	t.Run("retiring from Release records disk disposal", func(t *testing.T) {
 		e := e.sub(t)
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-r"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-r"); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-r"); err != nil {
@@ -358,7 +358,7 @@ func TestRecovery(t *testing.T) {
 		}
 		// An allocated server cannot be retired.
 		allocated := fresh()
-		if err := e.coord.Claim(e.ctx, allocated.Name, "alloc-live"); err != nil {
+		if err := e.coord.Claim(e.ctx, allocated.Name, allocated.UID, "alloc-live"); err != nil {
 			t.Fatal(err)
 		}
 		e.providerOp(allocated, "alloc-live", "a")
@@ -439,7 +439,7 @@ func TestRebuild(t *testing.T) {
 		if rebuilt.Spec.State != ops.CustodyUnverified {
 			t.Fatalf("rebuilt = %+v", rebuilt.Spec)
 		}
-		if err := e.coord.Claim(e.ctx, name, "alloc-new"); err == nil {
+		if err := e.coord.Claim(e.ctx, name, e.deviceUID(name), "alloc-new"); err == nil {
 			t.Fatal("rebuilt custody was allocatable before verification")
 		}
 		e.sites.report(name, used)
@@ -448,7 +448,7 @@ func TestRebuild(t *testing.T) {
 		if rebuilt.Spec.State != ops.CustodyVerified || rebuilt.Spec.Fence <= used {
 			t.Fatalf("verified fence %d, site stored %d", rebuilt.Spec.Fence, used)
 		}
-		if err := e.coord.Claim(e.ctx, name, "alloc-new"); err != nil {
+		if err := e.coord.Claim(e.ctx, name, e.deviceUID(name), "alloc-new"); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -545,7 +545,7 @@ func TestRebuild(t *testing.T) {
 		if custody.Spec.State != ops.CustodyUnverified || !slices.Contains(custody.Spec.Conflicts, want) {
 			t.Fatalf("rebuilt = %+v, want conflict %s", custody.Spec, want)
 		}
-		if err := e.coord.Claim(e.ctx, name, "alloc-any"); err == nil {
+		if err := e.coord.Claim(e.ctx, name, e.deviceUID(name), "alloc-any"); err == nil {
 			t.Fatal("conflicted custody was claimed")
 		}
 	}

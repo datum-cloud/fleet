@@ -27,6 +27,7 @@ import (
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 const (
@@ -241,7 +242,7 @@ func (p *Publisher) ensureProfile(ctx context.Context, sourceProfile *fleetv1.Ma
 func (p *Publisher) ensureClass(ctx context.Context, sourceClass *fleetv1.MachineClass) error {
 	var local fleetv1.MachineClass
 	err := p.Consumer.Get(ctx, client.ObjectKey{Name: p.Options.ClassName}, &local)
-	wantSpec := fleetv1.MachineClassSpec{Source: &fleetv1.SourceReference{Project: p.Options.ProviderProject.RouteName, Name: sourceClass.Name}}
+	wantSpec := fleetv1.MachineClassSpec{Source: &fleetv1.SourceReference{PublisherRef: tenancy.Project(p.Options.ProviderProject.RouteName), Name: sourceClass.Name}}
 	if apierrors.IsNotFound(err) {
 		local = fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: p.Options.ClassName, Annotations: p.annotations(sourceClass)}, Spec: wantSpec}
 		if err := p.Consumer.Create(ctx, &local); err != nil {

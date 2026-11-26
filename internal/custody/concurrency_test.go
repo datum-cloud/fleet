@@ -56,7 +56,7 @@ func TestConcurrency(t *testing.T) {
 			group.Add(1)
 			go func() {
 				defer group.Done()
-				err := allocator.Claim(e.ctx, device.Name, fmt.Sprintf("alloc-race-%d", index))
+				err := allocator.Claim(e.ctx, device.Name, device.UID, fmt.Sprintf("alloc-race-%d", index))
 				switch {
 				case err == nil:
 					wins.Add(1)
@@ -82,7 +82,10 @@ func TestConcurrency(t *testing.T) {
 			var group sync.WaitGroup
 			group.Add(2)
 			go func() { defer group.Done(); reconcileErr = settleQuiet(e.ctx, coordinator, device.Name) }()
-			go func() { defer group.Done(); claimErr = allocator.Claim(e.ctx, device.Name, "alloc-staff-race") }()
+			go func() {
+				defer group.Done()
+				claimErr = allocator.Claim(e.ctx, device.Name, device.UID, "alloc-staff-race")
+			}()
 			group.Wait()
 			if reconcileErr != nil {
 				t.Fatal(reconcileErr)
@@ -145,7 +148,7 @@ func TestConcurrency(t *testing.T) {
 		for range 5 {
 			device := fresh()
 			allocation := "alloc-hc-" + device.Name
-			if err := e.coord.Claim(e.ctx, device.Name, allocation); err != nil {
+			if err := e.coord.Claim(e.ctx, device.Name, device.UID, allocation); err != nil {
 				t.Fatal(err)
 			}
 			before := e.custody(device.Name).Spec.Fence
@@ -208,10 +211,10 @@ func TestConcurrency(t *testing.T) {
 		device, other := fresh(), fresh()
 		lossy := &faultClient{Client: e.client(), failAt: 1, lost: true}
 		allocator := e.coordinator(lossy)
-		if err := allocator.Claim(e.ctx, device.Name, "alloc-lost"); err == nil {
+		if err := allocator.Claim(e.ctx, device.Name, device.UID, "alloc-lost"); err == nil {
 			t.Fatal("the lost response was not reported")
 		}
-		if err := allocator.Claim(e.ctx, device.Name, "alloc-lost"); err != nil {
+		if err := allocator.Claim(e.ctx, device.Name, device.UID, "alloc-lost"); err != nil {
 			t.Fatalf("retry: %v", err)
 		}
 		if holder := e.custody(device.Name).Spec.Holder; holder.Type != ops.HolderAllocation || holder.AllocationRef.Name != "alloc-lost" {

@@ -12,7 +12,9 @@ lifecycle adapter, a Milo quota claim, and an event-only manager wiring scaffold
 with an injected Machine lifecycle handler. The public allocation API uses
 customer `Machine`, provider `MachineCapacity`, protected immutable
 `MachineAllocation`, and `Installation.machineRef`. Authored references contain
-names, and a MachineAllocation records the exact incarnations. A packaged
+names. A MachineAllocation names its consumer, a Milo Project or a standalone
+Namespace, with a typed `consumerRef`, and its name and labels record the exact
+incarnations. A packaged
 standalone synthetic smoke scenario exercises local-scope contention, install
 recovery, release with a wipe, and capacity reuse on Device custody. An explicit
 Milo-routed synthetic staging overlay exercises event-driven Machine allocation,
@@ -81,7 +83,7 @@ The implemented alpha surface follows the current machine-allocation proposal:
 - provider projects publish `MachineCapacity` objects whose immutable
   `deviceRef` names the separately owned physical inventory record;
 - Fleet owns `MachineAllocation` records in the provider project. Each is named
-  `alloc-` and 16 hex characters of the SHA-256 of the consumer project UID and
+  `alloc-` and 16 hex characters of the SHA-256 of the consumer UID and
   the Machine UID, its spec is immutable, and `Released` is terminal; and
 - `Installation` names its Machine and, for reinstalls, the preceding
   Installation. A MachineAllocation records the exact Machine, project and Device

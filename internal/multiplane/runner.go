@@ -35,6 +35,7 @@ import (
 	"go.datum.net/fleet/internal/delivery"
 	"go.datum.net/fleet/internal/manager"
 	"go.datum.net/fleet/internal/site/fixture"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 const Namespace = "default"
@@ -285,13 +286,20 @@ func (r *Runner) request(ctx context.Context, index int) (*request, error) {
 	if m.Spec.LocationRef.Name != Location || r.Config.Cell == "" || r.Hub != nil && r.Hub.Cell != r.Config.Cell {
 		return nil, fmt.Errorf("%w: %q", ErrLocationNotServed, m.Spec.LocationRef.Name)
 	}
-	if localClass.Spec.Source == nil || localClass.Spec.Source.Project != "provider" || localClass.Spec.Source.Name != class.Name {
+	if localClass.Spec.Source == nil || localClass.Spec.Source.Name != class.Name {
 		return nil, errors.New("publication source mismatch")
 	}
+	if _, err := tenancy.Incarnation(ctx, r.publishers(), localClass.Spec.Source.PublisherRef, r.Provider.Identity.UID); err != nil {
+		return nil, fmt.Errorf("publication source mismatch: %w", err)
+	}
+	consumer, err := r.Resolve(ctx, tenancy.Project(p.Identity.RouteName))
+	if err != nil {
+		return nil, err
+	}
 	return &request{project: p, machine: &m, alloc: allocation.Request{
-		Machine: allocation.Machine{Project: p.Identity.RouteName, ProjectUID: p.Identity.UID, Namespace: m.Namespace, Name: m.Name, UID: m.UID},
+		Machine: allocation.MachineOf(consumer, &m),
 		Class:   &class, Profile: &profile,
-		Authority: fleet.AllocationAuthority{Principal: "local-fixture:" + string(p.Identity.UID), Decision: "local-fixture:" + string(m.UID)},
+		Authority: fleet.AllocationAuthority{Principal: "local-fixture:" + p.Identity.RouteName, Decision: "local-fixture:" + m.Namespace + "/" + m.Name},
 	}}, nil
 }
 
@@ -555,4 +563,23 @@ func ReadConfig(path string) (Config, error) {
 	}
 	err = json.Unmarshal(b, &c)
 	return c, err
+}
+
+// Resolve resolves a consumer project of the lab to its recorded identity
+// and API.
+func (r *Runner) Resolve(_ context.Context, ref fleet.TypedReference) (tenancy.Consumer, error) {
+	if err := tenancy.Supported(ref); err != nil {
+		return tenancy.Consumer{}, err
+	}
+	for _, p := range r.Consumers {
+		if ref.Kind == tenancy.ProjectKind && p.Identity.RouteName == ref.Name {
+			return tenancy.Consumer{Ref: ref, UID: p.Identity.UID, Client: p.API}, nil
+		}
+	}
+	return tenancy.Consumer{}, fmt.Errorf("%w: project %s is not a lab consumer", tenancy.ErrConsumerGone, ref.Name)
+}
+
+// publishers resolves the lab's one provider project.
+func (r *Runner) publishers() tenancy.Resolver {
+	return tenancy.Fixed(tenancy.Consumer{Ref: tenancy.Project(r.Provider.Identity.RouteName), UID: r.Provider.Identity.UID, Client: r.Provider.API})
 }

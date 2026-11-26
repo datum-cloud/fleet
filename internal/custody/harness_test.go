@@ -19,6 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -421,8 +422,9 @@ func (e *env) allocation(device *inventory.Device, name, phase string) *metal.Ma
 		e.t.Fatal(err)
 	}
 	allocation := &metal.MachineAllocation{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Labels: map[string]string{
-		metal.LabelMachineUID: uid(901), metal.LabelConsumerProjectUID: uid(900), metal.LabelDeviceUID: string(device.UID)}}, Spec: metal.MachineAllocationSpec{
-		MachineRef:         metal.AllocatedMachineReference{Project: "consumer-example", Namespace: "default", Name: "machine-" + name},
+		metal.LabelMachineUID: uid(901), metal.LabelConsumerUID: uid(900), metal.LabelDeviceUID: string(device.UID)}}, Spec: metal.MachineAllocationSpec{
+		ConsumerRef:        metal.TypedReference{APIGroup: "resourcemanager.miloapis.com", Kind: "Project", Name: "consumer-example"},
+		MachineRef:         metal.AllocatedMachineReference{Namespace: "default", Name: "machine-" + name},
 		MachineCapacityRef: metal.NamespacedReference{Namespace: "default", Name: capacityName},
 		DeviceRef:          metal.AllocatedDeviceReference{Name: device.Name},
 		Accepted: metal.AcceptedContract{MachineClassRef: metal.ContentReference{Name: "class-example", Generation: 1, Digest: policyDigest}, MachineProfileRef: metal.ContentReference{Name: "profile-example", Generation: 1, Digest: policyDigest},
@@ -443,3 +445,14 @@ func (e *env) allocation(device *inventory.Device, name, phase string) *metal.Ma
 }
 
 func uid(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
+
+// deviceUID is the live Device's incarnation, as an allocation's
+// device-uid label records it.
+func (e *env) deviceUID(name string) types.UID {
+	e.t.Helper()
+	device := &inventory.Device{}
+	if err := e.admin.Get(e.ctx, client.ObjectKey{Namespace: "default", Name: name}, device); err != nil {
+		e.t.Fatal(err)
+	}
+	return device.UID
+}

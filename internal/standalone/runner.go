@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apiMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,6 +23,7 @@ import (
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 const (
@@ -321,12 +321,12 @@ func (r Runner) claim(ctx context.Context, namespaceName string) (claim, error) 
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: namespaceName, Name: r.Options.ClaimName}, machine); err != nil {
 		return claim{}, err
 	}
-	namespace := &corev1.Namespace{}
-	if err := r.Client.Get(ctx, client.ObjectKey{Name: namespaceName}, namespace); err != nil {
+	// Each consumer namespace stands in for a consumer project.
+	consumer, err := tenancy.Namespaces{Client: r.Client}.Resolve(ctx, tenancy.Namespace(namespaceName))
+	if err != nil {
 		return claim{}, err
 	}
-	// Each consumer namespace stands in for a consumer project.
-	return claim{claim: machine, machine: allocation.Machine{Project: namespace.Name, ProjectUID: namespace.UID, Namespace: machine.Namespace, Name: machine.Name, UID: machine.UID}}, nil
+	return claim{claim: machine, machine: allocation.MachineOf(consumer, machine)}, nil
 }
 
 func (r Runner) prepareClaim(ctx context.Context, namespaceName string) (claim, error) {
@@ -348,7 +348,7 @@ func (r Runner) prepareClaim(ctx context.Context, namespaceName string) (claim, 
 }
 
 func (r Runner) request(c claim, class *fleetv1.MachineClass, profile *fleetv1.MachineProfile) allocation.Request {
-	return allocation.Request{Machine: c.machine, Class: class, Profile: profile, Authority: fleetv1.AllocationAuthority{Principal: "standalone-fixture", Decision: "standalone-claim-" + string(c.machine.UID)}}
+	return allocation.Request{Machine: c.machine, Class: class, Profile: profile, Authority: fleetv1.AllocationAuthority{Principal: "standalone-fixture", Decision: "standalone-claim:" + c.machine.Namespace + "/" + c.machine.Name}}
 }
 
 // withRequestedHardware applies the same resolve-once contract as the

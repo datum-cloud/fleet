@@ -60,7 +60,7 @@ func TestExtensionSeams(t *testing.T) {
 		// future provider kind would.
 		e.coord.Registry.Kind("DeviceInstallation").Supersedes = true
 		device := fresh()
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-scope"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-scope"); err != nil {
 			t.Fatal(err)
 		}
 		running := e.installation(device, "alloc-scope", "request-running")
@@ -185,7 +185,7 @@ func TestExtensionSeams(t *testing.T) {
 		// unless it declares itself Retryable.
 		e.coord.Registry.Kind("DeviceWipe").Retryable = false
 		wiped := fresh()
-		if err := e.coord.Claim(e.ctx, wiped.Name, "alloc-nr"); err != nil {
+		if err := e.coord.Claim(e.ctx, wiped.Name, wiped.UID, "alloc-nr"); err != nil {
 			t.Fatal(err)
 		}
 		if err := e.coord.BeginRelease(e.ctx, wiped.Name, "alloc-nr"); err != nil {

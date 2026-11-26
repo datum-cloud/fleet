@@ -31,6 +31,7 @@ import (
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/custody"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 var (
@@ -50,36 +51,43 @@ var (
 	ErrUnsupported = errors.New("unsupported request")
 )
 
-// Machine names one Machine incarnation in one consumer project
-// incarnation.
+// Machine names one Machine incarnation in one consumer incarnation.
 type Machine struct {
-	Project    string
-	ProjectUID types.UID
-	Namespace  string
-	Name       string
-	UID        types.UID
+	// Consumer is the consumer's typed reference, as recorded in the
+	// allocation's consumerRef.
+	Consumer fleetv1.TypedReference
+	// ConsumerUID is the consumer's incarnation. It goes into the
+	// allocation's name and labels, never its spec.
+	ConsumerUID types.UID
+	Namespace   string
+	Name        string
+	UID         types.UID
+}
+
+// MachineOf is a resolved consumer's Machine.
+func MachineOf(consumer tenancy.Consumer, machine *fleetv1.Machine) Machine {
+	return Machine{Consumer: consumer.Ref, ConsumerUID: consumer.UID, Namespace: machine.Namespace, Name: machine.Name, UID: machine.UID}
 }
 
 func (m Machine) Valid() bool {
-	return m.Project != "" && m.ProjectUID != "" && m.Namespace != "" && m.Name != "" && m.UID != ""
+	return tenancy.Supported(m.Consumer) == nil && m.ConsumerUID != "" && m.Namespace != "" && m.Name != "" && m.UID != ""
 }
 
 func (m Machine) reference() fleetv1.AllocatedMachineReference {
-	return fleetv1.AllocatedMachineReference{Project: m.Project, Namespace: m.Namespace, Name: m.Name}
+	return fleetv1.AllocatedMachineReference{Namespace: m.Namespace, Name: m.Name}
 }
 
-// labels pin the Machine and consumer project incarnations. No spec holds an
-// object UID; the allocation's name hashes both, and these labels confirm
-// them.
+// labels pin the Machine and consumer incarnations. No spec holds an object
+// UID; the allocation's name hashes both, and these labels confirm them.
 func (m Machine) labels() map[string]string {
-	return map[string]string{fleetv1.LabelMachineUID: string(m.UID), fleetv1.LabelConsumerProjectUID: string(m.ProjectUID)}
+	return map[string]string{fleetv1.LabelMachineUID: string(m.UID), fleetv1.LabelConsumerUID: string(m.ConsumerUID)}
 }
 
 // Name is the only name a Machine's allocation may have. It derives from the
-// Machine UID within its consumer project, so a retried create collides and
-// equal UIDs in two projects never share an allocation.
+// Machine UID within its consumer, so a retried create collides and equal
+// UIDs in two consumers never share an allocation.
 func Name(machine Machine) string {
-	sum := sha256.Sum256([]byte(string(machine.ProjectUID) + "/" + string(machine.UID)))
+	sum := sha256.Sum256([]byte(string(machine.ConsumerUID) + "/" + string(machine.UID)))
 	return "alloc-" + hex.EncodeToString(sum[:])[:16]
 }
 
@@ -134,8 +142,8 @@ func (a *Allocator) Get(ctx context.Context, machine Machine) (*fleetv1.MachineA
 	} else if err != nil {
 		return nil, err
 	}
-	// A same-name Machine or project never inherits the allocation.
-	if allocation.Spec.MachineRef != machine.reference() || allocation.Labels[fleetv1.LabelMachineUID] != string(machine.UID) || allocation.Labels[fleetv1.LabelConsumerProjectUID] != string(machine.ProjectUID) {
+	// A same-name Machine or consumer never inherits the allocation.
+	if allocation.Spec.ConsumerRef != machine.Consumer || allocation.Spec.MachineRef != machine.reference() || allocation.Labels[fleetv1.LabelMachineUID] != string(machine.UID) || allocation.Labels[fleetv1.LabelConsumerUID] != string(machine.ConsumerUID) {
 		return nil, ErrConflict
 	}
 	return allocation, nil
@@ -145,8 +153,18 @@ func (a *Allocator) Get(ctx context.Context, machine Machine) (*fleetv1.MachineA
 // A retry after a lost response finds the same allocation by name and never
 // claims a second Device.
 func (a *Allocator) Allocate(ctx context.Context, request Request) (*fleetv1.MachineAllocation, error) {
+	if err := tenancy.Supported(request.Machine.Consumer); err != nil {
+		return nil, err
+	}
 	if !request.Machine.Valid() || request.Class == nil || request.Profile == nil || request.Class.Spec.Capacity == nil {
 		return nil, errors.New("allocation: an exact Machine, class and profile are required")
+	}
+	// No spec holds an object UID: the allocation's name and labels carry
+	// the incarnations, so the authority names its decision by name.
+	for _, uid := range []types.UID{request.Machine.UID, request.Machine.ConsumerUID} {
+		if strings.Contains(request.Authority.Principal, string(uid)) || strings.Contains(request.Authority.Decision, string(uid)) {
+			return nil, fmt.Errorf("%w: the allocation authority records an object UID", ErrUnsupported)
+		}
 	}
 	if request.Class.Spec.Capacity.MachineCapacities.Namespace != a.Namespace {
 		return nil, errors.New("allocation: the class selects capacity outside the Device namespace")
@@ -195,7 +213,7 @@ func (a *Allocator) claim(ctx context.Context, allocation *fleetv1.MachineAlloca
 	case fleetv1.AllocationReleasing, fleetv1.AllocationReleased:
 		return false, ErrReleased
 	}
-	err := a.Custody.Claim(ctx, allocation.Spec.DeviceRef.Name, allocation.Name)
+	err := a.Custody.Claim(ctx, allocation.Spec.DeviceRef.Name, types.UID(allocation.Labels[fleetv1.LabelDeviceUID]), allocation.Name)
 	switch {
 	case err == nil:
 		return true, a.setPhase(ctx, allocation, fleetv1.AllocationActive)
@@ -295,6 +313,7 @@ func (a *Allocator) newAllocation(request Request, capacity *fleetv1.MachineCapa
 	allocation := &fleetv1.MachineAllocation{
 		ObjectMeta: metav1.ObjectMeta{Name: Name(request.Machine), Namespace: a.Namespace, Labels: labels},
 		Spec: fleetv1.MachineAllocationSpec{
+			ConsumerRef:        request.Machine.Consumer,
 			MachineRef:         request.Machine.reference(),
 			MachineCapacityRef: fleetv1.NamespacedReference{Namespace: capacity.Namespace, Name: capacity.Name},
 			DeviceRef:          fleetv1.AllocatedDeviceReference{Name: device.Name},

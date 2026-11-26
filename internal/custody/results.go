@@ -16,6 +16,7 @@ import (
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -207,22 +208,34 @@ func progressRank(phase ops.Phase) int {
 // The allocator decides with this update, never with the advisory Available
 // condition. A claim that already names the allocation succeeds, so a retry
 // after a lost response does not claim a second server.
-func (c *Coordinator) Claim(ctx context.Context, deviceName, allocation string) error {
-	device, err := c.device(ctx, deviceName)
-	if err != nil {
-		return err
-	}
-	if device == nil || inventory.LifecycleOf(device) != inventory.DeviceActive {
-		return fmt.Errorf("%w: the Device is not Active", ErrUnavailable)
+//
+// deviceUID is the Device incarnation the allocation was made against, from
+// its device-uid label. Each attempt of the conditional update reads the
+// Device again and requires both it and custody's label to name that
+// incarnation, so a Device recreated after selection is never claimed for an
+// allocation made against the earlier one.
+func (c *Coordinator) Claim(ctx context.Context, deviceName string, deviceUID types.UID, allocation string) error {
+	if deviceUID == "" {
+		return fmt.Errorf("%w: the allocation names no Device incarnation", ErrUnavailable)
 	}
 	return ignoreNoChange(c.update(ctx, deviceName, func(custody *ops.DeviceCustody) error {
+		device, err := c.device(ctx, deviceName)
+		if err != nil {
+			return err
+		}
+		switch {
+		case device == nil, device.UID != deviceUID:
+			return fmt.Errorf("%w: the Device is not the incarnation the allocation names", ErrUnavailable)
+		case !custody.DeletionTimestamp.IsZero(), custody.Labels[ops.LabelDeviceUID] != string(deviceUID):
+			return fmt.Errorf("%w: custody is for another Device incarnation", ErrUnavailable)
+		}
 		spec := &custody.Spec
 		if spec.Holder.Type == ops.HolderAllocation && spec.Holder.AllocationRef != nil && spec.Holder.AllocationRef.Name == allocation {
 			return errNoChange
 		}
 		switch {
-		case !custody.DeletionTimestamp.IsZero(), false:
-			return fmt.Errorf("%w: custody is for another Device incarnation", ErrUnavailable)
+		case inventory.LifecycleOf(device) != inventory.DeviceActive:
+			return fmt.Errorf("%w: the Device is not Active", ErrUnavailable)
 		case spec.State != ops.CustodyVerified:
 			return fmt.Errorf("%w: custody is Unverified", ErrUnavailable)
 		case spec.Holder.Type != ops.HolderNone:

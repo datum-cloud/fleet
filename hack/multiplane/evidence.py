@@ -159,7 +159,7 @@ def custody_evidence(store, ops, provider, a, b):
         m = allocations[name]
         if m.get('status', {}).get('phase') != 'Released' or m['spec']['deviceRef']['name'] != harness.DEVICE.split('/')[1]:
             fail('%s allocation %s is not Released for the Device' % (consumer, name))
-        record['allocations'][consumer] = {'name': name, 'phase': 'Released', 'machine': {k: m['spec']['machineRef'].get(k) for k in ('project', 'namespace', 'name')},
+        record['allocations'][consumer] = {'name': name, 'phase': 'Released', 'consumer': m['spec']['consumerRef'], 'machine': {k: m['spec']['machineRef'].get(k) for k in ('namespace', 'name')},
                                            'wipe': m['status'].get('wipe')}
     record['operations'] = [{k: o[k] for k in ('kind', 'name', 'operation', 'allocation', 'fence', 'phase')} for o in ops]
     (ev / 'custody.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')

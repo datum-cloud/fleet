@@ -8,6 +8,7 @@ import (
 	"go.datum.net/fleet/internal/allocation"
 	fleet "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
+	"go.datum.net/fleet/internal/tenancy"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,7 +39,7 @@ func TestAdversarialRejectNonlocalMachineBeforeAllocation(t *testing.T) {
 	profile.Spec.Memory.Capacity = "2Gi"
 	class := &fleet.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "local-class", UID: "source-class"}, Spec: fleet.MachineClassSpec{Capacity: &fleet.CapacityPolicy{MachineCapacities: fleet.MachineSelector{Namespace: DeviceNamespace}}}, Status: fleet.MachineClassStatus{EvaluatedRevision: "v1"}}
 	machine := &fleet.Machine{ObjectMeta: metav1.ObjectMeta{Name: "allocation", Namespace: Namespace, UID: "machine"}, Spec: fleet.MachineSpec{MachineClassRef: fleet.LocalReference{Name: "local-class"}, MachineProfileRef: fleet.LocalReference{Name: "local-profile"}, LocationRef: fleet.LocalReference{Name: "not-the-local-location"}, PowerState: "Off"}}
-	localClass := &fleet.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "local-class", UID: "consumer-class"}, Spec: fleet.MachineClassSpec{Source: &fleet.SourceReference{Project: "provider", Name: "local-class"}}}
+	localClass := &fleet.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: "local-class", UID: "consumer-class"}, Spec: fleet.MachineClassSpec{Source: &fleet.SourceReference{PublisherRef: tenancy.Project("provider"), Name: "local-class"}}}
 	localProfile := profile.DeepCopyObject().(*fleet.MachineProfile)
 	localProfile.UID = "consumer-profile"
 	runner := Runner{

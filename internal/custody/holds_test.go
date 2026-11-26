@@ -64,7 +64,7 @@ func TestRebuildKeepsUnprovenOutcomes(t *testing.T) {
 		if custody.Spec.State != ops.CustodyVerified || custody.Spec.Holder.Type != ops.HolderAllocation || custody.Spec.RecoveryHold == nil || custody.Spec.RecoveryHold.Name != install.Name || custody.Spec.ActiveOperation != nil {
 			t.Fatalf("rebuilt = %+v", custody.Spec)
 		}
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-other"); err == nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-other"); err == nil {
 			t.Fatal("a held server was claimed")
 		}
 	})
@@ -261,7 +261,7 @@ func TestARefusalNeverUsesCustodyReadBeforeAHolderChange(t *testing.T) {
 	device := e.verified("server-example-800", uid(800), fmt.Sprintf("%064x", 800))
 	var install *ops.DeviceInstallation
 	racing := &claimingClient{Client: e.client(), before: func() {
-		if err := e.coord.Claim(e.ctx, device.Name, "alloc-late"); err != nil {
+		if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-late"); err != nil {
 			t.Error(err)
 		}
 		install = e.installation(device, "alloc-late", "request-1")
@@ -304,7 +304,7 @@ func TestFencesFollowTheSiteReport(t *testing.T) {
 func TestAHeldOperationIsNeverACandidate(t *testing.T) {
 	e := startEnv(t)
 	device := e.verified("server-example-820", uid(820), fmt.Sprintf("%064x", 820))
-	if err := e.coord.Claim(e.ctx, device.Name, "alloc-held"); err != nil {
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-held"); err != nil {
 		t.Fatal(err)
 	}
 	install := e.installation(device, "alloc-held", "request-1")

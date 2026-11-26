@@ -34,9 +34,18 @@ spec:
             properties:
               source:
                 type: object
-                required: [project, name]
+                required: [publisherRef, name]
                 properties:
-                  project: {type: string, minLength: 1}
+                  publisherRef:
+                    type: object
+                    required: [kind, name]
+                    x-kubernetes-validations:
+                    - rule: '(self.kind == "Project" && has(self.apiGroup) && self.apiGroup == "resourcemanager.miloapis.com") || (self.kind == "Namespace" && (!has(self.apiGroup) || self.apiGroup == ""))'
+                      message: a publisher is a Milo Project or a standalone Namespace
+                    properties:
+                      apiGroup: {type: string}
+                      kind: {type: string, minLength: 1}
+                      name: {type: string, minLength: 1}
                   name: {type: string, minLength: 1}
               profilePolicy: {type: object, x-kubernetes-preserve-unknown-fields: true}
               access: {type: object, x-kubernetes-preserve-unknown-fields: true}
@@ -355,17 +364,26 @@ spec:
           metadata: {type: object}
           spec:
             type: object
-            required: [machineRef, machineCapacityRef, deviceRef, accepted, hardware, authority, cleaningPolicyDigest, bootInterface, targetDisks]
+            required: [consumerRef, machineRef, machineCapacityRef, deviceRef, accepted, hardware, authority, cleaningPolicyDigest, bootInterface, targetDisks]
             x-kubernetes-validations:
             - {rule: 'self == oldSelf', message: MachineAllocation identity and endpoints are immutable}
             properties:
               # No spec holds an object UID. The allocation's name hashes the
-              # consumer project and Machine UIDs, and its labels record them.
+              # consumer and Machine UIDs, and its labels record them.
+              consumerRef:
+                type: object
+                required: [kind, name]
+                x-kubernetes-validations:
+                - rule: '(self.kind == "Project" && has(self.apiGroup) && self.apiGroup == "resourcemanager.miloapis.com") || (self.kind == "Namespace" && (!has(self.apiGroup) || self.apiGroup == ""))'
+                  message: a consumer is a Milo Project or a standalone Namespace
+                properties:
+                  apiGroup: {type: string}
+                  kind: {type: string, minLength: 1}
+                  name: {type: string, minLength: 1}
               machineRef:
                 type: object
-                required: [project, namespace, name]
+                required: [namespace, name]
                 properties:
-                  project: {type: string, minLength: 1}
                   namespace: {type: string, minLength: 1}
                   name: {type: string, minLength: 1}
               machineCapacityRef:

@@ -177,19 +177,50 @@ records where an environment needs them.
 A `MachineAllocation` holds the allocation's private facts (O8). It lives in the
 provider project, and only the Metal provider writes it.
 
-- **Spec (immutable).** The Machine and consumer project by name, the
-  capacity, the Device by name, the accepted class and profile pinned by
+- **Spec (immutable).** The consumer as a typed reference, the Machine by
+  namespace and name, the capacity, the Device by name, the accepted class and profile pinned by
   generation and spec digest, the CPU and memory, the hardware snapshot, the
   admission authority, an optional quota claim, the pinned cleaning policy
   digest, the boot interface and the target disks.
 - **Labels.** `fleet.datumapis.com/machine-uid`,
-  `fleet.datumapis.com/consumer-project-uid` and
+  `fleet.datumapis.com/consumer-uid` and
   `fleet.datumapis.com/device-uid` record the incarnations the allocation was
   made for. See [No object UIDs in spec](#no-object-uids-in-spec).
 - **Status.** A phase, `Active`, `Releasing` or `Released`, and the latest wipe.
 - **Name.** `alloc-` and the first 16 hex characters of the SHA-256 of
-  `<consumer project UID>/<Machine UID>`. See [the decision](#cutover-decisions).
+  `<consumer UID>/<Machine UID>`. See [the decision](#cutover-decisions).
 - **Secrets.** None. Staff recovery operators may read it.
+
+### Consumers
+
+An allocation names its consumer with `consumerRef`, a typed reference of API
+group, kind and name in the shape of Milo's quota consumer reference. The
+consumer's UID is never in the spec; the allocation's name and
+`consumer-uid` label carry it.
+
+| Consumer | `consumerRef` | Served by |
+| --- | --- | --- |
+| Milo project | `{apiGroup: resourcemanager.miloapis.com, kind: Project, name: consumer-a}` | The managed and multi-plane modes, through project discovery |
+| Standalone namespace | `{apiGroup: "", kind: Namespace, name: fleet-project-a}` | The standalone mode, where each namespace stands in for a project |
+
+The allocator and the API both refuse any other kind. The allocator refuses
+it before it reserves quota or looks for capacity.
+
+A published MachineClass names its source the same way:
+`source: {publisherRef: {apiGroup, kind, name}, name}`, the provider that
+publishes the class and the source class's name. The same kinds are allowed.
+A claim allocates through a published class only when its `publisherRef`
+resolves to the provider incarnation that published it.
+
+One tenancy interface resolves a reference to the consumer's current
+incarnation, its UID, and the client of its API. The allocator, release,
+quota claims, the Machine power projector, staging and the standalone and
+multi-plane runners reach a consumer only through it. The managed mode
+resolves a project through the engaged project runtimes, so a project that is
+not engaged is unavailable, never assumed gone. Only a Milo project has
+quota. A quota claim is never made in a project recreated under the same
+name, and releasing the Machine's claim in a recreated project finds nothing,
+because the claim went with the earlier project.
 
 ### Allocation, installation and release
 
@@ -628,7 +659,11 @@ fails if its guard is removed:
 
 | Recreated | Guard | Test |
 | --- | --- | --- |
-| Machine or consumer project | The allocation's name hashes both UIDs, and its `machine-uid` and `consumer-project-uid` labels must match | `TestAnAllocationForAnotherMachineIncarnationIsAConflict` |
+| Machine or consumer | The allocation's name hashes both UIDs, and its `machine-uid` and `consumer-uid` labels must match | `TestAnAllocationForAnotherMachineIncarnationIsAConflict` |
+| Machine or consumer, against the authority | The allocator refuses an admission authority that records the Machine or consumer UID, so the decision is named by name | `TestTheAllocationAuthorityNamesNoIncarnation` |
+| Consumer, under another kind or name | The allocation's `consumerRef` must name the Machine's consumer | `TestAnAllocationForAnotherConsumerIsAConflict` |
+| Publisher, against a published class | A published class's `publisherRef` must resolve to the provider incarnation that published it | `TestAClassFromAnotherPublisherIsRejected` |
+| Consumer project, against quota | Quota resolves the project and requires the incarnation the Machine was admitted in | `TestQuotaServesOnlyTheMachinesProjectIncarnation` |
 | Device | Custody's `device-uid` label must match the Device, or custody stays `Unverified` until a `Resolve` | `TestARecreatedDeviceLeavesCustodyUnverified` |
 | Device, against free capacity | Custody for another Device incarnation is never free | `TestCustodyForAnotherDeviceIncarnationIsNotFree` |
 | Device, against an operation | An operation's `device-uid` label must match the Device at admission | `TestAdmissionPreconditions` |

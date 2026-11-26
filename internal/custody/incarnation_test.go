@@ -1,6 +1,7 @@
 package custody
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -45,7 +46,7 @@ func (e *env) statusOf(operation ops.Operation) ops.OperationStatus {
 func TestARecreatedActiveOperationNeverGetsItsResult(t *testing.T) {
 	e := startEnv(t)
 	device := e.verified("server-example-842", uid(842), fmt.Sprintf("%064x", 842))
-	if err := e.coord.Claim(e.ctx, device.Name, "alloc-a"); err != nil {
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-a"); err != nil {
 		t.Fatal(err)
 	}
 	first := e.providerOp(device, "alloc-a", "again")
@@ -66,7 +67,7 @@ func TestARecreatedActiveOperationNeverGetsItsResult(t *testing.T) {
 func TestARecreatedOperationNeverInheritsItsLastResult(t *testing.T) {
 	e := startEnv(t)
 	device := e.verified("server-example-840", uid(840), fmt.Sprintf("%064x", 840))
-	if err := e.coord.Claim(e.ctx, device.Name, "alloc-r"); err != nil {
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-r"); err != nil {
 		t.Fatal(err)
 	}
 	first := e.providerOp(device, "alloc-r", "again")
@@ -92,7 +93,7 @@ func TestARecreatedOperationNeverInheritsItsLastResult(t *testing.T) {
 func TestARecreatedHeldOperationNeverTakesTheHold(t *testing.T) {
 	e := startEnv(t)
 	device := e.verified("server-example-843", uid(843), fmt.Sprintf("%064x", 843))
-	if err := e.coord.Claim(e.ctx, device.Name, "alloc-h"); err != nil {
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-h"); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-h"); err != nil {
@@ -122,7 +123,7 @@ func TestARecreatedHeldOperationNeverTakesTheHold(t *testing.T) {
 func TestARecreatedRetryIsNeverCountedAsTheRetry(t *testing.T) {
 	e := startEnv(t)
 	device := e.verified("server-example-844", uid(844), fmt.Sprintf("%064x", 844))
-	if err := e.coord.Claim(e.ctx, device.Name, "alloc-t"); err != nil {
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-t"); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.coord.BeginRelease(e.ctx, device.Name, "alloc-t"); err != nil {
@@ -202,5 +203,57 @@ func TestARecreatedRetryNeverSupersedesARebuiltHold(t *testing.T) {
 	custody := e.custody(device.Name)
 	if hold := custody.Spec.RecoveryHold; hold == nil || hold.Name != original.Name || hold.Fence != 1 {
 		t.Fatalf("rebuilt hold = %+v", custody.Spec.RecoveryHold)
+	}
+}
+
+// TestCustodyForAnotherDeviceIncarnationIsNeverClaimed covers custody still
+// recorded for an earlier Device under the same name, before rebuild has
+// marked it Unverified: no allocation claims it for the new Device.
+func TestCustodyForAnotherDeviceIncarnationIsNeverClaimed(t *testing.T) {
+	e := startEnv(t)
+	device := e.verified("server-example-846", uid(846), fmt.Sprintf("%064x", 846))
+	custody := e.custody(device.Name)
+	custody.Labels[ops.LabelDeviceUID] = uid(847)
+	if err := e.admin.Update(e.ctx, custody); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.coord.Claim(e.ctx, device.Name, device.UID, "alloc-earlier-incarnation"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("claim of custody for another Device incarnation = %v", err)
+	}
+	if after := e.custody(device.Name); after.Spec.Holder.Type != ops.HolderNone {
+		t.Fatalf("holder = %+v", after.Spec.Holder)
+	}
+}
+
+// TestRebuildIgnoresAnEarlierDeviceIncarnation rebuilds custody for a
+// Device recreated under the same name. An allocation and an admitted
+// operation recorded for the earlier Device name it only by name, and
+// rebuild takes neither as the new Device's holder or hold.
+func TestRebuildIgnoresAnEarlierDeviceIncarnation(t *testing.T) {
+	e := startEnv(t)
+	device := e.device("server-example-848", uid(848), fmt.Sprintf("%064x", 848))
+	allocation := "alloc-old-" + device.Name
+	e.allocation(device, allocation, "Releasing")
+	wipe := e.wipe(device, allocation, 1)
+	wipe.Status = ops.OperationStatus{Admission: admitted(1), Phase: ops.PhaseOutcomeUnknown, Fence: 1, FinishedAt: ptrTime(e.clock.Now())}
+	if err := e.admin.Status().Update(e.ctx, wipe); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.admin.Delete(e.ctx, device); err != nil {
+		t.Fatal(err)
+	}
+	recreated := e.device(device.Name, uid(848), fmt.Sprintf("%064x", 848))
+	if recreated.UID == device.UID {
+		t.Fatal("the Device was not recreated")
+	}
+	// Custody does not exist yet, so the first reconcile rebuilds it.
+	e.sites.report(device.Name, 0)
+	e.settle(device.Name)
+	rebuilt := e.custody(device.Name)
+	if rebuilt.Spec.RecoveryHold != nil || rebuilt.Spec.ActiveOperation != nil {
+		t.Fatalf("rebuild took the earlier Device's operation: hold %+v, active %+v", rebuilt.Spec.RecoveryHold, rebuilt.Spec.ActiveOperation)
+	}
+	if rebuilt.Spec.Holder.Type != ops.HolderNone {
+		t.Fatalf("rebuild took the earlier Device's allocation as the holder: %+v", rebuilt.Spec.Holder)
 	}
 }

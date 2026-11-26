@@ -23,6 +23,7 @@ import (
 	fleetv1 "go.datum.net/fleet/internal/api/v1alpha1"
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 // Handler is an event-driven synthetic provider and claim coordinator. It uses
@@ -82,11 +83,17 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	sourceClass, sourceProfile := &class, &profile
 	machineClient := h.Public
 	if crossProject {
-		if class.Spec.Source == nil || class.Spec.Source.Project != h.ProviderProject.RouteName || !sourceResolved(&class) || !profilePublished(&profile) || !publishedFor(&class, h.ProviderProject) || !publishedFor(&profile, h.ProviderProject) {
+		if class.Spec.Source == nil || !sourceResolved(&class) || !profilePublished(&profile) || !publishedFor(&class, h.ProviderProject) || !publishedFor(&profile, h.ProviderProject) {
 			return h.rejected(ctx, &claim, "UnresolvedPublication", "Synthetic cross-project allocation requires a publisher-owned class and profile with a current resolved source.")
 		}
+		// The class's publisher must be the provider incarnation that
+		// published it.
+		publisher, err := tenancy.Incarnation(ctx, tenancy.Fixed(manager.ProjectConsumer(h.ProviderProject, h.Provider)), class.Spec.Source.PublisherRef, h.ProviderProject.UID)
+		if err != nil {
+			return h.rejected(ctx, &claim, "UnresolvedPublication", "The class's publisher is not the configured provider project.")
+		}
 		sourceClass = &fleetv1.MachineClass{}
-		if err := h.Provider.Get(ctx, client.ObjectKey{Name: class.Spec.Source.Name}, sourceClass); err != nil {
+		if err := publisher.Client.Get(ctx, client.ObjectKey{Name: class.Spec.Source.Name}, sourceClass); err != nil {
 			return h.dependency(ctx, &claim, "SourceMachineClassPending", err)
 		}
 		sourceProfile = &fleetv1.MachineProfile{}
@@ -94,7 +101,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		if sourceProfileName == "" {
 			return h.rejected(ctx, &claim, "UnresolvedPublication", "Published MachineProfile provenance is incomplete.")
 		}
-		if err := h.Provider.Get(ctx, client.ObjectKey{Name: sourceProfileName}, sourceProfile); err != nil {
+		if err := publisher.Client.Get(ctx, client.ObjectKey{Name: sourceProfileName}, sourceProfile); err != nil {
 			return h.dependency(ctx, &claim, "SourceMachineProfilePending", err)
 		}
 		revision, revisionErr := publicationRevision(sourceClass, h.ProviderProject)
@@ -102,7 +109,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 		if revisionErr != nil || class.Status.EvaluatedRevision != revision || !reflect.DeepEqual(class.Status.ResolvedClass, resolved) || class.Annotations[publicationSourceUIDAnnotation] != string(sourceClass.UID) || profile.Annotations[publicationSourceUIDAnnotation] != string(sourceProfile.UID) || !reflect.DeepEqual(profile.Spec, sourceProfile.Spec) || !profileAllowed(sourceClass.Spec.ProfilePolicy, sourceProfile.Name) {
 			return h.rejected(ctx, &claim, "PublicationDrift", "Published inputs no longer match the exact provider source lifetimes.")
 		}
-		machineClient = h.Provider
+		machineClient = publisher.Client
 	} else if class.Spec.Source != nil {
 		return h.rejected(ctx, &claim, "UnsupportedMachineClass", "Synthetic same-project staging requires a local capacity definition.")
 	}
@@ -144,7 +151,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 	}
 	record, err := h.Allocator.Allocate(ctx, allocation.Request{
 		Machine: h.machine(&claim), Class: sourceClass, Profile: sourceProfile,
-		Authority: fleetv1.AllocationAuthority{Principal: "synthetic-staging:" + string(h.Project.UID), Decision: "synthetic-staging:" + string(claim.UID)},
+		Authority: fleetv1.AllocationAuthority{Principal: "synthetic-staging:" + h.Project.RouteName, Decision: "synthetic-staging:" + claim.Namespace + "/" + claim.Name},
 	})
 	if errors.Is(err, allocation.ErrInsufficientCapacity) {
 		return h.pending(ctx, &claim, "InsufficientCapacity", "No matching synthetic machine is currently available.", nil)
@@ -190,7 +197,7 @@ func (h Handler) ReconcileEvent(ctx context.Context, request manager.ProjectRequ
 
 // machine is the claim's exact identity in its consumer project.
 func (h Handler) machine(claim *fleetv1.Machine) allocation.Machine {
-	return allocation.Machine{Project: h.Project.RouteName, ProjectUID: h.Project.UID, Namespace: claim.Namespace, Name: claim.Name, UID: claim.UID}
+	return allocation.MachineOf(manager.ProjectConsumer(h.Project, h.Public), claim)
 }
 
 func (h Handler) dependency(ctx context.Context, claim *fleetv1.Machine, reason string, err error) manager.Outcome {

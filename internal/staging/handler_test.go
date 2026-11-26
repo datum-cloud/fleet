@@ -19,6 +19,7 @@ import (
 	"go.datum.net/fleet/internal/controller"
 	"go.datum.net/fleet/internal/custody"
 	"go.datum.net/fleet/internal/manager"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 func assertPhase(t *testing.T, claim *fleetv1.Machine, phase string) {
@@ -197,7 +198,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	provenance := func(source client.Object) map[string]string {
 		return map[string]string{publicationManagedByAnnotation: publicationManager, publicationProviderUIDAnnotation: string(provider.UID), publicationSourceUIDAnnotation: string(source.GetUID()), publicationSourceNameAnnotation: source.GetName()}
 	}
-	localClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: sourceClass.Name, UID: "local-class-uid", Generation: 1, Annotations: provenance(sourceClass)}, Spec: fleetv1.MachineClassSpec{Source: &fleetv1.SourceReference{Project: provider.RouteName, Name: sourceClass.Name}}, Status: fleetv1.MachineClassStatus{EvaluatedRevision: revision, ResolvedClass: &fleetv1.ResolvedClass{ProfilePolicy: *sourceClass.Spec.ProfilePolicy}, Conditions: []metav1.Condition{publicationCondition("SourceResolved", metav1.ConditionTrue, 1, "AuthorizedSource", "resolved")}}}
+	localClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: sourceClass.Name, UID: "local-class-uid", Generation: 1, Annotations: provenance(sourceClass)}, Spec: fleetv1.MachineClassSpec{Source: &fleetv1.SourceReference{PublisherRef: tenancy.Project(provider.RouteName), Name: sourceClass.Name}}, Status: fleetv1.MachineClassStatus{EvaluatedRevision: revision, ResolvedClass: &fleetv1.ResolvedClass{ProfilePolicy: *sourceClass.Spec.ProfilePolicy}, Conditions: []metav1.Condition{publicationCondition("SourceResolved", metav1.ConditionTrue, 1, "AuthorizedSource", "resolved")}}}
 	localProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: sourceProfile.Name, UID: "local-profile-uid", Generation: 1, Annotations: provenance(sourceProfile)}, Spec: sourceProfile.Spec}
 	localProfile.Status.Conditions = []metav1.Condition{publicationCondition("Published", metav1.ConditionTrue, 1, "SourceCopied", "copied")}
 	claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "cross-project", UID: types.UID(uid(901))}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: localClass.Name}, MachineProfileRef: fleetv1.LocalReference{Name: localProfile.Name}, LocationRef: fleetv1.LocalReference{Name: locationName}, PowerState: "Off"}}
@@ -218,7 +219,7 @@ func TestPublishedConsumerClaimAllocatesProviderMachine(t *testing.T) {
 	if err != nil || allocated == nil {
 		t.Fatalf("allocation = %v, %v", allocated, err)
 	}
-	if allocated.Spec.MachineRef.Project != consumer.RouteName || allocated.Labels[fleetv1.LabelConsumerProjectUID] != string(consumer.UID) || allocated.Spec.DeviceRef.Name != device.Name || got.Status.AllocatedHardware == nil || !reflect.DeepEqual(got.Status.AllocatedHardware.Hardware, allocated.Spec.Hardware) {
+	if allocated.Spec.ConsumerRef != tenancy.Project(consumer.RouteName) || allocated.Labels[fleetv1.LabelConsumerUID] != string(consumer.UID) || allocated.Spec.DeviceRef.Name != device.Name || got.Status.AllocatedHardware == nil || !reflect.DeepEqual(got.Status.AllocatedHardware.Hardware, allocated.Spec.Hardware) {
 		t.Fatalf("allocation = %+v, allocated hardware %#v", allocated.Spec, got.Status.AllocatedHardware)
 	}
 	if holder := s.custody(device.Name).Spec.Holder; holder.Type != ops.HolderAllocation || holder.AllocationRef.Name != allocated.Name {
@@ -288,5 +289,40 @@ func TestStagingPreservesPinnedRequestAndRejectsConflictingProfile(t *testing.T)
 	}
 	if found, err := s.allocator.Get(s.ctx, machineIdentity(consumerProject, conflicting)); err != nil || found != nil {
 		t.Fatalf("conflicting Machine was allocated: %v, %v", found, err)
+	}
+}
+
+// TestAClassFromAnotherPublisherIsRejected never allocates through a
+// published class whose publisherRef names anything but the provider
+// project that published it.
+func TestAClassFromAnotherPublisherIsRejected(t *testing.T) {
+	s := startStack(t)
+	s.server(1)
+	consumer := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "project-consumer", UID: types.UID(uid(12))}
+	provider := controller.ProjectIdentity{AuthorityID: "staging", RouteName: "datum-cloud", UID: types.UID(uid(13))}
+	sourceClass, sourceProfile := s.class, s.profile
+	revision, err := publicationRevision(sourceClass, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance := func(source client.Object) map[string]string {
+		return map[string]string{publicationManagedByAnnotation: publicationManager, publicationProviderUIDAnnotation: string(provider.UID), publicationSourceUIDAnnotation: string(source.GetUID()), publicationSourceNameAnnotation: source.GetName()}
+	}
+	for i, publisher := range []fleetv1.TypedReference{tenancy.Project("another-provider"), tenancy.Namespace(provider.RouteName)} {
+		localClass := &fleetv1.MachineClass{ObjectMeta: metav1.ObjectMeta{Name: sourceClass.Name, UID: "local-class-uid", Generation: 1, Annotations: provenance(sourceClass)}, Spec: fleetv1.MachineClassSpec{Source: &fleetv1.SourceReference{PublisherRef: publisher, Name: sourceClass.Name}}, Status: fleetv1.MachineClassStatus{EvaluatedRevision: revision, ResolvedClass: &fleetv1.ResolvedClass{ProfilePolicy: *sourceClass.Spec.ProfilePolicy}, Conditions: []metav1.Condition{publicationCondition("SourceResolved", metav1.ConditionTrue, 1, "AuthorizedSource", "resolved")}}}
+		localProfile := &fleetv1.MachineProfile{ObjectMeta: metav1.ObjectMeta{Name: sourceProfile.Name, UID: "local-profile-uid", Generation: 1, Annotations: provenance(sourceProfile)}, Spec: sourceProfile.Spec}
+		localProfile.Status.Conditions = []metav1.Condition{publicationCondition("Published", metav1.ConditionTrue, 1, "SourceCopied", "copied")}
+		claim := &fleetv1.Machine{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "cross-project", UID: types.UID(uid(910 + i))}, Spec: fleetv1.MachineSpec{MachineClassRef: fleetv1.LocalReference{Name: localClass.Name}, MachineProfileRef: fleetv1.LocalReference{Name: localProfile.Name}, LocationRef: fleetv1.LocalReference{Name: locationName}, PowerState: "Off"}}
+		consumerKube := fake.NewClientBuilder().WithScheme(stackScheme(t)).WithStatusSubresource(&fleetv1.Machine{}).WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: "namespace-uid"}}, localClass, localProfile, claim).Build()
+		handler := Handler{Public: consumerKube, Provider: s.admin, Allocator: s.allocator, Project: consumer, ProviderProject: provider, Location: locationName, Now: time.Now}
+		handler.ReconcileEvent(s.ctx, projectRequest(consumer, claim))
+		var got fleetv1.Machine
+		if err := consumerKube.Get(s.ctx, client.ObjectKeyFromObject(claim), &got); err != nil {
+			t.Fatal(err)
+		}
+		assertCondition(t, &got, "Accepted", metav1.ConditionFalse, "UnresolvedPublication")
+		if allocated, err := s.allocator.Get(s.ctx, machineIdentity(consumer, claim)); err != nil || allocated != nil {
+			t.Fatalf("publisher %+v: allocation = %v, %v", publisher, allocated, err)
+		}
 	}
 }

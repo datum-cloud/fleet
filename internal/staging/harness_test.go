@@ -250,5 +250,5 @@ func drive(t *testing.T, ctx context.Context, handler manager.Handler, project c
 }
 
 func machineIdentity(project controller.ProjectIdentity, claim *fleetv1.Machine) allocation.Machine {
-	return allocation.Machine{Project: project.RouteName, ProjectUID: project.UID, Namespace: claim.Namespace, Name: claim.Name, UID: claim.UID}
+	return allocation.MachineOf(manager.ProjectConsumer(project, nil), claim)
 }

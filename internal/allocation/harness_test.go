@@ -27,6 +27,7 @@ import (
 	"go.datum.net/fleet/internal/site/fixture"
 	"go.datum.net/fleet/internal/site/simwork"
 	"go.datum.net/fleet/internal/site/siteapi"
+	"go.datum.net/fleet/internal/tenancy"
 )
 
 const (
@@ -200,7 +201,7 @@ func (e *env) custody(name string) *ops.DeviceCustody {
 }
 
 func machine(n int) Machine {
-	return Machine{Project: fmt.Sprintf("consumer-%d", n), ProjectUID: types.UID(uid(500 + n)), Namespace: "default", Name: "allocation", UID: types.UID(uid(600 + n))}
+	return Machine{Consumer: tenancy.Project(fmt.Sprintf("consumer-%d", n)), ConsumerUID: types.UID(uid(500 + n)), Namespace: "default", Name: "allocation", UID: types.UID(uid(600 + n))}
 }
 
 func (e *env) request(n int) Request {

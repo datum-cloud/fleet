@@ -35,7 +35,8 @@ func (p PowerProjector) ReconcileEvent(ctx context.Context, request ProjectReque
 	if p.Client == nil || p.Provider == nil || !p.Project.Valid() || !request.Valid() || !request.SameProject(p.Project.AuthorityID, p.Project.UID) {
 		return Outcome{RetryError: ErrEventWiringUnavailable}
 	}
-	machine := allocation.Machine{Project: p.Project.RouteName, ProjectUID: p.Project.UID, Namespace: request.Namespace, Name: request.Name, UID: request.UID}
+	consumer := ProjectConsumer(p.Project, p.Client)
+	machine := allocation.Machine{Consumer: consumer.Ref, ConsumerUID: consumer.UID, Namespace: request.Namespace, Name: request.Name, UID: request.UID}
 	if err := ProjectPower(ctx, p.Client, p.Provider, p.Namespace, machine); err != nil {
 		return Outcome{RetryError: err}
 	}
@@ -82,7 +83,7 @@ func power(ctx context.Context, provider client.Reader, namespace string, machin
 	} else if err != nil {
 		return nil, err
 	}
-	if current.Labels[fleetv1.LabelMachineUID] != string(machine.UID) || current.Labels[fleetv1.LabelConsumerProjectUID] != string(machine.ProjectUID) || current.Status.Phase != fleetv1.AllocationActive {
+	if current.Labels[fleetv1.LabelMachineUID] != string(machine.UID) || current.Labels[fleetv1.LabelConsumerUID] != string(machine.ConsumerUID) || current.Status.Phase != fleetv1.AllocationActive {
 		return nil, nil
 	}
 	state := &ops.DeviceCustody{}

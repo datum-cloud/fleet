@@ -223,7 +223,7 @@ func TestStagingAllocatesOnlyForThePublicationConsumer(t *testing.T) {
 	if err := s.admin.List(ctx, &allocations, client.InNamespace(providerNamespace)); err != nil {
 		t.Fatal(err)
 	}
-	if len(allocations.Items) != 1 || allocations.Items[0].Labels[fleetv1.LabelConsumerProjectUID] != string(consumerProject.UID) || allocations.Items[0].Spec.DeviceRef.Name != device.Name {
+	if len(allocations.Items) != 1 || allocations.Items[0].Labels[fleetv1.LabelConsumerUID] != string(consumerProject.UID) || allocations.Items[0].Spec.DeviceRef.Name != device.Name {
 		t.Fatalf("allocations = %#v, want one for the consumer on %s", allocations.Items, device.Name)
 	}
 	if holder := s.custody(device.Name).Spec.Holder; holder.AllocationRef == nil || holder.AllocationRef.Name != allocations.Items[0].Name {
