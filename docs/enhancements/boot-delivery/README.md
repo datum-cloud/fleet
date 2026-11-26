@@ -110,13 +110,14 @@ and evidence handling are the same for every method.
 
 - **[Device custody](../device-operations/README.md):** delivery steps run
   inside an admitted operation, under its fence, and are journaled like every
-  other step. Custody changes in three ways:
+  other step. Custody changes in four ways:
   - installation, wipe, and commissioning operations gain a delivery method
     input;
   - admission gains kind checks of that input, through custody's existing rule
-    for checks of a kind's own inputs; and
-  - a settling operation must use the held operation's method. See [Settling a
-    hold](#settling-a-hold).
+    for checks of a kind's own inputs;
+  - a recovery hold records each method the held operation prepared; and
+  - a settling operation must prove release for each of those methods. See
+    [Settling a hold](#settling-a-hold).
 - **Boot network reservations ([#87][boot-network-pr]) and server networking
   ([#186][server-networking-pr]):** become the network boot method. Their
   evidence gates are its verify and release steps. Two changes: a site can
@@ -129,7 +130,8 @@ and evidence handling are the same for every method.
   on virtual media, and the install report returns a report token. See [Install
   report](#install-report).
 - **Commissioning ([#185][commissioning-pr]):** commissioning gains a delivery
-  phase, and `Available` gains two conditions.
+  phase, burn-in boots with any qualified method instead of only network boot,
+  and `Available` gains two conditions.
 - **PXE installation ([#59][pxe-pr]):** its customer Redfish gateway already
   refuses virtual media. That stays true.
 
@@ -181,12 +183,18 @@ hold is settled:
 - a wipe hold, by a `Retry` and then a later wipe that succeeds; and
 - a commissioning hold, by a later commissioning that succeeds.
 
-Each method proves release only for itself. So a settling installation, wipe,
-or commissioning uses the method that the held operation used. The requester
-reads it from the hold. Admission skips the site, class, and qualification
-checks for a settling operation, because the held operation passed them and
-its delivery must be proven closed with the same method. A settling operation
-that records another method is refused with `DeliveryMethodMismatch`.
+Each method proves release only for itself. So the hold records each method
+that the held operation prepared, and a settling operation must prove release
+for every one of them:
+
+- An installation or a wipe prepares one method, so its settling operation
+  uses that method. The requester reads it from the hold. Admission skips the
+  site, class, and qualification checks for it, because the held operation
+  passed them. A settling installation or wipe that records another method is
+  refused with `DeliveryMethodMismatch`.
+- A commissioning exercises every method its operation lists. A settling
+  commissioning must list every method in the hold, or it is refused with
+  `DeliveryMethodMismatch`.
 
 Other operations wait or are refused exactly as custody defines today.
 
@@ -266,7 +274,9 @@ sequenceDiagram
   media, reads back each device's URL, sets a one-time boot from media, reads
   it back, and powers the server on.
 - **Verify.** The worker reads the install report from the serial console.
-  The report token exists only inside this operation's config medium.
+  The report token exists only inside this operation's config medium. A boot
+  medium qualified for virtual media brings up no network interface during the
+  install.
 - **Release.** The worker closes every window of the Device and ejects every
   virtual media device. It then reads back two independent sources:
   - the BMC: every device reports no media, and no boot override is set; and
@@ -279,8 +289,8 @@ unproven.
 
 Release relies on the BMC's own report of its media, as network boot relies on
 DHCP's report of its reservations. A BMC that reports empty devices while it
-still holds media is not detected. Closed windows limit that BMC to media it
-already fetched, and the cleared override keeps it from booting them.
+still holds media is not detected. Closed windows stop it from fetching more,
+and the cleared override keeps it from booting what it holds.
 
 The site deletes the rendered config medium when the operation ends or a
 higher fence stops the worker, as [#184][images-pr] requires for every copy of
@@ -291,7 +301,7 @@ attachment claim, provisioning address, relay, or DHCP.
 
 #### Serial console
 
-The installer under virtual media uses no network. It writes its report to the
+The installer under virtual media brings up no network. It writes its report to the
 serial console, and the worker reads it through the BMC's serial console
 service. [#185][commissioning-pr] burn-in reports on the console too, but no
 proposal yet defines how a worker reads it. This enhancement needs that
@@ -336,6 +346,10 @@ there. Unless the operation settles a hold, the method is the first one in the
 site's order that the class allows and the server's latest commissioning
 qualified. Staff operations have no class, so the class rule does not apply to
 them.
+
+A commissioning is the exception, because it qualifies methods. It lists every
+method the site offers, in the site's order, and admission checks only that
+the site offers each one.
 
 Admission checks the recorded method again under the custody update, and
 refuses an operation whose method:
@@ -411,10 +425,12 @@ how the OS gets those addresses at first boot:
 Either way IPAM is the one source of the addresses. Fleet copies them and never
 chooses one.
 
-The installer uses no network, so it does not matter when NSO programs the
-Machine's interfaces. Under virtual media, NSO programs them as it does for a
-dedicated boot NIC in [#186][server-networking-pr], with no boot attachment.
-A wipe and a burn-in hold no Machine and run with no network.
+The installer brings up no network, so the install does not wait for NSO to
+program the Machine's interfaces. NSO programs them as it does for a dedicated
+boot NIC in [#186][server-networking-pr], with no boot attachment. The
+Machine reports `NetworkReady=False` until they are programmed, and in Data
+network mode the OS gets no address until then. A wipe and a burn-in hold no
+Machine and run with no network.
 
 ### Isolation and security
 
@@ -439,7 +455,8 @@ A wipe and a burn-in hold no Machine and run with no network.
 
 | Failure | Outcome |
 | --- | --- |
-| The media service cannot open a window | Nothing was sent to the server, so the operation fails. |
+| The media service refuses to open a window | Nothing was sent, so the operation fails. |
+| The open times out, so a window may exist | The operation ends `OutcomeUnknown`. The worker tries to close the window. |
 | The BMC accepts an insert but never reports the media inserted | The operation ends `OutcomeUnknown`. The worker tries to eject. |
 | The BMC reports media after an eject | Release is unproven. The operation ends `OutcomeUnknown`. |
 | The BMC ignores the one-time boot and boots from disk | No report arrives. The operation ends `OutcomeUnknown` at its deadline. |
@@ -471,6 +488,13 @@ These tests are required and not implemented:
   and settles the hold.
 - A delayed worker tries to open a window or insert media after a newer
   operation is admitted. The media service and the site journal refuse it.
+- A fence rise closes every window of the Device.
+- The BMC reports every device empty while the media service reports an open
+  window, and release stays unproven.
+- A settling install that records another method is refused with
+  `DeliveryMethodMismatch`.
+- A commissioning held during a virtual media probe is settled only by a
+  commissioning that lists virtual media.
 - A window reaches its deadline, and its URLs stop serving without a worker.
 - A server whose BMC failed the virtual media qualification is never allocated
   to a class that requires virtual media.
