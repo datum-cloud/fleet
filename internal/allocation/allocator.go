@@ -50,7 +50,14 @@ var (
 	// ErrUnsupported means a request Fleet does not implement, such as a
 	// bootstrap payload.
 	ErrUnsupported = errors.New("unsupported request")
+	// ErrBootClaimsFull means the allocation's boot claim record is full:
+	// no new boot claim is made until earlier ones are verified released.
+	ErrBootClaimsFull = errors.New("the allocation's boot claims are not yet verified released, so no new boot claim is made")
 )
+
+// MaxBootClaims is how many boot claims an allocation's status records at
+// once. It matches the CRD's limit on status.bootClaims.
+const MaxBootClaims = 64
 
 // Machine names one Machine incarnation in one consumer project
 // incarnation.
@@ -455,6 +462,11 @@ func (a *Allocator) recordBootClaim(ctx context.Context, allocation *fleetv1.Mac
 		Claim: fleetv1.TypedReference{APIGroup: claimKind.Group, Kind: claimKind.Kind, Name: bootaddress.ClaimName(operation)}}
 	if slices.Contains(allocation.Status.BootClaims, record) {
 		return nil
+	}
+	// A full record fails closed: no entry is ever dropped or overwritten
+	// before its release is verified.
+	if len(allocation.Status.BootClaims) >= MaxBootClaims {
+		return fmt.Errorf("%w: %d recorded", ErrBootClaimsFull, len(allocation.Status.BootClaims))
 	}
 	allocation.Status.BootClaims = append(allocation.Status.BootClaims, record)
 	return a.Provider.Status().Update(ctx, allocation)

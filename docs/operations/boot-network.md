@@ -194,7 +194,10 @@ the release is checked from the allocation's own record rather than from the
 claims that remain. Before it creates any boot claim, the requester records
 the operation's kind and name and the claim's kind and name in the
 allocation's status, and it removes the record only once the claim's release
-is verified. The check therefore still runs after the claim is gone, after
+is verified. The record holds at most 64 claims. When it is full, the next
+installation or wipe is refused with `ErrBootClaimsFull` and makes no claim,
+until earlier entries are verified released; no entry is ever dropped or
+overwritten first. The check therefore still runs after the claim is gone, after
 custody retention removed the operation, and for an operation that was never
 created. While an allocation is active, a hand-over step
 releases the claims of ended, unheld operations under the same rules, so NSO
