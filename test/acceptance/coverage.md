@@ -32,8 +32,8 @@ result reports every required phase `Passed`.
 ## Device custody and operations
 
 These are the acceptance tests of [#174 at `d4d17f9`](https://github.com/datum-cloud/fleet/pull/174).
-Increment A covers them against a real API server. End-to-end coverage arrives
-in Increments C and D. See [device custody](../../docs/development/device-custody.md#tests).
+Increment A covers them against a real API server, and Increment B covers the
+site side in unit tests. End-to-end coverage arrives in Increments C and D. See [device custody](../../docs/development/device-custody.md#tests).
 
 | #174 acceptance test | Executable evidence | Current state |
 | --- | --- | --- |
@@ -43,7 +43,8 @@ in Increments C and D. See [device custody](../../docs/development/device-custod
 | A commissioning times out and a later one settles the hold | `TestLifecycle`, `TestRecovery`, with the test-only kind and `DeviceWipe` | Deferred: commissioning is out of scope; the mechanism is envtest verified |
 | A staff operation targets an allocated, releasing or unsettleable held server and is refused, nothing sent | `TestAdmissionPreconditions`, `TestRecovery` | Envtest verified; end to end proposed |
 | A worker passes its deadline; `OutcomeUnknown`; settling waits for the worker to stop | `TestLifecycle`, `TestRecovery` | Envtest verified with a fake site; end to end proposed |
-| A delayed worker's step after a newer admission is refused by the journal | None yet | Proposed in B |
+| A delayed worker's step after a newer admission is refused by the journal | `TestTwoWorkersOnOneDevice`, `TestANewerFenceStopsTheOlderWorker`, `TestStoreRefusesOlderFencesAndSurvivesARestart` | Unit verified; end to end proposed |
+| A TLS pin mismatch or an identity mismatch sends nothing | `TestPinMismatchSendsNothing`, `TestIdentityMismatchSendsNothing`, against TLS servers | Unit verified; the emulator lab has no TLS |
 | Custody deleted and restored stays unallocatable until rebuilt with a higher fence | `TestRebuild` | Envtest verified with a fake site; end to end proposed |
 | A Machine deleted during installation; release waits; a wipe settles the install hold | `TestLifecycle`, `TestRecovery` | Envtest verified; end to end proposed |
 | No staff role can read a bootstrap payload | `TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets` | Role definitions verified; bootstrap stays refused |

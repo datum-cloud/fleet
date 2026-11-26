@@ -362,6 +362,7 @@ container and is unchanged.
 | Redfish execution Jobs with no libvirt path, against the DMTF Redfish Interface Emulator and lab VMs | Implemented as a separate mode; see [Redfish-mode acceptance](redfish-lab.md) for its run record |
 | Synchronized DHCP boot reservations with served and withdrawn evidence | Implemented and unit tested; not exercised at a site ([Boot network](boot-network.md)) |
 | Physical Redfish/BMC execution Jobs | Not qualified (lab emulator only; see the [hardware readiness checklist](redfish-lab.md#limitations-and-physical-hardware-readiness)) |
+| Per-Device fence store and journal, older-worker stop with a confirmation, worker deadlines, fenced typed results, per-Device credentials with the approved TLS pin, and the operation handoff payload ([device custody](../development/device-custody.md#site-execution-increment-b)) | Implemented and inert: unit tested, and nothing at the site runs it until the cutover. The site-wide journal above still drives this acceptance. |
 
 ## Independent review of the recorded run
 

@@ -227,7 +227,12 @@ type System struct {
 	ResetTarget string   `json:"resetTarget"`
 	ResetTypes  []string `json:"resetTypes"`
 	BootTargets []string `json:"bootTargets"`
+	// noOnce records that the System does not offer a one-time override.
+	noOnce bool
 }
+
+// OffersOnce reports whether the System offers a one-time boot override.
+func (s System) OffersOnce() bool { return !s.noOnce }
 
 // Power is one observation of a System's power and boot override state.
 type Power struct {
@@ -251,13 +256,38 @@ type resetAction struct {
 	}
 }
 
-// Discover walks the service root to the enrolled System. Every member of the
-// Systems collection, across all pages, must be read: exactly one must carry
-// the enrolled UUID, and it must have the enrolled Id; a member with the
-// enrolled Id but another UUID is a renumbered or swapped target. The reset
-// target and ActionInfo must belong to that System, and On, ForceOff, Pxe and
-// Hdd must be advertised. Discovery issues GETs only.
+// Discover is Identify followed by the install and cleanup capability
+// checks: On, ForceOff, Pxe and Hdd must be advertised, and a one-time boot
+// override offered.
 func (c *Client) Discover(ctx context.Context, t Target) (System, error) {
+	sys, err := c.Identify(ctx, t)
+	if err != nil {
+		return System{}, err
+	}
+	for _, need := range []string{"On", "ForceOff"} {
+		if !contains(sys.ResetTypes, need) {
+			return System{}, fmt.Errorf("%w: ResetType %s", ErrUnsupported, need)
+		}
+	}
+	for _, need := range []string{"Pxe", "Hdd"} {
+		if !contains(sys.BootTargets, need) {
+			return System{}, fmt.Errorf("%w: boot override target %s", ErrUnsupported, need)
+		}
+	}
+	if sys.noOnce {
+		return System{}, fmt.Errorf("%w: one-time boot override", ErrUnsupported)
+	}
+	return sys, nil
+}
+
+// Identify walks the service root to the enrolled System and reads what it
+// offers. Every member of the Systems collection, across all pages, must be
+// read: exactly one must carry the enrolled UUID, and it must have the
+// enrolled Id; a member with the enrolled Id but another UUID is a renumbered
+// or swapped target. The reset target and ActionInfo must belong to that
+// System. It requires no capability, so each caller checks what it uses. It
+// issues GETs only.
+func (c *Client) Identify(ctx context.Context, t Target) (System, error) {
 	api, err := c.connect(ctx)
 	if err != nil {
 		return System{}, err
@@ -349,19 +379,7 @@ func (c *Client) Discover(ctx context.Context, t Target) (System, error) {
 	for _, b := range s.Boot.AllowableBootSourceOverrideTargetValues {
 		sys.BootTargets = append(sys.BootTargets, string(b))
 	}
-	for _, need := range []string{"On", "ForceOff"} {
-		if !contains(sys.ResetTypes, need) {
-			return System{}, fmt.Errorf("%w: ResetType %s", ErrUnsupported, need)
-		}
-	}
-	for _, need := range []string{"Pxe", "Hdd"} {
-		if !contains(sys.BootTargets, need) {
-			return System{}, fmt.Errorf("%w: boot override target %s", ErrUnsupported, need)
-		}
-	}
-	if raw.Boot.Enabled != nil && !contains(*raw.Boot.Enabled, "Once") {
-		return System{}, fmt.Errorf("%w: one-time boot override", ErrUnsupported)
-	}
+	sys.noOnce = raw.Boot.Enabled != nil && !contains(*raw.Boot.Enabled, "Once")
 	return sys, nil
 }
 

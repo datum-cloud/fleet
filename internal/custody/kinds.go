@@ -36,7 +36,15 @@ const (
 	ReasonRetryAuthorized      = "RetryAlreadyAuthorized"
 	ReasonDisposalRequired     = "DisposalRequired"
 	ReasonInvalidResolve       = "InvalidResolve"
+	// Reasons the Redfish install and wipe workers raise.
+	ReasonTargetUnsupported = "TargetUnsupported"
+	ReasonTargetDisks       = "TargetDisksUnknown"
+	ReasonInputsUnreadable  = "InputsUnreadable"
 )
+
+// redfishWorkerReasons are the reasons the site's install and wipe workers
+// raise before sending anything.
+var redfishWorkerReasons = []Reason{{Name: ReasonTargetUnsupported, RaisedBy: RaisedByWorker}, {Name: ReasonTargetDisks, RaisedBy: RaisedByWorker}, {Name: ReasonInputsUnreadable, RaisedBy: RaisedByWorker}}
 
 const evidenceLimit = 4096
 
@@ -106,7 +114,7 @@ func DeviceInstallationKind() Kind {
 			return refuse(ReasonBootInterfaceUnknown, "the Device records no interface %q with a MAC address", installation.Spec.BootInterface)
 		},
 		Settles: []SettleRule{{Held: "DeviceInstallation"}},
-		Reasons: []Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}},
+		Reasons: append([]Reason{{Name: ReasonBootstrapUnsupported, RaisedBy: RaisedByBoth}, {Name: ReasonBootInterfaceUnknown, RaisedBy: RaisedByCoordinator}}, redfishWorkerReasons...),
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.InstallationEvidence) error {
 			return validateSteps(evidence.Steps)
 		}),
@@ -135,6 +143,7 @@ func DeviceWipeKind() Kind {
 		// settled by a later wipe only after a DeviceRecovery with Retry.
 		Settles:   []SettleRule{{Held: "DeviceInstallation"}, {Held: "DeviceWipe", RequiresRetry: true}},
 		Retryable: true,
+		Reasons:   redfishWorkerReasons,
 		Evidence: StrictEvidence(evidenceLimit, func(_ ops.Operation, evidence *ops.WipeEvidence) error {
 			if len(evidence.WipedDisks) > 16 {
 				return errors.New("evidence records at most 16 disks")

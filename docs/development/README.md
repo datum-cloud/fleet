@@ -55,8 +55,10 @@ and inert: the `DeviceCustody` and Device operation kinds, the creator webhook,
 the kind registry and admission rule table, and the coordinator that admits,
 fences, holds, recovers and rebuilds custody. Tests against a real API server
 verify it. No deployment root, manager or staging overlay includes it, and the
-Secret-backed lifecycle is unchanged. Site execution, the cutover and the
-end-to-end failure scenarios are proposed.
+Secret-backed lifecycle is unchanged. Increment B, the site framework with
+per-Device fencing, journal, credentials and pinned TLS and the Redfish
+install and wipe workers, is implemented and inert until the cutover. The
+cutover and the end-to-end failure scenarios are proposed.
 
 ## API group naming
 

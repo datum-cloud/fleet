@@ -20,8 +20,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Sites reports what each site serving a Device has stored. Delivery and
-// results are added in Increment B; until then tests supply a fake.
+// Sites reports what each site serving a Device has stored. The site
+// framework's Report implements it for one site; tests supply a fake.
 type Sites interface {
 	// Serving returns the sites explicitly configured to serve the Device.
 	// The coordinator never infers a site from placement.

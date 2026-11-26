@@ -227,8 +227,23 @@ const (
 	ReasonSnapshotInvalid        = "SnapshotInvalid"
 )
 
+// Reasons the site framework raises for any kind.
+const (
+	ReasonUnsupportedKind   = "UnsupportedKind"
+	ReasonInputMismatch     = "InputMismatch"
+	ReasonCredentialMissing = "CredentialMissing"
+	ReasonPinNotApproved    = "PinNotApproved"
+	ReasonPublicKeyMismatch = "PublicKeyMismatch"
+	ReasonNotEnrolled       = "NotEnrolled"
+	ReasonBMCUnavailable    = "BMCUnavailable"
+	ReasonWorkerRunning     = "OlderWorkerRunning"
+	ReasonStale             = "Stale"
+	ReasonStepUnknown       = "StepOutcomeUnknown"
+)
+
 // sharedReasons are the reasons every kind may raise.
-var sharedReasons = []string{ReasonCustodyUnverified, ReasonCreatorNotPermitted, ReasonHolderMismatch, ReasonOperationInProgress, ReasonDeviceIdentityMismatch,
+var sharedReasons = []string{ReasonUnsupportedKind, ReasonInputMismatch, ReasonCredentialMissing, ReasonPinNotApproved, ReasonPublicKeyMismatch,
+	ReasonNotEnrolled, ReasonBMCUnavailable, ReasonWorkerRunning, ReasonStale, ReasonStepUnknown, ReasonCustodyUnverified, ReasonCreatorNotPermitted, ReasonHolderMismatch, ReasonOperationInProgress, ReasonDeviceIdentityMismatch,
 	ReasonSharedPublicKey, ReasonRecoveryHold, ReasonNameMismatch, ReasonExpired, ReasonSuperseded, ReasonWithdrawn, ReasonDeadlineExceeded,
 	ReasonSiteNotConfirmed, ReasonSiteUnknown, ReasonInvalidEvidence, ReasonUndeclared, ReasonSnapshotInvalid}
 
