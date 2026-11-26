@@ -459,6 +459,8 @@ def lock(args):
         # signals the run forwards, it keeps the inherited flock until the
         # owning run has exited and finished its own cleanup.
         os.setsid()
+        # Its own pid, so it can be stopped by the pid it recorded, never by name.
+        write_json(LOCK_DIR / 'holder.json', dict(holder, holderPid=os.getpid()))
         null = os.open(os.devnull, os.O_RDWR)
         for fd in (0, 1, 2):
             os.dup2(null, fd)

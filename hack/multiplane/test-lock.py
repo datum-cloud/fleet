@@ -60,6 +60,21 @@ def lock_record(tmp, name):
     return json.loads((tmp / name / 'evidence/lock.json').read_text())
 
 
+def holder_pid(tmp):
+    """The detached holder's pid as it recorded it: processes are stopped
+    only by recorded pid, never by name or pattern."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            pid = json.loads((tmp / 'lock/holder.json').read_text()).get('holderPid')
+        except (OSError, ValueError):
+            pid = None
+        if pid:
+            return pid
+        time.sleep(0.1)
+    return None
+
+
 def tickets(tmp):
     return list((tmp / 'lock/queue').glob('*.ticket'))
 
@@ -125,10 +140,10 @@ with tempfile.TemporaryDirectory() as t:
     wc = waiter(tmp, c, 'c')
     time.sleep(1)
     # Kill the detached holder itself, not its owner: the lock must still free.
-    out = subprocess.run(['pgrep', '-f', 'harness.py lock --state %s' % (tmp / 'a')], capture_output=True, text=True).stdout.split()
-    check('stale: one detached holder', len(out) == 1, str(out))
-    for pid in out:
-        os.kill(int(pid), signal.SIGKILL)
+    pid = holder_pid(tmp)
+    check('stale: the holder recorded its pid', pid is not None)
+    if pid:
+        os.kill(pid, signal.SIGKILL)
     check('stale: the next waiter acquires after the holder is killed', finished(wc, 10) and wc.returncode == 0)
     check('stale: the dead ticket was removed', not tickets(tmp), str(tickets(tmp)))
     stop(a, b, c, wa, wb, wc)
@@ -193,21 +208,31 @@ with tempfile.TemporaryDirectory() as t:
 
     # Killing the wrapped command ends it and releases the lock: the wrapper
     # is the command, not a shell left waiting for it.
-    marker = 'with-lock-victim-%d' % os.getpid()
-    w = subprocess.Popen(wrapper + [sys.executable, '-c', 'import time; time.sleep(600)', marker], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # The command records its own pid, so the test checks that pid, not a name.
+    victim = tmp / 'victim.pid'
+    w = subprocess.Popen(wrapper + [sys.executable, '-c', 'import os, sys, time; open(sys.argv[1], "w").write(str(os.getpid())); time.sleep(600)', str(victim)],
+                         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1.5)
     c = owner()
     probe = waiter(tmp, c, 'probe-held', timeout=1)
     check('with-lock: holds the lock while the command runs', finished(probe, 10) and probe.returncode == 4, str(probe.returncode))
     w.kill()
     w.wait()
-    left = subprocess.run(['pgrep', '-f', marker], capture_output=True, text=True).stdout.split()
-    check('with-lock: killing it ends the command', not left, str(left))
+    recorded = int(victim.read_text()) if victim.exists() else None
+
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+    left = [recorded] if recorded and alive(recorded) else []
+    check('with-lock: killing it ends the command', recorded is not None and not left, str(left))
     probe = waiter(tmp, c, 'probe-free', timeout=10)
     check('with-lock: killing it releases the lock', finished(probe, 15) and probe.returncode == 0, str(probe.returncode))
     stop(c, probe)
     for pid in left:
-        os.kill(int(pid), signal.SIGKILL)
+        os.kill(pid, signal.SIGKILL)
 
 # A stale holder record naming a dead owner never lets a run skip the lock:
 # it queues and really takes the lock.
@@ -237,8 +262,9 @@ with tempfile.TemporaryDirectory() as t:
     a, b = owner(), owner()
     wa = waiter(tmp, a, 'a')
     finished(wa, 10)
-    for pid in subprocess.run(['pgrep', '-f', 'harness.py lock --state %s' % (tmp / 'a')], capture_output=True, text=True).stdout.split():
-        os.kill(int(pid), signal.SIGTERM)
+    pid = holder_pid(tmp)
+    if pid:
+        os.kill(pid, signal.SIGTERM)
     # The bounded wait expires while the owner lives, and records why.
     wb = waiter(tmp, b, 'b', timeout=2)
     check('signal: TERM to the holder does not release the lock', finished(wb, 15) and wb.returncode == 4, str(wb.returncode))
