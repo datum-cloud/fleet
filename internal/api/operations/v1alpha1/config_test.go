@@ -170,9 +170,13 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 	declared(t, filepath.Join(configRoot, "components", "inventory", "protected-resources"), permissions)
 	declared(t, filepath.Join(configRoot, "components", "iam", "protected-resources"), permissions)
 	// IPAM declares its own ProtectedResources. The requesters claim boot
-	// addresses, and the coordinator reads them at admission.
+	// addresses and confirm their release, and the coordinator reads them at
+	// admission.
 	for _, verb := range []string{"create", "get", "list", "delete"} {
 		permissions["ipam.miloapis.com/ipclaims."+verb] = true
+	}
+	for _, verb := range []string{"get", "list"} {
+		permissions["ipam.miloapis.com/ipallocations."+verb] = true
 	}
 	roles := map[string]role{}
 	for _, r := range decodeDir[role](t, filepath.Join(componentRoot, "roles")) {
@@ -195,8 +199,8 @@ func TestRolesKeepOneWriterAndKeepStaffFromCustomerSecrets(t *testing.T) {
 	want := map[string][]string{
 		"fleet.datumapis.com-device-operations-viewer":      slices.Concat(p(group+"devicecustodies", read...), p(group+"deviceinstallations", read...), p(group+"devicewipes", read...), p(group+"devicerecoveries", read...)),
 		"fleet.datumapis.com-device-recovery-operator":      slices.Concat(p(group+"devicerecoveries", "create"), p("metal.datumapis.com/machineallocations", read...)),
-		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...), p("ipam.miloapis.com/ipclaims", "create", "get", "list", "delete")),
-		"fleet.datumapis.com-device-wipe-requester":         slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...), p("ipam.miloapis.com/ipclaims", "create", "get", "list", "delete")),
+		"fleet.datumapis.com-device-installation-requester": slices.Concat(p(group+"deviceinstallations", "create", "get", "list", "watch"), p(group+"devicecustodies", read...), p("ipam.miloapis.com/ipclaims", "create", "get", "list", "delete"), p("ipam.miloapis.com/ipallocations", "get", "list")),
+		"fleet.datumapis.com-device-wipe-requester":         slices.Concat(p(group+"devicewipes", "create", "get", "list", "watch"), p(group+"devicecustodies", read...), p("ipam.miloapis.com/ipclaims", "create", "get", "list", "delete"), p("ipam.miloapis.com/ipallocations", "get", "list")),
 	}
 	coordinator := slices.Concat(p(group+"devicecustodies", "get", "list", "watch", "create", "update", "delete"), p(group+"devices", read...), p("metal.datumapis.com/machineallocations", read...), p("metal.datumapis.com/machinecapacities", read...), p("ipam.miloapis.com/ipclaims", "get"))
 	for _, plural := range []string{"deviceinstallations", "devicewipes", "devicerecoveries"} {

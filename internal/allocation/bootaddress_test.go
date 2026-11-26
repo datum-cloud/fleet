@@ -3,10 +3,14 @@ package allocation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -199,5 +203,39 @@ func TestBootAddressesFollowTheirOperations(t *testing.T) {
 	}
 	if allocation.Status.Phase != fleetv1.AllocationReleased {
 		t.Fatalf("phase = %s", allocation.Status.Phase)
+	}
+}
+
+// exhausted refuses every IPAM claim as IPAM does when its pool is full.
+type exhausted struct{ client.Client }
+
+func (c exhausted) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if claim, ok := object.(*unstructured.Unstructured); ok && claim.GroupVersionKind() == bootaddress.GVK {
+		return &apierrors.StatusError{ErrStatus: metav1.Status{
+			Status: metav1.StatusFailure, Code: http.StatusInsufficientStorage, Reason: "InsufficientStorage",
+			Details: &metav1.StatusDetails{Name: "lab-provisioning", Causes: []metav1.StatusCause{{Type: "Exhausted"}}},
+		}}
+	}
+	return c.Client.Create(ctx, object, options...)
+}
+
+// TestAnExhaustedPoolSendsNothing refuses the installation with IPAM's
+// reason and creates no operation, so nothing reaches the site.
+func TestAnExhaustedPoolSendsNothing(t *testing.T) {
+	e := startEnv(t)
+	e.allocator.Provider = exhausted{e.admin}
+	e.allocator.BootAddresses = &bootaddress.Claimer{Class: "provisioning"}
+	e.server(1)
+	allocation, err := e.allocator.Allocate(e.ctx, e.request(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := e.installation(1, "debian-12", "")
+	if _, err := e.allocator.Install(e.ctx, allocation, Installation{Installation: installation}); !errors.Is(err, bootaddress.ErrExhausted) || !strings.Contains(err.Error(), "lab-provisioning") {
+		t.Fatalf("install with a full pool: %v", err)
+	}
+	operations := &ops.DeviceInstallationList{}
+	if err := e.admin.List(e.ctx, operations, client.InNamespace(e.allocator.Namespace)); err != nil || len(operations.Items) != 0 {
+		t.Fatalf("operations = %d, %v", len(operations.Items), err)
 	}
 }

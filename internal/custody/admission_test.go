@@ -1,6 +1,7 @@
 package custody
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"testing"
@@ -9,10 +10,21 @@ import (
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
 	ops "go.datum.net/fleet/internal/api/operations/v1alpha1"
 	"go.datum.net/fleet/internal/bootaddress"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// ipamDown answers every IPAM claim read as an outage.
+type ipamDown struct{ client.Client }
+
+func (c ipamDown) Get(ctx context.Context, key client.ObjectKey, object client.Object, opts ...client.GetOption) error {
+	if object.GetObjectKind().GroupVersionKind().Group == bootaddress.GVK.Group {
+		return apierrors.NewServiceUnavailable("ipam is down")
+	}
+	return c.Client.Get(ctx, key, object, opts...)
+}
 
 // requireUntouched fails if custody admitted anything or raised the fence.
 func (e *env) requireUntouched(name string, fence int64) {
@@ -325,6 +337,14 @@ func TestAdmissionPreconditions(t *testing.T) {
 		}
 		e.requireUntouched(device.Name, fence)
 		admitted := withAddress("bound", good)
+		// While IPAM cannot be read, the claim's state is unknown: the
+		// operation waits, admitted no further, and is checked again.
+		outage := e.coordinator(ipamDown{e.admin})
+		if outcome := settleWith(t, e.ctx, outage, device.Name); outcome.RequeueAfter == 0 {
+			t.Fatalf("an undecided check did not ask to run again: %+v", outcome)
+		}
+		e.requirePhase(admitted, ops.PhasePending, ReasonBootAddress)
+		e.requireUntouched(device.Name, fence)
 		e.settle(device.Name)
 		if active := e.custody(device.Name).Spec.ActiveOperation; active == nil || active.Name != admitted.Name || active.Snapshot.BootMACAddress == "" {
 			t.Fatalf("active = %+v, want the bound installation with the boot MAC from inventory", active)

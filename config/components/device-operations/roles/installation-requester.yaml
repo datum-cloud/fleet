@@ -19,3 +19,5 @@ spec:
     - ipam.miloapis.com/ipclaims.get
     - ipam.miloapis.com/ipclaims.list
     - ipam.miloapis.com/ipclaims.delete
+    - ipam.miloapis.com/ipallocations.get
+    - ipam.miloapis.com/ipallocations.list
