@@ -273,8 +273,10 @@ Any instance may answer a request. Each applies the same feed through its own
 synchronizer and reports under its own name, so the power-on gate needs one
 expected instance serving and the withdrawal gate needs every expected
 instance. An instance that has not applied a reservation yet stays silent,
-because Kea is not authoritative, and the firmware retries; client-IP affinity
-keeps one relay's exchange on one instance.
+because Kea is not authoritative, and the firmware retries. Client-IP affinity
+sends all of one relay's traffic to one instance, so the replicas give
+availability, not load sharing per relay, and a relay's retries keep reaching
+that instance until its synchronizer applies the reservation, within one poll.
 
 Kea answers each relayed request at the relay address the request carries, on
 UDP 67. Its reply leaves through the cluster's egress, which is not always the

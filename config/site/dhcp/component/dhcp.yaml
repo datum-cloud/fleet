@@ -111,7 +111,10 @@ spec:
 # under its own stable name, so the withdrawal gate covers every expected one;
 # an instance that has not applied a reservation yet stays silent, because
 # Kea is not authoritative, and the firmware retries. Client-IP affinity
-# keeps one relay's exchange on one instance. Kea replies to the relay
+# sends all of one relay's traffic to one instance, so the replicas give
+# availability, not load sharing per relay; a relay's retries keep reaching
+# the same instance until its synchronizer applies the reservation, within
+# one poll. Kea replies to the relay
 # address in each request; the site's relays must accept replies from the
 # cluster's egress address.
 apiVersion: v1
