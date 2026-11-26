@@ -377,6 +377,8 @@ evidence must come from the observation it is dated with. A rejected
 credential or pin, a link outside its collection or owner, or an interrupted
 attempt fails the whole inventory as for Managers and Systems. An
 off-schema property type in an adapter or port document reads as absent.
+Text fields are cut to their length bound by character, never inside a
+multi-byte character.
 
 For each port, status records:
 

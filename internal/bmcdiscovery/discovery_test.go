@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -709,6 +710,27 @@ func TestAdapterReadFailureKeepsTheRestOfTheInventory(t *testing.T) {
 	}
 	if c := condition(t, status, inventory.ConditionAuthenticated); c.Status != metav1.ConditionTrue {
 		t.Fatalf("Authenticated = %+v", c)
+	}
+}
+
+func TestClipNeverSplitsACharacter(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   string
+		n    int
+		want string
+	}{
+		"ascii":              {in: "  abcdef ", n: 3, want: "abc"},
+		"multi-byte at cut":  {in: "ab" + strings.Repeat("é", 3), n: 3, want: "abé"},
+		"four-byte":          {in: "😀😀😀", n: 2, want: "😀😀"},
+		"fits in characters": {in: strings.Repeat("é", 4), n: 4, want: strings.Repeat("é", 4)},
+		"invalid utf-8":      {in: "a\xffb", n: 8, want: "a�b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := clip(tc.in, tc.n)
+			if got != tc.want || !utf8.ValidString(got) || utf8.RuneCountInString(got) > tc.n {
+				t.Fatalf("clip(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+			}
+		})
 	}
 }
 

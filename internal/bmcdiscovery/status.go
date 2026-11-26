@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -273,12 +274,15 @@ func observedChassis(in []redfish.Chassis) []inventory.ObservedChassis {
 	return out
 }
 
+// clip trims s and keeps at most n characters, the unit of a CRD maxLength,
+// so a multi-byte character is never split. Invalid UTF-8 is replaced first
+// so that the result is always valid.
 func clip(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) > n {
-		return s[:n]
+	s = strings.ToValidUTF8(strings.TrimSpace(s), "\uFFFD")
+	if utf8.RuneCountInString(s) <= n {
+		return s
 	}
-	return s
+	return string([]rune(s)[:n])
 }
 
 func canonicalUUIDOrEmpty(s string) string {
