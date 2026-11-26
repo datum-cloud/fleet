@@ -120,10 +120,10 @@ func synced(r *site.Runner) {
 	for name, kind := range r.Kinds {
 		switch k := kind.(type) {
 		case Installation:
-			k.Synced, k.DHCPInstances = true, []string{"dhcp-a"}
+			k.Synced, k.DHCPInstances, k.ContactQuiet = true, []string{"dhcp-a"}, time.Millisecond
 			r.Kinds[name] = k
 		case Wipe:
-			k.Synced, k.DHCPInstances = true, []string{"dhcp-a"}
+			k.Synced, k.DHCPInstances, k.ContactQuiet = true, []string{"dhcp-a"}, time.Millisecond
 			r.Kinds[name] = k
 		}
 	}
@@ -216,7 +216,7 @@ func newGate(t *testing.T) *gate {
 	if g.handler, err = g.server.DHCPHandler(syncToken); err != nil {
 		t.Fatal(err)
 	}
-	g.config = Config{BootRoot: g.server.BootRoot, Poll: 5 * time.Millisecond, Now: clock, Synced: true, DHCPInstances: instances}
+	g.config = Config{BootRoot: g.server.BootRoot, Poll: 5 * time.Millisecond, Now: clock, Synced: true, DHCPInstances: instances, ContactQuiet: time.Second}
 	return g
 }
 
@@ -299,6 +299,155 @@ func (g *gate) reserved(boot Boot) error {
 	return g.config.awaitReservation(ctx, boot)
 }
 
+// applied is the retained applied reports, without refused contacts.
+func applied(retained []report) []report {
+	var out []report
+	for _, r := range retained {
+		if !r.Rejected {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// contacts is the retained refused contacts, by instance name.
+func (g *gate) contacts() []string {
+	g.t.Helper()
+	retained, err := reports(g.server.BootRoot)
+	if err != nil {
+		g.t.Fatal(err)
+	}
+	var out []string
+	for _, r := range retained {
+		if r.Rejected {
+			out = append(out, r.Instance)
+		}
+	}
+	return out
+}
+
+// removed is a handler of the same feed that still expects dhcp-c, as the
+// feed did before dhcp-c was removed from the enrollment.
+func (g *gate) removed() http.Handler {
+	g.t.Helper()
+	before := g.server
+	before.DHCPInstances = []string{"dhcp-a", "dhcp-b", "dhcp-c"}
+	handler, err := before.DHCPHandler(syncToken)
+	if err != nil {
+		g.t.Fatal(err)
+	}
+	return handler
+}
+
+// TestARemovedInstanceStillPollingBlocksWithdrawal: dhcp-c was removed from
+// the expected set while its replica still runs. Its last report served
+// nothing, but it keeps polling the feed, which refuses and retains each
+// contact, so withdrawal stays unproven. Once it stops, a later boot's
+// withdrawal is proven.
+func TestARemovedInstanceStillPollingBlocksWithdrawal(t *testing.T) {
+	g := newGate(t)
+	current := g.handler
+	g.handler = g.removed()
+	g.apply("dhcp-c")
+	g.handler = current
+	boot := g.admit("op-a", 1, address)
+	g.apply("dhcp-a")
+	g.apply("dhcp-b")
+	if code := g.serve("GET", "/dhcp/v1/reservations", "dhcp-c", "").Code; code != http.StatusForbidden {
+		t.Fatalf("removed instance's feed = %d", code)
+	}
+	g.close(boot)
+	g.apply("dhcp-a")
+	g.apply("dhcp-b")
+	if err := g.withdrawn(boot); err == nil {
+		t.Fatal("withdrawal proven while a removed instance still polls the feed")
+	}
+	// dhcp-c stopped. A later boot, published after its last contact,
+	// passes.
+	later := g.admit("op-b", 2, "192.0.2.21")
+	g.apply("dhcp-a")
+	g.apply("dhcp-b")
+	g.close(later)
+	g.apply("dhcp-a")
+	g.apply("dhcp-b")
+	if err := g.withdrawn(later); err != nil {
+		t.Fatalf("withdrawal after the removed instance stopped: %v", err)
+	}
+}
+
+// TestTheRateLimitCannotHideAPollingInstance: contacts are retained at most
+// once per contactInterval, so the gate cannot pass before contactQuiet
+// after the admission was published; by then a still-polling instance has
+// been retained again.
+func TestTheRateLimitCannotHideAPollingInstance(t *testing.T) {
+	g := newGate(t)
+	g.config.ContactQuiet = 0
+	g.serve("GET", "/dhcp/v1/reservations", "dhcp-c", "")
+	boot := g.admit("op-a", 1, address)
+	g.apply("dhcp-a")
+	g.apply("dhcp-b")
+	g.close(boot)
+	g.apply("dhcp-a")
+	g.apply("dhcp-b")
+	// dhcp-c polls again within the interval: refused, not retained.
+	g.serve("GET", "/dhcp/v1/reservations", "dhcp-c", "")
+	if got := g.contacts(); len(got) != 1 {
+		t.Fatalf("contacts = %q", got)
+	}
+	if err := g.withdrawn(boot); err == nil {
+		t.Fatal("withdrawal proven before a rate-limited contact could be retained")
+	}
+	g.now = g.now.Add(contactInterval)
+	g.serve("GET", "/dhcp/v1/reservations", "dhcp-c", "")
+	if err := g.withdrawn(boot); err == nil {
+		t.Fatal("withdrawal proven while a removed instance still polls the feed")
+	}
+}
+
+// TestRefusedContactsAreRetainedOncePerInterval retains one record per
+// instance name per contactInterval, for a missing name too, for a refused
+// feed request and a refused report alike, and never for an unauthenticated
+// request. A contact that cannot be retained is still refused.
+func TestRefusedContactsAreRetainedOncePerInterval(t *testing.T) {
+	g := newGate(t)
+	request, _ := newRequest("GET", "/dhcp/v1/reservations", "")
+	request.Header.Set("Authorization", "Bearer wrong-token-wrong-token-wrong-token-0000")
+	request.Header.Set(bootnet.InstanceHeader, "dhcp-c")
+	recorder := httptest.NewRecorder()
+	g.handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized || len(g.contacts()) != 0 {
+		t.Fatalf("unauthenticated contact = %d, retained %q", recorder.Code, g.contacts())
+	}
+	empty, _ := bootnet.NewFeed(nil)
+	for i := 0; i < 3; i++ {
+		g.serve("GET", "/dhcp/v1/reservations", "dhcp-c", "")
+		g.serve("GET", "/dhcp/v1/reservations", "", "")
+		if code := g.post("dhcp-c", empty); code != http.StatusForbidden {
+			t.Fatalf("report from a removed instance = %d", code)
+		}
+		g.tick()
+	}
+	if got := g.contacts(); len(got) != 2 || got[0] != "dhcp-c" || got[1] != "" {
+		t.Fatalf("contacts within one interval = %q", got)
+	}
+	g.now = g.now.Add(contactInterval)
+	g.post("dhcp-c", empty)
+	if got := g.contacts(); len(got) != 3 || got[2] != "dhcp-c" {
+		t.Fatalf("contacts after the interval = %q", got)
+	}
+	// The log cannot be written: still refused.
+	broken := g.server
+	broken.BootRoot = filepath.Join(g.server.BootRoot, dhcpLog)
+	handler, err := broken.DHCPHandler(syncToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.handler = handler
+	if code := g.serve("GET", "/dhcp/v1/reservations", "dhcp-d", "").Code; code != http.StatusForbidden {
+		t.Fatalf("an unretained contact = %d", code)
+	}
+}
+
 // TestTheFeedServesOnlyExpectedInstances refuses a feed request without an
 // instance or from an instance outside the expected set, and refuses and
 // does not retain such an instance's report. An expected instance gets the
@@ -326,13 +475,13 @@ func TestTheFeedServesOnlyExpectedInstances(t *testing.T) {
 	if code := g.post("dhcp-c", feed); code != http.StatusForbidden {
 		t.Fatalf("report from an unexpected instance = %d", code)
 	}
-	if retained, err := reports(g.server.BootRoot); err != nil || len(retained) != 0 {
+	if retained, err := reports(g.server.BootRoot); err != nil || len(applied(retained)) != 0 {
 		t.Fatalf("an unexpected instance's report was retained: %+v, %v", retained, err)
 	}
 	if code := g.post("dhcp-a", feed); code != http.StatusNoContent {
 		t.Fatalf("report from an expected instance = %d", code)
 	}
-	if retained, err := reports(g.server.BootRoot); err != nil || len(retained) != 1 || !retained[0].Feed.Issued.Equal(feed.Issued) {
+	if retained, err := reports(g.server.BootRoot); err != nil || len(applied(retained)) != 1 || !applied(retained)[0].Feed.Issued.Equal(feed.Issued) {
 		t.Fatalf("retained %+v, %v", retained, err)
 	}
 	if _, err := (BootServer{}).DHCPHandler(syncToken); err == nil {

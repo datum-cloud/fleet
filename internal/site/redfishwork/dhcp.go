@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.datum.net/fleet/internal/bootnet"
@@ -26,13 +27,37 @@ const withdrawalWindow = 10 * time.Minute
 
 const dhcpLog = "dhcp-applied.log"
 
+// contactInterval is the least time between two retained refused contacts
+// from one instance name, so a polling replica outside the expected set
+// grows the log slowly.
+const contactInterval = 30 * time.Second
+
+// contactQuiet is how long after an admission was published the withdrawal
+// gate waits before it can pass: one contactInterval plus a synchronizer
+// poll (five seconds by default; at most fifteen is assumed), so an instance
+// still polling after the admission was published has a retained contact
+// by then.
+const contactQuiet = contactInterval + 15*time.Second
+
 // report is one retained applied report: when the boot server accepted it,
 // and which DHCP instance applied which exact feed, as the feed server issued
-// it.
+// it. A Rejected record is instead an authenticated contact the feed refused
+// because its instance was missing or outside the expected set: it has no
+// feed, and its instance may be empty or not a valid name. It is never
+// evidence that anything was served or withdrawn; it only shows that an
+// instance the proof does not watch was still running at At.
 type report struct {
 	At       time.Time    `json:"at"`
 	Instance string       `json:"instance"`
 	Feed     bootnet.Feed `json:"feed"`
+	Rejected bool         `json:"rejected,omitempty"`
+}
+
+// contact is how a refused contact is retained.
+type contact struct {
+	At       time.Time `json:"at"`
+	Instance string    `json:"instance"`
+	Rejected bool      `json:"rejected"`
 }
 
 // retainedLine is how a retained line is read. A line carrying "retired" was
@@ -100,6 +125,32 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 		return nil, errors.New("the DHCP feed needs the enrollment's expected DHCP instances")
 	}
 	allowed := expected(b.DHCPInstances)
+	var mu sync.Mutex
+	recorded := map[string]time.Time{}
+	// refuse retains, at most once per instance name per contactInterval,
+	// that an authenticated instance outside the expected set is still
+	// running, then answers 403 whether or not that was retained.
+	refuse := func(w http.ResponseWriter, instance string) {
+		if len(instance) > 253 {
+			instance = instance[:253]
+		}
+		mu.Lock()
+		now := b.now().UTC()
+		if last, ok := recorded[instance]; !ok || now.Sub(last) >= contactInterval {
+			if len(recorded) > 1024 {
+				for name, at := range recorded {
+					if now.Sub(at) >= contactInterval {
+						delete(recorded, name)
+					}
+				}
+			}
+			if b.retainContact(contact{At: now, Instance: instance, Rejected: true}) == nil {
+				recorded[instance] = now
+			}
+		}
+		mu.Unlock()
+		http.Error(w, "not an expected DHCP instance", http.StatusForbidden)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		got, ok := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
@@ -109,8 +160,8 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 		}
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/dhcp/v1/reservations" && request.URL.RawQuery == "":
-			if !allowed[request.Header.Get(bootnet.InstanceHeader)] {
-				http.Error(w, "not an expected DHCP instance", http.StatusForbidden)
+			if instance := request.Header.Get(bootnet.InstanceHeader); !allowed[instance] {
+				refuse(w, instance)
 				return
 			}
 			feed, err := b.Issue()
@@ -129,7 +180,7 @@ func (b BootServer) DHCPHandler(token string) (http.Handler, error) {
 				return
 			}
 			if !allowed[applied.Instance] {
-				http.Error(w, "not an expected DHCP instance", http.StatusForbidden)
+				refuse(w, applied.Instance)
 				return
 			}
 			if err := b.retain(applied); err != nil {
@@ -166,10 +217,20 @@ func (b BootServer) retain(applied bootnet.Applied) error {
 	return appendEvidence(b.BootRoot, dhcpLog, string(data)+"\n")
 }
 
+// retainContact appends one refused contact and syncs it.
+func (b BootServer) retainContact(c contact) error {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return appendEvidence(b.BootRoot, dhcpLog, string(data)+"\n")
+}
+
 // reports reads every retained report in order. An unreadable line is
 // corruption, never evidence in either direction. A report retained before
 // feeds carried an issue time reads as issued at the zero time, so it can
-// never prove a withdrawal. A retired line is skipped (see retainedLine).
+// never prove a withdrawal. A retired line is skipped (see retainedLine). A
+// rejected contact carries no feed to verify.
 func reports(root string) ([]report, error) {
 	file, err := os.Open(filepath.Join(root, dhcpLog))
 	if os.IsNotExist(err) {
@@ -184,7 +245,8 @@ func reports(root string) ([]report, error) {
 	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for scanner.Scan() {
 		var line retainedLine
-		if json.Unmarshal(scanner.Bytes(), &line) != nil || line.At.IsZero() || (bootnet.Applied{Instance: line.Instance, Feed: line.Feed}).Verify() != nil {
+		if json.Unmarshal(scanner.Bytes(), &line) != nil || line.At.IsZero() || (line.Rejected && line.Retired) ||
+			(!line.Rejected && (bootnet.Applied{Instance: line.Instance, Feed: line.Feed}).Verify() != nil) {
 			return nil, errors.New("invalid retained DHCP report")
 		}
 		if !line.Retired {
@@ -206,7 +268,7 @@ func (c Config) awaitReservation(ctx context.Context, boot Boot) error {
 			return err
 		}
 		for _, r := range retained {
-			if allowed[r.Instance] && r.At.After(boot.Created) && r.Feed.Has(boot.MAC, boot.Address) {
+			if !r.Rejected && allowed[r.Instance] && r.At.After(boot.Created) && r.Feed.Has(boot.MAC, boot.Address) {
 				return nil
 			}
 		}
@@ -238,6 +300,14 @@ func (c Config) awaitReservation(ctx context.Context, boot Boot) error {
 // state volume. A success also proves that every earlier reservation for
 // the Device, such as a held operation's, is withdrawn. The only way past an
 // instance that is gone is to remove it from the expected set.
+//
+// Removing a name does not stop its replica. A removed replica whose
+// synchronizer still polls is refused by the feed, which retains that
+// contact, so the gate also blocks while any refused contact was retained
+// after the admission was published, and passes no earlier than
+// contactQuiet after it, by which time a still-polling replica has been
+// retained despite the rate limit. A replica whose synchronizer stopped
+// while its Kea keeps serving is not seen.
 func (c Config) awaitWithdrawal(ctx context.Context, store *site.Store, device string, boot Boot) error {
 	poll, _, _, _ := c.durations()
 	deadline := c.now().Add(withdrawalWindow)
@@ -251,8 +321,14 @@ func (c Config) awaitWithdrawal(ctx context.Context, store *site.Store, device s
 		if err != nil {
 			return err
 		}
-		served, latest := false, map[string]bootnet.Feed{}
+		served, contacted, latest := false, false, map[string]bootnet.Feed{}
 		for _, r := range retained {
+			if r.Rejected {
+				if !r.At.Before(boot.Published) {
+					contacted = true
+				}
+				continue
+			}
 			if !allowed[r.Instance] {
 				continue
 			}
@@ -261,7 +337,7 @@ func (c Config) awaitWithdrawal(ctx context.Context, store *site.Store, device s
 			}
 			latest[r.Instance] = r.Feed
 		}
-		withdrawn := served && !boot.Published.IsZero() && len(allowed) > 0
+		withdrawn := served && !contacted && !boot.Published.IsZero() && len(allowed) > 0 && !c.now().Before(boot.Published.Add(c.quiet()))
 		for instance := range allowed {
 			feed, reported := latest[instance]
 			if !reported || !feed.Issued.After(boot.Published) {
@@ -307,4 +383,12 @@ func publishedFor(store *site.Store, device string) ([]Boot, error) {
 		}
 	}
 	return out, nil
+}
+
+// quiet is contactQuiet unless a test shortens it.
+func (c Config) quiet() time.Duration {
+	if c.ContactQuiet > 0 {
+		return c.ContactQuiet
+	}
+	return contactQuiet
 }

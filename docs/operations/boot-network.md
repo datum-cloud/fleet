@@ -172,9 +172,21 @@ it. To retire one on purpose:
 2. shrink `dhcpInstances` to match the Pods that remain; and
 3. restart the site's workers and its feed, so both read the new set.
 
-The feed then refuses the removed instance, and a later report from it is
-rejected and not retained. An instance removed while it may still answer could
-serve a reservation that nothing tracks, so check it first.
+The feed then refuses the removed instance: a later report from it is
+rejected and not retained as a report. Removing a name does not stop its
+replica, and one still running behind the load balancer could keep serving
+its last reservations. So the feed records each refused contact from a
+synchronizer holding the site's token, at most once per instance name every
+30 seconds, and the withdrawal proof refuses to pass while any contact was
+recorded after the operation's admission was stored. It also waits at least
+45 seconds after that, so the rate limit cannot hide a replica that is still
+polling. Stopping an instance before removing it is therefore enforced for any
+instance whose synchronizer still runs: its operations stay unknown until it
+stops, and later operations pass.
+
+**Known limit:** the feed cannot see Pods, so a replica whose synchronizer
+stopped while its Kea keeps serving is not detected. Making sure Kea no longer
+answers before removing its name still rests on the operator.
 
 These gates do not depend on where Kea runs. The feed comes only from the
 site's admitted operations at the Device's stored fence, and every report
@@ -196,7 +208,8 @@ refuses to start without one. Every request needs `Authorization: Bearer
 <token>`; the token is at least 32 characters.
 
 - `GET /dhcp/v1/reservations` needs `X-Fleet-DHCP-Instance: <name>` naming an
-  expected instance; otherwise it is refused with `403` and nothing is served.
+  expected instance; otherwise it is refused with `403`, nothing is served and
+  the contact is recorded (see [Retiring a DHCP instance](#retiring-a-dhcp-instance)).
   It returns the canonical feed:
   `{"revision": "<sha256>", "reservations": [{"mac", "address", "expires"}],
   "issued": "<UTC time>"}`. An address is one host address with no prefix.
@@ -207,11 +220,16 @@ refuses to start without one. Every request needs `Authorization: Bearer
 - `POST /dhcp/v1/applied` takes `{"instance": "<name>", "feed": <feed>}`, with
   the feed exactly as it was served. The feed must be canonical with a
   matching revision, and the instance must be expected; anything else is
-  rejected and not retained. An accepted report is synced to disk before
-  `204`.
+  rejected and not retained as a report. A report from an instance outside
+  the set is recorded as a refused contact. An accepted report is synced to
+  disk before `204`.
 
-The retained log holds MACs, addresses, revisions, issue times and instance
-names. It holds no token, receipt or boot capability. An unreadable line is
+The retained log holds MACs, addresses, revisions, issue times, instance
+names and refused contacts: `{"at", "instance", "rejected": true}`, synced
+before the `403`, with an empty instance when the request named none. A
+refused contact is never evidence that a reservation was served or withdrawn;
+it only blocks the proof. A request without the site's token is never
+recorded, and a contact that cannot be recorded is still refused. It holds no token, receipt or boot capability. An unreadable line is
 treated as corruption, never as evidence. A report retained before feeds
 carried an issue time counts as issued at the zero time, so it can never prove
 a withdrawal. A record left by the removed retirement command is ignored.
@@ -346,6 +364,7 @@ requirements.
 | Boot NIC from Device inventory through the admission snapshot; enrollment without MACs or addresses | Implemented; unit tested |
 | Reservation feed, authenticated applied reports, served and withdrawn gates over every reservation of the Device | Implemented; unit tested with a fake BMC and synchronizer |
 | Expected DHCP instance set in the enrollment: the feed refuses other instances, withdrawal needs every expected instance's report of a feed issued after the admission, and retirement only by shrinking the set | Implemented; unit tested, including an instance that never reported and one that stopped after fetching the reservation. Restarting the workers and the feed after a change is an operator step |
+| Refused contacts recorded and blocking withdrawal, so a removed instance whose synchronizer still polls keeps its operations unknown | Implemented; unit tested, including the rate limit, an unauthenticated request and a log that cannot be written. A removed replica whose synchronizer stopped while Kea serves is not detected |
 | Kea synchronizer: containing-subnet placement, restart re-apply, report only after Kea accepted | Implemented; unit tested against a fake Kea control socket |
 | Feed over TLS beside the boot service; Kea and the synchronizer as a central component, several instances behind one UDP 67 load balancer | Implemented; render checked in CI, and reservation-gated answers proved by the boot network lab with real Kea. Not deployed, and relayed requests across a WAN are not exercised |
 | Boot service and boot files in the central cluster, serving a UEFI HTTP boot loader | Proposed; the boot service runs in the site's boot Pod beside the site store, and serves the iPXE script but no EFI loader yet |

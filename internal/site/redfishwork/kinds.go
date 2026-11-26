@@ -74,7 +74,10 @@ type Config struct {
 	// DHCPInstances is the enrollment's expected DHCP instance set. Only
 	// their reports count, and withdrawal needs every one of them.
 	DHCPInstances []string
-	Now           func() time.Time
+	// ContactQuiet replaces contactQuiet, the least time after an admission
+	// was published before withdrawal can be proven. Tests shorten it.
+	ContactQuiet time.Duration
+	Now          func() time.Time
 }
 
 func (c Config) now() time.Time {
