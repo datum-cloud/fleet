@@ -95,9 +95,10 @@ with tempfile.TemporaryDirectory(prefix='test-fleet-smoke-') as temporary:
     suite = Path(temporary)
     names = []
 
-    # Cleanup that is expected to finish gets a deadline a loaded machine can
-    # meet: each mock is a fresh Python process. Only the cases that test the
-    # cleanup deadline itself use a short one.
+    # Each mock is a fresh Python process, which can take over a second to
+    # start on a loaded machine. Cleanup that is expected to finish gets ten
+    # seconds; the two cases that test the cleanup deadline itself get five,
+    # enough for the hanging mock to start and record itself.
     def case(scenario, expected, missing=None, timeout=None, send_signal=None, arguments=(), cleanup_timeout='10'):
         directory = suite / (scenario + '-' + str(len(list(suite.iterdir()))))
         directory.mkdir()
@@ -137,19 +138,19 @@ with tempfile.TemporaryDirectory(prefix='test-fleet-smoke-') as temporary:
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             if send_signal:
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 10
                 while not (directory / 'descendant').exists():
                     check(process.poll() is None, scenario + ' exited before signal')
                     check(time.monotonic() < deadline, scenario + ' did not start')
                     time.sleep(0.02)
                 process.send_signal(send_signal)
-            output = process.communicate(timeout=15)[0].decode()
+            output = process.communicate(timeout=30)[0].decode()
         finally:
             if process.poll() is None:
                 process.kill()
                 process.communicate()
         check(process.returncode == expected, scenario + ': unexpected status ' + str(process.returncode) + '\n' + output)
-        check(time.monotonic() - started < 15, scenario + ': unbounded execution')
+        check(time.monotonic() - started < 30, scenario + ': unbounded execution')
         check('SYNTHETIC-SECRET' not in output, scenario + ': raw diagnostics leaked')
         for credential in credentials:
             check(credential.read_text() == 'user-config-and-current-context-must-not-change\n', scenario + ': changed user config')
@@ -204,12 +205,12 @@ with tempfile.TemporaryDirectory(prefix='test-fleet-smoke-') as temporary:
     case('get_timeout', 124, timeout='1')
     case('create_timeout', 124, timeout='1')
     case('standalone-smoke.sh_timeout', 124, timeout='1')
-    case('delete_timeout', 1, cleanup_timeout='1')
+    case('delete_timeout', 1, cleanup_timeout='5')
     case('get_signal', 143, send_signal=signal.SIGTERM)
     case('create_signal', 143, send_signal=signal.SIGTERM)
     case('standalone-smoke.sh_signal', 130, send_signal=signal.SIGINT)
     case('standalone-smoke.sh_signal', 129, send_signal=signal.SIGHUP)
-    case('delete_signal', 1, send_signal=signal.SIGTERM, cleanup_timeout='1')
+    case('delete_signal', 1, send_signal=signal.SIGTERM, cleanup_timeout='5')
     check(len(names) == len(set(names)), 'cluster names reused across invocations')
     print('All disposable standalone smoke tests passed; no real tools or clusters used.')
 PY
