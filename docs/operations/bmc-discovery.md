@@ -42,7 +42,8 @@ never runs two.
 It needs:
 
 - a kubeconfig for **one Milo project**, mounted from a Secret;
-- read access to credential Secrets in the namespace where it runs;
+- list and watch on Secrets in the namespace where it runs, which must hold
+  credential Secrets only (see [Credential namespace](#credential-namespace));
 - network reachability to each `spec.bmc.endpoint`. It needs no privilege,
   capability or host networking of its own.
 
@@ -62,9 +63,48 @@ filesystem, no privilege escalation, all capabilities dropped and the
 | Configuration | A patch of `config.yaml` or the generated ConfigMap. |
 
 The ServiceAccount token is mounted because discovery reads Secrets through
-the Kubernetes API. Kubernetes RBAC cannot narrow a Role to labelled Secrets,
-so run discovery in a namespace that holds nothing else it should not read.
-To avoid the token, set `localKubeconfig` and mount a kubeconfig instead.
+the Kubernetes API. To avoid the token, set `localKubeconfig` and mount a
+kubeconfig instead.
+
+### Credential namespace
+
+The Role grants `list` and `watch` on Secrets in discovery's namespace, and no
+`get`: discovery reads Secrets only through a label-selected watch and, for
+`--once`, a label-selected list. RBAC cannot filter by label, so the Role
+still lets discovery read every Secret in that namespace. The namespace must
+therefore hold credential Secrets only, plus discovery's own Milo kubeconfig
+Secret. A pod mounts Secrets from its own namespace only, so that Secret sits
+beside discovery and the Role can read it. That exposes nothing discovery
+does not already mount.
+
+`hack/validate-bmc-credential-namespace.sh` runs in CI. It renders every
+Kustomize entry point under `config/` and fails when a Secret without the
+credential label and the three Device annotations lands in a credential
+namespace. A credential namespace is one that holds discovery's
+ServiceAccount or Role, holds a labelled credential Secret, or is a Namespace
+labelled `fleet.datumapis.com/bmc-credential-namespace: "true"`. The site's
+Redfish credential namespace carries that label. A namespace found in any
+root is checked in every root, because Flux may apply a namespace and the
+objects in it from different Kustomizations. For a render that leaves the
+namespace unset, such as `config/base/bmc-discovery`, every unnamespaced
+Secret in that render counts. The only other Secret admitted is
+`fleet-bmc-discovery-milo-kubeconfig`, and only in a namespace that runs
+discovery. The check covers this repository's roots only. A deploying
+repository that adds Secrets to discovery's namespace must keep the same rule.
+
+The Role stays namespace-wide for these reasons:
+
+- `resourceNames` does not apply to an unfiltered `list` or `watch`. A Role
+  limited by name would need discovery to `get` each Device's Secret by a
+  derived name, as the Redfish site workers do. Today a discovery Secret may
+  have any name; requiring the derived name changes the credential contract
+  for every deploying repository.
+- The names would have to be rendered from the Devices enrolled in Milo,
+  which change at run time. No root in this repository deploys discovery, so
+  the deploying repository would need to re-render the Role on every
+  enrollment. A Device added before the Role updates gets no credential.
+- Polling by name loses the watch. Today an approved pin takes effect at once.
+  Keeping that would need one name-filtered watch per Device.
 
 ### Sidecar in another pod
 
@@ -77,7 +117,10 @@ and volume snippet to merge into that pod's template. In that case:
 - create the ConfigMap and Milo kubeconfig Secret yourself; the snippet uses
   fixed names;
 - bind the Role in `rbac.yaml` to that pod's ServiceAccount, or set
-  `localKubeconfig`;
+  `localKubeconfig`. Either identity reads every Secret in the credential
+  namespace. When the pod's own namespace holds other Secrets, create the
+  Role and its binding in a namespace that holds credential Secrets only, and
+  set `credentialNamespace` to it;
 - set `healthProbeAddress: ""` if port 8081 is already in use in the pod.
   The snippet defines no probes.
 
@@ -356,7 +399,12 @@ sessions. Basic authentication is used; no Redfish session is created.
   with no credential sent, then approval yields inventory and
   `IdentityMatched=True`;
 - the Device status schema, the discoverer role, and the shipped Deployment's
-  single unprivileged replica.
+  single unprivileged replica;
+- with envtest assets, that the shipped Role serves the credential cache and
+  `--once`, refuses `get` and any other namespace.
+
+`./hack/test-bmc-credential-namespace.sh` proves the render check passes the
+real roots and fails on a stray Secret in each kind of credential namespace.
 
 ## Not yet qualified
 
