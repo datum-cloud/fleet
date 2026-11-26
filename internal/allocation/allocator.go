@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	inventory "go.datum.net/fleet/internal/api/inventory/v1alpha1"
@@ -128,6 +129,11 @@ type Allocator struct {
 	// after a switch to another source IPAM's claims are still released by
 	// IPAM's verified release.
 	BootAddresses bootaddress.Source
+	// PreviousBootAddresses are sources the requesters used before
+	// BootAddresses. Their claims are still released, listed and checked
+	// through them, by claim kind, until no operation names their kind.
+	// IPAM's claimer always takes part as the default.
+	PreviousBootAddresses []bootaddress.Source
 }
 
 // Get returns the Machine's allocation, or nil.
@@ -400,26 +406,77 @@ func (a *Allocator) claims(api client.Client, kind string) bootaddress.Source {
 	return a.BootAddresses.Requester(api, a.Namespace, kind)
 }
 
+// knownSource is one source a requester's claims may belong to. Implicit is
+// IPAM's default claimer when no one configured it: a provider API without
+// IPAM's kinds has no IPAM claims for it to release.
+type knownSource struct {
+	source   bootaddress.Source
+	implicit bool
+}
+
 // releaseSources returns, by claim kind, every source whose claims a
-// requester may still hold: the configured source, and IPAM's claimer, which
-// is the default and so holds the claims made before a switch. Each is the
-// requester's own. It is empty when the site's DHCP is not synchronized.
-func (a *Allocator) releaseSources(api client.Client, kind string) []bootaddress.Source {
+// requester may still hold: the configured source, the previous ones, and
+// IPAM's claimer, which is the default and so holds the claims made before a
+// switch. Each is the requester's own. It is empty when the site's DHCP is
+// not synchronized.
+func (a *Allocator) releaseSources(api client.Client, kind string) []knownSource {
 	if a.BootAddresses == nil {
 		return nil
 	}
-	byKind := map[schema.GroupKind]bootaddress.Source{bootaddress.GVK.GroupKind(): bootaddress.Claimer{}}
-	byKind[a.BootAddresses.ClaimKind()] = a.BootAddresses
+	byKind := map[schema.GroupKind]knownSource{bootaddress.GVK.GroupKind(): {bootaddress.Claimer{}, true}}
+	for _, previous := range a.PreviousBootAddresses {
+		byKind[previous.ClaimKind()] = knownSource{previous, false}
+	}
+	byKind[a.BootAddresses.ClaimKind()] = knownSource{a.BootAddresses, false}
 	kinds := make([]schema.GroupKind, 0, len(byKind))
 	for claimKind := range byKind {
 		kinds = append(kinds, claimKind)
 	}
 	sort.Slice(kinds, func(i, j int) bool { return kinds[i].String() < kinds[j].String() })
-	sources := make([]bootaddress.Source, 0, len(kinds))
+	sources := make([]knownSource, 0, len(kinds))
 	for _, claimKind := range kinds {
-		sources = append(sources, byKind[claimKind].Requester(api, a.Namespace, kind))
+		known := byKind[claimKind]
+		sources = append(sources, knownSource{known.source.Requester(api, a.Namespace, kind), known.implicit})
 	}
 	return sources
+}
+
+// absentAPI reports whether an error means the API does not serve the kind.
+func absentAPI(err error) bool {
+	return apiMeta.IsNoMatchError(err) || discovery.IsGroupDiscoveryFailedError(err)
+}
+
+// recordedOperations returns the allocation's operations of one kind whose
+// boot network input names the claim kind. Listing them from the
+// allocator's own record, not only from the claims that remain, lets a
+// release be verified again after the claim is gone.
+func (a *Allocator) recordedOperations(ctx context.Context, api client.Client, kind string, allocation string, claimKind schema.GroupKind) ([]string, error) {
+	var found []string
+	keep := func(name string, authority ops.Authority, network *ops.BootNetworkInput) {
+		if authority.AllocationRef != nil && authority.AllocationRef.Name == allocation && network != nil &&
+			(schema.GroupKind{Group: network.AddressClaim.APIGroup, Kind: network.AddressClaim.Kind}) == claimKind {
+			found = append(found, name)
+		}
+	}
+	switch kind {
+	case "DeviceInstallation":
+		var list ops.DeviceInstallationList
+		if err := api.List(ctx, &list, client.InNamespace(a.Namespace)); err != nil {
+			return nil, err
+		}
+		for _, item := range list.Items {
+			keep(item.Name, item.Spec.Authority, item.Spec.BootNetwork)
+		}
+	case "DeviceWipe":
+		var list ops.DeviceWipeList
+		if err := api.List(ctx, &list, client.InNamespace(a.Namespace)); err != nil {
+			return nil, err
+		}
+		for _, item := range list.Items {
+			keep(item.Name, item.Spec.Authority, item.Spec.BootNetwork)
+		}
+	}
+	return found, nil
 }
 
 // bootNetwork attaches the operation's boot NIC, then claims its boot

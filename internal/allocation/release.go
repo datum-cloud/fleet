@@ -112,21 +112,40 @@ func (a *Allocator) Release(ctx context.Context, allocation *fleetv1.MachineAllo
 func (a *Allocator) releaseBootAddresses(ctx context.Context, allocation *fleetv1.MachineAllocation, all bool) (bool, error) {
 	none := true
 	type requester struct {
-		claimer bootaddress.Source
-		api     client.Client
-		new     func() ops.Operation
+		claimer  bootaddress.Source
+		implicit bool
+		api      client.Client
+		kind     string
+		new      func() ops.Operation
 	}
 	var pairs []requester
-	for _, claimer := range a.releaseSources(a.Provider, "DeviceInstallation") {
-		pairs = append(pairs, requester{claimer, a.Provider, func() ops.Operation { return &ops.DeviceInstallation{} }})
+	for _, known := range a.releaseSources(a.Provider, "DeviceInstallation") {
+		pairs = append(pairs, requester{known.source, known.implicit, a.Provider, "DeviceInstallation", func() ops.Operation { return &ops.DeviceInstallation{} }})
 	}
-	for _, claimer := range a.releaseSources(a.Releaser, "DeviceWipe") {
-		pairs = append(pairs, requester{claimer, a.Releaser, func() ops.Operation { return &ops.DeviceWipe{} }})
+	for _, known := range a.releaseSources(a.Releaser, "DeviceWipe") {
+		pairs = append(pairs, requester{known.source, known.implicit, a.Releaser, "DeviceWipe", func() ops.Operation { return &ops.DeviceWipe{} }})
 	}
 	for _, pair := range pairs {
 		operations, err := pair.claimer.Operations(ctx, allocation.Name)
+		if pair.implicit && absentAPI(err) {
+			// No IPAM API, so no IPAM claim to release.
+			continue
+		}
 		if err != nil {
 			return false, err
+		}
+		// A source whose address can outlive its claim is verified again for
+		// every recorded operation of its kind, after the claim is gone too.
+		if _, ok := pair.claimer.(bootaddress.Lingering); ok {
+			recorded, err := a.recordedOperations(ctx, pair.api, pair.kind, allocation.Name, pair.claimer.ClaimKind())
+			if err != nil {
+				return false, err
+			}
+			for _, name := range recorded {
+				if !slices.Contains(operations, name) {
+					operations = append(operations, name)
+				}
+			}
 		}
 		for _, name := range operations {
 			if !all {

@@ -43,16 +43,24 @@ func (a *Allocator) HandOver(ctx context.Context, allocation *fleetv1.MachineAll
 	return a.releaseBootAddresses(ctx, allocation, false)
 }
 
-// BootNIC reports whether a boot attachment claim holds the allocation's boot
-// NIC while it is one of the Machine's interfaces. It returns ErrBootAttached
-// or ErrBootAttachmentHeld while one does, and nil otherwise, including for
-// a source that does not attach boot NICs and for a dedicated boot NIC.
+// BootNIC reports whether a boot attachment claim of any known source holds
+// the allocation's boot NIC while it is one of the Machine's interfaces, so a
+// claim left by a source used before a switch still counts. It returns
+// ErrBootAttached or ErrBootAttachmentHeld while one does, and nil
+// otherwise, including for sources that do not attach boot NICs and for a
+// dedicated boot NIC. Fleet's customer network attachment must call it.
 func (a *Allocator) BootNIC(ctx context.Context, allocation *fleetv1.MachineAllocation, interfaces []string) error {
-	if _, ok := a.BootAddresses.(attaches); !ok || !slices.Contains(interfaces, allocation.Spec.BootInterface) {
+	if a.BootAddresses == nil || !slices.Contains(interfaces, allocation.Spec.BootInterface) {
 		return nil
 	}
 	var holding error
-	for _, source := range []bootaddress.Source{a.installClaims(), a.wipeClaims()} {
+	var sources []bootaddress.Source
+	for _, known := range append(a.releaseSources(a.Provider, "DeviceInstallation"), a.releaseSources(a.Releaser, "DeviceWipe")...) {
+		if _, ok := known.source.(attaches); ok {
+			sources = append(sources, known.source)
+		}
+	}
+	for _, source := range sources {
 		operations, err := source.Operations(ctx, allocation.Name)
 		if err != nil {
 			return err
