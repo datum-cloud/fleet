@@ -1,4 +1,5 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { expect } from 'vitest';
 
 // The inventory category switcher: a trigger inside the "Inventory categories"
 // navigation element that opens a datum-ui Popover of category links.
@@ -25,4 +26,19 @@ export function categoryLink(title: string, navigation = categoryNavigation()) {
 /** Chooses a category from the switcher. */
 export function chooseCategory(title: string, navigation = categoryNavigation()) {
   fireEvent.click(categoryLink(title, navigation));
+}
+
+/**
+ * Chooses a category and waits until React has rendered its directory.
+ *
+ * RouterProvider applies router state to React inside startTransition, so
+ * `router.state.location` and `router.state.navigation` change before the
+ * page commits, and the previous category's search box stays enabled until it
+ * does. The new category's own search box, named for it, is the committed
+ * signal; it does not depend on the switcher trigger, so callers can still
+ * assert the trigger's label independently.
+ */
+export async function switchCategory(title: string, navigation = categoryNavigation()) {
+  chooseCategory(title, navigation);
+  await waitFor(() => expect(screen.getByRole('searchbox', { name: `Search ${title.toLowerCase()}` })).toBeEnabled());
 }

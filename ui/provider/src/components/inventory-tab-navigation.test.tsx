@@ -5,7 +5,7 @@ import { createMemoryRouter, Outlet, RouterProvider } from 'react-router';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import DeviceInventoryList from '../pages/device-inventory-list';
 import HardwareCatalog from '../pages/hardware-catalog';
-import { categoryLink, categoryMenu, categoryNavigation, categoryTrigger, chooseCategory } from '../test/inventory-category';
+import { categoryLink, categoryMenu, categoryNavigation, categoryTrigger, chooseCategory, switchCategory } from '../test/inventory-category';
 import { fixturePhysicalClaims, fixturePhysicalDevices, fixturePhysicalRecords } from '../lib/fixtures';
 import { inventoryGroups, isCatalogKind } from './inventory-groups';
 import { sections } from './inventory-navigation';
@@ -220,10 +220,10 @@ it('defaults to Devices and switches to every category without extra collection 
   expect(trigger).toHaveAccessibleName('Inventory category: Devices');
   const inventorySections = sections.filter(section => !isCatalogKind(section.kind));
   for (const section of [...inventorySections.slice(1), inventorySections[0]]) {
-    chooseCategory(section.title, navigation);
-    await waitFor(() => expect(view.router.state.location.search).toBe(`?kind=${section.kind}`));
-    await waitFor(() => expect(view.router.state.navigation.state).toBe('idle'));
-    await waitFor(() => expect(screen.getByRole('searchbox')).toBeEnabled());
+    // Wait for the committed page, not router.state: the router updates React in a transition.
+    await switchCategory(section.title, navigation);
+    expect(view.router.state.location.search).toBe(`?kind=${section.kind}`);
+    expect(view.router.state.navigation.state).toBe('idle');
     expect(categoryTrigger(navigation)).toBe(trigger);
     expect(trigger).toHaveAccessibleName(`Inventory category: ${section.title}`);
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
